@@ -19,6 +19,7 @@ import type {
 import type { DoctorMode, DoctorResponse } from "../contracts/doctor"
 import type { ActiveInstructionsResponse } from "../contracts/instructions"
 import type { OperationsSummary, StaleRunCleanupResult } from "../contracts/operations"
+import type { TopologyRelationTemplateCatalogResponse } from "../contracts/relation-templates"
 import type { RootRun, RunEvent, RunRuntimeInspectorProjection, RunStep } from "../contracts/runs"
 import type { SetupDraft, SetupMcpServerDraft, SetupState } from "../contracts/setup"
 import type { TaskModel } from "../contracts/tasks"
@@ -29,7 +30,33 @@ import type {
   AgentTopologyResponse,
   AgentTopologyTeamMembersPayload,
 } from "../contracts/topology"
+import type { TopologyTemplateCatalogResponse } from "../contracts/topology-templates"
 import type { UpdateSnapshot } from "../contracts/update"
+import type {
+  AgentTeamImportMode,
+  AgentTeamTopologyImportPreviewResponse,
+  EnterpriseTopologyGuiDraftIssuesResponse,
+  EnterpriseTopologyGuiDraftCompiledPreviewResponse,
+  EnterpriseTopologyGuiDraftRunRequest,
+  EnterpriseTopologyGuiDraftRunResponse,
+  EnterpriseTopologyGuiDraftOperationsRequest,
+  EnterpriseTopologyGuiDraftOperationsResponse,
+  EnterpriseTopologyGuiDraftResponse,
+  EnterpriseTopologyGuiDraftStartRequest,
+  EnterpriseTopologyGuiDraftValidateResponse,
+  EnterpriseTopologyExportResponse,
+  EnterpriseTopologyImportRequest,
+  EnterpriseTopologyImportResponse,
+  EnterpriseTopologyRunFailureReportsResponse,
+  EnterpriseTopologyRunTraceResponse,
+  TopologyImportExportFormat,
+  WorkOrderTemplateCatalogResponse,
+} from "../lib/enterprise-topology-operations"
+import {
+  buildTopologyWorkspaceSnapshot,
+  type TopologyWorkspaceSnapshot,
+  type TopologyWorkspaceSnapshotLoadRequest,
+} from "../lib/topology-workspace"
 import { localAdapter } from "./adapters/local"
 import type {
   ControlPlaneAdapter,
@@ -1227,6 +1254,45 @@ export const api = {
 
   agentTopology: () => request<AgentTopologyResponse>("/api/agent-topology"),
 
+  topologyWorkspaceSnapshot: async (
+    input: TopologyWorkspaceSnapshotLoadRequest = {},
+  ): Promise<TopologyWorkspaceSnapshot> => {
+    const [
+      capabilitiesResult,
+      runtimeResourcesResult,
+      topologyTemplatesResult,
+      relationTemplatesResult,
+      workOrderTemplatesResult,
+    ] = await Promise.allSettled([
+      getControlPlaneAdapter().getCapabilities(),
+      request<AgentTopologyResponse>("/api/agent-topology"),
+      request<TopologyTemplateCatalogResponse>("/api/topology-templates"),
+      request<TopologyRelationTemplateCatalogResponse>("/api/relation-templates"),
+      request<WorkOrderTemplateCatalogResponse>("/api/work-order-templates"),
+    ])
+
+    return buildTopologyWorkspaceSnapshot({
+      topologyId: input.topologyId,
+      topology: input.topology ?? null,
+      latestTrace: input.latestTrace ?? null,
+      recentRuns: input.recentRuns ?? [],
+      featureFlags: input.featureFlags ?? [],
+      capabilities: capabilitiesResult.status === "fulfilled" ? capabilitiesResult.value.items : [],
+      runtimeResources: runtimeResourcesResult.status === "fulfilled" ? runtimeResourcesResult.value : null,
+      catalogs: {
+        topologyTemplates: topologyTemplatesResult.status === "fulfilled" ? topologyTemplatesResult.value.catalog : null,
+        relationTemplates: relationTemplatesResult.status === "fulfilled" ? relationTemplatesResult.value.catalog : null,
+        workOrderTemplates: workOrderTemplatesResult.status === "fulfilled" ? workOrderTemplatesResult.value.catalog : null,
+      },
+    })
+  },
+
+  topologyTemplates: () => request<TopologyTemplateCatalogResponse>("/api/topology-templates"),
+
+  relationTemplates: () => request<TopologyRelationTemplateCatalogResponse>("/api/relation-templates"),
+
+  workOrderTemplates: () => request<WorkOrderTemplateCatalogResponse>("/api/work-order-templates"),
+
   validateTopologyEdge: (edge: AgentTopologyEdgeValidationInput) =>
     request<AgentTopologyEdgeValidationResponse>("/api/agent-topology/edges/validate", {
       method: "POST",
@@ -1295,6 +1361,108 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ layout }),
     }),
+
+  startEnterpriseTopologyGuiDraft: (
+    topologyId: string,
+    payload: EnterpriseTopologyGuiDraftStartRequest = {},
+  ) =>
+    request<EnterpriseTopologyGuiDraftResponse>(
+      `/api/topologies/${encodeURIComponent(topologyId)}/gui-draft`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+
+  patchEnterpriseTopologyGuiDraftOperations: (
+    topologyId: string,
+    payload: EnterpriseTopologyGuiDraftOperationsRequest,
+  ) =>
+    request<EnterpriseTopologyGuiDraftOperationsResponse>(
+      `/api/topologies/${encodeURIComponent(topologyId)}/gui-draft/operations`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      },
+    ),
+
+  enterpriseTopologyGuiDraftIssues: (topologyId: string) =>
+    request<EnterpriseTopologyGuiDraftIssuesResponse>(
+      `/api/topologies/${encodeURIComponent(topologyId)}/gui-draft/issues`,
+    ),
+
+  validateEnterpriseTopologyGuiDraft: (topologyId: string) =>
+    request<EnterpriseTopologyGuiDraftValidateResponse>(
+      `/api/topologies/${encodeURIComponent(topologyId)}/gui-draft/validate`,
+      { method: "POST" },
+    ),
+
+  exportEnterpriseTopology: (
+    topologyId: string,
+    params: { version?: number; format?: TopologyImportExportFormat } = {},
+  ) => {
+    const query = new URLSearchParams()
+    if (params.version !== undefined) query.set("version", String(params.version))
+    if (params.format !== undefined) query.set("format", params.format)
+    const suffix = query.toString()
+    return request<EnterpriseTopologyExportResponse>(
+      `/api/topologies/${encodeURIComponent(topologyId)}/export${suffix ? `?${suffix}` : ""}`,
+    )
+  },
+
+  importEnterpriseTopology: (payload: EnterpriseTopologyImportRequest) =>
+    request<EnterpriseTopologyImportResponse>("/api/topologies/import", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  previewAgentTeamTopologyImport: (
+    payload: {
+      topologyId?: string
+      name?: string
+      teamImportMode?: AgentTeamImportMode
+      agents?: unknown[]
+      teams?: unknown[]
+      relationships?: unknown[]
+    } = {},
+  ) =>
+    request<AgentTeamTopologyImportPreviewResponse>("/api/topologies/import/agent-team-preview", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  compileEnterpriseTopologyGuiDraft: (topologyId: string) =>
+    request<EnterpriseTopologyGuiDraftCompiledPreviewResponse>(
+      `/api/topologies/${encodeURIComponent(topologyId)}/gui-draft/compile`,
+      { method: "POST" },
+    ),
+
+  enterpriseTopologyGuiDraftCompiledPreview: (topologyId: string) =>
+    request<EnterpriseTopologyGuiDraftCompiledPreviewResponse>(
+      `/api/topologies/${encodeURIComponent(topologyId)}/gui-draft/compiled-preview`,
+    ),
+
+  runEnterpriseTopologyGuiDraft: (
+    topologyId: string,
+    payload: EnterpriseTopologyGuiDraftRunRequest,
+  ) =>
+    request<EnterpriseTopologyGuiDraftRunResponse>(
+      `/api/topologies/${encodeURIComponent(topologyId)}/gui-draft/run`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+
+  topologyRunTrace: (topologyRunId: string) =>
+    request<EnterpriseTopologyRunTraceResponse>(
+      `/api/topology-runs/${encodeURIComponent(topologyRunId)}/trace`,
+    ),
+
+  topologyRunFailureReports: (topologyRunId: string) =>
+    request<EnterpriseTopologyRunFailureReportsResponse>(
+      `/api/topology-runs/${encodeURIComponent(topologyRunId)}/failure-reports`,
+    ),
 
   updateTeamMembers: (teamId: string, payload: AgentTopologyTeamMembersPayload) =>
     request<{ ok: boolean; team: unknown }>(`/api/teams/${encodeURIComponent(teamId)}/members`, {

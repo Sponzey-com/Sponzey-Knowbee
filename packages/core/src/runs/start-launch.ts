@@ -6,6 +6,7 @@ import type { RootRun, TaskProfile } from "./types.js"
 import type { InboundMessageRecord } from "./request-isolation.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 import { buildStartPlan, type StartPlan } from "./start-plan.js"
+import { resolveTopologyRootRunRouting } from "../topology-runtime/harness.js"
 import type { OrchestrationPlannerIntent } from "../orchestration/planner.js"
 import { applyStartInitialization } from "./start-initialization.js"
 import {
@@ -48,6 +49,7 @@ interface StartLaunchDependencies {
   findLatestWorkerSessionRun: typeof findLatestWorkerSessionRun
   resolveOrchestrationMode?: Parameters<typeof buildStartPlan>[1]["resolveOrchestrationMode"]
   buildOrchestrationPlan?: Parameters<typeof buildStartPlan>[1]["buildOrchestrationPlan"]
+  resolveTopologyRootRunRouting?: typeof resolveTopologyRootRunRouting
   ensureSessionExists: (sessionId: string, source: RootRun["source"], now: number) => void
   createRootRun: typeof createRootRun
   applyStartInitialization: typeof applyStartInitialization
@@ -147,6 +149,7 @@ export async function prepareStartLaunch(
     findLatestWorkerSessionRun: dependencies.findLatestWorkerSessionRun,
     ...(dependencies.resolveOrchestrationMode ? { resolveOrchestrationMode: dependencies.resolveOrchestrationMode } : {}),
     ...(dependencies.buildOrchestrationPlan ? { buildOrchestrationPlan: dependencies.buildOrchestrationPlan } : {}),
+    ...(dependencies.resolveTopologyRootRunRouting ? { resolveTopologyRootRunRouting: dependencies.resolveTopologyRootRunRouting } : {}),
   } as Parameters<typeof buildStartPlan>[1])
 
   dependencies.ensureSessionExists(params.sessionId, params.source, params.now)
@@ -154,6 +157,7 @@ export async function prepareStartLaunch(
     ...(params.inboundMessage ? { inboundMessage: params.inboundMessage } : {}),
     ...(startPlan.orchestrationRegistrySnapshot ? { orchestration: startPlan.orchestrationRegistrySnapshot } : {}),
     ...(startPlan.orchestrationPlanSnapshot ? { orchestrationPlan: startPlan.orchestrationPlanSnapshot } : {}),
+    topologyRouting: startPlan.topologyRouting,
   }
 
   const run = dependencies.createRootRun({

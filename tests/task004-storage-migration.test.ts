@@ -470,7 +470,9 @@ describe("task004 storage migration", () => {
         { normalized_nickname: "researcher", entity_type: "agent", entity_id: "agent:researcher" },
         { normalized_nickname: "research team", entity_type: "team", entity_id: "team:research" },
       ]))
-      expect((legacyDb.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version).toBe(36)
+      expect((legacyDb.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version).toBe(
+        MIGRATIONS[MIGRATIONS.length - 1]?.version,
+      )
     } finally {
       legacyDb.close()
     }

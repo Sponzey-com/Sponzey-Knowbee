@@ -212,6 +212,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       effectiveTaskProfile,
       effectiveContextMode,
       workerSessionId,
+      topologyRouting,
     } = startPlan
     const queuedBehindRequestGroupRun = startLaunch.queuedBehindRequestGroupRun
     const { syntheticApprovalRuntimeDependencies, driverDependencies } = buildStartRootRunDriverDependencies({
@@ -239,6 +240,9 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       ...(params.provider ? { provider: params.provider } : {}),
       ...(params.onChunk ? { onChunk: params.onChunk } : {}),
       ...(params.immediateCompletionText ? { immediateCompletionText: params.immediateCompletionText } : {}),
+      ...(topologyRouting.mode === "route" && !params.immediateCompletionText
+        ? { immediateCompletionText: "topology-runtime" }
+        : {}),
       ...(params.toolsEnabled === false ? { toolsEnabled: params.toolsEnabled } : {}),
       ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
       ...(params.targetId ? { targetId: params.targetId } : {}),
@@ -352,6 +356,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
             isRootRequest,
             contextMode: effectiveContextMode,
             taskProfile: effectiveTaskProfile,
+            topologyRouting,
             syntheticApprovalRuntimeDependencies,
             defaultMaxDelegationTurns: getConfig().orchestration.maxDelegationTurns,
           }, driverDependencies)

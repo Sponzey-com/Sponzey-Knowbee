@@ -54,12 +54,14 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         findLatestWorkerSessionRun: dependencies.findLatestWorkerSessionRun,
         ...(dependencies.resolveOrchestrationMode ? { resolveOrchestrationMode: dependencies.resolveOrchestrationMode } : {}),
         ...(dependencies.buildOrchestrationPlan ? { buildOrchestrationPlan: dependencies.buildOrchestrationPlan } : {}),
+        ...(dependencies.resolveTopologyRootRunRouting ? { resolveTopologyRootRunRouting: dependencies.resolveTopologyRootRunRouting } : {}),
     });
     dependencies.ensureSessionExists(params.sessionId, params.source, params.now);
     const promptSourceSnapshot = {
         ...(params.inboundMessage ? { inboundMessage: params.inboundMessage } : {}),
         ...(startPlan.orchestrationRegistrySnapshot ? { orchestration: startPlan.orchestrationRegistrySnapshot } : {}),
         ...(startPlan.orchestrationPlanSnapshot ? { orchestrationPlan: startPlan.orchestrationPlanSnapshot } : {}),
+        topologyRouting: startPlan.topologyRouting,
     };
     const run = dependencies.createRootRun({
         id: params.runId,

@@ -46,6 +46,9 @@ import { registerSettingsRoute } from "./routes/settings.js"
 import { registerSetupRoute } from "./routes/setup.js"
 import { registerStatusRoute } from "./routes/status.js"
 import { registerSubSessionRoutes } from "./routes/subsessions.js"
+import { registerTopologyAnalysisRoutes } from "./routes/topology-analysis.js"
+import { registerTopologyRunRoutes } from "./routes/topology-runs.js"
+import { registerTopologyRoutes } from "./routes/topologies.js"
 import { registerToolsRoute } from "./routes/tools.js"
 import { registerUiModeRoute } from "./routes/ui-mode.js"
 import { registerUpdateRoute } from "./routes/update.js"
@@ -103,6 +106,9 @@ export async function startServer(): Promise<void> {
   registerSetupRoute(server)
   registerRunsRoute(server)
   registerSubSessionRoutes(server)
+  registerTopologyRoutes(server)
+  registerTopologyRunRoutes(server)
+  registerTopologyAnalysisRoutes(server)
   registerCommandPaletteRoutes(server)
   registerDataExchangeRoutes(server)
   registerInstructionsRoute(server)

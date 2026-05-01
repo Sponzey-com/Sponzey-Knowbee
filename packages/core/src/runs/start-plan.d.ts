@@ -10,6 +10,7 @@ import { buildIncomingIntentContract, type ActiveRunContractProjection } from ".
 import { findLatestWorkerSessionRun, getRequestGroupDelegationTurnCount, isReusableRequestGroup, listActiveSessionRequestGroups } from "./store.js";
 import type { RootRun, TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
+import { resolveTopologyRootRunRouting, type TopologyRootRunRoutingDecision } from "../topology-runtime/harness.js";
 export interface StartPlan {
     entrySemantics: RequestEntrySemantics;
     requestedClosedRequestGroup: boolean;
@@ -26,6 +27,7 @@ export interface StartPlan {
     orchestrationMode: OrchestrationMode;
     orchestrationRegistrySnapshot: OrchestrationModeSnapshot;
     orchestrationPlanSnapshot: OrchestrationPlan;
+    topologyRouting: TopologyRootRunRoutingDecision;
     workerSessionId?: string | undefined;
     reusableWorkerSessionRun?: RootRun | undefined;
     latencyEvents: string[];
@@ -53,6 +55,7 @@ interface StartPlanDependencies {
     findLatestWorkerSessionRun: typeof findLatestWorkerSessionRun;
     resolveOrchestrationMode?: typeof resolveOrchestrationModeSnapshot;
     buildOrchestrationPlan?: typeof buildOrchestrationPlan;
+    resolveTopologyRootRunRouting?: typeof resolveTopologyRootRunRouting;
 }
 declare const defaultDependencies: StartPlanDependencies;
 export declare function buildStartPlan(params: {

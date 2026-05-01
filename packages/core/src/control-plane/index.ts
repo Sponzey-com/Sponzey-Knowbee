@@ -1062,6 +1062,24 @@ export function createTransientAuthToken(): string {
   return randomBytes(32).toString("hex")
 }
 
+function createEnterpriseTopologyBuilderCapability(): FeatureCapability {
+  const rawFlag = process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]?.trim().toLowerCase()
+  const explicitlyDisabled =
+    rawFlag === "0" || rawFlag === "false" || rawFlag === "no" || rawFlag === "off"
+
+  return {
+    key: "enterprise_topology_builder_ui",
+    label: "Enterprise Topology Builder",
+    area: "gateway",
+    status: explicitlyDisabled ? "disabled" : "ready",
+    implemented: true,
+    enabled: !explicitlyDisabled,
+    ...(explicitlyDisabled
+      ? { reason: "Enterprise Topology Builder UI 기능 플래그가 꺼져 있습니다." }
+      : {}),
+  }
+}
+
 export function createCapabilities(): FeatureCapability[] {
   const config = getConfig()
   const telegramRunning = getActiveTelegramChannel() !== null
@@ -1214,6 +1232,7 @@ export function createCapabilities(): FeatureCapability[] {
     { key: "ai.routing", label: "AI Routing", area: "ai", status: "ready", implemented: true, enabled: true },
     { key: "instructions.chain", label: "Active Instructions", area: "gateway", status: "ready", implemented: true, enabled: true },
     { key: "settings.control", label: "Settings Control", area: "security", status: "ready", implemented: true, enabled: true },
+    createEnterpriseTopologyBuilderCapability(),
     {
       key: "audit.viewer",
       label: "Audit Viewer",

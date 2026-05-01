@@ -82,6 +82,17 @@ export {
   buildSubAgentRollbackEvidence,
   runSubAgentRestartResumeSoak,
 } from "./release/sub-agent-release-gate.js"
+export {
+  ENTERPRISE_TOPOLOGY_RELEASE_FEATURE_FLAGS,
+  ENTERPRISE_TOPOLOGY_RELEASE_MODE_SEQUENCE,
+  ENTERPRISE_TOPOLOGY_RELEASE_REGRESSION_COMMANDS,
+  buildEnterpriseTopologyReleaseFlagMatrix,
+  buildEnterpriseTopologyReleaseReadinessSummary,
+  buildEnterpriseTopologyRollbackRunbook,
+  buildEnterpriseTopologyRollbackSmoke,
+  buildEnterpriseTopologyRuntimeSmoke,
+  inferEnterpriseTopologyReleaseMode,
+} from "./release/enterprise-topology-release-gate.js"
 export type {
   SubAgentReleaseDryRunSummary,
   SubAgentReleaseGateCheck,
@@ -95,6 +106,23 @@ export type {
   SubAgentRestartResumeSoakResult,
   SubAgentRollbackEvidence,
 } from "./release/sub-agent-release-gate.js"
+export type {
+  EnterpriseTopologyRegressionCommand,
+  EnterpriseTopologyReleaseFeatureFlagDefinition,
+  EnterpriseTopologyReleaseFeatureFlagKey,
+  EnterpriseTopologyReleaseFlagMatrixRow,
+  EnterpriseTopologyReleaseFlagRequirement,
+  EnterpriseTopologyReleaseGateCheck,
+  EnterpriseTopologyReleaseGateCheckId,
+  EnterpriseTopologyReleaseGateStatus,
+  EnterpriseTopologyReleaseModeDefinition,
+  EnterpriseTopologyReleaseModeId,
+  EnterpriseTopologyReleaseReadinessOptions,
+  EnterpriseTopologyReleaseReadinessSummary,
+  EnterpriseTopologyRollbackRunbook,
+  EnterpriseTopologyRollbackSmoke,
+  EnterpriseTopologyRuntimeSmoke,
+} from "./release/enterprise-topology-release-gate.js"
 
 // Runtime manifest and diagnostics
 export {
@@ -975,6 +1003,20 @@ export {
   validateScheduleContract,
   validateToolTargetContract,
 } from "./contracts/index.js"
+export {
+  ENTERPRISE_NODE_TYPES,
+  ENTERPRISE_RELATION_TYPES,
+  ENTERPRISE_TOPOLOGY_SCHEMA_VERSION,
+  validateEnterpriseOrgUnit,
+  validateEnterpriseRelation,
+  validateEnterpriseTeam,
+  validateEnterpriseTopology,
+  validateFailureReport,
+  validateNodeResultReport,
+  validateNodeContract,
+  validateTraceEvent,
+  validateWorkOrder,
+} from "./contracts/enterprise-topology.js"
 export { intentContractFromTaskIntentEnvelope } from "./contracts/intake-adapter.js"
 export {
   findNicknameNamespaceConflict,
@@ -996,6 +1038,513 @@ export {
   validateTeamConfig,
   validateUserVisibleAgentMessage,
 } from "./contracts/sub-agent-orchestration.js"
+export {
+  createInMemoryTopologyDraftStore,
+  createTopologyDocumentEnvelope,
+} from "./topology/draft-store.js"
+export {
+  applyEnterpriseTopologyGuiCommands,
+  buildEnterpriseTopologyQuickFixOperationPlan,
+  createEnterpriseTopologyGuiDraft,
+  createGuiDraftOperationId,
+  enterpriseTopologyGuiOperationScope,
+  ENTERPRISE_TOPOLOGY_GUI_DRAFT_SCHEMA_VERSION,
+  EnterpriseTopologyGuiOperationError,
+  isEnterpriseRelationType,
+  isEnterpriseTopologyGuiCommandKind,
+  isEnterpriseTopologyGuiOperationKind,
+  previewEnterpriseTopologyGuiOperation,
+} from "./topology/gui-operations.js"
+export {
+  buildCompiledEntityRefKey,
+  buildCompiledTopologySnapshotId,
+  compileTopology,
+  compileTopologyOrThrow,
+  computeTopologySourceHash,
+  getCompiledChildCandidates,
+  getCompiledEntryNode,
+  normalizeSourceTopologyVersion,
+  TOPOLOGY_COMPILER_VERSION,
+  TopologyCompileError,
+} from "./topology/compiler.js"
+export {
+  buildCompiledTopologyCacheKey,
+  createInMemoryTopologyCompilerCache,
+} from "./topology/compiler-cache.js"
+export {
+  createEnterpriseTopologyRegistry,
+} from "./topology/registry.js"
+export {
+  buildAgentTeamTopologyImportPreview,
+} from "./topology/agent-team-import.js"
+export {
+  inferTopologyDocumentFormat,
+  normalizeTopologyDocumentFormat,
+  parseTopologyImportDocument,
+  stringifyTopologyDocument,
+} from "./topology/import-export.js"
+export {
+  analyzeTopologyGaps,
+  listDeclaredTopologyEdges,
+} from "./topology/gap-analysis.js"
+export {
+  listObservedTopologyEdges,
+  listTopologyGapFindings,
+  listTopologyMetricsDaily,
+  projectEnterpriseOrgWorkloadMetrics,
+  projectTopologyMetricsDaily,
+  projectTopologyRunMetricsDaily,
+  refreshTopologyMetricsDaily,
+} from "./topology/metrics.js"
+export {
+  simulateApprovalLine,
+} from "./topology/enterprise-rules.js"
+export {
+  extractObservedTopologyEdges,
+} from "./topology/observed.js"
+export {
+  buildTopologyHistoryId,
+  buildTopologyValidationSnapshotId,
+  buildTopologyVersionId,
+  compiledSnapshotMatchesTopologyVersion,
+  computeTopologyRegistrySourceHash,
+  describeCompiledSnapshotMismatch,
+} from "./topology/versioning.js"
+export {
+  aggregateNodeRuntimeResults,
+} from "./topology-runtime/aggregation.js"
+export {
+  checkNodeRuntimeAuthority,
+} from "./topology-runtime/authority-checker.js"
+export {
+  dispatchChildWorkOrders,
+} from "./topology-runtime/child-dispatcher.js"
+export {
+  checkFinalFailureExhaustion,
+} from "./topology-runtime/exhaustion-checker.js"
+export {
+  generateFailureReport,
+} from "./topology-runtime/failure-report.js"
+export {
+  DEFAULT_TOPOLOGY_RUNTIME_MAX_DELEGATION_DEPTH,
+  buildChildWorkOrder,
+  calculateWorkOrderDelegationDepth,
+  describeTopologyNestedDelegationCompatibilityBoundary,
+  isTopologyChildFailureStatus,
+  listDirectChildDelegationCandidates,
+  planChildDelegation,
+} from "./topology-runtime/delegation-planner.js"
+export {
+  runNodeRuntime,
+  validateNodeRuntimeInputSchema,
+} from "./topology-runtime/node-runtime.js"
+export {
+  checkNodeRuntimePermission,
+} from "./topology-runtime/permission-checker.js"
+export {
+  FallbackController,
+  RecoveryController,
+  RedelegationController,
+  ToolRecoveryController,
+  buildNodeRecoveryReview,
+} from "./topology-runtime/recovery-controller.js"
+export {
+  createLegacyResultReportFromNodeResult,
+  createNodeResultReportFromRuntime,
+  legacyResultStatusForNodeResultStatus,
+} from "./topology-runtime/reporter.js"
+export {
+  buildNodeRuntimeProfileSnapshotId,
+  createNodeRuntimeProfileSnapshot,
+} from "./topology-runtime/runtime-profile.js"
+export {
+  createNodeRuntimeTraceEvent,
+  getTopologyRun,
+  getTopologyRunTraceProjection,
+  listTopologyFailureReports,
+  listTopologyNodeRuns,
+  listTopologyResultReports,
+  listTopologyRuns,
+  listTopologyRunsForRootRun,
+  listTopologyToolCalls,
+  listTopologyTraceEvents,
+  listTopologyWorkOrders,
+  recordTopologyRuntimeExecution,
+  tracePhaseForNodeRuntimeState,
+} from "./topology-runtime/trace.js"
+export {
+  dispatchPlannedNodeTools,
+} from "./topology-runtime/tool-dispatcher.js"
+export {
+  TOPOLOGY_RUNTIME_FEATURE_KEY,
+  resolveTopologyRootRunRouting,
+  runTopologyRootRun,
+} from "./topology-runtime/harness.js"
+export {
+  isApprovalRequiredToolType,
+  planNodeToolExecution,
+  resolveAllowedNodeTools,
+} from "./topology-runtime/tool-planner.js"
+export {
+  validateAggregatedNodeResult,
+  validationStatusToNodeResultStatus,
+} from "./topology-runtime/validation.js"
+export {
+  buildExpectedOutputsForWorkOrder,
+  buildWorkOrder,
+  buildWorkOrderSubSessionIdempotencyKey,
+  createWorkOrderRuntimeEnvelope,
+  deriveEffectiveWorkOrderPermissionScope,
+  deriveWorkOrderCapabilityPolicy,
+  evaluateWorkOrderAuthorityPreflight,
+  successCriterionToExpectedOutputContract,
+  workOrderExpectedOutputSchemaToExpectedOutputContract,
+} from "./topology-runtime/work-order.js"
+export {
+  buildExampleEnterpriseTopology,
+} from "./topology/examples.js"
+export {
+  createTopologyFixtureStore,
+  inferTopologyFixtureFormat,
+  loadTopologyFixtureDirectory,
+  loadTopologyFixtureFile,
+  parseTopologyDocumentText,
+} from "./topology/fixtures.js"
+export {
+  DEFAULT_TOPOLOGY_MAX_DELEGATION_DEPTH,
+  isEnterpriseRelationEndpointAllowed,
+  TOPOLOGY_RELATION_ENDPOINT_RULES,
+  TOPOLOGY_VALIDATOR_BLOCKING_SEVERITIES,
+} from "./topology/schema.js"
+export {
+  planTopologySmartConnect,
+  recommendTopologySmartConnectRelation,
+  recommendTopologySmartConnectRelations,
+  TOPOLOGY_RELATION_TEMPLATE_CATALOG,
+} from "./topology/relation-templates.js"
+export {
+  buildTopologyFlowTemplateDraft,
+  TOPOLOGY_FLOW_TEMPLATES,
+  TOPOLOGY_TEMPLATE_CATALOG,
+} from "./topology/templates.js"
+export {
+  assertTopologyValidationExecutable,
+  createTopologyValidatorIssue,
+  isTopologyValidationExecutable,
+  TopologyValidationGateError,
+  TOPOLOGY_VALIDATOR_QUICK_FIX_CODES,
+  validateTopology,
+} from "./topology/validator.js"
+export type {
+  SaveTopologyDraftInput,
+  TopologyDocumentEnvelope,
+  TopologyDraftSource,
+  TopologyDraftStore,
+  TopologyDraftStoreResult,
+} from "./topology/draft-store.js"
+export type {
+  ApplyEnterpriseTopologyGuiCommandsResult,
+  CreateEnterpriseTopologyGuiDraftInput,
+  EnterpriseTopologyGuiCommand,
+  EnterpriseTopologyGuiCommandKind,
+  EnterpriseTopologyGuiCreateNodeOperation,
+  EnterpriseTopologyGuiCreateRelationOperation,
+  EnterpriseTopologyGuiDeleteNodeOperation,
+  EnterpriseTopologyGuiDeleteRelationOperation,
+  EnterpriseTopologyGuiDraft,
+  EnterpriseTopologyGuiDraftSchemaVersion,
+  EnterpriseTopologyGuiLayout,
+  EnterpriseTopologyGuiMoveNodeOperation,
+  EnterpriseTopologyGuiNodeLayout,
+  EnterpriseTopologyGuiOperation,
+  EnterpriseTopologyGuiOperationBase,
+  EnterpriseTopologyGuiOperationIssue,
+  EnterpriseTopologyGuiOperationIssueCode,
+  EnterpriseTopologyGuiOperationKind,
+  EnterpriseTopologyGuiOperationScope,
+  EnterpriseTopologyGuiPendingDeletes,
+  EnterpriseTopologyGuiPosition,
+  EnterpriseTopologyQuickFixId,
+  EnterpriseTopologyQuickFixOperationPlan,
+  EnterpriseTopologyQuickFixOperationPreview,
+  EnterpriseTopologyGuiRedoCommand,
+  EnterpriseTopologyGuiUndoCommand,
+  EnterpriseTopologyGuiUpdateNodeOperation,
+  EnterpriseTopologyGuiUpdateNodePatch,
+  EnterpriseTopologyGuiUpdateRelationOperation,
+  EnterpriseTopologyGuiUpdateRelationPatch,
+} from "./topology/gui-operations.js"
+export type {
+  CompileTopologyOptions,
+  CompileTopologyResult,
+  CompiledAuthorityRule,
+  CompiledAuthorityScope,
+  CompiledDelegationScope,
+  CompiledDelegationTree,
+  CompiledNode,
+  CompiledOrgUnit,
+  CompiledPerson,
+  CompiledPosition,
+  CompiledProcess,
+  CompiledProcessFlow,
+  CompiledResponsibilityIndex,
+  CompiledResponsibilityScope,
+  CompiledRuntimeExecutionContext,
+  CompiledSystem,
+  CompiledTeam,
+  CompiledTool,
+  CompiledToolScope,
+  CompiledTopologySnapshot,
+} from "./topology/compiler.js"
+export type {
+  CachedCompileTopologyResult,
+  CompiledTopologyCacheEntry,
+  TopologyCompilerCache,
+} from "./topology/compiler-cache.js"
+export type {
+  AppendTopologyVersionInput,
+  AppendTopologyVersionResult,
+  CompiledTopologySnapshotRecord,
+  CreateEnterpriseTopologyRegistryOptions,
+  EnterpriseTopologyHistoryRecord,
+  EnterpriseTopologyRegistryRecord,
+  EnterpriseTopologyRegistryStatus,
+  EnterpriseTopologyRegistryStore,
+  EnterpriseTopologyVersionRecord,
+  TopologyActivationBlocked,
+  TopologyActivationResult,
+  TopologyActivationSuccess,
+  TopologyExportEnvelope,
+  TopologyValidationSnapshotRecord,
+} from "./topology/registry.js"
+export type {
+  AgentTeamImportMode,
+  AgentTeamTopologyImportPreview,
+  AgentTeamTopologyImportTransformation,
+  BuildAgentTeamTopologyImportPreviewInput,
+} from "./topology/agent-team-import.js"
+export type {
+  TopologyDocumentParseResult,
+  TopologyImportExportFormat,
+} from "./topology/import-export.js"
+export type {
+  AnalyzeTopologyGapsOptions,
+  DeclaredTopologyEdge,
+  TopologyGapAnalysisResult,
+  TopologyGapAnalysisSummary,
+  TopologyGapFinding,
+  TopologyGapFindingKind,
+  TopologyGapFindingStatus,
+  TopologyGapSeverity,
+  TopologyRelationDiff,
+  TopologyRelationDiffKind,
+} from "./topology/gap-analysis.js"
+export type {
+  ListTopologyMetricsDailyOptions,
+  ListTopologyObservabilityOptions,
+  EnterpriseOrgWorkloadMetric,
+  ProjectEnterpriseOrgWorkloadMetricsOptions,
+  ObservedTopologyEdgeRecord,
+  ProjectTopologyMetricsDailyOptions,
+  TopologyGapFindingRecord,
+  TopologyMetricsDailyRecord,
+} from "./topology/metrics.js"
+export type {
+  ApprovalLineApprover,
+  ApprovalLineSimulationInput,
+  ApprovalLineSimulationResult,
+} from "./topology/enterprise-rules.js"
+export type {
+  ExtractObservedTopologyEdgesOptions,
+  ObservedTopologyEdge,
+  ObservedTopologyEdgeKind,
+  ObservedTopologyRuntimeRelationType,
+} from "./topology/observed.js"
+export type {
+  TopologyRegistryHistoryEventType,
+} from "./topology/versioning.js"
+export type {
+  AggregatedResultItem,
+  AggregatedResultSource,
+  AggregatedResultSourceKind,
+  AggregateNodeRuntimeResultsInput,
+  AggregationIssue,
+  AggregationIssueCode,
+  AggregationResult,
+  AggregationStrategy,
+} from "./topology-runtime/aggregation.js"
+export type {
+  CheckNodeRuntimeAuthorityInput,
+  NodeRuntimeAuthorityDecision,
+} from "./topology-runtime/authority-checker.js"
+export type {
+  ChildDispatchResult,
+  ChildDispatchStatus,
+  ChildDispatchSummary,
+  ChildRuntimeRunner,
+  ChildRuntimeRunnerInput,
+  ChildRuntimeRunnerResult,
+  DispatchChildWorkOrdersInput,
+} from "./topology-runtime/child-dispatcher.js"
+export type {
+  CheckFinalFailureExhaustionInput,
+  NodeExhaustionCheckResult,
+} from "./topology-runtime/exhaustion-checker.js"
+export type {
+  GenerateFailureReportInput,
+} from "./topology-runtime/failure-report.js"
+export type {
+  ResolveTopologyRootRunRoutingInput,
+  RunTopologyRootRunInput,
+  TopologyRootRunExecutionResult,
+  TopologyRootRunFallbackReasonCode,
+  TopologyRootRunRouteReasonCode,
+  TopologyRootRunRoutingDecision,
+  TopologyRootRunRoutingMode,
+} from "./topology-runtime/harness.js"
+export type {
+  ChildDelegationCandidate,
+  DelegationPlan,
+  DelegationPlanIssue,
+  DelegationPlanIssueCode,
+  DelegationPlanStatus,
+  PlanChildDelegationInput,
+  PlannedChildWorkOrder,
+  TopologyNestedDelegationCompatibilityBoundary,
+} from "./topology-runtime/delegation-planner.js"
+export type {
+  NodeRuntimeChildDelegationOptions,
+  NodeRuntimeAggregationOptions,
+  NodeRuntimeExecutionResult,
+  NodeRuntimeInputValidationIssue,
+  NodeRuntimeInputValidationResult,
+  NodeRuntimeSelfExecutionContext,
+  NodeRuntimeSelfExecutionResult,
+  NodeRuntimeSelfExecutionStatus,
+  NodeRuntimeSelfExecutor,
+  NodeRuntimeRecoveryOptions,
+  NodeRuntimeStateTransition,
+  NodeRuntimeToolExecutionOptions,
+  RunNodeRuntimeInput,
+} from "./topology-runtime/node-runtime.js"
+export type {
+  CheckNodeRuntimePermissionInput,
+  NodeRuntimePermissionDecision,
+  NodeRuntimePermissionDecisionStatus,
+} from "./topology-runtime/permission-checker.js"
+export type {
+  BuildNodeRecoveryReviewInput,
+  NodeRecoveryControllerOptions,
+  NodeRecoveryControllerResult,
+  NodeRecoveryReviewSignal,
+  RecoveryOptionReviewCode,
+} from "./topology-runtime/recovery-controller.js"
+export type {
+  CreateLegacyResultReportInput,
+  CreateNodeResultReportInput,
+} from "./topology-runtime/reporter.js"
+export type {
+  CreateNodeRuntimeProfileSnapshotInput,
+} from "./topology-runtime/runtime-profile.js"
+export type {
+  CreateNodeRuntimeTraceEventInput,
+  ListTopologyRunChildrenOptions,
+  ListTopologyRunsOptions,
+  RecordTopologyRuntimeExecutionInput,
+  TopologyFailureReportRecord,
+  TopologyNodeRunRecord,
+  TopologyResultReportRecord,
+  TopologyRunRecord,
+  TopologyRunTraceProjection,
+  TopologyToolCallRecord,
+  TopologyTraceEventRecord,
+  TopologyTracePersistenceResult,
+  TopologyWorkOrderRecord,
+} from "./topology-runtime/trace.js"
+export type {
+  DispatchPlannedNodeToolsInput,
+  NodeToolExecutionStatus,
+  NodeToolExecutionSummary,
+  NormalizedNodeToolResult,
+  TopologyToolDispatcher,
+} from "./topology-runtime/tool-dispatcher.js"
+export type {
+  NodeAllowedToolResolution,
+  NodeToolApprovalStatus,
+  NodeToolExecutionPlan,
+  NodeToolPlanIssue,
+  NodeToolPlanIssueCode,
+  NodeToolPlanStatus,
+  NodeToolRequest,
+  NodeToolType,
+  PlanNodeToolExecutionInput,
+  PlannedNodeToolCall,
+} from "./topology-runtime/tool-planner.js"
+export type {
+  AggregatedNodeValidationIssue,
+  AggregatedNodeValidationIssueCode,
+  AggregatedNodeValidationResult,
+  AggregatedNodeValidationStatus,
+  ValidateAggregatedNodeResultInput,
+} from "./topology-runtime/validation.js"
+export type {
+  BuildWorkOrderInput,
+  EffectiveWorkOrderPermissionScope,
+  WorkOrderAuthorityDecision,
+  WorkOrderAuthorityPreflightInput,
+  WorkOrderPromptBridge,
+  WorkOrderResultReviewBridge,
+  WorkOrderRuntimeBridgeIssue,
+  WorkOrderRuntimeBridgeIssueCode,
+  WorkOrderRuntimeEnvelope,
+  WorkOrderRuntimeEnvelopeInput,
+  WorkOrderRuntimeEnvelopeResult,
+} from "./topology-runtime/work-order.js"
+export type {
+  TopologyFixtureDirectoryLoadResult,
+  TopologyFixtureFormat,
+  TopologyFixtureIssue,
+  TopologyFixtureIssueCode,
+  TopologyFixtureParseResult,
+  TopologyFixtureRecord,
+  TopologyFixtureStore,
+} from "./topology/fixtures.js"
+export type {
+  EnterpriseRelationEndpointPair,
+  EnterpriseRelationEndpointRule,
+} from "./topology/schema.js"
+export type {
+  TopologyRelationEasyMode,
+  TopologyRelationLayer,
+  TopologyRelationTemplateCatalog,
+  TopologyRelationTemplateGroup,
+  TopologyRelationTemplatePreset,
+  TopologySmartConnectDirection,
+  TopologySmartConnectEndpoint,
+  TopologySmartConnectIssue,
+  TopologySmartConnectPlan,
+  TopologySmartConnectRecommendation,
+} from "./topology/relation-templates.js"
+export type {
+  TopologyBeginnerPaletteKind,
+  TopologyEntityTemplatePreset,
+  TopologyFlowTemplateId,
+  TopologyFlowTemplatePreset,
+  TopologyNodeTemplatePreset,
+  TopologyTemplateCatalog,
+  TopologyTemplateEntityKind,
+  TopologyWorkspaceStarterTemplatePreset,
+} from "./topology/templates.js"
+export type {
+  TopologyValidationIssueCounts,
+  TopologyValidationResult,
+  TopologyValidatorIssue,
+  TopologyValidatorIssueCode,
+  TopologyValidatorIssueInput,
+  TopologyValidatorOptions,
+  TopologyValidatorSeverity,
+} from "./topology/validator.js"
+
 export {
   findScheduleCandidatesByContract,
   parseScheduleContractJson,
@@ -1019,12 +1568,55 @@ export type {
   DeliveryChannel,
   DeliveryContract,
   DeliveryMode,
+  AttemptKind,
+  AttemptRecord,
+  AttemptStatus,
+  AuthorityRule,
+  AuthorityScope,
+  EnterpriseBaseEntity,
+  EnterpriseEntityRef,
+  EnterpriseEntityStatus,
+  EnterpriseEntityType,
+  EnterpriseMetadata,
+  EnterpriseMetadataValue,
+  EnterpriseRelation,
+  EnterpriseRelationType,
+  EnterpriseTeam,
+  EnterpriseTimestamp,
+  EnterpriseTool,
+  EnterpriseTopology,
+  EnterpriseTopologySchemaVersion,
+  EnterpriseTopologyValidationCode,
+  EnterpriseTopologyValidationIssue,
+  EnterpriseTopologyValidationResult,
+  EnterpriseTopologyVersionEnvelope,
+  EnterpriseSystem,
+  ExhaustionSummary,
+  FailurePolicy,
+  FailureReport,
   IngressEnvelope,
   IntentContract,
   IntentType,
   JsonObject,
   JsonPrimitive,
   JsonValue,
+  Membership,
+  NodeContract,
+  NodeOwnerEntityType,
+  NodeResultOutput,
+  NodeResultReport,
+  NodeResultStatus,
+  NodeRuntimeProfileSnapshot,
+  NodeRuntimeState,
+  NodeTemplateRef,
+  NodeType,
+  OrgUnit,
+  PermissionScope,
+  Person,
+  Position,
+  ProcessDefinition,
+  RecoveryPolicy,
+  ResponsibilityMatrixEntry,
   ScheduleContract,
   ScheduleKind,
   ScheduleMissedPolicy,
@@ -1033,6 +1625,13 @@ export type {
   ScheduleTimeContract,
   ToolTargetContract,
   ToolTargetKind,
+  TraceEvent,
+  TracePhase,
+  WorkOrder,
+  WorkOrderScope,
+  WorkOrderSuccessCriterion,
+  WorkOrderTarget,
+  WorkOrderTargetType,
 } from "./contracts/index.js"
 export type {
   AgentConfig,
@@ -1659,6 +2258,11 @@ export type {
 // Runs
 export { startRootRun } from "./runs/start.js"
 export type { StartRootRunParams, StartedRootRun } from "./runs/start.js"
+export {
+  buildStartPlan,
+  defaultStartPlanDependencies,
+} from "./runs/start-plan.js"
+export type { StartPlan } from "./runs/start-plan.js"
 export { buildIngressReceipt, resolveIngressStartParams, startIngressRun } from "./runs/ingress.js"
 export { buildIngressDedupeKey } from "./runs/ingress.js"
 export type {

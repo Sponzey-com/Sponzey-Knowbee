@@ -19,6 +19,10 @@ import {
   listOrchestrationEvents,
   listRunSubSessionsForParentRun,
 } from "../db/index.js"
+import {
+  listTopologyRunsForRootRun,
+  type TopologyRunTraceProjection,
+} from "../topology-runtime/trace.js"
 import { redactUiValue } from "../ui/redaction.js"
 import type { RootRun, RunEvent } from "./types.js"
 
@@ -205,6 +209,22 @@ export interface RunRuntimeInspectorFinalizer {
   at?: number
 }
 
+export interface RunRuntimeInspectorTopologyRun {
+  topologyRunId: string
+  topologyId: string
+  status: string
+  entryNodeId?: string
+  startedAt: number
+  finishedAt?: number
+  nodeRunCount: number
+  workOrderCount: number
+  traceEventCount: number
+  toolCallCount: number
+  failureCount: number
+  observedEdgeCount: number
+  projection: TopologyRunTraceProjection
+}
+
 export interface RunRuntimeInspectorProjection {
   schemaVersion: 1
   runId: string
@@ -216,6 +236,7 @@ export interface RunRuntimeInspectorProjection {
   dataExchanges: RunRuntimeInspectorDataExchangeSummary[]
   approvals: RunRuntimeInspectorApprovalSummary[]
   timeline: RunRuntimeInspectorTimelineEvent[]
+  topologyRuns: RunRuntimeInspectorTopologyRun[]
   finalizer: RunRuntimeInspectorFinalizer
   redaction: {
     payloadsRedacted: true
@@ -1088,6 +1109,28 @@ function collectLedgerEvents(run: RootRun, limit: number): DbMessageLedgerEvent[
   ]).sort((left, right) => left.created_at - right.created_at || left.id.localeCompare(right.id))
 }
 
+function collectTopologyRuns(run: RootRun, limit: number): RunRuntimeInspectorTopologyRun[] {
+  return listTopologyRunsForRootRun(run.id, { limit })
+    .map((projection) => {
+      const item: RunRuntimeInspectorTopologyRun = {
+        topologyRunId: redactedText(projection.run.topologyRunId),
+        topologyId: redactedText(projection.run.topologyId),
+        status: projection.run.status,
+        startedAt: projection.run.startedAt,
+        nodeRunCount: projection.nodeRuns.length,
+        workOrderCount: projection.workOrders.length,
+        traceEventCount: projection.traceEvents.length,
+        toolCallCount: projection.toolCalls.length,
+        failureCount: projection.failureReports.length,
+        observedEdgeCount: projection.observedEdges.length,
+        projection,
+      }
+      if (projection.run.entryNodeId !== undefined) item.entryNodeId = redactedText(projection.run.entryNodeId)
+      if (projection.run.finishedAt !== undefined) item.finishedAt = projection.run.finishedAt
+      return item
+    })
+}
+
 export function buildRunRuntimeInspectorProjection(
   run: RootRun,
   options: RunRuntimeInspectorProjectionOptions = {},
@@ -1117,6 +1160,7 @@ export function buildRunRuntimeInspectorProjection(
     dataExchanges: collectDataExchanges(subSessionContracts, now),
     approvals,
     timeline: collectTimeline(run, orchestrationEvents, ledgerEvents, limit),
+    topologyRuns: collectTopologyRuns(run, limit),
     finalizer: finalizerFromLedger(ledgerEvents),
     redaction: {
       payloadsRedacted: true,

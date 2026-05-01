@@ -8,11 +8,12 @@ import { buildLatencyEventLabel, recordLatencyMetric } from "../observability/la
 import { emitStandaloneAssistantMessage } from "./finalization.js";
 import { executeRootRunDriver, } from "./root-run-driver.js";
 import { prepareStartLaunch, } from "./start-launch.js";
-import { appendRunEvent, clearActiveRunController, getRootRun, setRunStepStatus, updateRunStatus, } from "./store.js";
+import { appendRunEvent, clearActiveRunController, getRootRun, setRunStepStatus, updateRunSummary, updateRunStatus, } from "./store.js";
 import { enqueueRequestGroupExecution, hasRequestGroupExecutionQueue, } from "./execution-queue.js";
 import { buildStartRootRunDriverDependencies, } from "./start-driver-dependencies.js";
 import { rememberRunFailure } from "./start-support.js";
 import { resolveStartContextPlan } from "./preflight.js";
+import { dispatchDelegatedSubAgentTasks } from "./orchestration-dispatch.js";
 const log = createLogger("runs:start");
 const syntheticApprovalScopes = new Set();
 async function failStartPreflight(params) {
@@ -124,7 +125,7 @@ export function startRootRun(params) {
         }
         for (const latencyEvent of startPlan.latencyEvents)
             appendRunEvent(runId, latencyEvent);
-        const { entrySemantics, reconnectTarget, reconnectNeedsClarification, requestGroupId, isRootRequest, effectiveTaskProfile, effectiveContextMode, workerSessionId, } = startPlan;
+        const { entrySemantics, reconnectTarget, reconnectNeedsClarification, requestGroupId, isRootRequest, effectiveTaskProfile, effectiveContextMode, workerSessionId, topologyRouting, } = startPlan;
         const queuedBehindRequestGroupRun = startLaunch.queuedBehindRequestGroupRun;
         const { syntheticApprovalRuntimeDependencies, driverDependencies } = buildStartRootRunDriverDependencies({
             runId,
@@ -151,6 +152,9 @@ export function startRootRun(params) {
             ...(params.provider ? { provider: params.provider } : {}),
             ...(params.onChunk ? { onChunk: params.onChunk } : {}),
             ...(params.immediateCompletionText ? { immediateCompletionText: params.immediateCompletionText } : {}),
+            ...(topologyRouting.mode === "route" && !params.immediateCompletionText
+                ? { immediateCompletionText: "topology-runtime" }
+                : {}),
             ...(params.toolsEnabled === false ? { toolsEnabled: params.toolsEnabled } : {}),
             ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
             ...(params.targetId ? { targetId: params.targetId } : {}),
@@ -176,7 +180,55 @@ export function startRootRun(params) {
             runId,
             task: async () => {
                 const executionStartedAt = Date.now();
+                let executionMessage = params.message;
                 try {
+                    if (isRootRequest &&
+                        !params.parentRunId &&
+                        params.runScope !== "child" &&
+                        !params.skipIntake &&
+                        startPlan.orchestrationMode === "orchestration" &&
+                        startPlan.orchestrationPlanSnapshot.delegatedTasks.length > 0) {
+                        try {
+                            const dispatchResult = await dispatchDelegatedSubAgentTasks({
+                                plan: startPlan.orchestrationPlanSnapshot,
+                                parentRunId: runId,
+                                parentSessionId: sessionId,
+                                parentRequestGroupId: requestGroupId,
+                                source: params.source,
+                                message: params.message,
+                                ...(params.originalRequest ? { originalRequest: params.originalRequest } : {}),
+                                workDir,
+                                controller,
+                            }, {
+                                startSubAgentRun: startRootRun,
+                                appendParentEvent: appendRunEvent,
+                                updateParentSummary: updateRunSummary,
+                            });
+                            appendRunEvent(runId, `sub_agent_dispatch_summary:attempted=${dispatchResult.attempted};completed=${dispatchResult.completed};failed=${dispatchResult.failed};skipped=${dispatchResult.skipped}`);
+                            const subAgentContext = dispatchResult.outcomes
+                                .filter((outcome) => outcome.status !== "skipped")
+                                .map((outcome) => [
+                                `- task=${outcome.taskId}`,
+                                outcome.agentId ? `agent=${outcome.agentId}` : undefined,
+                                outcome.subSessionId ? `subSession=${outcome.subSessionId}` : undefined,
+                                outcome.childRunId ? `childRun=${outcome.childRunId}` : undefined,
+                                `status=${outcome.status}`,
+                                outcome.reasonCode ? `reason=${outcome.reasonCode}` : undefined,
+                                outcome.summary ? `summary=${outcome.summary}` : undefined,
+                            ].filter(Boolean).join("; "))
+                                .join("\n");
+                            if (subAgentContext.trim()) {
+                                executionMessage = `${params.message}\n\n# Sub-agent execution results\n${subAgentContext}`;
+                            }
+                        }
+                        catch (error) {
+                            appendRunEvent(runId, `sub_agent_dispatch_failed:${error instanceof Error ? error.message : String(error)}`);
+                            log.warn("sub-agent dispatch failed", {
+                                runId,
+                                error: error instanceof Error ? error.message : String(error),
+                            });
+                        }
+                    }
                     await executeRootRunDriver({
                         runId,
                         sessionId,
@@ -184,8 +236,10 @@ export function startRootRun(params) {
                         source: params.source,
                         onChunk: params.onChunk,
                         controller,
-                        message: params.message,
-                        ...(params.originalRequest ? { originalRequest: params.originalRequest } : {}),
+                        message: executionMessage,
+                        ...(params.originalRequest || executionMessage !== params.message
+                            ? { originalRequest: params.originalRequest ?? params.message }
+                            : {}),
                         ...(params.executionSemantics ? { executionSemantics: params.executionSemantics } : {}),
                         ...(params.structuredRequest ? { structuredRequest: params.structuredRequest } : {}),
                         ...(params.intentEnvelope ? { intentEnvelope: params.intentEnvelope } : {}),
@@ -206,6 +260,7 @@ export function startRootRun(params) {
                         isRootRequest,
                         contextMode: effectiveContextMode,
                         taskProfile: effectiveTaskProfile,
+                        topologyRouting,
                         syntheticApprovalRuntimeDependencies,
                         defaultMaxDelegationTurns: getConfig().orchestration.maxDelegationTurns,
                     }, driverDependencies);

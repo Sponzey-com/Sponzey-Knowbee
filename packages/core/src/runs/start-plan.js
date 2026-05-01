@@ -7,6 +7,7 @@ import { compareRequestContinuationWithAI, } from "./entry-comparison.js";
 import { buildActiveRunProjections, buildIncomingIntentContract, } from "./active-run-projection.js";
 import { findLatestWorkerSessionRun, getRequestGroupDelegationTurnCount, isReusableRequestGroup, listActiveSessionRequestGroups, } from "./store.js";
 import { detectExplicitToolIntent, hasExplicitContinuationReference, shouldInspectActiveRunCandidates, } from "./request-isolation.js";
+import { resolveTopologyRootRunRouting, } from "../topology-runtime/harness.js";
 const defaultDependencies = {
     analyzeRequestEntrySemantics,
     isReusableRequestGroup,
@@ -22,6 +23,7 @@ const defaultDependencies = {
     findLatestWorkerSessionRun,
     resolveOrchestrationMode: resolveOrchestrationModeSnapshot,
     buildOrchestrationPlan,
+    resolveTopologyRootRunRouting,
 };
 function isStandaloneLocalExecutionAction(message, explicitContinuationReference) {
     return !explicitContinuationReference && detectExplicitToolIntent(message) != null;
@@ -218,6 +220,16 @@ export async function buildStartPlan(params, dependencies) {
     const reusableWorkerSessionRun = workerSessionId
         ? dependencies.findLatestWorkerSessionRun(requestGroupId, workerSessionId)
         : undefined;
+    const topologyRouting = (dependencies.resolveTopologyRootRunRouting ?? resolveTopologyRootRunRouting)({
+        message: params.message,
+        runId: params.runId,
+        sessionId: params.sessionId,
+        ...(params.source ? { source: params.source } : {}),
+        ...(params.targetId ? { targetId: params.targetId } : {}),
+        taskProfile: effectiveTaskProfile,
+        isRootRequest,
+    });
+    latencyEvents.push(`topology_routing:${topologyRouting.mode}:${topologyRouting.reasonCode}`);
     return {
         entrySemantics,
         requestedClosedRequestGroup,
@@ -234,6 +246,7 @@ export async function buildStartPlan(params, dependencies) {
         orchestrationMode: orchestrationRegistrySnapshot.mode,
         orchestrationRegistrySnapshot,
         orchestrationPlanSnapshot,
+        topologyRouting,
         ...(workerSessionId ? { workerSessionId } : {}),
         ...(reusableWorkerSessionRun ? { reusableWorkerSessionRun } : {}),
         latencyEvents,

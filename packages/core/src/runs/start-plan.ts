@@ -43,6 +43,10 @@ import {
   hasExplicitContinuationReference,
   shouldInspectActiveRunCandidates,
 } from "./request-isolation.js"
+import {
+  resolveTopologyRootRunRouting,
+  type TopologyRootRunRoutingDecision,
+} from "../topology-runtime/harness.js"
 
 export interface StartPlan {
   entrySemantics: RequestEntrySemantics
@@ -60,6 +64,7 @@ export interface StartPlan {
   orchestrationMode: OrchestrationMode
   orchestrationRegistrySnapshot: OrchestrationModeSnapshot
   orchestrationPlanSnapshot: OrchestrationPlan
+  topologyRouting: TopologyRootRunRoutingDecision
   workerSessionId?: string | undefined
   reusableWorkerSessionRun?: RootRun | undefined
   latencyEvents: string[]
@@ -88,6 +93,7 @@ interface StartPlanDependencies {
   findLatestWorkerSessionRun: typeof findLatestWorkerSessionRun
   resolveOrchestrationMode?: typeof resolveOrchestrationModeSnapshot
   buildOrchestrationPlan?: typeof buildOrchestrationPlan
+  resolveTopologyRootRunRouting?: typeof resolveTopologyRootRunRouting
 }
 
 const defaultDependencies: StartPlanDependencies = {
@@ -105,6 +111,7 @@ const defaultDependencies: StartPlanDependencies = {
   findLatestWorkerSessionRun,
   resolveOrchestrationMode: resolveOrchestrationModeSnapshot,
   buildOrchestrationPlan,
+  resolveTopologyRootRunRouting,
 }
 
 function isStandaloneLocalExecutionAction(message: string, explicitContinuationReference: boolean): boolean {
@@ -327,6 +334,16 @@ export async function buildStartPlan(
   const reusableWorkerSessionRun = workerSessionId
     ? dependencies.findLatestWorkerSessionRun(requestGroupId, workerSessionId)
     : undefined
+  const topologyRouting = (dependencies.resolveTopologyRootRunRouting ?? resolveTopologyRootRunRouting)({
+    message: params.message,
+    runId: params.runId,
+    sessionId: params.sessionId,
+    ...(params.source ? { source: params.source } : {}),
+    ...(params.targetId ? { targetId: params.targetId } : {}),
+    taskProfile: effectiveTaskProfile,
+    isRootRequest,
+  })
+  latencyEvents.push(`topology_routing:${topologyRouting.mode}:${topologyRouting.reasonCode}`)
 
   return {
     entrySemantics,
@@ -344,6 +361,7 @@ export async function buildStartPlan(
     orchestrationMode: orchestrationRegistrySnapshot.mode,
     orchestrationRegistrySnapshot,
     orchestrationPlanSnapshot,
+    topologyRouting,
     ...(workerSessionId ? { workerSessionId } : {}),
     ...(reusableWorkerSessionRun ? { reusableWorkerSessionRun } : {}),
     latencyEvents,
