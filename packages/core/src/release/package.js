@@ -15,6 +15,7 @@ import { buildReleasePerformanceSummary, } from "./performance-gate.js";
 import { buildSubAgentReleaseReadinessSummary, } from "./sub-agent-release-gate.js";
 import { buildEnterpriseTopologyReleaseReadinessSummary, buildEnterpriseTopologyRollbackRunbook, } from "./enterprise-topology-release-gate.js";
 import { buildUiModeReleaseGateSummary } from "./ui-mode-gate.js";
+import { buildYeonjangMultiInstanceReleaseGateSummary, } from "./yeonjang-multi-instance-gate.js";
 const DEFAULT_TARGET_PLATFORMS = ["macos", "windows", "linux"];
 export function buildReleaseManifest(options = {}) {
     const rootDir = resolve(options.rootDir ?? getWorkspaceRootPath());
@@ -47,6 +48,9 @@ export function buildReleaseManifest(options = {}) {
         liveSmoke: null,
     });
     const uiModeEvidence = buildUiModeReleaseGateSummary();
+    const yeonjangMultiInstanceEvidence = buildYeonjangMultiInstanceReleaseGateSummary({
+        now: options.now ?? new Date(),
+    });
     const performanceEvidence = buildReleasePerformanceSummary(options.now ? { now: options.now } : {});
     const benchmarkSuite = runSubAgentBenchmarkSuite({ now: options.now ?? new Date() });
     const benchmarkEvidence = benchmarkSuite.releaseGate;
@@ -86,6 +90,7 @@ export function buildReleaseManifest(options = {}) {
         rollback,
         webRetrievalEvidence,
         uiModeEvidence,
+        yeonjangMultiInstanceEvidence,
     });
     return {
         kind: "nobie.release.package",
@@ -137,6 +142,7 @@ export function buildReleaseManifest(options = {}) {
         planEvidence: planDrift.releaseNoteEvidence,
         webRetrievalEvidence,
         uiModeEvidence,
+        yeonjangMultiInstanceEvidence,
         performanceEvidence,
         benchmarkEvidence,
         subAgentReleaseGate,
@@ -186,8 +192,10 @@ export function buildReleaseArtifactDefinitions(input) {
     if (targetPlatforms.has("linux")) {
         definitions.push(optionalArtifact("yeonjang:linux:binary", "yeonjang_linux_binary", rootDir, "Yeonjang/target/release/nobie-yeonjang", "yeonjang/linux/nobie-yeonjang", "Linux Yeonjang executable.", "linux"));
         definitions.push(requiredArtifact("yeonjang:linux:build-script", "yeonjang_script", rootDir, "scripts/build-yeonjang-linux.sh", "scripts/build-yeonjang-linux.sh", "Linux Yeonjang build script.", "linux"));
-        definitions.push(requiredArtifact("yeonjang:linux:start-script", "yeonjang_script", rootDir, "scripts/start-yeonjang-linux.sh", "scripts/start-yeonjang-linux.sh", "Linux Yeonjang start script.", "linux"));
-        definitions.push(requiredArtifact("yeonjang:linux:stop-script", "yeonjang_script", rootDir, "scripts/stop-yeonjang-linux.sh", "scripts/stop-yeonjang-linux.sh", "Linux Yeonjang stop script.", "linux"));
+        definitions.push(requiredArtifact("yeonjang:linux:start-script", "yeonjang_script", rootDir, "scripts/start-yeonjang-linux.sh", "scripts/start-yeonjang-linux.sh", "Linux Yeonjang desktop start script.", "linux"));
+        definitions.push(requiredArtifact("yeonjang:linux:headless-start-script", "yeonjang_script", rootDir, "scripts/start-yeonjang-linux-headless.sh", "scripts/start-yeonjang-linux-headless.sh", "Linux Yeonjang headless managed start script.", "linux"));
+        definitions.push(requiredArtifact("yeonjang:linux:stop-script", "yeonjang_script", rootDir, "scripts/stop-yeonjang-linux.sh", "scripts/stop-yeonjang-linux.sh", "Linux Yeonjang desktop stop script.", "linux"));
+        definitions.push(requiredArtifact("yeonjang:linux:headless-stop-script", "yeonjang_script", rootDir, "scripts/stop-yeonjang-linux-headless.sh", "scripts/stop-yeonjang-linux-headless.sh", "Linux Yeonjang headless managed stop script.", "linux"));
     }
     return definitions;
 }
@@ -230,6 +238,14 @@ export function buildReleasePipelinePlan(input = {}) {
         ], true, false, "Verify topology feature flag matrix, workspace route/layer/Executor-first usability, contracts/validator-only rollout, dry-run/shadow, gated mode, opt-in routing, single Nobie fallback, sub-agent and channel finalizer regressions, WebUI build gate, runtime smoke, and rollback smoke."),
         step("web-retrieval-fixture-regression", "Web retrieval fixture regression", ["pnpm", "test", "tests/task008-web-retrieval-fixtures.test.ts"], true, false, "Run offline KOSPI, KOSDAQ, NASDAQ, weather, timeout, and no-network retrieval regression fixtures."),
         step("ui-mode-release-gate", "UI mode release gate", ["pnpm", "test", "tests/task017-ui-release-gate.test.ts"], true, false, "Verify beginner, advanced, and admin smoke matrix, redaction, admin guard, route redirects, and UI regression blockers."),
+        step("yeonjang-multi-instance-release-gate", "Yeonjang multi-instance release gate", [
+            "pnpm",
+            "exec",
+            "vitest",
+            "run",
+            "tests/task010-yeonjang-multi-instance-e2e.test.ts",
+            "tests/task010-yeonjang-release-gate.test.ts",
+        ], true, false, "Verify multi-instance target routing, revoke/quarantine blocks, duplicate-session guard, broadcast partial retry, and release evidence summary."),
         step("backup-rehearsal", "Backup and restore rehearsal", ["pnpm", "run", "backup:rehearsal"], true, false, "Verify DB, prompt, migration, and restore rehearsal paths."),
         step("admin-diagnostic-export", "Admin diagnostic export rehearsal", ["pnpm", "exec", "vitest", "run", "tests/task014-admin-platform-export.test.ts"], true, false, "Verify sanitized admin diagnostics export and bundle generation contract."),
         step("channel-delivery-release-gate", "Channel delivery release gate", [
@@ -395,6 +411,11 @@ export function buildCleanMachineInstallChecklist() {
             description: "Beginner, advanced, and admin UI mode smoke matrix, redaction, route guard, and redirect evidence pass.",
         },
         {
+            id: "yeonjang-multi-instance-release-gate",
+            required: true,
+            description: "Yeonjang multi-instance exact target, ambiguity guard, revoked/quarantined block, duplicate-session guard, broadcast partial retry, and readiness evidence regressions pass.",
+        },
+        {
             id: "admin-diagnostics",
             required: true,
             description: "A sanitized admin diagnostics bundle is exportable and attached or explicitly marked missing in the release artifact list.",
@@ -449,6 +470,7 @@ function buildReleaseNoteSummary(input) {
             `Enterprise Topology release gate: ${input.enterpriseTopologyReleaseGate.gateStatus}`,
             `Web retrieval release gate: ${input.webRetrievalEvidence.gateStatus}`,
             `UI mode release gate: ${input.uiModeEvidence.gateStatus}`,
+            `Yeonjang multi-instance release gate: ${input.yeonjangMultiInstanceEvidence.gateStatus}`,
             orchestrationFlag
                 ? `Sub-agent orchestration default is ${orchestrationFlag.mode}; public rollout should keep single Nobie fallback intact.`
                 : "Sub-agent orchestration feature flag state is missing from the rollout snapshot.",

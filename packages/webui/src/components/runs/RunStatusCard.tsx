@@ -1,9 +1,9 @@
-import type { ReactNode } from "react"
+import React, { type ReactNode } from "react"
 import type { RootRun } from "../../contracts/runs"
 import { useUiI18n } from "../../lib/ui-i18n"
 import { CancelRunButton } from "./CancelRunButton"
 import { CollapsibleText } from "./CollapsibleText"
-import { RunTargetBadge } from "./RunTargetBadge"
+import { RunTargetSummary } from "./RunTargetSummary"
 import { toContextModeText, toRunStatusText, toTaskProfileText } from "./runLabels"
 
 export interface RunStatusTreeNode {
@@ -90,7 +90,7 @@ export function RunStatusCard({
       </div>
 
       <div className="mb-3 flex flex-wrap gap-2">
-        <RunTargetBadge targetId={run.targetId} targetLabel={run.targetLabel} />
+        <RunTargetSummary run={run} />
         {run.workerSessionId ? (
           <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
             {text("세션", "Session")} {run.workerSessionId}

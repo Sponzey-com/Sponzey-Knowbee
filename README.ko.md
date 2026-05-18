@@ -177,6 +177,8 @@ macOS에서 일반적인 로컬 제어를 사용할 때:
 bash scripts/start-yeonjang-macos.sh
 ```
 
+`desktop_interactive` 프로파일에서는 Yeonjang이 tray-first로 시작합니다. 시작 시 메인 창은 숨겨지고, 트레이 아이콘만 남아 있으며, 창의 닫기 버튼은 종료가 아니라 다시 tray로 숨기는 동작입니다.
+
 macOS에서 정리 후 재시작할 때:
 
 ```bash
@@ -205,6 +207,14 @@ bash scripts/start-yeonjang-linux.sh --restart
 bash scripts/stop-yeonjang-linux.sh
 ```
 
+Linux headless managed 런타임을 사용할 때:
+
+```bash
+bash scripts/start-yeonjang-linux-headless.sh
+bash scripts/start-yeonjang-linux-headless.sh --restart
+bash scripts/stop-yeonjang-linux-headless.sh
+```
+
 소스 기준 개발 실행:
 
 ```bash
@@ -215,8 +225,18 @@ cargo run --manifest-path Yeonjang/Cargo.toml
 
 - `start-yeonjang-macos.sh`는 시작 전에 macOS 앱 번들을 확인하고 다시 빌드합니다.
 - `start-yeonjang-windows.bat`가 Windows 시작/재시작 흐름을 담당하고, build 스크립트는 바이너리가 없을 때만 준비 단계로 사용합니다.
-- `start-yeonjang-linux.sh`는 시작 전에 Linux 바이너리를 확인하고 다시 빌드합니다.
+- `start-yeonjang-linux.sh`는 시작 전에 Linux desktop 바이너리를 확인하고 다시 빌드합니다.
+- `start-yeonjang-linux-headless.sh`는 `headless_managed` 프로파일로 managed MQTT entrypoint만 실행하며 tray/window를 기대하지 않습니다.
 - `build-yeonjang-windows.bat`, `build-yeonjang-linux.sh`는 실행보다 빌드 산출물 준비에 집중합니다.
+- Yeonjang support profile은 다음 3가지입니다.
+  - `desktop_interactive`: tray-first 데스크톱 앱
+  - `desktop_limited`: GUI는 있으나 tray-first를 보장하지 않는 데스크톱 앱
+  - `headless_managed`: MQTT/runtime 전용 managed 노드
+- `desktop_interactive`는 숨김 창 + tray 아이콘을 기본으로 사용합니다. 창은 tray 메뉴로 다시 열고, Windows에서는 tray 더블 클릭으로도 다시 열 수 있습니다.
+- Linux는 tray icon click event 지원이 제한적이어서, 창 다시 열기는 tray 메뉴 기준으로 보는 편이 맞습니다.
+- Linux desktop 시작은 `DISPLAY` 또는 `WAYLAND_DISPLAY`가 있어야 합니다. 둘 다 없으면 GUI 스크립트 대신 headless managed 스크립트를 사용하세요.
+- 창의 X 버튼은 hide-to-tray입니다. 프로세스를 실제로 종료하려면 tray 메뉴의 `종료`를 사용하세요.
+- `시스템 시작 시 실행` 옵션은 운영체제별 자동 시작 항목을 만들고, 다음 로그인부터 같은 tray-first 모드로 다시 실행합니다.
 - stop 스크립트는 정리 후 Yeonjang을 계속 멈춰 둬야 할 때만 사용하세요.
 
 Yeonjang의 기본 MQTT 연결값:

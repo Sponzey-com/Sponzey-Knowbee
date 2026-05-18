@@ -19,10 +19,18 @@ describe("Yeonjang capability matrix", () => {
       capabilityMatrix: {
         "screen.capture": {
           supported: false,
+          supportState: "blocked_by_profile",
           requiresApproval: false,
           requiresPermission: true,
           permissionSetting: "allow_screen_capture",
           knownLimitations: ["test limitation"],
+          requiresInteractiveDesktop: true,
+          broadcastSafe: true,
+          defaultTargetPolicy: "local_preferred",
+          reasonCodes: ["support_profile_restricted"],
+          platformBaseline: {
+            linux: { supported: true },
+          },
           outputModes: ["base64", "file"],
           lastCheckedAt: 1,
         },
@@ -32,7 +40,11 @@ describe("Yeonjang capability matrix", () => {
 
     expect(resolveYeonjangMethodCapability(payload, "screen.capture")).toMatchObject({
       supported: false,
+      supportState: "blocked_by_profile",
       permissionSetting: "allow_screen_capture",
+      requiresInteractiveDesktop: true,
+      broadcastSafe: true,
+      defaultTargetPolicy: "local_preferred",
     })
     expect(doesYeonjangCapabilitySupportMethod(payload, "screen.capture")).toBe(false)
   })
@@ -94,9 +106,13 @@ describe("Yeonjang capability matrix", () => {
       capabilityMatrix: {
         "screen.capture": {
           supported: true,
+          supportState: "supported",
           requiresApproval: true,
           requiresPermission: true,
           permissionSetting: "allow_screen_capture",
+          requiresInteractiveDesktop: true,
+          broadcastSafe: true,
+          defaultTargetPolicy: "local_preferred",
           outputModes: ["base64", "file"],
           lastCheckedAt: 10,
         },
@@ -121,9 +137,13 @@ describe("Yeonjang capability matrix", () => {
         name: "screen.capture",
         implemented: true,
         supported: true,
+        supportState: "supported",
         requiresApproval: true,
         requiresPermission: true,
         permissionSetting: "allow_screen_capture",
+        requiresInteractiveDesktop: true,
+        broadcastSafe: true,
+        defaultTargetPolicy: "local_preferred",
         outputModes: ["base64", "file"],
         lastCheckedAt: 10,
       },

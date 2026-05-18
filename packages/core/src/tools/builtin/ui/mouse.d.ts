@@ -3,26 +3,24 @@
  * Requires Yeonjang for execution.
  */
 import type { AgentTool } from "../../types.js";
-interface MouseMoveParams {
+import { type YeonjangTargetedToolParams } from "../yeonjang-target.js";
+interface MouseMoveParams extends YeonjangTargetedToolParams {
     x: number;
     y: number;
-    extensionId?: string;
 }
-interface MouseClickParams {
+interface MouseClickParams extends YeonjangTargetedToolParams {
     x: number;
     y: number;
     button?: "left" | "right" | "middle";
     double?: boolean;
-    extensionId?: string;
 }
-interface MouseActionParams {
+interface MouseActionParams extends YeonjangTargetedToolParams {
     action: "move" | "click" | "double_click" | "button_down" | "button_up" | "scroll";
     x?: number;
     y?: number;
     button?: "left" | "right" | "middle";
     deltaX?: number;
     deltaY?: number;
-    extensionId?: string;
 }
 export declare const mouseMoveTool: AgentTool<MouseMoveParams>;
 export declare const mouseClickTool: AgentTool<MouseClickParams>;

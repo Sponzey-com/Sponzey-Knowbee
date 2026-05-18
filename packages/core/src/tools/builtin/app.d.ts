@@ -1,9 +1,9 @@
 import type { AgentTool } from "../types.js";
-interface AppLaunchParams {
+import { type YeonjangTargetedToolParams } from "./yeonjang-target.js";
+interface AppLaunchParams extends YeonjangTargetedToolParams {
     app: string;
     args?: string[];
     background?: boolean;
-    extensionId?: string;
 }
 interface AppListParams {
     filter?: string;

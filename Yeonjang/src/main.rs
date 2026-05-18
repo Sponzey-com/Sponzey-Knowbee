@@ -4,6 +4,7 @@ mod automation;
 mod features;
 mod gui;
 mod icon;
+mod lifecycle;
 mod mqtt;
 mod node;
 mod platform;
@@ -19,8 +20,11 @@ use std::process::{Command, Stdio};
 use anyhow::Result;
 use serde_json::json;
 
+use crate::lifecycle::{managed_runtime_state, new_shared_lifecycle_state};
+use crate::mqtt::{RuntimeEvent, start_runtime};
 use crate::node::spawn_request_task;
 use crate::protocol::{Request, Response};
+use crate::settings::load_settings;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -51,13 +55,21 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    if args
+        .iter()
+        .any(|arg| arg == "--managed" || arg == "--headless-managed")
+    {
+        run_managed()?;
+        return Ok(());
+    }
+
     if args.is_empty() || args.iter().any(|arg| arg == "--gui") {
         gui::run_gui()?;
         return Ok(());
     }
 
     eprintln!(
-        "Usage: nobie-yeonjang [--gui | --stdio | --write-icon <path> | --exec <command> | --exec-bin <program> [args...] | --camera-capture-helper <args...>]"
+        "Usage: nobie-yeonjang [--gui | --managed | --stdio | --write-icon <path> | --exec <command> | --exec-bin <program> [args...] | --camera-capture-helper <args...>]"
     );
     std::process::exit(2);
 }
@@ -97,6 +109,7 @@ fn run_exec_shell(command: String) -> Result<()> {
             "command": command,
             "shell": true,
         }),
+        metadata: Default::default(),
     })
     .join()
     .unwrap_or_else(|_| Response::error(None, "request_failed", "request thread panicked"));
@@ -117,10 +130,35 @@ fn run_exec_binary(args: Vec<String>) -> Result<()> {
             "args": args.into_iter().skip(1).collect::<Vec<_>>(),
             "shell": false,
         }),
+        metadata: Default::default(),
     })
     .join()
     .unwrap_or_else(|_| Response::error(None, "request_failed", "request thread panicked"));
     write_response_and_exit(response)
+}
+
+fn run_managed() -> Result<()> {
+    let settings = load_settings()?;
+    let lifecycle_state = new_shared_lifecycle_state(managed_runtime_state());
+    let (_runtime, receiver) = start_runtime(settings, lifecycle_state)?;
+
+    eprintln!("Yeonjang managed runtime started. Press Ctrl+C to stop.");
+    for event in receiver {
+        match event {
+            RuntimeEvent::Connected => eprintln!("Yeonjang MQTT connected."),
+            RuntimeEvent::Reconnecting(message)
+            | RuntimeEvent::Disconnected(message)
+            | RuntimeEvent::AuthFailed(message) => eprintln!("{message}"),
+            RuntimeEvent::ResponsePublishFailed { method, message } => {
+                eprintln!("failed to publish `{method}` response: {message}");
+            }
+            RuntimeEvent::RequestHandled { method, ok } => {
+                eprintln!("handled `{method}` request (ok={ok})");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn run_camera_capture_helper(args: Vec<String>) -> Result<()> {

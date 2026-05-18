@@ -4,7 +4,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../yeonjang/mqtt-client.js";
-import { resolvePreferredYeonjangExtensionId } from "./yeonjang-target.js";
+import { buildYeonjangTargetParameterProperties, buildYeonjangTargetResolutionDetails, buildYeonjangTargetSelectionFailure, recordYeonjangRemoteExecutionApproval, revalidateYeonjangTargetSelection, resolveYeonjangTargetSelection, } from "./yeonjang-target.js";
 import { withYeonjangRequestMetadata } from "./yeonjang-request-metadata.js";
 const execFileAsync = promisify(execFile);
 // ─── App discovery ────────────────────────────────────────────────────────────
@@ -92,10 +92,7 @@ export const appLaunchTool = {
                 type: "boolean",
                 description: "백그라운드 실행 여부. 기본: true",
             },
-            extensionId: {
-                type: "string",
-                description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
-            },
+            ...buildYeonjangTargetParameterProperties(DEFAULT_YEONJANG_EXTENSION_ID),
         },
         required: ["app"],
     },
@@ -103,11 +100,24 @@ export const appLaunchTool = {
     requiresApproval: true,
     async execute(params, ctx) {
         const { app, args = [], background = true } = params;
-        const extensionId = resolvePreferredYeonjangExtensionId({
+        const selection = resolveYeonjangTargetSelection({
             requestedExtensionId: params.extensionId,
+            targetSelector: params.targetSelector,
+            expectedTargetSessionId: params.targetSessionId,
             userMessage: ctx.userMessage,
+            requiredSupportProfiles: ["desktop_interactive", "desktop_limited"],
         });
-        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {});
+        if (!selection.ok) {
+            return {
+                success: false,
+                ...buildYeonjangTargetSelectionFailure(selection),
+            };
+        }
+        const extensionId = selection.extensionId;
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? {
+            extensionId,
+            ...(selection.targetSessionId ? { metadata: { targetSessionId: selection.targetSessionId } } : {}),
+        } : {});
         const isPath = app.startsWith("/") || app.startsWith("./");
         // Require approval for direct executable paths
         if (isPath) {
@@ -118,6 +128,17 @@ export const appLaunchTool = {
         }
         try {
             if (await canYeonjangHandleMethod("application.launch", yeonjangOptions)) {
+                const reboundSelection = revalidateYeonjangTargetSelection({
+                    selection,
+                    requiredSupportProfiles: ["desktop_interactive", "desktop_limited"],
+                });
+                if (!reboundSelection.ok) {
+                    return {
+                        success: false,
+                        ...buildYeonjangTargetSelectionFailure(reboundSelection),
+                    };
+                }
+                recordYeonjangRemoteExecutionApproval({ selection: reboundSelection, toolName: "application.launch", ctx });
                 const remote = await invokeYeonjangMethod("application.launch", {
                     application: app,
                     args,
@@ -126,7 +147,12 @@ export const appLaunchTool = {
                 return {
                     success: remote.launched,
                     output: remote.message || `"${app}" 실행`,
-                    details: { via: "yeonjang", application: remote.application, pid: remote.pid ?? null },
+                    details: {
+                        via: "yeonjang",
+                        application: remote.application,
+                        pid: remote.pid ?? null,
+                        ...buildYeonjangTargetResolutionDetails(reboundSelection),
+                    },
                     ...(remote.launched ? {} : { error: "remote_launch_failed" }),
                 };
             }
@@ -134,10 +160,25 @@ export const appLaunchTool = {
         catch (error) {
             if (!isYeonjangUnavailableError(error)) {
                 const message = error instanceof Error ? error.message : String(error);
-                return { success: false, output: `Yeonjang 앱 실행 실패: ${message}`, error: message };
+                return {
+                    success: false,
+                    output: `Yeonjang 앱 실행 실패: ${message}`,
+                    error: message,
+                    details: {
+                        via: "yeonjang",
+                        ...buildYeonjangTargetResolutionDetails(selection),
+                    },
+                };
             }
         }
-        return yeonjangRequiredFailure("application.launch");
+        const failure = yeonjangRequiredFailure("application.launch");
+        return {
+            ...failure,
+            details: {
+                ...(failure.details && typeof failure.details === "object" ? failure.details : {}),
+                ...buildYeonjangTargetResolutionDetails(selection),
+            },
+        };
     },
 };
 export const appListTool = {

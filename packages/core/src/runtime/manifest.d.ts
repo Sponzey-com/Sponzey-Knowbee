@@ -74,12 +74,23 @@ export interface RuntimeManifestChannelSummary {
 }
 export interface RuntimeManifestYeonjangNode {
     extensionId: string;
+    instanceId?: string | null;
+    instanceAlias?: string | null;
     state: string | null;
     version: string | null;
     protocolVersion: string | null;
     capabilityHash: string | null;
     methodCount: number;
     lastSeenAt: number;
+    liveSessionCount?: number;
+    supportProfile?: string | null;
+    configuredSupportProfile?: string | null;
+    supportProfileReasonCodes?: string[];
+    interactiveDesktopAvailable?: boolean | null;
+    trayRuntimeAvailable?: boolean | null;
+    startupMode?: string | null;
+    windowMode?: string | null;
+    trayState?: string | null;
 }
 export interface RuntimeManifestMemory {
     dbPath: string;

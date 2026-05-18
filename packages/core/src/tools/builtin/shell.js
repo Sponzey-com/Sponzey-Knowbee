@@ -1,5 +1,5 @@
 import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../yeonjang/mqtt-client.js";
-import { resolvePreferredYeonjangExtensionId } from "./yeonjang-target.js";
+import { buildYeonjangTargetParameterProperties, buildYeonjangTargetResolutionDetails, buildYeonjangTargetSelectionFailure, recordYeonjangRemoteExecutionApproval, revalidateYeonjangTargetSelection, resolveYeonjangTargetSelection, } from "./yeonjang-target.js";
 import { withYeonjangRequestMetadata } from "./yeonjang-request-metadata.js";
 const DEFAULT_TIMEOUT_SEC = 300;
 // Simple obfuscation patterns to reject
@@ -58,10 +58,7 @@ export const shellExecTool = {
                 description: "Additional environment variables to set",
                 additionalProperties: { type: "string" },
             },
-            extensionId: {
-                type: "string",
-                description: `Target Yeonjang extension ID when the user specifies a particular computer/device. Default: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
-            },
+            ...buildYeonjangTargetParameterProperties(DEFAULT_YEONJANG_EXTENSION_ID),
         },
         required: ["command"],
     },
@@ -76,14 +73,34 @@ export const shellExecTool = {
                 error: "obfuscation_detected",
             };
         }
-        const extensionId = resolvePreferredYeonjangExtensionId({
+        const selection = resolveYeonjangTargetSelection({
             requestedExtensionId: params.extensionId,
+            targetSelector: params.targetSelector,
+            expectedTargetSessionId: params.targetSessionId,
             userMessage: ctx.userMessage,
         });
-        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {});
+        if (!selection.ok) {
+            return {
+                success: false,
+                ...buildYeonjangTargetSelectionFailure(selection),
+            };
+        }
+        const extensionId = selection.extensionId;
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? {
+            extensionId,
+            ...(selection.targetSessionId ? { metadata: { targetSessionId: selection.targetSessionId } } : {}),
+        } : {});
         const workDir = resolveRemoteWorkDir(params.workDir);
         try {
             if (await canYeonjangHandleMethod("system.exec", yeonjangOptions)) {
+                const reboundSelection = revalidateYeonjangTargetSelection({ selection });
+                if (!reboundSelection.ok) {
+                    return {
+                        success: false,
+                        ...buildYeonjangTargetSelectionFailure(reboundSelection),
+                    };
+                }
+                recordYeonjangRemoteExecutionApproval({ selection: reboundSelection, toolName: "system.exec", ctx });
                 ctx.onProgress(`Yeonjang${extensionId ? `(${extensionId})` : ""}에서 명령 실행: ${params.command}`);
                 const remote = await invokeYeonjangMethod("system.exec", {
                     command: params.command,
@@ -100,7 +117,11 @@ export const shellExecTool = {
                 return {
                     success: remote.success,
                     output: combined || "(no output)",
-                    details: { via: "yeonjang", exitCode: remote.exit_code ?? null },
+                    details: {
+                        via: "yeonjang",
+                        exitCode: remote.exit_code ?? null,
+                        ...buildYeonjangTargetResolutionDetails(reboundSelection),
+                    },
                     ...(remote.success ? {} : { error: remote.exit_code != null ? `Exit code: ${remote.exit_code}` : "remote execution failed" }),
                 };
             }
@@ -108,10 +129,25 @@ export const shellExecTool = {
         catch (error) {
             if (!isYeonjangUnavailableError(error)) {
                 const message = error instanceof Error ? error.message : String(error);
-                return { success: false, output: `Yeonjang 명령 실행 실패: ${message}`, error: message };
+                return {
+                    success: false,
+                    output: `Yeonjang 명령 실행 실패: ${message}`,
+                    error: message,
+                    details: {
+                        via: "yeonjang",
+                        ...buildYeonjangTargetResolutionDetails(selection),
+                    },
+                };
             }
         }
-        return yeonjangRequiredFailure("system.exec");
+        const failure = yeonjangRequiredFailure("system.exec");
+        return {
+            ...failure,
+            details: {
+                ...(failure.details && typeof failure.details === "object" ? failure.details : {}),
+                ...buildYeonjangTargetResolutionDetails(selection),
+            },
+        };
     },
 };
 //# sourceMappingURL=shell.js.map

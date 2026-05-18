@@ -29,6 +29,12 @@ if [[ "$(uname -s)" != "Linux" ]]; then
   exit 1
 fi
 
+if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+  echo "Linux GUI desktop session이 감지되지 않았습니다."
+  echo "Headless managed runtime은 bash scripts/start-yeonjang-linux-headless.sh 를 사용하세요."
+  exit 1
+fi
+
 mkdir -p "$PIDS_DIR" "$LOGS_DIR"
 
 cleanup_stale_pid() {
@@ -113,5 +119,6 @@ fi
 echo "Yeonjang Linux GUI 실행 완료"
 echo "  PID  : $(cat "$PID_FILE")"
 echo "  Log  : $LOG_FILE"
+echo "  Mode : tray-first (startup hidden, close hides to tray)"
 echo "  Stop : bash scripts/stop-yeonjang-linux.sh"
 echo "  Restart : bash scripts/start-yeonjang-linux.sh --restart"

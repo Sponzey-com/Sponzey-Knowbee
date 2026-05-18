@@ -3,6 +3,7 @@ import aedesPackage from "aedes";
 import { getConfig } from "../config/index.js";
 import { createLogger } from "../logger/index.js";
 import { eventBus } from "../events/index.js";
+import { upsertYeonjangRegistryObservation } from "../yeonjang/registry.js";
 const log = createLogger("mqtt:broker");
 const MQTT_DISABLED_REASON = "MQTT 브로커가 비활성화되어 있습니다.";
 const MQTT_STOPPED_REASON = "MQTT 브로커가 중지되었습니다.";
@@ -92,10 +93,28 @@ function rememberExtensionClaim(extensionId, clientId) {
         extensionId,
         clientId,
         displayName: current?.displayName ?? null,
+        instanceId: current?.instanceId ?? null,
+        instanceAlias: current?.instanceAlias ?? null,
+        normalizedCallName: current?.normalizedCallName ?? null,
+        nodeId: current?.nodeId ?? extensionId,
+        supportProfile: current?.supportProfile ?? null,
+        configuredSupportProfile: current?.configuredSupportProfile ?? null,
+        supportProfileReasonCodes: current?.supportProfileReasonCodes ?? [],
+        interactiveDesktopAvailable: current?.interactiveDesktopAvailable ?? null,
+        trayRuntimeAvailable: current?.trayRuntimeAvailable ?? null,
         state: current?.state ?? "connected",
         message: current?.message ?? null,
         version: current?.version ?? null,
         methods: current?.methods ?? [],
+        sessionId: current?.sessionId ?? null,
+        startupMode: current?.startupMode ?? null,
+        windowMode: current?.windowMode ?? null,
+        trayState: current?.trayState ?? null,
+        trustState: current?.trustState ?? null,
+        workspaceScopeId: current?.workspaceScopeId ?? null,
+        pairingFingerprint: current?.pairingFingerprint ?? null,
+        hostFingerprint: current?.hostFingerprint ?? null,
+        installFingerprint: current?.installFingerprint ?? null,
         lastSeenAt: Date.now(),
     });
 }
@@ -118,6 +137,7 @@ function releaseExtensionClaimsForClient(clientId) {
                     message: "MQTT connection disconnected.",
                     lastSeenAt: Date.now(),
                 });
+                persistYeonjangRegistrySnapshot(extensionSnapshots.get(extensionId) ?? current);
                 eventBus.emit("yeonjang.heartbeat", {
                     extensionId,
                     state: "offline",
@@ -142,6 +162,7 @@ function clearExtensionClaims() {
             message: "MQTT broker is stopped.",
             lastSeenAt: now,
         });
+        persistYeonjangRegistrySnapshot(extensionSnapshots.get(extensionId) ?? current);
     }
     activeClientsById.clear();
     claimedExtensionOwners.clear();
@@ -221,6 +242,23 @@ function updateExtensionSnapshotFromPayload(extensionId, clientId, kind, payload
     const next = {
         extensionId,
         clientId: clientId ?? current?.clientId ?? currentOwner,
+        instanceId: readString(objectPayload, "instance_id", "instanceId") ?? current?.instanceId ?? null,
+        instanceAlias: readString(objectPayload, "instance_alias", "instanceAlias") ?? current?.instanceAlias ?? null,
+        normalizedCallName: readString(objectPayload, "normalized_call_name", "normalizedCallName") ?? current?.normalizedCallName ?? null,
+        nodeId: readString(objectPayload, "node_id", "nodeId") ?? current?.nodeId ?? extensionId,
+        supportProfile: readString(objectPayload, "support_profile", "supportProfile") ?? current?.supportProfile ?? null,
+        configuredSupportProfile: readString(objectPayload, "configured_support_profile", "configuredSupportProfile")
+            ?? current?.configuredSupportProfile
+            ?? null,
+        supportProfileReasonCodes: readStringArray(objectPayload, "support_profile_reason_codes", "supportProfileReasonCodes")
+            ?? current?.supportProfileReasonCodes
+            ?? [],
+        interactiveDesktopAvailable: readBoolean(objectPayload, "interactive_desktop_available", "interactiveDesktopAvailable")
+            ?? current?.interactiveDesktopAvailable
+            ?? null,
+        trayRuntimeAvailable: readBoolean(objectPayload, "tray_runtime_available", "trayRuntimeAvailable")
+            ?? current?.trayRuntimeAvailable
+            ?? null,
         displayName: (typeof objectPayload?.display_name === "string" && objectPayload.display_name) ||
             (typeof objectPayload?.displayName === "string" && objectPayload.displayName) ||
             current?.displayName ||
@@ -244,6 +282,19 @@ function updateExtensionSnapshotFromPayload(extensionId, clientId, kind, payload
         transport: readStringArray(objectPayload, "transport") ?? current?.transport ?? [],
         capabilityHash: readString(objectPayload, "capabilityHash", "capability_hash") ?? current?.capabilityHash ?? null,
         methods,
+        sessionId: readString(objectPayload, "session_id", "sessionId") ?? current?.sessionId ?? null,
+        startupMode: readString(objectPayload, "startup_mode", "startupMode") ?? current?.startupMode ?? null,
+        windowMode: readString(objectPayload, "window_mode", "windowMode") ?? current?.windowMode ?? null,
+        trayState: readString(objectPayload, "tray_state", "trayState") ?? current?.trayState ?? null,
+        trustState: readString(objectPayload, "trust_state", "trustState") ?? current?.trustState ?? null,
+        workspaceScopeId: readString(objectPayload, "workspace_scope_id", "workspaceScopeId")
+            ?? current?.workspaceScopeId
+            ?? null,
+        pairingFingerprint: readString(objectPayload, "pairing_fingerprint", "pairingFingerprint")
+            ?? current?.pairingFingerprint
+            ?? null,
+        hostFingerprint: readString(objectPayload, "host_fingerprint", "hostFingerprint") ?? current?.hostFingerprint ?? null,
+        installFingerprint: readString(objectPayload, "install_fingerprint", "installFingerprint") ?? current?.installFingerprint ?? null,
         ...(permissions ? { permissions } : current?.permissions ? { permissions: current.permissions } : {}),
         ...(toolHealth ? { toolHealth } : current?.toolHealth ? { toolHealth: current.toolHealth } : {}),
         ...(capabilityMatrix ? { capabilityMatrix } : current?.capabilityMatrix ? { capabilityMatrix: current.capabilityMatrix } : {}),
@@ -251,6 +302,7 @@ function updateExtensionSnapshotFromPayload(extensionId, clientId, kind, payload
         lastSeenAt: now,
     };
     extensionSnapshots.set(extensionId, next);
+    persistYeonjangRegistrySnapshot(next);
     eventBus.emit("yeonjang.heartbeat", {
         extensionId,
         state: next.state,
@@ -270,14 +322,27 @@ function readString(payload, ...keys) {
     }
     return null;
 }
-function readStringArray(payload, key) {
+function readStringArray(payload, ...keys) {
     if (!payload)
         return null;
-    const value = payload[key];
-    if (typeof value === "string" && value.trim())
-        return [value];
-    if (Array.isArray(value))
-        return value.filter((item) => typeof item === "string" && item.trim() !== "");
+    for (const key of keys) {
+        const value = payload[key];
+        if (typeof value === "string" && value.trim())
+            return [value];
+        if (Array.isArray(value)) {
+            return value.filter((item) => typeof item === "string" && item.trim() !== "");
+        }
+    }
+    return null;
+}
+function readBoolean(payload, ...keys) {
+    if (!payload)
+        return null;
+    for (const key of keys) {
+        const value = payload[key];
+        if (typeof value === "boolean")
+            return value;
+    }
     return null;
 }
 function readObject(payload, ...keys) {
@@ -319,6 +384,45 @@ function readCapabilityMethods(payload, capabilityMatrix) {
         return typeof candidate.name === "string" ? candidate.name : null;
     })
         .filter((item) => Boolean(item));
+}
+function persistYeonjangRegistrySnapshot(snapshot) {
+    if (!snapshot?.instanceId || !snapshot.instanceAlias || !snapshot.displayName || !snapshot.sessionId)
+        return;
+    try {
+        upsertYeonjangRegistryObservation({
+            instanceId: snapshot.instanceId,
+            instanceAlias: snapshot.instanceAlias,
+            displayName: snapshot.displayName,
+            nodeId: snapshot.nodeId ?? snapshot.extensionId,
+            supportProfile: snapshot.supportProfile ?? "desktop_interactive",
+            platform: snapshot.platform ?? snapshot.os ?? null,
+            arch: snapshot.arch ?? null,
+            hostFingerprint: snapshot.hostFingerprint ?? null,
+            installFingerprint: snapshot.installFingerprint ?? null,
+            sessionId: snapshot.sessionId,
+            clientId: snapshot.clientId,
+            connectionState: snapshot.state,
+            message: snapshot.message,
+            version: snapshot.version,
+            protocolVersion: snapshot.protocolVersion ?? null,
+            capabilityHash: snapshot.capabilityHash ?? null,
+            transport: snapshot.transport ?? [],
+            permissions: snapshot.permissions ?? null,
+            toolHealth: snapshot.toolHealth ?? null,
+            capabilityMatrix: snapshot.capabilityMatrix ?? null,
+            methodCount: snapshot.methods.length,
+            startupMode: snapshot.startupMode ?? null,
+            windowMode: snapshot.windowMode ?? null,
+            trayState: snapshot.trayState ?? null,
+            workspaceScopeId: snapshot.workspaceScopeId ?? null,
+            pairingFingerprint: snapshot.pairingFingerprint ?? null,
+            observedAt: snapshot.lastSeenAt,
+        });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log.warn(`failed to persist yeonjang registry snapshot (${snapshot.extensionId}): ${message}`);
+    }
 }
 function handleBrokerPublish(packet, client) {
     const topic = typeof packet?.topic === "string" ? packet.topic : null;

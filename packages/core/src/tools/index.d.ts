@@ -3,6 +3,7 @@ export type { AgentScopedToolDispatchInput } from "./dispatcher.js";
 export type { AgentTool, AnyTool, ToolContext, ToolResult, RiskLevel } from "./types.js";
 export { fileReadTool, fileWriteTool, fileListTool, fileDeleteTool, filePatchTool, } from "./builtin/file.js";
 export { shellExecTool } from "./builtin/shell.js";
+export { yeonjangBroadcastRunTool } from "./builtin/yeonjang-broadcast.js";
 export { fileSearchTool } from "./builtin/file-search.js";
 export { webSearchTool } from "./builtin/web-search.js";
 export { webFetchTool } from "./builtin/web-fetch.js";

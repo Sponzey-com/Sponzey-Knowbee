@@ -13,6 +13,7 @@ import { getProviderCapabilityMatrix } from "../ai/capabilities.js";
 import { buildRolloutSafetySnapshot } from "./rollout-safety.js";
 import { resolveAdminUiActivation } from "../ui/mode.js";
 import { getWebUiWsClientCount } from "../api/ws/stream.js";
+import { listYeonjangRegistryInstances } from "../yeonjang/registry.js";
 let lastRuntimeManifest = null;
 function commandOutput(command, args, cwd = getWorkspaceRootPath()) {
     try {
@@ -192,15 +193,51 @@ function buildChannels() {
     };
 }
 function buildYeonjang() {
-    const nodes = getMqttExtensionSnapshots().map((node) => ({
-        extensionId: node.extensionId,
-        state: node.state,
-        version: node.version,
-        protocolVersion: node.protocolVersion ?? null,
-        capabilityHash: node.capabilityHash ?? null,
-        methodCount: node.methods.length,
-        lastSeenAt: node.lastSeenAt,
-    }));
+    const liveSnapshots = new Map(getMqttExtensionSnapshots().map((node) => [node.extensionId, node]));
+    const registryNodes = listYeonjangRegistryInstances().map((node) => {
+        const live = liveSnapshots.get(node.nodeId);
+        return {
+            extensionId: node.nodeId,
+            instanceId: node.instanceId,
+            instanceAlias: node.instanceAlias,
+            state: node.state,
+            version: node.version,
+            protocolVersion: node.protocolVersion ?? null,
+            capabilityHash: node.capabilityHash ?? null,
+            methodCount: node.methodCount,
+            lastSeenAt: node.lastSeenAt ?? 0,
+            liveSessionCount: node.liveSessionCount,
+            supportProfile: node.supportProfile,
+            configuredSupportProfile: live?.configuredSupportProfile ?? null,
+            supportProfileReasonCodes: live?.supportProfileReasonCodes ?? [],
+            interactiveDesktopAvailable: live?.interactiveDesktopAvailable ?? null,
+            trayRuntimeAvailable: live?.trayRuntimeAvailable ?? null,
+            startupMode: node.session?.startupMode ?? null,
+            windowMode: node.session?.windowMode ?? null,
+            trayState: node.session?.trayState ?? null,
+        };
+    });
+    const nodes = registryNodes.length > 0
+        ? registryNodes
+        : getMqttExtensionSnapshots().map((node) => ({
+            extensionId: node.extensionId,
+            instanceId: node.instanceId ?? null,
+            instanceAlias: node.instanceAlias ?? null,
+            state: node.state,
+            version: node.version,
+            protocolVersion: node.protocolVersion ?? null,
+            capabilityHash: node.capabilityHash ?? null,
+            methodCount: node.methods.length,
+            lastSeenAt: node.lastSeenAt,
+            supportProfile: node.supportProfile ?? null,
+            configuredSupportProfile: node.configuredSupportProfile ?? null,
+            supportProfileReasonCodes: node.supportProfileReasonCodes ?? [],
+            interactiveDesktopAvailable: node.interactiveDesktopAvailable ?? null,
+            trayRuntimeAvailable: node.trayRuntimeAvailable ?? null,
+            startupMode: node.startupMode ?? null,
+            windowMode: node.windowMode ?? null,
+            trayState: node.trayState ?? null,
+        }));
     return {
         nodeCount: nodes.length,
         capabilityHash: nodes.length > 0 ? hashObject(nodes.map((node) => ({ id: node.extensionId, hash: node.capabilityHash, methods: node.methodCount }))) : null,

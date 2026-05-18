@@ -10,6 +10,15 @@ export interface YeonjangRequestMetadata {
     runId?: string;
     requestGroupId?: string;
     sessionId?: string;
+    targetSessionId?: string;
+    commandId?: string;
+    deliveryId?: string;
+    idempotencyKey?: string;
+    expiresAt?: number;
+    cancelToken?: string;
+    broadcastRunId?: string;
+    broadcastIndex?: number;
+    broadcastTotal?: number;
     source?: ChannelSource;
     agentId?: string;
     auditId?: string;
@@ -31,23 +40,45 @@ export interface YeonjangClientOptions {
     forceRefresh?: boolean;
     metadata?: YeonjangRequestMetadata;
 }
+export interface YeonjangCommandDispatch {
+    requestId: string;
+    commandId: string;
+    deliveryId: string;
+    idempotencyKey: string;
+    expiresAt: number;
+    cancelToken: string;
+    metadata: YeonjangRequestMetadata;
+    request: YeonjangRequestEnvelope;
+}
 export interface YeonjangMethodCapability {
     name: string;
     implemented: boolean;
     supported?: boolean;
+    supportState?: string;
     requiresApproval?: boolean;
     requiresPermission?: boolean;
     permissionSetting?: string | null;
     knownLimitations?: string[];
+    requiresInteractiveDesktop?: boolean;
+    broadcastSafe?: boolean;
+    defaultTargetPolicy?: string;
+    reasonCodes?: string[];
+    platformBaseline?: Record<string, unknown>;
     outputModes?: string[];
     lastCheckedAt?: number;
 }
 export interface YeonjangCapabilityMatrixEntry {
     supported?: boolean;
+    supportState?: string;
     requiresApproval?: boolean;
     requiresPermission?: boolean;
     permissionSetting?: string | null;
     knownLimitations?: string[];
+    requiresInteractiveDesktop?: boolean;
+    broadcastSafe?: boolean;
+    defaultTargetPolicy?: string;
+    reasonCodes?: string[];
+    platformBaseline?: Record<string, unknown>;
     outputModes?: string[];
     lastCheckedAt?: number;
 }
@@ -65,6 +96,11 @@ export interface YeonjangCapabilitiesPayload {
     os?: string;
     arch?: string;
     platform?: string;
+    supportProfile?: string;
+    configuredSupportProfile?: string;
+    supportProfileReasonCodes?: string[];
+    interactiveDesktopAvailable?: boolean;
+    trayRuntimeAvailable?: boolean;
     transport?: string | string[];
     capabilityHash?: string;
     capability_hash?: string;
@@ -86,6 +122,8 @@ export declare function buildYeonjangTopics(extensionId?: string): {
     eventTopic: string;
 };
 export declare function invokeYeonjangMethod<T = unknown>(method: string, params?: Record<string, unknown>, options?: YeonjangClientOptions): Promise<T>;
+export declare function createYeonjangCommandDispatch(method: string, params?: Record<string, unknown>, options?: YeonjangClientOptions): YeonjangCommandDispatch;
+export declare function isYeonjangSafeRetryMethod(method: string): boolean;
 export declare function getYeonjangCapabilities(options?: YeonjangClientOptions): Promise<YeonjangCapabilitiesPayload>;
 export declare function clearYeonjangCapabilityCache(): void;
 export declare function shouldSerializeYeonjangMethod(method: string): boolean;

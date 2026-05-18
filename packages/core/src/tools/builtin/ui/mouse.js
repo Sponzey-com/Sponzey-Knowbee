@@ -3,7 +3,7 @@
  * Requires Yeonjang for execution.
  */
 import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js";
-import { resolvePreferredYeonjangExtensionId } from "../yeonjang-target.js";
+import { buildYeonjangTargetParameterProperties, buildYeonjangTargetResolutionDetails, buildYeonjangTargetSelectionFailure, recordYeonjangRemoteExecutionApproval, revalidateYeonjangTargetSelection, resolveYeonjangTargetSelection, } from "../yeonjang-target.js";
 import { withYeonjangRequestMetadata } from "../yeonjang-request-metadata.js";
 const MOVE_DELAY_MS = 500;
 function yeonjangRequiredFailure(method) {
@@ -25,29 +25,55 @@ export const mouseMoveTool = {
         properties: {
             x: { type: "number", description: "X 좌표 (픽셀)" },
             y: { type: "number", description: "Y 좌표 (픽셀)" },
-            extensionId: {
-                type: "string",
-                description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
-            },
+            ...buildYeonjangTargetParameterProperties(DEFAULT_YEONJANG_EXTENSION_ID),
         },
         required: ["x", "y"],
     },
     riskLevel: "moderate",
     requiresApproval: true,
     execute: async (params, ctx) => {
-        const extensionId = resolvePreferredYeonjangExtensionId({
+        const selection = resolveYeonjangTargetSelection({
             requestedExtensionId: params.extensionId,
+            targetSelector: params.targetSelector,
+            expectedTargetSessionId: params.targetSessionId,
             userMessage: ctx.userMessage,
+            requiredSupportProfiles: ["desktop_interactive", "desktop_limited"],
         });
-        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {});
+        if (!selection.ok) {
+            return {
+                success: false,
+                ...buildYeonjangTargetSelectionFailure(selection),
+            };
+        }
+        const extensionId = selection.extensionId;
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? {
+            extensionId,
+            ...(selection.targetSessionId ? { metadata: { targetSessionId: selection.targetSessionId } } : {}),
+        } : {});
         await new Promise((r) => setTimeout(r, MOVE_DELAY_MS));
         try {
             if (await canYeonjangHandleMethod("mouse.move", yeonjangOptions)) {
+                const reboundSelection = revalidateYeonjangTargetSelection({
+                    selection,
+                    requiredSupportProfiles: ["desktop_interactive", "desktop_limited"],
+                });
+                if (!reboundSelection.ok) {
+                    return {
+                        success: false,
+                        ...buildYeonjangTargetSelectionFailure(reboundSelection),
+                    };
+                }
+                recordYeonjangRemoteExecutionApproval({ selection: reboundSelection, toolName: "mouse.move", ctx });
                 const remote = await invokeYeonjangMethod("mouse.move", { x: params.x, y: params.y }, { ...yeonjangOptions, timeoutMs: 15_000 });
                 return {
                     success: remote.moved,
                     output: remote.message || `마우스를 (${params.x}, ${params.y})로 이동했습니다.`,
-                    details: { via: "yeonjang", x: remote.x, y: remote.y },
+                    details: {
+                        via: "yeonjang",
+                        x: remote.x,
+                        y: remote.y,
+                        ...buildYeonjangTargetResolutionDetails(reboundSelection),
+                    },
                     ...(remote.moved ? {} : { error: "remote_mouse_move_failed" }),
                 };
             }
@@ -55,10 +81,25 @@ export const mouseMoveTool = {
         catch (error) {
             if (!isYeonjangUnavailableError(error)) {
                 const message = error instanceof Error ? error.message : String(error);
-                return { success: false, output: `Yeonjang 마우스 이동 실패: ${message}`, error: message };
+                return {
+                    success: false,
+                    output: `Yeonjang 마우스 이동 실패: ${message}`,
+                    error: message,
+                    details: {
+                        via: "yeonjang",
+                        ...buildYeonjangTargetResolutionDetails(selection),
+                    },
+                };
             }
         }
-        return yeonjangRequiredFailure("mouse.move");
+        const failure = yeonjangRequiredFailure("mouse.move");
+        return {
+            ...failure,
+            details: {
+                ...(failure.details && typeof failure.details === "object" ? failure.details : {}),
+                ...buildYeonjangTargetResolutionDetails(selection),
+            },
+        };
     },
 };
 export const mouseClickTool = {
@@ -75,24 +116,45 @@ export const mouseClickTool = {
                 description: "클릭할 마우스 버튼 (기본: left)",
             },
             double: { type: "boolean", description: "더블 클릭 여부 (기본: false)" },
-            extensionId: {
-                type: "string",
-                description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
-            },
+            ...buildYeonjangTargetParameterProperties(DEFAULT_YEONJANG_EXTENSION_ID),
         },
         required: ["x", "y"],
     },
     riskLevel: "moderate",
     requiresApproval: true,
     execute: async (params, ctx) => {
-        const extensionId = resolvePreferredYeonjangExtensionId({
+        const selection = resolveYeonjangTargetSelection({
             requestedExtensionId: params.extensionId,
+            targetSelector: params.targetSelector,
+            expectedTargetSessionId: params.targetSessionId,
             userMessage: ctx.userMessage,
+            requiredSupportProfiles: ["desktop_interactive", "desktop_limited"],
         });
-        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {});
+        if (!selection.ok) {
+            return {
+                success: false,
+                ...buildYeonjangTargetSelectionFailure(selection),
+            };
+        }
+        const extensionId = selection.extensionId;
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? {
+            extensionId,
+            ...(selection.targetSessionId ? { metadata: { targetSessionId: selection.targetSessionId } } : {}),
+        } : {});
         await new Promise((r) => setTimeout(r, MOVE_DELAY_MS));
         try {
             if (await canYeonjangHandleMethod("mouse.click", yeonjangOptions)) {
+                const reboundSelection = revalidateYeonjangTargetSelection({
+                    selection,
+                    requiredSupportProfiles: ["desktop_interactive", "desktop_limited"],
+                });
+                if (!reboundSelection.ok) {
+                    return {
+                        success: false,
+                        ...buildYeonjangTargetSelectionFailure(reboundSelection),
+                    };
+                }
+                recordYeonjangRemoteExecutionApproval({ selection: reboundSelection, toolName: "mouse.click", ctx });
                 const remote = await invokeYeonjangMethod("mouse.click", {
                     x: params.x,
                     y: params.y,
@@ -102,7 +164,14 @@ export const mouseClickTool = {
                 return {
                     success: remote.clicked,
                     output: remote.message || `(${params.x}, ${params.y}) 클릭 완료`,
-                    details: { via: "yeonjang", x: remote.x, y: remote.y, button: remote.button, double: remote.double },
+                    details: {
+                        via: "yeonjang",
+                        x: remote.x,
+                        y: remote.y,
+                        button: remote.button,
+                        double: remote.double,
+                        ...buildYeonjangTargetResolutionDetails(reboundSelection),
+                    },
                     ...(remote.clicked ? {} : { error: "remote_mouse_click_failed" }),
                 };
             }
@@ -110,10 +179,25 @@ export const mouseClickTool = {
         catch (error) {
             if (!isYeonjangUnavailableError(error)) {
                 const message = error instanceof Error ? error.message : String(error);
-                return { success: false, output: `Yeonjang 마우스 클릭 실패: ${message}`, error: message };
+                return {
+                    success: false,
+                    output: `Yeonjang 마우스 클릭 실패: ${message}`,
+                    error: message,
+                    details: {
+                        via: "yeonjang",
+                        ...buildYeonjangTargetResolutionDetails(selection),
+                    },
+                };
             }
         }
-        return yeonjangRequiredFailure("mouse.click");
+        const failure = yeonjangRequiredFailure("mouse.click");
+        return {
+            ...failure,
+            details: {
+                ...(failure.details && typeof failure.details === "object" ? failure.details : {}),
+                ...buildYeonjangTargetResolutionDetails(selection),
+            },
+        };
     },
 };
 export const mouseActionTool = {
@@ -136,24 +220,45 @@ export const mouseActionTool = {
             },
             deltaX: { type: "number", description: "가로 스크롤 값" },
             deltaY: { type: "number", description: "세로 스크롤 값" },
-            extensionId: {
-                type: "string",
-                description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
-            },
+            ...buildYeonjangTargetParameterProperties(DEFAULT_YEONJANG_EXTENSION_ID),
         },
         required: ["action"],
     },
     riskLevel: "moderate",
     requiresApproval: true,
     execute: async (params, ctx) => {
-        const extensionId = resolvePreferredYeonjangExtensionId({
+        const selection = resolveYeonjangTargetSelection({
             requestedExtensionId: params.extensionId,
+            targetSelector: params.targetSelector,
+            expectedTargetSessionId: params.targetSessionId,
             userMessage: ctx.userMessage,
+            requiredSupportProfiles: ["desktop_interactive", "desktop_limited"],
         });
-        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {});
+        if (!selection.ok) {
+            return {
+                success: false,
+                ...buildYeonjangTargetSelectionFailure(selection),
+            };
+        }
+        const extensionId = selection.extensionId;
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? {
+            extensionId,
+            ...(selection.targetSessionId ? { metadata: { targetSessionId: selection.targetSessionId } } : {}),
+        } : {});
         await new Promise((r) => setTimeout(r, MOVE_DELAY_MS));
         try {
             if (await canYeonjangHandleMethod("mouse.action", yeonjangOptions)) {
+                const reboundSelection = revalidateYeonjangTargetSelection({
+                    selection,
+                    requiredSupportProfiles: ["desktop_interactive", "desktop_limited"],
+                });
+                if (!reboundSelection.ok) {
+                    return {
+                        success: false,
+                        ...buildYeonjangTargetSelectionFailure(reboundSelection),
+                    };
+                }
+                recordYeonjangRemoteExecutionApproval({ selection: reboundSelection, toolName: "mouse.action", ctx });
                 const remote = await invokeYeonjangMethod("mouse.action", {
                     action: params.action,
                     ...(typeof params.x === "number" ? { x: params.x } : {}),
@@ -173,6 +278,7 @@ export const mouseActionTool = {
                         button: remote.button,
                         deltaX: remote.delta_x,
                         deltaY: remote.delta_y,
+                        ...buildYeonjangTargetResolutionDetails(reboundSelection),
                     },
                     ...(remote.accepted ? {} : { error: "remote_mouse_action_failed" }),
                 };
@@ -181,10 +287,25 @@ export const mouseActionTool = {
         catch (error) {
             if (!isYeonjangUnavailableError(error)) {
                 const message = error instanceof Error ? error.message : String(error);
-                return { success: false, output: `Yeonjang 마우스 액션 실패: ${message}`, error: message };
+                return {
+                    success: false,
+                    output: `Yeonjang 마우스 액션 실패: ${message}`,
+                    error: message,
+                    details: {
+                        via: "yeonjang",
+                        ...buildYeonjangTargetResolutionDetails(selection),
+                    },
+                };
             }
         }
-        return yeonjangRequiredFailure("mouse.action");
+        const failure = yeonjangRequiredFailure("mouse.action");
+        return {
+            ...failure,
+            details: {
+                ...(failure.details && typeof failure.details === "object" ? failure.details : {}),
+                ...buildYeonjangTargetResolutionDetails(selection),
+            },
+        };
     },
 };
 //# sourceMappingURL=mouse.js.map

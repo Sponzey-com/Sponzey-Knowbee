@@ -10,6 +10,7 @@ import type {
   StatusResponse,
   TestBackendResponse,
   TestMcpServerResponse,
+  YeonjangFleetResponse,
   TestSlackResponse,
   TestSkillPathResponse,
   TestTelegramResponse,
@@ -95,6 +96,27 @@ export const localAdapter: ControlPlaneAdapter = {
   getMcpServers: () => request<McpServersResponse>("/api/mcp/servers"),
   reloadMcpServers: () => request<McpServersResponse>("/api/mcp/reload", { method: "POST" }),
   getMqttRuntime: () => request<MqttRuntimeResponse>("/api/settings/mqtt/runtime"),
+  getYeonjangFleet: () => request<YeonjangFleetResponse>("/api/yeonjang/instances"),
+  approveYeonjangPairing: (instanceId, payload) =>
+    request<YeonjangFleetResponse>(`/api/yeonjang/instances/${encodeURIComponent(instanceId)}/pairing/approve`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateYeonjangTrust: (instanceId, payload) =>
+    request<YeonjangFleetResponse>(`/api/yeonjang/instances/${encodeURIComponent(instanceId)}/trust`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  renameYeonjangInstance: (instanceId, payload) =>
+    request<YeonjangFleetResponse>(`/api/yeonjang/instances/${encodeURIComponent(instanceId)}/rename`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  assignYeonjangLocalMarker: (instanceId, payload) =>
+    request<YeonjangFleetResponse>(`/api/yeonjang/instances/${encodeURIComponent(instanceId)}/local-marker`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   disconnectMqttExtension: (extensionId: string) =>
     request<{ ok: boolean; message: string }>(`/api/settings/mqtt/extensions/${encodeURIComponent(extensionId)}/disconnect`, { method: "POST" }),
 }

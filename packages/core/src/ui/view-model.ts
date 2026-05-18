@@ -35,6 +35,17 @@ export interface UiShellDomainState {
     yeonjang: {
       mqttEnabled: boolean
       connectedExtensions: number
+      localInstances?: number
+      remoteInstances?: number
+      broadcastSafeTools?: number
+      broadcastBlockedTools?: number
+      broadcastApprovalRequiredTools?: number
+      supportProfiles?: {
+        desktopInteractive: number
+        desktopLimited: number
+        headlessManaged: number
+      }
+      defaultTargetStatus?: string
     }
   }
   activeRuns: {

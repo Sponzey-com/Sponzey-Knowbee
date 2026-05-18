@@ -1,5 +1,9 @@
 import crypto from "node:crypto"
 import type { ChannelProvider, ChannelSource } from "../channels/contracts.js"
+import {
+  isStructuredYeonjangTargetSelector,
+  validateYeonjangTargetSelector,
+} from "./yeonjang-target.js"
 
 export const CONTRACT_SCHEMA_VERSION = 1 as const
 
@@ -262,6 +266,18 @@ export function validateToolTargetContract(value: unknown): ContractValidationRe
   validateStringEnum(value.kind, TARGET_KINDS, "$.kind", issues)
   validateOptionalString(value.id, "$.id", issues)
   validateOptionalJsonObject(value.selector, "$.selector", issues)
+  if (
+    value.kind === "extension"
+    && value.selector != null
+    && isStructuredYeonjangTargetSelector(value.selector)
+  ) {
+    const selectorValidation = validateYeonjangTargetSelector(value.selector)
+    if (!selectorValidation.ok) {
+      for (const issue of selectorValidation.issues) {
+        addIssue(issues, issue.path.replace(/^\$/, "$.selector"), issue.code, issue.message)
+      }
+    }
+  }
   validateOptionalString(value.displayName, "$.displayName", issues)
   validateOptionalString(value.rawText, "$.rawText", issues)
   return issues.length === 0 ? { ok: true, value: value as unknown as ToolTargetContract, issues: [] } : { ok: false, issues }

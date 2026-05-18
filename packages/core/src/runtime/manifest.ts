@@ -13,6 +13,7 @@ import { getProviderCapabilityMatrix, type ProviderCapabilityMatrix } from "../a
 import { buildRolloutSafetySnapshot, type RolloutSafetySnapshot } from "./rollout-safety.js"
 import { resolveAdminUiActivation } from "../ui/mode.js"
 import { getWebUiWsClientCount } from "../api/ws/stream.js"
+import { listYeonjangRegistryInstances } from "../yeonjang/registry.js"
 
 export interface RuntimeManifestEnvironment {
   node: string
@@ -89,12 +90,23 @@ export interface RuntimeManifestChannelSummary {
 
 export interface RuntimeManifestYeonjangNode {
   extensionId: string
+  instanceId?: string | null
+  instanceAlias?: string | null
   state: string | null
   version: string | null
   protocolVersion: string | null
   capabilityHash: string | null
   methodCount: number
   lastSeenAt: number
+  liveSessionCount?: number
+  supportProfile?: string | null
+  configuredSupportProfile?: string | null
+  supportProfileReasonCodes?: string[]
+  interactiveDesktopAvailable?: boolean | null
+  trayRuntimeAvailable?: boolean | null
+  startupMode?: string | null
+  windowMode?: string | null
+  trayState?: string | null
 }
 
 export interface RuntimeManifestMemory {
@@ -356,15 +368,52 @@ function buildChannels(): RuntimeManifestChannelSummary {
 }
 
 function buildYeonjang(): RuntimeManifest["yeonjang"] {
-  const nodes = getMqttExtensionSnapshots().map((node) => ({
-    extensionId: node.extensionId,
+  const liveSnapshots = new Map(
+    getMqttExtensionSnapshots().map((node) => [node.extensionId, node] as const),
+  )
+  const registryNodes = listYeonjangRegistryInstances().map((node) => {
+    const live = liveSnapshots.get(node.nodeId)
+    return {
+    extensionId: node.nodeId,
+    instanceId: node.instanceId,
+    instanceAlias: node.instanceAlias,
     state: node.state,
     version: node.version,
     protocolVersion: node.protocolVersion ?? null,
     capabilityHash: node.capabilityHash ?? null,
-    methodCount: node.methods.length,
-    lastSeenAt: node.lastSeenAt,
-  }))
+    methodCount: node.methodCount,
+    lastSeenAt: node.lastSeenAt ?? 0,
+    liveSessionCount: node.liveSessionCount,
+    supportProfile: node.supportProfile,
+    configuredSupportProfile: live?.configuredSupportProfile ?? null,
+    supportProfileReasonCodes: live?.supportProfileReasonCodes ?? [],
+    interactiveDesktopAvailable: live?.interactiveDesktopAvailable ?? null,
+    trayRuntimeAvailable: live?.trayRuntimeAvailable ?? null,
+    startupMode: node.session?.startupMode ?? null,
+    windowMode: node.session?.windowMode ?? null,
+    trayState: node.session?.trayState ?? null,
+  }})
+  const nodes = registryNodes.length > 0
+    ? registryNodes
+    : getMqttExtensionSnapshots().map((node) => ({
+      extensionId: node.extensionId,
+      instanceId: node.instanceId ?? null,
+      instanceAlias: node.instanceAlias ?? null,
+      state: node.state,
+      version: node.version,
+      protocolVersion: node.protocolVersion ?? null,
+      capabilityHash: node.capabilityHash ?? null,
+      methodCount: node.methods.length,
+      lastSeenAt: node.lastSeenAt,
+      supportProfile: node.supportProfile ?? null,
+      configuredSupportProfile: node.configuredSupportProfile ?? null,
+      supportProfileReasonCodes: node.supportProfileReasonCodes ?? [],
+      interactiveDesktopAvailable: node.interactiveDesktopAvailable ?? null,
+      trayRuntimeAvailable: node.trayRuntimeAvailable ?? null,
+      startupMode: node.startupMode ?? null,
+      windowMode: node.windowMode ?? null,
+      trayState: node.trayState ?? null,
+    }))
   return {
     nodeCount: nodes.length,
     capabilityHash: nodes.length > 0 ? hashObject(nodes.map((node) => ({ id: node.extensionId, hash: node.capabilityHash, methods: node.methodCount }))) : null,

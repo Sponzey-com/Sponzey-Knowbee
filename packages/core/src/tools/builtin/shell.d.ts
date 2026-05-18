@@ -1,10 +1,10 @@
 import type { AgentTool } from "../types.js";
-interface ShellExecParams {
+import { type YeonjangTargetedToolParams } from "./yeonjang-target.js";
+interface ShellExecParams extends YeonjangTargetedToolParams {
     command: string;
     workDir?: string;
     timeoutSec?: number;
     env?: Record<string, string>;
-    extensionId?: string;
 }
 export declare const shellExecTool: AgentTool<ShellExecParams>;
 export {};

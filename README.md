@@ -195,6 +195,8 @@ For normal macOS local control:
 bash scripts/start-yeonjang-macos.sh
 ```
 
+Yeonjang starts in tray-first mode for `desktop_interactive`: the main window stays hidden at launch, the tray icon remains available, and closing the window hides it back to the tray instead of exiting.
+
 For a clean macOS restart:
 
 ```bash
@@ -223,6 +225,14 @@ bash scripts/start-yeonjang-linux.sh --restart
 bash scripts/stop-yeonjang-linux.sh
 ```
 
+For Linux headless managed control:
+
+```bash
+bash scripts/start-yeonjang-linux-headless.sh
+bash scripts/start-yeonjang-linux-headless.sh --restart
+bash scripts/stop-yeonjang-linux-headless.sh
+```
+
 For source-based development:
 
 ```bash
@@ -233,8 +243,18 @@ Notes:
 
 - `start-yeonjang-macos.sh` checks and rebuilds the macOS app bundle before launch.
 - `start-yeonjang-windows.bat` owns the Windows start and restart flow, and uses the build script only to prepare a missing binary.
-- `start-yeonjang-linux.sh` checks and rebuilds the Linux binary before launch.
+- `start-yeonjang-linux.sh` checks and rebuilds the Linux desktop binary before launch.
+- `start-yeonjang-linux-headless.sh` runs the `headless_managed` profile through the managed MQTT entrypoint with no tray/window expectation.
 - `build-yeonjang-windows.bat` and `build-yeonjang-linux.sh` stay focused on build output preparation.
+- Yeonjang support profiles are:
+  - `desktop_interactive`: tray-first desktop app
+  - `desktop_limited`: desktop app without tray-first guarantees
+  - `headless_managed`: MQTT/runtime-only managed node
+- `desktop_interactive` starts hidden to the tray. Open the window from the tray menu, and on Windows you can also reopen it with a tray double-click.
+- Linux tray icon event support is limited, so Linux should be treated as tray-menu-first for reopening the window.
+- Linux desktop start requires `DISPLAY` or `WAYLAND_DISPLAY`. If neither exists, use the headless managed script instead of the GUI script.
+- The window close button is hide-to-tray. Use the tray menu `Quit` item when you want the process to exit.
+- `Launch on Startup` writes an OS-specific autostart entry and starts Yeonjang again in the same tray-first mode.
 - Use the stop script only when you want Yeonjang to remain stopped after cleanup.
 
 In Yeonjang, the default MQTT connection is:

@@ -44,6 +44,21 @@ cleanup_stale_pid() {
   fi
 }
 
+find_running_pid() {
+  local match="${1:-}"
+  if [[ -z "$match" ]]; then
+    return 1
+  fi
+
+  local pid
+  pid="$(pgrep -f "$match" | tail -n 1 || true)"
+  if [[ -z "$pid" ]]; then
+    return 1
+  fi
+
+  echo "$pid"
+}
+
 stop_existing() {
   cleanup_stale_pid
   if [[ ! -f "$PID_FILE" ]]; then
@@ -68,22 +83,30 @@ stop_existing() {
   rm -f "$PID_FILE"
 }
 
+resolve_app_bundle_path() {
+  local base_dir="$ROOT_DIR/Yeonjang/target"
+  if [[ -n "$TARGET_TRIPLE" ]]; then
+    local app_bundle="$base_dir/$TARGET_TRIPLE/$PROFILE/$APP_NAME.app"
+    if [[ -d "$app_bundle" ]]; then
+      echo "$app_bundle"
+      return
+    fi
+  else
+    local app_bundle="$base_dir/$PROFILE/$APP_NAME.app"
+    if [[ -d "$app_bundle" ]]; then
+      echo "$app_bundle"
+      return
+    fi
+  fi
+
+  echo ""
+}
+
 resolve_binary_path() {
   local base_dir="$ROOT_DIR/Yeonjang/target"
-  local app_binary
   if [[ -n "$TARGET_TRIPLE" ]]; then
-    app_binary="$base_dir/$TARGET_TRIPLE/$PROFILE/$APP_NAME.app/Contents/MacOS/$APP_NAME"
-    if [[ -x "$app_binary" ]]; then
-      echo "$app_binary"
-      return
-    fi
     echo "$base_dir/$TARGET_TRIPLE/$PROFILE/$BINARY_NAME"
   else
-    app_binary="$base_dir/$PROFILE/$APP_NAME.app/Contents/MacOS/$APP_NAME"
-    if [[ -x "$app_binary" ]]; then
-      echo "$app_binary"
-      return
-    fi
     echo "$base_dir/$PROFILE/$BINARY_NAME"
   fi
 }
@@ -91,8 +114,9 @@ resolve_binary_path() {
 echo "Yeonjang macOS GUI 빌드를 확인합니다..."
 bash "$ROOT_DIR/scripts/build-yeonjang-macos.sh"
 
+APP_BUNDLE_PATH="$(resolve_app_bundle_path)"
 BINARY_PATH="$(resolve_binary_path)"
-if [[ ! -x "$BINARY_PATH" ]]; then
+if [[ -z "$APP_BUNDLE_PATH" && ! -x "$BINARY_PATH" ]]; then
   echo "Yeonjang 실행 파일을 찾을 수 없습니다: $BINARY_PATH"
   exit 1
 fi
@@ -105,16 +129,30 @@ stop_existing
 : > "$LOG_FILE"
 
 echo "Yeonjang GUI를 시작합니다..."
-(
-  cd "$ROOT_DIR"
-  exec nohup "$BINARY_PATH" </dev/null
-) >>"$LOG_FILE" 2>&1 &
+if [[ -n "$APP_BUNDLE_PATH" ]]; then
+  open -na "$APP_BUNDLE_PATH" >>"$LOG_FILE" 2>&1
+else
+  (
+    cd "$ROOT_DIR"
+    exec "$BINARY_PATH" </dev/null
+  ) >>"$LOG_FILE" 2>&1 &
+fi
 
-echo "$!" > "$PID_FILE"
+STARTED_PID=""
+MATCH_PATH="$BINARY_PATH"
+if [[ -n "$APP_BUNDLE_PATH" ]]; then
+  MATCH_PATH="$APP_BUNDLE_PATH/Contents/MacOS/$APP_NAME"
+fi
 
-sleep 2
+for _ in $(seq 1 40); do
+  STARTED_PID="$(find_running_pid "$MATCH_PATH" || true)"
+  if [[ -n "$STARTED_PID" ]] && kill -0 "$STARTED_PID" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.25
+done
 
-if ! kill -0 "$(cat "$PID_FILE")" >/dev/null 2>&1; then
+if [[ -z "$STARTED_PID" ]] || ! kill -0 "$STARTED_PID" >/dev/null 2>&1; then
   echo "Yeonjang GUI가 시작 중 종료되었습니다."
   echo "로그:"
   tail -n 80 "$LOG_FILE" || true
@@ -122,8 +160,11 @@ if ! kill -0 "$(cat "$PID_FILE")" >/dev/null 2>&1; then
   exit 1
 fi
 
+echo "$STARTED_PID" > "$PID_FILE"
+
 echo "Yeonjang GUI 실행 완료"
 echo "  PID  : $(cat "$PID_FILE")"
 echo "  Log  : $LOG_FILE"
+echo "  Mode : tray-first (startup hidden, close hides to tray)"
 echo "  Stop : bash scripts/stop-yeonjang-macos.sh"
 echo "  Restart : bash scripts/start-yeonjang-macos.sh --restart"

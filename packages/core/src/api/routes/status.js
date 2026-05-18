@@ -13,6 +13,8 @@ import { getFastResponseHealthSnapshot } from "../../observability/latency.js";
 import { loadPromptSourceRegistry } from "../../memory/nobie-md.js";
 import { resolveOrchestrationModeSnapshotSync } from "../../orchestration/mode.js";
 import { getGatewayProcessStartTimeMs, getRuntimeBuildStatus } from "../../runtime/build-status.js";
+import { buildYeonjangFleetProjection } from "../../yeonjang/topology.js";
+import { buildYeonjangBroadcastPolicyProjection } from "../../yeonjang/broadcast-policy.js";
 const startTime = getGatewayProcessStartTimeMs();
 const startedAt = new Date(startTime).toISOString();
 function getPromptSourceSnapshot() {
@@ -43,6 +45,8 @@ export function registerStatusRoute(app) {
         const orchestrator = capabilities.find((item) => item.key === "gateway.orchestrator");
         const orchestration = resolveOrchestrationModeSnapshotSync();
         const runtimeBuild = getRuntimeBuildStatus();
+        const yeonjangFleet = buildYeonjangFleetProjection();
+        const yeonjangBroadcastPolicies = buildYeonjangBroadcastPolicyProjection();
         const uptime = Math.floor((Date.now() - startTime) / 1000);
         return {
             version: getCurrentAppVersion(),
@@ -82,7 +86,30 @@ export function registerStatusRoute(app) {
             mcp: mcpRegistry.getSummary(),
             mqtt: getMqttBrokerSnapshot(),
             yeonjang: {
-                extensions: getMqttExtensionSnapshots(),
+                extensions: getMqttExtensionSnapshots().map((snapshot) => ({
+                    extensionId: snapshot.extensionId,
+                    displayName: snapshot.displayName,
+                    state: snapshot.state,
+                    message: snapshot.message,
+                    version: snapshot.version,
+                    protocolVersion: snapshot.protocolVersion ?? null,
+                    platform: snapshot.platform ?? snapshot.os ?? null,
+                    arch: snapshot.arch ?? null,
+                    transport: snapshot.transport ?? [],
+                    capabilityHash: snapshot.capabilityHash ?? null,
+                    methodCount: snapshot.methods.length,
+                    lastSeenAt: snapshot.lastSeenAt,
+                    instanceId: snapshot.instanceId ?? null,
+                    instanceAlias: snapshot.instanceAlias ?? null,
+                    sessionId: snapshot.sessionId ?? null,
+                })),
+                registry: {
+                    summary: yeonjangFleet.summary,
+                    instances: yeonjangFleet.instances,
+                    diffSummaries: yeonjangFleet.diffSummaries,
+                    defaultTarget: yeonjangFleet.summary.defaultTarget,
+                    broadcastPolicies: yeonjangBroadcastPolicies,
+                },
             },
             paths: {
                 stateDir: PATHS.stateDir,

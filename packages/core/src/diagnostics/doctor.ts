@@ -12,6 +12,7 @@ import { DEFAULT_EVIDENCE_CONFLICT_POLICY } from "../runs/web-conflict-resolver.
 import { DEFAULT_RETRIEVAL_CACHE_TTL_POLICY } from "../runs/web-retrieval-cache.js"
 import { buildWebSourceAdapterRegistrySnapshot } from "../runs/web-source-adapters/index.js"
 import { runPlanDriftCheck } from "./plan-drift.js"
+import { getYeonjangRegistrySummary } from "../yeonjang/registry.js"
 
 export type DoctorStatus = "ok" | "warning" | "blocked" | "unknown"
 export type DoctorMode = "quick" | "full"
@@ -324,18 +325,65 @@ function checkAdminUi(manifest: RuntimeManifest): DoctorCheckResult {
 
 function checkMqtt(manifest: RuntimeManifest): DoctorCheckResult {
   const mqtt = manifest.channels.mqtt
-  if (!mqtt.enabled) return makeCheck("yeonjang.mqtt", "unknown", "MQTT 브로커가 비활성화되어 있습니다.")
-  if (!mqtt.running) return makeCheck("yeonjang.mqtt", "warning", mqtt.reason ?? "MQTT 브로커가 실행 중이 아닙니다.", { host: mqtt.host, port: mqtt.port })
-  return makeCheck("yeonjang.mqtt", "ok", "MQTT 브로커가 실행 중입니다.", { host: mqtt.host, port: mqtt.port, authEnabled: mqtt.authEnabled })
+  const registry = getYeonjangRegistrySummary()
+  if (!mqtt.enabled) return makeCheck("yeonjang.mqtt", "unknown", "MQTT 브로커가 비활성화되어 있습니다.", { registry })
+  if (!mqtt.running) return makeCheck("yeonjang.mqtt", "warning", mqtt.reason ?? "MQTT 브로커가 실행 중이 아닙니다.", { host: mqtt.host, port: mqtt.port, registry })
+  return makeCheck("yeonjang.mqtt", "ok", "MQTT 브로커가 실행 중입니다.", { host: mqtt.host, port: mqtt.port, authEnabled: mqtt.authEnabled, registry })
 }
 
 function checkYeonjangProtocol(manifest: RuntimeManifest): DoctorCheckResult {
-  if (manifest.yeonjang.nodeCount === 0) return makeCheck("yeonjang.protocol", "unknown", "연장 노드가 연결되어 있지 않습니다.")
+  const registry = getYeonjangRegistrySummary()
+  if (manifest.yeonjang.nodeCount === 0) return makeCheck("yeonjang.protocol", "unknown", "연장 노드가 연결되어 있지 않습니다.", { registry })
   const missing = manifest.yeonjang.nodes.filter((node) => !node.protocolVersion || !node.capabilityHash)
+  const profileOverrides = manifest.yeonjang.nodes.filter((node) =>
+    node.configuredSupportProfile
+      && node.supportProfile
+      && node.configuredSupportProfile !== node.supportProfile,
+  )
+  const lifecycleMismatches = manifest.yeonjang.nodes.filter((node) =>
+    node.supportProfile === "desktop_interactive"
+      && (node.windowMode !== "hidden" || node.trayState !== "visible"),
+  )
   if (missing.length > 0) {
-    return makeCheck("yeonjang.protocol", "warning", "일부 연장 노드의 protocol/capability 정보가 부족합니다.", { missing: missing.map((node) => node.extensionId) })
+    return makeCheck("yeonjang.protocol", "warning", "일부 연장 노드의 protocol/capability 정보가 부족합니다.", {
+      missing: missing.map((node) => node.extensionId),
+      registry,
+    })
   }
-  return makeCheck("yeonjang.protocol", "ok", "연장 protocol/capability 정보가 확인되었습니다.", { nodeCount: manifest.yeonjang.nodeCount })
+  if (profileOverrides.length > 0) {
+    return makeCheck("yeonjang.protocol", "warning", "일부 연장 노드가 configured support profile보다 제한된 profile로 내려가 실행 중입니다.", {
+      profileOverrides: profileOverrides.map((node) => ({
+        extensionId: node.extensionId,
+        configuredSupportProfile: node.configuredSupportProfile ?? null,
+        supportProfile: node.supportProfile ?? null,
+        interactiveDesktopAvailable: node.interactiveDesktopAvailable ?? null,
+        trayRuntimeAvailable: node.trayRuntimeAvailable ?? null,
+        supportProfileReasonCodes: node.supportProfileReasonCodes ?? [],
+      })),
+      registry,
+    }, "headless/server 환경이면 headless_managed entrypoint를 사용하고, desktop 환경이면 tray/display availability를 확인하세요.")
+  }
+  if (lifecycleMismatches.length > 0) {
+    return makeCheck("yeonjang.protocol", "warning", "일부 연장 노드가 tray-first lifecycle 정책과 다르게 동작 중입니다.", {
+      lifecycleMismatches: lifecycleMismatches.map((node) => ({
+        extensionId: node.extensionId,
+        supportProfile: node.supportProfile ?? null,
+        startupMode: node.startupMode ?? null,
+        windowMode: node.windowMode ?? null,
+        trayState: node.trayState ?? null,
+      })),
+      registry,
+    }, "desktop_interactive 프로파일은 startup hidden + tray visible 상태인지 확인하세요.")
+  }
+  return makeCheck("yeonjang.protocol", "ok", "연장 protocol/capability 정보가 확인되었습니다.", {
+    nodeCount: manifest.yeonjang.nodeCount,
+    lifecycleReadyCount: manifest.yeonjang.nodes.filter((node) =>
+      node.supportProfile === "desktop_interactive"
+        ? node.windowMode === "hidden" && node.trayState === "visible"
+        : true,
+    ).length,
+    registry,
+  })
 }
 
 function checkDbMigration(manifest: RuntimeManifest): DoctorCheckResult {

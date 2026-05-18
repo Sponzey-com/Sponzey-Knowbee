@@ -3,13 +3,12 @@
  * Uses @nut-tree/nut-js when available, falls back to platform CLI tools.
  */
 import type { AgentTool } from "../../types.js";
-interface ScreenCaptureParams {
-    extensionId?: string;
+import { type YeonjangTargetedToolParams } from "../yeonjang-target.js";
+interface ScreenCaptureParams extends YeonjangTargetedToolParams {
     display?: number | string;
 }
-interface ScreenFindTextParams {
+interface ScreenFindTextParams extends YeonjangTargetedToolParams {
     text: string;
-    extensionId?: string;
 }
 export declare const screenCaptureTool: AgentTool<ScreenCaptureParams>;
 export declare const screenFindTextTool: AgentTool<ScreenFindTextParams>;

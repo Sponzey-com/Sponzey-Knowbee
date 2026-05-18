@@ -1,6 +1,7 @@
 export { toolDispatcher, ToolDispatcher } from "./dispatcher.js";
 export { fileReadTool, fileWriteTool, fileListTool, fileDeleteTool, filePatchTool, } from "./builtin/file.js";
 export { shellExecTool } from "./builtin/shell.js";
+export { yeonjangBroadcastRunTool } from "./builtin/yeonjang-broadcast.js";
 export { fileSearchTool } from "./builtin/file-search.js";
 export { webSearchTool } from "./builtin/web-search.js";
 export { webFetchTool } from "./builtin/web-fetch.js";
@@ -20,6 +21,7 @@ import { fileDeleteTool, fileListTool, filePatchTool, fileReadTool, fileWriteToo
 import { fileSemanticSearchTool, memorySearchTool, memoryStoreTool } from "./builtin/memory.js";
 import { processKillTool, processListTool } from "./builtin/process.js";
 import { shellExecTool } from "./builtin/shell.js";
+import { yeonjangBroadcastRunTool } from "./builtin/yeonjang-broadcast.js";
 import { telegramSendFileTool } from "./builtin/telegram-send.js";
 import { clipboardReadTool, clipboardWriteTool } from "./builtin/ui/clipboard.js";
 import { keyboardActionTool, keyboardShortcutTool, keyboardTypeTool, } from "./builtin/ui/keyboard.js";
@@ -67,6 +69,7 @@ export function registerBuiltinTools() {
         windowListTool,
         windowFocusTool,
         // Yeonjang extension
+        yeonjangBroadcastRunTool,
         yeonjangCameraListTool,
         yeonjangCameraCaptureTool,
         // Channel delivery

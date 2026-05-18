@@ -11,6 +11,7 @@ import {
   type MemoryWritebackReviewItem,
   type MqttRuntimeResponse,
   type StatusResponse,
+  type YeonjangFleetResponse,
 } from "../api/client"
 import { ActiveInstructionsPanel } from "../components/ActiveInstructionsPanel"
 import { McpServersPanel } from "../components/McpServersPanel"
@@ -20,6 +21,7 @@ import { MqttRuntimePanel } from "../components/setup/MqttRuntimePanel"
 import { MqttSettingsForm } from "../components/setup/MqttSettingsForm"
 import { RemoteAccessForm } from "../components/setup/RemoteAccessForm"
 import { SecuritySettingsForm } from "../components/setup/SecuritySettingsForm"
+import { YeonjangFleetPanel } from "../components/setup/YeonjangFleetPanel"
 import { SlackCheckPanel } from "../components/setup/SlackCheckPanel"
 import { SlackSettingsForm } from "../components/setup/SlackSettingsForm"
 import { DiscordSettingsForm } from "../components/setup/DiscordSettingsForm"
@@ -42,8 +44,10 @@ import {
   type AdvancedSettingsTabId,
 } from "../lib/advanced-settings"
 import { getPreferredSingleAiBackendId, setSingleAiBackendEnabled } from "../lib/single-ai"
+import { resolveInspectableYeonjangInstance } from "../lib/yeonjang-fleet"
 import { useCapabilitiesStore } from "../stores/capabilities"
 import { useSetupStore } from "../stores/setup"
+import { useUiModeStore } from "../stores/uiMode"
 import { useUiI18n } from "../lib/ui-i18n"
 import { pickUiText, useUiLanguageStore } from "../stores/uiLanguage"
 
@@ -144,6 +148,13 @@ export function SettingsPage() {
   const [mqttRuntime, setMqttRuntime] = useState<MqttRuntimeResponse | null>(null)
   const [mqttRuntimeLoading, setMqttRuntimeLoading] = useState(false)
   const [mqttRuntimeError, setMqttRuntimeError] = useState("")
+  const [yeonjangFleet, setYeonjangFleet] = useState<YeonjangFleetResponse | null>(null)
+  const [yeonjangFleetLoading, setYeonjangFleetLoading] = useState(false)
+  const [yeonjangFleetError, setYeonjangFleetError] = useState("")
+  const [selectedYeonjangInstanceId, setSelectedYeonjangInstanceId] = useState<string | null>(null)
+  const [yeonjangGovernancePending, setYeonjangGovernancePending] = useState(false)
+  const [yeonjangGovernanceError, setYeonjangGovernanceError] = useState("")
+  const [yeonjangGovernanceMessage, setYeonjangGovernanceMessage] = useState("")
   const [disconnectingExtensionId, setDisconnectingExtensionId] = useState<string | null>(null)
   const [operationsDiagnostics, setOperationsDiagnostics] = useState<OperationsDiagnosticsSnapshot | null>(null)
   const [operationsDiagnosticsLoading, setOperationsDiagnosticsLoading] = useState(false)
@@ -181,6 +192,7 @@ export function SettingsPage() {
   const [channelActionMessage, setChannelActionMessage] = useState("")
   const [channelActionId, setChannelActionId] = useState<string | null>(null)
   const [localBridgeConsent, setLocalBridgeConsent] = useState(false)
+  const uiMode = useUiModeStore((state) => state.mode)
   const uiLanguage = useUiLanguageStore((state) => state.language)
   const { text, displayText } = useUiI18n()
   const capabilities = useCapabilitiesStore((state) => state.items)
@@ -219,6 +231,112 @@ export function SettingsPage() {
       setMqttRuntimeLoading(false)
     }
   }, [])
+
+  const loadYeonjangFleet = useCallback(async () => {
+    setYeonjangFleetLoading(true)
+    try {
+      const fleet = await api.yeonjangFleet()
+      setYeonjangFleet(fleet)
+      setSelectedYeonjangInstanceId((current) => {
+        const selected = resolveInspectableYeonjangInstance(fleet, current)
+        return selected?.instanceId ?? null
+      })
+      setYeonjangFleetError("")
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setYeonjangFleetError(message)
+    } finally {
+      setYeonjangFleetLoading(false)
+    }
+  }, [])
+
+  const applyYeonjangFleet = useCallback((fleet: YeonjangFleetResponse, successMessage: string) => {
+    setYeonjangFleet(fleet)
+    setSelectedYeonjangInstanceId((current) => {
+      const selected = resolveInspectableYeonjangInstance(fleet, current)
+      return selected?.instanceId ?? fleet.instances[0]?.instanceId ?? null
+    })
+    setYeonjangFleetError("")
+    setYeonjangGovernanceError("")
+    setYeonjangGovernanceMessage(successMessage)
+  }, [])
+
+  const runYeonjangGovernanceAction = useCallback(async (
+    action: () => Promise<YeonjangFleetResponse>,
+    successMessage: string,
+  ) => {
+    setYeonjangGovernancePending(true)
+    setYeonjangGovernanceError("")
+    setYeonjangGovernanceMessage("")
+    try {
+      const fleet = await action()
+      applyYeonjangFleet(fleet, successMessage)
+    } catch (error) {
+      setYeonjangGovernanceError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setYeonjangGovernancePending(false)
+    }
+  }, [applyYeonjangFleet])
+
+  const handleApproveYeonjangPairing = useCallback(async (payload: {
+    instanceId: string
+    pairingSecret: string
+    ownerUserId?: string
+    workspaceScopeId?: string
+    reason?: string
+  }) => {
+    await runYeonjangGovernanceAction(
+      () => api.approveYeonjangPairing(payload.instanceId, {
+        pairingSecret: payload.pairingSecret,
+        ...(payload.ownerUserId ? { ownerUserId: payload.ownerUserId } : {}),
+        ...(payload.workspaceScopeId ? { workspaceScopeId: payload.workspaceScopeId } : {}),
+        ...(payload.reason ? { reason: payload.reason } : {}),
+      }),
+      text("Pairing 승인을 저장했습니다.", "Saved pairing approval."),
+    )
+  }, [runYeonjangGovernanceAction, text])
+
+  const handleUpdateYeonjangTrust = useCallback(async (payload: {
+    instanceId: string
+    trustState: "pending" | "trusted" | "revoked" | "quarantined"
+    reason?: string
+  }) => {
+    await runYeonjangGovernanceAction(
+      () => api.updateYeonjangTrust(payload.instanceId, {
+        trustState: payload.trustState,
+        ...(payload.reason ? { reason: payload.reason } : {}),
+      }),
+      text("Trust 상태를 업데이트했습니다.", "Updated trust state."),
+    )
+  }, [runYeonjangGovernanceAction, text])
+
+  const handleRenameYeonjangInstance = useCallback(async (payload: {
+    instanceId: string
+    instanceAlias?: string
+    displayName?: string
+    reason?: string
+  }) => {
+    await runYeonjangGovernanceAction(
+      () => api.renameYeonjangInstance(payload.instanceId, {
+        ...(payload.instanceAlias ? { instanceAlias: payload.instanceAlias } : {}),
+        ...(payload.displayName ? { displayName: payload.displayName } : {}),
+        ...(payload.reason ? { reason: payload.reason } : {}),
+      }),
+      text("인스턴스 이름을 저장했습니다.", "Saved instance names."),
+    )
+  }, [runYeonjangGovernanceAction, text])
+
+  const handleAssignYeonjangLocalMarker = useCallback(async (payload: {
+    instanceId: string
+    reason?: string
+  }) => {
+    await runYeonjangGovernanceAction(
+      () => api.assignYeonjangLocalMarker(payload.instanceId, {
+        ...(payload.reason ? { reason: payload.reason } : {}),
+      }),
+      text("로컬 기준 인스턴스를 변경했습니다.", "Updated local baseline instance."),
+    )
+  }, [runYeonjangGovernanceAction, text])
 
   const loadOperationsDiagnostics = useCallback(async () => {
     setOperationsDiagnosticsLoading(true)
@@ -331,11 +449,13 @@ export function SettingsPage() {
   useEffect(() => {
     if (tab !== "yeonjang") return
     void loadMqttRuntime()
+    void loadYeonjangFleet()
     const timer = window.setInterval(() => {
       void loadMqttRuntime()
+      void loadYeonjangFleet()
     }, 3000)
     return () => window.clearInterval(timer)
-  }, [tab, editorVersion, loadMqttRuntime])
+  }, [tab, editorVersion, loadMqttRuntime, loadYeonjangFleet])
 
   useEffect(() => {
     if (tab !== "memory" && tab !== "schedules" && tab !== "release") return
@@ -564,14 +684,14 @@ export function SettingsPage() {
     try {
       const result = await api.disconnectMqttExtension(extensionId)
       setMqttRuntimeError(result.ok ? "" : result.message)
-      await loadMqttRuntime()
+      await Promise.all([loadMqttRuntime(), loadYeonjangFleet()])
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setMqttRuntimeError(message)
     } finally {
       setDisconnectingExtensionId(null)
     }
-  }, [loadMqttRuntime])
+  }, [loadMqttRuntime, loadYeonjangFleet])
 
   function patchDraft<K extends keyof SetupDraft>(key: K, value: SetupDraft[K]) {
     setLocalDraft((current) => {
@@ -787,6 +907,22 @@ export function SettingsPage() {
               <MqttSettingsForm
                 value={activeDraft.mqtt}
                 onChange={(patch) => patchDraft("mqtt", { ...activeDraft.mqtt, ...patch })}
+              />
+              <YeonjangFleetPanel
+                fleet={yeonjangFleet}
+                loading={yeonjangFleetLoading}
+                error={yeonjangFleetError}
+                actionPending={yeonjangGovernancePending}
+                actionError={yeonjangGovernanceError}
+                actionMessage={yeonjangGovernanceMessage}
+                mode={uiMode}
+                selectedInstanceId={selectedYeonjangInstanceId}
+                onSelectInstance={setSelectedYeonjangInstanceId}
+                onRefresh={() => void loadYeonjangFleet()}
+                onApprovePairing={(payload) => void handleApproveYeonjangPairing(payload)}
+                onUpdateTrust={(payload) => void handleUpdateYeonjangTrust(payload)}
+                onRenameInstance={(payload) => void handleRenameYeonjangInstance(payload)}
+                onAssignLocalMarker={(payload) => void handleAssignYeonjangLocalMarker(payload)}
               />
               <MqttRuntimePanel
                 runtime={mqttRuntime}

@@ -42,14 +42,55 @@ Platform binaries are optional on a single-host local release build, but must be
 8. Run architecture cleanup gate: `pnpm run test:architecture`.
 9. Review dead-code cleanup evidence in `.tasks/dead-code-candidates.md` and confirm no immediate-delete candidate remains in production source.
 10. Run UI mode release gate: `pnpm test tests/task017-ui-release-gate.test.ts`.
-11. Run sub-agent release readiness gate: `pnpm test tests/task030-release-gate-rollback-soak.test.ts`.
-12. Run Enterprise Topology release gate: `pnpm test tests/task025-enterprise-topology-release-gate.test.ts`.
-13. Run backup/restore rehearsal: `pnpm run backup:rehearsal`.
-14. Run channel delivery release gate: `pnpm exec vitest run tests/channel-delivery-fallback.test.ts tests/channel-smoke-runner.test.ts tests/channel-adapter-contract-runner.test.ts tests/channel-connections.test.ts tests/task013-channel-api.test.ts`.
-15. Run channel smoke dry-run: `pnpm run smoke:channels`.
-16. Build Yeonjang packages for each target OS.
-17. Generate release manifest and checksum files: `pnpm run release:package`.
-18. Run at least one live channel smoke and one Yeonjang smoke before public publish.
+11. Run Yeonjang multi-instance release gate: `pnpm exec vitest run tests/task010-yeonjang-multi-instance-e2e.test.ts tests/task010-yeonjang-release-gate.test.ts`.
+12. Run sub-agent release readiness gate: `pnpm test tests/task030-release-gate-rollback-soak.test.ts`.
+13. Run Enterprise Topology release gate: `pnpm test tests/task025-enterprise-topology-release-gate.test.ts`.
+14. Run backup/restore rehearsal: `pnpm run backup:rehearsal`.
+15. Run channel delivery release gate: `pnpm exec vitest run tests/channel-delivery-fallback.test.ts tests/channel-smoke-runner.test.ts tests/channel-adapter-contract-runner.test.ts tests/channel-connections.test.ts tests/task013-channel-api.test.ts`.
+16. Run channel smoke dry-run: `pnpm run smoke:channels`.
+17. Build Yeonjang packages for each target OS.
+18. Generate release manifest and checksum files: `pnpm run release:package`.
+19. Run at least one live channel smoke and one Yeonjang smoke before public publish.
+
+## Yeonjang Multi-instance Manual Smoke
+
+Run these checks on the target OS after the automated release gate passes.
+
+### macOS desktop_interactive
+
+- Start with `bash scripts/start-yeonjang-macos.sh --restart`.
+- Confirm tray-first startup: the app launches hidden, tray remains available, and the main window is not forced open.
+- Open and close the window from the tray menu, then confirm the close button hides back to tray instead of quitting.
+- Confirm the node appears in `/api/status` and `/api/doctor`.
+- Run one `screen.capture`, one camera capture, and one input baseline check.
+
+### Windows desktop_interactive
+
+- Start with `scripts\\start-yeonjang-windows.bat --restart`.
+- Confirm the notify icon appears and double click or tray menu opens the main window.
+- Confirm close-to-tray behavior and explicit quit behavior.
+- Confirm the node appears in `/api/status` and `/api/doctor`.
+- Run one `screen.capture`, one camera capture, and one input baseline check.
+
+### Linux desktop_interactive
+
+- Start with `bash scripts/start-yeonjang-linux.sh --restart`.
+- Confirm tray fallback behavior for the current desktop environment.
+- Confirm the node appears in `/api/status` and `/api/doctor`.
+- Run one `screen.capture` and verify desktop capability baseline.
+
+### Linux headless_managed
+
+- Start with `bash scripts/start-yeonjang-linux-headless.sh --restart`.
+- Do not require tray or window behavior.
+- Confirm the node appears in `/api/status` and `/api/doctor` with `headless_managed` support profile.
+- Verify diagnostics-only flow and headless capability baseline.
+
+### Fleet Summary Checks
+
+- `/api/status` must show total instance count, local/remote count, trusted/pending/revoked count, duplicate conflict count, and update required count.
+- `/api/doctor` must expose the same fleet summary through the Yeonjang checks without leaking raw fingerprints.
+- Release dry-run evidence must include `yeonjangMultiInstanceEvidence`, the multi-instance pipeline step, and the checklist item.
 
 ## Execution Decision Regression Gate
 

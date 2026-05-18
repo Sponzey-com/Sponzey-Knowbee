@@ -73,6 +73,10 @@ import type {
   StatusResponse,
   TestBackendResponse,
   TestMcpServerResponse,
+  YeonjangDefaultTargetSelection,
+  YeonjangFleetResponse,
+  YeonjangLocalRemoteDiffSummary,
+  YeonjangProjectedInstance,
   TestSkillPathResponse,
   TestTelegramResponse,
 } from "./adapters/types"
@@ -988,6 +992,15 @@ export const api = {
   mcpServers: () => getControlPlaneAdapter().getMcpServers(),
   reloadMcpServers: () => getControlPlaneAdapter().reloadMcpServers(),
   mqttRuntime: () => getControlPlaneAdapter().getMqttRuntime(),
+  yeonjangFleet: () => getControlPlaneAdapter().getYeonjangFleet(),
+  approveYeonjangPairing: (instanceId: string, payload: { pairingSecret: string; actor?: string; ownerUserId?: string; workspaceScopeId?: string; reason?: string }) =>
+    getControlPlaneAdapter().approveYeonjangPairing(instanceId, payload),
+  updateYeonjangTrust: (instanceId: string, payload: { trustState: "pending" | "trusted" | "revoked" | "quarantined"; actor?: string; reason?: string }) =>
+    getControlPlaneAdapter().updateYeonjangTrust(instanceId, payload),
+  renameYeonjangInstance: (instanceId: string, payload: { instanceAlias?: string; displayName?: string; actor?: string; reason?: string }) =>
+    getControlPlaneAdapter().renameYeonjangInstance(instanceId, payload),
+  assignYeonjangLocalMarker: (instanceId: string, payload: { actor?: string; reason?: string }) =>
+    getControlPlaneAdapter().assignYeonjangLocalMarker(instanceId, payload),
   disconnectMqttExtension: (extensionId: string) =>
     getControlPlaneAdapter().disconnectMqttExtension(extensionId),
   updateStatus: () => request<UpdateSnapshot>("/api/update/status"),
@@ -2012,6 +2025,10 @@ export type {
   ResetSetupResponse,
   FeatureCapability,
   MqttRuntimeResponse,
+  YeonjangDefaultTargetSelection,
+  YeonjangFleetResponse,
+  YeonjangLocalRemoteDiffSummary,
+  YeonjangProjectedInstance,
 }
 
 export interface AuditEvent {

@@ -1,8 +1,8 @@
-import type { ReactNode } from "react"
+import React, { type ReactNode } from "react"
 import type { RootRun } from "../../contracts/runs"
 import { useUiI18n } from "../../lib/ui-i18n"
 import { CollapsibleText } from "./CollapsibleText"
-import { RunTargetBadge } from "./RunTargetBadge"
+import { RunTargetSummary } from "./RunTargetSummary"
 import { toContextModeText, toRunStatusText, toTaskProfileText } from "./runLabels"
 
 function describeDiagnosticReason(run: RootRun): string {
@@ -65,7 +65,7 @@ export function RunSummaryPanel({ run, extraContent, diagnosticMode = false }: {
             {toTaskProfileText(run.taskProfile, language)} · {toRunStatusText(run.status, language)} · {text(`진행 ${run.currentStepIndex}/${run.totalSteps}`, `Progress ${run.currentStepIndex}/${run.totalSteps}`)}
           </div>
         </div>
-        <RunTargetBadge targetId={run.targetId} targetLabel={run.targetLabel} />
+        <RunTargetSummary run={run} />
       </div>
       <div className="space-y-4">
         <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4">

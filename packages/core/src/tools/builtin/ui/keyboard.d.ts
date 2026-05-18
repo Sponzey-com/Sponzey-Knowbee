@@ -3,20 +3,18 @@
  * Requires Yeonjang for execution.
  */
 import type { AgentTool } from "../../types.js";
-interface KeyboardTypeParams {
+import { type YeonjangTargetedToolParams } from "../yeonjang-target.js";
+interface KeyboardTypeParams extends YeonjangTargetedToolParams {
     text: string;
-    extensionId?: string;
 }
-interface KeyboardShortcutParams {
+interface KeyboardShortcutParams extends YeonjangTargetedToolParams {
     keys: string[];
-    extensionId?: string;
 }
-interface KeyboardActionParams {
+interface KeyboardActionParams extends YeonjangTargetedToolParams {
     action: "type_text" | "shortcut" | "key_press" | "key_down" | "key_up";
     text?: string;
     key?: string;
     modifiers?: string[];
-    extensionId?: string;
 }
 export declare const keyboardTypeTool: AgentTool<KeyboardTypeParams>;
 export declare const keyboardShortcutTool: AgentTool<KeyboardShortcutParams>;

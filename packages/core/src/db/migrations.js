@@ -2600,6 +2600,132 @@ export const MIGRATIONS = [
       `);
         },
     },
+    {
+        version: 44,
+        up(db) {
+            db.exec(`
+        CREATE TABLE IF NOT EXISTS yeonjang_instances (
+          instance_id TEXT PRIMARY KEY,
+          instance_alias TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          normalized_call_name TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          support_profile TEXT NOT NULL,
+          platform TEXT,
+          arch TEXT,
+          host_fingerprint TEXT,
+          install_fingerprint TEXT,
+          version TEXT,
+          protocol_version TEXT,
+          connection_state TEXT NOT NULL DEFAULT 'discovered',
+          state_message TEXT,
+          capability_hash TEXT,
+          transport_json TEXT,
+          permissions_json TEXT,
+          tool_health_json TEXT,
+          capability_matrix_json TEXT,
+          method_count INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_yeonjang_instances_instance_alias
+          ON yeonjang_instances(instance_alias);
+
+        CREATE TABLE IF NOT EXISTS yeonjang_instance_call_names (
+          instance_id TEXT NOT NULL,
+          name_kind TEXT NOT NULL CHECK(name_kind IN ('instance_alias', 'display_name')),
+          raw_name TEXT NOT NULL,
+          normalized_name TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (instance_id, name_kind),
+          FOREIGN KEY (instance_id) REFERENCES yeonjang_instances(instance_id) ON DELETE CASCADE
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_yeonjang_instance_call_names_normalized
+          ON yeonjang_instance_call_names(normalized_name);
+
+        CREATE TABLE IF NOT EXISTS yeonjang_instance_sessions (
+          session_id TEXT PRIMARY KEY,
+          instance_id TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          client_id TEXT,
+          startup_mode TEXT,
+          window_mode TEXT,
+          tray_state TEXT,
+          session_state TEXT NOT NULL DEFAULT 'discovered',
+          session_message TEXT,
+          started_at INTEGER NOT NULL,
+          last_seen_at INTEGER NOT NULL,
+          ended_at INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (instance_id) REFERENCES yeonjang_instances(instance_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_yeonjang_instance_sessions_instance
+          ON yeonjang_instance_sessions(instance_id, last_seen_at DESC, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_yeonjang_instance_sessions_live
+          ON yeonjang_instance_sessions(instance_id, ended_at, last_seen_at DESC);
+
+        CREATE TABLE IF NOT EXISTS yeonjang_instance_heartbeats (
+          heartbeat_id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          instance_id TEXT NOT NULL,
+          state TEXT,
+          message TEXT,
+          observed_at INTEGER NOT NULL,
+          method_count INTEGER NOT NULL DEFAULT 0,
+          capability_hash TEXT,
+          payload_json TEXT,
+          FOREIGN KEY (session_id) REFERENCES yeonjang_instance_sessions(session_id) ON DELETE CASCADE,
+          FOREIGN KEY (instance_id) REFERENCES yeonjang_instances(instance_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_yeonjang_instance_heartbeats_instance
+          ON yeonjang_instance_heartbeats(instance_id, observed_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_yeonjang_instance_heartbeats_session
+          ON yeonjang_instance_heartbeats(session_id, observed_at DESC);
+      `);
+        },
+    },
+    {
+        version: 45,
+        up(db) {
+            db.exec(`
+        ALTER TABLE yeonjang_instances ADD COLUMN owner_user_id TEXT;
+        ALTER TABLE yeonjang_instances ADD COLUMN workspace_scope_id TEXT;
+        ALTER TABLE yeonjang_instances ADD COLUMN pairing_fingerprint TEXT;
+        ALTER TABLE yeonjang_instances ADD COLUMN trust_state TEXT NOT NULL DEFAULT 'pending' CHECK(trust_state IN ('pending', 'trusted', 'revoked', 'quarantined'));
+        ALTER TABLE yeonjang_instances ADD COLUMN trust_reason TEXT;
+        ALTER TABLE yeonjang_instances ADD COLUMN local_marker INTEGER NOT NULL DEFAULT 0 CHECK(local_marker IN (0, 1));
+        ALTER TABLE yeonjang_instances ADD COLUMN trust_updated_at INTEGER;
+        ALTER TABLE yeonjang_instances ADD COLUMN trust_updated_by TEXT;
+        ALTER TABLE yeonjang_instances ADD COLUMN approved_at INTEGER;
+        ALTER TABLE yeonjang_instances ADD COLUMN revoked_at INTEGER;
+
+        UPDATE yeonjang_instances
+        SET workspace_scope_id = COALESCE(workspace_scope_id, CASE WHEN node_id = 'yeonjang-main' THEN 'workspace:local-default' ELSE NULL END),
+            owner_user_id = COALESCE(owner_user_id, CASE WHEN node_id = 'yeonjang-main' THEN 'local:operator' ELSE NULL END),
+            trust_state = CASE WHEN node_id = 'yeonjang-main' THEN 'trusted' ELSE trust_state END,
+            trust_reason = COALESCE(trust_reason, CASE WHEN node_id = 'yeonjang-main' THEN 'migration:auto_local_identity' ELSE 'migration:pairing_required' END),
+            local_marker = CASE WHEN node_id = 'yeonjang-main' THEN 1 ELSE local_marker END,
+            trust_updated_at = COALESCE(trust_updated_at, updated_at),
+            trust_updated_by = COALESCE(trust_updated_by, CASE WHEN node_id = 'yeonjang-main' THEN 'migration:auto-local' ELSE 'migration:v45' END),
+            approved_at = COALESCE(approved_at, CASE WHEN node_id = 'yeonjang-main' THEN updated_at ELSE NULL END);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_yeonjang_instances_single_local_marker
+          ON yeonjang_instances(local_marker)
+          WHERE local_marker = 1;
+
+        CREATE INDEX IF NOT EXISTS idx_yeonjang_instances_workspace_scope
+          ON yeonjang_instances(workspace_scope_id, trust_state, updated_at DESC);
+      `);
+        },
+    },
 ];
 function schemaMigrationsTableExists(db) {
     return Boolean(db

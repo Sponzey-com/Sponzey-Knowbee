@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { isStructuredYeonjangTargetSelector, validateYeonjangTargetSelector, } from "./yeonjang-target.js";
 export const CONTRACT_SCHEMA_VERSION = 1;
 export const CANONICAL_JSON_POLICY = {
     keyOrder: "Object keys are sorted lexicographically at every depth.",
@@ -80,6 +81,16 @@ export function validateToolTargetContract(value) {
     validateStringEnum(value.kind, TARGET_KINDS, "$.kind", issues);
     validateOptionalString(value.id, "$.id", issues);
     validateOptionalJsonObject(value.selector, "$.selector", issues);
+    if (value.kind === "extension"
+        && value.selector != null
+        && isStructuredYeonjangTargetSelector(value.selector)) {
+        const selectorValidation = validateYeonjangTargetSelector(value.selector);
+        if (!selectorValidation.ok) {
+            for (const issue of selectorValidation.issues) {
+                addIssue(issues, issue.path.replace(/^\$/, "$.selector"), issue.code, issue.message);
+            }
+        }
+    }
     validateOptionalString(value.displayName, "$.displayName", issues);
     validateOptionalString(value.rawText, "$.rawText", issues);
     return issues.length === 0 ? { ok: true, value: value, issues: [] } : { ok: false, issues };

@@ -5,6 +5,8 @@ import { readSetupState } from "../../control-plane/index.js";
 import { getMqttExtensionSnapshots } from "../../mqtt/broker.js";
 import { listActiveRootRuns } from "../../runs/store.js";
 import { buildUiViewModels } from "../../ui/view-model.js";
+import { buildYeonjangFleetProjection } from "../../yeonjang/topology.js";
+import { buildYeonjangBroadcastPolicyProjection } from "../../yeonjang/broadcast-policy.js";
 function parsePreferredUiMode(value) {
     if (typeof value !== "string")
         return null;
@@ -17,6 +19,8 @@ function buildUiShellDomainState() {
     const cfg = getConfig();
     const activeRuns = listActiveRootRuns();
     const extensions = getMqttExtensionSnapshots();
+    const yeonjang = buildYeonjangFleetProjection({ snapshots: extensions });
+    const yeonjangBroadcastPolicies = buildYeonjangBroadcastPolicyProjection();
     const imessageConfigured = Boolean(cfg.imessage?.localBridgeEnabled
         && cfg.imessage.riskAcknowledged
         && cfg.imessage.messagesAppAvailable
@@ -64,6 +68,13 @@ function buildUiShellDomainState() {
             yeonjang: {
                 mqttEnabled: cfg.mqtt.enabled,
                 connectedExtensions: extensions.length,
+                localInstances: yeonjang.summary.localInstances,
+                remoteInstances: yeonjang.summary.remoteInstances,
+                supportProfiles: yeonjang.summary.supportProfiles,
+                defaultTargetStatus: yeonjang.summary.defaultTarget.status,
+                broadcastSafeTools: yeonjangBroadcastPolicies.summary.broadcastSafeTools,
+                broadcastBlockedTools: yeonjangBroadcastPolicies.summary.blockedTools,
+                broadcastApprovalRequiredTools: yeonjangBroadcastPolicies.summary.approvalRequiredTools,
             },
         },
         activeRuns: {

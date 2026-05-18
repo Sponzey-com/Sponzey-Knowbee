@@ -7,12 +7,17 @@ const isYeonjangUnavailableError = vi.fn((error: unknown) => error === "unavaila
 const mkdirSync = vi.fn()
 const statSync = vi.fn(() => ({ size: 321 }))
 const writeFileSync = vi.fn()
+const getMqttExtensionSnapshots = vi.fn()
 
 vi.mock("../packages/core/src/yeonjang/mqtt-client.js", () => ({
   canYeonjangHandleMethod,
   invokeYeonjangMethod,
   isYeonjangUnavailableError,
   DEFAULT_YEONJANG_EXTENSION_ID: "yeonjang-main",
+}))
+
+vi.mock("../packages/core/src/mqtt/broker.js", () => ({
+  getMqttExtensionSnapshots,
 }))
 
 vi.mock("node:fs", async () => {
@@ -50,6 +55,19 @@ describe("yeonjang camera capture tool", () => {
     statSync.mockClear()
     writeFileSync.mockClear()
     statSync.mockReturnValue({ size: 321 })
+    getMqttExtensionSnapshots.mockReturnValue([
+      {
+        extensionId: "yeonjang-main",
+        displayName: "Yeonjang-osx",
+        instanceId: "inst-local-main",
+        instanceAlias: "local-mac",
+        state: "online",
+        message: "macOS connected",
+        platform: "macos",
+        methods: ["camera.capture", "camera.list"],
+        sessionId: "sess-local-main",
+      },
+    ])
   })
 
   it("forces inline base64 capture and does not leak remote output paths", async () => {
@@ -86,6 +104,7 @@ describe("yeonjang camera capture tool", () => {
           runId: "run-1",
           requestGroupId: "request-group-1",
           sessionId: "session-1",
+          targetSessionId: "sess-local-main",
           source: "telegram",
         },
       },
@@ -135,6 +154,7 @@ describe("yeonjang camera capture tool", () => {
           runId: "run-1",
           requestGroupId: "request-group-1",
           sessionId: "session-1",
+          targetSessionId: "sess-local-main",
           source: "telegram",
         },
       },

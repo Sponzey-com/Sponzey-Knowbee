@@ -1,10 +1,9 @@
 import type { AgentTool } from "../types.js";
-interface YeonjangCameraListParams {
-    extensionId?: string;
+import { type YeonjangTargetedToolParams } from "./yeonjang-target.js";
+interface YeonjangCameraListParams extends YeonjangTargetedToolParams {
     timeoutSec?: number;
 }
-interface YeonjangCameraCaptureParams {
-    extensionId?: string;
+interface YeonjangCameraCaptureParams extends YeonjangTargetedToolParams {
     deviceId?: string;
     outputPath?: string;
     inlineBase64?: boolean;

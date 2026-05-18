@@ -8,9 +8,10 @@ use crate::automation::{
     PlatformKind,
 };
 use crate::features::{camera, keyboard, mouse, screen, system};
+use crate::lifecycle::{SupportProfileKind, SupportProfileRuntimeInfo, runtime_support_profile};
 use crate::platform::current_backend;
 use crate::protocol::{Request, Response};
-use crate::settings::{PermissionSettings, load_settings};
+use crate::settings::{PermissionSettings, YeonjangSettings, load_settings};
 
 const YEONJANG_PROTOCOL_VERSION: &str = "2026-04-16.capability-matrix.v1";
 
@@ -30,6 +31,9 @@ pub fn capabilities_payload() -> Value {
 }
 
 fn dispatch(request: &Request) -> Result<Value> {
+    let settings = load_settings().unwrap_or_else(|_| YeonjangSettings::default());
+    let support_profile = runtime_support_profile(&settings, None);
+    let runtime_capabilities = runtime_capabilities(&support_profile);
     let permissions = current_permissions();
 
     match request.method.as_str() {
@@ -47,6 +51,11 @@ fn dispatch(request: &Request) -> Result<Value> {
         "node.capabilities" => Ok(capabilities()),
         "system.info" => system::system_info(),
         "system.control" => {
+            ensure_runtime_support(
+                runtime_capabilities.system_control,
+                "system.control",
+                &support_profile,
+            )?;
             ensure_permission(
                 permissions.allow_system_control,
                 "system.control",
@@ -56,13 +65,30 @@ fn dispatch(request: &Request) -> Result<Value> {
                 .context("invalid params for system.control")?;
             system::control(params)
         }
-        "camera.list" => camera::list_devices(),
+        "camera.list" => {
+            ensure_runtime_support(
+                runtime_capabilities.camera_management,
+                "camera.list",
+                &support_profile,
+            )?;
+            camera::list_devices()
+        }
         "camera.capture" => {
+            ensure_runtime_support(
+                runtime_capabilities.camera_management,
+                "camera.capture",
+                &support_profile,
+            )?;
             let params = serde_json::from_value::<camera::CaptureParams>(request.params.clone())
                 .context("invalid params for camera.capture")?;
             camera::capture(params)
         }
         "system.exec" => {
+            ensure_runtime_support(
+                runtime_capabilities.command_execution,
+                "system.exec",
+                &support_profile,
+            )?;
             ensure_permission(
                 permissions.allow_shell_exec,
                 "system.exec",
@@ -73,6 +99,11 @@ fn dispatch(request: &Request) -> Result<Value> {
             system::exec(params)
         }
         "application.launch" => {
+            ensure_runtime_support(
+                runtime_capabilities.application_launch,
+                "application.launch",
+                &support_profile,
+            )?;
             ensure_permission(
                 permissions.allow_application_launch,
                 "application.launch",
@@ -83,6 +114,11 @@ fn dispatch(request: &Request) -> Result<Value> {
             system::launch_application(params)
         }
         "screen.capture" => {
+            ensure_runtime_support(
+                runtime_capabilities.screen_capture,
+                "screen.capture",
+                &support_profile,
+            )?;
             ensure_permission(
                 permissions.allow_screen_capture,
                 "screen.capture",
@@ -93,6 +129,11 @@ fn dispatch(request: &Request) -> Result<Value> {
             screen::capture(params)
         }
         "mouse.move" => {
+            ensure_runtime_support(
+                runtime_capabilities.mouse_control,
+                "mouse.move",
+                &support_profile,
+            )?;
             ensure_permission(
                 permissions.allow_mouse_control,
                 "mouse.move",
@@ -103,6 +144,11 @@ fn dispatch(request: &Request) -> Result<Value> {
             mouse::move_cursor(params)
         }
         "mouse.click" => {
+            ensure_runtime_support(
+                runtime_capabilities.mouse_control,
+                "mouse.click",
+                &support_profile,
+            )?;
             ensure_permission(
                 permissions.allow_mouse_control,
                 "mouse.click",
@@ -113,6 +159,11 @@ fn dispatch(request: &Request) -> Result<Value> {
             mouse::click(params)
         }
         "mouse.action" => {
+            ensure_runtime_support(
+                runtime_capabilities.mouse_control,
+                "mouse.action",
+                &support_profile,
+            )?;
             ensure_permission(
                 permissions.allow_mouse_control,
                 "mouse.action",
@@ -123,6 +174,11 @@ fn dispatch(request: &Request) -> Result<Value> {
             mouse::action(params)
         }
         "keyboard.type" => {
+            ensure_runtime_support(
+                runtime_capabilities.keyboard_control,
+                "keyboard.type",
+                &support_profile,
+            )?;
             ensure_permission(
                 permissions.allow_keyboard_control,
                 "keyboard.type",
@@ -133,6 +189,11 @@ fn dispatch(request: &Request) -> Result<Value> {
             keyboard::type_text(params)
         }
         "keyboard.action" => {
+            ensure_runtime_support(
+                runtime_capabilities.keyboard_control,
+                "keyboard.action",
+                &support_profile,
+            )?;
             ensure_permission(
                 permissions.allow_keyboard_control,
                 "keyboard.action",
@@ -147,7 +208,9 @@ fn dispatch(request: &Request) -> Result<Value> {
 }
 
 fn capabilities() -> Value {
-    let capability_flags = effective_capabilities();
+    let settings = load_settings().unwrap_or_else(|_| YeonjangSettings::default());
+    let support_profile = runtime_support_profile(&settings, None);
+    let capability_flags = runtime_capabilities(&support_profile);
     let permissions = current_permissions();
     let last_checked_at = now_unix_millis();
     json!({
@@ -162,7 +225,12 @@ fn capabilities() -> Value {
         "transport": ["stdio-jsonl", "mqtt-json"],
         "platform": capability_flags.platform,
         "capabilityHash": capability_hash(&capability_flags),
-        "capabilityMatrix": capability_matrix(&capability_flags, last_checked_at),
+        "supportProfile": support_profile.effective_profile.as_str(),
+        "configuredSupportProfile": support_profile.configured_profile.as_str(),
+        "supportProfileReasonCodes": support_profile.reason_codes,
+        "interactiveDesktopAvailable": support_profile.interactive_desktop_available,
+        "trayRuntimeAvailable": support_profile.tray_runtime_available,
+        "capabilityMatrix": capability_matrix(&capability_flags, &support_profile, last_checked_at),
         "permissions": permissions_payload(&permissions),
         "toolHealth": tool_health(&capability_flags, &permissions, last_checked_at),
         "abstractions": {
@@ -298,117 +366,177 @@ fn capability_hash(flags: &AutomationCapabilities) -> String {
     )
 }
 
-fn capability_matrix(flags: &AutomationCapabilities, last_checked_at: u64) -> Value {
+fn capability_matrix(
+    flags: &AutomationCapabilities,
+    support_profile: &SupportProfileRuntimeInfo,
+    last_checked_at: u64,
+) -> Value {
     json!({
-        "node.ping": capability_entry(true, false, None, vec![], vec!["json"], last_checked_at),
-        "node.capabilities": capability_entry(true, false, None, vec![], vec!["json"], last_checked_at),
-        "system.info": capability_entry(true, false, None, vec![], vec!["json"], last_checked_at),
+        "node.ping": capability_entry("node.ping", true, false, None, flags.platform, support_profile, last_checked_at),
+        "node.capabilities": capability_entry("node.capabilities", true, false, None, flags.platform, support_profile, last_checked_at),
+        "system.info": capability_entry("system.info", true, false, None, flags.platform, support_profile, last_checked_at),
         "camera.list": capability_entry(
+            "camera.list",
             flags.camera_management,
             false,
             None,
-            camera_limitations(flags.platform),
-            vec!["json"],
+            flags.platform,
+            support_profile,
             last_checked_at,
         ),
         "camera.capture": capability_entry(
+            "camera.capture",
             flags.camera_management,
             true,
             None,
-            camera_limitations(flags.platform),
-            vec!["base64", "file"],
+            flags.platform,
+            support_profile,
             last_checked_at,
         ),
         "system.control": capability_entry(
+            "system.control",
             flags.system_control,
             true,
             Some("allow_system_control"),
-            system_limitations(flags.platform),
-            vec!["json"],
+            flags.platform,
+            support_profile,
             last_checked_at,
         ),
         "system.exec": capability_entry(
+            "system.exec",
             flags.command_execution,
             true,
             Some("allow_shell_exec"),
-            vec![],
-            vec!["stdout", "stderr", "exit_code"],
+            flags.platform,
+            support_profile,
             last_checked_at,
         ),
         "application.launch": capability_entry(
+            "application.launch",
             flags.application_launch,
             true,
             Some("allow_application_launch"),
-            vec![],
-            vec!["json"],
+            flags.platform,
+            support_profile,
             last_checked_at,
         ),
         "screen.capture": capability_entry(
+            "screen.capture",
             flags.screen_capture,
             false,
             Some("allow_screen_capture"),
-            screen_limitations(flags.platform),
-            vec!["base64", "file"],
+            flags.platform,
+            support_profile,
             last_checked_at,
         ),
         "mouse.action": capability_entry(
+            "mouse.action",
             flags.mouse_control,
             true,
             Some("allow_mouse_control"),
-            mouse_limitations(flags.platform),
-            vec!["json"],
+            flags.platform,
+            support_profile,
             last_checked_at,
         ),
         "mouse.move": capability_entry(
+            "mouse.move",
             flags.mouse_control,
             true,
             Some("allow_mouse_control"),
-            mouse_limitations(flags.platform),
-            vec!["json"],
+            flags.platform,
+            support_profile,
             last_checked_at,
         ),
         "mouse.click": capability_entry(
+            "mouse.click",
             flags.mouse_control,
             true,
             Some("allow_mouse_control"),
-            mouse_limitations(flags.platform),
-            vec!["json"],
+            flags.platform,
+            support_profile,
             last_checked_at,
         ),
         "keyboard.action": capability_entry(
+            "keyboard.action",
             flags.keyboard_control,
             true,
             Some("allow_keyboard_control"),
-            keyboard_limitations(flags.platform),
-            vec!["json"],
+            flags.platform,
+            support_profile,
             last_checked_at,
         ),
         "keyboard.type": capability_entry(
+            "keyboard.type",
             flags.keyboard_control,
             true,
             Some("allow_keyboard_control"),
-            keyboard_limitations(flags.platform),
-            vec!["json"],
+            flags.platform,
+            support_profile,
             last_checked_at,
         ),
     })
 }
 
+#[derive(Debug, Clone)]
+struct CapabilityMethodMetadata {
+    supported: bool,
+    known_limitations: Vec<&'static str>,
+    output_modes: Vec<&'static str>,
+    requires_interactive_desktop: bool,
+    broadcast_safe: bool,
+    default_target_policy: &'static str,
+}
+
 fn capability_entry(
+    method: &'static str,
     supported: bool,
     requires_approval: bool,
     permission_setting: Option<&'static str>,
-    known_limitations: Vec<&'static str>,
-    output_modes: Vec<&'static str>,
+    platform: PlatformKind,
+    support_profile: &SupportProfileRuntimeInfo,
     last_checked_at: u64,
 ) -> Value {
+    let baseline = method_metadata_for_platform(method, platform);
+    let platform_baseline = json!({
+        "macos": platform_method_summary(method, PlatformKind::Macos),
+        "windows": platform_method_summary(method, PlatformKind::Windows),
+        "linux": platform_method_summary(method, PlatformKind::Linux),
+    });
+    let mut known_limitations = baseline.known_limitations.clone();
+    let mut reason_codes = support_profile.reason_codes.clone();
+    let support_state = if supported {
+        "supported"
+    } else if baseline.supported
+        && baseline.requires_interactive_desktop
+        && support_profile.effective_profile == SupportProfileKind::HeadlessManaged
+    {
+        known_limitations.push(
+            "Current runtime profile is headless_managed, so interactive desktop methods are blocked.",
+        );
+        reason_codes.push("interactive_desktop_required".to_string());
+        reason_codes.push("support_profile_restricted".to_string());
+        "blocked_by_profile"
+    } else {
+        if baseline.supported {
+            reason_codes.push("runtime_dependency_unavailable".to_string());
+        } else {
+            reason_codes.push("unsupported_on_platform".to_string());
+        }
+        "unsupported"
+    };
     json!({
         "supported": supported,
+        "supportState": support_state,
         "requiresApproval": requires_approval,
         "requiresPermission": permission_setting.is_some(),
         "permissionSetting": permission_setting,
         "knownLimitations": known_limitations,
-        "outputModes": output_modes,
+        "requiresInteractiveDesktop": baseline.requires_interactive_desktop,
+        "broadcastSafe": baseline.broadcast_safe,
+        "defaultTargetPolicy": baseline.default_target_policy,
+        "outputModes": baseline.output_modes,
+        "reasonCodes": reason_codes,
+        "platformBaseline": platform_baseline,
         "lastCheckedAt": last_checked_at,
     })
 }
@@ -453,12 +581,12 @@ fn tool_health_entry(
     permission_setting: Option<&'static str>,
     last_checked_at: u64,
 ) -> Value {
-    let status = if supported {
-        "ready"
+    let status = if !supported {
+        "unsupported"
     } else if !permission_allowed {
         "permission_disabled"
     } else {
-        "unsupported"
+        "ready"
     };
     json!({
         "status": status,
@@ -469,68 +597,20 @@ fn tool_health_entry(
     })
 }
 
-fn camera_limitations(platform: PlatformKind) -> Vec<&'static str> {
-    match platform {
-        PlatformKind::Macos => {
-            vec!["iPhone Continuity Camera front/rear lens selection is not exposed to Yeonjang."]
-        }
-        PlatformKind::Linux => vec![
-            "Linux camera capture depends on v4l2 devices and ffmpeg or fswebcam availability.",
-        ],
-        _ => vec![],
-    }
-}
-
-fn screen_limitations(platform: PlatformKind) -> Vec<&'static str> {
-    match platform {
-        PlatformKind::Macos => vec![
-            "Gateway display indexes are zero-based; Yeonjang translates them to macOS screencapture one-based indexes.",
-        ],
-        PlatformKind::Linux => vec![
-            "Linux screen.capture currently captures the current full screen only; display index selection is unsupported.",
-        ],
-        _ => vec!["Display indexes are zero-based."],
-    }
-}
-
-fn mouse_limitations(platform: PlatformKind) -> Vec<&'static str> {
-    match platform {
-        PlatformKind::Linux => vec!["Linux mouse control requires xdotool in PATH."],
-        _ => vec![],
-    }
-}
-
-fn keyboard_limitations(platform: PlatformKind) -> Vec<&'static str> {
-    match platform {
-        PlatformKind::Linux => vec!["Linux keyboard control requires xdotool in PATH."],
-        _ => vec![],
-    }
-}
-
-fn system_limitations(platform: PlatformKind) -> Vec<&'static str> {
-    match platform {
-        PlatformKind::Linux => vec![
-            "Linux system control depends on systemctl/loginctl availability and session permissions.",
-        ],
-        _ => vec![],
-    }
-}
-
 fn current_permissions() -> PermissionSettings {
     load_settings()
         .map(|settings| settings.permissions)
         .unwrap_or_default()
 }
 
-fn effective_capabilities() -> AutomationCapabilities {
+fn runtime_capabilities(support_profile: &SupportProfileRuntimeInfo) -> AutomationCapabilities {
     let mut capability_flags = current_backend().capabilities();
-    let permissions = current_permissions();
-    capability_flags.system_control &= permissions.allow_system_control;
-    capability_flags.command_execution &= permissions.allow_shell_exec;
-    capability_flags.application_launch &= permissions.allow_application_launch;
-    capability_flags.screen_capture &= permissions.allow_screen_capture;
-    capability_flags.keyboard_control &= permissions.allow_keyboard_control;
-    capability_flags.mouse_control &= permissions.allow_mouse_control;
+    if support_profile.effective_profile == SupportProfileKind::HeadlessManaged {
+        capability_flags.application_launch = false;
+        capability_flags.screen_capture = false;
+        capability_flags.mouse_control = false;
+        capability_flags.keyboard_control = false;
+    }
     capability_flags
 }
 
@@ -541,5 +621,248 @@ fn ensure_permission(allowed: bool, method: &str, setting: &str) -> Result<()> {
         anyhow::bail!(
             "permission denied: `{method}` is disabled in Yeonjang permissions ({setting})"
         )
+    }
+}
+
+fn ensure_runtime_support(
+    supported: bool,
+    method: &str,
+    support_profile: &SupportProfileRuntimeInfo,
+) -> Result<()> {
+    if supported {
+        return Ok(());
+    }
+    if support_profile.effective_profile == SupportProfileKind::HeadlessManaged {
+        anyhow::bail!(
+            "`{method}` is blocked for the current support profile (`{}`); interactive desktop access is unavailable",
+            support_profile.effective_profile.as_str()
+        );
+    }
+    anyhow::bail!("`{method}` is not supported on this Yeonjang runtime")
+}
+
+fn platform_method_summary(method: &'static str, platform: PlatformKind) -> Value {
+    let metadata = method_metadata_for_platform(method, platform);
+    json!({
+        "supported": metadata.supported,
+        "knownLimitations": metadata.known_limitations,
+        "outputModes": metadata.output_modes,
+        "requiresInteractiveDesktop": metadata.requires_interactive_desktop,
+    })
+}
+
+fn method_metadata_for_platform(
+    method: &'static str,
+    platform: PlatformKind,
+) -> CapabilityMethodMetadata {
+    match method {
+        "node.ping" | "node.capabilities" | "system.info" => CapabilityMethodMetadata {
+            supported: true,
+            known_limitations: vec![],
+            output_modes: vec!["json"],
+            requires_interactive_desktop: false,
+            broadcast_safe: true,
+            default_target_policy: "local_preferred",
+        },
+        "camera.list" => CapabilityMethodMetadata {
+            supported: true,
+            known_limitations: match platform {
+                PlatformKind::Linux => vec![
+                    "Linux camera list uses v4l2-ctl when available and otherwise scans /dev/video*.",
+                ],
+                _ => vec![],
+            },
+            output_modes: vec!["json"],
+            requires_interactive_desktop: false,
+            broadcast_safe: true,
+            default_target_policy: "local_preferred",
+        },
+        "camera.capture" => CapabilityMethodMetadata {
+            supported: true,
+            known_limitations: match platform {
+                PlatformKind::Macos => vec![
+                    "iPhone Continuity Camera front/rear lens selection is not exposed to Yeonjang.",
+                ],
+                PlatformKind::Linux => vec![
+                    "Linux camera capture depends on v4l2 devices and ffmpeg or fswebcam availability.",
+                ],
+                PlatformKind::Windows => vec![
+                    "Windows camera capture opens the native camera flow when a device_id is not specified.",
+                ],
+                PlatformKind::Unknown => vec![],
+            },
+            output_modes: vec!["base64", "file"],
+            requires_interactive_desktop: false,
+            broadcast_safe: false,
+            default_target_policy: "exact_instance",
+        },
+        "system.control" => CapabilityMethodMetadata {
+            supported: true,
+            known_limitations: match platform {
+                PlatformKind::Linux => vec![
+                    "Linux system control depends on systemctl/loginctl availability and session permissions.",
+                ],
+                _ => vec![],
+            },
+            output_modes: vec!["json"],
+            requires_interactive_desktop: false,
+            broadcast_safe: false,
+            default_target_policy: "exact_instance",
+        },
+        "system.exec" => CapabilityMethodMetadata {
+            supported: true,
+            known_limitations: vec![],
+            output_modes: vec!["stdout", "stderr", "exit_code"],
+            requires_interactive_desktop: false,
+            broadcast_safe: false,
+            default_target_policy: "exact_instance",
+        },
+        "application.launch" => CapabilityMethodMetadata {
+            supported: true,
+            known_limitations: vec![],
+            output_modes: vec!["json"],
+            requires_interactive_desktop: true,
+            broadcast_safe: false,
+            default_target_policy: "exact_instance",
+        },
+        "screen.capture" => CapabilityMethodMetadata {
+            supported: true,
+            known_limitations: match platform {
+                PlatformKind::Macos => vec![
+                    "Gateway display indexes are zero-based; Yeonjang translates them to macOS screencapture one-based indexes.",
+                ],
+                PlatformKind::Linux => vec![
+                    "Linux screen.capture currently captures the current full screen only; display index selection is unsupported.",
+                ],
+                PlatformKind::Windows => vec!["Display indexes are zero-based."],
+                PlatformKind::Unknown => vec!["Display indexes are zero-based."],
+            },
+            output_modes: vec!["base64", "file"],
+            requires_interactive_desktop: true,
+            broadcast_safe: true,
+            default_target_policy: "local_preferred",
+        },
+        "mouse.action" | "mouse.move" | "mouse.click" => CapabilityMethodMetadata {
+            supported: true,
+            known_limitations: match platform {
+                PlatformKind::Linux => vec!["Linux mouse control requires xdotool in PATH."],
+                _ => vec![],
+            },
+            output_modes: vec!["json"],
+            requires_interactive_desktop: true,
+            broadcast_safe: false,
+            default_target_policy: "exact_instance",
+        },
+        "keyboard.action" | "keyboard.type" => CapabilityMethodMetadata {
+            supported: true,
+            known_limitations: match platform {
+                PlatformKind::Linux => vec!["Linux keyboard control requires xdotool in PATH."],
+                _ => vec![],
+            },
+            output_modes: vec!["json"],
+            requires_interactive_desktop: true,
+            broadcast_safe: false,
+            default_target_policy: "exact_instance",
+        },
+        _ => CapabilityMethodMetadata {
+            supported: false,
+            known_limitations: vec!["This method is not part of the Yeonjang baseline matrix."],
+            output_modes: vec!["json"],
+            requires_interactive_desktop: false,
+            broadcast_safe: false,
+            default_target_policy: "exact_instance",
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capability_entry_exposes_platform_baseline_and_target_policy() {
+        let runtime = SupportProfileRuntimeInfo {
+            configured_profile: SupportProfileKind::DesktopInteractive,
+            effective_profile: SupportProfileKind::DesktopInteractive,
+            interactive_desktop_available: true,
+            tray_runtime_available: true,
+            reason_codes: vec!["tray_runtime_visible".to_string()],
+        };
+
+        let entry = capability_entry(
+            "screen.capture",
+            true,
+            false,
+            Some("allow_screen_capture"),
+            PlatformKind::Linux,
+            &runtime,
+            42,
+        );
+
+        assert_eq!(entry["supported"], Value::Bool(true));
+        assert_eq!(entry["requiresInteractiveDesktop"], Value::Bool(true));
+        assert_eq!(entry["broadcastSafe"], Value::Bool(true));
+        assert_eq!(
+            entry["defaultTargetPolicy"],
+            Value::String("local_preferred".to_string())
+        );
+        assert!(
+            entry["platformBaseline"]["macos"]["supported"]
+                .as_bool()
+                .unwrap_or(false)
+        );
+        assert!(
+            entry["platformBaseline"]["windows"]["supported"]
+                .as_bool()
+                .unwrap_or(false)
+        );
+        assert!(
+            entry["platformBaseline"]["linux"]["supported"]
+                .as_bool()
+                .unwrap_or(false)
+        );
+    }
+
+    #[test]
+    fn capability_entry_marks_interactive_methods_blocked_in_headless_profile() {
+        let runtime = SupportProfileRuntimeInfo {
+            configured_profile: SupportProfileKind::DesktopInteractive,
+            effective_profile: SupportProfileKind::HeadlessManaged,
+            interactive_desktop_available: false,
+            tray_runtime_available: false,
+            reason_codes: vec!["interactive_desktop_unavailable".to_string()],
+        };
+
+        let entry = capability_entry(
+            "screen.capture",
+            false,
+            false,
+            Some("allow_screen_capture"),
+            PlatformKind::Linux,
+            &runtime,
+            42,
+        );
+
+        assert_eq!(
+            entry["supportState"],
+            Value::String("blocked_by_profile".to_string())
+        );
+        assert_eq!(entry["supported"], Value::Bool(false));
+        assert!(
+            entry["reasonCodes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|value| value == "support_profile_restricted")
+        );
+    }
+
+    #[test]
+    fn tool_health_prefers_permission_disabled_over_ready() {
+        let entry = tool_health_entry(true, false, Some("allow_shell_exec"), 42);
+        assert_eq!(
+            entry["status"],
+            Value::String("permission_disabled".to_string())
+        );
     }
 }

@@ -3,7 +3,6 @@ use std::fs;
 use std::path::Path;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
     mpsc::{self, Receiver, Sender},
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -11,12 +10,20 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Result, anyhow};
 use iced::widget::{button, checkbox, column, container, row, scrollable, text, text_input};
 use iced::{
-    Alignment, Background, Border, Color, Element, Length, Shadow, Size, Subscription, Task,
-    Vector, time, window,
+    Alignment, Background, Border, Color, Element, Length, Padding, Shadow, Size, Subscription,
+    Task, Vector, time, window,
 };
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
-use tray_icon::{Icon as TrayIconImage, TrayIcon, TrayIconBuilder};
+use tray_icon::{
+    Icon as TrayIconImage, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
+    TrayIconId,
+};
 
+use crate::lifecycle::{
+    LifecycleCommand, LifecycleMachine, SharedLifecycleState, WindowModeState,
+    current_policy_from_settings, new_shared_lifecycle_state, sync_launch_on_startup,
+    write_shared_lifecycle_state,
+};
 use crate::mqtt::{MqttRuntimeHandle, RuntimeEvent, probe_connection, start_runtime};
 use crate::settings::{UiLanguage, YeonjangSettings, load_settings, save_settings};
 
@@ -79,34 +86,69 @@ enum Message {
 
 struct SystemTrayController {
     _tray_icon: TrayIcon,
+    show_item: MenuItem,
+    hide_item: MenuItem,
+    connection_item: MenuItem,
+    permission_item: MenuItem,
+    version_item: MenuItem,
     receiver: Receiver<TrayAction>,
 }
 
 impl SystemTrayController {
-    fn new(lang: UiLanguage, quit_requested: Arc<AtomicBool>) -> Result<Self> {
+    fn new(lang: UiLanguage) -> Result<Self> {
         let menu = Menu::new();
-        let settings_item = MenuItem::new(t(lang, "설정창 보기", "Show Settings"), true, None);
+        let settings_item = MenuItem::new(t(lang, "창 열기", "Open Window"), true, None);
         let hide_item = MenuItem::new(t(lang, "숨기기", "Hide"), true, None);
+        let connection_item = MenuItem::new(
+            t(lang, "연결 상태: 확인 중", "Connection: pending"),
+            false,
+            None,
+        );
+        let permission_item = MenuItem::new(
+            t(lang, "권한 상태: 확인 중", "Permissions: pending"),
+            false,
+            None,
+        );
+        let version_item = MenuItem::new(
+            format!(
+                "{} {}",
+                t(lang, "버전", "Version"),
+                env!("CARGO_PKG_VERSION")
+            ),
+            false,
+            None,
+        );
         let quit_item = MenuItem::new(t(lang, "종료", "Quit"), true, None);
 
         menu.append(&settings_item)?;
         menu.append(&hide_item)?;
+        menu.append(&connection_item)?;
+        menu.append(&permission_item)?;
+        menu.append(&version_item)?;
         menu.append(&quit_item)?;
 
         let tray_icon = TrayIconBuilder::new()
+            .with_id("yeonjang-main-tray")
             .with_tooltip("Yeonjang")
             .with_icon(build_tray_icon()?)
             .with_menu(Box::new(menu))
             .build()?;
+        let tray_icon_id = tray_icon.id().clone();
 
         let settings_id = settings_item.id().clone();
         let hide_id = hide_item.id().clone();
         let quit_id = quit_item.id().clone();
         let (sender, receiver) = mpsc::channel();
-        install_tray_menu_handler(sender, quit_requested, settings_id, hide_id, quit_id);
+        install_tray_menu_handler(sender.clone(), settings_id, hide_id, quit_id);
+        install_tray_icon_handler(sender, tray_icon_id.clone());
 
         Ok(Self {
             _tray_icon: tray_icon,
+            show_item: settings_item,
+            hide_item,
+            connection_item,
+            permission_item,
+            version_item,
             receiver,
         })
     }
@@ -118,11 +160,51 @@ impl SystemTrayController {
         }
         actions
     }
+
+    fn sync_state(
+        &self,
+        lang: UiLanguage,
+        connection_state: ConnectionState,
+        permission_counts: (usize, usize, usize),
+        window_visible: bool,
+    ) {
+        let (enabled, disabled, os_required) = permission_counts;
+        let connection_text = format!(
+            "{}: {}",
+            t(lang, "연결 상태", "Connection"),
+            connection_state_label(lang, connection_state),
+        );
+        let permission_text = format!(
+            "{}: {} {}, {} {}, {} {}",
+            t(lang, "권한 상태", "Permissions"),
+            t(lang, "허용", "On"),
+            enabled,
+            t(lang, "꺼짐", "Off"),
+            disabled,
+            t(lang, "OS 승인", "OS Approval"),
+            os_required,
+        );
+        let version_text = format!(
+            "{} {}",
+            t(lang, "버전", "Version"),
+            env!("CARGO_PKG_VERSION"),
+        );
+
+        self.show_item.set_text(t(lang, "창 열기", "Open Window"));
+        self.hide_item.set_text(t(lang, "숨기기", "Hide"));
+        self.connection_item.set_text(connection_text);
+        self.permission_item.set_text(permission_text);
+        self.version_item.set_text(version_text);
+        self.show_item.set_enabled(!window_visible);
+        self.hide_item.set_enabled(window_visible);
+        self.connection_item.set_enabled(false);
+        self.permission_item.set_enabled(false);
+        self.version_item.set_enabled(false);
+    }
 }
 
 fn install_tray_menu_handler(
     sender: Sender<TrayAction>,
-    quit_requested: Arc<AtomicBool>,
     settings_id: tray_icon::menu::MenuId,
     hide_id: tray_icon::menu::MenuId,
     quit_id: tray_icon::menu::MenuId,
@@ -139,10 +221,33 @@ fn install_tray_menu_handler(
         };
 
         if let Some(action) = action {
-            if action == TrayAction::QuitApp {
-                quit_requested.store(true, Ordering::SeqCst);
-            }
             let _ = sender.send(action);
+        }
+    }));
+}
+
+fn install_tray_icon_handler(sender: Sender<TrayAction>, tray_icon_id: TrayIconId) {
+    TrayIconEvent::set_event_handler(Some(move |event| {
+        let show = match event {
+            TrayIconEvent::DoubleClick { id, button, .. } => {
+                id == tray_icon_id && button == MouseButton::Left
+            }
+            TrayIconEvent::Click {
+                id,
+                button,
+                button_state,
+                ..
+            } => {
+                cfg!(target_os = "macos")
+                    && id == tray_icon_id
+                    && button == MouseButton::Left
+                    && button_state == MouseButtonState::Up
+            }
+            _ => false,
+        };
+
+        if show {
+            let _ = sender.send(TrayAction::ShowWindow);
         }
     }));
 }
@@ -155,6 +260,11 @@ fn t(lang: UiLanguage, ko: &'static str, en: &'static str) -> &'static str {
 }
 
 pub fn run_gui() -> Result<()> {
+    let initial_window_visible = load_settings()
+        .map(|settings| {
+            current_policy_from_settings(&settings).initial_window_mode == WindowModeState::Visible
+        })
+        .unwrap_or(true);
     let mut app = iced::application(
         YeonjangGuiApp::new,
         YeonjangGuiApp::update,
@@ -168,6 +278,7 @@ pub fn run_gui() -> Result<()> {
         max_size: Some(Size::new(680.0, 760.0)),
         resizable: false,
         exit_on_close_request: false,
+        visible: initial_window_visible,
         icon: build_window_icon().ok(),
         ..window::Settings::default()
     });
@@ -192,7 +303,10 @@ struct YeonjangGuiApp {
     mqtt_runtime: Option<MqttRuntimeHandle>,
     mqtt_runtime_events: Option<Receiver<RuntimeEvent>>,
     tray_controller: Option<SystemTrayController>,
-    quit_requested: Arc<AtomicBool>,
+    lifecycle: LifecycleMachine,
+    lifecycle_state: SharedLifecycleState,
+    pending_lifecycle_command: Option<LifecycleCommand>,
+    quit_in_progress: bool,
 }
 
 impl YeonjangGuiApp {
@@ -222,6 +336,10 @@ impl YeonjangGuiApp {
             }
         };
         let ui_language = settings.ui_language;
+        let policy = current_policy_from_settings(&settings);
+        let mut lifecycle = LifecycleMachine::new(policy, false);
+        let mut tray_controller = None;
+        let mut pending_lifecycle_command = None;
 
         let mut app = Self {
             saved_settings: settings.clone(),
@@ -240,12 +358,16 @@ impl YeonjangGuiApp {
             mqtt_runtime: None,
             mqtt_runtime_events: None,
             tray_controller: None,
-            quit_requested: Arc::new(AtomicBool::new(false)),
+            lifecycle_state: new_shared_lifecycle_state(lifecycle.state()),
+            lifecycle: lifecycle.clone(),
+            pending_lifecycle_command: None,
+            quit_in_progress: false,
         };
 
-        match SystemTrayController::new(ui_language, Arc::clone(&app.quit_requested)) {
-            Ok(tray_controller) => {
-                app.tray_controller = Some(tray_controller);
+        match SystemTrayController::new(ui_language) {
+            Ok(controller) => {
+                lifecycle.sync_tray_availability(true);
+                tray_controller = Some(controller);
             }
             Err(error) => {
                 app.set_status(format!(
@@ -256,8 +378,17 @@ impl YeonjangGuiApp {
                         "Failed to initialize the system tray"
                     )
                 ));
+                if lifecycle.expects_tray() && !lifecycle.initial_window_visible() {
+                    pending_lifecycle_command = Some(lifecycle.force_foreground_fallback());
+                }
             }
         }
+
+        app.lifecycle = lifecycle;
+        app.tray_controller = tray_controller;
+        app.pending_lifecycle_command = pending_lifecycle_command;
+        app.sync_lifecycle_registration();
+        app.sync_tray_menu();
 
         if app.settings.connection.auto_connect {
             app.connect_now();
@@ -286,28 +417,58 @@ impl YeonjangGuiApp {
             Message::Tick => {
                 self.process_runtime_events();
                 let mut tasks = Vec::new();
+                self.sync_tray_menu();
 
-                if self.quit_requested.swap(false, Ordering::SeqCst) {
-                    tasks.push(window_command(WindowCommand::Quit));
+                if let Some(command) = self.pending_lifecycle_command.take() {
+                    tasks.push(self.apply_lifecycle_command(command, "startup-ready"));
                 }
 
                 for action in self.drain_tray_actions() {
                     match action {
-                        TrayAction::ShowWindow => tasks.push(window_command(WindowCommand::Show)),
-                        TrayAction::HideWindow => tasks.push(window_command(WindowCommand::Hide)),
-                        TrayAction::QuitApp => tasks.push(window_command(WindowCommand::Quit)),
+                        TrayAction::ShowWindow => {
+                            self.set_status(t(
+                                self.lang(),
+                                "트레이에서 창을 열었습니다.",
+                                "Opened the window from the tray.",
+                            ));
+                            let command = self.lifecycle.show_window();
+                            tasks.push(self.apply_lifecycle_command(command, "window-visible"));
+                        }
+                        TrayAction::HideWindow => {
+                            self.set_status(t(
+                                self.lang(),
+                                "Yeonjang을 트레이로 숨겼습니다.",
+                                "Yeonjang was hidden to the tray.",
+                            ));
+                            let command = self.lifecycle.hide_window();
+                            tasks.push(self.apply_lifecycle_command(command, "window-hidden"));
+                        }
+                        TrayAction::QuitApp => {
+                            self.set_status(t(
+                                self.lang(),
+                                "Yeonjang을 종료합니다.",
+                                "Quitting Yeonjang.",
+                            ));
+                            tasks.push(
+                                self.apply_lifecycle_command(self.lifecycle.quit(), "quitting"),
+                            );
+                        }
                     }
                 }
 
                 Task::batch(tasks)
             }
             Message::WindowCloseRequested(_id) => {
+                if self.quit_in_progress {
+                    return window_command(WindowCommand::Quit);
+                }
+                let command = self.lifecycle.handle_close_request();
                 self.set_status(t(
                     self.lang(),
                     "연장은 시스템 트레이에서 계속 실행됩니다.",
                     "Yeonjang is still running in the system tray.",
                 ));
-                window_command(WindowCommand::Hide)
+                self.apply_lifecycle_command(command, "window-hidden")
             }
             Message::SelectTab(tab) => {
                 self.active_tab = tab;
@@ -315,6 +476,7 @@ impl YeonjangGuiApp {
             }
             Message::SetLanguage(lang) => {
                 self.settings.ui_language = lang;
+                self.sync_tray_menu();
                 Task::none()
             }
             Message::HostChanged(value) => {
@@ -545,10 +707,18 @@ impl YeonjangGuiApp {
             column![
                 header,
                 tabs,
-                container(scrollable(body).height(Length::Fill))
-                    .padding(18)
+                container(
+                    scrollable(
+                        container(body)
+                            .width(Length::Fill)
+                            .padding(Padding::ZERO.right(18.0)),
+                    )
                     .height(Length::Fill)
                     .width(Length::Fill),
+                )
+                .padding(18)
+                .height(Length::Fill)
+                .width(Length::Fill),
                 footer,
             ]
             .height(Length::Fill),
@@ -669,6 +839,7 @@ impl YeonjangGuiApp {
             ),
         ]
         .spacing(12)
+        .width(Length::Fill)
         .into()
     }
 
@@ -740,6 +911,7 @@ impl YeonjangGuiApp {
             ),
         ]
         .spacing(12)
+        .width(Length::Fill)
         .into()
     }
 
@@ -840,6 +1012,7 @@ impl YeonjangGuiApp {
             ),
         ]
         .spacing(12)
+        .width(Length::Fill)
         .into()
     }
 
@@ -866,11 +1039,42 @@ impl YeonjangGuiApp {
             Ok(_) => {
                 self.saved_settings = self.settings.clone();
                 self.port_input = self.settings.connection.port.to_string();
-                self.set_status(t(
-                    self.lang(),
-                    "현재 설정을 저장했습니다.",
-                    "Settings saved.",
-                ));
+                match sync_launch_on_startup(&self.settings) {
+                    Ok(result) => {
+                        self.set_status(if result.enabled {
+                            format!(
+                                "{}: {}",
+                                t(
+                                    self.lang(),
+                                    "현재 설정을 저장했고 자동 시작을 동기화했습니다",
+                                    "Settings saved and launch on startup was synced",
+                                ),
+                                result.entry_path.display()
+                            )
+                        } else {
+                            format!(
+                                "{}: {}",
+                                t(
+                                    self.lang(),
+                                    "현재 설정을 저장했고 자동 시작 항목을 정리했습니다",
+                                    "Settings saved and launch on startup entry was removed",
+                                ),
+                                result.entry_path.display()
+                            )
+                        });
+                    }
+                    Err(error) => {
+                        self.set_status(format!(
+                            "{}: {error}",
+                            t(
+                                self.lang(),
+                                "설정은 저장했지만 자동 시작 동기화는 실패했습니다",
+                                "Settings were saved, but launch on startup sync failed"
+                            )
+                        ));
+                    }
+                }
+                self.publish_runtime_presence("settings-saved");
             }
             Err(error) => {
                 self.set_status(format!(
@@ -971,7 +1175,7 @@ impl YeonjangGuiApp {
         }
 
         self.stop_runtime();
-        match start_runtime(self.settings.clone()) {
+        match start_runtime(self.settings.clone(), Arc::clone(&self.lifecycle_state)) {
             Ok((runtime, events)) => {
                 self.mqtt_runtime = Some(runtime);
                 self.mqtt_runtime_events = Some(events);
@@ -1247,6 +1451,58 @@ impl YeonjangGuiApp {
             .map(SystemTrayController::drain_actions)
             .unwrap_or_default()
     }
+
+    fn is_window_visible(&self) -> bool {
+        self.lifecycle.state().window_mode == WindowModeState::Visible
+    }
+
+    fn sync_lifecycle_registration(&self) {
+        write_shared_lifecycle_state(&self.lifecycle_state, self.lifecycle.state());
+    }
+
+    fn sync_tray_menu(&self) {
+        if let Some(controller) = &self.tray_controller {
+            controller.sync_state(
+                self.lang(),
+                self.connection_state,
+                self.permission_counts(),
+                self.is_window_visible(),
+            );
+        }
+    }
+
+    fn publish_runtime_presence(&mut self, message: &str) {
+        if let Some(runtime) = &self.mqtt_runtime {
+            if let Err(error) = runtime.refresh_presence(message) {
+                self.last_error = error.to_string();
+            }
+        }
+    }
+
+    fn apply_lifecycle_command(
+        &mut self,
+        command: LifecycleCommand,
+        runtime_message: &str,
+    ) -> Task<Message> {
+        self.sync_lifecycle_registration();
+        self.sync_tray_menu();
+        self.publish_runtime_presence(runtime_message);
+        match command {
+            LifecycleCommand::None => Task::none(),
+            LifecycleCommand::ShowWindow => {
+                self.quit_in_progress = false;
+                window_command(WindowCommand::Show)
+            }
+            LifecycleCommand::HideWindow => {
+                self.quit_in_progress = false;
+                window_command(WindowCommand::Hide)
+            }
+            LifecycleCommand::QuitApp => {
+                self.quit_in_progress = true;
+                window_command(WindowCommand::Quit)
+            }
+        }
+    }
 }
 
 impl Drop for YeonjangGuiApp {
@@ -1269,18 +1525,17 @@ fn window_command(command: WindowCommand) -> Task<Message> {
             window::minimize(id, false),
             window::gain_focus(id),
         ]),
-        WindowCommand::Hide => {
-            #[cfg(target_os = "windows")]
-            {
-                window::minimize(id, true)
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                window::set_mode(id, window::Mode::Hidden)
-            }
-        }
-        WindowCommand::Quit => window::close(id),
+        WindowCommand::Hide => window::set_mode(id, window::Mode::Hidden),
+        WindowCommand::Quit => iced::exit(),
     })
+}
+
+fn connection_state_label(lang: UiLanguage, state: ConnectionState) -> &'static str {
+    match state {
+        ConnectionState::Disconnected => t(lang, "연결 안 됨", "Offline"),
+        ConnectionState::Connected => t(lang, "연결됨", "Connected"),
+        ConnectionState::AuthFailed => t(lang, "인증 실패", "Auth Failed"),
+    }
 }
 
 fn tab_button(
@@ -1341,17 +1596,19 @@ fn alert_box<'a>(title: &'a str, message: &'a str, kind: StatusKind) -> Element<
                 .center_y(Length::Fill)
                 .style(move |_theme| alert_icon_style(kind)),
             column![
-                text(title).size(13).color(foreground),
-                text(message).size(13).color(foreground),
+                text(title).size(13).color(foreground).width(Length::Fill),
+                text(message).size(13).color(foreground).width(Length::Fill),
             ]
             .spacing(3)
+            .align_x(Alignment::Start)
             .width(Length::Fill),
         ]
         .spacing(10)
-        .align_y(Alignment::Center),
+        .align_y(Alignment::Center)
+        .width(Length::Fill),
     )
-    .padding(12)
     .width(Length::Fill)
+    .padding(12)
     .style(move |_theme| alert_style(kind))
     .into()
 }

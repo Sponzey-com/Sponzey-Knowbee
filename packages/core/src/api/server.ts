@@ -52,6 +52,7 @@ import { registerTopologyRoutes } from "./routes/topologies.js"
 import { registerToolsRoute } from "./routes/tools.js"
 import { registerUiModeRoute } from "./routes/ui-mode.js"
 import { registerUpdateRoute } from "./routes/update.js"
+import { registerYeonjangInstancesRoute } from "./routes/yeonjang-instances.js"
 import { registerWsRoute } from "./ws/stream.js"
 
 const log = createLogger("api:server")
@@ -70,6 +71,7 @@ export async function startServer(): Promise<void> {
   await server.register(websocketPlugin)
 
   registerStatusRoute(server)
+  registerYeonjangInstancesRoute(server)
   registerBenchmarkRoutes(server)
   registerCapabilitiesRoute(server)
   registerArtifactsRoute(server)

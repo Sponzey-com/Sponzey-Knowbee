@@ -5,7 +5,15 @@
 
 import type { AgentTool, ToolContext, ToolResult } from "../../types.js"
 import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js"
-import { resolvePreferredYeonjangExtensionId } from "../yeonjang-target.js"
+import {
+  buildYeonjangTargetParameterProperties,
+  buildYeonjangTargetResolutionDetails,
+  buildYeonjangTargetSelectionFailure,
+  recordYeonjangRemoteExecutionApproval,
+  revalidateYeonjangTargetSelection,
+  resolveYeonjangTargetSelection,
+  type YeonjangTargetedToolParams,
+} from "../yeonjang-target.js"
 import { withYeonjangRequestMetadata } from "../yeonjang-request-metadata.js"
 
 const TYPE_DELAY_MS = 500
@@ -22,22 +30,19 @@ function yeonjangRequiredFailure(method: string): ToolResult {
   }
 }
 
-interface KeyboardTypeParams {
+interface KeyboardTypeParams extends YeonjangTargetedToolParams {
   text: string
-  extensionId?: string
 }
 
-interface KeyboardShortcutParams {
+interface KeyboardShortcutParams extends YeonjangTargetedToolParams {
   keys: string[]
-  extensionId?: string
 }
 
-interface KeyboardActionParams {
+interface KeyboardActionParams extends YeonjangTargetedToolParams {
   action: "type_text" | "shortcut" | "key_press" | "key_down" | "key_up"
   text?: string
   key?: string
   modifiers?: string[]
-  extensionId?: string
 }
 
 interface YeonjangKeyboardTypeResult {
@@ -119,25 +124,46 @@ export const keyboardTypeTool: AgentTool<KeyboardTypeParams> = {
     type: "object",
     properties: {
       text: { type: "string", description: "입력할 텍스트" },
-      extensionId: {
-        type: "string",
-        description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
-      },
+      ...buildYeonjangTargetParameterProperties(DEFAULT_YEONJANG_EXTENSION_ID),
     },
     required: ["text"],
   },
   riskLevel: "moderate",
   requiresApproval: true,
   execute: async (params: KeyboardTypeParams, ctx: ToolContext): Promise<ToolResult> => {
-    const extensionId = resolvePreferredYeonjangExtensionId({
+    const selection = resolveYeonjangTargetSelection({
       requestedExtensionId: params.extensionId,
+      targetSelector: params.targetSelector,
+      expectedTargetSessionId: params.targetSessionId,
       userMessage: ctx.userMessage,
+      requiredSupportProfiles: ["desktop_interactive", "desktop_limited"],
     })
-    const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {})
+    if (!selection.ok) {
+      return {
+        success: false,
+        ...buildYeonjangTargetSelectionFailure(selection),
+      }
+    }
+    const extensionId = selection.extensionId
+    const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? {
+      extensionId,
+      ...(selection.targetSessionId ? { metadata: { targetSessionId: selection.targetSessionId } } : {}),
+    } : {})
     await new Promise((r) => setTimeout(r, TYPE_DELAY_MS))
 
     try {
       if (await canYeonjangHandleMethod("keyboard.type", yeonjangOptions)) {
+        const reboundSelection = revalidateYeonjangTargetSelection({
+          selection,
+          requiredSupportProfiles: ["desktop_interactive", "desktop_limited"],
+        })
+        if (!reboundSelection.ok) {
+          return {
+            success: false,
+            ...buildYeonjangTargetSelectionFailure(reboundSelection),
+          }
+        }
+        recordYeonjangRemoteExecutionApproval({ selection: reboundSelection, toolName: "keyboard.type", ctx })
         const remote = await invokeYeonjangMethod<YeonjangKeyboardTypeResult>(
           "keyboard.type",
           { text: params.text },
@@ -146,17 +172,36 @@ export const keyboardTypeTool: AgentTool<KeyboardTypeParams> = {
         return {
           success: remote.typed,
           output: remote.message || `텍스트 입력 완료: "${params.text.slice(0, 50)}${params.text.length > 50 ? "…" : ""}"`,
-          details: { via: "yeonjang", textLength: remote.text_len },
+          details: {
+            via: "yeonjang",
+            textLength: remote.text_len,
+            ...buildYeonjangTargetResolutionDetails(reboundSelection),
+          },
           ...(remote.typed ? {} : { error: "remote_keyboard_type_failed" }),
         }
       }
     } catch (error) {
       if (!isYeonjangUnavailableError(error)) {
         const message = error instanceof Error ? error.message : String(error)
-        return { success: false, output: `Yeonjang 키보드 입력 실패: ${message}`, error: message }
+        return {
+          success: false,
+          output: `Yeonjang 키보드 입력 실패: ${message}`,
+          error: message,
+          details: {
+            via: "yeonjang",
+            ...buildYeonjangTargetResolutionDetails(selection),
+          },
+        }
       }
     }
-    return yeonjangRequiredFailure("keyboard.type")
+    const failure = yeonjangRequiredFailure("keyboard.type")
+    return {
+      ...failure,
+      details: {
+        ...(failure.details && typeof failure.details === "object" ? failure.details as Record<string, unknown> : {}),
+        ...buildYeonjangTargetResolutionDetails(selection),
+      },
+    }
   },
 }
 
@@ -166,10 +211,7 @@ export const keyboardShortcutTool: AgentTool<KeyboardShortcutParams> = {
   parameters: {
     type: "object",
     properties: {
-      extensionId: {
-        type: "string",
-        description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
-      },
+      ...buildYeonjangTargetParameterProperties(DEFAULT_YEONJANG_EXTENSION_ID),
       keys: {
         type: "array",
         items: { type: "string" },
@@ -181,17 +223,41 @@ export const keyboardShortcutTool: AgentTool<KeyboardShortcutParams> = {
   riskLevel: "moderate",
   requiresApproval: true,
   execute: async (params: KeyboardShortcutParams, ctx: ToolContext): Promise<ToolResult> => {
-    const extensionId = resolvePreferredYeonjangExtensionId({
+    const selection = resolveYeonjangTargetSelection({
       requestedExtensionId: params.extensionId,
+      targetSelector: params.targetSelector,
+      expectedTargetSessionId: params.targetSessionId,
       userMessage: ctx.userMessage,
+      requiredSupportProfiles: ["desktop_interactive", "desktop_limited"],
     })
-    const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {})
+    if (!selection.ok) {
+      return {
+        success: false,
+        ...buildYeonjangTargetSelectionFailure(selection),
+      }
+    }
+    const extensionId = selection.extensionId
+    const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? {
+      extensionId,
+      ...(selection.targetSessionId ? { metadata: { targetSessionId: selection.targetSessionId } } : {}),
+    } : {})
     await new Promise((r) => setTimeout(r, TYPE_DELAY_MS))
 
     const shortcut = splitShortcutKeys(params.keys)
 
     try {
       if (await canYeonjangHandleMethod("keyboard.action", yeonjangOptions)) {
+        const reboundSelection = revalidateYeonjangTargetSelection({
+          selection,
+          requiredSupportProfiles: ["desktop_interactive", "desktop_limited"],
+        })
+        if (!reboundSelection.ok) {
+          return {
+            success: false,
+            ...buildYeonjangTargetSelectionFailure(reboundSelection),
+          }
+        }
+        recordYeonjangRemoteExecutionApproval({ selection: reboundSelection, toolName: "keyboard.action", ctx })
         const remote = await invokeYeonjangMethod<YeonjangKeyboardActionResult>(
           "keyboard.action",
           {
@@ -209,6 +275,7 @@ export const keyboardShortcutTool: AgentTool<KeyboardShortcutParams> = {
             action: remote.action,
             key: remote.key ?? shortcut.key,
             modifiers: remote.modifiers ?? shortcut.modifiers,
+            ...buildYeonjangTargetResolutionDetails(reboundSelection),
           },
           ...(remote.accepted ? {} : { error: "remote_keyboard_shortcut_failed" }),
         }
@@ -216,10 +283,25 @@ export const keyboardShortcutTool: AgentTool<KeyboardShortcutParams> = {
     } catch (error) {
       if (!isYeonjangUnavailableError(error)) {
         const message = error instanceof Error ? error.message : String(error)
-        return { success: false, output: `Yeonjang 단축키 실행 실패: ${message}`, error: message }
+        return {
+          success: false,
+          output: `Yeonjang 단축키 실행 실패: ${message}`,
+          error: message,
+          details: {
+            via: "yeonjang",
+            ...buildYeonjangTargetResolutionDetails(selection),
+          },
+        }
       }
     }
-    return yeonjangRequiredFailure("keyboard.action")
+    const failure = yeonjangRequiredFailure("keyboard.action")
+    return {
+      ...failure,
+      details: {
+        ...(failure.details && typeof failure.details === "object" ? failure.details as Record<string, unknown> : {}),
+        ...buildYeonjangTargetResolutionDetails(selection),
+      },
+    }
   },
 }
 
@@ -241,25 +323,46 @@ export const keyboardActionTool: AgentTool<KeyboardActionParams> = {
         items: { type: "string" },
         description: "함께 누를 modifier 키 목록",
       },
-      extensionId: {
-        type: "string",
-        description: `대상 Yeonjang 연장 ID. 사용자가 특정 컴퓨터/장치를 지목한 경우 지정합니다. 기본값: ${DEFAULT_YEONJANG_EXTENSION_ID}`,
-      },
+      ...buildYeonjangTargetParameterProperties(DEFAULT_YEONJANG_EXTENSION_ID),
     },
     required: ["action"],
   },
   riskLevel: "moderate",
   requiresApproval: true,
   execute: async (params: KeyboardActionParams, ctx: ToolContext): Promise<ToolResult> => {
-    const extensionId = resolvePreferredYeonjangExtensionId({
+    const selection = resolveYeonjangTargetSelection({
       requestedExtensionId: params.extensionId,
+      targetSelector: params.targetSelector,
+      expectedTargetSessionId: params.targetSessionId,
       userMessage: ctx.userMessage,
+      requiredSupportProfiles: ["desktop_interactive", "desktop_limited"],
     })
-    const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? { extensionId } : {})
+    if (!selection.ok) {
+      return {
+        success: false,
+        ...buildYeonjangTargetSelectionFailure(selection),
+      }
+    }
+    const extensionId = selection.extensionId
+    const yeonjangOptions = withYeonjangRequestMetadata(ctx, extensionId ? {
+      extensionId,
+      ...(selection.targetSessionId ? { metadata: { targetSessionId: selection.targetSessionId } } : {}),
+    } : {})
     await new Promise((r) => setTimeout(r, TYPE_DELAY_MS))
 
     try {
       if (await canYeonjangHandleMethod("keyboard.action", yeonjangOptions)) {
+        const reboundSelection = revalidateYeonjangTargetSelection({
+          selection,
+          requiredSupportProfiles: ["desktop_interactive", "desktop_limited"],
+        })
+        if (!reboundSelection.ok) {
+          return {
+            success: false,
+            ...buildYeonjangTargetSelectionFailure(reboundSelection),
+          }
+        }
+        recordYeonjangRemoteExecutionApproval({ selection: reboundSelection, toolName: "keyboard.action", ctx })
         const remote = await invokeYeonjangMethod<YeonjangKeyboardActionResult>(
           "keyboard.action",
           {
@@ -279,6 +382,7 @@ export const keyboardActionTool: AgentTool<KeyboardActionParams> = {
             key: remote.key,
             modifiers: remote.modifiers,
             textLength: remote.text_len,
+            ...buildYeonjangTargetResolutionDetails(reboundSelection),
           },
           ...(remote.accepted ? {} : { error: "remote_keyboard_action_failed" }),
         }
@@ -286,10 +390,25 @@ export const keyboardActionTool: AgentTool<KeyboardActionParams> = {
     } catch (error) {
       if (!isYeonjangUnavailableError(error)) {
         const message = error instanceof Error ? error.message : String(error)
-        return { success: false, output: `Yeonjang 키보드 액션 실패: ${message}`, error: message }
+        return {
+          success: false,
+          output: `Yeonjang 키보드 액션 실패: ${message}`,
+          error: message,
+          details: {
+            via: "yeonjang",
+            ...buildYeonjangTargetResolutionDetails(selection),
+          },
+        }
       }
     }
 
-    return yeonjangRequiredFailure("keyboard.action")
+    const failure = yeonjangRequiredFailure("keyboard.action")
+    return {
+      ...failure,
+      details: {
+        ...(failure.details && typeof failure.details === "object" ? failure.details as Record<string, unknown> : {}),
+        ...buildYeonjangTargetResolutionDetails(selection),
+      },
+    }
   },
 }

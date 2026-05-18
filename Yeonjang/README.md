@@ -118,7 +118,15 @@ Each response is emitted as a single JSON object per line.
 
 ## Notes
 
-- GUI는 네이티브 앱으로 열리며 Windows, Linux, macOS에서 작업 표시줄 또는 Dock에 나타나는 형태를 기본 전제로 합니다.
+- `desktop_interactive` support profile now runs as a tray-first app: startup hides the main window, the tray icon becomes the primary entry point, and the close button hides back to tray instead of exiting.
+- Support profile baseline:
+  - `desktop_interactive`: tray-first desktop app
+  - `desktop_limited`: desktop app with reduced tray/window guarantees
+  - `headless_managed`: managed MQTT runtime with no tray/window expectation
+- The tray menu exposes window open/hide, connection status, permission summary, version, and explicit quit.
+- Windows supports tray double-click reopen. Linux should be treated as tray-menu-first because portable tray click events are limited there.
+- Linux desktop launch requires `DISPLAY` or `WAYLAND_DISPLAY`. Without either, use `scripts/start-yeonjang-linux-headless.sh` or run `nobie-yeonjang --managed` with `YEONJANG_SUPPORT_PROFILE=headless_managed`.
+- `Launch on Startup` writes an OS-specific autostart entry that relaunches Yeonjang in the same tray-first mode.
 - 설정 화면에는 broker 접속 정보, 자동 접속, 시스템 시작 시 실행, node id, MQTT topic, 권한 토글이 포함됩니다.
 - `system.exec` supports direct command execution and shell-based execution, and now receives environment variables and timeout hints from Nobie.
 - `system.exec` now respects the Yeonjang permission toggle. If `명령 실행 / Command Execution` is off, request handling returns a permission error.
@@ -144,3 +152,4 @@ Each response is emitted as a single JSON object per line.
 - Linux mouse and keyboard automation require `xdotool` in `PATH`.
 - Linux system control supports local lock, sleep, hibernate, logout, restart, and shutdown through `loginctl`, `systemctl`, `xdg-screensaver`, `gnome-session-quit`, or `shutdown` depending on the installed desktop/systemd tooling.
 - Linux runtime management uses `scripts/build-yeonjang-linux.sh`, `scripts/start-yeonjang-linux.sh`, and `scripts/stop-yeonjang-linux.sh`, with `start-* --restart` as the restart entry point.
+- Linux headless managed runtime uses `scripts/start-yeonjang-linux-headless.sh` and `scripts/stop-yeonjang-linux-headless.sh`.

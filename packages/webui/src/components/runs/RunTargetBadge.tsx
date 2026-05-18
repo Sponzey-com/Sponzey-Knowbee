@@ -1,3 +1,4 @@
+import React from "react"
 import { getBackendDisplayLabel } from "../../lib/ai-display"
 import { useUiI18n } from "../../lib/ui-i18n"
 

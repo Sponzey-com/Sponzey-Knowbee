@@ -1,7 +1,7 @@
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { invokeYeonjangMethod, DEFAULT_YEONJANG_EXTENSION_ID } from "../../yeonjang/mqtt-client.js";
-import { resolvePreferredYeonjangExtensionId } from "./yeonjang-target.js";
+import { buildYeonjangTargetParameterProperties, buildYeonjangTargetResolutionDetails, buildYeonjangTargetSelectionFailure, recordYeonjangRemoteExecutionApproval, revalidateYeonjangTargetSelection, resolveYeonjangTargetSelection, } from "./yeonjang-target.js";
 import { withYeonjangRequestMetadata } from "./yeonjang-request-metadata.js";
 import { PATHS } from "../../config/index.js";
 function validateYeonjangBinaryCaptureResult(result) {
@@ -126,10 +126,7 @@ export const yeonjangCameraListTool = {
     parameters: {
         type: "object",
         properties: {
-            extensionId: {
-                type: "string",
-                description: "대상 연장 ID. 기본값은 yeonjang-main 입니다.",
-            },
+            ...buildYeonjangTargetParameterProperties(DEFAULT_YEONJANG_EXTENSION_ID),
             timeoutSec: {
                 type: "number",
                 description: "응답 대기 시간(초). 기본값은 15초입니다.",
@@ -140,11 +137,23 @@ export const yeonjangCameraListTool = {
     riskLevel: "safe",
     requiresApproval: false,
     async execute(params, ctx) {
-        const extensionId = resolvePreferredYeonjangExtensionId({
+        const selection = resolveYeonjangTargetSelection({
             requestedExtensionId: params.extensionId,
+            targetSelector: params.targetSelector,
+            expectedTargetSessionId: params.targetSessionId,
             userMessage: ctx.userMessage,
-        }) ?? DEFAULT_YEONJANG_EXTENSION_ID;
-        const yeonjangOptions = withYeonjangRequestMetadata(ctx, { extensionId });
+        });
+        if (!selection.ok) {
+            return {
+                success: false,
+                ...buildYeonjangTargetSelectionFailure(selection),
+            };
+        }
+        const extensionId = selection.extensionId ?? DEFAULT_YEONJANG_EXTENSION_ID;
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, {
+            extensionId,
+            ...(selection.targetSessionId ? { metadata: { targetSessionId: selection.targetSessionId } } : {}),
+        });
         ctx.onProgress(`연장 ${extensionId} 카메라 목록을 조회합니다.`);
         try {
             const timeoutMs = resolveTimeoutMs(params.timeoutSec);
@@ -159,6 +168,7 @@ export const yeonjangCameraListTool = {
                     via: "yeonjang",
                     extensionId,
                     devices,
+                    ...buildYeonjangTargetResolutionDetails(selection),
                     ...(wantsCameraInventoryOnly(ctx.userMessage) ? { responseOwnership: "final_text" } : {}),
                 },
             };
@@ -169,6 +179,11 @@ export const yeonjangCameraListTool = {
                 success: false,
                 output: `연장 "${extensionId}" 카메라 목록 조회 실패: ${message}`,
                 error: message,
+                details: {
+                    via: "yeonjang",
+                    extensionId,
+                    ...buildYeonjangTargetResolutionDetails(selection),
+                },
             };
         }
     },
@@ -179,10 +194,7 @@ export const yeonjangCameraCaptureTool = {
     parameters: {
         type: "object",
         properties: {
-            extensionId: {
-                type: "string",
-                description: "대상 연장 ID. 기본값은 yeonjang-main 입니다.",
-            },
+            ...buildYeonjangTargetParameterProperties(DEFAULT_YEONJANG_EXTENSION_ID),
             deviceId: {
                 type: "string",
                 description: "캡처할 카메라 장치 ID. 비우면 기본 카메라를 사용합니다.",
@@ -205,16 +217,36 @@ export const yeonjangCameraCaptureTool = {
     riskLevel: "moderate",
     requiresApproval: true,
     async execute(params, ctx) {
-        const extensionId = resolvePreferredYeonjangExtensionId({
+        const selection = resolveYeonjangTargetSelection({
             requestedExtensionId: params.extensionId,
+            targetSelector: params.targetSelector,
+            expectedTargetSessionId: params.targetSessionId,
             userMessage: ctx.userMessage,
-        }) ?? DEFAULT_YEONJANG_EXTENSION_ID;
-        const yeonjangOptions = withYeonjangRequestMetadata(ctx, { extensionId });
+        });
+        if (!selection.ok) {
+            return {
+                success: false,
+                ...buildYeonjangTargetSelectionFailure(selection),
+            };
+        }
+        const extensionId = selection.extensionId ?? DEFAULT_YEONJANG_EXTENSION_ID;
+        const yeonjangOptions = withYeonjangRequestMetadata(ctx, {
+            extensionId,
+            ...(selection.targetSessionId ? { metadata: { targetSessionId: selection.targetSessionId } } : {}),
+        });
         const inlineBase64 = true;
         ctx.onProgress(`연장 ${extensionId} 카메라 캡처를 요청합니다.`);
         try {
             const requestedFacing = resolveRequestedCameraFacing(ctx.userMessage);
             if (requestedFacing && params.deviceId) {
+                const reboundSelection = revalidateYeonjangTargetSelection({ selection });
+                if (!reboundSelection.ok) {
+                    return {
+                        success: false,
+                        ...buildYeonjangTargetSelectionFailure(reboundSelection),
+                    };
+                }
+                recordYeonjangRemoteExecutionApproval({ selection: reboundSelection, toolName: "camera.list", ctx });
                 const listTimeoutMs = resolveTimeoutMs(15);
                 const listedDevices = await invokeYeonjangMethod("camera.list", {}, {
                     ...yeonjangOptions,
@@ -236,10 +268,19 @@ export const yeonjangCameraCaptureTool = {
                             deviceName: selectedDevice.name,
                             requestedFacing,
                             constraint: "camera_facing_selection_unsupported",
+                            ...buildYeonjangTargetResolutionDetails(reboundSelection),
                         },
                     };
                 }
             }
+            const reboundSelection = revalidateYeonjangTargetSelection({ selection });
+            if (!reboundSelection.ok) {
+                return {
+                    success: false,
+                    ...buildYeonjangTargetSelectionFailure(reboundSelection),
+                };
+            }
+            recordYeonjangRemoteExecutionApproval({ selection: reboundSelection, toolName: "camera.capture", ctx });
             const result = await invokeYeonjangMethod("camera.capture", {
                 ...(params.deviceId ? { device_id: params.deviceId } : {}),
                 inline_base64: inlineBase64,
@@ -257,6 +298,7 @@ export const yeonjangCameraCaptureTool = {
                 ...(result.mime_type ? { mimeType: result.mime_type } : {}),
                 ...(typeof result.size_bytes === "number" ? { sizeBytes: result.size_bytes } : {}),
                 transferEncoding: "base64",
+                ...buildYeonjangTargetResolutionDetails(reboundSelection),
             };
             validateYeonjangBinaryCaptureResult(result);
             const localSavedPath = saveInlineCapture(extensionId, result);
@@ -291,6 +333,11 @@ export const yeonjangCameraCaptureTool = {
                 success: false,
                 output: `연장 "${extensionId}" 카메라 캡처 실패: ${message}`,
                 error: message,
+                details: {
+                    via: "yeonjang",
+                    extensionId,
+                    ...buildYeonjangTargetResolutionDetails(selection),
+                },
             };
         }
     },

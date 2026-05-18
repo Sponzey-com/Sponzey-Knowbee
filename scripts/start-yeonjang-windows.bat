@@ -93,6 +93,7 @@ if errorlevel 1 (
 echo Yeonjang GUI started
 echo   PID  : %STARTED_PID%
 echo   Log  : %LOG_FILE%
+echo   Mode : tray-first ^(startup hidden, close hides to tray^)
 echo   Target : %TARGET_DIR%
 echo   Stop : scripts\stop-yeonjang-windows.bat
 echo   Restart : scripts\start-yeonjang-windows.bat --restart

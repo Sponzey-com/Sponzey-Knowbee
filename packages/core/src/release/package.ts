@@ -49,6 +49,10 @@ import {
   buildEnterpriseTopologyRollbackRunbook,
 } from "./enterprise-topology-release-gate.js"
 import { type UiModeReleaseGateSummary, buildUiModeReleaseGateSummary } from "./ui-mode-gate.js"
+import {
+  type YeonjangMultiInstanceReleaseGateSummary,
+  buildYeonjangMultiInstanceReleaseGateSummary,
+} from "./yeonjang-multi-instance-gate.js"
 
 export type ReleaseTargetPlatform = "macos" | "windows" | "linux"
 
@@ -112,6 +116,7 @@ export interface ReleaseManifest {
   planEvidence: PlanDriftReleaseNoteEvidence
   webRetrievalEvidence: WebRetrievalReleaseGateSummary
   uiModeEvidence: UiModeReleaseGateSummary
+  yeonjangMultiInstanceEvidence: YeonjangMultiInstanceReleaseGateSummary
   performanceEvidence: ReleasePerformanceSummary
   benchmarkEvidence: SubAgentBenchmarkReleaseGateSummary
   subAgentReleaseGate: SubAgentReleaseReadinessSummary
@@ -259,6 +264,9 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
     liveSmoke: null,
   })
   const uiModeEvidence = buildUiModeReleaseGateSummary()
+  const yeonjangMultiInstanceEvidence = buildYeonjangMultiInstanceReleaseGateSummary({
+    now: options.now ?? new Date(),
+  })
   const performanceEvidence = buildReleasePerformanceSummary(
     options.now ? { now: options.now } : {},
   )
@@ -300,6 +308,7 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
     rollback,
     webRetrievalEvidence,
     uiModeEvidence,
+    yeonjangMultiInstanceEvidence,
   })
 
   return {
@@ -355,6 +364,7 @@ export function buildReleaseManifest(options: ReleaseManifestOptions = {}): Rele
     planEvidence: planDrift.releaseNoteEvidence,
     webRetrievalEvidence,
     uiModeEvidence,
+    yeonjangMultiInstanceEvidence,
     performanceEvidence,
     benchmarkEvidence,
     subAgentReleaseGate,
@@ -566,7 +576,18 @@ export function buildReleaseArtifactDefinitions(input: {
         rootDir,
         "scripts/start-yeonjang-linux.sh",
         "scripts/start-yeonjang-linux.sh",
-        "Linux Yeonjang start script.",
+        "Linux Yeonjang desktop start script.",
+        "linux",
+      ),
+    )
+    definitions.push(
+      requiredArtifact(
+        "yeonjang:linux:headless-start-script",
+        "yeonjang_script",
+        rootDir,
+        "scripts/start-yeonjang-linux-headless.sh",
+        "scripts/start-yeonjang-linux-headless.sh",
+        "Linux Yeonjang headless managed start script.",
         "linux",
       ),
     )
@@ -577,7 +598,18 @@ export function buildReleaseArtifactDefinitions(input: {
         rootDir,
         "scripts/stop-yeonjang-linux.sh",
         "scripts/stop-yeonjang-linux.sh",
-        "Linux Yeonjang stop script.",
+        "Linux Yeonjang desktop stop script.",
+        "linux",
+      ),
+    )
+    definitions.push(
+      requiredArtifact(
+        "yeonjang:linux:headless-stop-script",
+        "yeonjang_script",
+        rootDir,
+        "scripts/stop-yeonjang-linux-headless.sh",
+        "scripts/stop-yeonjang-linux-headless.sh",
+        "Linux Yeonjang headless managed stop script.",
         "linux",
       ),
     )
@@ -724,6 +756,21 @@ export function buildReleasePipelinePlan(
       true,
       false,
       "Verify beginner, advanced, and admin smoke matrix, redaction, admin guard, route redirects, and UI regression blockers.",
+    ),
+    step(
+      "yeonjang-multi-instance-release-gate",
+      "Yeonjang multi-instance release gate",
+      [
+        "pnpm",
+        "exec",
+        "vitest",
+        "run",
+        "tests/task010-yeonjang-multi-instance-e2e.test.ts",
+        "tests/task010-yeonjang-release-gate.test.ts",
+      ],
+      true,
+      false,
+      "Verify multi-instance target routing, revoke/quarantine blocks, duplicate-session guard, broadcast partial retry, and release evidence summary.",
     ),
     step(
       "backup-rehearsal",
@@ -1004,6 +1051,12 @@ export function buildCleanMachineInstallChecklist(): ReleaseChecklistItem[] {
         "Beginner, advanced, and admin UI mode smoke matrix, redaction, route guard, and redirect evidence pass.",
     },
     {
+      id: "yeonjang-multi-instance-release-gate",
+      required: true,
+      description:
+        "Yeonjang multi-instance exact target, ambiguity guard, revoked/quarantined block, duplicate-session guard, broadcast partial retry, and readiness evidence regressions pass.",
+    },
+    {
       id: "admin-diagnostics",
       required: true,
       description:
@@ -1047,6 +1100,7 @@ function buildReleaseNoteSummary(input: {
   rollback: ReleaseRollbackRunbook
   webRetrievalEvidence: WebRetrievalReleaseGateSummary
   uiModeEvidence: UiModeReleaseGateSummary
+  yeonjangMultiInstanceEvidence: YeonjangMultiInstanceReleaseGateSummary
 }): ReleaseNoteSummary {
   const orchestrationFlag = input.featureFlags.find(
     (flag) => flag.featureKey === "sub_agent_orchestration",
@@ -1080,6 +1134,7 @@ function buildReleaseNoteSummary(input: {
       `Enterprise Topology release gate: ${input.enterpriseTopologyReleaseGate.gateStatus}`,
       `Web retrieval release gate: ${input.webRetrievalEvidence.gateStatus}`,
       `UI mode release gate: ${input.uiModeEvidence.gateStatus}`,
+      `Yeonjang multi-instance release gate: ${input.yeonjangMultiInstanceEvidence.gateStatus}`,
       orchestrationFlag
         ? `Sub-agent orchestration default is ${orchestrationFlag.mode}; public rollout should keep single Nobie fallback intact.`
         : "Sub-agent orchestration feature flag state is missing from the rollout snapshot.",

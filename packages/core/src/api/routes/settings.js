@@ -206,7 +206,23 @@ export function registerSettingsRoute(app) {
     });
     app.get("/api/settings/mqtt/runtime", { preHandler: authMiddleware }, async () => {
         return {
-            extensions: getMqttExtensionSnapshots(),
+            extensions: getMqttExtensionSnapshots().map((snapshot) => ({
+                extensionId: snapshot.extensionId,
+                displayName: snapshot.displayName,
+                instanceId: snapshot.instanceId ?? null,
+                instanceAlias: snapshot.instanceAlias ?? null,
+                state: snapshot.state,
+                message: snapshot.message,
+                version: snapshot.version,
+                protocolVersion: snapshot.protocolVersion ?? null,
+                platform: snapshot.platform ?? snapshot.os ?? null,
+                arch: snapshot.arch ?? null,
+                transport: snapshot.transport ?? [],
+                capabilityHash: snapshot.capabilityHash ?? null,
+                methodCount: snapshot.methods.length,
+                lastSeenAt: snapshot.lastSeenAt,
+                sessionId: snapshot.sessionId ?? null,
+            })),
             logs: getMqttExchangeLogs(),
         };
     });
