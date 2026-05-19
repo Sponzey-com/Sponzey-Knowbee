@@ -57,10 +57,21 @@ Platform binaries are optional on a single-host local release build, but must be
 
 Run these checks in `advanced` or `admin` UI mode before public publish.
 
+### UI smoke
+
 - Open `/advanced/memory` and confirm `Memory inspector` cards show raw token estimate, raw message count, latest capsule age, chain depth, rollup age, compaction reason, pending preservation count, recall hit count, and drift state.
 - Confirm beginner UI does not expose memory internals, compact preview, or admin-only manual controls.
+- Confirm the browser console is clean while opening the memory inspector and using the memory cards.
+
+### Runtime smoke
+
 - In admin UI mode, run `dry-run compact`, `latest capsule`, `rollup 보기`, and `safe restore`, then confirm they return preview-only data without mutating append-only history.
+- Restart the local runtime and confirm latest capsule, continuity, and pending preservation state remain available after restart.
+
+### Release smoke
+
 - Confirm `memoryCompactionEvidence` appears in the release manifest and that `Memory compaction release gate` status is reviewed before publish.
+- Confirm the Memory Compaction task documents and this runbook use the same UI/Runtime/Release smoke split.
 
 ## Yeonjang Multi-instance Manual Smoke
 
