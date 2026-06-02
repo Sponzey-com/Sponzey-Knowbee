@@ -55,24 +55,29 @@ describe("npm install packaging", () => {
 
   it("stages the meta npm package with registry dependencies and Yeonjang optional packages", () => {
     const outputDir = makeTempDir("nobie-npm-package-")
-    execFileSync("node", ["scripts/package-npm.mjs", "--output-dir", outputDir], {
-      cwd: process.cwd(),
-      stdio: "pipe",
-    })
+    execFileSync(
+      "node",
+      ["scripts/package-npm.mjs", "--version", "v9.8.7", "--output-dir", outputDir],
+      {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      },
+    )
 
     const staged = readJson(join(outputDir, "nobie", "package.json"))
     expect(staged).toMatchObject({
       name: "@sponzey/nobie",
+      version: "9.8.7",
       bin: { nobie: "./bin/nobie.js" },
     })
     expect(staged.dependencies).toMatchObject({
-      "@sponzey/cli": "0.1.0",
-      "@sponzey/webui": "0.1.0",
+      "@sponzey/cli": "9.8.7",
+      "@sponzey/webui": "9.8.7",
     })
     expect(staged.optionalDependencies).toMatchObject({
-      "@sponzey/yeonjang-darwin-arm64": "0.1.0",
-      "@sponzey/yeonjang-linux-x64": "0.1.0",
-      "@sponzey/yeonjang-win32-x64": "0.1.0",
+      "@sponzey/yeonjang-darwin-arm64": "9.8.7",
+      "@sponzey/yeonjang-linux-x64": "9.8.7",
+      "@sponzey/yeonjang-win32-x64": "9.8.7",
     })
     expect(existsSync(join(outputDir, "nobie", "bin", "nobie.js"))).toBe(true)
 
@@ -82,8 +87,9 @@ describe("npm install packaging", () => {
     expect(core.name).toBe("@sponzey/core")
     expect(cli).toMatchObject({
       name: "@sponzey/cli",
+      version: "9.8.7",
       dependencies: {
-        "@sponzey/core": "0.1.0",
+        "@sponzey/core": "9.8.7",
       },
     })
     expect(webui.name).toBe("@sponzey/webui")
@@ -109,6 +115,8 @@ describe("npm install packaging", () => {
         "darwin-arm64",
         "--binary",
         binaryPath,
+        "--version",
+        "v9.8.7",
         "--output-dir",
         outputDir,
       ],
@@ -118,7 +126,7 @@ describe("npm install packaging", () => {
     const staged = readJson(join(outputDir, "yeonjang-darwin-arm64", "package.json"))
     expect(staged).toMatchObject({
       name: "@sponzey/yeonjang-darwin-arm64",
-      version: "0.1.0",
+      version: "9.8.7",
       os: ["darwin"],
       cpu: ["arm64"],
     })
@@ -194,6 +202,7 @@ describe("npm install packaging", () => {
 
     expect(workflow).toContain("scripts/package-npm.mjs")
     expect(workflow).toContain("scripts/package-yeonjang-platform.mjs")
+    expect(workflow).toContain('--version "$GITHUB_REF_NAME"')
     expect(workflow).toContain("macos-latest")
     expect(workflow).toContain("build-yeonjang-linux-package:")
     expect(workflow).toContain("image: ubuntu:20.04")
@@ -205,6 +214,8 @@ describe("npm install packaging", () => {
     expect(workflow).toContain("GH_REPO: ${{ github.repository }}")
     expect(workflow).toContain("gh release create")
     expect(workflow).toContain("gh release upload")
+    expect(workflow).toContain("npm view \"$package_spec\" version")
+    expect(workflow).toContain("Skipping already published package")
     expect(workflow).toContain("NODE_AUTH_TOKEN")
   })
 })
