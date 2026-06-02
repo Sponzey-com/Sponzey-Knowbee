@@ -41,15 +41,12 @@ jobs:
           - os: macos-latest
             target: darwin-arm64
             build: bash scripts/build-yeonjang-macos.sh
-            binary: Yeonjang/target/release/nobie-yeonjang
           - os: ubuntu-20.04
             target: linux-x64
             build: bash scripts/build-yeonjang-linux.sh
-            binary: Yeonjang/target/release/nobie-yeonjang
           - os: windows-latest
             target: win32-x64
             build: scripts\build-yeonjang-windows.bat
-            binary: Yeonjang\target\release\nobie-yeonjang.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +59,7 @@ jobs:
           registry-url: https://registry.npmjs.org
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: ${{ matrix.build }}
-      - run: node scripts/package-yeonjang-platform.mjs --target ${{ matrix.target }} --binary "${{ matrix.binary }}" --output-dir release/npm
+      - run: node scripts/package-yeonjang-platform.mjs --target ${{ matrix.target }} --output-dir release/npm
       - run: mkdir -p release/npm/tarballs
         shell: bash
       - run: npm pack ./release/npm/yeonjang-${{ matrix.target }} --pack-destination release/npm/tarballs

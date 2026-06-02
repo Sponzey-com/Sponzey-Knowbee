@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 
 const tempDirs: string[] = []
@@ -148,6 +148,45 @@ describe("npm install packaging", () => {
       cpu: ["x64"],
       libc: ["glibc"],
     })
+  })
+
+  it("finds a Windows Yeonjang binary from the build target directory", () => {
+    const targetDir = makeTempDir("nobie-yeonjang-windows-target-")
+    const outputDir = makeTempDir("nobie-yeonjang-windows-package-")
+    const binaryPath = join(targetDir, "release", "nobie-yeonjang.exe")
+    mkdirSync(dirname(binaryPath), { recursive: true })
+    writeFileSync(binaryPath, "fake-windows-binary\n", "utf-8")
+
+    execFileSync(
+      "node",
+      [
+        "scripts/package-yeonjang-platform.mjs",
+        "--target",
+        "win32-x64",
+        "--binary",
+        "Yeonjang/target/release/nobie-yeonjang.exe",
+        "--output-dir",
+        outputDir,
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          YEONJANG_TARGET_DIR: targetDir,
+        },
+        stdio: "pipe",
+      },
+    )
+
+    const staged = readJson(join(outputDir, "yeonjang-win32-x64", "package.json"))
+    expect(staged).toMatchObject({
+      name: "@sponzey/yeonjang-win32-x64",
+      os: ["win32"],
+      cpu: ["x64"],
+    })
+    expect(existsSync(join(outputDir, "yeonjang-win32-x64", "bin", "nobie-yeonjang.exe"))).toBe(
+      true,
+    )
   })
 
   it("documents the GitHub Actions release path for npm package publishing", () => {

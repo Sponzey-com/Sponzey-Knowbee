@@ -41,9 +41,41 @@ function packageVersion(explicitVersion) {
   return String(rootPackage.version ?? "0.1.0")
 }
 
-function defaultBinaryPath(target) {
-  if (target === "win32-x64") return join(rootDir, "Yeonjang", "target", "release", "nobie-yeonjang.exe")
-  return join(rootDir, "Yeonjang", "target", "release", "nobie-yeonjang")
+function uniquePaths(paths) {
+  return [...new Set(paths.filter(Boolean))]
+}
+
+function defaultTargetDirs(target) {
+  const dirs = [process.env.YEONJANG_TARGET_DIR]
+  if (target === "win32-x64" && process.env.LOCALAPPDATA) {
+    dirs.push(join(process.env.LOCALAPPDATA, "Yeonjang", "target"))
+  }
+  dirs.push(join(rootDir, "Yeonjang", "target"))
+  return uniquePaths(dirs.map((dir) => (dir ? resolve(dir) : null)))
+}
+
+function binaryCandidates(targetKey, explicitBinary) {
+  const target = TARGETS[targetKey]
+  const profile = process.env.YEONJANG_PROFILE || "release"
+  return uniquePaths([
+    explicitBinary ? resolve(explicitBinary) : null,
+    process.env.YEONJANG_BINARY_PATH ? resolve(process.env.YEONJANG_BINARY_PATH) : null,
+    ...defaultTargetDirs(targetKey).map((targetDir) => join(targetDir, profile, target.binaryName)),
+  ])
+}
+
+function resolveBinaryPath(target, explicitBinary) {
+  const candidates = binaryCandidates(target, explicitBinary)
+  const binaryPath = candidates.find((candidate) => existsSync(candidate))
+  if (binaryPath) return binaryPath
+
+  throw new Error(
+    [
+      "Yeonjang binary does not exist.",
+      "Checked candidates:",
+      ...candidates.map((candidate) => `- ${candidate}`),
+    ].join("\n"),
+  )
 }
 
 function copyIfPresent(sourcePath, targetPath) {
@@ -58,8 +90,7 @@ function main() {
     throw new Error(`--target must be one of: ${Object.keys(TARGETS).join(", ")}`)
   }
   const target = TARGETS[options.target]
-  const binaryPath = resolve(options.binary ?? defaultBinaryPath(options.target))
-  if (!existsSync(binaryPath)) throw new Error(`Yeonjang binary does not exist: ${binaryPath}`)
+  const binaryPath = resolveBinaryPath(options.target, options.binary)
 
   const version = packageVersion(options.version)
   const packageDir = join(options.outputDir, `yeonjang-${options.target}`)
