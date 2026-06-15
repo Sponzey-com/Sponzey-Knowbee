@@ -75,8 +75,8 @@ export const TOPOLOGY_WORKSPACE_LAYER_COPY: TopologyWorkspaceLayerCopy[] = [
     layer: "resources",
     labelKo: "리소스",
     labelEn: "Resources",
-    tooltipKo: "내부 projection 전용 레이어입니다. 기본 토폴로지 화면에는 노출하지 않습니다.",
-    tooltipEn: "Internal projection-only layer. It is not exposed in the default topology screen.",
+    tooltipKo: "내부 projection 전용 레이어입니다. 기본 서브에이전트 설정 화면에는 노출하지 않습니다.",
+    tooltipEn: "Internal projection-only layer. It is not exposed in the default sub-agent settings screen.",
   },
 ]
 
@@ -290,9 +290,9 @@ export const TOPOLOGY_WORKSPACE_SECTION_POLICIES: TopologyWorkspaceSectionPolicy
 
 export const TOPOLOGY_WORKSPACE_FEATURE_FALLBACK_COPY = {
   disabledReasonKo:
-    "토폴로지 작업공간은 관리자 설정(기능 플래그)이 꺼져 있어 사용할 수 없습니다. 관리자에게 실행자 그래프 작업공간을 켜 달라고 요청하세요.",
+    "서브에이전트 설정은 관리자 설정(기능 플래그)이 꺼져 있어 사용할 수 없습니다. 관리자에게 실행자 그래프 작업공간을 켜 달라고 요청하세요.",
   disabledReasonEn:
-    "Topology Workspace is unavailable because the administrator setting (feature flag) is off. Ask an administrator to enable the Executor Graph workspace.",
+    "Sub-agent settings are unavailable because the administrator setting (feature flag) is off. Ask an administrator to enable the Executor Graph workspace.",
 } as const
 
 export function topologyWorkspaceVisibleLayers(
@@ -343,8 +343,8 @@ export function resolveTopologyWorkspaceExposureModeForRoute(input: {
 }
 
 export const TOPOLOGY_WORKSPACE_FIRST_START_COPY = {
-  titleKo: "첫 업무 흐름 만들기",
-  titleEn: "Create your first work flow",
+  titleKo: "첫 서브에이전트 구성 만들기",
+  titleEn: "Create your first sub-agent setup",
   descriptionKo: "실행자 예시를 고르면 연결까지 자동으로 채워진다.",
   descriptionEn: "Choose an executor example to start with connections already filled in.",
   primaryActionKo: "첫 실행자 추가",

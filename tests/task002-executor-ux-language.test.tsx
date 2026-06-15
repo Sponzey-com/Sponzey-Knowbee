@@ -98,7 +98,7 @@ describe("task002 executor-first UX language", () => {
       }),
     )
 
-    expect(shellHtml).toContain("업무 흐름 만들기")
+    expect(shellHtml).toContain("서브에이전트 구성하기")
     expect(shellHtml).not.toContain("Topology Workspace")
     expect(firstStartHtml).toContain("첫 실행자 추가")
     expect(firstStartHtml).toContain("실행자 예시")
@@ -110,7 +110,7 @@ describe("task002 executor-first UX language", () => {
     const html = renderToStaticMarkup(
       createElement(
         FeatureGate,
-        { capabilityKey: "enterprise_topology_builder_ui", title: "토폴로지" },
+        { capabilityKey: "enterprise_topology_builder_ui", title: "서브에이전트 설정" },
         createElement("div", null, "workspace route content"),
       ),
     )
@@ -118,7 +118,7 @@ describe("task002 executor-first UX language", () => {
     expect(TOPOLOGY_WORKSPACE_FEATURE_FALLBACK_COPY.disabledReasonKo).toContain("관리자")
     expect(TOPOLOGY_WORKSPACE_FEATURE_FALLBACK_COPY.disabledReasonKo).toContain("기능 플래그")
     expect(TOPOLOGY_WORKSPACE_FEATURE_FALLBACK_COPY.disabledReasonKo).toContain("실행자 그래프")
-    expect(html).toContain("토폴로지")
+    expect(html).toContain("서브에이전트 설정")
     expect(html).toContain("관리자 설정")
     expect(html).toContain("실행자 그래프")
     expect(html).not.toContain("workspace route content")

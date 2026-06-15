@@ -29,6 +29,7 @@ import {
   buildExecutorGraphRelationInfoMap,
   type ExecutorGraphRelationInfo,
 } from "../../lib/executor-graph-relations"
+import type { TopologySubAgentSummary } from "../../lib/topology-sub-agent-sync"
 import type { TopologyWorkspaceLayer } from "../../lib/topology-workspace"
 import { useUiI18n } from "../../lib/ui-i18n"
 import {
@@ -47,6 +48,7 @@ interface ExecutorFlowNodeData extends Record<string, unknown> {
   executor: ExecutorDraft
   resources: ExecutorCardResourceChip[]
   relation?: ExecutorGraphRelationInfo
+  subAgentSummary?: TopologySubAgentSummary
   working: boolean
   executionStatus?: ExecutorCardExecutionStatus
 }
@@ -112,6 +114,7 @@ export function ExecutorGraphCanvas({
   activeEdgeIds = [],
   executorStatuses = {},
   edgeStatuses = {},
+  subAgentSummaries,
   onSelectExecutor,
   onConnectExecutors,
   onMoveExecutor,
@@ -124,6 +127,7 @@ export function ExecutorGraphCanvas({
   activeEdgeIds?: string[]
   executorStatuses?: Record<string, ExecutorCardExecutionStatus>
   edgeStatuses?: Record<string, ExecutorFlowEdgeStatus>
+  subAgentSummaries?: ReadonlyMap<string, TopologySubAgentSummary>
   onSelectExecutor?: (executorId: string) => void
   onConnectExecutors?: (sourceExecutorId: string, targetExecutorId: string) => void
   onMoveExecutor?: (executorId: string, position: { x: number; y: number }) => void
@@ -133,8 +137,8 @@ export function ExecutorGraphCanvas({
   const activeExecutorIdSet = React.useMemo(() => new Set(activeExecutorIds), [activeExecutorIds])
   const activeEdgeIdSet = React.useMemo(() => new Set(activeEdgeIds), [activeEdgeIds])
   const flowNodes = React.useMemo(
-    () => model ? executorFlowNodes(model, selectedExecutorId, activeExecutorIdSet, executorStatuses) : [],
-    [activeExecutorIdSet, executorStatuses, model, selectedExecutorId],
+    () => model ? executorFlowNodes(model, selectedExecutorId, activeExecutorIdSet, executorStatuses, subAgentSummaries) : [],
+    [activeExecutorIdSet, executorStatuses, model, selectedExecutorId, subAgentSummaries],
   )
   const [interactiveNodes, setInteractiveNodes] = React.useState<Array<Node<ExecutorFlowNodeData>>>(flowNodes)
   const sourcePositionsRef = React.useRef(executorFlowPositionMap(flowNodes))
@@ -259,6 +263,7 @@ function ExecutorFlowNodeView(props: NodeProps) {
       <ExecutorCardNode
         executor={data.executor}
         resources={data.resources}
+        subAgentSummary={data.subAgentSummary}
         selected={Boolean(props.selected)}
         working={working}
         executionStatus={data.executionStatus}
@@ -285,6 +290,7 @@ function executorFlowNodes(
   selectedExecutorId?: string | null,
   activeExecutorIds: Set<string> = new Set(),
   executorStatuses: Record<string, ExecutorCardExecutionStatus> = {},
+  subAgentSummaries?: ReadonlyMap<string, TopologySubAgentSummary>,
 ): Array<Node<ExecutorFlowNodeData>> {
   const cardsById = new Map<string, ExecutorGraphCanvasCard>()
   const relationInfoById = buildExecutorGraphRelationInfoMap(model.graph)
@@ -307,6 +313,7 @@ function executorFlowNodes(
         executor,
         resources: card.resources,
         relation: relationInfoById.get(executor.id),
+        subAgentSummary: subAgentSummaries?.get(executor.id),
         working: activeExecutorIds.has(executor.id) || Boolean(executor.sourceNodeId && activeExecutorIds.has(executor.sourceNodeId)),
         executionStatus: executorStatuses[executor.id] ?? (activeExecutorIds.has(executor.id) ? "running" : undefined),
       },

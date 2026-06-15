@@ -248,6 +248,12 @@ function createInitialSetupDraft(): SetupDraft {
       host: "127.0.0.1",
       port: 18888,
     },
+    subAgents: {
+      orchestrationEnabled: false,
+      items: [],
+      runtimeActiveAgentIds: [],
+      lastRuntimeSeenAtByAgentId: {},
+    },
   }
 }
 

@@ -14,8 +14,8 @@ import {
   type FeedbackRequest,
   type ModelExecutionSnapshot,
   type NicknameSnapshot,
-  type OwnerScope,
   type OrchestrationPlan,
+  type OwnerScope,
   type ParallelSubSessionGroup,
   type ProgressEvent,
   type ResourceLockContract,
@@ -29,12 +29,12 @@ import {
 } from "../contracts/sub-agent-orchestration.js"
 import { recordControlEvent } from "../control-plane/timeline.js"
 import {
-  getSession,
   getRunSubSessionByIdempotencyKey,
+  getSession,
   insertRunSubSession,
   listMemoryCapsulesForOwner,
-  upsertAgentMemoryState,
   updateRunSubSession,
+  upsertAgentMemoryState,
 } from "../db/index.js"
 import {
   buildAgentMemoryStateFromBootstrap,
@@ -257,9 +257,7 @@ export type VisibleTopologySubSessionGuardResult =
   | { ok: true }
   | {
       ok: false
-      reasonCode:
-        | "topology_executor_id_required"
-        | "system_preparation_user_result_blocked"
+      reasonCode: "topology_executor_id_required" | "system_preparation_user_result_blocked"
     }
 
 export const SUB_SESSION_STATUS_TRANSITIONS: Readonly<
@@ -555,7 +553,7 @@ function buildPreparedSubSessionMemoryBootstrap(
   })
   return buildChildOwnMemoryBootstrap({
     agentId: input.agent.agentId,
-    ...(input.agent.nickname ?? input.command.targetNicknameSnapshot
+    ...((input.agent.nickname ?? input.command.targetNicknameSnapshot)
       ? { nicknameSnapshot: input.agent.nickname ?? input.command.targetNicknameSnapshot }
       : {}),
     sessionId: input.parentSessionId,
@@ -591,7 +589,9 @@ function createAndPersistSubSessionHandoffExchange(input: {
   payload: ReturnType<typeof buildSubSessionHandoffCapsulePayload>
   now: number
 }) {
-  const sourceOwner = ownerScopeForSubSessionAgent(input.input.parentAgent?.agentId ?? "agent:nobie")
+  const sourceOwner = ownerScopeForSubSessionAgent(
+    input.input.parentAgent?.agentId ?? "agent:nobie",
+  )
   const recipientOwner = ownerScopeForSubSessionAgent(input.input.agent.agentId)
   const exchange = createDataExchangePackage({
     sourceOwner,
@@ -609,7 +609,7 @@ function createAndPersistSubSessionHandoffExchange(input: {
     retentionPolicy: "session_only",
     redactionState: "not_sensitive",
     provenanceRefs: uniqueValues([
-      `command_request:${input.input.command.commandRequestId}`,
+      `opaque:command_request:${input.input.command.commandRequestId}`,
       ...input.input.command.contextPackageIds,
       ...(input.payload.artifactRefs ?? []),
     ]),
@@ -1383,15 +1383,17 @@ export class SubSessionRunner {
         ...(subSession.parentAgentId
           ? { parentAgentId: subSession.parentAgentId, requestingAgentId: subSession.parentAgentId }
           : {}),
-        successCriteria: effectiveInput.command.expectedOutputs.map((output) =>
-          output.description || output.outputId,
+        successCriteria: effectiveInput.command.expectedOutputs.map(
+          (output) => output.description || output.outputId,
         ),
-        childResults: [{
-          subSessionId: subSession.subSessionId,
-          resultReport: result,
-          review,
-          canUseSameChild: review.canRetry,
-        }],
+        childResults: [
+          {
+            subSessionId: subSession.subSessionId,
+            resultReport: result,
+            review,
+            canUseSameChild: review.canRetry,
+          },
+        ],
       })
       const parentAggregationTrace = aggregation.trace
       try {

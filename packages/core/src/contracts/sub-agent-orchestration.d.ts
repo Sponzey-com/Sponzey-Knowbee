@@ -60,6 +60,12 @@ export interface ModelExecutionSnapshot {
 export interface DelegationPolicy {
     enabled: boolean;
     maxParallelSessions: number;
+    directChildOnly?: boolean;
+    allowedChildAgentIds?: string[];
+    resultReviewRequired?: boolean;
+    aggregationMode?: "parent_synthesis" | "append_summaries" | "verifier_required";
+    redelegationAllowed?: boolean;
+    escalationPolicy?: "return_to_parent" | "ask_user" | "stop_with_report";
 }
 export interface NicknameSnapshot {
     entityType: NicknameEntityType;
@@ -100,6 +106,13 @@ export interface MemoryPolicy {
     writeScope: OwnerScope;
     retentionPolicy: "session" | "short_term" | "long_term";
     writebackReviewRequired: boolean;
+    rawWindowSize?: number;
+    compactThreshold?: number;
+    capsuleMode?: "session_compaction" | "rolling_summary";
+    archiveReferenceMode?: "summary_reference" | "full_reference_disabled";
+    handoffCapsuleAllowed?: boolean;
+    lastCompactedAt?: number;
+    capsuleCount?: number;
 }
 export interface SkillMcpAllowlist {
     enabledSkillIds: string[];

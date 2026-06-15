@@ -24,6 +24,7 @@ import { MqttSettingsForm } from "../components/setup/MqttSettingsForm"
 import { MemoryInspectorPanel } from "../components/setup/MemoryInspectorPanel"
 import { RemoteAccessForm } from "../components/setup/RemoteAccessForm"
 import { SecuritySettingsForm } from "../components/setup/SecuritySettingsForm"
+import { SubAgentAdvancedSettingsPanel } from "../components/setup/SubAgentAdvancedSettingsPanel"
 import { YeonjangFleetPanel } from "../components/setup/YeonjangFleetPanel"
 import { SlackCheckPanel } from "../components/setup/SlackCheckPanel"
 import { SlackSettingsForm } from "../components/setup/SlackSettingsForm"
@@ -47,6 +48,21 @@ import {
   type AdvancedSettingsTabId,
 } from "../lib/advanced-settings"
 import { getPreferredSingleAiBackendId, setSingleAiBackendEnabled } from "../lib/single-ai"
+import {
+  applySubAgentAdvancedIdentityCommand,
+  applySubAgentAdvancedModelPolicyCommand,
+  applySubAgentAdvancedSkillMcpBindingsCommand,
+  applySubAgentAdvancedMemoryPolicyCommand,
+  applySubAgentAdvancedCapabilityPolicyCommand,
+  applySubAgentAdvancedDelegationPolicyCommand,
+  buildSubAgentAdvancedSettingsView,
+  type UpdateSubAgentIdentityCommand,
+  type UpdateSubAgentModelPolicyCommand,
+  type UpdateSubAgentSkillMcpBindingsCommand,
+  type UpdateSubAgentMemoryPolicyCommand,
+  type UpdateSubAgentCapabilityPolicyCommand,
+  type UpdateSubAgentDelegationPolicyCommand,
+} from "../lib/advanced-sub-agent-settings"
 import { resolveInspectableYeonjangInstance } from "../lib/yeonjang-fleet"
 import { useCapabilitiesStore } from "../stores/capabilities"
 import { useSetupStore } from "../stores/setup"
@@ -169,6 +185,8 @@ export function SettingsPage() {
   const [orchestrationSaving, setOrchestrationSaving] = useState(false)
   const [orchestrationError, setOrchestrationError] = useState("")
   const [orchestrationMessage, setOrchestrationMessage] = useState("")
+  const [selectedAdvancedSubAgentId, setSelectedAdvancedSubAgentId] = useState<string | null>(null)
+  const [subAgentAdvancedError, setSubAgentAdvancedError] = useState("")
   const [configOperationsSnapshot, setConfigOperationsSnapshot] = useState<ConfigurationOperationsSnapshot | null>(null)
   const [configOperationsLoading, setConfigOperationsLoading] = useState(false)
   const [configOperationsError, setConfigOperationsError] = useState("")
@@ -698,6 +716,17 @@ export function SettingsPage() {
     () => JSON.stringify(activeDraft.channels) !== JSON.stringify(draft.channels),
     [activeDraft.channels, draft.channels],
   )
+  const subAgentAdvancedView = useMemo(
+    () => buildSubAgentAdvancedSettingsView({
+      draft: activeDraft,
+      selectedAgentId: selectedAdvancedSubAgentId,
+      dirty: isDirty,
+      saving,
+      validationIssues: [orchestrationError, subAgentAdvancedError].filter(Boolean),
+      language: uiLanguage,
+    }),
+    [activeDraft, isDirty, orchestrationError, saving, selectedAdvancedSubAgentId, subAgentAdvancedError, uiLanguage],
+  )
 
   const activeTab = tabs.find((item) => item.id === tab) ?? tabs[0]
   const pageTitle = activeTab.label
@@ -718,13 +747,105 @@ export function SettingsPage() {
 
   async function handleSave() {
     await saveDraftSnapshot(activeDraft, { syncChannelRuntime: channelsDirty })
+    setSubAgentAdvancedError("")
     setEditorVersion((current) => current + 1)
   }
 
   function handleCancel() {
     setLocalDraft(cloneDraft(draft))
+    setSubAgentAdvancedError("")
     setEditorVersion((current) => current + 1)
   }
+
+  const handleSubAgentIdentityUpdate = useCallback((command: UpdateSubAgentIdentityCommand) => {
+    const result = applySubAgentAdvancedIdentityCommand({
+      draft: localDraft ?? draft,
+      command,
+      language: uiLanguage,
+    })
+    if (result.ok && result.draft) {
+      setLocalDraft(result.draft)
+      setSubAgentAdvancedError("")
+    } else {
+      setSubAgentAdvancedError(result.message)
+    }
+    return result
+  }, [draft, localDraft, uiLanguage])
+
+  const handleSubAgentModelPolicyUpdate = useCallback((command: UpdateSubAgentModelPolicyCommand) => {
+    const result = applySubAgentAdvancedModelPolicyCommand({
+      draft: localDraft ?? draft,
+      command,
+      language: uiLanguage,
+    })
+    if (result.ok && result.draft) {
+      setLocalDraft(result.draft)
+      setSubAgentAdvancedError("")
+    } else {
+      setSubAgentAdvancedError(result.message)
+    }
+    return result
+  }, [draft, localDraft, uiLanguage])
+
+  const handleSubAgentSkillMcpBindingsUpdate = useCallback((command: UpdateSubAgentSkillMcpBindingsCommand) => {
+    const result = applySubAgentAdvancedSkillMcpBindingsCommand({
+      draft: localDraft ?? draft,
+      command,
+      language: uiLanguage,
+    })
+    if (result.ok && result.draft) {
+      setLocalDraft(result.draft)
+      setSubAgentAdvancedError("")
+    } else {
+      setSubAgentAdvancedError(result.message)
+    }
+    return result
+  }, [draft, localDraft, uiLanguage])
+
+  const handleSubAgentMemoryPolicyUpdate = useCallback((command: UpdateSubAgentMemoryPolicyCommand) => {
+    const result = applySubAgentAdvancedMemoryPolicyCommand({
+      draft: localDraft ?? draft,
+      command,
+      language: uiLanguage,
+    })
+    if (result.ok && result.draft) {
+      setLocalDraft(result.draft)
+      setSubAgentAdvancedError("")
+    } else {
+      setSubAgentAdvancedError(result.message)
+    }
+    return result
+  }, [draft, localDraft, uiLanguage])
+
+  const handleSubAgentCapabilityPolicyUpdate = useCallback((command: UpdateSubAgentCapabilityPolicyCommand) => {
+    const result = applySubAgentAdvancedCapabilityPolicyCommand({
+      draft: localDraft ?? draft,
+      command,
+      language: uiLanguage,
+    })
+    if (result.ok && result.draft) {
+      setLocalDraft(result.draft)
+      setSubAgentAdvancedError("")
+    } else {
+      setSubAgentAdvancedError(result.message)
+    }
+    return result
+  }, [draft, localDraft, uiLanguage])
+
+  const handleSubAgentDelegationPolicyUpdate = useCallback((command: UpdateSubAgentDelegationPolicyCommand) => {
+    const result = applySubAgentAdvancedDelegationPolicyCommand({
+      draft: localDraft ?? draft,
+      command,
+      language: uiLanguage,
+    })
+    if (result.ok && result.draft) {
+      setLocalDraft(result.draft)
+      setSubAgentAdvancedError("")
+    } else {
+      setSubAgentAdvancedError(result.message)
+    }
+    return result
+  }, [draft, localDraft, uiLanguage])
 
   const handleDisconnectMqttExtension = useCallback(async (extensionId: string) => {
     setDisconnectingExtensionId(extensionId)
@@ -897,6 +1018,25 @@ export function SettingsPage() {
                 }}
                 onRefresh={() => void loadOrchestrationSettings()}
               />
+              <div className="mt-4">
+                <SubAgentAdvancedSettingsPanel
+                  view={subAgentAdvancedView}
+                  saving={saving}
+                  onSelectAgent={setSelectedAdvancedSubAgentId}
+                  onUpdateIdentity={handleSubAgentIdentityUpdate}
+                  onUpdateModelPolicy={handleSubAgentModelPolicyUpdate}
+                  onUpdateSkillMcpBindings={handleSubAgentSkillMcpBindingsUpdate}
+                  onUpdateMemoryPolicy={handleSubAgentMemoryPolicyUpdate}
+                  onUpdateCapabilityPolicy={handleSubAgentCapabilityPolicyUpdate}
+                  onUpdateDelegationPolicy={handleSubAgentDelegationPolicyUpdate}
+                  onSave={() => void handleSave()}
+                  onCancel={handleCancel}
+                  onRefresh={() => {
+                    void loadOrchestrationSettings()
+                    void refreshChecks(true)
+                  }}
+                />
+              </div>
             </CompactSection>
           </div>
         )

@@ -1,10 +1,4 @@
 import * as React from "react"
-import {
-  confirmExecutorUnderstanding,
-  createExecutorDraftFromInference,
-  inferExecutorFromDescription,
-  type ExecutorInferenceResult,
-} from "../../lib/executor-inference"
 import type {
   ExecutorAdvancedMapping,
   ExecutorConnectionDraft,
@@ -12,35 +6,42 @@ import type {
   ExecutorGraphWorkspace,
   ExecutorRuntimeMode,
 } from "../../lib/executor-graph"
+import { buildExecutorGraphRelationInfoMap } from "../../lib/executor-graph-relations"
 import {
+  type ExecutorInferenceResult,
+  confirmExecutorUnderstanding,
+  createExecutorDraftFromInference,
+  inferExecutorFromDescription,
+} from "../../lib/executor-inference"
+import {
+  type NodeDefinitionDraft,
+  type NodeDefinitionTriggerField,
   buildNodeDefinitionGraphContext,
   executorFromNodeDefinitionDraft,
   nodeDefinitionDraftFromExecutor,
-  type NodeDefinitionDraft,
-  type NodeDefinitionTriggerField,
 } from "../../lib/node-definition-suggestion"
-import { buildExecutorGraphRelationInfoMap } from "../../lib/executor-graph-relations"
+import type { TopologySubAgentSummary } from "../../lib/topology-sub-agent-sync"
 import { useUiI18n } from "../../lib/ui-i18n"
+import { ExecutorUnderstandingPanel } from "./ExecutorUnderstandingPanel"
 import { NodeDefinitionAiButton } from "./NodeDefinitionAiButton"
 import { NodeDefinitionAiDialog } from "./NodeDefinitionAiDialog"
-import { ExecutorUnderstandingPanel } from "./ExecutorUnderstandingPanel"
 
-export type ExecutorFriendlyRuntimeLabel =
-  | "자동 처리"
-  | "최종 검토"
-  | "도구 실행"
-  | "외부 처리"
+export type ExecutorFriendlyRuntimeLabel = "자동 처리" | "최종 검토" | "도구 실행" | "외부 처리"
 
 export interface ExecutorInspectorProps {
   executor?: ExecutorDraft | null
   graph?: ExecutorGraphWorkspace | null
   workspaceId?: string
   topologyId?: string
+  subAgentSummary?: TopologySubAgentSummary
+  readOnly?: boolean
   onExecutorChange?: (executor: ExecutorDraft) => void
   onConfirmUnderstanding?: (executor: ExecutorDraft) => void
 }
 
-export function executorFriendlyRuntimeLabel(mode: ExecutorRuntimeMode): ExecutorFriendlyRuntimeLabel {
+export function executorFriendlyRuntimeLabel(
+  mode: ExecutorRuntimeMode,
+): ExecutorFriendlyRuntimeLabel {
   if (mode === "tool_execution") return "도구 실행"
   if (mode === "external") return "외부 처리"
   if (mode === "approval" || mode === "human_check" || mode === "unknown") return "최종 검토"
@@ -52,11 +53,13 @@ export function updateExecutorDraftFromInspector(
   changes: { name?: string; roleName?: string; description?: string; now?: number | string },
 ): ExecutorDraft {
   const name = changes.name !== undefined ? changes.name : executor.name
-  const roleName = changes.roleName !== undefined
-    ? changes.roleName
-    : executor.executorProfile?.roleName ?? ""
+  const roleName =
+    changes.roleName !== undefined ? changes.roleName : (executor.executorProfile?.roleName ?? "")
   const description = changes.description !== undefined ? changes.description : executor.description
-  const changed = name !== executor.name || description !== executor.description || roleName !== (executor.executorProfile?.roleName ?? "")
+  const changed =
+    name !== executor.name ||
+    description !== executor.description ||
+    roleName !== (executor.executorProfile?.roleName ?? "")
   const executorProfile = executor.executorProfile
     ? {
         ...executor.executorProfile,
@@ -74,13 +77,18 @@ export function updateExecutorDraftFromInspector(
     ...(executor.sourceNodeId ? { sourceNodeId: executor.sourceNodeId } : {}),
     ...(changes.now !== undefined ? { now: changes.now } : {}),
   })
-  const advancedMapping = mergeAdvancedMappingAfterInference(executor.advancedMapping, inferred.advancedMapping)
+  const advancedMapping = mergeAdvancedMappingAfterInference(
+    executor.advancedMapping,
+    inferred.advancedMapping,
+  )
 
   return {
     id: executor.id,
     name,
     description,
-    ...(executor.definitionQuickChips?.length ? { definitionQuickChips: [...executor.definitionQuickChips] } : {}),
+    ...(executor.definitionQuickChips?.length
+      ? { definitionQuickChips: [...executor.definitionQuickChips] }
+      : {}),
     inferredRuntimeMode: inferred.inferredRuntimeMode,
     inferredCapabilities: inferred.inferredCapabilities,
     inferredTools: inferred.inferredTools,
@@ -91,7 +99,11 @@ export function updateExecutorDraftFromInspector(
       : inferred.executorProfile,
     confidence: inferred.confidence,
     ...(changed ? {} : executor.userConfirmed ? { userConfirmed: executor.userConfirmed } : {}),
-    ...(changed ? {} : executor.confirmedUnderstandingVersion ? { confirmedUnderstandingVersion: executor.confirmedUnderstandingVersion } : {}),
+    ...(changed
+      ? {}
+      : executor.confirmedUnderstandingVersion
+        ? { confirmedUnderstandingVersion: executor.confirmedUnderstandingVersion }
+        : {}),
     ...(executor.sourceNodeId ? { sourceNodeId: executor.sourceNodeId } : {}),
     ...(executor.position ? { position: executor.position } : {}),
     ...(advancedMapping ? { advancedMapping } : {}),
@@ -113,7 +125,10 @@ export function describeExecutorConnections(
   if (!graph) return []
   const executorById = new Map(graph.executors.map((executor) => [executor.id, executor]))
   return graph.connections
-    .filter((connection) => connection.fromExecutorId === executorId || connection.toExecutorId === executorId)
+    .filter(
+      (connection) =>
+        connection.fromExecutorId === executorId || connection.toExecutorId === executorId,
+    )
     .map((connection) => {
       const outgoing = connection.fromExecutorId === executorId
       const otherId = outgoing ? connection.toExecutorId : connection.fromExecutorId
@@ -122,8 +137,12 @@ export function describeExecutorConnections(
         id: connection.id,
         direction: outgoing ? "outgoing" : "incoming",
         label: connection.label,
-        textKo: outgoing ? `${otherName}에게 ${connection.label}` : `${otherName}에서 ${connection.label}`,
-        textEn: outgoing ? `${connection.label} to ${otherName}` : `${connection.label} from ${otherName}`,
+        textKo: outgoing
+          ? `${otherName}에게 ${connection.label}`
+          : `${otherName}에서 ${connection.label}`,
+        textEn: outgoing
+          ? `${connection.label} to ${otherName}`
+          : `${connection.label} from ${otherName}`,
       }
     })
 }
@@ -133,19 +152,23 @@ export function ExecutorInspector({
   graph,
   workspaceId = "workspace:draft",
   topologyId = "workspace:draft",
+  subAgentSummary,
+  readOnly = false,
   onExecutorChange,
   onConfirmUnderstanding,
 }: ExecutorInspectorProps) {
   const { text } = useUiI18n()
-  const [aiDialogTrigger, setAiDialogTrigger] = React.useState<NodeDefinitionTriggerField | null>(null)
+  const [aiDialogTrigger, setAiDialogTrigger] = React.useState<NodeDefinitionTriggerField | null>(
+    null,
+  )
   const inference = React.useMemo(() => inferenceForExecutor(executor), [executor])
   const friendlyInference = React.useMemo(() => friendlyInferenceForDisplay(inference), [inference])
   const connectedExecutors = React.useMemo(
-    () => executor ? describeExecutorConnections(graph, executor.id) : [],
+    () => (executor ? describeExecutorConnections(graph, executor.id) : []),
     [executor, graph],
   )
   const relationInfo = React.useMemo(
-    () => executor ? buildExecutorGraphRelationInfoMap(graph).get(executor.id) : undefined,
+    () => (executor ? buildExecutorGraphRelationInfoMap(graph).get(executor.id) : undefined),
     [executor, graph],
   )
 
@@ -160,7 +183,10 @@ export function ExecutorInspector({
           {text("실행자 확인", "Executor inspector")}
         </div>
         <div className="mt-3 rounded-lg border border-dashed border-stone-200 p-4 text-sm text-stone-500">
-          {text("실행자를 선택하면 여기에서 노비가 이해한 내용을 확인합니다.", "Select an executor to review what Nobie understood.")}
+          {text(
+            "실행자를 선택하면 여기에서 노비가 이해한 내용을 확인합니다.",
+            "Select an executor to review what Nobie understood.",
+          )}
         </div>
       </section>
     )
@@ -172,38 +198,52 @@ export function ExecutorInspector({
   const graphContext = buildNodeDefinitionGraphContext({ graph, executorId: executor.id })
   const duplicateName = relationInfo?.duplicateName === true
   const applyAiDefinitionDraft = (nextDraft: NodeDefinitionDraft) => {
-    onExecutorChange?.(executorFromNodeDefinitionDraft({
-      executor,
-      draft: nextDraft,
-      now: Date.now(),
-    }))
+    onExecutorChange?.(
+      executorFromNodeDefinitionDraft({
+        executor,
+        draft: nextDraft,
+        now: Date.now(),
+      }),
+    )
   }
 
   return (
     <section
-      className="rounded-lg border border-stone-200 bg-white p-4"
+      className="min-w-0 rounded-lg border border-stone-200 bg-white p-4 [overflow-wrap:anywhere]"
       data-testid="executor-inspector"
       data-empty="false"
       data-understanding-state={understandingState}
       data-runtime-label={runtimeLabel}
     >
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
           <div className="text-sm font-semibold text-stone-950">
-            {text("선택한 실행자", "Selected executor")}
+            {subAgentSummary?.kind === "root"
+              ? text("메인 에이전트", "Main agent")
+              : text("선택한 실행자", "Selected executor")}
           </div>
-          <div className="mt-1 text-xs text-stone-500">
-            {text("이름과 성격을 정하면 노비가 실행 구조를 안에서 정리합니다.", "Define the name and character; Nobie prepares the run structure internally.")}
+          <div className="mt-1 break-words text-xs text-stone-500 [overflow-wrap:anywhere]">
+            {subAgentSummary?.kind === "root"
+              ? text(
+                  "노비는 직접 하위 서브 에이전트에게만 일을 위임합니다.",
+                  "Nobie delegates only to direct child sub-agents.",
+                )
+              : text(
+                  "이름과 성격을 정하면 노비가 실행 구조를 안에서 정리합니다.",
+                  "Define the name and character; Nobie prepares the run structure internally.",
+                )}
           </div>
         </div>
         <span
-          className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-semibold text-stone-700"
+          className="max-w-full shrink-0 break-words rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-semibold leading-4 text-stone-700 [overflow-wrap:anywhere]"
           title={text(
             "아래 노비가 이해한 내용에서 저장을 누르면 이 정의가 저장됩니다.",
             "Press Save in the understanding panel below to save this definition.",
           )}
         >
-          {executor.userConfirmed ? text("확인됨", "Confirmed") : text("내용 검토 전", "Not reviewed")}
+          {executor.userConfirmed
+            ? text("확인됨", "Confirmed")
+            : text("내용 검토 전", "Not reviewed")}
         </span>
       </div>
       {relationInfo ? (
@@ -228,20 +268,30 @@ export function ExecutorInspector({
               </>
             ) : null}
           </div>
-          <div className="mt-1 text-[11px] leading-5 text-stone-500">
+          <div className="mt-1 break-words text-[11px] leading-5 text-stone-500 [overflow-wrap:anywhere]">
             {text(relationInfo.relationDetailKo, relationInfo.relationDetailEn)}
           </div>
         </div>
       ) : null}
 
+      {subAgentSummary ? (
+        <TopologySubAgentInspectorSummaryView summary={subAgentSummary} text={text} />
+      ) : null}
+
       <div className="mt-3 grid gap-2">
-        <label className="grid gap-1 text-xs font-semibold text-stone-500">
+        <label className="grid min-w-0 gap-1 text-xs font-semibold text-stone-500">
           <span>{text("이름", "Name")}</span>
           <input
             value={executor.name}
-            onChange={(event) => onExecutorChange?.(updateExecutorDraftFromInspector(executor, { name: event.currentTarget.value }))}
+            disabled={readOnly}
+            onChange={(event) => {
+              if (readOnly) return
+              onExecutorChange?.(
+                updateExecutorDraftFromInspector(executor, { name: event.currentTarget.value }),
+              )
+            }}
             aria-invalid={duplicateName}
-            className={`h-9 rounded-md border px-2.5 text-sm font-semibold text-stone-900 ${
+            className={`h-9 min-w-0 rounded-md border px-2.5 text-sm font-semibold text-stone-900 ${
               duplicateName ? "border-rose-300 bg-rose-50" : "border-stone-200"
             }`}
             data-testid="executor-inspector-name"
@@ -251,53 +301,83 @@ export function ExecutorInspector({
               className="text-[11px] font-semibold leading-4 text-rose-700"
               data-testid="executor-inspector-duplicate-name"
             >
-              {text("이미 사용 중인 이름입니다. 다른 이름을 입력해야 저장할 수 있습니다.", "This name is already used. Use a unique name before saving.")}
+              {text(
+                "이미 사용 중인 이름입니다. 다른 이름을 입력해야 저장할 수 있습니다.",
+                "This name is already used. Use a unique name before saving.",
+              )}
             </span>
           ) : null}
         </label>
-        <label className="grid gap-1 text-xs font-semibold text-stone-500">
+        <label className="grid min-w-0 gap-1 text-xs font-semibold text-stone-500">
           <span>{text("역할명", "Role name")}</span>
           <input
             value={executor.executorProfile?.roleName ?? ""}
-            onChange={(event) => onExecutorChange?.(updateExecutorDraftFromInspector(executor, { roleName: event.currentTarget.value }))}
-            className="h-9 rounded-md border border-stone-200 px-2.5 text-sm font-semibold text-stone-900"
+            disabled={readOnly}
+            onChange={(event) => {
+              if (readOnly) return
+              onExecutorChange?.(
+                updateExecutorDraftFromInspector(executor, { roleName: event.currentTarget.value }),
+              )
+            }}
+            className="h-9 min-w-0 rounded-md border border-stone-200 px-2.5 text-sm font-semibold text-stone-900"
             data-testid="executor-inspector-role-name"
           />
         </label>
-        <div className="grid gap-1 text-xs font-semibold text-stone-500">
+        <div className="grid min-w-0 gap-1 text-xs font-semibold text-stone-500">
           <div className="flex items-center justify-between gap-2">
             <label htmlFor="executor-inspector-description-input">
               {text("성격과 하는 일", "Character and work")}
             </label>
-            <NodeDefinitionAiButton
-              ariaLabel={text("성격과 하는 일을 AI로 다듬기", "Refine character and work with AI")}
-              onClick={() => setAiDialogTrigger("description")}
-              testId="executor-inspector-description-ai"
-            />
+            {readOnly ? null : (
+              <NodeDefinitionAiButton
+                ariaLabel={text(
+                  "성격과 하는 일을 AI로 다듬기",
+                  "Refine character and work with AI",
+                )}
+                onClick={() => setAiDialogTrigger("description")}
+                testId="executor-inspector-description-ai"
+              />
+            )}
           </div>
           <textarea
             id="executor-inspector-description-input"
             value={executor.description}
-            onChange={(event) => onExecutorChange?.(updateExecutorDraftFromInspector(executor, { description: event.currentTarget.value }))}
+            disabled={readOnly}
+            onChange={(event) => {
+              if (readOnly) return
+              onExecutorChange?.(
+                updateExecutorDraftFromInspector(executor, {
+                  description: event.currentTarget.value,
+                }),
+              )
+            }}
             rows={3}
-            className="resize-none rounded-md border border-stone-200 px-2.5 py-2 text-sm leading-5 text-stone-900"
+            className="min-w-0 resize-none rounded-md border border-stone-200 px-2.5 py-2 text-sm leading-5 text-stone-900"
             data-testid="executor-inspector-description"
           />
         </div>
       </div>
 
-      <section className="mt-3 rounded-md border border-stone-200 bg-stone-50 px-2.5 py-2" data-testid="executor-inspector-connections">
+      <section
+        className="mt-3 rounded-md border border-stone-200 bg-stone-50 px-2.5 py-2"
+        data-testid="executor-inspector-connections"
+      >
         <div className="text-[11px] font-semibold text-stone-500">
           {text("연결된 실행자", "Connected executors")}
         </div>
         <div className="mt-1 flex flex-wrap gap-1.5">
-          {(connectedExecutors.length > 0 ? connectedExecutors : [{
-            id: "empty",
-            direction: "outgoing" as const,
-            label: "넘김" as const,
-            textKo: text("아직 연결 없음", "No connections yet"),
-            textEn: "No connections yet",
-          }]).map((connection) => (
+          {(connectedExecutors.length > 0
+            ? connectedExecutors
+            : [
+                {
+                  id: "empty",
+                  direction: "outgoing" as const,
+                  label: "넘김" as const,
+                  textKo: text("아직 연결 없음", "No connections yet"),
+                  textEn: "No connections yet",
+                },
+              ]
+          ).map((connection) => (
             <span
               key={connection.id}
               className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-stone-700"
@@ -314,7 +394,7 @@ export function ExecutorInspector({
         name={executor.name}
         description={executor.description}
         inference={friendlyInference}
-        confirmDisabled={executor.userConfirmed === true}
+        confirmDisabled={readOnly || executor.userConfirmed === true}
         onConfirm={() => onConfirmUnderstanding?.(confirmExecutorUnderstanding(executor))}
       />
 
@@ -332,7 +412,97 @@ export function ExecutorInspector({
   )
 }
 
-function inferenceForExecutor(executor: ExecutorDraft | null | undefined): ExecutorInferenceResult | null {
+function TopologySubAgentInspectorSummaryView({
+  summary,
+  text,
+}: {
+  summary: TopologySubAgentSummary
+  text: ReturnType<typeof useUiI18n>["text"]
+}) {
+  return (
+    <section
+      className="mt-3 rounded-md border border-stone-200 bg-stone-50 px-2.5 py-2"
+      data-testid="topology-sub-agent-inspector-summary"
+      data-sub-agent-kind={summary.kind}
+      data-readiness-state={summary.readinessState}
+      data-runtime-state={summary.runtimeState}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-[11px] font-semibold text-stone-500">
+            {summary.kind === "root"
+              ? text("메인 에이전트", "Main agent")
+              : text("서브 에이전트", "Sub-agent")}
+          </div>
+          <div className="mt-0.5 text-sm font-semibold text-stone-950">{summary.displayName}</div>
+          <div className="mt-0.5 text-[11px] font-semibold text-stone-600">{summary.nickname}</div>
+        </div>
+        <div className="flex flex-wrap justify-end gap-1.5">
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${summaryBadgeClassName(summary.readinessState)}`}
+          >
+            {summary.readinessLabel}
+          </span>
+          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-stone-700">
+            {summary.runtimeLabel}
+          </span>
+        </div>
+      </div>
+      <p className="mt-2 text-[11px] leading-5 text-stone-600">
+        {summary.description || summary.role}
+      </p>
+      <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px] font-semibold text-stone-700">
+        <div className="rounded bg-white px-2 py-1">
+          {text("부모", "Parent")}: {summary.parentDisplayName || "-"}
+        </div>
+        <div className="rounded bg-white px-2 py-1">
+          {text("직접 하위", "Direct children")}: {summary.childCount}
+        </div>
+        <div className="rounded bg-white px-2 py-1">
+          {text("저장", "Saved")}: {summary.savedLabel}
+        </div>
+        <div className="rounded bg-white px-2 py-1">
+          {text("최근 실행", "Recent runtime")}: {summary.lastRuntimeLabel}
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-semibold text-stone-600">
+        <span className="rounded-full bg-white px-2 py-0.5">{summary.modelLabel}</span>
+        <span className="rounded-full bg-white px-2 py-0.5">
+          Skill/MCP: {summary.skillMcpLabel}
+        </span>
+        <span className="rounded-full bg-white px-2 py-0.5">{summary.memoryLabel}</span>
+        <span className="rounded-full bg-white px-2 py-0.5">{summary.permissionLabel}</span>
+        <span className="rounded-full bg-white px-2 py-0.5">{summary.delegationLabel}</span>
+      </div>
+      {summary.directChildLabels.length > 0 ? (
+        <div
+          className="mt-2 flex flex-wrap gap-1.5"
+          data-testid="topology-sub-agent-direct-children"
+        >
+          {summary.directChildLabels.map((label) => (
+            <span
+              key={label}
+              className="rounded-full border border-stone-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-stone-700"
+            >
+              {label}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function summaryBadgeClassName(state: TopologySubAgentSummary["readinessState"]): string {
+  if (state === "ready") return "bg-emerald-100 text-emerald-800"
+  if (state === "needs_attention") return "bg-amber-100 text-amber-800"
+  if (state === "disabled") return "bg-stone-200 text-stone-700"
+  return "bg-sky-100 text-sky-800"
+}
+
+function inferenceForExecutor(
+  executor: ExecutorDraft | null | undefined,
+): ExecutorInferenceResult | null {
   if (!executor) return null
   const inferred = inferExecutorFromDescription({
     name: executor.name,
@@ -342,14 +512,23 @@ function inferenceForExecutor(executor: ExecutorDraft | null | undefined): Execu
     ...inferred,
     runtimeMode: executor.inferredRuntimeMode,
     toolHints: executor.inferredTools.length > 0 ? executor.inferredTools : inferred.toolHints,
-    outputHints: executor.inferredOutputs.length > 0 ? executor.inferredOutputs : inferred.outputHints,
-    successCriteria: executor.inferredSuccessCriteria.length > 0 ? executor.inferredSuccessCriteria : inferred.successCriteria,
-    capabilityHints: executor.inferredCapabilities.length > 0 ? executor.inferredCapabilities : inferred.capabilityHints,
+    outputHints:
+      executor.inferredOutputs.length > 0 ? executor.inferredOutputs : inferred.outputHints,
+    successCriteria:
+      executor.inferredSuccessCriteria.length > 0
+        ? executor.inferredSuccessCriteria
+        : inferred.successCriteria,
+    capabilityHints:
+      executor.inferredCapabilities.length > 0
+        ? executor.inferredCapabilities
+        : inferred.capabilityHints,
     confidence: executor.confidence,
   }
 }
 
-function friendlyInferenceForDisplay(inference: ExecutorInferenceResult | null): ExecutorInferenceResult | undefined {
+function friendlyInferenceForDisplay(
+  inference: ExecutorInferenceResult | null,
+): ExecutorInferenceResult | undefined {
   if (!inference) return undefined
   return {
     ...inference,

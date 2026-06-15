@@ -1170,6 +1170,12 @@ export {
   validateUserVisibleAgentMessage,
 } from "./contracts/sub-agent-orchestration.js"
 export {
+  buildAdvancedSubAgentSettingsView,
+  buildBeginnerSubAgentSetupView,
+  buildSubAgentStateProjection,
+  validateSubAgentSettingsCommand,
+} from "./ui/sub-agent-settings.js"
+export {
   createInMemoryTopologyDraftStore,
   createTopologyDocumentEnvelope,
 } from "./topology/draft-store.js"
@@ -2077,6 +2083,43 @@ export type {
   TeamResultPolicyMode,
   UserVisibleAgentMessage,
 } from "./contracts/sub-agent-orchestration.js"
+export type {
+  AdvancedSubAgentDetailView,
+  AdvancedSubAgentRowView,
+  AdvancedSubAgentSettingsView,
+  ArchiveSubAgentCommand,
+  BeginnerSubAgentCardView,
+  BeginnerSubAgentSetupView,
+  BuildAdvancedSubAgentSettingsViewInput,
+  BuildSubAgentSettingsViewInput,
+  CreateSubAgentBasicCommand,
+  PublishSubAgentTopologyCommand,
+  SubAgentLifecycleState,
+  SubAgentReadinessDimension,
+  SubAgentReadinessItem,
+  SubAgentReadinessState,
+  SubAgentReadinessView,
+  SubAgentRootRef,
+  SubAgentRuntimeProjectionInput,
+  SubAgentSettingsCatalogs,
+  SubAgentSettingsCommand,
+  SubAgentSettingsSource,
+  SubAgentSettingsValidationCode,
+  SubAgentSettingsValidationContext,
+  SubAgentSettingsValidationIssue,
+  SubAgentSettingsValidationResult,
+  SubAgentStateLabel,
+  SubAgentStateProjection,
+  SubAgentStateProjectionInput,
+  SubAgentStateSnapshotView,
+  SubAgentSummaryView,
+  UpdateSubAgentCapabilityPolicyCommand,
+  UpdateSubAgentDelegationPolicyCommand,
+  UpdateSubAgentIdentityCommand,
+  UpdateSubAgentMemoryPolicyCommand,
+  UpdateSubAgentModelPolicyCommand,
+  UpdateSubAgentSkillMcpBindingsCommand,
+} from "./ui/sub-agent-settings.js"
 export type {
   FindScheduleCandidatesByContractInput,
   ScheduleCandidate,

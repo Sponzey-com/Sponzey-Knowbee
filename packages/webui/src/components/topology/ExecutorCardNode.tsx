@@ -1,6 +1,7 @@
 import * as React from "react"
 import type { ExecutorDraft, ExecutorRuntimeMode } from "../../lib/executor-graph"
 import type { ExecutorCardResourceChip } from "../../lib/executor-graph-viewmodel"
+import type { TopologySubAgentSummary } from "../../lib/topology-sub-agent-sync"
 import { useUiI18n } from "../../lib/ui-i18n"
 
 export type ExecutorCardExecutionStatus =
@@ -92,6 +93,7 @@ export function ExecutorCardNode({
   shortId,
   duplicateName = false,
   selectableWithoutPath = true,
+  subAgentSummary,
   onSelect,
 }: {
   executor: ExecutorDraft
@@ -105,6 +107,7 @@ export function ExecutorCardNode({
   shortId?: string
   duplicateName?: boolean
   selectableWithoutPath?: boolean
+  subAgentSummary?: TopologySubAgentSummary
   onSelect?: (executorId: string) => void
 }) {
   const { text } = useUiI18n()
@@ -166,6 +169,23 @@ export function ExecutorCardNode({
                 {shortId}
               </span>
             ) : null}
+            {subAgentSummary ? (
+              <>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${subAgentReadinessClassName(subAgentSummary.readinessState)}`}
+                  data-testid="executor-card-sub-agent-readiness"
+                  data-readiness-state={subAgentSummary.readinessState}
+                >
+                  {subAgentSummary.readinessLabel}
+                </span>
+                <span
+                  className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-stone-700"
+                  data-testid="executor-card-sub-agent-child-count"
+                >
+                  {text("하위", "Children")} {subAgentSummary.childCount}
+                </span>
+              </>
+            ) : null}
           </div>
         ) : null}
         <p className="mt-1 max-h-10 overflow-hidden text-xs leading-5 text-stone-600">
@@ -212,6 +232,13 @@ export function ExecutorCardNode({
       ) : null}
     </article>
   )
+}
+
+function subAgentReadinessClassName(state: TopologySubAgentSummary["readinessState"]): string {
+  if (state === "ready") return "bg-emerald-100 text-emerald-800"
+  if (state === "needs_attention") return "bg-amber-100 text-amber-800"
+  if (state === "disabled") return "bg-stone-200 text-stone-700"
+  return "bg-sky-100 text-sky-800"
 }
 
 function executionStatusLabel(

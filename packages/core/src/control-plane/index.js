@@ -15,6 +15,7 @@ import { getMqttBrokerSnapshot } from "../mqtt/broker.js";
 import { orchestrationCapabilityStatus, resolveOrchestrationModeSnapshotSync, } from "../orchestration/mode.js";
 import { updateActiveRunsMaxDelegationTurns } from "../runs/store.js";
 import { OPENAI_CODEX_KNOWN_MODELS, OPENAI_CODEX_RESPONSES_PATH, OPENAI_CODEX_USER_AGENT, readOpenAICodexAccessToken, resolveOpenAICodexAuthFilePath, resolveOpenAICodexBaseUrl, } from "../auth/openai-codex-oauth.js";
+import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
 const KNOWN_BACKENDS = [
     "provider:openai",
     "provider:anthropic",
@@ -450,6 +451,98 @@ function sanitizeCustomBackends(value) {
     })
         .filter((entry) => entry !== null);
 }
+function buildSubAgentSetupDraft(config) {
+    return {
+        orchestrationEnabled: config.orchestration.mode === "orchestration",
+        items: (config.orchestration.subAgents ?? []).map((agent) => ({
+            agentId: agent.agentId,
+            displayName: agent.displayName,
+            nickname: agent.nickname ?? agent.displayName,
+            role: agent.role,
+            description: agent.personality,
+            skillMcpBindings: {
+                enabledSkillIds: [...agent.capabilityPolicy.skillMcpAllowlist.enabledSkillIds],
+                enabledMcpServerIds: [...agent.capabilityPolicy.skillMcpAllowlist.enabledMcpServerIds],
+                enabledToolNames: [...agent.capabilityPolicy.skillMcpAllowlist.enabledToolNames],
+                disabledToolNames: [...agent.capabilityPolicy.skillMcpAllowlist.disabledToolNames],
+                ...(agent.capabilityPolicy.skillMcpAllowlist.secretScopeId
+                    ? { connectionStateByCatalogId: {} }
+                    : {}),
+            },
+            ...(agent.modelProfile
+                ? {
+                    modelPolicy: {
+                        mode: "override",
+                        providerId: agent.modelProfile.providerId,
+                        modelId: agent.modelProfile.modelId,
+                        ...(agent.modelProfile.fallbackModelId ? { fallbackModelId: agent.modelProfile.fallbackModelId } : {}),
+                        ...(agent.modelProfile.effort ? { effort: agent.modelProfile.effort } : {}),
+                        ...(agent.modelProfile.maxOutputTokens !== undefined ? { maxOutputTokens: agent.modelProfile.maxOutputTokens } : {}),
+                        ...(agent.modelProfile.costBudget !== undefined ? { costBudget: agent.modelProfile.costBudget } : {}),
+                    },
+                }
+                : {}),
+            memoryPolicy: {
+                ...agent.memoryPolicy,
+                rawWindowSize: agent.memoryPolicy.rawWindowSize ?? 24_000,
+                compactThreshold: agent.memoryPolicy.compactThreshold ?? 32_000,
+                capsuleMode: agent.memoryPolicy.capsuleMode ?? "session_compaction",
+                archiveReferenceMode: agent.memoryPolicy.archiveReferenceMode ?? "summary_reference",
+                handoffCapsuleAllowed: agent.memoryPolicy.handoffCapsuleAllowed ?? true,
+                ...(agent.memoryPolicy.lastCompactedAt !== undefined ? { lastCompactedAt: agent.memoryPolicy.lastCompactedAt } : {}),
+                capsuleCount: agent.memoryPolicy.capsuleCount ?? 0,
+            },
+            capabilityPolicy: {
+                permissionProfile: agent.capabilityPolicy.permissionProfile,
+                allowedCapabilityIds: capabilityIdsFromPermissionProfile(agent.capabilityPolicy.permissionProfile),
+                deniedCapabilityIds: deniedCapabilityIdsFromPermissionProfile(agent.capabilityPolicy.permissionProfile),
+                approvalRequiredCapabilityIds: capabilityIdsRequiringApproval(agent.capabilityPolicy.permissionProfile),
+                osSensitiveCapabilityIds: osSensitiveCapabilityIdsFromPermissionProfile(agent.capabilityPolicy.permissionProfile),
+                logVisibility: "product",
+            },
+            delegationPolicy: {
+                canDelegate: agent.delegationPolicy?.enabled ?? agent.delegation.enabled,
+                directChildOnly: agent.delegationPolicy?.directChildOnly ?? true,
+                allowedChildAgentIds: [...(agent.delegationPolicy?.allowedChildAgentIds ?? [])],
+                resultReviewRequired: agent.delegationPolicy?.resultReviewRequired ?? true,
+                aggregationMode: agent.delegationPolicy?.aggregationMode ?? "parent_synthesis",
+                redelegationAllowed: agent.delegationPolicy?.redelegationAllowed ?? (agent.delegationPolicy?.enabled ?? agent.delegation.enabled),
+                escalationPolicy: agent.delegationPolicy?.escalationPolicy ?? "return_to_parent",
+                maxParallelSessions: agent.delegationPolicy?.maxParallelSessions ?? agent.delegation.maxParallelSessions,
+            },
+            status: agent.status,
+            createdAt: agent.createdAt,
+            updatedAt: agent.updatedAt,
+            profileVersion: agent.profileVersion,
+        })),
+        runtimeActiveAgentIds: [],
+        lastRuntimeSeenAtByAgentId: {},
+    };
+}
+function capabilityIdsFromPermissionProfile(profile) {
+    return [
+        profile.allowExternalNetwork ? "capability:network_mcp" : "",
+        profile.allowFilesystemWrite ? "capability:file_write" : "capability:file_read",
+        profile.allowShellExecution ? "capability:shell" : "",
+        profile.allowScreenControl ? "capability:screen_control" : "",
+    ].filter(Boolean);
+}
+function deniedCapabilityIdsFromPermissionProfile(profile) {
+    return [
+        profile.allowShellExecution ? "" : "capability:shell",
+        profile.allowScreenControl ? "" : "capability:screen_control",
+        profile.allowFilesystemWrite ? "" : "capability:file_write",
+    ].filter(Boolean);
+}
+function capabilityIdsRequiringApproval(profile) {
+    return [
+        profile.approvalRequiredFrom === "moderate" || profile.approvalRequiredFrom === "safe" ? "capability:file_write" : "",
+        profile.approvalRequiredFrom !== "dangerous" ? "capability:shell" : "",
+    ].filter(Boolean);
+}
+function osSensitiveCapabilityIdsFromPermissionProfile(profile) {
+    return profile.allowScreenControl ? ["capability:screen_capture", "capability:keyboard_control", "capability:mouse_control"] : ["capability:screen_capture"];
+}
 export function buildSetupDraft() {
     const config = getConfig();
     const raw = readRawConfig();
@@ -568,6 +661,7 @@ export function buildSetupDraft() {
             host: config.webui.host,
             port: config.webui.port,
         },
+        subAgents: buildSubAgentSetupDraft(config),
     };
 }
 function persistBackends(raw, draft) {
@@ -610,6 +704,113 @@ function persistBackends(raw, draft) {
     ai.customBackends = customBackends;
     ai.routingProfiles = draft.routingProfiles;
     raw.ai = ai;
+}
+const beginnerSubAgentPermissionProfile = {
+    profileId: "profile:beginner-safe",
+    riskCeiling: "moderate",
+    approvalRequiredFrom: "moderate",
+    allowExternalNetwork: true,
+    allowFilesystemWrite: false,
+    allowShellExecution: false,
+    allowScreenControl: false,
+    allowedPaths: [],
+};
+function beginnerSubAgentMemoryPolicy(agentId) {
+    const owner = { ownerType: "sub_agent", ownerId: agentId };
+    return {
+        owner,
+        visibility: "private",
+        readScopes: [owner],
+        writeScope: owner,
+        retentionPolicy: "short_term",
+        writebackReviewRequired: true,
+        rawWindowSize: 24_000,
+        compactThreshold: 32_000,
+        capsuleMode: "session_compaction",
+        archiveReferenceMode: "summary_reference",
+        handoffCapsuleAllowed: true,
+        capsuleCount: 0,
+    };
+}
+function beginnerSubAgentAllowlist() {
+    return {
+        enabledSkillIds: [],
+        enabledMcpServerIds: [],
+        enabledToolNames: [],
+        disabledToolNames: [],
+    };
+}
+function setupSubAgentBindingsToAllowlist(item) {
+    return {
+        enabledSkillIds: [...(item.skillMcpBindings?.enabledSkillIds ?? [])],
+        enabledMcpServerIds: [...(item.skillMcpBindings?.enabledMcpServerIds ?? [])],
+        enabledToolNames: [...(item.skillMcpBindings?.enabledToolNames ?? [])],
+        disabledToolNames: [...(item.skillMcpBindings?.disabledToolNames ?? [])],
+    };
+}
+function setupSubAgentItemToConfig(item) {
+    const now = Date.now();
+    const memoryPolicy = item.memoryPolicy ?? beginnerSubAgentMemoryPolicy(item.agentId);
+    const permissionProfile = item.capabilityPolicy?.permissionProfile ?? beginnerSubAgentPermissionProfile;
+    const delegationPolicy = item.delegationPolicy;
+    return {
+        schemaVersion: CONTRACT_SCHEMA_VERSION,
+        agentType: "sub_agent",
+        agentId: item.agentId,
+        displayName: item.displayName.trim(),
+        nickname: item.nickname.trim(),
+        status: item.status,
+        role: item.role.trim(),
+        personality: item.description.trim() || item.role.trim(),
+        specialtyTags: [],
+        avoidTasks: [],
+        ...(item.modelPolicy?.mode === "override" && item.modelPolicy.providerId?.trim() && item.modelPolicy.modelId?.trim()
+            ? {
+                modelProfile: {
+                    providerId: item.modelPolicy.providerId.trim(),
+                    modelId: item.modelPolicy.modelId.trim(),
+                    ...(item.modelPolicy.fallbackModelId?.trim() ? { fallbackModelId: item.modelPolicy.fallbackModelId.trim() } : {}),
+                    ...(item.modelPolicy.effort?.trim() ? { effort: item.modelPolicy.effort.trim() } : {}),
+                    ...(typeof item.modelPolicy.maxOutputTokens === "number" ? { maxOutputTokens: item.modelPolicy.maxOutputTokens } : {}),
+                    ...(typeof item.modelPolicy.costBudget === "number" ? { costBudget: item.modelPolicy.costBudget } : {}),
+                },
+            }
+            : {}),
+        memoryPolicy,
+        capabilityPolicy: {
+            permissionProfile,
+            skillMcpAllowlist: item.skillMcpBindings ? setupSubAgentBindingsToAllowlist(item) : beginnerSubAgentAllowlist(),
+            rateLimit: { maxConcurrentCalls: 1 },
+        },
+        delegationPolicy: {
+            enabled: delegationPolicy?.canDelegate ?? true,
+            maxParallelSessions: delegationPolicy?.maxParallelSessions ?? 1,
+            directChildOnly: delegationPolicy?.directChildOnly ?? true,
+            allowedChildAgentIds: [...(delegationPolicy?.allowedChildAgentIds ?? [])],
+            resultReviewRequired: delegationPolicy?.resultReviewRequired ?? true,
+            aggregationMode: delegationPolicy?.aggregationMode ?? "parent_synthesis",
+            redelegationAllowed: delegationPolicy?.redelegationAllowed ?? true,
+            escalationPolicy: delegationPolicy?.escalationPolicy ?? "return_to_parent",
+        },
+        teamIds: [],
+        delegation: {
+            enabled: delegationPolicy?.canDelegate ?? true,
+            maxParallelSessions: delegationPolicy?.maxParallelSessions ?? 1,
+        },
+        profileVersion: Math.max(1, Math.floor(Number.isFinite(item.profileVersion) ? item.profileVersion : 1)),
+        createdAt: Number.isFinite(item.createdAt) ? item.createdAt : now,
+        updatedAt: Number.isFinite(item.updatedAt) ? item.updatedAt : now,
+    };
+}
+function persistSubAgentSetupDraft(raw, draft) {
+    if (!draft.subAgents)
+        return;
+    raw.orchestration = {
+        ...toObject(raw.orchestration),
+        mode: draft.subAgents.orchestrationEnabled ? "orchestration" : "single_nobie",
+        featureFlagEnabled: draft.subAgents.orchestrationEnabled,
+        subAgents: draft.subAgents.items.map(setupSubAgentItemToConfig),
+    };
 }
 export function saveSetupDraft(draft, state) {
     const raw = readRawConfig();
@@ -780,6 +981,7 @@ export function saveSetupDraft(draft, state) {
     delete raw.llm;
     persistMcpSetupDraft(raw, draft.mcp);
     persistSkillsSetupDraft(raw, draft.skills);
+    persistSubAgentSetupDraft(raw, draft);
     writeRawConfig(raw);
     updateActiveRunsMaxDelegationTurns(Math.max(0, Math.floor(Number.isFinite(draft.security.maxDelegationTurns) ? draft.security.maxDelegationTurns : 0)));
     const nextState = state ? writeSetupState(state) : readSetupState();

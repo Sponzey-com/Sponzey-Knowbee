@@ -33,6 +33,13 @@ import {
   resolveOpenAICodexAuthFilePath,
   resolveOpenAICodexBaseUrl,
 } from "../auth/openai-codex-oauth.js"
+import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js"
+import type {
+  MemoryPolicy,
+  PermissionProfile,
+  SkillMcpAllowlist,
+  SubAgentConfig,
+} from "../contracts/sub-agent-orchestration.js"
 
 export type CapabilityStatus = "ready" | "disabled" | "planned" | "error"
 
@@ -210,6 +217,155 @@ export interface SetupDraft {
     host: string
     port: number
   }
+  subAgents?: SetupSubAgentDraft
+}
+
+export type SetupSubAgentMonitoringLogLevel = "product" | "debug" | "dev"
+
+export type SetupSubAgentMonitoringEventKind =
+  | "request_received"
+  | "delegation_planned"
+  | "handoff_package_created"
+  | "child_accepted"
+  | "child_running"
+  | "child_result_returned"
+  | "parent_reviewing"
+  | "parent_aggregating"
+  | "redelegation_planned"
+  | "final_delivery_prepared"
+  | "completed"
+  | "blocked"
+  | "cancelled"
+
+export type SetupSubAgentMonitoringEventStatus =
+  | "pending"
+  | "running"
+  | "reviewing"
+  | "completed"
+  | "blocked"
+  | "cancelled"
+
+export type SetupSubAgentMonitoringReviewStatus =
+  | "waiting_for_child_result"
+  | "reviewing_child_result"
+  | "accepted"
+  | "needs_clarification"
+  | "needs_redelegation"
+  | "aggregated"
+  | "final_ready"
+  | "returned_to_parent"
+
+export type SetupSubAgentMonitoringQuality =
+  | "sufficient"
+  | "missing_information"
+  | "needs_verification"
+  | "permission_required"
+  | "split_required"
+  | "different_child_required"
+
+export interface SetupSubAgentMonitoringEvent {
+  eventId: string
+  runId: string
+  at: number
+  kind: SetupSubAgentMonitoringEventKind
+  status: SetupSubAgentMonitoringEventStatus
+  actorAgentId: string
+  targetAgentId?: string
+  summary: string
+  reason?: string
+  reviewStatus?: SetupSubAgentMonitoringReviewStatus
+  quality?: SetupSubAgentMonitoringQuality
+  latestResultSummary?: string
+  redelegation?: {
+    previousChildAgentId?: string
+    nextTargetAgentId?: string
+    previousResultSummary?: string
+    refinedInstructionSummary?: string
+    changedInputSummary?: string
+    validationMethod?: string
+  }
+  debug?: {
+    relatedTaskId?: string
+    internalTraceId?: string
+    attemptCount?: number
+  }
+  logLevel?: SetupSubAgentMonitoringLogLevel
+}
+
+export interface SetupSubAgentMonitoringDraft {
+  logLevel?: SetupSubAgentMonitoringLogLevel
+  events?: SetupSubAgentMonitoringEvent[]
+  activeRunIds?: string[]
+  selectedRunId?: string
+  refreshedAt?: number
+  staleAfterMs?: number
+}
+
+export interface SetupSubAgentDraftItem {
+  agentId: string
+  parentAgentId?: string
+  displayName: string
+  nickname: string
+  role: string
+  description: string
+  skillMcpBindings?: {
+    enabledSkillIds: string[]
+    enabledMcpServerIds: string[]
+    enabledToolNames: string[]
+    disabledToolNames: string[]
+    recommendedSkillIds?: string[]
+    recommendedMcpServerIds?: string[]
+    connectionStateByCatalogId?: Record<string, "disconnected" | "connecting" | "connected" | "degraded" | "permission_required" | "unavailable">
+  }
+  modelPolicy?: {
+    mode: "inherit" | "override"
+    providerId?: string
+    modelId?: string
+    fallbackModelId?: string
+    effort?: string
+    maxOutputTokens?: number
+    costBudget?: number
+  }
+  memoryPolicy?: MemoryPolicy & {
+    rawWindowSize?: number
+    compactThreshold?: number
+    capsuleMode?: "session_compaction" | "rolling_summary"
+    archiveReferenceMode?: "summary_reference" | "full_reference_disabled"
+    handoffCapsuleAllowed?: boolean
+    lastCompactedAt?: number
+    capsuleCount?: number
+  }
+  capabilityPolicy?: {
+    permissionProfile: PermissionProfile
+    allowedCapabilityIds: string[]
+    deniedCapabilityIds: string[]
+    approvalRequiredCapabilityIds: string[]
+    osSensitiveCapabilityIds: string[]
+    statusByCapabilityId?: Record<string, "allowed" | "denied" | "approval_required" | "os_permission_required" | "unavailable">
+    logVisibility?: "product" | "debug" | "dev"
+  }
+  delegationPolicy?: {
+    canDelegate: boolean
+    directChildOnly: boolean
+    allowedChildAgentIds: string[]
+    resultReviewRequired: boolean
+    aggregationMode: "parent_synthesis" | "append_summaries" | "verifier_required"
+    redelegationAllowed: boolean
+    escalationPolicy: "return_to_parent" | "ask_user" | "stop_with_report"
+    maxParallelSessions: number
+  }
+  status: "enabled" | "disabled" | "archived" | "degraded"
+  createdAt: number
+  updatedAt: number
+  profileVersion: number
+}
+
+export interface SetupSubAgentDraft {
+  orchestrationEnabled: boolean
+  items: SetupSubAgentDraftItem[]
+  runtimeActiveAgentIds: string[]
+  lastRuntimeSeenAtByAgentId: Record<string, number>
+  monitoring?: SetupSubAgentMonitoringDraft
 }
 
 export interface SetupChecks {
@@ -675,6 +831,103 @@ function sanitizeCustomBackends(value: unknown): AIBackendCard[] {
     .filter((entry): entry is AIBackendCard => entry !== null)
 }
 
+function buildSubAgentSetupDraft(config: NobieConfig): SetupSubAgentDraft {
+  return {
+    orchestrationEnabled: config.orchestration.mode === "orchestration",
+    items: (config.orchestration.subAgents ?? []).map((agent) => ({
+      agentId: agent.agentId,
+      displayName: agent.displayName,
+      nickname: agent.nickname ?? agent.displayName,
+      role: agent.role,
+      description: agent.personality,
+      skillMcpBindings: {
+        enabledSkillIds: [...agent.capabilityPolicy.skillMcpAllowlist.enabledSkillIds],
+        enabledMcpServerIds: [...agent.capabilityPolicy.skillMcpAllowlist.enabledMcpServerIds],
+        enabledToolNames: [...agent.capabilityPolicy.skillMcpAllowlist.enabledToolNames],
+        disabledToolNames: [...agent.capabilityPolicy.skillMcpAllowlist.disabledToolNames],
+        ...(agent.capabilityPolicy.skillMcpAllowlist.secretScopeId
+          ? { connectionStateByCatalogId: {} }
+          : {}),
+      },
+      ...(agent.modelProfile
+        ? {
+            modelPolicy: {
+              mode: "override" as const,
+              providerId: agent.modelProfile.providerId,
+              modelId: agent.modelProfile.modelId,
+              ...(agent.modelProfile.fallbackModelId ? { fallbackModelId: agent.modelProfile.fallbackModelId } : {}),
+              ...(agent.modelProfile.effort ? { effort: agent.modelProfile.effort } : {}),
+              ...(agent.modelProfile.maxOutputTokens !== undefined ? { maxOutputTokens: agent.modelProfile.maxOutputTokens } : {}),
+              ...(agent.modelProfile.costBudget !== undefined ? { costBudget: agent.modelProfile.costBudget } : {}),
+            },
+          }
+        : {}),
+      memoryPolicy: {
+        ...agent.memoryPolicy,
+        rawWindowSize: agent.memoryPolicy.rawWindowSize ?? 24_000,
+        compactThreshold: agent.memoryPolicy.compactThreshold ?? 32_000,
+        capsuleMode: agent.memoryPolicy.capsuleMode ?? "session_compaction",
+        archiveReferenceMode: agent.memoryPolicy.archiveReferenceMode ?? "summary_reference",
+        handoffCapsuleAllowed: agent.memoryPolicy.handoffCapsuleAllowed ?? true,
+        ...(agent.memoryPolicy.lastCompactedAt !== undefined ? { lastCompactedAt: agent.memoryPolicy.lastCompactedAt } : {}),
+        capsuleCount: agent.memoryPolicy.capsuleCount ?? 0,
+      },
+      capabilityPolicy: {
+        permissionProfile: agent.capabilityPolicy.permissionProfile,
+        allowedCapabilityIds: capabilityIdsFromPermissionProfile(agent.capabilityPolicy.permissionProfile),
+        deniedCapabilityIds: deniedCapabilityIdsFromPermissionProfile(agent.capabilityPolicy.permissionProfile),
+        approvalRequiredCapabilityIds: capabilityIdsRequiringApproval(agent.capabilityPolicy.permissionProfile),
+        osSensitiveCapabilityIds: osSensitiveCapabilityIdsFromPermissionProfile(agent.capabilityPolicy.permissionProfile),
+        logVisibility: "product",
+      },
+      delegationPolicy: {
+        canDelegate: agent.delegationPolicy?.enabled ?? agent.delegation.enabled,
+        directChildOnly: agent.delegationPolicy?.directChildOnly ?? true,
+        allowedChildAgentIds: [...(agent.delegationPolicy?.allowedChildAgentIds ?? [])],
+        resultReviewRequired: agent.delegationPolicy?.resultReviewRequired ?? true,
+        aggregationMode: agent.delegationPolicy?.aggregationMode ?? "parent_synthesis",
+        redelegationAllowed: agent.delegationPolicy?.redelegationAllowed ?? (agent.delegationPolicy?.enabled ?? agent.delegation.enabled),
+        escalationPolicy: agent.delegationPolicy?.escalationPolicy ?? "return_to_parent",
+        maxParallelSessions: agent.delegationPolicy?.maxParallelSessions ?? agent.delegation.maxParallelSessions,
+      },
+      status: agent.status,
+      createdAt: agent.createdAt,
+      updatedAt: agent.updatedAt,
+      profileVersion: agent.profileVersion,
+    })),
+    runtimeActiveAgentIds: [],
+    lastRuntimeSeenAtByAgentId: {},
+  }
+}
+
+function capabilityIdsFromPermissionProfile(profile: PermissionProfile): string[] {
+  return [
+    profile.allowExternalNetwork ? "capability:network_mcp" : "",
+    profile.allowFilesystemWrite ? "capability:file_write" : "capability:file_read",
+    profile.allowShellExecution ? "capability:shell" : "",
+    profile.allowScreenControl ? "capability:screen_control" : "",
+  ].filter(Boolean)
+}
+
+function deniedCapabilityIdsFromPermissionProfile(profile: PermissionProfile): string[] {
+  return [
+    profile.allowShellExecution ? "" : "capability:shell",
+    profile.allowScreenControl ? "" : "capability:screen_control",
+    profile.allowFilesystemWrite ? "" : "capability:file_write",
+  ].filter(Boolean)
+}
+
+function capabilityIdsRequiringApproval(profile: PermissionProfile): string[] {
+  return [
+    profile.approvalRequiredFrom === "moderate" || profile.approvalRequiredFrom === "safe" ? "capability:file_write" : "",
+    profile.approvalRequiredFrom !== "dangerous" ? "capability:shell" : "",
+  ].filter(Boolean)
+}
+
+function osSensitiveCapabilityIdsFromPermissionProfile(profile: PermissionProfile): string[] {
+  return profile.allowScreenControl ? ["capability:screen_capture", "capability:keyboard_control", "capability:mouse_control"] : ["capability:screen_capture"]
+}
+
 export function buildSetupDraft(): SetupDraft {
   const config = getConfig()
   const raw = readRawConfig()
@@ -794,6 +1047,7 @@ export function buildSetupDraft(): SetupDraft {
       host: config.webui.host,
       port: config.webui.port,
     },
+    subAgents: buildSubAgentSetupDraft(config),
   }
 }
 
@@ -835,6 +1089,118 @@ function persistBackends(raw: JsonObject, draft: SetupDraft): void {
   ai.customBackends = customBackends
   ai.routingProfiles = draft.routingProfiles
   raw.ai = ai
+}
+
+const beginnerSubAgentPermissionProfile: PermissionProfile = {
+  profileId: "profile:beginner-safe",
+  riskCeiling: "moderate",
+  approvalRequiredFrom: "moderate",
+  allowExternalNetwork: true,
+  allowFilesystemWrite: false,
+  allowShellExecution: false,
+  allowScreenControl: false,
+  allowedPaths: [],
+}
+
+function beginnerSubAgentMemoryPolicy(agentId: string): MemoryPolicy {
+  const owner = { ownerType: "sub_agent" as const, ownerId: agentId }
+  return {
+    owner,
+    visibility: "private",
+    readScopes: [owner],
+    writeScope: owner,
+    retentionPolicy: "short_term",
+    writebackReviewRequired: true,
+    rawWindowSize: 24_000,
+    compactThreshold: 32_000,
+    capsuleMode: "session_compaction",
+    archiveReferenceMode: "summary_reference",
+    handoffCapsuleAllowed: true,
+    capsuleCount: 0,
+  }
+}
+
+function beginnerSubAgentAllowlist(): SkillMcpAllowlist {
+  return {
+    enabledSkillIds: [],
+    enabledMcpServerIds: [],
+    enabledToolNames: [],
+    disabledToolNames: [],
+  }
+}
+
+function setupSubAgentBindingsToAllowlist(item: SetupSubAgentDraftItem): SkillMcpAllowlist {
+  return {
+    enabledSkillIds: [...(item.skillMcpBindings?.enabledSkillIds ?? [])],
+    enabledMcpServerIds: [...(item.skillMcpBindings?.enabledMcpServerIds ?? [])],
+    enabledToolNames: [...(item.skillMcpBindings?.enabledToolNames ?? [])],
+    disabledToolNames: [...(item.skillMcpBindings?.disabledToolNames ?? [])],
+  }
+}
+
+function setupSubAgentItemToConfig(item: SetupSubAgentDraftItem): SubAgentConfig {
+  const now = Date.now()
+  const memoryPolicy = item.memoryPolicy ?? beginnerSubAgentMemoryPolicy(item.agentId)
+  const permissionProfile = item.capabilityPolicy?.permissionProfile ?? beginnerSubAgentPermissionProfile
+  const delegationPolicy = item.delegationPolicy
+  return {
+    schemaVersion: CONTRACT_SCHEMA_VERSION,
+    agentType: "sub_agent",
+    agentId: item.agentId,
+    displayName: item.displayName.trim(),
+    nickname: item.nickname.trim(),
+    status: item.status,
+    role: item.role.trim(),
+    personality: item.description.trim() || item.role.trim(),
+    specialtyTags: [],
+    avoidTasks: [],
+    ...(item.modelPolicy?.mode === "override" && item.modelPolicy.providerId?.trim() && item.modelPolicy.modelId?.trim()
+      ? {
+          modelProfile: {
+            providerId: item.modelPolicy.providerId.trim(),
+            modelId: item.modelPolicy.modelId.trim(),
+            ...(item.modelPolicy.fallbackModelId?.trim() ? { fallbackModelId: item.modelPolicy.fallbackModelId.trim() } : {}),
+            ...(item.modelPolicy.effort?.trim() ? { effort: item.modelPolicy.effort.trim() } : {}),
+            ...(typeof item.modelPolicy.maxOutputTokens === "number" ? { maxOutputTokens: item.modelPolicy.maxOutputTokens } : {}),
+            ...(typeof item.modelPolicy.costBudget === "number" ? { costBudget: item.modelPolicy.costBudget } : {}),
+          },
+        }
+      : {}),
+    memoryPolicy,
+    capabilityPolicy: {
+      permissionProfile,
+      skillMcpAllowlist: item.skillMcpBindings ? setupSubAgentBindingsToAllowlist(item) : beginnerSubAgentAllowlist(),
+      rateLimit: { maxConcurrentCalls: 1 },
+    },
+    delegationPolicy: {
+      enabled: delegationPolicy?.canDelegate ?? true,
+      maxParallelSessions: delegationPolicy?.maxParallelSessions ?? 1,
+      directChildOnly: delegationPolicy?.directChildOnly ?? true,
+      allowedChildAgentIds: [...(delegationPolicy?.allowedChildAgentIds ?? [])],
+      resultReviewRequired: delegationPolicy?.resultReviewRequired ?? true,
+      aggregationMode: delegationPolicy?.aggregationMode ?? "parent_synthesis",
+      redelegationAllowed: delegationPolicy?.redelegationAllowed ?? true,
+      escalationPolicy: delegationPolicy?.escalationPolicy ?? "return_to_parent",
+    },
+    teamIds: [],
+    delegation: {
+      enabled: delegationPolicy?.canDelegate ?? true,
+      maxParallelSessions: delegationPolicy?.maxParallelSessions ?? 1,
+    },
+    profileVersion: Math.max(1, Math.floor(Number.isFinite(item.profileVersion) ? item.profileVersion : 1)),
+    createdAt: Number.isFinite(item.createdAt) ? item.createdAt : now,
+    updatedAt: Number.isFinite(item.updatedAt) ? item.updatedAt : now,
+  }
+}
+
+function persistSubAgentSetupDraft(raw: JsonObject, draft: SetupDraft): void {
+  if (!draft.subAgents) return
+  raw.orchestration = {
+    ...toObject(raw.orchestration),
+    mode: draft.subAgents.orchestrationEnabled ? "orchestration" : "single_nobie",
+    featureFlagEnabled: draft.subAgents.orchestrationEnabled,
+    subAgents: draft.subAgents.items.map(setupSubAgentItemToConfig),
+  }
 }
 
 export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: SetupDraft; state: SetupState } {
@@ -1019,6 +1385,7 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
   delete raw.llm
   persistMcpSetupDraft(raw, draft.mcp)
   persistSkillsSetupDraft(raw, draft.skills)
+  persistSubAgentSetupDraft(raw, draft)
   writeRawConfig(raw)
   updateActiveRunsMaxDelegationTurns(Math.max(0, Math.floor(Number.isFinite(draft.security.maxDelegationTurns) ? draft.security.maxDelegationTurns : 0)))
 

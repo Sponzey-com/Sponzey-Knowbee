@@ -304,7 +304,7 @@ describe("task012 Topology Workspace release gate", () => {
     const featureGateHtml = renderToStaticMarkup(
       createElement(
         FeatureGate,
-        { capabilityKey: "enterprise_topology_builder_ui", title: "토폴로지" },
+        { capabilityKey: "enterprise_topology_builder_ui", title: "서브에이전트 설정" },
         createElement("div", null, "workspace route content"),
       ),
     )

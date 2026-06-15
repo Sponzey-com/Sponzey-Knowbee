@@ -15,9 +15,10 @@ function rg(pattern: string, paths: string[]): string[] {
       .split("\n")
       .filter(Boolean)
   } catch (error) {
-    const status = typeof error === "object" && error !== null && "status" in error
-      ? (error as { status?: number }).status
-      : undefined
+    const status =
+      typeof error === "object" && error !== null && "status" in error
+        ? (error as { status?: number }).status
+        : undefined
     if (status === 1) return []
     throw error
   }
@@ -37,7 +38,9 @@ describe("legacy routing static audit", () => {
       "packages/core/src/runs/intake-bridge-pass.ts:",
       "packages/core/src/runs/intake-bridge-pass.js:",
     ]
-    expect(matches.filter((line) => !allowedPrefixes.some((prefix) => line.startsWith(prefix)))).toEqual([])
+    expect(
+      matches.filter((line) => !allowedPrefixes.some((prefix) => line.startsWith(prefix))),
+    ).toEqual([])
 
     const intakeBridgePass = source("packages/core/src/runs/intake-bridge-pass.ts")
     const decisionRouteSource = source("packages/core/src/orchestration/decide-execution-route.ts")
@@ -46,13 +49,18 @@ describe("legacy routing static audit", () => {
     )
     const graphSelectionStart = decisionRouteSource.indexOf("const buildGraph =")
     const runBridgeStart = intakeBridgePass.indexOf("export async function runIntakeBridgePass")
-    const decisionRouteStart = intakeBridgePass.indexOf("const decisionRoute = await decideExecutionRoute({")
+    const decisionRouteStart = intakeBridgePass.indexOf(
+      "const decisionRoute = await decideExecutionRoute({",
+    )
     expect(explicitProviderStart).toBeGreaterThanOrEqual(0)
     expect(graphSelectionStart).toBeGreaterThan(explicitProviderStart)
     expect(runBridgeStart).toBeGreaterThanOrEqual(0)
     expect(decisionRouteStart).toBeGreaterThan(runBridgeStart)
 
-    const explicitProviderSection = decisionRouteSource.slice(explicitProviderStart, graphSelectionStart)
+    const explicitProviderSection = decisionRouteSource.slice(
+      explicitProviderStart,
+      graphSelectionStart,
+    )
     const runBridgeSection = intakeBridgePass.slice(runBridgeStart)
 
     expect(explicitProviderSection).toContain("input.resolveExplicitProviderTarget?.")
@@ -65,18 +73,25 @@ describe("legacy routing static audit", () => {
   })
 
   it("does not keep removed phase022 topology route helpers", () => {
-    expect(rg("buildIntakeTopologyExecutionDecision|resolveDelegatedTopologyRoute", [
-      "packages/core/src",
-    ])).toEqual([])
+    expect(
+      rg("buildIntakeTopologyExecutionDecision|resolveDelegatedTopologyRoute", [
+        "packages/core/src",
+      ]),
+    ).toEqual([])
   })
 
   it("keeps provider:openai mention inside explicit provider route normalization only", () => {
-    const matches = rg("provider:openai", ["packages/core/src/runs", "packages/core/src/orchestration"])
+    const matches = rg("provider:openai", [
+      "packages/core/src/runs",
+      "packages/core/src/orchestration",
+    ])
     const allowedPrefixes = [
       "packages/core/src/runs/routing.ts:",
       "packages/core/src/runs/routing.js:",
     ]
-    expect(matches.filter((line) => !allowedPrefixes.some((prefix) => line.startsWith(prefix)))).toEqual([])
+    expect(
+      matches.filter((line) => !allowedPrefixes.some((prefix) => line.startsWith(prefix))),
+    ).toEqual([])
     expect(source("packages/core/src/runs/intake-bridge-pass.ts")).toContain(
       "provider_direct_blocked_without_explicit_target",
     )
@@ -109,6 +124,12 @@ describe("legacy routing static audit", () => {
       "packages/core/src/config/types.d.ts:",
       "packages/core/src/api/routes/settings.ts:",
       "packages/core/src/api/routes/settings.js:",
+      "packages/core/src/control-plane/index.ts:",
+      "packages/core/src/control-plane/index.js:",
+      "packages/core/src/control-plane/index.d.ts:",
+      "packages/core/src/ui/sub-agent-settings.ts:",
+      "packages/core/src/ui/sub-agent-settings.js:",
+      "packages/core/src/ui/sub-agent-settings.d.ts:",
       "packages/core/src/orchestration/mode.ts:",
       "packages/core/src/orchestration/mode.js:",
       "packages/core/src/orchestration/mode.d.ts:",
@@ -125,15 +146,21 @@ describe("legacy routing static audit", () => {
       "packages/core/src/release/enterprise-topology-release-gate.d.ts:",
     ]
 
-    expect(matches.filter((line) => !allowedPrefixes.some((prefix) => line.startsWith(prefix)))).toEqual([])
+    expect(
+      matches.filter((line) => !allowedPrefixes.some((prefix) => line.startsWith(prefix))),
+    ).toEqual([])
     expect(source("packages/core/src/orchestration/planner.ts")).not.toContain("single_nobie")
-    expect(source("packages/core/src/orchestration/execution-harness.ts")).not.toContain("single_nobie")
+    expect(source("packages/core/src/orchestration/execution-harness.ts")).not.toContain(
+      "single_nobie",
+    )
     expect(source("packages/core/src/runs/intake-bridge-pass.ts")).not.toContain("single_nobie")
   })
 
   it("does not justify provider direct fallback with topology routing opt-out", () => {
     const matches = rg("topology_routing_not_opted_in", ["packages/core/src"])
-    expect(matches.every((line) => line.startsWith("packages/core/src/topology-runtime/harness"))).toBe(true)
+    expect(
+      matches.every((line) => line.startsWith("packages/core/src/topology-runtime/harness")),
+    ).toBe(true)
     expect(source("packages/core/src/runs/intake-bridge-pass.ts")).not.toContain(
       "topology_routing_not_opted_in",
     )
@@ -152,7 +179,9 @@ describe("legacy routing static audit", () => {
       "packages/core/src/runs/start.ts:",
       "packages/core/src/runs/start.js:",
     ]
-    expect(matches.filter((line) => !allowedPrefixes.some((prefix) => line.startsWith(prefix)))).toEqual([])
+    expect(
+      matches.filter((line) => !allowedPrefixes.some((prefix) => line.startsWith(prefix))),
+    ).toEqual([])
 
     const candidateSourceFiles = [
       "packages/core/src/runs/intake-bridge-pass.ts",
@@ -165,7 +194,9 @@ describe("legacy routing static audit", () => {
     }
     expect(source("packages/core/src/topology-runtime/harness.ts")).not.toContain("activeSubAgents")
     expect(source("packages/core/src/topology-runtime/harness.js")).not.toContain("activeSubAgents")
-    expect(source("packages/core/src/topology-runtime/harness.d.ts")).not.toContain("activeSubAgents")
+    expect(source("packages/core/src/topology-runtime/harness.d.ts")).not.toContain(
+      "activeSubAgents",
+    )
   })
 
   it("does not use active_default_workflow_candidate as a runtime route reason", () => {
@@ -181,22 +212,32 @@ describe("legacy routing static audit", () => {
     for (const file of runtimeSourceFiles) {
       expect(source(file), file).not.toContain("active_default_workflow_candidate")
     }
-    expect(source("packages/core/src/topology-runtime/harness.ts")).not.toContain(removedDefaultRouteReason)
-    expect(source("packages/core/src/topology-runtime/harness.js")).not.toContain(removedDefaultRouteReason)
-    expect(source("packages/core/src/topology-runtime/harness.d.ts")).not.toContain(removedDefaultRouteReason)
+    expect(source("packages/core/src/topology-runtime/harness.ts")).not.toContain(
+      removedDefaultRouteReason,
+    )
+    expect(source("packages/core/src/topology-runtime/harness.js")).not.toContain(
+      removedDefaultRouteReason,
+    )
+    expect(source("packages/core/src/topology-runtime/harness.d.ts")).not.toContain(
+      removedDefaultRouteReason,
+    )
   })
 
   it("does not keep compiled default entry strings in runtime routing or prompts", () => {
-    expect(rg("compiled_default_entry|compiled_default", [
-      "packages/core/src/runs",
-      "packages/core/src/orchestration",
-      "packages/core/src/topology-runtime",
-      "prompts",
-    ])).toEqual([])
+    expect(
+      rg("compiled_default_entry|compiled_default", [
+        "packages/core/src/runs",
+        "packages/core/src/orchestration",
+        "packages/core/src/topology-runtime",
+        "prompts",
+      ]),
+    ).toEqual([])
   })
 
   it("does not generate new planner fallback plans through single_nobie", () => {
     expect(source("packages/core/src/orchestration/planner.ts")).not.toContain("single_nobie")
-    expect(source("packages/core/src/orchestration/execution-harness.ts")).not.toContain("single_nobie")
+    expect(source("packages/core/src/orchestration/execution-harness.ts")).not.toContain(
+      "single_nobie",
+    )
   })
 })

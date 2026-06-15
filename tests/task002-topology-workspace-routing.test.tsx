@@ -46,7 +46,7 @@ describe("task002 topology workspace routing", () => {
     )
 
     expect(html).toContain('data-testid="topology-workspace-route-shell"')
-    expect(html).toContain("업무 흐름 만들기")
+    expect(html).toContain("서브에이전트 구성하기")
     expect(html).toContain('data-testid="topology-workspace-layer-build"')
     expect(html).toContain('data-testid="topology-workspace-layer-run"')
     expect(html).toContain('data-testid="topology-workspace-layer-trace"')
@@ -59,15 +59,24 @@ describe("task002 topology workspace routing", () => {
     expect(html).not.toContain("리소스")
   })
 
-  it("exposes one topology navigation entry instead of separate runtime and enterprise entries", () => {
+  it("exposes sub-agent settings in beginner and advanced navigation", () => {
+    const beginnerNav = getUiNavigation("beginner", false)
     const nav = getUiNavigation("advanced", false)
     const topologyItems = nav.filter((item) => item.path.includes("topology"))
 
+    expect(beginnerNav).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: "/sub-agents",
+        labelKo: "서브에이전트 설정",
+        labelEn: "Sub-agent settings",
+        capabilityKey: "enterprise_topology_builder_ui",
+      }),
+    ]))
     expect(topologyItems).toEqual([
       expect.objectContaining({
         path: "/advanced/topology",
-        labelKo: "토폴로지",
-        labelEn: "Topology",
+        labelKo: "서브에이전트 설정",
+        labelEn: "Sub-agent settings",
         capabilityKey: "enterprise_topology_builder_ui",
       }),
     ])
@@ -75,10 +84,23 @@ describe("task002 topology workspace routing", () => {
 
   it("tracks old enterprise builder bookmarks as compatibility aliases for the workspace", () => {
     const inventory = getUiRouteInventory()
+    const beginnerWorkspace = inventory.find((item) => item.path === "/sub-agents")
+    const topologyAlias = inventory.find((item) => item.path === "/topology")
     const workspace = inventory.find((item) => item.path === "/advanced/topology")
     const enterpriseAlias = inventory.find((item) => item.path === "/advanced/enterprise-topology")
     const appSource = readFileSync(new URL("../packages/webui/src/App.tsx", import.meta.url), "utf-8")
 
+    expect(beginnerWorkspace).toEqual(expect.objectContaining({
+      component: "TopologyWorkspacePage",
+      mode: "beginner",
+      status: "kept",
+      replacementPath: null,
+    }))
+    expect(topologyAlias).toEqual(expect.objectContaining({
+      component: "TopologyWorkspacePage",
+      status: "redirect",
+      replacementPath: "/sub-agents",
+    }))
     expect(workspace).toEqual(expect.objectContaining({
       component: "TopologyWorkspacePage",
       status: "kept",
@@ -90,8 +112,10 @@ describe("task002 topology workspace routing", () => {
       status: "compatibility",
       replacementPath: "/advanced/topology?mode=build",
     }))
+    expect(resolveLegacyAdvancedRoute("/topology")).toBe("/sub-agents")
     expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/advanced/topology")
     expect(appSource).toContain("TopologyWorkspacePage")
+    expect(appSource).toContain('path="/sub-agents"')
     expect(appSource).toContain('path="/advanced/enterprise-topology"')
     expect(appSource).toContain('to="/advanced/topology?mode=build"')
   })
@@ -104,7 +128,7 @@ describe("task002 topology workspace routing", () => {
     const html = renderToStaticMarkup(
       createElement(
         FeatureGate,
-        { capabilityKey: "enterprise_topology_builder_ui", title: "토폴로지" },
+        { capabilityKey: "enterprise_topology_builder_ui", title: "서브에이전트 설정" },
         createElement("div", null, "workspace route content"),
       ),
     )
@@ -113,14 +137,15 @@ describe("task002 topology workspace routing", () => {
       status: "disabled",
       enabled: false,
     }))
-    expect(html).toContain("토폴로지")
+    expect(html).toContain("서브에이전트 설정")
     expect(html).toContain("기능 플래그")
     expect(html).not.toContain("workspace route content")
   })
 
   it("keeps beginner and advanced mode switch policy stable", () => {
-    expect(resolveModeSwitchRoute("/advanced/topology", "beginner")).toBe("/status")
-    expect(resolveModeSwitchRoute("/advanced/enterprise-topology", "beginner")).toBe("/status")
+    expect(resolveModeSwitchRoute("/advanced/topology", "beginner")).toBe("/sub-agents")
+    expect(resolveModeSwitchRoute("/advanced/enterprise-topology", "beginner")).toBe("/sub-agents")
+    expect(resolveModeSwitchRoute("/sub-agents", "advanced")).toBe("/advanced/topology")
     expect(resolveModeSwitchRoute("/status", "advanced")).toBe("/advanced/dashboard")
   })
 })

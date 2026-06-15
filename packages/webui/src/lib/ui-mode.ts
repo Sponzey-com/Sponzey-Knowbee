@@ -49,6 +49,14 @@ const BEGINNER_NAV: UiNavItem[] = [
     descriptionEn: "Required connections",
   },
   {
+    path: "/sub-agents",
+    labelKo: "서브에이전트 설정",
+    labelEn: "Sub-agent settings",
+    capabilityKey: "enterprise_topology_builder_ui",
+    descriptionKo: "서브에이전트 추가와 연결",
+    descriptionEn: "Add and connect sub-agents",
+  },
+  {
     path: "/tasks",
     labelKo: "작업 확인",
     labelEn: "Tasks",
@@ -71,11 +79,11 @@ const ADVANCED_NAV: UiNavItem[] = [
   { path: "/advanced/runs", labelKo: "실행 현황", labelEn: "Runs", capabilityKey: "runs.monitor" },
   {
     path: "/advanced/topology",
-    labelKo: "토폴로지",
-    labelEn: "Topology",
+    labelKo: "서브에이전트 설정",
+    labelEn: "Sub-agent settings",
     capabilityKey: "enterprise_topology_builder_ui",
-    descriptionKo: "업무 흐름 만들기, 실행, 기록 확인",
-    descriptionEn: "Build, run, and inspect work flows",
+    descriptionKo: "서브에이전트 만들기, 연결, 실행 기록 확인",
+    descriptionEn: "Create, connect, and inspect sub-agents",
   },
   {
     path: "/advanced/orchestration",

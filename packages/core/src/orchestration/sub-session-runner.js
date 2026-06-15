@@ -3,7 +3,7 @@ import { reviewSubAgentResult, } from "../agent/sub-agent-result-review.js";
 import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
 import { normalizeNicknameSnapshot, } from "../contracts/sub-agent-orchestration.js";
 import { recordControlEvent } from "../control-plane/timeline.js";
-import { getSession, getRunSubSessionByIdempotencyKey, insertRunSubSession, listMemoryCapsulesForOwner, upsertAgentMemoryState, updateRunSubSession, } from "../db/index.js";
+import { getRunSubSessionByIdempotencyKey, getSession, insertRunSubSession, listMemoryCapsulesForOwner, updateRunSubSession, upsertAgentMemoryState, } from "../db/index.js";
 import { buildAgentMemoryStateFromBootstrap, buildChildOwnMemoryBootstrap, } from "../memory/agent-state.js";
 import { buildSubSessionHandoffCapsulePayload, buildSubSessionHandoffPinnedItems, } from "../memory/flow-capsules.js";
 import { createDataExchangePackage, persistDataExchangePackage } from "../memory/isolation.js";
@@ -262,7 +262,7 @@ function buildPreparedSubSessionMemoryBootstrap(input, now) {
     });
     return buildChildOwnMemoryBootstrap({
         agentId: input.agent.agentId,
-        ...(input.agent.nickname ?? input.command.targetNicknameSnapshot
+        ...((input.agent.nickname ?? input.command.targetNicknameSnapshot)
             ? { nicknameSnapshot: input.agent.nickname ?? input.command.targetNicknameSnapshot }
             : {}),
         sessionId: input.parentSessionId,
@@ -310,7 +310,7 @@ function createAndPersistSubSessionHandoffExchange(input) {
         retentionPolicy: "session_only",
         redactionState: "not_sensitive",
         provenanceRefs: uniqueValues([
-            `command_request:${input.input.command.commandRequestId}`,
+            `opaque:command_request:${input.input.command.commandRequestId}`,
             ...input.input.command.contextPackageIds,
             ...(input.payload.artifactRefs ?? []),
         ]),
@@ -890,12 +890,14 @@ export class SubSessionRunner {
                     ? { parentAgentId: subSession.parentAgentId, requestingAgentId: subSession.parentAgentId }
                     : {}),
                 successCriteria: effectiveInput.command.expectedOutputs.map((output) => output.description || output.outputId),
-                childResults: [{
+                childResults: [
+                    {
                         subSessionId: subSession.subSessionId,
                         resultReport: result,
                         review,
                         canUseSameChild: review.canRetry,
-                    }],
+                    },
+                ],
             });
             const parentAggregationTrace = aggregation.trace;
             try {

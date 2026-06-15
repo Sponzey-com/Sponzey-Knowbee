@@ -22,6 +22,7 @@ import { SetupChecksPanel } from "../components/setup/SetupChecksPanel"
 import { SetupStepShell } from "../components/setup/SetupStepShell"
 import { SetupSyncStatus } from "../components/setup/SetupSyncStatus"
 import { SetupVisualizationCanvas, SetupVisualizationLegend } from "../components/setup/SetupVisualizationCanvas"
+import { BeginnerSubAgentCreateDialog, SubAgentReadinessPanel } from "../components/setup/SubAgentReadinessPanel"
 import { TelegramSettingsForm } from "../components/setup/TelegramSettingsForm"
 import { TelegramCheckPanel } from "../components/setup/TelegramCheckPanel"
 import { AI_PROVIDER_OPTIONS, getAIProviderDefaultEndpoint, type AIBackendCard, type AIProviderType, type NewAIBackendInput, type RoutingProfile } from "../contracts/ai"
@@ -38,6 +39,11 @@ import {
   type BeginnerConnectionStatus,
   type BeginnerSetupStepId,
 } from "../lib/beginner-setup"
+import {
+  buildBeginnerSubAgentReadinessPanel,
+  createBeginnerSubAgent,
+  type BeginnerSubAgentCreateInput,
+} from "../lib/beginner-sub-agents"
 import { uiCatalogText } from "../lib/message-catalog"
 import {
   canSkipSetupStep,
@@ -129,6 +135,14 @@ export function SetupPage() {
   const [beginnerAiTestOk, setBeginnerAiTestOk] = useState<boolean | null>(null)
   const [beginnerTestingAi, setBeginnerTestingAi] = useState(false)
   const [beginnerNotice, setBeginnerNotice] = useState("")
+  const [subAgentDialogOpen, setSubAgentDialogOpen] = useState(false)
+  const [subAgentCreateInput, setSubAgentCreateInput] = useState<BeginnerSubAgentCreateInput>({
+    displayName: "",
+    nickname: "",
+    role: "",
+    description: "",
+  })
+  const [subAgentCreateErrors, setSubAgentCreateErrors] = useState<Partial<Record<keyof BeginnerSubAgentCreateInput, string>>>({})
   const [testingMcpServerId, setTestingMcpServerId] = useState<string | null>(null)
   const [testingSkillId, setTestingSkillId] = useState<string | null>(null)
   const capabilities = useCapabilitiesStore((state) => state.items)
@@ -251,6 +265,10 @@ export function SetupPage() {
   const beginnerSmoke = useMemo(
     () => buildBeginnerSetupSmokeResult({ draft: activeDraft, checks, shell: uiShell, language: uiLanguage }),
     [activeDraft, checks, uiShell, uiLanguage],
+  )
+  const beginnerSubAgentPanel = useMemo(
+    () => buildBeginnerSubAgentReadinessPanel({ draft: activeDraft, language: uiLanguage }),
+    [activeDraft, uiLanguage],
   )
   const beginnerVisualizationDeck = useMemo(
     () => buildBeginnerVisualizationDeck({
@@ -1192,6 +1210,36 @@ export function SetupPage() {
     setBeginnerNotice(success ? uiCatalogText(uiLanguage, "beginner.setup.saved") : sanitizeBeginnerSetupError(lastError || "save failed", uiLanguage))
   }
 
+  function resetSubAgentCreateDialog() {
+    setSubAgentDialogOpen(false)
+    setSubAgentCreateInput({
+      displayName: "",
+      nickname: "",
+      role: "",
+      description: "",
+    })
+    setSubAgentCreateErrors({})
+  }
+
+  async function handleCreateBeginnerSubAgent() {
+    setBeginnerNotice("")
+    const result = createBeginnerSubAgent(activeDraft, subAgentCreateInput, Date.now(), uiLanguage)
+    setSubAgentCreateErrors(result.fieldErrors)
+    if (!result.ok || !result.draft) {
+      setBeginnerNotice(result.message)
+      return
+    }
+
+    setLocalDraft(result.draft)
+    const saved = await saveDraftSnapshot(result.draft)
+    if (!saved) {
+      setBeginnerNotice(sanitizeBeginnerSetupError(lastError || "save failed", uiLanguage))
+      return
+    }
+    resetSubAgentCreateDialog()
+    setBeginnerNotice(result.message)
+  }
+
   async function handleFinishBeginnerSetup() {
     setBeginnerNotice("")
     await saveDraftSnapshot(activeDraft)
@@ -1401,9 +1449,27 @@ export function SetupPage() {
             </aside>
             <main className="space-y-4">
               {beginnerNotice ? <RuntimeNotice tone={beginnerAiTestOk === false ? "error" : "info"} title={uiCatalogText(uiLanguage, beginnerAiTestOk === false ? "beginner.setup.testNeedsAction" : "beginner.setup.saved")} message={beginnerNotice} /> : null}
+              <SubAgentReadinessPanel
+                panel={beginnerSubAgentPanel}
+                language={uiLanguage}
+                onCreate={() => setSubAgentDialogOpen(true)}
+              />
               {renderBeginnerSetupBody()}
             </main>
           </div>
+          <BeginnerSubAgentCreateDialog
+            open={subAgentDialogOpen}
+            language={uiLanguage}
+            value={subAgentCreateInput}
+            fieldErrors={subAgentCreateErrors}
+            saving={saving}
+            onChange={(patch) => {
+              setSubAgentCreateInput((current) => ({ ...current, ...patch }))
+              setSubAgentCreateErrors({})
+            }}
+            onCancel={resetSubAgentCreateDialog}
+            onSubmit={() => void handleCreateBeginnerSubAgent()}
+          />
         </div>
       </div>
     )

@@ -162,7 +162,7 @@ describe("task013 Executor-first usability", () => {
     )
 
     expect(simpleHtml).toContain('data-testid="executor-workspace-shell"')
-    expect(simpleHtml).toContain("업무 흐름 만들기")
+    expect(simpleHtml).toContain("서브에이전트 구성하기")
     expect(simpleHtml).toContain("실행자 이름과 성격 정하기")
     expect(simpleHtml).toContain("성격과 하는 일")
     expect(simpleHtml).toContain('data-testid="executor-create-name"')

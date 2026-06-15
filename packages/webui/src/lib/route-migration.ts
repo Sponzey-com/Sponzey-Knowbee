@@ -65,6 +65,21 @@ const UI_ROUTE_INVENTORY: UiRouteInventoryItem[] = [
     replacementPath: null,
     notes: "Connection summary for non-technical users.",
   },
+  {
+    path: "/sub-agents",
+    mode: "beginner",
+    component: "TopologyWorkspacePage",
+    apiCalls: [
+      "/api/topologies",
+      "/api/topology-templates",
+      "/api/relation-templates",
+      "/api/agent-topology",
+      "/api/work-order-templates",
+    ],
+    status: "kept",
+    replacementPath: null,
+    notes: "Beginner-accessible sub-agent settings screen backed by the simple executor graph workspace.",
+  },
 
   {
     path: "/dashboard",
@@ -113,7 +128,7 @@ const UI_ROUTE_INVENTORY: UiRouteInventoryItem[] = [
   },
   {
     path: "/topology",
-    mode: "advanced",
+    mode: "beginner",
     component: "TopologyWorkspacePage",
     apiCalls: [
       "/api/topologies",
@@ -123,8 +138,8 @@ const UI_ROUTE_INVENTORY: UiRouteInventoryItem[] = [
       "/api/work-order-templates",
     ],
     status: "redirect",
-    replacementPath: "/advanced/topology",
-    notes: "Legacy runtime topology URL now opens the simple topology workspace.",
+    replacementPath: "/sub-agents",
+    notes: "Legacy topology URL now opens the beginner-accessible sub-agent settings screen.",
   },
   {
     path: "/enterprise-topology",
@@ -282,7 +297,7 @@ const UI_ROUTE_INVENTORY: UiRouteInventoryItem[] = [
     ],
     status: "kept",
     replacementPath: null,
-    notes: "Unified simple topology workspace for build, run, trace, and improve layers.",
+    notes: "Advanced alias for sub-agent settings, backed by the unified simple executor graph workspace.",
   },
   {
     path: "/advanced/enterprise-topology",
@@ -453,6 +468,7 @@ export function resolveModeSwitchRoute(pathname: string, targetMode: UiRouteMode
     if (normalized === "/chat") return "/advanced/chat"
     if (normalized === "/tasks") return "/advanced/runs"
     if (normalized === "/status") return "/advanced/dashboard"
+    if (normalized === "/sub-agents" || normalized.startsWith("/sub-agents/")) return "/advanced/topology"
     return resolveLegacyAdvancedRoute(normalized) ?? resolveRollbackRoute(normalized)
   }
 
@@ -461,6 +477,7 @@ export function resolveModeSwitchRoute(pathname: string, targetMode: UiRouteMode
     normalized === "/chat" ||
     normalized === "/tasks" ||
     normalized === "/status" ||
+    normalized === "/sub-agents" ||
     normalized === "/setup"
   )
     return normalized
@@ -483,11 +500,15 @@ export function resolveModeSwitchRoute(pathname: string, targetMode: UiRouteMode
     normalized.startsWith("/advanced/audit") ||
     normalized.startsWith("/advanced/plugins") ||
     normalized.startsWith("/advanced/schedules") ||
-    normalized.startsWith("/advanced/enterprise-topology") ||
-    normalized.startsWith("/advanced/topology") ||
     normalized.startsWith("/admin")
   ) {
     return "/status"
+  }
+  if (
+    normalized.startsWith("/advanced/enterprise-topology") ||
+    normalized.startsWith("/advanced/topology")
+  ) {
+    return "/sub-agents"
   }
   return normalized
 }

@@ -171,6 +171,12 @@ cleanup_stale_pid() {
 
   local pid
   pid="$(read_pid "$pid_file")"
+  if [[ -z "$pid" || ! "$pid" =~ ^[0-9]+$ ]]; then
+    rm -f "$pid_file"
+    echo "$name 잘못된 PID 파일을 정리했습니다: ${pid:-empty}"
+    return
+  fi
+
   if ! pid_alive "$pid"; then
     rm -f "$pid_file"
     echo "$name stale PID 파일을 정리했습니다: ${pid:-empty}"
@@ -178,9 +184,10 @@ cleanup_stale_pid() {
   fi
 
   if ! pid_belongs_to_repo "$pid"; then
-    echo "$name PID 파일이 현재 repo가 아닌 프로세스를 가리킵니다. start를 중단합니다."
+    rm -f "$pid_file"
+    echo "$name PID 파일이 현재 repo가 아닌 프로세스를 가리켜 stale로 정리했습니다: $pid"
     describe_pid "$pid"
-    exit 1
+    return
   fi
 }
 
@@ -228,6 +235,27 @@ assert_port_available() {
   exit 1
 }
 
+has_repo_owned_port_conflict() {
+  local port="$1"
+  local expected_pid_file="${2:-}"
+  local expected_pid=""
+  [[ -n "$expected_pid_file" ]] && expected_pid="$(read_pid "$expected_pid_file")"
+
+  local pids
+  pids="$(pids_for_port "$port")"
+  [[ -z "$pids" ]] && return 1
+
+  while IFS= read -r pid; do
+    [[ -z "$pid" ]] && continue
+    [[ -n "$expected_pid" && "$pid" == "$expected_pid" ]] && continue
+    if pid_belongs_to_repo "$pid"; then
+      return 0
+    fi
+  done <<< "$pids"
+
+  return 1
+}
+
 truncate_logs() {
   : > "$GATEWAY_LOG_FILE"
   : > "$WEBUI_LOG_FILE"
@@ -242,41 +270,154 @@ build_workspace() {
   )
 }
 
+installed_pnpm_store_dir() {
+  local modules_file="$ROOT_DIR/node_modules/.modules.yaml"
+  [[ -f "$modules_file" ]] || return 0
+  sed -n 's/^storeDir:[[:space:]]*//p' "$modules_file" | head -n 1
+}
+
+pnpm_rebuild_package() {
+  local package_name="$1"
+  local store_dir
+  store_dir="$(installed_pnpm_store_dir)"
+  (
+    cd "$ROOT_DIR"
+    if [[ -n "$store_dir" ]]; then
+      pnpm --store-dir "$store_dir" --filter @nobie/core rebuild "$package_name"
+    else
+      pnpm --filter @nobie/core rebuild "$package_name"
+    fi
+  )
+}
+
+verify_core_native_dependencies() {
+  (
+    cd "$ROOT_DIR/packages/core"
+    node -e 'const Database = require("better-sqlite3"); const db = new Database(":memory:"); db.close();' >/dev/null 2>&1
+  )
+}
+
+ensure_core_native_dependencies() {
+  if verify_core_native_dependencies; then
+    return 0
+  fi
+
+  echo "better-sqlite3 native binding이 없어 복구 빌드를 실행합니다..."
+  pnpm_rebuild_package better-sqlite3
+
+  if verify_core_native_dependencies; then
+    echo "better-sqlite3 native binding 확인 완료."
+    return 0
+  fi
+
+  echo "better-sqlite3 native binding을 준비하지 못했습니다."
+  echo "다음 명령을 실행한 뒤 다시 시작하세요:"
+  echo "  pnpm install --config.ignore-scripts=false"
+  echo "  pnpm rebuild better-sqlite3"
+  echo
+  echo "macOS에서 계속 실패하면 Xcode Command Line Tools가 필요할 수 있습니다:"
+  echo "  xcode-select --install"
+  return 1
+}
+
 extract_status_field() {
   local field="$1"
-  node -e '
+  local raw="$2"
+  STATUS_JSON="$raw" node -e '
     const field = process.argv[1]
-    let raw = ""
-    process.stdin.setEncoding("utf8")
-    process.stdin.on("data", (chunk) => raw += chunk)
-    process.stdin.on("end", () => {
-      try {
-        const data = JSON.parse(raw)
-        const value = field.split(".").reduce((current, key) => current?.[key], data)
-        if (value === undefined || value === null) process.exit(2)
-        process.stdout.write(String(value))
-      } catch {
-        process.exit(1)
-      }
-    })
+    const raw = process.env.STATUS_JSON ?? ""
+    try {
+      const data = JSON.parse(raw)
+      const value = field.split(".").reduce((current, key) => current?.[key], data)
+      if (value === undefined || value === null) process.exit(2)
+      process.stdout.write(String(value))
+    } catch {
+      process.exit(1)
+    }
   ' "$field"
 }
 
+summarize_status_body() {
+  local raw="$1"
+  STATUS_JSON="$raw" node -e '
+    const raw = process.env.STATUS_JSON ?? ""
+    try {
+      const data = JSON.parse(raw)
+      const keys = Object.keys(data).slice(0, 20).join(", ")
+      const runtimeKeys = data.runtime && typeof data.runtime === "object"
+        ? Object.keys(data.runtime).slice(0, 20).join(", ")
+        : "none"
+      process.stdout.write(`keys=[${keys}] runtimeKeys=[${runtimeKeys}]`)
+    } catch {
+      const compact = raw.replace(/\s+/g, " ").slice(0, 300)
+      process.stdout.write(`non-json body=${compact}`)
+    }
+  '
+}
+
+port_has_pid() {
+  local port="$1"
+  local expected_pid="$2"
+  while IFS= read -r pid; do
+    [[ -z "$pid" ]] && continue
+    [[ "$pid" == "$expected_pid" ]] && return 0
+  done <<< "$(pids_for_port "$port")"
+  return 1
+}
+
+first_repo_owned_port_pid() {
+  local port="$1"
+  while IFS= read -r pid; do
+    [[ -z "$pid" ]] && continue
+    if pid_belongs_to_repo "$pid"; then
+      printf '%s' "$pid"
+      return 0
+    fi
+  done <<< "$(pids_for_port "$port")"
+  return 1
+}
+
+GATEWAY_HEALTH_DIAGNOSTIC_PRINTED="0"
+
 verify_gateway_status() {
   local expected_pid="$1"
-  local body pid state_dir cwd display_version prompt_checksum
+  local body pid state_dir cwd display_version prompt_checksum listener_pid
+  local pid_from_listener="0"
   body="$(curl -fsS "http://$GATEWAY_HOST:$GATEWAY_PORT/api/status" 2>/dev/null || true)"
   [[ -z "$body" ]] && return 1
 
-  pid="$(printf '%s' "$body" | extract_status_field runtime.pid || true)"
-  state_dir="$(printf '%s' "$body" | extract_status_field paths.stateDir || true)"
-  cwd="$(printf '%s' "$body" | extract_status_field runtime.cwd || true)"
-  display_version="$(printf '%s' "$body" | extract_status_field displayVersion || true)"
-  prompt_checksum="$(printf '%s' "$body" | extract_status_field promptSources.checksum || true)"
+  pid="$(extract_status_field runtime.pid "$body" || true)"
+  state_dir="$(extract_status_field paths.stateDir "$body" || true)"
+  cwd="$(extract_status_field runtime.cwd "$body" || true)"
+  display_version="$(extract_status_field displayVersion "$body" || true)"
+  prompt_checksum="$(extract_status_field promptSources.checksum "$body" || true)"
 
-  if [[ "$pid" != "$expected_pid" ]]; then
-    echo "Gateway health 응답 PID가 새 프로세스와 다릅니다. expected=$expected_pid actual=${pid:-unknown}"
-    return 1
+  if [[ -z "$pid" || ! "$pid" =~ ^[0-9]+$ ]]; then
+    listener_pid="$(first_repo_owned_port_pid "$GATEWAY_PORT" || true)"
+    if [[ -n "$listener_pid" && "$state_dir" == "$STATE_DIR" ]]; then
+      echo "$listener_pid" > "$GATEWAY_PID_FILE"
+      echo "Gateway health 응답에 runtime.pid가 없어 실제 listener PID로 갱신했습니다. runtime=$listener_pid"
+      pid="$listener_pid"
+      pid_from_listener="1"
+      [[ -z "$cwd" ]] && cwd="$(pid_cwd "$pid")"
+    else
+      echo "Gateway health 응답에서 runtime.pid를 확인하지 못했습니다."
+      if [[ "$GATEWAY_HEALTH_DIAGNOSTIC_PRINTED" != "1" ]]; then
+        echo "Gateway health 응답 요약: $(summarize_status_body "$body")"
+        GATEWAY_HEALTH_DIAGNOSTIC_PRINTED="1"
+      fi
+      return 1
+    fi
+  fi
+
+  if [[ "$pid_from_listener" != "1" && "$pid" != "$expected_pid" ]]; then
+    if pid_alive "$pid" && pid_belongs_to_repo "$pid" && port_has_pid "$GATEWAY_PORT" "$pid"; then
+      echo "$pid" > "$GATEWAY_PID_FILE"
+      echo "Gateway health 응답 PID를 실제 listener PID로 갱신했습니다. launcher=$expected_pid runtime=$pid"
+    else
+      echo "Gateway health 응답 PID가 새 프로세스와 다릅니다. expected=$expected_pid actual=$pid"
+      return 1
+    fi
   fi
   if [[ "$state_dir" != "$STATE_DIR" ]]; then
     echo "Gateway stateDir가 예상과 다릅니다. expected=$STATE_DIR actual=${state_dir:-unknown}"
@@ -329,6 +470,18 @@ wait_for_http() {
   return 1
 }
 
+start_gateway_nohup() {
+  (
+    cd "$ROOT_DIR"
+    export NOBIE_STATE_DIR="$STATE_DIR"
+    export NOBIE_LOG_LEVEL="${NOBIE_LOG_LEVEL:-debug}"
+    export NOBIE_ADMIN_UI="$ADMIN_UI"
+    export NOBIE_ADMIN_UI_SOURCE="local-script"
+    exec nohup node packages/cli/dist/index.js serve </dev/null
+  ) >>"$GATEWAY_LOG_FILE" 2>&1 &
+  echo "$!" > "$GATEWAY_PID_FILE"
+}
+
 start_gateway() {
   if is_running "Gateway" "$GATEWAY_PID_FILE"; then
     echo "Gateway는 이미 실행 중입니다. PID=$(cat "$GATEWAY_PID_FILE")"
@@ -337,6 +490,7 @@ start_gateway() {
 
   assert_port_available "Gateway" "$GATEWAY_PORT"
   build_workspace
+  ensure_core_native_dependencies
 
   echo "Gateway를 시작합니다..."
   if can_use_launchctl; then
@@ -344,18 +498,19 @@ start_gateway() {
     local command
     printf -v command 'cd %q && export NOBIE_STATE_DIR=%q NOBIE_LOG_LEVEL=%q NOBIE_ADMIN_UI=%q NOBIE_ADMIN_UI_SOURCE=%q PATH=%q && exec node packages/cli/dist/index.js serve >>%q 2>&1' \
       "$ROOT_DIR" "$STATE_DIR" "${NOBIE_LOG_LEVEL:-debug}" "$ADMIN_UI" "local-script" "$PATH" "$GATEWAY_LOG_FILE"
-    launchctl submit -l "$GATEWAY_LAUNCHD_LABEL" -- /bin/bash -lc "$command"
-    wait_launchctl_pid "Gateway" "$GATEWAY_LAUNCHD_LABEL" "$GATEWAY_PID_FILE"
+    if launchctl submit -l "$GATEWAY_LAUNCHD_LABEL" -- /bin/bash -lc "$command"; then
+      if ! wait_launchctl_pid "Gateway" "$GATEWAY_LAUNCHD_LABEL" "$GATEWAY_PID_FILE"; then
+        echo "Gateway launchctl PID 확인에 실패해 nohup 방식으로 전환합니다."
+        remove_launchctl_job "$GATEWAY_LAUNCHD_LABEL"
+        start_gateway_nohup
+      fi
+    else
+      echo "Gateway launchctl 시작에 실패해 nohup 방식으로 전환합니다."
+      remove_launchctl_job "$GATEWAY_LAUNCHD_LABEL"
+      start_gateway_nohup
+    fi
   else
-    (
-      cd "$ROOT_DIR"
-      export NOBIE_STATE_DIR="$STATE_DIR"
-      export NOBIE_LOG_LEVEL="${NOBIE_LOG_LEVEL:-debug}"
-      export NOBIE_ADMIN_UI="$ADMIN_UI"
-      export NOBIE_ADMIN_UI_SOURCE="local-script"
-      exec nohup node packages/cli/dist/index.js serve </dev/null
-    ) >>"$GATEWAY_LOG_FILE" 2>&1 &
-    echo "$!" > "$GATEWAY_PID_FILE"
+    start_gateway_nohup
   fi
 
   if ! wait_for_http "Gateway" "http://$GATEWAY_HOST:$GATEWAY_PORT/api/status" "$GATEWAY_PID_FILE" true; then
@@ -363,6 +518,15 @@ start_gateway() {
     tail -n 100 "$GATEWAY_LOG_FILE" || true
     return 1
   fi
+}
+
+start_webui_nohup() {
+  (
+    cd "$ROOT_DIR"
+    export NOBIE_LOG_LEVEL="${NOBIE_LOG_LEVEL:-debug}"
+    exec nohup pnpm --filter @nobie/webui exec vite --host "$WEBUI_HOST" --port "$WEBUI_PORT" --strictPort </dev/null
+  ) >>"$WEBUI_LOG_FILE" 2>&1 &
+  echo "$!" > "$WEBUI_PID_FILE"
 }
 
 start_webui() {
@@ -379,15 +543,19 @@ start_webui() {
     local command
     printf -v command 'cd %q && export NOBIE_LOG_LEVEL=%q PATH=%q && exec pnpm --filter @nobie/webui exec vite --host %q --port %q --strictPort >>%q 2>&1' \
       "$ROOT_DIR" "${NOBIE_LOG_LEVEL:-debug}" "$PATH" "$WEBUI_HOST" "$WEBUI_PORT" "$WEBUI_LOG_FILE"
-    launchctl submit -l "$WEBUI_LAUNCHD_LABEL" -- /bin/bash -lc "$command"
-    wait_launchctl_pid "WebUI" "$WEBUI_LAUNCHD_LABEL" "$WEBUI_PID_FILE"
+    if launchctl submit -l "$WEBUI_LAUNCHD_LABEL" -- /bin/bash -lc "$command"; then
+      if ! wait_launchctl_pid "WebUI" "$WEBUI_LAUNCHD_LABEL" "$WEBUI_PID_FILE"; then
+        echo "WebUI launchctl PID 확인에 실패해 nohup 방식으로 전환합니다."
+        remove_launchctl_job "$WEBUI_LAUNCHD_LABEL"
+        start_webui_nohup
+      fi
+    else
+      echo "WebUI launchctl 시작에 실패해 nohup 방식으로 전환합니다."
+      remove_launchctl_job "$WEBUI_LAUNCHD_LABEL"
+      start_webui_nohup
+    fi
   else
-    (
-      cd "$ROOT_DIR"
-      export NOBIE_LOG_LEVEL="${NOBIE_LOG_LEVEL:-debug}"
-      exec nohup pnpm --filter @nobie/webui exec vite --host "$WEBUI_HOST" --port "$WEBUI_PORT" --strictPort </dev/null
-    ) >>"$WEBUI_LOG_FILE" 2>&1 &
-    echo "$!" > "$WEBUI_PID_FILE"
+    start_webui_nohup
   fi
 
   if ! wait_for_http "WebUI" "http://$WEBUI_HOST:$WEBUI_PORT" "$WEBUI_PID_FILE" false; then
@@ -407,6 +575,11 @@ if [[ "$RESTART_LOCAL" == "1" ]]; then
   wait_port_release "WebUI" "$WEBUI_PORT"
 elif is_running "Gateway" "$GATEWAY_PID_FILE" || is_running "WebUI" "$WEBUI_PID_FILE"; then
   echo "기존 스폰지 노비 · Sponzey Nobie 프로세스를 정리하고 다시 시작합니다..."
+  bash "$ROOT_DIR/scripts/stop-local.sh"
+  wait_port_release "Gateway" "$GATEWAY_PORT"
+  wait_port_release "WebUI" "$WEBUI_PORT"
+elif has_repo_owned_port_conflict "$GATEWAY_PORT" "$GATEWAY_PID_FILE" || has_repo_owned_port_conflict "$WEBUI_PORT" "$WEBUI_PID_FILE"; then
+  echo "현재 repo의 orphan 포트 점유 프로세스를 정리하고 다시 시작합니다..."
   bash "$ROOT_DIR/scripts/stop-local.sh"
   wait_port_release "Gateway" "$GATEWAY_PORT"
   wait_port_release "WebUI" "$WEBUI_PORT"

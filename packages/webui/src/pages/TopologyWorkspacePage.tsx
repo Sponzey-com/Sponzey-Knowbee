@@ -49,11 +49,17 @@ import {
   type TopologyExecutionTraceEventViewModel,
   type TopologyExecutionTraceViewModel,
 } from "../lib/topology-execution-trace"
+import {
+  applyTopologyExecutorToSetupDraft,
+  buildSubAgentTopologyProjection,
+  hasSetupSubAgentTopology,
+} from "../lib/topology-sub-agent-sync"
 import { useUiI18n } from "../lib/ui-i18n"
 import type { EnterpriseTopologyRunTraceProjection } from "../lib/enterprise-topology-operations"
+import { useSetupStore } from "../stores/setup"
 
 const DEFAULT_TOPOLOGY_ID = "workspace:draft"
-const DEFAULT_TOPOLOGY_NAME = "업무 흐름"
+const DEFAULT_TOPOLOGY_NAME = "서브에이전트 구성"
 
 const TOPOLOGY_WORKSPACE_LAYER_SET = new Set<TopologyWorkspaceLayer>([
   "build",
@@ -139,15 +145,15 @@ export function TopologyWorkspaceRouteShell({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">
-              {text("토폴로지", "Topology")}
+              {text("서브에이전트 설정", "Sub-agent settings")}
             </div>
             <h1 className="mt-1 text-2xl font-semibold">
               {effectiveExposureMode === "simple"
-                ? text("업무 흐름 만들기", "Build a workflow")
-                : text("Topology Workspace", "Topology Workspace")}
+                ? text("서브에이전트 구성하기", "Configure sub-agents")
+                : text("서브에이전트 설정", "Sub-agent settings")}
             </h1>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label={text("토폴로지 작업 모드", "Topology workspace modes")}>
+          <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label={text("서브에이전트 설정 모드", "Sub-agent settings modes")}>
             {visibleLayers.map((layer) => (
               <button
                 key={layer.layer}
@@ -449,11 +455,18 @@ function ExecutorTopologyV2Workspace({
   const [traceLoadStatus, setTraceLoadStatus] = React.useState<TopologyLoadStatus>("idle")
   const [traceErrorMessage, setTraceErrorMessage] = React.useState<string | null>(null)
   const [traceEmptyReason, setTraceEmptyReason] = React.useState<TopologyTraceEmptyReason>("none")
+  const setupDraft = useSetupStore((state) => state.draft)
+  const initializeSetup = useSetupStore((state) => state.initialize)
+  const saveSetupDraftSnapshot = useSetupStore((state) => state.saveDraftSnapshot)
   const topologyRef = React.useRef(topology)
 
   React.useEffect(() => {
     topologyRef.current = topology
   }, [topology])
+
+  React.useEffect(() => {
+    void initializeSetup()
+  }, [initializeSetup])
 
   React.useEffect(() => {
     let cancelled = false
@@ -480,17 +493,33 @@ function ExecutorTopologyV2Workspace({
     }
   }, [text])
 
+  const subAgentProjection = React.useMemo(
+    () => hasSetupSubAgentTopology(setupDraft)
+      ? buildSubAgentTopologyProjection({ draft: setupDraft })
+      : null,
+    [setupDraft],
+  )
+  const effectiveTopology = subAgentProjection?.topology ?? topology
+
+  React.useEffect(() => {
+    if (!subAgentProjection) return
+    setSelectedExecutorId((current) => {
+      if (current && subAgentProjection.graph.executors.some((executor) => executor.id === current)) return current
+      return subAgentProjection.graph.executors[0]?.id ?? null
+    })
+  }, [subAgentProjection])
+
   const graph = React.useMemo(() => ({
-    ...executorGraphFromExecutorTopologyV2(topology),
+    ...(subAgentProjection?.graph ?? executorGraphFromExecutorTopologyV2(topology)),
     selectedId: selectedExecutorId,
-  }), [selectedExecutorId, topology])
-  const validation = React.useMemo(() => validateExecutorTopologyV2(topology), [topology])
+  }), [selectedExecutorId, subAgentProjection, topology])
+  const validation = React.useMemo(() => validateExecutorTopologyV2(effectiveTopology), [effectiveTopology])
   const selectedExecutor = React.useMemo(
     () => graph.executors.find((executor) => executor.id === selectedExecutorId) ?? null,
     [graph.executors, selectedExecutorId],
   )
-  const activeNodes = React.useMemo(() => activeExecutorNodes(topology), [topology])
-  const activeEdges = React.useMemo(() => topology.edges.filter((edge) => edge.status === "active"), [topology.edges])
+  const activeNodes = React.useMemo(() => activeExecutorNodes(effectiveTopology), [effectiveTopology])
+  const activeEdges = React.useMemo(() => effectiveTopology.edges.filter((edge) => edge.status === "active"), [effectiveTopology.edges])
   const executorNames = React.useMemo(
     () => Object.fromEntries(activeNodes.map((node) => [node.id, node.name])),
     [activeNodes],
@@ -527,7 +556,7 @@ function ExecutorTopologyV2Workspace({
           return
         }
         const runs = await api.topologyRuns({
-          topologyId: topologyRef.current.id,
+          topologyId: (subAgentProjection?.topology ?? topologyRef.current).id,
           rootRunId: latestRootRunId,
           limit: 1,
         })
@@ -563,7 +592,7 @@ function ExecutorTopologyV2Workspace({
       cancelled = true
       if (intervalId !== undefined) clearInterval(intervalId)
     }
-  }, [loadStatus, text])
+  }, [loadStatus, subAgentProjection, text])
 
   const persistTopology = React.useCallback(async (nextTopology: ExecutorTopologyV2) => {
     const repaired = repairExecutorTopologyV2ForPersistence(nextTopology).topology
@@ -629,9 +658,17 @@ function ExecutorTopologyV2Workspace({
   }, [commitTopology, selectedExecutorId])
 
   const handleExecutorChange = React.useCallback((executor: ExecutorDraft) => {
+    if (subAgentProjection?.summaries.has(executor.id)) {
+      const nextDraft = applyTopologyExecutorToSetupDraft(setupDraft, executor)
+      setSelectedExecutorId(executor.id)
+      useSetupStore.setState({ draft: nextDraft })
+      setSaveStatus("idle")
+      setErrorMessage(null)
+      return
+    }
     commitTopology((current) => applyExecutorDraftToExecutorTopologyV2(current, executor))
     setSelectedExecutorId(executor.id)
-  }, [commitTopology])
+  }, [commitTopology, setupDraft, subAgentProjection])
 
   const handleConfirmUnderstanding = React.useCallback((executor: ExecutorDraft) => {
     const nextTopology = applyExecutorDraftToExecutorTopologyV2(topologyRef.current, executor)
@@ -669,10 +706,20 @@ function ExecutorTopologyV2Workspace({
       showFirstStart={false}
       showLeftRail={false}
       saveDisabled={saveStatus === "loading" || !validation.ok}
-      deleteDisabled={!selectedExecutorId}
-      onAddExecutor={handleAddExecutor}
+      deleteDisabled={!selectedExecutorId || Boolean(subAgentProjection && selectedExecutorId === "agent:nobie")}
+      onAddExecutor={subAgentProjection ? undefined : handleAddExecutor}
       onDeleteExecutor={handleDeleteExecutor}
-      onSaveDraft={() => void persistTopology(topologyRef.current)}
+      onSaveDraft={() => {
+        if (subAgentProjection) {
+          setSaveStatus("loading")
+          void saveSetupDraftSnapshot(setupDraft).then((ok) => {
+            setSaveStatus(ok ? "saved" : "failed")
+            setErrorMessage(ok ? null : text("서브 에이전트 설정을 저장하지 못했습니다.", "Failed to save sub-agent settings."))
+          })
+          return
+        }
+        void persistTopology(topologyRef.current)
+      }}
       onAutoLayout={handleAutoLayout}
     >
       <section
@@ -688,8 +735,9 @@ function ExecutorTopologyV2Workspace({
             activeEdgeIds={traceView.activeEdgeIds}
             executorStatuses={traceView.executorStatuses}
             edgeStatuses={traceView.edgeStatuses}
+            subAgentSummaries={subAgentProjection?.summaries}
             onSelectExecutor={setSelectedExecutorId}
-            onConnectExecutors={handleConnectExecutors}
+            onConnectExecutors={subAgentProjection ? undefined : handleConnectExecutors}
             onMoveExecutor={handleMoveExecutor}
           />
         </div>
@@ -715,7 +763,9 @@ function ExecutorTopologyV2Workspace({
               executor={selectedExecutor}
               graph={graph}
               workspaceId={DEFAULT_TOPOLOGY_ID}
-              topologyId={topology.id}
+              topologyId={effectiveTopology.id}
+              subAgentSummary={selectedExecutorId ? subAgentProjection?.summaries.get(selectedExecutorId) : undefined}
+              readOnly={Boolean(subAgentProjection && selectedExecutorId === "agent:nobie")}
               onExecutorChange={handleExecutorChange}
               onConfirmUnderstanding={handleConfirmUnderstanding}
             />

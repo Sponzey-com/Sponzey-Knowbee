@@ -1378,6 +1378,40 @@ export default function App() {
             path="/status"
             element={setupCompleted ? <BeginnerStatusPage /> : <Navigate to="/setup" replace />}
           />
+          <Route
+            path="/sub-agents"
+            element={
+              setupCompleted ? (
+                <FeatureGate
+                  capabilityKey="enterprise_topology_builder_ui"
+                  title="서브에이전트 설정"
+                >
+                  <LazyPage>
+                    <TopologyWorkspacePage />
+                  </LazyPage>
+                </FeatureGate>
+              ) : (
+                <Navigate to="/setup" replace />
+              )
+            }
+          />
+          <Route
+            path="/sub-agents/*"
+            element={
+              setupCompleted ? (
+                <FeatureGate
+                  capabilityKey="enterprise_topology_builder_ui"
+                  title="서브에이전트 설정"
+                >
+                  <LazyPage>
+                    <TopologyWorkspacePage />
+                  </LazyPage>
+                </FeatureGate>
+              ) : (
+                <Navigate to="/setup" replace />
+              )
+            }
+          />
           <Route path="/runs/*" element={<LegacyAdvancedRedirect from="/runs" />} />
           <Route path="/dashboard/*" element={<LegacyAdvancedRedirect from="/dashboard" />} />
           <Route path="/audit/*" element={<LegacyAdvancedRedirect from="/audit" />} />
@@ -1596,7 +1630,7 @@ export default function App() {
                 <AdvancedOnly>
                   <FeatureGate
                     capabilityKey="enterprise_topology_builder_ui"
-                    title="토폴로지"
+                    title="서브에이전트 설정"
                   >
                     <LazyPage>
                       <TopologyWorkspacePage />
@@ -1615,7 +1649,7 @@ export default function App() {
                 <AdvancedOnly>
                   <FeatureGate
                     capabilityKey="enterprise_topology_builder_ui"
-                    title="토폴로지"
+                    title="서브에이전트 설정"
                   >
                     <LazyPage>
                       <TopologyWorkspacePage />

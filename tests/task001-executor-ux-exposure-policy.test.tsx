@@ -193,7 +193,7 @@ describe("task001 executor-first UX exposure policy", () => {
     const html = renderToStaticMarkup(
       createElement(
         FeatureGate,
-        { capabilityKey: "enterprise_topology_builder_ui", title: "토폴로지" },
+        { capabilityKey: "enterprise_topology_builder_ui", title: "서브에이전트 설정" },
         createElement("div", null, "simple workspace content"),
       ),
     )
@@ -202,7 +202,7 @@ describe("task001 executor-first UX exposure policy", () => {
       enabled: false,
       status: "disabled",
     }))
-    expect(html).toContain("토폴로지")
+    expect(html).toContain("서브에이전트 설정")
     expect(html).toContain("기능 플래그")
     expect(html).not.toContain("simple workspace content")
   })

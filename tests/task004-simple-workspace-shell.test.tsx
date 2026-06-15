@@ -105,10 +105,10 @@ describe("task004 simple workspace shell", () => {
     expect(html).toContain("md:pb-0")
     expect(html).not.toContain("pb-20")
     expect(html).not.toContain("md:pb-16")
-    expect(html).toContain("업무 흐름 만들기")
-    expect(html).toContain("실행자를 추가하고 노드끼리는 선으로 바로 연결하세요.")
-    expect(html).toContain("1. 실행자 추가")
-    expect(html).toContain("2. 노드끼리 연결")
+    expect(html).toContain("서브에이전트 구성하기")
+    expect(html).toContain("서브에이전트를 추가하고 서로 선으로 연결하세요.")
+    expect(html).toContain("1. 서브에이전트 추가")
+    expect(html).toContain("2. 서브에이전트끼리 연결")
     expect(html).toContain("3. 요청이 오면 자동 실행")
     expect(html).toContain('data-testid="executor-workspace-top-add-executor"')
     expect(html).toContain('data-testid="executor-workspace-top-delete-executor"')
@@ -155,7 +155,7 @@ describe("task004 simple workspace shell", () => {
     )
 
     expect(html).toContain('data-testid="executor-workspace-shell"')
-    expect(html).toContain("업무 흐름 만들기")
+    expect(html).toContain("서브에이전트 구성하기")
     expect(html).toContain("flex min-h-0 flex-1 overflow-hidden")
     expect(html).toContain('data-testid="executor-workspace-guide-steps"')
     expect(html).toContain('data-testid="executor-create-panel"')
@@ -229,14 +229,14 @@ describe("task004 simple workspace shell", () => {
     const fallbackHtml = renderToStaticMarkup(
       createElement(
         FeatureGate,
-        { capabilityKey: "enterprise_topology_builder_ui", title: "토폴로지" },
+        { capabilityKey: "enterprise_topology_builder_ui", title: "서브에이전트 설정" },
         createElement("div", null, "simple workspace content"),
       ),
     )
 
     expect(advancedHtml).toContain('data-testid="topology-workspace-layer-build"')
     expect(advancedHtml).not.toContain('data-testid="topology-workspace-layer-resources"')
-    expect(advancedHtml).toContain("업무 흐름 만들기")
+    expect(advancedHtml).toContain("서브에이전트 구성하기")
     expect(advancedHtml).not.toContain("Topology Workspace")
     expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/advanced/topology")
     expect(fallbackHtml).toContain("관리자 설정")

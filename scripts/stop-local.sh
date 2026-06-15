@@ -72,6 +72,16 @@ pids_for_port() {
   fi
 }
 
+signal_pid() {
+  local signal="$1"
+  local pid="$2"
+
+  if kill -0 -- "-$pid" >/dev/null 2>&1; then
+    kill "-$signal" -- "-$pid" >/dev/null 2>&1 || true
+  fi
+  kill "-$signal" "$pid" >/dev/null 2>&1 || true
+}
+
 terminate_pid() {
   local name="$1"
   local pid="$2"
@@ -82,11 +92,7 @@ terminate_pid() {
   fi
 
   echo "$name 종료 중... PID=$pid"
-  if kill -0 -- "-$pid" >/dev/null 2>&1; then
-    kill -TERM -- "-$pid" >/dev/null 2>&1 || true
-  else
-    kill -TERM "$pid" >/dev/null 2>&1 || true
-  fi
+  signal_pid TERM "$pid"
 
   for _ in $(seq 1 20); do
     if ! pid_alive "$pid"; then
@@ -97,12 +103,18 @@ terminate_pid() {
   done
 
   echo "$name 정상 종료가 지연되어 강제 종료합니다. PID=$pid"
-  if kill -0 -- "-$pid" >/dev/null 2>&1; then
-    kill -KILL -- "-$pid" >/dev/null 2>&1 || true
-  else
-    kill -KILL "$pid" >/dev/null 2>&1 || true
-  fi
-  echo "$name 강제 종료 완료"
+  signal_pid KILL "$pid"
+
+  for _ in $(seq 1 10); do
+    if ! pid_alive "$pid"; then
+      echo "$name 강제 종료 완료"
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  echo "$name 강제 종료 후에도 프로세스가 남아 있습니다. PID=$pid"
+  return 1
 }
 
 stop_process() {

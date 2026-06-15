@@ -6,6 +6,7 @@ describe("task002 UI navigation policy", () => {
     expect(getUiNavigation("beginner", false).map((item) => item.path)).toEqual([
       "/chat",
       "/setup",
+      "/sub-agents",
       "/tasks",
       "/status",
     ])
@@ -40,7 +41,7 @@ describe("task002 UI navigation policy", () => {
     expect(resolveLegacyAdvancedRoute("/settings")).toBe("/advanced/ai")
     expect(resolveLegacyAdvancedRoute("/settings/ai")).toBe("/advanced/ai")
     expect(resolveLegacyAdvancedRoute("/runs")).toBe("/advanced/runs")
-    expect(resolveLegacyAdvancedRoute("/topology")).toBe("/advanced/topology")
+    expect(resolveLegacyAdvancedRoute("/topology")).toBe("/sub-agents")
     expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/advanced/topology")
     expect(resolveLegacyAdvancedRoute("/chat")).toBeNull()
   })
@@ -50,6 +51,8 @@ describe("task002 UI navigation policy", () => {
     expect(resolveModeSwitchRoute("/chat", "advanced")).toBe("/advanced/chat")
     expect(resolveModeSwitchRoute("/tasks", "advanced")).toBe("/advanced/runs")
     expect(resolveModeSwitchRoute("/status", "advanced")).toBe("/advanced/dashboard")
+    expect(resolveModeSwitchRoute("/sub-agents", "advanced")).toBe("/advanced/topology")
+    expect(resolveModeSwitchRoute("/advanced/topology", "beginner")).toBe("/sub-agents")
     expect(resolveRollbackRoute("/setup")).toBe("/advanced/ai")
   })
 })
