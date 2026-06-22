@@ -122,7 +122,7 @@ export function insertMemoryJournalRecord(input) {
     const tags = JSON.stringify(input.tags ?? []);
     db.prepare(`INSERT INTO memory_records
       (id, kind, scope, session_id, run_id, request_group_id, title, content, summary, tags, source, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, input.kind, input.scope ?? (input.runId ? "task" : input.sessionId ? "session" : "global"), input.sessionId ?? null, input.runId ?? null, input.requestGroupId ?? null, title, content, summary, tags, input.source ?? "nobie", now, now);
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, input.kind, input.scope ?? (input.runId ? "task" : input.sessionId ? "session" : "global"), input.sessionId ?? null, input.runId ?? null, input.requestGroupId ?? null, title, content, summary, tags, input.source ?? "knowbee", now, now);
     db.prepare(`INSERT INTO memory_records_fts(rowid, title, content, summary, tags)
      SELECT rowid, title, content, summary, tags
      FROM memory_records

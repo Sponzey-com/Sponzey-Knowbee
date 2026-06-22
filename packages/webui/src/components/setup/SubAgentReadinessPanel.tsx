@@ -167,8 +167,8 @@ export function BeginnerSubAgentCreateDialog({
             <p className="mt-2 break-words text-sm leading-6 text-stone-600 [overflow-wrap:anywhere]">
               {pickUiText(
                 language,
-                "이름과 맡길 일을 정하면 노비의 직접 하위 에이전트로 저장됩니다.",
-                "Set a name and job. It will be saved as Nobie's direct child.",
+                "이름과 맡길 일을 정하면 노우비의 직접 하위 에이전트로 저장됩니다.",
+                "Set a name and job. It will be saved as Knowbee's direct child.",
               )}
             </p>
           </div>

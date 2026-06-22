@@ -120,7 +120,7 @@ export function buildReleasePerformanceSummary(input = {}) {
             ? "warning"
             : "passed";
     return {
-        kind: "nobie.release.performance",
+        kind: "knowbee.release.performance",
         generatedAt: now.toISOString(),
         windowMs,
         gateStatus,

@@ -10,7 +10,7 @@ export type OrchestrationRuntimeStatus = "ready" | "disabled" | "degraded"
 
 export type OrchestrationModeReasonCode =
   | "feature_flag_off"
-  | "mode_single_nobie"
+  | "mode_single_knowbee"
   | "no_active_sub_agents"
   | "registry_load_failed"
   | "registry_load_timeout"
@@ -64,7 +64,7 @@ interface RegistryCandidate {
 }
 
 function requestedModeFromConfig(config: OrchestrationConfig): OrchestrationMode {
-  return config.mode ?? "single_nobie"
+  return config.mode ?? "single_knowbee"
 }
 
 function isOrchestrationFeatureEnabled(config: OrchestrationConfig): boolean {
@@ -208,11 +208,11 @@ function buildSnapshot(input: {
 
 function timeoutSnapshot(config: OrchestrationConfig, generatedAt: number): OrchestrationModeSnapshot {
   return buildSnapshot({
-    mode: "single_nobie",
+    mode: "single_knowbee",
     status: "degraded",
     config,
     reasonCode: "registry_load_timeout",
-    reason: "토폴로지 실행자 조회가 시간 내 완료되지 않아 단일 노비 모드로 fallback했습니다.",
+    reason: "토폴로지 실행자 조회가 시간 내 완료되지 않아 단일 노우비 모드로 fallback했습니다.",
     generatedAt,
   })
 }
@@ -220,11 +220,11 @@ function timeoutSnapshot(config: OrchestrationConfig, generatedAt: number): Orch
 function registryErrorSnapshot(config: OrchestrationConfig, generatedAt: number, error: unknown): OrchestrationModeSnapshot {
   const detail = error instanceof Error ? error.message : String(error)
   return buildSnapshot({
-    mode: "single_nobie",
+    mode: "single_knowbee",
     status: "degraded",
     config,
     reasonCode: "registry_load_failed",
-    reason: `토폴로지 실행자 조회에 실패해 단일 노비 모드로 fallback했습니다: ${detail}`,
+    reason: `토폴로지 실행자 조회에 실패해 단일 노우비 모드로 fallback했습니다: ${detail}`,
     generatedAt,
   })
 }
@@ -232,7 +232,7 @@ function registryErrorSnapshot(config: OrchestrationConfig, generatedAt: number,
 function snapshotFromRegistry(config: OrchestrationConfig, generatedAt: number, registry: RegistryLoadResult): OrchestrationModeSnapshot {
   if (registry.activeSubAgents.length === 0) {
     return buildSnapshot({
-      mode: "single_nobie",
+      mode: "single_knowbee",
       status: "ready",
       config,
       activeSubAgents: [],
@@ -240,8 +240,8 @@ function snapshotFromRegistry(config: OrchestrationConfig, generatedAt: number, 
       disabledSubAgentCount: registry.disabledSubAgentCount,
       reasonCode: "no_active_sub_agents",
       reason: registry.totalSubAgentCount > 0
-        ? "활성화된 토폴로지 실행자 노드가 없어 단일 노비 모드로 동작합니다."
-        : "저장된 토폴로지 실행자 노드가 없어 단일 노비 모드로 동작합니다.",
+        ? "활성화된 토폴로지 실행자 노드가 없어 단일 노우비 모드로 동작합니다."
+        : "저장된 토폴로지 실행자 노드가 없어 단일 노우비 모드로 동작합니다.",
       generatedAt,
     })
   }
@@ -264,22 +264,22 @@ function snapshotBeforeRegistry(config: OrchestrationConfig, generatedAt: number
 
   if (requestedMode !== "orchestration") {
     return buildSnapshot({
-      mode: "single_nobie",
+      mode: "single_knowbee",
       status: "ready",
       config,
-      reasonCode: "mode_single_nobie",
-      reason: "설정 모드가 single_nobie이므로 기존 단일 노비 경로로 동작합니다.",
+      reasonCode: "mode_single_knowbee",
+      reason: "설정 모드가 single_knowbee이므로 기존 단일 노우비 경로로 동작합니다.",
       generatedAt,
     })
   }
 
   if (!isOrchestrationFeatureEnabled(config)) {
     return buildSnapshot({
-      mode: "single_nobie",
+      mode: "single_knowbee",
       status: "ready",
       config,
       reasonCode: "feature_flag_off",
-      reason: "orchestration feature flag가 꺼져 있어 기존 단일 노비 경로로 동작합니다.",
+      reason: "orchestration feature flag가 꺼져 있어 기존 단일 노우비 경로로 동작합니다.",
       generatedAt,
     })
   }

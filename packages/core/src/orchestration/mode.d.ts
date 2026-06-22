@@ -1,7 +1,7 @@
 import { type OrchestrationConfig } from "../config/index.js";
 import type { OrchestrationMode } from "../contracts/sub-agent-orchestration.js";
 export type OrchestrationRuntimeStatus = "ready" | "disabled" | "degraded";
-export type OrchestrationModeReasonCode = "feature_flag_off" | "mode_single_nobie" | "no_active_sub_agents" | "registry_load_failed" | "registry_load_timeout" | "orchestration_ready";
+export type OrchestrationModeReasonCode = "feature_flag_off" | "mode_single_knowbee" | "no_active_sub_agents" | "registry_load_failed" | "registry_load_timeout" | "orchestration_ready";
 export interface OrchestrationRegistryAgentSnapshot {
     agentId: string;
     displayName: string;

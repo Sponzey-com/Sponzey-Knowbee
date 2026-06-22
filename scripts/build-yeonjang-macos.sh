@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 YEONJANG_DIR="$ROOT_DIR/Yeonjang"
 MANIFEST_PATH="$YEONJANG_DIR/Cargo.toml"
-BINARY_NAME="nobie-yeonjang"
+BINARY_NAME="knowbee-yeonjang"
 APP_NAME="Yeonjang"
 PROFILE="${YEONJANG_PROFILE:-release}"
 TARGET_TRIPLE="${YEONJANG_TARGET_TRIPLE:-}"
@@ -12,7 +12,7 @@ MACOS_INFO_PLIST="$YEONJANG_DIR/manifests/macos/Info.plist"
 MACOS_ENTITLEMENTS="$YEONJANG_DIR/manifests/macos/Yeonjang.entitlements"
 CAMERA_HELPER_SWIFT="$YEONJANG_DIR/helpers/macos/camera_capture_helper.swift"
 CAMERA_HELPER_BINARY_NAME="yeonjang-camera-helper"
-NOBIE_ICON_PNG="$ROOT_DIR/resource/nobie-1-128.png"
+KNOWBEE_ICON_PNG="$ROOT_DIR/resource/knowbee-1-128.png"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "이 스크립트는 macOS 전용입니다."
@@ -39,8 +39,8 @@ if [[ ! -f "$CAMERA_HELPER_SWIFT" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$NOBIE_ICON_PNG" ]]; then
-  echo "Nobie 아이콘 리소스를 찾을 수 없습니다: $NOBIE_ICON_PNG"
+if [[ ! -f "$KNOWBEE_ICON_PNG" ]]; then
+  echo "Knowbee 아이콘 리소스를 찾을 수 없습니다: $KNOWBEE_ICON_PNG"
   exit 1
 fi
 

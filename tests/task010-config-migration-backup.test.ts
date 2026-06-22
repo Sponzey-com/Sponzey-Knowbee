@@ -16,11 +16,11 @@ import {
 } from "../packages/core/src/config/operations.ts"
 import { closeDb, getDb, getSession, insertSession } from "../packages/core/src/db/index.ts"
 import { MIGRATIONS } from "../packages/core/src/db/migrations.ts"
-import { ensurePromptSourceFiles, loadPromptSourceRegistry } from "../packages/core/src/memory/nobie-md.ts"
+import { ensurePromptSourceFiles, loadPromptSourceRegistry } from "../packages/core/src/memory/knowbee-md.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 
 function makeTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -28,11 +28,11 @@ function makeTempDir(prefix: string): string {
   return dir
 }
 
-function useTempState(prefix = "nobie-task010-state-"): string {
+function useTempState(prefix = "knowbee-task010-state-"): string {
   closeDb()
   const stateDir = makeTempDir(prefix)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = join(stateDir, "config.json5")
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
   reloadConfig()
   return stateDir
 }
@@ -43,10 +43,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -107,7 +107,7 @@ describe("task010 configuration, migration, backup", () => {
       ai: { connection: { provider: "openai", model: "gpt-test", auth: { apiKey: "sk-testsecretvalue1234567890" } } },
       telegram: { enabled: true, botToken: "123456:telegramtokenabcdefghijklmnopqrstuvwxyz", allowedUserIds: [42120565] },
       slack: { enabled: true, appToken: "xapp-verylongslackapptoken-1234567890", allowedChannelIds: ["C12345"] },
-      mqtt: { username: "nobie", password: "mqttpassword1234567890" }
+      mqtt: { username: "knowbee", password: "mqttpassword1234567890" }
     }`, "utf-8")
 
     const masked = maskSecretsDeep({ token: "123456:telegramtokenabcdefghijklmnopqrstuvwxyz", channelId: "C12345" })
@@ -124,8 +124,8 @@ describe("task010 configuration, migration, backup", () => {
   })
 
   it("exports/imports prompt sources and recovers missing defaults without overwriting edits", () => {
-    const sourceRoot = makeTempDir("nobie-task010-prompts-source-")
-    const targetRoot = makeTempDir("nobie-task010-prompts-target-")
+    const sourceRoot = makeTempDir("knowbee-task010-prompts-source-")
+    const targetRoot = makeTempDir("knowbee-task010-prompts-target-")
     ensurePromptSourceFiles(sourceRoot)
     ensurePromptSourceFiles(targetRoot)
 

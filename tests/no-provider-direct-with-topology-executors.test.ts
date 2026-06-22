@@ -19,16 +19,16 @@ import { runIntakeBridgePass } from "../packages/core/src/runs/intake-bridge-pas
 
 const now = Date.UTC(2026, 4, 7, 12, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 function useTempState(overrides: Record<string, unknown> = {}): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-no-provider-direct-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-no-provider-direct-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json")
-  writeFileSync(process.env.NOBIE_CONFIG, JSON.stringify({
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json")
+  writeFileSync(process.env.KNOWBEE_CONFIG, JSON.stringify({
     orchestration: {
       maxDelegationTurns: 5,
       mode: "orchestration",
@@ -52,10 +52,10 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.NOBIE_STATE_DIR
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.NOBIE_CONFIG
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
 })
 
@@ -159,7 +159,7 @@ function taskIntakeResult(actionPayload: Record<string, unknown> = {}) {
 function decisionForExecutor(selectedExecutorId: string): AgentExecutionDecision {
   return {
     contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
-    current_executor_id: "agent:nobie",
+    current_executor_id: "agent:knowbee",
     domain: "channel_intake",
     behavior_pattern: "delegate",
     execution_route: "delegate_to_child",
@@ -194,7 +194,7 @@ function decisionForExecutor(selectedExecutorId: string): AgentExecutionDecision
 function fallbackDecision(route: "ask_user" | "return_to_parent"): AgentExecutionDecision {
   return {
     contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
-    current_executor_id: "agent:nobie",
+    current_executor_id: "agent:knowbee",
     domain: "channel_intake",
     behavior_pattern: route === "ask_user" ? "clarify" : "recover",
     execution_route: route,
@@ -344,8 +344,8 @@ describe("run_task provider direct guard", () => {
     })
 
     const result = await runIntakeBridgePass({
-      message: "실행자가 판단하지 못하면 노비가 직접 처리해줘",
-      originalRequest: "실행자가 판단하지 못하면 노비가 직접 처리해줘",
+      message: "실행자가 판단하지 못하면 노우비가 직접 처리해줘",
+      originalRequest: "실행자가 판단하지 못하면 노우비가 직접 처리해줘",
       sessionId: "session:fallback",
       requestGroupId: "run:fallback",
       model: "gpt-test",

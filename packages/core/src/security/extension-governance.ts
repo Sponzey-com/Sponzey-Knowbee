@@ -1,7 +1,7 @@
 import crypto from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { basename, join, resolve } from "node:path"
-import { PATHS, getConfig, type McpServerConfig, type NobieConfig } from "../config/index.js"
+import { PATHS, getConfig, type McpServerConfig, type KnowbeeConfig } from "../config/index.js"
 import type { SkillConfigItem } from "../config/types.js"
 import { insertAuditLog, insertDiagnosticEvent } from "../db/index.js"
 import { sanitizeUserFacingError } from "../runs/error-sanitizer.js"
@@ -40,7 +40,7 @@ export interface ExtensionRegistryEntry {
 }
 
 export interface ExtensionRegistrySnapshot {
-  kind: "nobie.extension.registry"
+  kind: "knowbee.extension.registry"
   version: 1
   createdAt: string
   checksum: string
@@ -327,7 +327,7 @@ function skillEntry(skill: SkillConfigItem): ExtensionRegistryEntry {
 }
 
 export function buildExtensionRegistrySnapshot(input: {
-  config?: NobieConfig
+  config?: KnowbeeConfig
   tools?: AnyTool[]
   mcpStatuses?: MinimalMcpServerStatus[]
   now?: Date
@@ -390,7 +390,7 @@ export function buildExtensionRegistrySnapshot(input: {
   })))
 
   return {
-    kind: "nobie.extension.registry",
+    kind: "knowbee.extension.registry",
     version: 1,
     createdAt: (input.now ?? new Date()).toISOString(),
     checksum,

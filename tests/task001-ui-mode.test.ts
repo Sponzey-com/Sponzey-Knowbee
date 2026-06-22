@@ -17,17 +17,17 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
-const previousAdminUi = process.env["NOBIE_ADMIN_UI"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
+const previousAdminUi = process.env["KNOWBEE_ADMIN_UI"]
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-ui-mode-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ui-mode-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
-  delete process.env["NOBIE_ADMIN_UI"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
+  delete process.env["KNOWBEE_ADMIN_UI"]
   reloadConfig()
 }
 
@@ -37,12 +37,12 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
-  if (previousAdminUi === undefined) delete process.env["NOBIE_ADMIN_UI"]
-  else process.env["NOBIE_ADMIN_UI"] = previousAdminUi
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
+  if (previousAdminUi === undefined) delete process.env["KNOWBEE_ADMIN_UI"]
+  else process.env["KNOWBEE_ADMIN_UI"] = previousAdminUi
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -119,8 +119,8 @@ describe("task001 UI mode contract", () => {
     }
   })
 
-  it("reports admin availability from NOBIE_ADMIN_UI without saving admin as the preference", async () => {
-    process.env["NOBIE_ADMIN_UI"] = "1"
+  it("reports admin availability from KNOWBEE_ADMIN_UI without saving admin as the preference", async () => {
+    process.env["KNOWBEE_ADMIN_UI"] = "1"
     reloadConfig()
     const app = Fastify({ logger: false })
     registerUiModeRoute(app)

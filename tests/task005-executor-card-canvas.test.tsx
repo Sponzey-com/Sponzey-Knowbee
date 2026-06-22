@@ -96,7 +96,7 @@ describe("task005 executor card canvas", () => {
 	    expect(html).not.toContain('data-executor-id="team:front-office"')
 	  })
 
-  it("shows Nobie direct, child, and indirect executor relations with duplicate-name disambiguation", () => {
+  it("shows Knowbee direct, child, and indirect executor relations with duplicate-name disambiguation", () => {
     const topology = resourceTopologyFixture()
     topology.nodes = [
       node("node:lead", "검토자", "function", {
@@ -122,7 +122,7 @@ describe("task005 executor card canvas", () => {
 
     expect(relationInfo.get("node:lead")).toEqual(expect.objectContaining({
       relationKind: "root_direct",
-      relationLabelKo: "노비 직속",
+      relationLabelKo: "노우비 직속",
       selectableWithoutPath: true,
       duplicateName: true,
       roleLabel: "리드",

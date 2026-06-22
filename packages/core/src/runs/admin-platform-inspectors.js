@@ -533,7 +533,7 @@ function buildExportBundle(input) {
             filters,
         });
     return sanitizeExportValue({
-        kind: "nobie.admin.diagnostic_export",
+        kind: "knowbee.admin.diagnostic_export",
         generatedAt: Date.now(),
         filters,
         includes: {

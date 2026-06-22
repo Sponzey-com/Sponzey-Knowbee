@@ -77,7 +77,7 @@ export interface MqttExtensionSnapshot {
 export interface MqttExchangeLogEntry {
   id: string
   timestamp: number
-  direction: "nobie_to_extension" | "extension_to_nobie"
+  direction: "knowbee_to_extension" | "extension_to_knowbee"
   topic: string
   extensionId: string | null
   kind: ExtensionTopicKind | "unknown"
@@ -161,7 +161,7 @@ function createAuthError(): Error {
 
 function parseExtensionTopic(topic: unknown): ExtensionTopicRef | null {
   if (typeof topic !== "string") return null
-  const match = /^nobie\/v1\/node\/([^/]+)\/(status|capabilities|request|response|event)$/.exec(topic.trim())
+  const match = /^knowbee\/v1\/node\/([^/]+)\/(status|capabilities|request|response|event)$/.exec(topic.trim())
   if (!match) return null
   const extensionId = match[1]?.trim()
   const kind = match[2] as ExtensionTopicKind | undefined
@@ -538,7 +538,7 @@ function handleBrokerPublish(packet: { topic?: unknown; payload?: unknown }, cli
   const clientId = client?.id?.trim() || null
   const payload = parsePacketPayload(packet.payload)
   appendExchangeLog({
-    direction: ref.kind === "request" ? "nobie_to_extension" : "extension_to_nobie",
+    direction: ref.kind === "request" ? "knowbee_to_extension" : "extension_to_knowbee",
     topic,
     extensionId: ref.extensionId,
     kind: ref.kind,

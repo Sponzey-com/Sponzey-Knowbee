@@ -12,13 +12,13 @@ import {
 } from "../packages/core/src/runs/web-retrieval-smoke.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
-const previousLive = process.env["NOBIE_LIVE_WEB_SMOKE"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
+const previousLive = process.env["KNOWBEE_LIVE_WEB_SMOKE"]
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task008-live-smoke-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task008-live-smoke-"))
   tempDirs.push(stateDir)
   const configPath = join(stateDir, "config.json5")
   writeFileSync(configPath, `{
@@ -27,24 +27,24 @@ function useTempState(): void {
     security: { approvalMode: "off" },
     scheduler: { enabled: false, timezone: "Asia/Seoul" }
   }`, "utf-8")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = configPath
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = configPath
   reloadConfig()
 }
 
 beforeEach(() => {
   useTempState()
-  delete process.env["NOBIE_LIVE_WEB_SMOKE"]
+  delete process.env["KNOWBEE_LIVE_WEB_SMOKE"]
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
-  if (previousLive === undefined) delete process.env["NOBIE_LIVE_WEB_SMOKE"]
-  else process.env["NOBIE_LIVE_WEB_SMOKE"] = previousLive
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
+  if (previousLive === undefined) delete process.env["KNOWBEE_LIVE_WEB_SMOKE"]
+  else process.env["KNOWBEE_LIVE_WEB_SMOKE"] = previousLive
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -53,7 +53,7 @@ afterEach(() => {
 })
 
 describe("task008 opt-in live web smoke", () => {
-  it("does not run live web smoke unless NOBIE_LIVE_WEB_SMOKE=1", async () => {
+  it("does not run live web smoke unless KNOWBEE_LIVE_WEB_SMOKE=1", async () => {
     expect(isLiveWebSmokeEnabled()).toBe(false)
 
     const summary = await runWebRetrievalLiveSmokeScenarios({ mode: "live-run" })

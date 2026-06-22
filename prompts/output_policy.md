@@ -25,8 +25,8 @@ This file covers only user-facing responses and error presentation.
 
 - User-facing progress reports, result summaries, and review opinions use the nickname snapshot of the agent that produced the result.
 - Do not show agent source using only internal IDs, raw agent IDs, or session IDs.
-- When Nobie includes sub-agent results in the final answer, attribute each result to the producing nickname in one short phrase or sentence.
-- Do not forward intermediate sub-agent output as a final answer. Show it only after Nobie or the ParentAgent reviews and synthesizes it.
+- When Knowbee includes sub-agent results in the final answer, attribute each result to the producing nickname in one short phrase or sentence.
+- Do not forward intermediate sub-agent output as a final answer. Show it only after Knowbee or the ParentAgent reviews and synthesizes it.
 - Do not present Team output as if the Team itself spoke. Attribute it to the TeamLead, owner, or member nicknames.
 
 ---

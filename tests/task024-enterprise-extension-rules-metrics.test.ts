@@ -138,7 +138,7 @@ describe("task024 enterprise extension rules and metrics", () => {
       workOrderId: "work-order:data-domain",
       topologyRunId: "topology-run:data-domain",
       parentWorkOrderId: null,
-      fromNodeId: "node:nobie",
+      fromNodeId: "node:knowbee",
       to: { type: "node", id: "node:intake" },
       objective: "Read finance data for a support request.",
       scope: { included: ["finance data"], excluded: [] },
@@ -161,7 +161,7 @@ describe("task024 enterprise extension rules and metrics", () => {
         approvalRequired: false,
       },
       failureReportRequired: true,
-      delegationPath: ["node:nobie", "node:intake"],
+      delegationPath: ["node:knowbee", "node:intake"],
       createdAt: now,
     })
 

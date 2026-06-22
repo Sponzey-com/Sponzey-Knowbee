@@ -39,7 +39,7 @@ function topology(overrides: Partial<ExecutorTopologyV2> = {}): ExecutorTopology
           executorGraph: {
             inferredTools: ["tool:web"],
           },
-          understanding: { summary: "노비가 이해한 내용" },
+          understanding: { summary: "노우비가 이해한 내용" },
           definitionQuickChips: ["분석"],
         },
       },

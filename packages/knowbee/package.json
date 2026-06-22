@@ -1,16 +1,16 @@
 {
-  "name": "@sponzey/nobie",
+  "name": "@sponzey/knowbee",
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "nobie": "./bin/nobie.js"
+    "knowbee": "./bin/knowbee.js"
   },
   "files": [
     "bin"
   ],
   "dependencies": {
-    "@nobie/cli": "workspace:*",
-    "@nobie/webui": "workspace:*"
+    "@knowbee/cli": "workspace:*",
+    "@knowbee/webui": "workspace:*"
   },
   "engines": {
     "node": ">=22.0.0"

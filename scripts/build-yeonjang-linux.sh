@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 YEONJANG_DIR="$ROOT_DIR/Yeonjang"
 MANIFEST_PATH="$YEONJANG_DIR/Cargo.toml"
-BINARY_NAME="nobie-yeonjang"
+BINARY_NAME="knowbee-yeonjang"
 PROFILE="${YEONJANG_PROFILE:-release}"
 TARGET_TRIPLE="${YEONJANG_TARGET_TRIPLE:-}"
 

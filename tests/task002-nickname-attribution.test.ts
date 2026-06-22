@@ -34,16 +34,16 @@ import {
 } from "../packages/core/src/index.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const now = Date.UTC(2026, 3, 23, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task002-nickname-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task002-nickname-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = join(stateDir, "config.json5")
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -53,10 +53,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -82,8 +82,8 @@ const allowlist: SkillMcpAllowlist = {
   disabledToolNames: [],
 }
 
-function owner(ownerId = "agent:nobie"): RuntimeIdentity["owner"] {
-  return { ownerType: "nobie", ownerId }
+function owner(ownerId = "agent:knowbee"): RuntimeIdentity["owner"] {
+  return { ownerType: "knowbee", ownerId }
 }
 
 function identity(entityType: RuntimeIdentity["entityType"], entityId: string): RuntimeIdentity {
@@ -169,7 +169,7 @@ function team(input: {
 const expectedOutput: ExpectedOutputContract = {
   outputId: "answer",
   kind: "text",
-  description: "Answer returned to Nobie review.",
+  description: "Answer returned to Knowbee review.",
   required: true,
   acceptance: {
     requiredEvidenceKinds: [],
@@ -227,7 +227,7 @@ function nicknameSnapshot(entityId: string, nickname: string): NicknameSnapshot 
 describe("task002 nickname and user-facing attribution", () => {
   it("normalizes nicknames with trim, whitespace collapse, and case folding", () => {
     expect(normalizeNickname("  Research   Agent  ")).toBe("research agent")
-    expect(normalizeNickname("  노비   리서치  ")).toBe("노비 리서치")
+    expect(normalizeNickname("  노우비   리서치  ")).toBe("노우비 리서치")
     expect(normalizeNicknameSnapshot("  Research   Agent  ")).toBe("Research Agent")
     const invalidAgent = validateAgentConfig({
       ...subAgent({ agentId: "agent:missing-nickname", nickname: "Researcher" }),
@@ -268,7 +268,7 @@ describe("task002 nickname and user-facing attribution", () => {
 
   it("validates user-visible message, handoff, and delivery attribution snapshots", () => {
     const speaker = nicknameSnapshot("agent:researcher", "Researcher")
-    const recipient = { entityType: "nobie" as const, entityId: "agent:nobie", nicknameSnapshot: "노비" }
+    const recipient = { entityType: "knowbee" as const, entityId: "agent:knowbee", nicknameSnapshot: "노우비" }
 
     expect(validateUserVisibleAgentMessage({
       identity: identity("sub_session", "message:1"),
@@ -358,7 +358,7 @@ describe("task002 nickname and user-facing attribution", () => {
       parentRunId: result.parentRunId,
       deliveryKind: "result_report",
       sender: source,
-      recipient: { entityType: "nobie", entityId: "agent:nobie", nicknameSnapshot: "노비" },
+      recipient: { entityType: "knowbee", entityId: "agent:knowbee", nicknameSnapshot: "노우비" },
       summary: "sub-agent result returned",
       resultReportId: result.resultReportId,
       createdAt: now,

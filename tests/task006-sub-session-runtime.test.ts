@@ -31,7 +31,7 @@ const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 const expectedOutput: ExpectedOutputContract = {
   outputId: "answer",
   kind: "text",
-  description: "Answer returned to Nobie review.",
+  description: "Answer returned to Knowbee review.",
   required: true,
   acceptance: {
     requiredEvidenceKinds: [],

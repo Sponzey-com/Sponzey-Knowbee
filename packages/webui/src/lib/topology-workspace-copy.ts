@@ -195,8 +195,8 @@ export const TOPOLOGY_WORKSPACE_SECTION_POLICIES: TopologyWorkspaceSectionPolicy
     labelKo: "업무 유형 preset",
     labelEn: "Work type presets",
     visibleIn: ["advanced", "developer"],
-    descriptionKo: "업무 유형 직접 선택. 기본 화면에서는 노비가 추론한다.",
-    descriptionEn: "Direct work-type selection. Nobie infers this in the simple view.",
+    descriptionKo: "업무 유형 직접 선택. 기본 화면에서는 노우비가 추론한다.",
+    descriptionEn: "Direct work-type selection. Knowbee infers this in the simple view.",
   },
   {
     section: "relationModeToolbar",

@@ -1,7 +1,7 @@
 import { type MigrationPreflightReport } from "../config/backup-rehearsal.js";
 import { type SubAgentBenchmarkReleaseGateSummary } from "../benchmarks/sub-agent-benchmarks.js";
 import { type PlanDriftReleaseNoteEvidence } from "../diagnostics/plan-drift.js";
-import { type PromptSourceMetadata } from "../memory/nobie-md.js";
+import { type PromptSourceMetadata } from "../memory/knowbee-md.js";
 import { type WebRetrievalReleaseGateSummary } from "../runs/web-retrieval-smoke.js";
 import { type FeatureFlagMode } from "../runtime/rollout-safety.js";
 import { type ReleasePerformanceSummary } from "./performance-gate.js";
@@ -28,7 +28,7 @@ export interface ReleaseArtifact extends ReleaseArtifactDefinition {
     checksum: string | null;
 }
 export interface ReleaseManifest {
-    kind: "nobie.release.package";
+    kind: "knowbee.release.package";
     version: 1;
     releaseVersion: string;
     appVersion: string;
@@ -91,7 +91,7 @@ export interface ReleaseOrchestrationEvidenceCheck {
     detail: Record<string, unknown>;
 }
 export interface ReleaseOrchestrationEvidenceSummary {
-    kind: "nobie.release.orchestration";
+    kind: "knowbee.release.orchestration";
     generatedAt: string;
     gateStatus: ReleaseOrchestrationEvidenceStatus;
     checks: ReleaseOrchestrationEvidenceCheck[];

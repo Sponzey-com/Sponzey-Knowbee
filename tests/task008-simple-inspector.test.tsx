@@ -29,7 +29,7 @@ import { TopologyWorkspaceCanvas } from "../packages/webui/src/components/topolo
 const now = Date.UTC(2026, 4, 2, 12, 0, 0)
 
 describe("task008 simple inspector and advanced isolation", () => {
-  it("renders the basic executor inspector around Nobie's understanding and natural connections", () => {
+  it("renders the basic executor inspector around Knowbee's understanding and natural connections", () => {
     const graph = graphFixture()
     const executor = graph.executors[0]!
     const html = renderToStaticMarkup(
@@ -40,7 +40,7 @@ describe("task008 simple inspector and advanced isolation", () => {
     )
 
     expect(html).toContain('data-testid="executor-inspector"')
-    expect(html).toContain("노비가 이해한 내용")
+    expect(html).toContain("노우비가 이해한 내용")
     expect(html).toContain("연결된 실행자")
     expect(html).toContain("운영 담당자에게 넘김")
     expect(html).not.toContain("필요한 도구")
@@ -75,7 +75,7 @@ describe("task008 simple inspector and advanced isolation", () => {
     expect(html).not.toContain("raw schema")
     expect(html).not.toContain("JSON Schema")
     expect(html).not.toContain("manual_approval")
-    expect(html).not.toContain("nobie")
+    expect(html).not.toContain("knowbee")
   })
 
   it("shows duplicate executor names as invalid before saving", () => {
@@ -116,7 +116,7 @@ describe("task008 simple inspector and advanced isolation", () => {
     )
 
     expect(html).toContain("선택한 실행자")
-    expect(html).toContain("노비가 이해한 내용")
+    expect(html).toContain("노우비가 이해한 내용")
     expect(html).not.toContain('data-testid="executor-inspector-advanced-settings"')
     expect(html).not.toContain('data-testid="executor-inspector-runtime-mode"')
     expect(html).not.toContain('data-testid="executor-inspector-advanced-contract"')

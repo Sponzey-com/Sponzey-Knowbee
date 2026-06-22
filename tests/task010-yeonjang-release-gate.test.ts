@@ -7,7 +7,7 @@ import { registerDoctorRoute } from "../packages/core/src/api/routes/doctor.ts"
 import { registerStatusRoute } from "../packages/core/src/api/routes/status.ts"
 import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
-import { ensurePromptSourceFiles } from "../packages/core/src/memory/nobie-md.ts"
+import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
 import { buildReleaseManifest } from "../packages/core/src/release/package.ts"
 import { upsertYeonjangRegistryObservation } from "../packages/core/src/yeonjang/registry.ts"
 
@@ -18,8 +18,8 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
   inject(options: { method: string; url: string; payload?: unknown }): Promise<{ statusCode: number; json(): any }>
 }
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 let observedBase = 0
 
@@ -31,9 +31,9 @@ function tempDir(prefix: string): string {
 
 function useTempState(): void {
   closeDb()
-  const stateDir = tempDir("nobie-task010-yeonjang-release-state-")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
+  const stateDir = tempDir("knowbee-task010-yeonjang-release-state-")
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
   reloadConfig()
 }
 
@@ -44,7 +44,7 @@ function writeFile(rootDir: string, relativePath: string, content: string): void
 }
 
 function createReleaseRoot(): string {
-  const rootDir = tempDir("nobie-task010-yeonjang-release-root-")
+  const rootDir = tempDir("knowbee-task010-yeonjang-release-root-")
   writeFile(rootDir, "package.json", JSON.stringify({ version: "9.9.9" }))
   writeFile(rootDir, "packages/cli/dist/index.js", "console.log('cli')\n")
   writeFile(rootDir, "packages/core/dist/index.js", "export const core = true\n")
@@ -110,10 +110,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -230,7 +230,7 @@ describe("task010 yeonjang release evidence", () => {
       now: new Date("2026-05-18T00:00:00.000Z"),
     })
 
-    expect(manifest.yeonjangMultiInstanceEvidence.kind).toBe("nobie.release.yeonjang_multi_instance")
+    expect(manifest.yeonjangMultiInstanceEvidence.kind).toBe("knowbee.release.yeonjang_multi_instance")
     expect(manifest.yeonjangMultiInstanceEvidence.policyVersion).toBe("2026-05-18.yeonjang-multi-instance.release-gate.v1")
     expect(manifest.yeonjangMultiInstanceEvidence.gateStatus).toBe("warning")
     expect(manifest.yeonjangMultiInstanceEvidence.liveFleetSummary.totalInstances).toBe(2)

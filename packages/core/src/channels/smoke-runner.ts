@@ -1,4 +1,4 @@
-import type { NobieConfig } from "../config/types.js"
+import type { KnowbeeConfig } from "../config/types.js"
 import type { ChannelSource } from "./contracts.js"
 import {
   insertChannelSmokeRun,
@@ -120,7 +120,7 @@ export interface ChannelSmokeRunResult {
 }
 
 export interface ChannelSmokeRunnerOptions {
-  config: NobieConfig
+  config: KnowbeeConfig
   scenarios?: ChannelSmokeScenario[]
   executeScenario: (scenario: ChannelSmokeScenario) => Promise<ChannelSmokeTrace>
 }
@@ -302,7 +302,7 @@ function defaultCorrelationKey(channel: ChannelSmokeChannel): ChannelSmokeCorrel
 }
 
 export function resolveChannelSmokeReadiness(
-  config: NobieConfig,
+  config: KnowbeeConfig,
   scenario: ChannelSmokeScenario,
 ): ChannelSmokeReadiness {
   switch (scenario.channel) {
@@ -611,7 +611,7 @@ export function createDryRunChannelSmokeExecutor(input: {
             : {
                 channel: scenario.expectedTarget,
                 mode: "native_file",
-                filePath: "/tmp/nobie-smoke-dry-run.png",
+                filePath: "/tmp/knowbee-smoke-dry-run.png",
               }]
         : [],
       capabilityFallbacks: scenario.expectsUnsupportedCapability

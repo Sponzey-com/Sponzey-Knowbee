@@ -1,6 +1,6 @@
 import type { StructuredTaskScope, SubSessionMemoryBootstrap, SubSessionMemoryOwnerScope } from "../contracts/sub-agent-orchestration.js";
 import type { MemoryCapsule } from "./capsule.js";
-export declare const ROOT_MAIN_AGENT_ID = "agent:nobie";
+export declare const ROOT_MAIN_AGENT_ID = "agent:knowbee";
 export interface AgentMemoryState {
     stateId: string;
     ownerScope: SubSessionMemoryOwnerScope;

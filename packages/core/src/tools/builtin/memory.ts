@@ -95,7 +95,7 @@ interface FileSearchParams {
 
 export const fileSemanticSearchTool: AgentTool<FileSearchParams> = {
   name: "file_semantic_search",
-  description: "인덱싱된 로컬 파일에서 의미적/키워드 검색을 수행합니다. `nobie index` 명령으로 파일을 먼저 인덱싱해야 합니다.",
+  description: "인덱싱된 로컬 파일에서 의미적/키워드 검색을 수행합니다. `knowbee index` 명령으로 파일을 먼저 인덱싱해야 합니다.",
   parameters: {
     type: "object",
     properties: {
@@ -137,7 +137,7 @@ export const fileSemanticSearchTool: AgentTool<FileSearchParams> = {
     }
 
     if (!results.length) {
-      return { success: true, output: "검색 결과가 없습니다. `nobie index <경로>` 명령으로 파일을 먼저 인덱싱하세요." }
+      return { success: true, output: "검색 결과가 없습니다. `knowbee index <경로>` 명령으로 파일을 먼저 인덱싱하세요." }
     }
 
     const text = results

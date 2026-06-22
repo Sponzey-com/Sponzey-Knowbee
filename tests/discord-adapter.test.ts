@@ -63,7 +63,7 @@ runChannelAdapterContractTests({
     transport: transport(),
     now: () => DISCORD_NOW,
     botUserId: "BOT1",
-    botDisplayName: "Nobie",
+    botDisplayName: "Knowbee",
   }),
   inboundFixtures: discordInboundFixtures,
   interactionFixtures: discordInteractionFixtures,
@@ -96,7 +96,7 @@ describe("Discord adapter facade policies", () => {
     const adapter = createDiscordChannelAdapter({
       config: discordConfig,
       botUserId: "BOT1",
-      botDisplayName: "Nobie",
+      botDisplayName: "Knowbee",
       now: () => DISCORD_NOW,
     })
     const first = await adapter.normalizeInbound(discordInboundFixtures[0]!.rawPayload)
@@ -107,7 +107,7 @@ describe("Discord adapter facade policies", () => {
         id: "self-1",
         guild_id: "GUILD1",
         channel_id: "CHANNEL1",
-        author: { id: "BOT1", username: "Nobie", bot: false },
+        author: { id: "BOT1", username: "Knowbee", bot: false },
         content: "self echo",
       },
     }, { botUserId: "BOT1" })
@@ -132,7 +132,7 @@ describe("Discord adapter facade policies", () => {
     const [reply] = await createDiscordChannelAdapter({
       config: discordConfig,
       botUserId: "BOT1",
-      botDisplayName: "Nobie",
+      botDisplayName: "Knowbee",
     }).normalizeInbound(discordInboundFixtures.find((fixture) => fixture.name === "thread reply")!.rawPayload)
 
     expect(reply?.continuationContext).toEqual({

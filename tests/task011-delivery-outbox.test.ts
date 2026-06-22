@@ -22,8 +22,8 @@ import {
 import { createRootRun } from "../packages/core/src/runs/store.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const baseNow = Date.UTC(2026, 3, 27, 0, 0, 0)
 
 function setupRun(input: {
@@ -72,20 +72,20 @@ function slackReceipt(input: {
 beforeEach(() => {
   closeDb()
   resetDeliveryOutboxForTest()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task011-outbox-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task011-outbox-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = join(stateDir, "config.json5")
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
   reloadConfig()
 })
 
 afterEach(() => {
   resetDeliveryOutboxForTest()
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()

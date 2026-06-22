@@ -52,7 +52,7 @@ export interface RecoveryKeyParts {
 }
 
 export function buildRecoveryKey(parts: RecoveryKeyParts): string {
-  // nobie-critical-decision-audit: recovery.normalized_error_key
+  // knowbee-critical-decision-audit: recovery.normalized_error_key
   // Recovery dedupe is based on structured tool/action/target/channel plus sanitized error kind, not user request text.
   const errorKind: SanitizedErrorKind = sanitizeUserFacingError(parts.error).kind
   return [
@@ -99,7 +99,7 @@ function commandFailureTargetFingerprint(params: unknown): string | undefined {
 }
 
 export function describeCommandFailureReason(output: string): string {
-  // nobie-critical-decision-audit: recovery.command_failure_reason
+  // knowbee-critical-decision-audit: recovery.command_failure_reason
   // Error-message classification only selects recovery candidates; it must not decide user intent or schedule identity.
   if (/(not found|command not found|enoent|is not recognized)/i.test(output)) {
     return "실행 명령을 찾지 못해 다른 명령이나 다른 도구 경로를 찾아야 합니다."

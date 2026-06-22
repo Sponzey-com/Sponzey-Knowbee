@@ -25,16 +25,16 @@ import { buildOrchestrationRegistrySnapshot } from "../packages/core/src/orchest
 import { createEnterpriseTopologyRegistry } from "../packages/core/src/topology/registry.js"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 4, 7, 1, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-topology-root-direct-children-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-topology-root-direct-children-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -44,10 +44,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env.NOBIE_STATE_DIR
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.NOBIE_CONFIG
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -192,7 +192,7 @@ function subAgent(agentId: string): SubAgentConfig {
 }
 
 describe("topology relation root direct child projection", () => {
-  it("keeps incoming topology relation targets out of Nobie direct children", () => {
+  it("keeps incoming topology relation targets out of Knowbee direct children", () => {
     createEnterpriseTopologyRegistry({ now: () => now }).appendTopologyVersion({
       topology: topology({
         nodes: [
@@ -208,7 +208,7 @@ describe("topology relation root direct child projection", () => {
     const snapshot = registrySnapshot()
     const hierarchy = snapshot.hierarchy
 
-    expect(hierarchy?.directChildrenByParent["agent:nobie"]).toEqual([
+    expect(hierarchy?.directChildrenByParent["agent:knowbee"]).toEqual([
       "workspace:draft:node:executor-1",
       "workspace:draft:node:executor-5",
     ])
@@ -227,7 +227,7 @@ describe("topology relation root direct child projection", () => {
         executionCandidate: true,
       }),
       expect.objectContaining({
-        parentAgentId: "agent:nobie",
+        parentAgentId: "agent:knowbee",
         childAgentId: "workspace:draft:node:executor-5",
         source: "unparented_root",
         executionCandidate: true,
@@ -235,7 +235,7 @@ describe("topology relation root direct child projection", () => {
     ]))
   })
 
-  it("adds db/config agents without an active parent as Nobie direct children", () => {
+  it("adds db/config agents without an active parent as Knowbee direct children", () => {
     upsertAgentConfig(subAgent("agent:lead"), { now })
     upsertAgentConfig(subAgent("agent:worker"), { now })
     upsertAgentConfig(subAgent("agent:solo"), { now })
@@ -252,7 +252,7 @@ describe("topology relation root direct child projection", () => {
 
     const hierarchy = registrySnapshot().hierarchy
 
-    expect(hierarchy?.directChildrenByParent["agent:nobie"]).toEqual(["agent:lead", "agent:solo"])
+    expect(hierarchy?.directChildrenByParent["agent:knowbee"]).toEqual(["agent:lead", "agent:solo"])
     expect(hierarchy?.directChildrenByParent["agent:lead"]).toEqual(["agent:worker"])
     expect(hierarchy?.directChildren).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -261,7 +261,7 @@ describe("topology relation root direct child projection", () => {
         source: "agent_relationship",
       }),
       expect.objectContaining({
-        parentAgentId: "agent:nobie",
+        parentAgentId: "agent:knowbee",
         childAgentId: "agent:solo",
         source: "unparented_root",
       }),

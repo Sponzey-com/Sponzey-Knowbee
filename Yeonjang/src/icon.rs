@@ -4,13 +4,13 @@ use std::path::Path;
 
 use anyhow::{Result, anyhow};
 
-const NOBIE_ICON_PNG: &[u8] = include_bytes!("../../resource/nobie-1-128.png");
+const KNOWBEE_ICON_PNG: &[u8] = include_bytes!("../../resource/knowbee-1-128.png");
 const APP_ICON_SIZE: u32 = 128;
 const APP_ICON_PADDING: u32 = 6;
 const APP_ICON_ALPHA_THRESHOLD: u8 = 8;
 
 pub fn build_icon_rgba() -> Result<(Vec<u8>, u32, u32)> {
-    let (source_rgba, source_width, source_height) = decode_icon_png_rgba(NOBIE_ICON_PNG)?;
+    let (source_rgba, source_width, source_height) = decode_icon_png_rgba(KNOWBEE_ICON_PNG)?;
     Ok(fit_icon_to_square(
         &source_rgba,
         source_width,

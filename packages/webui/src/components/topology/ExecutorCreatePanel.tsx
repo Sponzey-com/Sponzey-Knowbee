@@ -56,8 +56,8 @@ export function ExecutorCreatePanel({
   initialDescription = "",
   titleKo = "실행자 추가",
   titleEn = "Add executor",
-  helperKo = "이름과 하는 일만 적으면 나머지는 노비가 먼저 추론합니다.",
-  helperEn = "Enter only the name and what it does; Nobie infers the rest first.",
+  helperKo = "이름과 하는 일만 적으면 나머지는 노우비가 먼저 추론합니다.",
+  helperEn = "Enter only the name and what it does; Knowbee infers the rest first.",
   descriptionLabelKo = "하는 일",
   descriptionLabelEn = "What it does",
   descriptionPlaceholderKo = "예: 고객 요청을 읽고 CRM에서 정보를 확인한다.",
@@ -211,8 +211,8 @@ export function ExecutorCreatePanel({
             data-testid="executor-create-waiting-understanding"
           >
             {text(
-              "이름과 성격을 입력하면 노비가 이해한 내용을 바로 보여줍니다.",
-              "Enter a name and character to preview what Nobie understood.",
+              "이름과 성격을 입력하면 노우비가 이해한 내용을 바로 보여줍니다.",
+              "Enter a name and character to preview what Knowbee understood.",
             )}
           </div>
         ) : (

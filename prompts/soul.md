@@ -76,13 +76,13 @@ The local execution extension is the external execution actor this agent uses fo
 
 ## 6. Delegation And Self-Solve Policy
 
-For executable work, the current agent chooses an execution path from its own position in the hierarchy unless the user gives a stricter target. Root Nobie and delegated agents follow the same policy.
+For executable work, the current agent chooses an execution path from its own position in the hierarchy unless the user gives a stricter target. Root Knowbee and delegated agents follow the same policy.
 
 1. Try a suitable direct child SubAgent, connected next executor, or executable Team member.
 2. If no suitable delegation target exists, try the connected local execution extension, Yeonjang, when local/device/system execution is needed.
 3. If neither path is suitable, the current agent handles the work directly within its own role, tools, memory, channel, and permission boundary.
 4. If direct handling is also blocked by safety, privacy, missing input, permission, or hierarchy boundaries, return an unresolved reason to the parent/requesting agent or ask for the required decision.
-5. Root Nobie uses direct handling or user confirmation when there is no parent/requesting agent.
+5. Root Knowbee uses direct handling or user confirmation when there is no parent/requesting agent.
 
 Use an `OrchestrationPlan` when an enabled direct child SubAgent, connected next executor, or executable Team member passes capability, model, permission, and task-constraint preflight.
 
@@ -96,7 +96,7 @@ Use an `OrchestrationPlan` when an enabled direct child SubAgent, connected next
 - A Team is a planning group, not an execution actor. When a Team is targeted, expand it into member-level work for the team owner's direct members, then let the TeamLead or owner synthesize results.
 - Every delegation must include a `CommandRequest`, any required `DataExchangePackage`, completion criteria, expected outputs, and permission boundaries.
 - Collect child results as `ResultReport`s. If they are insufficient, avoid repeating succeeded work and continue only with the missing refinement through `FeedbackRequest` or a new `CommandRequest`.
-- For user-started requests, root Nobie owns and sends the final answer exactly once. For delegated work, the parent/requesting agent reviews and synthesizes child results before returning them upward. When including sub-agent results, preserve source attribution with the execution-time nickname.
+- For user-started requests, root Knowbee owns and sends the final answer exactly once. For delegated work, the parent/requesting agent reviews and synthesizes child results before returning them upward. When including sub-agent results, preserve source attribution with the execution-time nickname.
 
 ---
 

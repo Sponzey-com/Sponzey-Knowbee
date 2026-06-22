@@ -39,7 +39,7 @@ import type {
   PromptSourceMetadata,
   PromptSourceSnapshot,
   PromptSourceState,
-} from "../memory/nobie-md.js"
+} from "../memory/knowbee-md.js"
 import {
   normalizeAgentMemoryState,
   type AgentMemoryState,
@@ -2595,7 +2595,7 @@ function buildPersistedTeamMemberships(config: TeamConfig): TeamMembership[] {
 
 function persistedTeamShape(input: TeamConfig): TeamConfig {
   const memberships = buildPersistedTeamMemberships(input)
-  const ownerAgentId = input.ownerAgentId ?? memberships[0]?.agentId ?? "agent:nobie"
+  const ownerAgentId = input.ownerAgentId ?? memberships[0]?.agentId ?? "agent:knowbee"
   const leadAgentId = input.leadAgentId ?? memberships[0]?.agentId ?? ownerAgentId
   const memberAgentIds = uniqueStrings([
     ...input.memberAgentIds,
@@ -2761,7 +2761,7 @@ function reconcileSubAgentStorageDerivedFields(db: BetterSqlite3.Database): void
       const fallbackRoleHints =
         roleHints.length > 0 ? roleHints : parseJsonStringArray(row.role_hints_json)
       const ownerAgentId =
-        asString(config?.["ownerAgentId"]) ?? fallbackMemberAgentIds[0] ?? "agent:nobie"
+        asString(config?.["ownerAgentId"]) ?? fallbackMemberAgentIds[0] ?? "agent:knowbee"
       const leadAgentId =
         asString(config?.["leadAgentId"]) ?? fallbackMemberAgentIds[0] ?? ownerAgentId
       const requiredCount =

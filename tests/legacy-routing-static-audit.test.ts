@@ -100,15 +100,15 @@ describe("legacy routing static audit", () => {
     )
   })
 
-  it("does not use legacy single-nobie delegation failure as an initial execution selector", () => {
-    expect(rg("delegate_failure_single_nobie", ["packages/core/src"])).toEqual([])
+  it("does not use legacy single-knowbee delegation failure as an initial execution selector", () => {
+    expect(rg("delegate_failure_single_knowbee", ["packages/core/src"])).toEqual([])
     expect(source("packages/core/src/orchestration/planner.ts")).not.toContain(
-      "delegate_failure_single_nobie",
+      "delegate_failure_single_knowbee",
     )
   })
 
-  it("limits legacy single_nobie text to compatibility, settings, and release gates", () => {
-    const matches = rg("single_nobie", ["packages/core/src"])
+  it("limits legacy single_knowbee text to compatibility, settings, and release gates", () => {
+    const matches = rg("single_knowbee", ["packages/core/src"])
     const allowedPrefixes = [
       "packages/core/src/contracts/sub-agent-orchestration.ts:",
       "packages/core/src/contracts/sub-agent-orchestration.js:",
@@ -149,11 +149,11 @@ describe("legacy routing static audit", () => {
     expect(
       matches.filter((line) => !allowedPrefixes.some((prefix) => line.startsWith(prefix))),
     ).toEqual([])
-    expect(source("packages/core/src/orchestration/planner.ts")).not.toContain("single_nobie")
+    expect(source("packages/core/src/orchestration/planner.ts")).not.toContain("single_knowbee")
     expect(source("packages/core/src/orchestration/execution-harness.ts")).not.toContain(
-      "single_nobie",
+      "single_knowbee",
     )
-    expect(source("packages/core/src/runs/intake-bridge-pass.ts")).not.toContain("single_nobie")
+    expect(source("packages/core/src/runs/intake-bridge-pass.ts")).not.toContain("single_knowbee")
   })
 
   it("does not justify provider direct fallback with topology routing opt-out", () => {
@@ -234,10 +234,10 @@ describe("legacy routing static audit", () => {
     ).toEqual([])
   })
 
-  it("does not generate new planner fallback plans through single_nobie", () => {
-    expect(source("packages/core/src/orchestration/planner.ts")).not.toContain("single_nobie")
+  it("does not generate new planner fallback plans through single_knowbee", () => {
+    expect(source("packages/core/src/orchestration/planner.ts")).not.toContain("single_knowbee")
     expect(source("packages/core/src/orchestration/execution-harness.ts")).not.toContain(
-      "single_nobie",
+      "single_knowbee",
     )
   })
 })

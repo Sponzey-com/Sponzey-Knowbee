@@ -36,22 +36,22 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 type FastifyTestApp = ReturnType<typeof Fastify>
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task007-team-composition-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task007-team-composition-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
 function owner(
-  ownerType: RuntimeIdentity["owner"]["ownerType"] = "nobie",
-  ownerId = "agent:nobie",
+  ownerType: RuntimeIdentity["owner"]["ownerType"] = "knowbee",
+  ownerId = "agent:knowbee",
 ): RuntimeIdentity["owner"] {
   return { ownerType, ownerId }
 }
@@ -140,7 +140,7 @@ function membership(
     membershipId: `${teamId}:membership:${sortOrder}`,
     teamId,
     agentId,
-    ownerAgentIdSnapshot: "agent:nobie",
+    ownerAgentIdSnapshot: "agent:knowbee",
     teamRoles: roles,
     primaryRole: roles[0] ?? "member",
     required: true,
@@ -166,7 +166,7 @@ function teamConfig(overrides: Partial<TeamConfig> = {}): TeamConfig {
     nickname: "Composition Team",
     status: "enabled",
     purpose: "Validate executable team composition.",
-    ownerAgentId: "agent:nobie",
+    ownerAgentId: "agent:knowbee",
     leadAgentId: memberAgentIds[0],
     memberCountMin: 1,
     memberCountMax: 6,
@@ -275,10 +275,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -294,7 +294,7 @@ describe("task007 team composition API", () => {
     try {
       await createAgent(app, "agent:alpha", "Alpha")
       await createAgent(app, "agent:gamma", "Gamma")
-      await createRelationship(app, "agent:nobie", "agent:alpha")
+      await createRelationship(app, "agent:knowbee", "agent:alpha")
       await createTeam(
         app,
         teamConfig({
@@ -344,7 +344,7 @@ describe("task007 team composition API", () => {
     try {
       await createAgent(app, "agent:alpha", "Alpha")
       await createAgent(app, "agent:gamma", "Gamma")
-      await createRelationship(app, "agent:nobie", "agent:alpha")
+      await createRelationship(app, "agent:knowbee", "agent:alpha")
       await createTeam(
         app,
         teamConfig({
@@ -385,8 +385,8 @@ describe("task007 team composition API", () => {
         delegation: { enabled: true, maxParallelSessions: 1 },
         delegationPolicy: { enabled: true, maxParallelSessions: 1 },
       })
-      await createRelationship(app, "agent:nobie", "agent:alpha")
-      await createRelationship(app, "agent:nobie", "agent:beta")
+      await createRelationship(app, "agent:knowbee", "agent:alpha")
+      await createRelationship(app, "agent:knowbee", "agent:beta")
       expect(insertRunSubSession(subSession("agent:beta"), { now })).toBe(true)
       await createTeam(
         app,
@@ -437,7 +437,7 @@ describe("task007 team composition API", () => {
     try {
       await createAgent(app, "agent:owner", "Owner")
       await createAgent(app, "agent:child", "Child")
-      await createRelationship(app, "agent:nobie", "agent:owner")
+      await createRelationship(app, "agent:knowbee", "agent:owner")
       await createRelationship(app, "agent:owner", "agent:child")
       await disableAgent(app, "agent:owner")
       await createTeam(
@@ -491,7 +491,7 @@ describe("task007 team composition API", () => {
         "agent:fallback",
         "agent:broad-fallback",
       ]) {
-        await createRelationship(app, "agent:nobie", agentId)
+        await createRelationship(app, "agent:knowbee", agentId)
       }
       await disableAgent(app, "agent:primary")
 
@@ -564,7 +564,7 @@ describe("task007 team composition API", () => {
     await app.ready()
     try {
       await createAgent(app, "agent:alpha", "Alpha")
-      await createRelationship(app, "agent:nobie", "agent:alpha")
+      await createRelationship(app, "agent:knowbee", "agent:alpha")
 
       const response = await app.inject({
         method: "POST",

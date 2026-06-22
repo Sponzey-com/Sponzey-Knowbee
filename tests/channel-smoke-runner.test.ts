@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
-import { DEFAULT_CONFIG, type NobieConfig } from "../packages/core/src/config/types.ts"
+import { DEFAULT_CONFIG, type KnowbeeConfig } from "../packages/core/src/config/types.ts"
 import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, listChannelSmokeRuns, listChannelSmokeSteps } from "../packages/core/src/db/index.js"
 import {
@@ -16,7 +16,7 @@ import {
   type ChannelSmokeTrace,
 } from "../packages/core/src/channels/smoke-runner.ts"
 
-function configWithChannels(patch: Partial<NobieConfig> = {}): NobieConfig {
+function configWithChannels(patch: Partial<KnowbeeConfig> = {}): KnowbeeConfig {
   return {
     ...structuredClone(DEFAULT_CONFIG),
     ...patch,
@@ -202,8 +202,8 @@ describe("channel smoke runner", () => {
 
     const result = validateChannelSmokeTrace(webui, {
       ...passingTrace(webui),
-      artifacts: [{ channel: "webui", mode: "local_path_markdown", filePath: "/Users/test/.nobie/artifacts/screen.png" }],
-      finalText: "![screenshot](/Users/test/.nobie/artifacts/screen.png)",
+      artifacts: [{ channel: "webui", mode: "local_path_markdown", filePath: "/Users/test/.knowbee/artifacts/screen.png" }],
+      finalText: "![screenshot](/Users/test/.knowbee/artifacts/screen.png)",
     })
 
     expect(result.status).toBe("failed")
@@ -267,12 +267,12 @@ describe("channel smoke runner", () => {
   })
 
   it("persists sanitized dry-run smoke results for later UI and CLI inspection", async () => {
-    const previousStateDir = process.env["NOBIE_STATE_DIR"]
-    const previousConfig = process.env["NOBIE_CONFIG"]
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-channel-smoke-runner-"))
+    const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+    const previousConfig = process.env["KNOWBEE_CONFIG"]
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-channel-smoke-runner-"))
     closeDb()
-    process.env["NOBIE_STATE_DIR"] = stateDir
-    delete process.env["NOBIE_CONFIG"]
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
+    delete process.env["KNOWBEE_CONFIG"]
     reloadConfig()
 
     try {
@@ -314,10 +314,10 @@ describe("channel smoke runner", () => {
       expect(steps[0]?.trace_json).toContain("***")
     } finally {
       closeDb()
-      if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-      else process.env["NOBIE_STATE_DIR"] = previousStateDir
-      if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-      else process.env["NOBIE_CONFIG"] = previousConfig
+      if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+      else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+      if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+      else process.env["KNOWBEE_CONFIG"] = previousConfig
       reloadConfig()
       rmSync(stateDir, { recursive: true, force: true })
     }

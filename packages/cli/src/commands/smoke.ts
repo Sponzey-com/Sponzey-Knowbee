@@ -7,7 +7,7 @@ export interface ChannelSmokeCommandOptions {
 const CHANNELS = new Set(["webui", "telegram", "slack"])
 
 export async function channelSmokeCommand(options: ChannelSmokeCommandOptions): Promise<void> {
-  const core = await import("@nobie/core")
+  const core = await import("@knowbee/core")
   await core.bootstrapRuntime()
 
   const channel = options.channel?.trim()
@@ -17,8 +17,8 @@ export async function channelSmokeCommand(options: ChannelSmokeCommandOptions): 
 
   const mode = options.live ? "live-run" : "dry-run"
   if (mode === "live-run") {
-    if (process.env["NOBIE_CHANNEL_SMOKE_LIVE"] !== "1") {
-      throw new Error("live channel smoke requires NOBIE_CHANNEL_SMOKE_LIVE=1")
+    if (process.env["KNOWBEE_CHANNEL_SMOKE_LIVE"] !== "1") {
+      throw new Error("live channel smoke requires KNOWBEE_CHANNEL_SMOKE_LIVE=1")
     }
     throw new Error("live channel smoke executor is not configured in this build")
   }
@@ -34,7 +34,7 @@ export async function channelSmokeCommand(options: ChannelSmokeCommandOptions): 
     scenarios,
     initiatedBy: "cli",
     metadata: {
-      command: "nobie smoke channels",
+      command: "knowbee smoke channels",
       channel: channel ?? null,
     },
     executeScenario: core.createDryRunChannelSmokeExecutor(),

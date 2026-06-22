@@ -152,31 +152,31 @@ describe("phase021 executor graph runtime contracts", () => {
     const executor = createExecutor("node:backend", "백엔드 엔지니어", "백엔드 구현을 담당한다.")
     const analysis = buildNodeTaskAnalysis({ executor, now })
     const graphSnapshot = {
-      currentExecutorId: "agent:nobie",
+      currentExecutorId: "agent:knowbee",
       agentsById: {
-        "agent:nobie": {},
+        "agent:knowbee": {},
         "node:finance": {},
         "node:backend": {},
         "node:reviewer": {},
       },
       directChildAgentIdsByParent: {
-        "agent:nobie": ["node:finance"],
+        "agent:knowbee": ["node:finance"],
         "node:finance": ["node:backend"],
       },
       edgeIndex: {
-        "agent:nobie": {
-          "node:finance": { edgeId: "edge:nobie-finance" },
+        "agent:knowbee": {
+          "node:finance": { edgeId: "edge:knowbee-finance" },
         },
         "node:finance": {
           "node:backend": { edgeId: "edge:finance-backend" },
         },
       },
-      allActiveExecutorIds: ["agent:nobie", "node:finance", "node:backend", "node:reviewer"],
-      allRegisteredExecutorIds: ["agent:nobie", "node:finance", "node:backend", "node:reviewer"],
+      allActiveExecutorIds: ["agent:knowbee", "node:finance", "node:backend", "node:reviewer"],
+      allRegisteredExecutorIds: ["agent:knowbee", "node:finance", "node:backend", "node:reviewer"],
     } as never
 
     expect(validateDelegationPath({
-      currentExecutorId: "agent:nobie",
+      currentExecutorId: "agent:knowbee",
       executionGraphSnapshot: graphSnapshot,
       executionDecision: {
         selected_executor_id: "node:backend",
@@ -185,11 +185,11 @@ describe("phase021 executor graph runtime contracts", () => {
     })).toEqual(expect.objectContaining({
       ok: true,
       status: "valid",
-      normalizedConnectionPath: ["agent:nobie", "node:finance", "node:backend"],
+      normalizedConnectionPath: ["agent:knowbee", "node:finance", "node:backend"],
     }))
 
     const resolution = resolveNodeDelegation({
-      executorId: "agent:nobie",
+      executorId: "agent:knowbee",
       taskAnalysis: analysis,
       candidates: [{
         targetId: "node:backend",
@@ -215,8 +215,8 @@ describe("phase021 executor graph runtime contracts", () => {
       status: "selected_connection_path_invalid",
       issues: expect.arrayContaining(["missing_graph_edge:node:finance->node:reviewer"]),
     }))
-    expect(resolution.selectedRoute).toBe("nobie_direct")
-    expect(resolution.selectedTargetId).toBe("nobie_direct")
+    expect(resolution.selectedRoute).toBe("knowbee_direct")
+    expect(resolution.selectedTargetId).toBe("knowbee_direct")
   })
 
   it("builds delegation candidates from agent and team registry snapshots", () => {

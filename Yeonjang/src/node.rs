@@ -38,7 +38,7 @@ fn dispatch(request: &Request) -> Result<Value> {
 
     match request.method.as_str() {
         "node.ping" => Ok(json!({
-            "node": "nobie-yeonjang",
+            "node": "knowbee-yeonjang",
             "version": git_tag(),
             "protocolVersion": YEONJANG_PROTOCOL_VERSION,
             "gitTag": git_tag(),
@@ -214,7 +214,7 @@ fn capabilities() -> Value {
     let permissions = current_permissions();
     let last_checked_at = now_unix_millis();
     json!({
-        "node": "nobie-yeonjang",
+        "node": "knowbee-yeonjang",
         "version": git_tag(),
         "protocolVersion": YEONJANG_PROTOCOL_VERSION,
         "gitTag": git_tag(),

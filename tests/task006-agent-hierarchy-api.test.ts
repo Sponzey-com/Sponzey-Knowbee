@@ -36,16 +36,16 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 type FastifyTestApp = ReturnType<typeof Fastify>
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task006-hierarchy-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task006-hierarchy-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -56,8 +56,8 @@ function writeConfig(value: unknown): void {
 }
 
 function owner(
-  ownerType: RuntimeIdentity["owner"]["ownerType"] = "nobie",
-  ownerId = "agent:nobie",
+  ownerType: RuntimeIdentity["owner"]["ownerType"] = "knowbee",
+  ownerId = "agent:knowbee",
 ): RuntimeIdentity["owner"] {
   return { ownerType, ownerId }
 }
@@ -134,7 +134,7 @@ function membership(teamId: string, agentId: string, sortOrder = 0): TeamMembers
     membershipId: `${teamId}:membership:${sortOrder}`,
     teamId,
     agentId,
-    ownerAgentIdSnapshot: "agent:nobie",
+    ownerAgentIdSnapshot: "agent:knowbee",
     teamRoles: ["member"],
     primaryRole: "member",
     required: true,
@@ -153,7 +153,7 @@ function teamConfig(overrides: Partial<TeamConfig> = {}): TeamConfig {
     nickname: "Default Team",
     status: "enabled",
     purpose: "Test team membership separation.",
-    ownerAgentId: "agent:nobie",
+    ownerAgentId: "agent:knowbee",
     leadAgentId: memberAgentIds[0],
     memberCountMin: 1,
     memberCountMax: 3,
@@ -215,10 +215,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -235,7 +235,7 @@ describe("task006 hierarchy relationship API", () => {
       await createAgent(app, "agent:alpha", "Alpha")
       await createAgent(app, "agent:beta", "Beta")
       await createAgent(app, "agent:gamma", "Gamma")
-      await createRelationship(app, "agent:nobie", "agent:alpha")
+      await createRelationship(app, "agent:knowbee", "agent:alpha")
       await createRelationship(app, "agent:alpha", "agent:beta")
 
       const team = await app.inject({
@@ -249,7 +249,7 @@ describe("task006 hierarchy relationship API", () => {
 
       const rootChildren = await app.inject({
         method: "GET",
-        url: "/api/agents/agent:nobie/children",
+        url: "/api/agents/agent:knowbee/children",
       })
       expect(rootChildren.statusCode).toBe(200)
       expect(rootChildren.json().childAgentIds).toEqual(["agent:alpha"])
@@ -271,7 +271,7 @@ describe("task006 hierarchy relationship API", () => {
         expect.arrayContaining([
           expect.objectContaining({
             edgeType: "parent_child",
-            fromNodeId: "agent:agent:nobie",
+            fromNodeId: "agent:agent:knowbee",
             toNodeId: "agent:agent:alpha",
           }),
           expect.objectContaining({
@@ -310,14 +310,14 @@ describe("task006 hierarchy relationship API", () => {
     }
   })
 
-  it("blocks cycles, multi-parent children, self-parenting, and Nobie-as-child relationships", async () => {
+  it("blocks cycles, multi-parent children, self-parenting, and Knowbee-as-child relationships", async () => {
     const app = Fastify({ logger: false })
     registerAgentRoutes(app)
     await app.ready()
     try {
       await createAgent(app, "agent:alpha", "Alpha")
       await createAgent(app, "agent:beta", "Beta")
-      await createRelationship(app, "agent:nobie", "agent:alpha")
+      await createRelationship(app, "agent:knowbee", "agent:alpha")
       await createRelationship(app, "agent:alpha", "agent:beta")
 
       const cycle = await app.inject({
@@ -331,7 +331,7 @@ describe("task006 hierarchy relationship API", () => {
       const multiParent = await app.inject({
         method: "POST",
         url: "/api/agent-relationships",
-        payload: { relationship: { parentAgentId: "agent:nobie", childAgentId: "agent:beta" } },
+        payload: { relationship: { parentAgentId: "agent:knowbee", childAgentId: "agent:beta" } },
       })
       expect(multiParent.statusCode).toBe(400)
       expect(reasonCodes(multiParent.json())).toContain("child_multi_parent_blocked")
@@ -345,13 +345,13 @@ describe("task006 hierarchy relationship API", () => {
       expect(selfParent.json()).toEqual(expect.objectContaining({ valid: false }))
       expect(reasonCodes(selfParent.json())).toContain("self_parent_blocked")
 
-      const nobieAsChild = await app.inject({
+      const knowbeeAsChild = await app.inject({
         method: "POST",
         url: "/api/agent-relationships",
-        payload: { relationship: { parentAgentId: "agent:alpha", childAgentId: "agent:nobie" } },
+        payload: { relationship: { parentAgentId: "agent:alpha", childAgentId: "agent:knowbee" } },
       })
-      expect(nobieAsChild.statusCode).toBe(400)
-      expect(reasonCodes(nobieAsChild.json())).toContain("nobie_parent_forbidden")
+      expect(knowbeeAsChild.statusCode).toBe(400)
+      expect(reasonCodes(knowbeeAsChild.json())).toContain("knowbee_parent_forbidden")
     } finally {
       await app.close()
     }
@@ -365,7 +365,7 @@ describe("task006 hierarchy relationship API", () => {
       await createAgent(app, "agent:alpha", "Alpha")
       await createAgent(app, "agent:beta", "Beta")
       await createAgent(app, "agent:gamma", "Gamma")
-      await createRelationship(app, "agent:nobie", "agent:alpha")
+      await createRelationship(app, "agent:knowbee", "agent:alpha")
       await createRelationship(app, "agent:alpha", "agent:beta")
 
       const tooDeep = await app.inject({
@@ -384,7 +384,7 @@ describe("task006 hierarchy relationship API", () => {
         url: "/api/agent-relationships",
         payload: {
           maxChildCount: 1,
-          relationship: { parentAgentId: "agent:nobie", childAgentId: "agent:gamma" },
+          relationship: { parentAgentId: "agent:knowbee", childAgentId: "agent:gamma" },
         },
       })
       expect(secondRootChild.statusCode).toBe(400)
@@ -403,7 +403,7 @@ describe("task006 hierarchy relationship API", () => {
       await createAgent(app, "agent:alpha", "Alpha")
       await createAgent(app, "agent:beta", "Beta")
 
-      await createRelationship(app, "agent:nobie", "agent:alpha")
+      await createRelationship(app, "agent:knowbee", "agent:alpha")
       const nested = await app.inject({
         method: "POST",
         url: "/api/agent-relationships",
@@ -441,7 +441,7 @@ describe("task006 hierarchy relationship API", () => {
         "hierarchy_fallback_enabled_sub_agents",
       )
 
-      await createRelationship(app, "agent:nobie", "agent:alpha")
+      await createRelationship(app, "agent:knowbee", "agent:alpha")
       const hierarchyTree = await app.inject({ method: "GET", url: "/api/agent-tree" })
       expect(hierarchyTree.statusCode).toBe(200)
       expect(hierarchyTree.json()).toEqual(
@@ -462,7 +462,7 @@ describe("task006 hierarchy relationship API", () => {
     try {
       await createAgent(app, "agent:alpha", "Alpha")
       await createAgent(app, "agent:beta", "Beta")
-      await createRelationship(app, "agent:nobie", "agent:alpha")
+      await createRelationship(app, "agent:knowbee", "agent:alpha")
       await createRelationship(app, "agent:alpha", "agent:beta")
 
       const disabled = await app.inject({ method: "POST", url: "/api/agents/agent:alpha/disable" })
@@ -508,7 +508,7 @@ describe("task006 hierarchy relationship API", () => {
           layout: {
             layout: "freeform",
             nodes: {
-              "agent:agent:nobie": { x: 10, y: 20, collapsed: true },
+              "agent:agent:knowbee": { x: 10, y: 20, collapsed: true },
             },
             viewport: { x: 0, y: 0, zoom: 1.2 },
           },
@@ -520,7 +520,7 @@ describe("task006 hierarchy relationship API", () => {
           schemaVersion: 1,
           layout: "freeform",
           nodes: {
-            "agent:agent:nobie": { x: 10, y: 20, collapsed: true },
+            "agent:agent:knowbee": { x: 10, y: 20, collapsed: true },
           },
           viewport: { x: 0, y: 0, zoom: 1.2 },
           updatedAt: expect.any(Number),

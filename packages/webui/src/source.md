@@ -17,7 +17,7 @@
 
 - 기본 topology UI, Runtime Inspector, task monitor, view model 경계 변경은 `pnpm run test:architecture:webui`로 확인한다.
 - WebUI가 core runtime 타입이나 EnterpriseTopology V1/WorkOrder/manual run을 기본 화면으로 다시 끌어오지 않는지는 `pnpm run test:architecture:static`에서도 확인한다.
-- 릴리즈 전에는 `pnpm --filter @nobie/webui build`와 `pnpm run test:architecture`를 함께 통과해야 한다.
+- 릴리즈 전에는 `pnpm --filter @knowbee/webui build`와 `pnpm run test:architecture`를 함께 통과해야 한다.
 
 ## 중요 단위
 

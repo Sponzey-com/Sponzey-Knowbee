@@ -14,7 +14,7 @@ export interface YeonjangManualSmokeChecklistItem {
     steps: string[];
 }
 export interface YeonjangMultiInstanceReleaseGateSummary {
-    kind: "nobie.release.yeonjang_multi_instance";
+    kind: "knowbee.release.yeonjang_multi_instance";
     generatedAt: string;
     policyVersion: "2026-05-18.yeonjang-multi-instance.release-gate.v1";
     gateStatus: YeonjangMultiInstanceReleaseGateStatus;

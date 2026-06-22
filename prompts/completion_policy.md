@@ -37,7 +37,7 @@ This file covers only completion decisions.
 - One successful child agent does not complete the whole request when other completion criteria remain.
 - Team work requires actual member-level results plus TeamLead or owner synthesis before it can be considered complete.
 - Do not treat a ChildAgent's claim that it sent a final user-channel answer as completion.
-- For user requests started through Nobie, completion requires Nobie's final review and delivery.
+- For user requests started through Knowbee, completion requires Knowbee's final review and delivery.
 - For delegated work, completion requires the parent/requesting agent's review, synthesis, and return path before it can move upward.
 - Results that need sub-agent attribution must be tied to nickname snapshots.
 

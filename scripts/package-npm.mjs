@@ -93,12 +93,12 @@ function copyBuiltPackage(outputDir, input) {
 }
 
 function copyMetaPackage(outputDir, version) {
-  const sourceDir = join(rootDir, "packages", "nobie")
+  const sourceDir = join(rootDir, "packages", "knowbee")
   const sourcePackage = readJson(join(sourceDir, "package.json"))
   const optionalDependencies = Object.fromEntries(
     YEONJANG_OPTIONAL_PACKAGES.map((name) => [name, version]),
   )
-  const targetDir = stagePackageDir(outputDir, "nobie", {
+  const targetDir = stagePackageDir(outputDir, "knowbee", {
     ...sourcePackage,
     version,
     dependencies: {
@@ -108,8 +108,8 @@ function copyMetaPackage(outputDir, version) {
     optionalDependencies,
   })
   cpSync(join(sourceDir, "bin"), join(targetDir, "bin"), { recursive: true })
-  rewriteTextFiles(targetDir, [["@nobie/cli", "@sponzey/cli"]])
-  chmodSync(join(targetDir, "bin", "nobie.js"), 0o755)
+  rewriteTextFiles(targetDir, [["@knowbee/cli", "@sponzey/cli"]])
+  chmodSync(join(targetDir, "bin", "knowbee.js"), 0o755)
   return targetDir
 }
 
@@ -143,10 +143,10 @@ function main() {
       commander: readJson(join(rootDir, "packages", "cli", "package.json")).dependencies.commander,
     },
     copy: ["dist"],
-    replacements: [["@nobie/core", "@sponzey/core"]],
+    replacements: [["@knowbee/core", "@sponzey/core"]],
   })
   const targetDir = copyMetaPackage(options.outputDir, version)
-  console.log(`Nobie npm package staged: ${targetDir}`)
+  console.log(`Knowbee npm package staged: ${targetDir}`)
 }
 
 main()

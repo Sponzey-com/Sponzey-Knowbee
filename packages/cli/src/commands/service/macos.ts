@@ -3,15 +3,15 @@ import { writeFileSync, unlinkSync, existsSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import type { ServiceAction } from "./index.js"
-import { which, nobieBinPath } from "./index.js"
+import { which, knowbeeBinPath } from "./index.js"
 
-const LABEL = "com.atomsoft.nobie"
+const LABEL = "com.atomsoft.knowbee"
 const AGENTS_DIR = join(homedir(), "Library", "LaunchAgents")
 const PLIST_PATH = join(AGENTS_DIR, `${LABEL}.plist`)
-const STATE_DIR = process.env["NOBIE_STATE_DIR"] ?? process.env["WIZBY_STATE_DIR"] ?? process.env["HOWIE_STATE_DIR"] ?? process.env["NOBIE_STATE_DIR"] ?? join(homedir(), ".nobie")
+const STATE_DIR = process.env["KNOWBEE_STATE_DIR"] ?? process.env["WIZBY_STATE_DIR"] ?? process.env["HOWIE_STATE_DIR"] ?? process.env["KNOWBEE_STATE_DIR"] ?? join(homedir(), ".knowbee")
 const LOGS_DIR = join(STATE_DIR, "logs")
 
-function buildPlist(nodePath: string, nobiePath: string): string {
+function buildPlist(nodePath: string, knowbeePath: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -22,7 +22,7 @@ function buildPlist(nodePath: string, nobiePath: string): string {
   <key>ProgramArguments</key>
   <array>
     <string>${nodePath}</string>
-    <string>${nobiePath}</string>
+    <string>${knowbeePath}</string>
     <string>serve</string>
   </array>
   <key>RunAtLoad</key>
@@ -53,10 +53,10 @@ export async function run(action: ServiceAction): Promise<void> {
   switch (action) {
     case "install": {
       const nodePath = which("node")
-      const nobiePath = nobieBinPath()
+      const knowbeePath = knowbeeBinPath()
       mkdirSync(AGENTS_DIR, { recursive: true })
       mkdirSync(LOGS_DIR, { recursive: true })
-      writeFileSync(PLIST_PATH, buildPlist(nodePath, nobiePath), "utf-8")
+      writeFileSync(PLIST_PATH, buildPlist(nodePath, knowbeePath), "utf-8")
       console.log(`Plist written: ${PLIST_PATH}`)
       // Unload if already loaded (ignore error)
       try { launchctl("unload", PLIST_PATH) } catch { /* ignore */ }
@@ -65,7 +65,7 @@ export async function run(action: ServiceAction): Promise<void> {
       console.log(`  Logs: ${LOGS_DIR}/daemon.log`)
       console.log(`  WebUI: http://127.0.0.1:18888`)
       console.log("")
-      console.log("Run 'nobie service status' to verify")
+      console.log("Run 'knowbee service status' to verify")
       break
     }
 

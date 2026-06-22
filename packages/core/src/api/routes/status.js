@@ -10,7 +10,7 @@ import { getCurrentAppVersion, getUpdateSnapshot } from "../../update/service.js
 import { getCurrentDisplayVersion, getWorkspaceRootPath } from "../../version.js";
 import { getLastStartupRecoverySummary } from "../../runs/startup-recovery.js";
 import { getFastResponseHealthSnapshot } from "../../observability/latency.js";
-import { loadPromptSourceRegistry } from "../../memory/nobie-md.js";
+import { loadPromptSourceRegistry } from "../../memory/knowbee-md.js";
 import { resolveOrchestrationModeSnapshotSync } from "../../orchestration/mode.js";
 import { getGatewayProcessStartTimeMs, getRuntimeBuildStatus } from "../../runtime/build-status.js";
 import { buildYeonjangFleetProjection } from "../../yeonjang/topology.js";

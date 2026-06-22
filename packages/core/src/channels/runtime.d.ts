@@ -1,4 +1,4 @@
-import type { NobieConfig } from "../config/types.js";
+import type { KnowbeeConfig } from "../config/types.js";
 import { type DbChannelConnectionHealthStatus } from "../db/index.js";
 import { type RuntimeFeatureFlag } from "../runtime/rollout-safety.js";
 import { type ChannelConnectionRecord } from "./connections.js";
@@ -21,7 +21,7 @@ export interface ChannelRuntimeHealth {
     detail?: Record<string, unknown>;
 }
 export interface ChannelProviderFactoryContext {
-    config: NobieConfig;
+    config: KnowbeeConfig;
     connection: ChannelConnectionRecord;
 }
 export interface ChannelProviderFactory {

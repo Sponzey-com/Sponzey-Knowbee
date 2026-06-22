@@ -237,7 +237,7 @@ export class SlackChannel {
         if (!access.allowed) {
             log.warn(`Ignored Slack message by policy user=${userId} channel=${channelId} reason=${access.policy.reasonCode}`);
             const responder = new SlackResponder(this.config, channelId, threadTs);
-            await responder.sendReceipt(access.responseText ?? "This channel request is blocked by Nobie's access policy.").catch(() => undefined);
+            await responder.sendReceipt(access.responseText ?? "This channel request is blocked by Knowbee's access policy.").catch(() => undefined);
             return;
         }
         log.info(`Accepted Slack message user=${userId} channel=${channelId} thread=${threadTs}`);

@@ -9,12 +9,12 @@ import {
   loadPromptSourceRegistry,
   rollbackPromptSourceBackup,
   writePromptSourceWithBackup,
-} from "../packages/core/src/memory/nobie-md.ts"
+} from "../packages/core/src/memory/knowbee-md.ts"
 
 const tempDirs: string[] = []
 
 function createPromptFixture(): string {
-  const root = mkdtempSync(join(tmpdir(), "nobie-prompt-ops-"))
+  const root = mkdtempSync(join(tmpdir(), "knowbee-prompt-ops-"))
   tempDirs.push(root)
   const promptsDir = join(root, "prompts")
   mkdirSync(promptsDir)
@@ -24,7 +24,7 @@ function createPromptFixture(): string {
     ["user.md", "User"],
     ["soul.md", "Soul"],
     ["planner.md", "Planner"],
-    ["nobie-execution.md", "Nobie Execution Decision Policy"],
+    ["knowbee-execution.md", "Knowbee Execution Decision Policy"],
     ["memory_policy.md", "Memory Policy"],
     ["tool_policy.md", "Tool Policy"],
     ["web_retrieval_planner.md", "Web Retrieval Recovery Planner"],
@@ -65,7 +65,7 @@ describe("prompt source operations", () => {
       "user",
       "soul",
       "planner",
-      "nobie_execution",
+      "knowbee_execution",
       "memory_policy",
       "tool_policy",
       "recovery_policy",

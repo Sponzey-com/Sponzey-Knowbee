@@ -17,8 +17,8 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
   inject(options: { method: string; url: string; payload?: unknown }): Promise<{ statusCode: number; json(): any }>
 }
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 class InspectorProvider implements AIProvider {
@@ -51,7 +51,7 @@ class InspectorProvider implements AIProvider {
 function useTempState(): void {
   closeDb()
   closeMemoryJournalDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task006-memory-inspector-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task006-memory-inspector-"))
   tempDirs.push(stateDir)
   const configPath = join(stateDir, "config.json5")
   writeFileSync(configPath, `{
@@ -63,8 +63,8 @@ function useTempState(): void {
       }
     }
   }`, "utf-8")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = configPath
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = configPath
   reloadConfig()
 }
 
@@ -105,10 +105,10 @@ async function seedCompaction(): Promise<void> {
 afterEach(() => {
   closeDb()
   closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -158,7 +158,7 @@ describe("task006 memory inspector api", () => {
         payload: {
           action: "safe_restore",
           ownerType: "main_agent",
-          ownerId: "agent:nobie",
+          ownerId: "agent:knowbee",
           sessionId: "session-task006-memory-inspector",
           requestGroupId: "group-task006-memory-inspector",
         },

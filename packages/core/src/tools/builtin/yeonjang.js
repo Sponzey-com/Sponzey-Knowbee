@@ -53,7 +53,7 @@ function findCameraDeviceById(devices, deviceId) {
 function buildCameraFacingUnsupportedMessage(params) {
     const facingLabel = params.facing === "front" ? "전면" : "후면";
     return [
-        `선택한 카메라 "${params.deviceName}" 에서는 ${facingLabel} 카메라를 Nobie/Yeonjang에서 강제로 선택할 수 없습니다.`,
+        `선택한 카메라 "${params.deviceName}" 에서는 ${facingLabel} 카메라를 Knowbee/Yeonjang에서 강제로 선택할 수 없습니다.`,
         "iPhone 연속성 카메라는 현재 렌즈(전면/후면) 전환 제어를 노출하지 않습니다.",
         `iPhone에서 ${facingLabel} 카메라로 직접 전환한 뒤 다시 촬영하거나, 다른 카메라를 선택해 주세요.`,
     ].join("\n");

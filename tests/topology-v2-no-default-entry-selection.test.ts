@@ -22,24 +22,24 @@ import { createEnterpriseTopologyRegistry } from "../packages/core/src/topology/
 
 const now = Date.UTC(2026, 4, 8, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 beforeEach(() => {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-topology-v2-no-default-entry-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-topology-v2-no-default-entry-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env.NOBIE_STATE_DIR
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.NOBIE_CONFIG
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()

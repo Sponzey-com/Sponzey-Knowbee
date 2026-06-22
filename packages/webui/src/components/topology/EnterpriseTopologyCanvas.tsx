@@ -272,8 +272,8 @@ function TopologyWorkspaceSimpleCreatePanel({
       </div>
       <div className="mt-1 text-xs leading-5 text-stone-500">
         {text(
-          "실행자를 추가하고 연결하면 내부 구조는 노비가 정리합니다.",
-          "Add executors and connect them; Nobie organizes the internal structure.",
+          "실행자를 추가하고 연결하면 내부 구조는 노우비가 정리합니다.",
+          "Add executors and connect them; Knowbee organizes the internal structure.",
         )}
       </div>
       <div className="mt-4 grid gap-2">
@@ -612,7 +612,7 @@ export function EnterpriseTopologyCanvasShell({
             className="border-b border-stone-200 bg-stone-50 px-4 py-2 text-xs font-medium text-stone-600"
             data-testid="topology-simple-relation-policy"
           >
-            {text("연결 의미는 노비가 자동으로 추천합니다.", "Nobie recommends connection meaning automatically.")}
+            {text("연결 의미는 노우비가 자동으로 추천합니다.", "Knowbee recommends connection meaning automatically.")}
           </div>
         )}
         <div className="min-h-0 flex-1">

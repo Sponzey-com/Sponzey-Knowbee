@@ -113,7 +113,7 @@ function draft(): SetupDraft {
 
 function checks(): SetupChecksResponse {
   return {
-    stateDir: "/tmp/nobie-task007",
+    stateDir: "/tmp/knowbee-task007",
     configFile: "/tmp/config.json",
     setupStateFile: "/tmp/setup.json",
     setupCompleted: true,
@@ -158,7 +158,7 @@ function status(withOrchestration = true): StatusResponse {
     orchestratorStatus: {
       status: withOrchestration ? "ready" : "disabled",
       reason: withOrchestration ? "ready" : "not enabled",
-      mode: withOrchestration ? "orchestration" : "single_nobie",
+      mode: withOrchestration ? "orchestration" : "single_knowbee",
       activeSubAgentCount: withOrchestration ? 2 : 0,
     },
     orchestration: withOrchestration ? {

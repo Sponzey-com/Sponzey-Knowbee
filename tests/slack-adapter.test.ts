@@ -49,8 +49,8 @@ runChannelAdapterContractTests({
     config: slackConfig,
     transport: transport(),
     now: () => 1_710_000_200_000,
-    botUserId: "U_NOBIE",
-    botDisplayName: "Nobie",
+    botUserId: "U_KNOWBEE",
+    botDisplayName: "Knowbee",
   }),
   inboundFixtures: slackInboundFixtures,
   interactionFixtures: slackInteractionFixtures,
@@ -61,8 +61,8 @@ describe("Slack adapter facade policies", () => {
   it("deduplicates repeated inbound events and ignores bot or self messages", async () => {
     const adapter = createSlackChannelAdapter({
       config: slackConfig,
-      botUserId: "U_NOBIE",
-      botDisplayName: "Nobie",
+      botUserId: "U_KNOWBEE",
+      botDisplayName: "Knowbee",
       now: () => 1_710_000_200_000,
     })
     const first = await adapter.normalizeInbound(slackInboundFixtures[0]!.rawPayload)
@@ -71,7 +71,7 @@ describe("Slack adapter facade policies", () => {
       type: "event_callback",
       event: {
         type: "message",
-        user: "U_NOBIE",
+        user: "U_KNOWBEE",
         text: "self echo",
         channel: "C_APPROVAL",
         ts: "1710000200.000100",
@@ -82,7 +82,7 @@ describe("Slack adapter facade policies", () => {
       type: "event_callback",
       event: {
         type: "message",
-        bot_id: "B_NOBIE",
+        bot_id: "B_KNOWBEE",
         user: "U_OTHER_BOT",
         text: "bot echo",
         channel: "C_APPROVAL",
@@ -100,8 +100,8 @@ describe("Slack adapter facade policies", () => {
   it("builds continuation lookup candidates from Slack thread metadata", async () => {
     const [reply] = await createSlackChannelAdapter({
       config: slackConfig,
-      botUserId: "U_NOBIE",
-      botDisplayName: "Nobie",
+      botUserId: "U_KNOWBEE",
+      botDisplayName: "Knowbee",
     }).normalizeInbound(slackInboundFixtures.find((fixture) => fixture.name === "thread reply")!.rawPayload)
 
     expect(reply?.continuationContext).toEqual({

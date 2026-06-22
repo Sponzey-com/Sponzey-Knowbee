@@ -261,7 +261,7 @@ describe("task022 no keyword execution decision static guard", () => {
       [
         "packages/core/src/runs/new-execution-decision.ts",
         `export function choose(userRequest: string) {
-          return userRequest.includes("코스피") ? "finance" : "nobie"
+          return userRequest.includes("코스피") ? "finance" : "knowbee"
         }`,
       ],
     ])

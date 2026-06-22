@@ -1,15 +1,15 @@
 import { cwd } from "node:process"
 
 export async function memoryInitCommand(): Promise<void> {
-  const { bootstrap, initNobieMd } = await import("@nobie/core")
+  const { bootstrap, initKnowbeeMd } = await import("@knowbee/core")
   bootstrap()
-  const target = initNobieMd(cwd())
-  console.log(`✓ NOBIE.md: ${target}`)
+  const target = initKnowbeeMd(cwd())
+  console.log(`✓ KNOWBEE.md: ${target}`)
   console.log("  파일을 열어 프로젝트 정보를 입력하세요.")
 }
 
 export async function memoryShowCommand(): Promise<void> {
-  const { bootstrap, recentMemories } = await import("@nobie/core")
+  const { bootstrap, recentMemories } = await import("@knowbee/core")
   bootstrap()
   const items = recentMemories(20)
   if (items.length === 0) {

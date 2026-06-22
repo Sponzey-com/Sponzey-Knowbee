@@ -88,9 +88,9 @@ function buildOpenAICompatibleProfile(
   apiKey: string | undefined,
 ): AuthProfile {
   if (apiKey) return buildProfile([apiKey])
-  if (providerId === "ollama") return buildProfile(["nobie-local"])
-  if (providerId === "llama") return buildProfile(["nobie-llama"])
-  if (providerId === "custom") return buildProfile(["nobie-custom"])
+  if (providerId === "ollama") return buildProfile(["knowbee-local"])
+  if (providerId === "llama") return buildProfile(["knowbee-llama"])
+  if (providerId === "custom") return buildProfile(["knowbee-custom"])
   return buildProfile([])
 }
 

@@ -26,16 +26,16 @@ import { resolveAgentCapabilityModelSummary } from "../packages/core/src/orchest
 import { buildOrchestrationRegistrySnapshot } from "../packages/core/src/orchestration/registry.js"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task008-capability-model-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task008-capability-model-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -148,10 +148,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()

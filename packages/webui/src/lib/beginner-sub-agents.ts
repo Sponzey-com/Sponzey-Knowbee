@@ -61,9 +61,9 @@ export interface BeginnerSubAgentReadinessPanelView {
 }
 
 const rootAgent = {
-  agentId: "agent:nobie",
-  displayName: "Nobie",
-  nickname: "Nobie",
+  agentId: "agent:knowbee",
+  displayName: "Knowbee",
+  nickname: "Knowbee",
 }
 
 const safePermissionProfile: PermissionProfile = {
@@ -186,7 +186,7 @@ function relationshipsFor(items: SetupSubAgentDraftItem[]): AgentRelationship[] 
   return items
     .filter((item) => item.status !== "archived")
     .map((item, index) => ({
-      edgeId: `edge:nobie:${item.agentId}`,
+      edgeId: `edge:knowbee:${item.agentId}`,
       parentAgentId: rootAgent.agentId,
       childAgentId: item.agentId,
       relationshipType: "parent_child",
@@ -221,8 +221,8 @@ function validationMessage(issue: SubAgentSettingsValidationIssue, language: UiL
       return pickUiText(language, "이름을 입력해야 합니다.", "Enter a name.")
     case "nickname_duplicate":
       return pickUiText(language, "이미 사용 중인 별명입니다.", "That nickname is already in use.")
-    case "reserved_nobie_name":
-      return pickUiText(language, "노비 이름은 메인 에이전트만 사용할 수 있습니다.", "Only the main agent can use the Nobie name.")
+    case "reserved_knowbee_name":
+      return pickUiText(language, "노우비 이름은 메인 에이전트만 사용할 수 있습니다.", "Only the main agent can use the Knowbee name.")
     case "parent_missing":
       return pickUiText(language, "상위 에이전트를 찾을 수 없습니다.", "The parent agent is missing.")
     default:
@@ -271,7 +271,7 @@ export function createBeginnerSubAgent(
   for (const issue of validation.issues) {
     if (issue.code === "display_name_required") fieldErrors.displayName = validationMessage(issue, language)
     if (issue.code === "nickname_duplicate") fieldErrors.nickname = validationMessage(issue, language)
-    if (issue.code === "reserved_nobie_name") {
+    if (issue.code === "reserved_knowbee_name") {
       fieldErrors.displayName = validationMessage(issue, language)
       fieldErrors.nickname = validationMessage(issue, language)
     }
@@ -360,7 +360,7 @@ export function buildBeginnerSubAgentReadinessPanel(input: {
   const title = pickUiText(input.language, "서브 에이전트 팀", "Sub-agent team")
   const summary =
     status === "empty"
-      ? pickUiText(input.language, "지금은 노비 혼자 처리합니다. 필요할 때 서브 에이전트를 추가하세요.", "Nobie works alone for now. Add sub-agents when needed.")
+      ? pickUiText(input.language, "지금은 노우비 혼자 처리합니다. 필요할 때 서브 에이전트를 추가하세요.", "Knowbee works alone for now. Add sub-agents when needed.")
       : status === "needs_attention" && subAgents.items.length === 0
         ? pickUiText(input.language, "오케스트레이션을 쓰려면 서브 에이전트를 먼저 추가해야 합니다.", "Add a sub-agent before using orchestration.")
         : status === "pending_runtime"

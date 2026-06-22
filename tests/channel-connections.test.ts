@@ -9,7 +9,7 @@ import {
   namespaceChannelIdentity,
 } from "../packages/core/src/channels/connections.ts"
 import { reloadConfig } from "../packages/core/src/config/index.js"
-import { DEFAULT_CONFIG, type NobieConfig } from "../packages/core/src/config/types.ts"
+import { DEFAULT_CONFIG, type KnowbeeConfig } from "../packages/core/src/config/types.ts"
 import {
   closeDb,
   getDb,
@@ -18,11 +18,11 @@ import {
   listChannelIdentityMappings,
 } from "../packages/core/src/db/index.js"
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
-function configWithLegacyChannels(): NobieConfig {
+function configWithLegacyChannels(): KnowbeeConfig {
   const config = structuredClone(DEFAULT_CONFIG)
   config.telegram = {
     enabled: true,
@@ -42,10 +42,10 @@ function configWithLegacyChannels(): NobieConfig {
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-channel-connections-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-channel-connections-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
   reloadConfig()
 }
 
@@ -55,10 +55,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()

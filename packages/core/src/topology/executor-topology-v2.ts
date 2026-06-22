@@ -16,7 +16,7 @@ import type {
 } from "./registry.js"
 
 export const EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION = 2 as const
-export const NOBIE_ROOT_AGENT_ID = "agent:nobie" as const
+export const KNOWBEE_ROOT_AGENT_ID = "agent:knowbee" as const
 
 export type ExecutorTopologyV2SchemaVersion = typeof EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION
 export type ExecutorTopologyV2Status = "draft" | "active" | "archived"
@@ -73,7 +73,7 @@ export interface ExecutorTopologyV2 {
 export interface ExecutorRuntimeGraphSnapshotV2 {
   topologyId: string
   schemaVersion: ExecutorTopologyV2SchemaVersion
-  rootAgentId: typeof NOBIE_ROOT_AGENT_ID
+  rootAgentId: typeof KNOWBEE_ROOT_AGENT_ID
   nodes: ExecutorNodeV2[]
   edges: ExecutorEdgeV2[]
   rootDirectChildIds: string[]
@@ -290,7 +290,7 @@ const STALE_METADATA_KEYS = new Set([
   "inferredTools",
   "lastSelectedNodeId",
   "nodeDefinitionAlternatives",
-  "nobieUnderstanding",
+  "knowbeeUnderstanding",
   "recommendedEntry",
   "runtimeDiagnostic",
   "runtimeDiagnostics",
@@ -298,7 +298,7 @@ const STALE_METADATA_KEYS = new Set([
   "selectedNodeId",
   "suggestionAlternatives",
   "understanding",
-  "understoodByNobie",
+  "understoodByKnowbee",
   "workspace",
 ])
 
@@ -1695,7 +1695,7 @@ export function buildExecutorRuntimeGraphSnapshotV2(
   return {
     topologyId: topology.id,
     schemaVersion: EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION,
-    rootAgentId: NOBIE_ROOT_AGENT_ID,
+    rootAgentId: KNOWBEE_ROOT_AGENT_ID,
     nodes: activeNodes,
     edges: activeEdges,
     rootDirectChildIds,

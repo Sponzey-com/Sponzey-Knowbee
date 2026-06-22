@@ -1,20 +1,20 @@
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-const MAX_NOBIE_MD_SIZE = 8000;
-const MEMORY_FILENAMES = ["NOBIE.md", "WIZBY.md", "HOWIE.md", "SIDEKICK.md"];
+const MAX_KNOWBEE_MD_SIZE = 8000;
+const MEMORY_FILENAMES = ["KNOWBEE.md", "WIZBY.md", "HOWIE.md", "SIDEKICK.md"];
 /**
- * Walk up from workDir (up to 3 parent levels) searching for NOBIE.md first,
+ * Walk up from workDir (up to 3 parent levels) searching for KNOWBEE.md first,
  * then legacy WIZBY.md / HOWIE.md / SIDEKICK.md.
  * Returns the file contents (trimmed to 8KB) or null if not found.
  */
-export function loadNobieMd(workDir) {
+export function loadKnowbeeMd(workDir) {
     let current = workDir;
     for (let i = 0; i < 4; i++) {
         for (const filename of MEMORY_FILENAMES) {
             const candidate = join(current, filename);
             if (existsSync(candidate)) {
                 try {
-                    return readFileSync(candidate, "utf-8").slice(0, MAX_NOBIE_MD_SIZE);
+                    return readFileSync(candidate, "utf-8").slice(0, MAX_KNOWBEE_MD_SIZE);
                 }
                 catch {
                     return null;
@@ -45,18 +45,18 @@ const TEMPLATE = `# 프로젝트 메모리
 ## 기타 메모
 - (에이전트가 알아야 할 기타 사항)
 `;
-/** Write a NOBIE.md template to the given directory. */
-export function initNobieMd(dir) {
-    const target = join(dir, "NOBIE.md");
+/** Write a KNOWBEE.md template to the given directory. */
+export function initKnowbeeMd(dir) {
+    const target = join(dir, "KNOWBEE.md");
     if (!existsSync(target)) {
         writeFileSync(target, TEMPLATE, "utf-8");
     }
     return target;
 }
-export const loadWizbyMd = loadNobieMd;
-export const initWizbyMd = initNobieMd;
-export const loadHowieMd = loadNobieMd;
-export const initHowieMd = initNobieMd;
-export const loadSidekickMd = loadNobieMd;
-export const initSidekickMd = initNobieMd;
+export const loadWizbyMd = loadKnowbeeMd;
+export const initWizbyMd = initKnowbeeMd;
+export const loadHowieMd = loadKnowbeeMd;
+export const initHowieMd = initKnowbeeMd;
+export const loadSidekickMd = loadKnowbeeMd;
+export const initSidekickMd = initKnowbeeMd;
 //# sourceMappingURL=sidekick-md.js.map

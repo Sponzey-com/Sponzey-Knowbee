@@ -5,10 +5,10 @@ import { listMessageLedgerEvents } from "../db/index.js";
 import { recordOrchestrationEvent } from "../orchestration/event-ledger.js";
 import { emitAssistantTextDelivery, resolveAssistantTextDeliveryOutcome, } from "./delivery.js";
 import { hashLedgerValue, recordMessageLedgerEvent } from "./message-ledger.js";
-const NOBIE_SPEAKER = {
-    entityType: "nobie",
-    entityId: "agent:nobie",
-    nicknameSnapshot: "노비",
+const KNOWBEE_SPEAKER = {
+    entityType: "knowbee",
+    entityId: "agent:knowbee",
+    nicknameSnapshot: "노우비",
 };
 function finalDeliveryTargetKey(input) {
     return `${input.parentRunId}:${input.source}:${hashLedgerValue(input.sessionId).slice(0, 16)}`;
@@ -21,9 +21,9 @@ function finalDeliveryIdempotencyKey(input) {
 }
 function normalizeSpeaker(speaker) {
     if (!speaker)
-        return NOBIE_SPEAKER;
+        return KNOWBEE_SPEAKER;
     const nicknameSnapshot = normalizeNicknameSnapshot(speaker.nicknameSnapshot);
-    return nicknameSnapshot ? { ...speaker, nicknameSnapshot } : NOBIE_SPEAKER;
+    return nicknameSnapshot ? { ...speaker, nicknameSnapshot } : KNOWBEE_SPEAKER;
 }
 function recordOrchestrationEventSafely(input) {
     try {
@@ -38,7 +38,7 @@ function identity(input) {
         schemaVersion: CONTRACT_SCHEMA_VERSION,
         entityType: input.entityType,
         entityId: input.entityId,
-        owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+        owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
         idempotencyKey: input.idempotencyKey,
         parent: { parentRunId: input.parentRunId },
     };
@@ -79,7 +79,7 @@ export function buildFinalDeliveryAttributions(resultReports = []) {
     }
     return attributions;
 }
-export function buildNobieFinalAnswer(input) {
+export function buildKnowbeeFinalAnswer(input) {
     const text = input.text.trim();
     const attributions = buildFinalDeliveryAttributions(input.resultReports);
     if (attributions.length === 0)
@@ -138,7 +138,7 @@ function commitBlocked(input) {
 }
 export async function commitFinalDelivery(input) {
     const speaker = normalizeSpeaker(input.speaker);
-    const answer = buildNobieFinalAnswer({
+    const answer = buildKnowbeeFinalAnswer({
         text: input.text,
         ...(input.resultReports ? { resultReports: input.resultReports } : {}),
     });
@@ -215,7 +215,7 @@ export async function commitFinalDelivery(input) {
     }
     const visibleMessage = {
         identity: identity({
-            entityType: "nobie",
+            entityType: "knowbee",
             entityId: `final-message:${input.parentRunId}`,
             parentRunId: input.parentRunId,
             idempotencyKey: `final-message:${input.parentRunId}`,

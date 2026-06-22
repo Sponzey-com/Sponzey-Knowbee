@@ -123,7 +123,7 @@ export interface RuntimeManifestAdminUi {
     reason: string;
 }
 export interface RuntimeManifest {
-    kind: "nobie.runtime.manifest";
+    kind: "knowbee.runtime.manifest";
     version: 1;
     id: string;
     createdAt: string;

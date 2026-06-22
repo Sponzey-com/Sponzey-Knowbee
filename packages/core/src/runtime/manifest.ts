@@ -6,7 +6,7 @@ import BetterSqlite3 from "better-sqlite3"
 import { getConfig, PATHS } from "../config/index.js"
 import { getDatabaseMigrationStatus } from "../config/operations.js"
 import { getMqttBrokerSnapshot, getMqttExtensionSnapshots } from "../mqtt/broker.js"
-import { checkPromptSourceLocaleParity, loadPromptSourceRegistry } from "../memory/nobie-md.js"
+import { checkPromptSourceLocaleParity, loadPromptSourceRegistry } from "../memory/knowbee-md.js"
 import { buildReleaseManifest } from "../release/package.js"
 import { getCurrentAppVersion, getCurrentDisplayVersion, getWorkspaceRootPath } from "../version.js"
 import { getProviderCapabilityMatrix, type ProviderCapabilityMatrix } from "../ai/capabilities.js"
@@ -143,7 +143,7 @@ export interface RuntimeManifestAdminUi {
 }
 
 export interface RuntimeManifest {
-  kind: "nobie.runtime.manifest"
+  kind: "knowbee.runtime.manifest"
   version: 1
   id: string
   createdAt: string
@@ -499,7 +499,7 @@ export function buildRuntimeManifest(options: RuntimeManifestOptions = {}): Runt
   const gitDescribe = commandOutput("git", ["describe", "--tags", "--always", "--dirty"], workspaceRoot)
   const gitCommit = commandOutput("git", ["rev-parse", "--short", "HEAD"], workspaceRoot)
   const base = {
-    kind: "nobie.runtime.manifest" as const,
+    kind: "knowbee.runtime.manifest" as const,
     version: 1 as const,
     createdAt: now.toISOString(),
     app: {

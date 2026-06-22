@@ -16,14 +16,14 @@ import { runDoctor } from "../packages/core/src/diagnostics/doctor.js"
 import { recordMessageLedgerEvent } from "../packages/core/src/runs/message-ledger.js"
 import { createRootRun } from "../packages/core/src/runs/store.js"
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempConfig(): void {
   closeDb()
   resetControlEventProjectionForTest()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task009-control-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task009-control-"))
   tempDirs.push(stateDir)
   const configPath = join(stateDir, "config.json5")
   writeFileSync(configPath, `{
@@ -33,8 +33,8 @@ function useTempConfig(): void {
     memory: { searchMode: "fts", sessionRetentionDays: 30 },
     scheduler: { enabled: false, timezone: "Asia/Seoul" }
   }`, "utf-8")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = configPath
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = configPath
   reloadConfig()
 }
 
@@ -63,10 +63,10 @@ beforeEach(() => {
 afterEach(() => {
   resetControlEventProjectionForTest()
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -120,7 +120,7 @@ describe("task009 control-plane timeline", () => {
 
     const rows = listControlEvents({ limit: 100 }).map((row) => row.event_type)
 
-    expect(doctor.kind).toBe("nobie.doctor.report")
+    expect(doctor.kind).toBe("knowbee.doctor.report")
     expect(rows).toEqual(expect.arrayContaining([
       "gateway.started",
       "channel.connected",
@@ -191,7 +191,7 @@ describe("task009 control-plane timeline", () => {
       summary: "provider returned <html><body>403</body></html>",
       detail: {
         recoveryKey: "ai:openai:chatgpt-oauth:403",
-        localPath: "/Users/dongwooshin/.nobie/secrets/report.json",
+        localPath: "/Users/dongwooshin/.knowbee/secrets/report.json",
         accessToken: "Bearer sk-secret-token-value",
         providerRawResponse: "<html><body>403 forbidden</body></html>",
       },

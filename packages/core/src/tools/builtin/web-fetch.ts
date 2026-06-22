@@ -12,7 +12,7 @@ import {
 import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js"
 import type { AgentTool, ToolContext, ToolResult } from "../types.js"
 
-const USER_AGENT = "Sponzey Nobie/0.1.0"
+const USER_AGENT = "Sponzey Knowbee/0.1.0"
 const BLOCKED_SCHEMES = ["file:", "data:", "javascript:"]
 
 interface WebFetchParams {

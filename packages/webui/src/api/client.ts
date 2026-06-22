@@ -82,7 +82,7 @@ import type {
 } from "./adapters/types"
 
 const BASE = ""
-const UI_MODE_FALLBACK_KEY = "nobie_preferred_ui_mode"
+const UI_MODE_FALLBACK_KEY = "knowbee_preferred_ui_mode"
 
 export type UiMode = "beginner" | "advanced" | "admin"
 export type PreferredUiMode = "beginner" | "advanced"
@@ -900,7 +900,7 @@ function buildBrowserUiModeFallback(mode = getBrowserPreferredUiModeFallback()):
 
 export function getStoredToken(): string {
   return (
-    localStorage.getItem("nobie_token") ??
+    localStorage.getItem("knowbee_token") ??
     localStorage.getItem("wizby_token") ??
     localStorage.getItem("howie_token") ??
     ""
@@ -908,7 +908,7 @@ export function getStoredToken(): string {
 }
 
 export function clearStoredToken(): void {
-  localStorage.removeItem("nobie_token")
+  localStorage.removeItem("knowbee_token")
   localStorage.removeItem("wizby_token")
   localStorage.removeItem("howie_token")
 }

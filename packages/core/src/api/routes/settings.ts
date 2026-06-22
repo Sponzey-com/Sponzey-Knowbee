@@ -28,8 +28,8 @@ import {
 } from "../../channels/connections.js"
 import { getFeatureFlag } from "../../runtime/rollout-safety.js"
 
-function isOrchestrationMode(value: unknown): value is "single_nobie" | "orchestration" {
-  return value === "single_nobie" || value === "orchestration"
+function isOrchestrationMode(value: unknown): value is "single_knowbee" | "orchestration" {
+  return value === "single_knowbee" || value === "orchestration"
 }
 
 function buildLegacySettingsSnapshot() {
@@ -71,7 +71,7 @@ function buildLegacySettingsSnapshot() {
       allowedPaths: cfg.security.allowedPaths,
     },
     orchestration: {
-      mode: cfg.orchestration.mode ?? "single_nobie",
+      mode: cfg.orchestration.mode ?? "single_knowbee",
       featureFlagEnabled: cfg.orchestration.featureFlagEnabled === true,
       maxDelegationTurns: cfg.orchestration.maxDelegationTurns,
     },

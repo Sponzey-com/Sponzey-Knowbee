@@ -1,4 +1,4 @@
-import type { NobieConfig } from "../config/types.js";
+import type { KnowbeeConfig } from "../config/types.js";
 import type { ChannelSource } from "./contracts.js";
 export type ChannelSmokeChannel = ChannelSource;
 export type ChannelSmokeRunMode = "dry-run" | "live-run";
@@ -90,7 +90,7 @@ export interface ChannelSmokeRunResult {
     finishedAt?: number;
 }
 export interface ChannelSmokeRunnerOptions {
-    config: NobieConfig;
+    config: KnowbeeConfig;
     scenarios?: ChannelSmokeScenario[];
     executeScenario: (scenario: ChannelSmokeScenario) => Promise<ChannelSmokeTrace>;
 }
@@ -116,7 +116,7 @@ export interface PersistedChannelSmokeRunnerOptions extends Omit<ChannelSmokeRun
     executeScenario?: (scenario: ChannelSmokeScenario) => Promise<ChannelSmokeTrace>;
 }
 export declare function getDefaultChannelSmokeScenarios(): ChannelSmokeScenario[];
-export declare function resolveChannelSmokeReadiness(config: NobieConfig, scenario: ChannelSmokeScenario): ChannelSmokeReadiness;
+export declare function resolveChannelSmokeReadiness(config: KnowbeeConfig, scenario: ChannelSmokeScenario): ChannelSmokeReadiness;
 export declare function validateChannelSmokeTrace(scenario: ChannelSmokeScenario, trace: ChannelSmokeTrace): ChannelSmokeValidation;
 export declare function runChannelSmokeScenarios(options: ChannelSmokeRunnerOptions): Promise<ChannelSmokeRunResult[]>;
 export declare function createDryRunChannelSmokeExecutor(input?: {

@@ -552,7 +552,7 @@ export function runDoctor(options = {}) {
     const summary = summarize(checks);
     const createdAt = (options.now ?? new Date()).toISOString();
     const report = sanitizeValue({
-        kind: "nobie.doctor.report",
+        kind: "knowbee.doctor.report",
         version: 1,
         id: `${manifest.id}-${mode}`,
         mode,

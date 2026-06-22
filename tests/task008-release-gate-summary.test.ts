@@ -4,7 +4,7 @@ import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, getDb } from "../packages/core/src/db/index.ts"
-import { ensurePromptSourceFiles } from "../packages/core/src/memory/nobie-md.ts"
+import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
 import { buildReleaseManifest } from "../packages/core/src/release/package.ts"
 import {
   buildWebRetrievalReleaseGateSummary,
@@ -13,8 +13,8 @@ import {
 } from "../packages/core/src/runs/web-retrieval-smoke.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 
 function tempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -29,7 +29,7 @@ function writeFile(rootDir: string, relativePath: string, content: string): void
 }
 
 function createReleaseRoot(): string {
-  const rootDir = tempDir("nobie-task008-release-root-")
+  const rootDir = tempDir("knowbee-task008-release-root-")
   writeFile(rootDir, "package.json", JSON.stringify({ version: "9.9.9" }))
   writeFile(rootDir, "packages/cli/dist/index.js", "console.log('cli')\n")
   writeFile(rootDir, "packages/core/dist/index.js", "export const core = true\n")
@@ -54,19 +54,19 @@ function createReleaseRoot(): string {
 
 beforeEach(() => {
   closeDb()
-  const stateDir = tempDir("nobie-task008-state-")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = join(stateDir, "config.json5")
+  const stateDir = tempDir("knowbee-task008-state-")
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
   reloadConfig()
   getDb()
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()

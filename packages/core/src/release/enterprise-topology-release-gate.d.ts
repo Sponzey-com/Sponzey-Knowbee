@@ -2,7 +2,7 @@ import type { FeatureFlagMode } from "../runtime/rollout-safety.js";
 export type EnterpriseTopologyReleaseModeId = "contracts_validator_only" | "dry_run_shadow" | "gated_mode" | "opt_in_routing";
 export type EnterpriseTopologyReleaseGateStatus = "passed" | "warning" | "failed";
 export type EnterpriseTopologyReleaseFeatureFlagKey = "enterprise_topology_registry" | "enterprise_topology_validator" | "enterprise_topology_compiler" | "topology_runtime_mvp" | "topology_runtime_recursive_delegation" | "topology_tool_runtime" | "topology_exhaustion_failure" | "declared_observed_topology_analysis" | "enterprise_topology_builder_ui" | "topology_runtime_enabled";
-export type EnterpriseTopologyReleaseGateCheckId = "feature_flag_matrix" | "contracts_validator_only_stage" | "dry_run_shadow_stage" | "gated_mode_stage" | "opt_in_routing_stage" | "feature_flag_off_path" | "single_nobie_fallback" | "sub_agent_regression_suite" | "channel_finalizer_regression_suite" | "webui_build_gate" | "topology_workspace_route_compatibility" | "topology_workspace_layer_gate" | "topology_workspace_executor_first_usability" | "topology_workspace_usability_gate" | "topology_runtime_smoke" | "topology_rollback_smoke" | "active_topology_snapshot_restore";
+export type EnterpriseTopologyReleaseGateCheckId = "feature_flag_matrix" | "contracts_validator_only_stage" | "dry_run_shadow_stage" | "gated_mode_stage" | "opt_in_routing_stage" | "feature_flag_off_path" | "single_knowbee_fallback" | "sub_agent_regression_suite" | "channel_finalizer_regression_suite" | "webui_build_gate" | "topology_workspace_route_compatibility" | "topology_workspace_layer_gate" | "topology_workspace_executor_first_usability" | "topology_workspace_usability_gate" | "topology_runtime_smoke" | "topology_rollback_smoke" | "active_topology_snapshot_restore";
 export type EnterpriseTopologyWorkspaceLayerId = "build" | "run" | "trace" | "improve";
 export interface EnterpriseTopologyReleaseFeatureFlagDefinition {
     featureKey: EnterpriseTopologyReleaseFeatureFlagKey;
@@ -38,27 +38,27 @@ export interface EnterpriseTopologyReleaseFlagMatrixRow {
     description: string;
 }
 export interface EnterpriseTopologyRuntimeSmoke {
-    kind: "nobie.enterprise_topology.runtime_smoke";
+    kind: "knowbee.enterprise_topology.runtime_smoke";
     generatedAt: string;
     featureFlagKey: "topology_runtime_enabled";
     featureFlagModeForSmoke: FeatureFlagMode;
     featureFlagOffPathPassed: boolean;
-    singleNobieFallbackPassed: boolean;
+    singleKnowbeeFallbackPassed: boolean;
     subAgentRuntimePreserved: boolean;
     topologyRuntimeMvpPassed: boolean;
-    nobieFinalAnswerOwnershipPreserved: boolean;
+    knowbeeFinalAnswerOwnershipPreserved: boolean;
     channelFinalizerDedupePreserved: boolean;
     status: EnterpriseTopologyReleaseGateStatus;
     blockingFailures: string[];
 }
 export interface EnterpriseTopologyRollbackSmoke {
-    kind: "nobie.enterprise_topology.rollback_smoke";
+    kind: "knowbee.enterprise_topology.rollback_smoke";
     generatedAt: string;
     featureFlagKey: "topology_runtime_enabled";
     featureFlagModeBeforeRollback: FeatureFlagMode;
     featureFlagModeAfterRollback: "off";
     dataDeletionRequired: false;
-    singleNobieModeRestored: boolean;
+    singleKnowbeeModeRestored: boolean;
     activeTopologyRollbackVerified: boolean;
     compiledSnapshotRestoreVerified: boolean;
     registryHistoryPreserved: boolean;
@@ -91,7 +91,7 @@ export interface EnterpriseTopologyWorkspaceInternalStability {
     executorGraphCompilesToEnterpriseTopology: boolean;
     executorGraphMetadataProjectionOnly: boolean;
     ruleBasedInferenceFallback: boolean;
-    featureFlagOffSingleNobieFallback: boolean;
+    featureFlagOffSingleKnowbeeFallback: boolean;
     advancedTopologySurfaceRemoved: boolean;
     rollbackProjectionRestoreVerified: boolean;
 }
@@ -103,7 +103,7 @@ export interface EnterpriseTopologyWorkspaceRouteCompatibility {
     legacyRuntimeMenuRemoved: boolean;
 }
 export interface EnterpriseTopologyWorkspaceUsabilityGate {
-    kind: "nobie.enterprise_topology.workspace_usability";
+    kind: "knowbee.enterprise_topology.workspace_usability";
     generatedAt: string;
     featureFlagKey: "enterprise_topology_builder_ui";
     canonicalRoute: "/advanced/topology";
@@ -137,7 +137,7 @@ export interface EnterpriseTopologyReleaseGateCheck {
     evidence: unknown;
 }
 export interface EnterpriseTopologyReleaseReadinessSummary {
-    kind: "nobie.enterprise_topology.release_readiness";
+    kind: "knowbee.enterprise_topology.release_readiness";
     version: 1;
     generatedAt: string;
     requestedMode: EnterpriseTopologyReleaseModeId;
@@ -180,12 +180,12 @@ export declare const ENTERPRISE_TOPOLOGY_RELEASE_REGRESSION_COMMANDS: Enterprise
 export declare function buildEnterpriseTopologyRuntimeSmoke(input?: {
     now?: Date;
     featureFlagModeForSmoke?: FeatureFlagMode;
-    overrides?: Partial<Pick<EnterpriseTopologyRuntimeSmoke, "featureFlagOffPathPassed" | "singleNobieFallbackPassed" | "subAgentRuntimePreserved" | "topologyRuntimeMvpPassed" | "nobieFinalAnswerOwnershipPreserved" | "channelFinalizerDedupePreserved">>;
+    overrides?: Partial<Pick<EnterpriseTopologyRuntimeSmoke, "featureFlagOffPathPassed" | "singleKnowbeeFallbackPassed" | "subAgentRuntimePreserved" | "topologyRuntimeMvpPassed" | "knowbeeFinalAnswerOwnershipPreserved" | "channelFinalizerDedupePreserved">>;
 }): EnterpriseTopologyRuntimeSmoke;
 export declare function buildEnterpriseTopologyRollbackSmoke(input?: {
     now?: Date;
     featureFlagModeBeforeRollback?: FeatureFlagMode;
-    overrides?: Partial<Pick<EnterpriseTopologyRollbackSmoke, "singleNobieModeRestored" | "activeTopologyRollbackVerified" | "compiledSnapshotRestoreVerified" | "registryHistoryPreserved">>;
+    overrides?: Partial<Pick<EnterpriseTopologyRollbackSmoke, "singleKnowbeeModeRestored" | "activeTopologyRollbackVerified" | "compiledSnapshotRestoreVerified" | "registryHistoryPreserved">>;
 }): EnterpriseTopologyRollbackSmoke;
 export declare function buildEnterpriseTopologyWorkspaceUsabilityGate(input?: {
     now?: Date;

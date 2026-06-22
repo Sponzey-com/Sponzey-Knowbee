@@ -15,7 +15,7 @@
 
 ## 프롬프트와 코드 책임 분리
 
-- prompt file loader와 registry는 `memory/nobie-md.ts`가 담당합니다.
+- prompt file loader와 registry는 `memory/knowbee-md.ts`가 담당합니다.
 - runtime 사용처별 prompt source 선택과 policy block 렌더링은 `prompt-policy-adapter.ts`가 담당합니다.
 - agent prompt bundle 조립은 `prompt-bundle.ts`가 담당합니다.
 - execution harness는 자연어 의미를 코드로 검색하지 않고, adapter가 제공한 정책 블록과 구조화된 context block을 모델에 제공합니다.

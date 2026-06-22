@@ -1,5 +1,5 @@
 import { authMiddleware } from "../middleware/auth.js";
-import { checkPromptSourceLocaleParity, dryRunPromptSourceAssembly, loadPromptSourceRegistry, rollbackPromptSourceBackup, writePromptSourceWithBackup, } from "../../memory/nobie-md.js";
+import { checkPromptSourceLocaleParity, dryRunPromptSourceAssembly, loadPromptSourceRegistry, rollbackPromptSourceBackup, writePromptSourceWithBackup, } from "../../memory/knowbee-md.js";
 import { runPromptSourceRegression } from "../../memory/prompt-regression.js";
 function resolveWorkDir(value) {
     return typeof value === "string" && value.trim().length > 0 ? value.trim() : process.cwd();

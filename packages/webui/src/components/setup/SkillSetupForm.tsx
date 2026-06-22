@@ -51,7 +51,7 @@ export function SkillSetupForm({
         <div>
           <div className="text-base font-semibold text-stone-900">{text("작업 능력 확장 (Skill)", "Skill Extensions")}</div>
           <div className="mt-1 text-sm leading-6 text-stone-600">
-            {text("Nobie가 참고할 작업 지침이나 확장 능력을 등록하는 단계입니다. 지금은 로컬 Skill과 기본 Skill 표시를 지원합니다.", "This step registers helper instructions and extra abilities Nobie can use. Right now it supports local skills and built-in skill markers.")}
+            {text("Knowbee가 참고할 작업 지침이나 확장 능력을 등록하는 단계입니다. 지금은 로컬 Skill과 기본 Skill 표시를 지원합니다.", "This step registers helper instructions and extra abilities Knowbee can use. Right now it supports local skills and built-in skill markers.")}
           </div>
         </div>
         <button
@@ -64,7 +64,7 @@ export function SkillSetupForm({
       </div>
 
       <div className="rounded-2xl bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-600">
-        {text("Skill이 없으면 특정 작업을 더 쉽게 처리하도록 가르치는 기능이 부족할 수 있습니다.", "Without skills, Nobie may have fewer specialized instructions for handling certain tasks easily.")}
+        {text("Skill이 없으면 특정 작업을 더 쉽게 처리하도록 가르치는 기능이 부족할 수 있습니다.", "Without skills, Knowbee may have fewer specialized instructions for handling certain tasks easily.")}
       </div>
 
       {value.items.length === 0 ? (

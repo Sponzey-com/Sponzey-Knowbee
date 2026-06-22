@@ -30,7 +30,7 @@ describe("filesystem verification helpers", () => {
   })
 
   it("verifies created files and directories from explicit mutation paths", () => {
-    const root = mkdtempSync(join(tmpdir(), "nobie-fs-verify-"))
+    const root = mkdtempSync(join(tmpdir(), "knowbee-fs-verify-"))
     tempDirs.push(root)
 
     const folderPath = join(root, "output")
@@ -51,7 +51,7 @@ describe("filesystem verification helpers", () => {
   })
 
   it("reports missing evidence when inferred targets do not exist", () => {
-    const root = mkdtempSync(join(tmpdir(), "nobie-fs-verify-"))
+    const root = mkdtempSync(join(tmpdir(), "knowbee-fs-verify-"))
     tempDirs.push(root)
 
     const result = verifyFilesystemTargets({
@@ -67,13 +67,13 @@ describe("filesystem verification helpers", () => {
 
   it("treats unquoted Korean download-folder typos as the OS Downloads candidate", () => {
     const result = verifyFilesystemTargets({
-      originalRequest: "다운도르 밑에 \"nobie-path-alias-target\" 폴더를 만들어줘",
+      originalRequest: "다운도르 밑에 \"knowbee-path-alias-target\" 폴더를 만들어줘",
       mutationPaths: [],
       workDir: "/tmp/work",
     })
 
     expect(result.ok).toBe(false)
-    expect(result.message).toContain("Downloads/nobie-path-alias-target")
-    expect(result.message).not.toContain("다운도르/nobie-path-alias-target")
+    expect(result.message).toContain("Downloads/knowbee-path-alias-target")
+    expect(result.message).not.toContain("다운도르/knowbee-path-alias-target")
   })
 })

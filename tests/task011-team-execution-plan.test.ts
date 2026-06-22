@@ -47,22 +47,22 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task011-team-plan-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task011-team-plan-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
-function owner(agentId = "agent:nobie"): RuntimeIdentity["owner"] {
-  return agentId === "agent:nobie"
-    ? { ownerType: "nobie", ownerId: agentId }
+function owner(agentId = "agent:knowbee"): RuntimeIdentity["owner"] {
+  return agentId === "agent:knowbee"
+    ? { ownerType: "knowbee", ownerId: agentId }
     : { ownerType: "sub_agent", ownerId: agentId }
 }
 
@@ -167,7 +167,7 @@ function membership(
     membershipId: `${teamId}:membership:${sortOrder}`,
     teamId,
     agentId,
-    ownerAgentIdSnapshot: "agent:nobie",
+    ownerAgentIdSnapshot: "agent:knowbee",
     teamRoles: roles,
     primaryRole: roles[0] ?? "member",
     required: true,
@@ -198,7 +198,7 @@ function teamConfig(overrides: Partial<TeamConfig> = {}): TeamConfig {
     nickname: "Execution Team",
     status: "enabled",
     purpose: "Expand team target into member execution tasks.",
-    ownerAgentId: "agent:nobie",
+    ownerAgentId: "agent:knowbee",
     leadAgentId: "agent:lead",
     memberCountMin: 1,
     memberCountMax: 8,
@@ -265,7 +265,7 @@ function seedAgents(): void {
     "agent:primary",
     "agent:fallback",
   ].entries()) {
-    upsertAgentRelationship(relationship("agent:nobie", agentId, index), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", agentId, index), { now })
   }
 }
 
@@ -311,10 +311,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -352,7 +352,7 @@ describe("task011 team execution plan", () => {
     const plan = buildPlan()
     expect(validateTeamExecutionPlan(plan).ok).toBe(true)
     expect(plan.teamNicknameSnapshot).toBe("Execution Team")
-    expect(plan.ownerAgentId).toBe("agent:nobie")
+    expect(plan.ownerAgentId).toBe("agent:knowbee")
     expect(plan.leadAgentId).toBe("agent:lead")
     expect(plan.conflictPolicySnapshot).toBe("reviewer_decides")
     expect(plan.resultPolicySnapshot).toBe("reviewer_required")
@@ -472,14 +472,14 @@ describe("task011 team execution plan", () => {
     )
     expect(result.ok).toBe(true)
     const plan = expectPresent(result.plan, "owner synthesis plan should exist")
-    expect(plan.leadAgentId).toBe("agent:nobie")
+    expect(plan.leadAgentId).toBe("agent:knowbee")
     expect(plan.coverageReport.policySnapshot).toEqual(
       expect.objectContaining({
         effectiveSynthesisMode: "owner_synthesis",
-        synthesisAgentId: "agent:nobie",
+        synthesisAgentId: "agent:knowbee",
       }),
     )
-    expect(taskKinds(assignmentFor(plan, "agent:nobie"))).toContain("synthesis")
+    expect(taskKinds(assignmentFor(plan, "agent:knowbee"))).toContain("synthesis")
   })
 
   it("selects fallback members only when their primary is unavailable", () => {

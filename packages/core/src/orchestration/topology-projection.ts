@@ -25,7 +25,7 @@ import {
   createAgentRegistryService,
 } from "./registry.js"
 
-export type AgentTopologyNodeKind = "nobie" | "sub_agent" | "team" | "team_lead" | "team_role"
+export type AgentTopologyNodeKind = "knowbee" | "sub_agent" | "team" | "team_lead" | "team_role"
 
 export type AgentTopologyEdgeKind = "parent_child" | "team_membership"
 export type AgentTopologyDiagnosticSeverity = "info" | "warning" | "blocked" | "invalid"
@@ -81,7 +81,7 @@ export interface AgentTopologyEdge {
 export interface AgentTopologyAgentInspector {
   agentId: string
   nodeId: string
-  kind: "nobie" | "sub_agent"
+  kind: "knowbee" | "sub_agent"
   displayName: string
   nickname?: string
   status: string
@@ -379,7 +379,7 @@ function booleanMetadata(node: RelationshipGraphNode, key: string): boolean | un
 }
 
 function defaultAgentPosition(node: RelationshipGraphNode, index: number): AgentTopologyPosition {
-  const depth = numberMetadata(node, "depth") ?? (node.entityType === "nobie" ? 0 : 1)
+  const depth = numberMetadata(node, "depth") ?? (node.entityType === "knowbee" ? 0 : 1)
   const row = Number.isFinite(depth) ? index : index + 1
   return {
     x: 80 + Math.max(0, depth) * 280,
@@ -393,9 +393,9 @@ function agentTopologyNode(input: {
   layout: AgentTreeLayoutPreference
   diagnostics: AgentTopologyDiagnostic[]
 }): AgentTopologyNode {
-  const kind: AgentTopologyNodeKind = input.node.entityType === "nobie" ? "nobie" : "sub_agent"
+  const kind: AgentTopologyNodeKind = input.node.entityType === "knowbee" ? "knowbee" : "sub_agent"
   const metadata = nodeMetadata(input.node)
-  const badges: string[] = [kind === "nobie" ? "Nobie" : "SubAgent"]
+  const badges: string[] = [kind === "knowbee" ? "Knowbee" : "SubAgent"]
   if (metadata.topLevel === true) badges.push("top-level")
   if (metadata.executionCandidate === true) badges.push("candidate")
   const blockedReason = stringMetadata(input.node, "blockedReason")
@@ -475,7 +475,7 @@ function buildAgentInspector(input: {
   return {
     agentId: input.node.entityId,
     nodeId: input.node.nodeId,
-    kind: input.node.entityType === "nobie" ? "nobie" : "sub_agent",
+    kind: input.node.entityType === "knowbee" ? "knowbee" : "sub_agent",
     displayName: redactedText(agent?.displayName ?? input.node.label, input.node.entityId),
     ...(agent?.nickname ? { nickname: redactedText(agent.nickname) } : {}),
     status: redactedText(agent?.status ?? input.node.status ?? "unknown"),

@@ -4,14 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PIDS_DIR="$ROOT_DIR/pids"
 
-GATEWAY_PID_FILE="$PIDS_DIR/nobie-gateway.pid"
-WEBUI_PID_FILE="$PIDS_DIR/nobie-webui.pid"
+GATEWAY_PID_FILE="$PIDS_DIR/knowbee-gateway.pid"
+WEBUI_PID_FILE="$PIDS_DIR/knowbee-webui.pid"
 
-GATEWAY_PORT="${NOBIE_GATEWAY_PORT:-18888}"
-WEBUI_PORT="${NOBIE_WEBUI_PORT:-4220}"
+GATEWAY_PORT="${KNOWBEE_GATEWAY_PORT:-18888}"
+WEBUI_PORT="${KNOWBEE_WEBUI_PORT:-4220}"
 LABEL_SUFFIX="$(printf '%s' "$ROOT_DIR" | cksum | awk '{print $1}')"
-GATEWAY_LAUNCHD_LABEL="com.sponzey.nobie.${LABEL_SUFFIX}.gateway"
-WEBUI_LAUNCHD_LABEL="com.sponzey.nobie.${LABEL_SUFFIX}.webui"
+GATEWAY_LAUNCHD_LABEL="com.sponzey.knowbee.${LABEL_SUFFIX}.gateway"
+WEBUI_LAUNCHD_LABEL="com.sponzey.knowbee.${LABEL_SUFFIX}.webui"
 
 read_pid() {
   local pid_file="$1"
@@ -54,7 +54,7 @@ pid_belongs_to_repo() {
 }
 
 can_use_launchctl() {
-  [[ "${NOBIE_DISABLE_LAUNCHCTL:-0}" != "1" ]] \
+  [[ "${KNOWBEE_DISABLE_LAUNCHCTL:-0}" != "1" ]] \
     && [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]] \
     && command -v launchctl >/dev/null 2>&1
 }

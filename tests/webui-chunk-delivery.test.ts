@@ -2,7 +2,7 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { createWebUiChunkDeliveryHandler } from "../packages/core/src/api/ws/chunk-delivery.ts"
 import { PATHS } from "../packages/core/src/config/index.js"
-import { eventBus, type NobieEvents } from "../packages/core/src/events/index.js"
+import { eventBus, type KnowbeeEvents } from "../packages/core/src/events/index.js"
 import { resetArtifactDeliveryDedupeForTest } from "../packages/core/src/runs/delivery.js"
 
 afterEach(() => {
@@ -71,7 +71,7 @@ describe("webui chunk delivery helper", () => {
   })
 
   it("does not emit the same artifact twice for one WebUI run", async () => {
-    const artifacts: NobieEvents["agent.artifact"][] = []
+    const artifacts: KnowbeeEvents["agent.artifact"][] = []
     const unsubscribe = eventBus.on("agent.artifact", (artifact) => {
       artifacts.push(artifact)
     })

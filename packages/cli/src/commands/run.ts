@@ -1,5 +1,5 @@
-import { bootstrapRuntime, startIngressRun } from "@nobie/core"
-import type { AgentChunk } from "@nobie/core"
+import { bootstrapRuntime, startIngressRun } from "@knowbee/core"
+import type { AgentChunk } from "@knowbee/core"
 import { createCliChunkDeliveryHandler } from "../chunk-delivery.js"
 
 const RESET = "\x1b[0m"
@@ -9,7 +9,7 @@ const DIM = "\x1b[2m"
 const BOLD = "\x1b[1m"
 
 function useColor(): boolean {
-  return process.env["NOBIE_NO_COLOR"] == null && process.stdout.isTTY === true
+  return process.env["KNOWBEE_NO_COLOR"] == null && process.stdout.isTTY === true
 }
 
 function c(color: string, text: string): string {
@@ -31,13 +31,13 @@ export async function runCommand(message: string, options: {
   })
 
   if (options.yes) {
-    const { eventBus } = await import("@nobie/core")
+    const { eventBus } = await import("@knowbee/core")
     eventBus.on("approval.request", ({ resolve }) => {
       process.stderr.write(c(YELLOW, "  [auto-approved with --yes]\n"))
       resolve("allow_run")
     })
   } else {
-    const { eventBus } = await import("@nobie/core")
+    const { eventBus } = await import("@knowbee/core")
     eventBus.on("approval.request", async ({ toolName, params, resolve }) => {
       const paramsStr = JSON.stringify(params, null, 2)
         .split("\n")

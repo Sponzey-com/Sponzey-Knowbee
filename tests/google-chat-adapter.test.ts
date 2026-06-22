@@ -22,7 +22,7 @@ const googleChatConfig: GoogleChatConfig = {
   enabled: true,
   projectId: "project-1",
   appCredentialJson: "{\"type\":\"service_account\"}",
-  serviceAccountEmail: "nobie@project-1.iam.gserviceaccount.com",
+  serviceAccountEmail: "knowbee@project-1.iam.gserviceaccount.com",
   webhookUrl: "https://example.com/api/channels/google-chat/events",
   verificationToken: "google-chat-verification-token",
   allowedUserIds: ["USER1"],
@@ -61,7 +61,7 @@ runChannelAdapterContractTests({
     config: googleChatConfig,
     transport: transport(),
     now: () => GOOGLE_CHAT_NOW,
-    botUserId: "NOBIE_BOT",
+    botUserId: "KNOWBEE_BOT",
   }),
   inboundFixtures: googleChatInboundFixtures,
   interactionFixtures: googleChatInteractionFixtures,
@@ -92,7 +92,7 @@ describe("Google Chat adapter facade policies", () => {
   it("deduplicates repeated inbound events and ignores bot or self messages", async () => {
     const adapter = createGoogleChatChannelAdapter({
       config: googleChatConfig,
-      botUserId: "NOBIE_BOT",
+      botUserId: "KNOWBEE_BOT",
       now: () => GOOGLE_CHAT_NOW,
     })
     const first = await adapter.normalizeInbound(googleChatInboundFixtures[0]!.rawPayload)
@@ -103,10 +103,10 @@ describe("Google Chat adapter facade policies", () => {
       message: {
         name: "spaces/SPACE1/messages/self-1",
         text: "self echo",
-        sender: { name: "users/NOBIE_BOT", displayName: "Nobie", type: "HUMAN" },
+        sender: { name: "users/KNOWBEE_BOT", displayName: "Knowbee", type: "HUMAN" },
         space: { name: "spaces/SPACE1", type: "ROOM" },
       },
-    }, { verificationToken: googleChatConfig.verificationToken, botUserId: "NOBIE_BOT" })
+    }, { verificationToken: googleChatConfig.verificationToken, botUserId: "KNOWBEE_BOT" })
     const botMessage = normalizeGoogleChatInboundEvent({
       token: googleChatConfig.verificationToken,
       type: "MESSAGE",
@@ -116,7 +116,7 @@ describe("Google Chat adapter facade policies", () => {
         sender: { name: "users/BOT2", displayName: "Other Bot", type: "BOT" },
         space: { name: "spaces/SPACE1", type: "ROOM" },
       },
-    }, { verificationToken: googleChatConfig.verificationToken, botUserId: "NOBIE_BOT" })
+    }, { verificationToken: googleChatConfig.verificationToken, botUserId: "KNOWBEE_BOT" })
 
     expect(first).toHaveLength(1)
     expect(second).toEqual([])
@@ -127,7 +127,7 @@ describe("Google Chat adapter facade policies", () => {
   it("builds continuation lookup candidates from Google Chat thread metadata", async () => {
     const [message] = await createGoogleChatChannelAdapter({
       config: googleChatConfig,
-      botUserId: "NOBIE_BOT",
+      botUserId: "KNOWBEE_BOT",
     }).normalizeInbound(googleChatInboundFixtures[0]!.rawPayload)
 
     expect(message?.continuationContext).toEqual({

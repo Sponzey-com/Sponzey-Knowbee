@@ -60,8 +60,8 @@ function contextFor(message: string, overrides: Partial<AgentExecutionContext> =
       }],
     },
     current_executor: {
-      executor_id: "agent:nobie",
-      display_name: "노비",
+      executor_id: "agent:knowbee",
+      display_name: "노우비",
       role_name: "Root agent",
       definition: "Receives channel requests and delegates to visible executor profiles when useful.",
       can_delegate: true,
@@ -74,13 +74,13 @@ function contextFor(message: string, overrides: Partial<AgentExecutionContext> =
     accessible_executors: [financeExecutor, generalExecutor],
     accessible_connections: [
       {
-        from_executor_id: "agent:nobie",
+        from_executor_id: "agent:knowbee",
         to_executor_id: financeExecutor.executor_id,
         relation: "delegates_to",
         label: "financial market review",
       },
       {
-        from_executor_id: "agent:nobie",
+        from_executor_id: "agent:knowbee",
         to_executor_id: generalExecutor.executor_id,
         relation: "delegates_to",
         label: "general fallback",
@@ -100,12 +100,12 @@ function contextFor(message: string, overrides: Partial<AgentExecutionContext> =
 function decisionForFinance(message: string): AgentExecutionDecision {
   return {
     contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
-    current_executor_id: "agent:nobie",
+    current_executor_id: "agent:knowbee",
     domain: "public_market_review",
     behavior_pattern: "delegate",
     execution_route: "delegate_to_child",
     selected_executor_id: financeExecutor.executor_id,
-    selected_connection_path: ["agent:nobie", financeExecutor.executor_id],
+    selected_connection_path: ["agent:knowbee", financeExecutor.executor_id],
     task_profile: taskProfileFor(message),
     required_outputs: [{
       id: "output:market-review",
@@ -223,12 +223,12 @@ describe("task025 multilingual execution decision", () => {
     ]))
   })
 
-  it("falls back to root Nobie direct handling when no entry executor or child profile is available", async () => {
+  it("falls back to root Knowbee direct handling when no entry executor or child profile is available", async () => {
     const result = await runAgentExecutionHarness({
       context: contextFor("정의되지 않은 요청", {
         current_executor: {
-          executor_id: "agent:nobie",
-          display_name: "노비",
+          executor_id: "agent:knowbee",
+          display_name: "노우비",
           can_delegate: true,
           available: false,
         },
@@ -239,7 +239,7 @@ describe("task025 multilingual execution decision", () => {
 
     expect(result.ok).toBe(false)
     expect(result.fallbackReason).toBe("model_unavailable")
-    expect(result.decision.execution_route).toBe("root_nobie_direct")
-    expect(result.decision.selected_executor_id).toBe("agent:nobie")
+    expect(result.decision.execution_route).toBe("root_knowbee_direct")
+    expect(result.decision.selected_executor_id).toBe("agent:knowbee")
   })
 })

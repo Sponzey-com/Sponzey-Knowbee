@@ -1,4 +1,4 @@
-import type { AgentChunk } from "@nobie/core"
+import type { AgentChunk } from "@knowbee/core"
 
 const RESET = "\x1b[0m"
 const CYAN = "\x1b[36m"
@@ -7,7 +7,7 @@ const RED = "\x1b[31m"
 const DIM = "\x1b[2m"
 
 function useColor(stdoutIsTty: boolean): boolean {
-  return process.env["NOBIE_NO_COLOR"] == null && stdoutIsTty
+  return process.env["KNOWBEE_NO_COLOR"] == null && stdoutIsTty
 }
 
 function colorize(stdoutIsTty: boolean, color: string, text: string): string {

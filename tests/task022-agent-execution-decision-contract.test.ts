@@ -76,11 +76,11 @@ describe("task022 agent execution decision contract", () => {
       "direct_current_agent",
       "delegate_to_child",
       "return_to_parent",
-      "root_nobie_direct",
+      "root_knowbee_direct",
       "explicit_provider",
       "explicit_provider_target",
       "boundary_failure",
-      "nobie_direct",
+      "knowbee_direct",
       "ask_parent",
       "ask_user",
     ])
@@ -257,7 +257,7 @@ describe("task022 agent execution decision contract", () => {
     })
 
     expect(context.parent_executor?.executor_id).toBe("node:lead")
-    expect(context.parent_executor?.executor_id).not.toBe("nobie")
+    expect(context.parent_executor?.executor_id).not.toBe("knowbee")
     expect(decision.fallback_if_unavailable).toBe("return_to_parent")
   })
 

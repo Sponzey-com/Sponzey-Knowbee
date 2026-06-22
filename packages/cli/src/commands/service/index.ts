@@ -14,8 +14,8 @@ export function which(bin: string): string {
   }
 }
 
-/** Find Nobie CLI entry point absolute path */
-export function nobieBinPath(): string {
+/** Find Knowbee CLI entry point absolute path */
+export function knowbeeBinPath(): string {
   // When running from dist/, __dirname is packages/cli/dist/commands/service/
   // The bin entry is packages/cli/dist/index.js
   const url = new URL(import.meta.url)
@@ -25,14 +25,14 @@ export function nobieBinPath(): string {
   const candidate = resolve(distDir, "index.js")
   if (existsSync(candidate)) return candidate
   // Fallback: try to find via npm/pnpm global
-  try { return which("nobie") } catch { /* ignore */ }
+  try { return which("knowbee") } catch { /* ignore */ }
   try { return which("wizby") } catch { /* ignore */ }
   try { return which("howie") } catch { /* ignore */ }
-  throw new Error("Cannot determine 스폰지 노비 · Sponzey Nobie binary path")
+  throw new Error("Cannot determine 스폰지 노우비 · Sponzey Knowbee binary path")
 }
 
-export const wizbyBinPath = nobieBinPath
-export const howieBinPath = nobieBinPath
+export const wizbyBinPath = knowbeeBinPath
+export const howieBinPath = knowbeeBinPath
 
 export async function runServiceAction(action: ServiceAction): Promise<void> {
   const p = platform()

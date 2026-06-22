@@ -54,7 +54,7 @@ export interface DoctorCheckResult {
 }
 
 export interface DoctorReport {
-  kind: "nobie.doctor.report"
+  kind: "knowbee.doctor.report"
   version: 1
   id: string
   mode: DoctorMode
@@ -615,7 +615,7 @@ export function runDoctor(options: RunDoctorOptions = {}): DoctorReport {
   const summary = summarize(checks)
   const createdAt = (options.now ?? new Date()).toISOString()
   const report = sanitizeValue({
-    kind: "nobie.doctor.report",
+    kind: "knowbee.doctor.report",
     version: 1,
     id: `${manifest.id}-${mode}`,
     mode,

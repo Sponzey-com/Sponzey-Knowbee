@@ -14,16 +14,16 @@ import { buildOrchestrationRegistrySnapshot } from "../packages/core/src/orchest
 import { createEnterpriseTopologyRegistry } from "../packages/core/src/topology/registry.js"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 4, 7, 2, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-topology-relation-source-of-truth-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-topology-relation-source-of-truth-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -33,10 +33,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env.NOBIE_STATE_DIR
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.NOBIE_CONFIG
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -175,7 +175,7 @@ describe("topology relation source of truth", () => {
     const hierarchy = snapshot.hierarchy
 
     expect(hierarchy?.directChildrenByParent["workspace:draft:node:executor-1"]).toBeUndefined()
-    expect(hierarchy?.directChildrenByParent["agent:nobie"]).toEqual([
+    expect(hierarchy?.directChildrenByParent["agent:knowbee"]).toEqual([
       "workspace:draft:node:executor-1",
       "workspace:draft:node:executor-2",
     ])
@@ -201,7 +201,7 @@ describe("topology relation source of truth", () => {
 
     const hierarchy = registrySnapshot().hierarchy
 
-    expect(hierarchy?.directChildrenByParent["agent:nobie"]).toBeUndefined()
+    expect(hierarchy?.directChildrenByParent["agent:knowbee"]).toBeUndefined()
     expect(hierarchy?.directChildren).toEqual(expect.arrayContaining([
       expect.objectContaining({
         parentAgentId: "workspace:draft:node:executor-1",

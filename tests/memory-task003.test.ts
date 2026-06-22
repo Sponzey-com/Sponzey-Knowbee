@@ -21,16 +21,16 @@ import { reloadConfig } from "../packages/core/src/config/index.js"
 import type { DbRequestGroupMessage } from "../packages/core/src/db/index.js"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 
 function useTempState(): void {
   closeDb()
   closeMemoryJournalDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-memory-task003-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-memory-task003-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
   reloadConfig()
 }
 
@@ -41,10 +41,10 @@ beforeEach(() => {
 afterEach(() => {
   closeDb()
   closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()

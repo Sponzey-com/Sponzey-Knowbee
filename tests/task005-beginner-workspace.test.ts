@@ -105,7 +105,7 @@ describe("task005 beginner workspace", () => {
             downloadUrl: "/api/artifacts/1/download",
             previewUrl: "/api/artifacts/1/preview",
             fileName: "screen.png",
-            filePath: "/Users/example/.nobie/artifacts/screen.png",
+            filePath: "/Users/example/.knowbee/artifacts/screen.png",
             mimeType: "image/png",
             caption: "메인 화면",
           },

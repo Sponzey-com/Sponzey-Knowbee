@@ -411,7 +411,7 @@ export function evaluateSubAgentBenchmarkReleaseGate(suite) {
         blockingFailures.push("compiled_workflow_recommendation_auto_apply_forbidden");
     }
     return {
-        kind: "nobie.benchmarks.release_gate",
+        kind: "knowbee.benchmarks.release_gate",
         generatedAt: suite.generatedAt,
         gateStatus: statusFromIssues(warnings, blockingFailures),
         requiredScenarioIds: [...SUB_AGENT_BENCHMARK_SCENARIO_IDS],
@@ -480,7 +480,7 @@ export function runSubAgentBenchmarkSuite(input = {}) {
     const partial = { generatedAt, scenarios, aggregate };
     const releaseGate = evaluateSubAgentBenchmarkReleaseGate(partial);
     return {
-        kind: "nobie.benchmarks.sub_agent",
+        kind: "knowbee.benchmarks.sub_agent",
         benchmarkRunId: input.benchmarkRunId ?? buildRunId({ seed, startedAt, scenarioIds }),
         seed,
         generatedAt,

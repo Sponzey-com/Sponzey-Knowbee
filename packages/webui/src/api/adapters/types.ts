@@ -20,15 +20,15 @@ export interface StatusResponse {
   orchestratorStatus: {
     status: "ready" | "disabled" | "planned" | "error"
     reason: string | null
-    mode?: "single_nobie" | "orchestration"
+    mode?: "single_knowbee" | "orchestration"
     reasonCode?: string
     activeSubAgentCount?: number
   }
   orchestration?: {
-    mode: "single_nobie" | "orchestration"
+    mode: "single_knowbee" | "orchestration"
     status: "ready" | "disabled" | "degraded"
     featureFlagEnabled: boolean
-    requestedMode: "single_nobie" | "orchestration"
+    requestedMode: "single_knowbee" | "orchestration"
     activeSubAgentCount: number
     totalSubAgentCount: number
     disabledSubAgentCount: number
@@ -171,7 +171,7 @@ export interface MqttExtensionSnapshot {
 export interface MqttExchangeLogEntry {
   id: string
   timestamp: number
-  direction: "nobie_to_extension" | "extension_to_nobie"
+  direction: "knowbee_to_extension" | "extension_to_knowbee"
   topic: string
   extensionId: string | null
   kind: "status" | "capabilities" | "request" | "response" | "event" | "unknown"

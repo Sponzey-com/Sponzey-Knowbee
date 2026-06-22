@@ -2,7 +2,7 @@ import { create } from "zustand"
 
 export type UiLanguage = "ko" | "en"
 
-const STORAGE_KEY = "nobie_ui_language"
+const STORAGE_KEY = "knowbee_ui_language"
 
 function normalizeUiLanguage(value?: string | null): UiLanguage {
   return value === "en" ? "en" : "ko"

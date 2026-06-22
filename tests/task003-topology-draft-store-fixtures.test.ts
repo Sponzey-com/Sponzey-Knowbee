@@ -104,7 +104,7 @@ describe("task003 topology draft store and fixtures", () => {
   })
 
   it("loads a directory of valid fixtures as a shared harness", () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "nobie-topology-fixtures-"))
+    const tempDir = mkdtempSync(join(tmpdir(), "knowbee-topology-fixtures-"))
     try {
       writeFileSync(join(tempDir, "customer-success-valid.json"), readFileSync(validFixturePath, "utf-8"), "utf-8")
 

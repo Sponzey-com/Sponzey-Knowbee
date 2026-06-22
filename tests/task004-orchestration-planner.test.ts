@@ -30,16 +30,16 @@ import {
 } from "../packages/core/src/orchestration/registry.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task004-orchestration-planner-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task004-orchestration-planner-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -49,10 +49,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -273,7 +273,7 @@ function taskScope(id: string): StructuredTaskScope {
 
 function executionDecision(
   selectedExecutorId: string,
-  currentExecutorId = "agent:nobie",
+  currentExecutorId = "agent:knowbee",
 ): AgentExecutionDecision {
   return {
     contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
@@ -458,7 +458,7 @@ describe("task004 orchestration registry and planner", () => {
     })
 
     expect(result.plan.delegatedTasks).toHaveLength(0)
-    expect(result.plan.directNobieTasks).toHaveLength(1)
+    expect(result.plan.directKnowbeeTasks).toHaveLength(1)
     expect(result.plan.fallbackStrategy.mode).toBe("ask_user")
     expect(result.plan.fallbackStrategy.reasonCode).toBe("explicit_agent_target_unavailable")
   })
@@ -486,7 +486,7 @@ describe("task004 orchestration registry and planner", () => {
       assignedTeamId: "team:research",
       executionKind: "delegated_sub_agent",
     })
-    expect(result.plan.directNobieTasks).toHaveLength(0)
+    expect(result.plan.directKnowbeeTasks).toHaveLength(0)
     expect(result.plan.plannerMetadata?.status).toBe("planned")
     expect(result.plan.plannerMetadata?.reasonCodes).toContain("team_execution_plan_planned")
     expect(result.plan.fallbackStrategy.reasonCode).toBe(
@@ -644,7 +644,7 @@ describe("task004 orchestration registry and planner", () => {
     })
 
     expect(result.plan.delegatedTasks).toHaveLength(0)
-    expect(result.plan.directNobieTasks).toHaveLength(1)
+    expect(result.plan.directKnowbeeTasks).toHaveLength(1)
     expect(result.plan.fallbackStrategy.reasonCode).toBe("execution_decision_required")
     expect(result.plan.plannerMetadata?.semanticComparisonUsed).toBe(false)
     expect(validateOrchestrationPlan(result.plan).ok).toBe(true)

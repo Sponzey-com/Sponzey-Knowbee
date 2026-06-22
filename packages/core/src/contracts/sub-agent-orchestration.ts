@@ -10,7 +10,7 @@ import type { ChannelSource } from "../channels/contracts.js"
 
 export const SUB_AGENT_CONTRACT_SCHEMA_VERSION = CONTRACT_SCHEMA_VERSION
 
-export type AgentEntityType = "nobie" | "sub_agent"
+export type AgentEntityType = "knowbee" | "sub_agent"
 export type RelationshipEntityType =
   | AgentEntityType
   | "team"
@@ -19,7 +19,7 @@ export type RelationshipEntityType =
   | "capability"
   | "data_exchange"
 export type AgentStatus = "enabled" | "disabled" | "archived" | "degraded"
-export type OrchestrationMode = "single_nobie" | "orchestration"
+export type OrchestrationMode = "single_knowbee" | "orchestration"
 export type OrchestrationFallbackStrategyMode =
   | "self_solve"
   | "direct_current_agent"
@@ -27,9 +27,9 @@ export type OrchestrationFallbackStrategyMode =
   | "ask_parent"
   | "ask_user"
   | "fail_with_reason"
-  | "root_nobie_direct"
+  | "root_knowbee_direct"
   | "explicit_provider"
-  | "single_nobie"
+  | "single_knowbee"
 export type OrchestrationSelectedExecutorSource = "execution_decision"
 export type SessionContractSource = ChannelSource | "scheduler" | "system"
 export type SubSessionStatus =
@@ -42,7 +42,7 @@ export type SubSessionStatus =
   | "needs_revision"
   | "failed"
   | "cancelled"
-export type TaskExecutionKind = "direct_nobie" | "delegated_sub_agent"
+export type TaskExecutionKind = "direct_knowbee" | "delegated_sub_agent"
 export type ResourceLockKind =
   | "file"
   | "display"
@@ -99,7 +99,7 @@ export type FeedbackTargetAgentPolicy =
   | "parent_decides"
   | "fallback_agent"
   | "lead_assigns"
-  | "nobie_direct"
+  | "knowbee_direct"
 
 export interface ModelProfile {
   providerId: string
@@ -165,7 +165,7 @@ export interface NicknameNamespaceConflict {
 }
 
 export interface OwnerScope {
-  ownerType: "nobie" | "sub_agent" | "team" | "system"
+  ownerType: "knowbee" | "sub_agent" | "team" | "system"
   ownerId: string
 }
 
@@ -256,11 +256,11 @@ export interface BaseAgentConfig {
   updatedAt: number
 }
 
-export interface NobieConfig extends BaseAgentConfig {
-  agentType: "nobie"
+export interface KnowbeeConfig extends BaseAgentConfig {
+  agentType: "knowbee"
   coordinator: {
     defaultMode: OrchestrationMode
-    fallbackMode: "single_nobie"
+    fallbackMode: "single_knowbee"
     maxDelegatedSubSessions: number
   }
 }
@@ -271,7 +271,7 @@ export interface SubAgentConfig extends BaseAgentConfig {
   delegation: DelegationPolicy
 }
 
-export type AgentConfig = NobieConfig | SubAgentConfig
+export type AgentConfig = KnowbeeConfig | SubAgentConfig
 
 export interface TeamMembership {
   membershipId: string
@@ -553,7 +553,7 @@ export interface OrchestrationPlan {
   planId: string
   parentRunId: string
   parentRequestId: string
-  directNobieTasks: OrchestrationTask[]
+  directKnowbeeTasks: OrchestrationTask[]
   delegatedTasks: OrchestrationTask[]
   dependencyEdges: DependencyEdgeContract[]
   resourceLocks: ResourceLockContract[]
@@ -569,7 +569,7 @@ export interface OrchestrationPlan {
     semanticComparisonUsed: false
     reasonCodes: string[]
     fastPath?: {
-      classification: "direct_nobie" | "delegation_candidate" | "workflow_candidate"
+      classification: "direct_knowbee" | "delegation_candidate" | "workflow_candidate"
       reasonCodes: string[]
       targetP95Ms: number
       latencyMs: number
@@ -606,7 +606,7 @@ export interface OrchestrationFallbackStrategy {
   unresolvedReason?: string
   userMessage?: string
   /**
-   * Legacy snapshots may still contain `single_nobie`; new planners must not
+   * Legacy snapshots may still contain `single_knowbee`; new planners must not
    * emit it. The field lets readers surface a non-fatal compatibility warning
    * without rejecting stored runs.
    */
@@ -989,7 +989,7 @@ function hasArray(
 }
 
 const RELATIONSHIP_ENTITY_TYPES = new Set<RelationshipEntityType>([
-  "nobie",
+  "knowbee",
   "sub_agent",
   "team",
   "session",
@@ -997,7 +997,7 @@ const RELATIONSHIP_ENTITY_TYPES = new Set<RelationshipEntityType>([
   "capability",
   "data_exchange",
 ])
-const OWNER_SCOPE_TYPES = new Set<OwnerScope["ownerType"]>(["nobie", "sub_agent", "team", "system"])
+const OWNER_SCOPE_TYPES = new Set<OwnerScope["ownerType"]>(["knowbee", "sub_agent", "team", "system"])
 const CAPABILITY_RISK_LEVELS = new Set<CapabilityRiskLevel>([
   "safe",
   "moderate",
@@ -1041,7 +1041,7 @@ const FEEDBACK_TARGET_AGENT_POLICIES = new Set<FeedbackTargetAgentPolicy>([
   "parent_decides",
   "fallback_agent",
   "lead_assigns",
-  "nobie_direct",
+  "knowbee_direct",
 ])
 const DATA_EXCHANGE_ALLOWED_USE = new Set<DataExchangePackage["allowedUse"]>([
   "temporary_context",
@@ -1183,7 +1183,7 @@ function validateOwnerScope(
     typeof value.ownerType !== "string" ||
     !OWNER_SCOPE_TYPES.has(value.ownerType as OwnerScope["ownerType"])
   ) {
-    addIssue(issues, `${path}.ownerType`, "ownerType must be nobie, sub_agent, team, or system.")
+    addIssue(issues, `${path}.ownerType`, "ownerType must be knowbee, sub_agent, team, or system.")
   }
   hasNonEmptyString(value, "ownerId", path, issues)
   return true
@@ -1565,7 +1565,7 @@ function validateRuntimeIdentity(
     addIssue(
       issues,
       `${path}.entityType`,
-      "entityType must be nobie, sub_agent, team, session, sub_session, capability, or data_exchange.",
+      "entityType must be knowbee, sub_agent, team, session, sub_session, capability, or data_exchange.",
     )
   }
   hasNonEmptyString(value, "entityId", path, issues)
@@ -1585,11 +1585,11 @@ function validateNicknameSnapshot(
   }
   rejectUserFacingDisplayNameAliases(value, path, issues)
   if (
-    value.entityType !== "nobie" &&
+    value.entityType !== "knowbee" &&
     value.entityType !== "sub_agent" &&
     value.entityType !== "team"
   ) {
-    addIssue(issues, `${path}.entityType`, "entityType must be nobie, sub_agent, or team.")
+    addIssue(issues, `${path}.entityType`, "entityType must be knowbee, sub_agent, or team.")
   }
   hasNonEmptyString(value, "entityId", path, issues)
   hasNonEmptyNickname(value, "nicknameSnapshot", path, issues)
@@ -1623,12 +1623,12 @@ function validateOrchestrationTask(
   hasNonEmptyString(value, "taskId", path, issues)
   if (
     typeof value.executionKind !== "string" ||
-    (value.executionKind !== "direct_nobie" && value.executionKind !== "delegated_sub_agent")
+    (value.executionKind !== "direct_knowbee" && value.executionKind !== "delegated_sub_agent")
   ) {
     addIssue(
       issues,
       `${path}.executionKind`,
-      "executionKind must be direct_nobie or delegated_sub_agent.",
+      "executionKind must be direct_knowbee or delegated_sub_agent.",
     )
   } else if (expectedExecutionKind && value.executionKind !== expectedExecutionKind) {
     addIssue(
@@ -1887,8 +1887,8 @@ export function validateAgentConfig(value: unknown): ContractValidationResult<Ag
   }
   if (value.schemaVersion !== CONTRACT_SCHEMA_VERSION)
     addIssue(issues, "$.schemaVersion", "Unsupported contract schema version.")
-  if (value.agentType !== "nobie" && value.agentType !== "sub_agent") {
-    addIssue(issues, "$.agentType", "agentType must be nobie or sub_agent.")
+  if (value.agentType !== "knowbee" && value.agentType !== "sub_agent") {
+    addIssue(issues, "$.agentType", "agentType must be knowbee or sub_agent.")
   }
   hasNonEmptyString(value, "agentId", "$", issues)
   hasNonEmptyString(value, "displayName", "$", issues)
@@ -1912,22 +1912,22 @@ export function validateAgentConfig(value: unknown): ContractValidationResult<Ag
   hasFiniteNumber(value, "profileVersion", "$", issues, { min: 1 })
   hasFiniteNumber(value, "createdAt", "$", issues, { min: 0 })
   hasFiniteNumber(value, "updatedAt", "$", issues, { min: 0 })
-  if (value.agentType === "nobie") {
+  if (value.agentType === "knowbee") {
     if (!isRecord(value.coordinator)) {
-      addIssue(issues, "$.coordinator", "nobie agent requires coordinator settings.")
+      addIssue(issues, "$.coordinator", "knowbee agent requires coordinator settings.")
     } else {
       if (
-        value.coordinator.defaultMode !== "single_nobie" &&
+        value.coordinator.defaultMode !== "single_knowbee" &&
         value.coordinator.defaultMode !== "orchestration"
       ) {
         addIssue(
           issues,
           "$.coordinator.defaultMode",
-          "defaultMode must be single_nobie or orchestration.",
+          "defaultMode must be single_knowbee or orchestration.",
         )
       }
-      if (value.coordinator.fallbackMode !== "single_nobie") {
-        addIssue(issues, "$.coordinator.fallbackMode", "fallbackMode must be single_nobie.")
+      if (value.coordinator.fallbackMode !== "single_knowbee") {
+        addIssue(issues, "$.coordinator.fallbackMode", "fallbackMode must be single_knowbee.")
       }
       hasFiniteNumber(value.coordinator, "maxDelegatedSubSessions", "$.coordinator", issues, {
         min: 1,
@@ -2337,12 +2337,12 @@ export function validateOrchestrationPlan(
   hasNonEmptyString(value, "planId", "$", issues)
   hasNonEmptyString(value, "parentRunId", "$", issues)
   hasNonEmptyString(value, "parentRequestId", "$", issues)
-  if (Array.isArray(value.directNobieTasks)) {
-    value.directNobieTasks.forEach((task, index) =>
-      validateOrchestrationTask(task, `$.directNobieTasks[${index}]`, issues, "direct_nobie"),
+  if (Array.isArray(value.directKnowbeeTasks)) {
+    value.directKnowbeeTasks.forEach((task, index) =>
+      validateOrchestrationTask(task, `$.directKnowbeeTasks[${index}]`, issues, "direct_knowbee"),
     )
   } else {
-    addIssue(issues, "$.directNobieTasks", "directNobieTasks must be an array.")
+    addIssue(issues, "$.directKnowbeeTasks", "directKnowbeeTasks must be an array.")
   }
   if (Array.isArray(value.delegatedTasks)) {
     value.delegatedTasks.forEach((task, index) =>
@@ -2390,14 +2390,14 @@ export function validateOrchestrationPlan(
       fallbackMode !== "ask_parent" &&
       fallbackMode !== "ask_user" &&
       fallbackMode !== "fail_with_reason" &&
-      fallbackMode !== "root_nobie_direct" &&
+      fallbackMode !== "root_knowbee_direct" &&
       fallbackMode !== "explicit_provider" &&
-      fallbackMode !== "single_nobie"
+      fallbackMode !== "single_knowbee"
     ) {
       addIssue(
         issues,
         "$.fallbackStrategy.mode",
-        "fallbackStrategy.mode must be self_solve, direct_current_agent, return_to_parent, ask_parent, ask_user, fail_with_reason, root_nobie_direct, explicit_provider, or legacy single_nobie.",
+        "fallbackStrategy.mode must be self_solve, direct_current_agent, return_to_parent, ask_parent, ask_user, fail_with_reason, root_knowbee_direct, explicit_provider, or legacy single_knowbee.",
       )
     }
     hasNonEmptyString(value.fallbackStrategy, "reasonCode", "$.fallbackStrategy", issues)
@@ -2430,13 +2430,13 @@ export function validateOrchestrationPlan(
       )
     }
     if (
-      fallbackMode === "root_nobie_direct" &&
-      value.fallbackStrategy.currentExecutorId !== "agent:nobie"
+      fallbackMode === "root_knowbee_direct" &&
+      value.fallbackStrategy.currentExecutorId !== "agent:knowbee"
     ) {
       addIssue(
         issues,
         "$.fallbackStrategy.currentExecutorId",
-        "currentExecutorId must be agent:nobie when fallbackStrategy.mode is root_nobie_direct.",
+        "currentExecutorId must be agent:knowbee when fallbackStrategy.mode is root_knowbee_direct.",
       )
     }
     if (
@@ -2800,7 +2800,7 @@ export function validateFeedbackRequest(value: unknown): ContractValidationResul
     addIssue(
       issues,
       "$.targetAgentPolicy",
-      "targetAgentPolicy must be same_agent, alternative_direct_child, parent_decides, fallback_agent, lead_assigns, or nobie_direct.",
+      "targetAgentPolicy must be same_agent, alternative_direct_child, parent_decides, fallback_agent, lead_assigns, or knowbee_direct.",
     )
   }
   if (
@@ -2936,9 +2936,9 @@ export function validateAgentPromptBundle(
   }
   if (
     typeof value.agentType !== "string" ||
-    (value.agentType !== "nobie" && value.agentType !== "sub_agent")
+    (value.agentType !== "knowbee" && value.agentType !== "sub_agent")
   ) {
-    addIssue(issues, "$.agentType", "agentType must be nobie or sub_agent.")
+    addIssue(issues, "$.agentType", "agentType must be knowbee or sub_agent.")
   }
   return issues.length === 0
     ? { ok: true, value: value as unknown as AgentPromptBundle, issues: [] }

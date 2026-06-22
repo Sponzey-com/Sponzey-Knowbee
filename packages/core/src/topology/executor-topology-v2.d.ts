@@ -1,7 +1,7 @@
 import type { EnterpriseTopology } from "../contracts/enterprise-topology.js";
 import type { EnterpriseTopologyRegistryStore, TopologyExportEnvelope } from "./registry.js";
 export declare const EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION: 2;
-export declare const NOBIE_ROOT_AGENT_ID: "agent:nobie";
+export declare const KNOWBEE_ROOT_AGENT_ID: "agent:knowbee";
 export type ExecutorTopologyV2SchemaVersion = typeof EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION;
 export type ExecutorTopologyV2Status = "draft" | "active" | "archived";
 export type ExecutorNodeV2Status = "active" | "archived";
@@ -51,7 +51,7 @@ export interface ExecutorTopologyV2 {
 export interface ExecutorRuntimeGraphSnapshotV2 {
     topologyId: string;
     schemaVersion: ExecutorTopologyV2SchemaVersion;
-    rootAgentId: typeof NOBIE_ROOT_AGENT_ID;
+    rootAgentId: typeof KNOWBEE_ROOT_AGENT_ID;
     nodes: ExecutorNodeV2[];
     edges: ExecutorEdgeV2[];
     rootDirectChildIds: string[];

@@ -67,7 +67,7 @@ export function connectWs() {
   }
 
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:"
-  const token = localStorage.getItem("nobie_token") ?? localStorage.getItem("wizby_token") ?? localStorage.getItem("howie_token")
+  const token = localStorage.getItem("knowbee_token") ?? localStorage.getItem("wizby_token") ?? localStorage.getItem("howie_token")
   const qs = token ? `?token=${encodeURIComponent(token)}` : ""
   const url = `${proto}//${window.location.host}/ws${qs}`
 

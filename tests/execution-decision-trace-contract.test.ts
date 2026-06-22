@@ -22,24 +22,24 @@ import { appendRunEvent, createRootRun, getRootRun } from "../packages/core/src/
 
 const now = Date.UTC(2026, 4, 7, 6, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 beforeEach(() => {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-execution-decision-trace-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-execution-decision-trace-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env.NOBIE_STATE_DIR
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.NOBIE_CONFIG
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -57,12 +57,12 @@ const taskProfile: AgentExecutionTaskProfile = {
 
 const connections: AgentExecutionConnection[] = [
   {
-    from_executor_id: "agent:nobie",
+    from_executor_id: "agent:knowbee",
     to_executor_id: "node:finance",
     relation: "delegates_to",
   },
   {
-    from_executor_id: "agent:nobie",
+    from_executor_id: "agent:knowbee",
     to_executor_id: "node:lead",
     relation: "delegates_to",
   },
@@ -82,8 +82,8 @@ function context(): AgentExecutionContext {
       structured_goal: "적합한 실행자에게 요청을 맡긴다.",
     },
     current_executor: {
-      executor_id: "agent:nobie",
-      display_name: "노비",
+      executor_id: "agent:knowbee",
+      display_name: "노우비",
       role_name: "root",
       can_delegate: true,
       available: true,
@@ -130,11 +130,11 @@ function context(): AgentExecutionContext {
     execution_graph: {
       graph_id: "execution-graph:test",
       graph_source: "workspace_draft",
-      root_executor_id: "agent:nobie",
-      current_executor_id: "agent:nobie",
+      root_executor_id: "agent:knowbee",
+      current_executor_id: "agent:knowbee",
       available_executor_ids: ["node:finance", "node:lead"],
       diagnostic_executor_ids: ["node:backend"],
-      all_active_executor_ids: ["agent:nobie", "node:finance", "node:lead", "node:backend"],
+      all_active_executor_ids: ["agent:knowbee", "node:finance", "node:lead", "node:backend"],
       allowed_connections: connections,
       validation_issue_codes: [],
       topology_id: "workspace:draft",
@@ -146,7 +146,7 @@ function context(): AgentExecutionContext {
 function decision(overrides: Partial<AgentExecutionDecision> = {}): AgentExecutionDecision {
   return {
     contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
-    current_executor_id: "agent:nobie",
+    current_executor_id: "agent:knowbee",
     domain: "finance",
     behavior_pattern: "delegate",
     execution_route: "delegate_to_child",
@@ -263,7 +263,7 @@ describe("execution decision trace contract", () => {
       context: ctx,
       decision: accepted,
       validation,
-      decisionSource: "nobie_harness",
+      decisionSource: "knowbee_harness",
     })
 
     insertSession({
@@ -284,7 +284,7 @@ describe("execution decision trace contract", () => {
       orchestrationMode: "orchestration",
       promptSourceSnapshot: {
         agentExecutionDecision: accepted,
-        executionDecisionSource: "nobie_harness",
+        executionDecisionSource: "knowbee_harness",
         executionDecisionTrace: trace,
         topologyRouting: {
           mode: "route",
@@ -299,14 +299,14 @@ describe("execution decision trace contract", () => {
 
     const run = getRootRun("run:trace")
     expect(run?.promptSourceSnapshot?.executionDecisionTrace).toEqual(expect.objectContaining({
-      decision_source: "nobie_harness",
+      decision_source: "knowbee_harness",
       graph_id: "execution-graph:test",
-      current_executor_id: "agent:nobie",
+      current_executor_id: "agent:knowbee",
       selected_executor_id: "node:finance",
       validation_status: "valid",
     }))
     expect(run?.recentEvents.map((event) => event.label)).toContain(
-      "execution_decision_source:nobie_harness; graph_id=execution-graph:test; graph_source=workspace_draft; current_executor=agent:nobie; available_executors=node:finance,node:lead; selected_executor=node:finance; resolved_selected_executor=none; resolved_route=delegate_to_child; fallback_reason=self_solve; validation_status=valid",
+      "execution_decision_source:knowbee_harness; graph_id=execution-graph:test; graph_source=workspace_draft; current_executor=agent:knowbee; available_executors=node:finance,node:lead; selected_executor=node:finance; resolved_selected_executor=none; resolved_route=delegate_to_child; fallback_reason=self_solve; validation_status=valid",
     )
     appendRunEvent(
       "run:trace",
@@ -317,16 +317,16 @@ describe("execution decision trace contract", () => {
     if (!updatedRun) throw new Error("run:trace was not created")
     const projection = buildRunRuntimeInspectorProjection(updatedRun, { now })
     expect(projection.topologyRouting).toEqual(expect.objectContaining({
-      executionDecisionSource: "nobie_harness",
+      executionDecisionSource: "knowbee_harness",
       executionDecisionGraphId: "execution-graph:test",
       executionDecisionGraphSource: "workspace_draft",
-      executionDecisionCurrentExecutorId: "agent:nobie",
+      executionDecisionCurrentExecutorId: "agent:knowbee",
       executionDecisionAvailableExecutorIds: ["node:finance", "node:lead"],
       executionDecisionDiagnosticExecutorIds: ["node:backend"],
-      executionDecisionAllExecutorIds: ["agent:nobie", "node:finance", "node:lead", "node:backend"],
+      executionDecisionAllExecutorIds: ["agent:knowbee", "node:finance", "node:lead", "node:backend"],
       executionDecisionSelectedExecutorId: "node:finance",
       executionDecisionSelectedConnectionPath: ["node:finance"],
-      executionDecisionNormalizedConnectionPath: ["agent:nobie", "node:finance"],
+      executionDecisionNormalizedConnectionPath: ["agent:knowbee", "node:finance"],
       executionDecisionValidationStatus: "valid",
       providerFallbackBlocked: true,
       providerFallbackBlockedReasonCode: "provider_direct_blocked_without_explicit_target",

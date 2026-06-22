@@ -87,7 +87,7 @@ function runtimeProjectionToExecutorProfile(
   if (!projection) {
     return {
       executor_id: executorId,
-      display_name: executorId === EXECUTION_GRAPH_ROOT_AGENT_ID ? "Nobie" : executorId,
+      display_name: executorId === EXECUTION_GRAPH_ROOT_AGENT_ID ? "Knowbee" : executorId,
       can_delegate: true,
       available: executorId === EXECUTION_GRAPH_ROOT_AGENT_ID,
     }

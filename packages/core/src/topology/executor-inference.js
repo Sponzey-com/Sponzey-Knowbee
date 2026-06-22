@@ -218,7 +218,7 @@ function executorKindForRuntimeMode(mode) {
         return "tool";
     if (mode === "external")
         return "external";
-    return "nobie";
+    return "knowbee";
 }
 function executorIdFromName(name, now) {
     const slug = name

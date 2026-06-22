@@ -18,22 +18,22 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
-const previousAdminUi = process.env["NOBIE_ADMIN_UI"]
-const previousAdminUiSource = process.env["NOBIE_ADMIN_UI_SOURCE"]
-const previousLocalDevAdminUi = process.env["NOBIE_LOCAL_DEV_ADMIN_UI"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
+const previousAdminUi = process.env["KNOWBEE_ADMIN_UI"]
+const previousAdminUiSource = process.env["KNOWBEE_ADMIN_UI_SOURCE"]
+const previousLocalDevAdminUi = process.env["KNOWBEE_LOCAL_DEV_ADMIN_UI"]
 const previousNodeEnv = process.env["NODE_ENV"]
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-admin-guard-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-admin-guard-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
-  delete process.env["NOBIE_ADMIN_UI"]
-  delete process.env["NOBIE_ADMIN_UI_SOURCE"]
-  delete process.env["NOBIE_LOCAL_DEV_ADMIN_UI"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
+  delete process.env["KNOWBEE_ADMIN_UI"]
+  delete process.env["KNOWBEE_ADMIN_UI_SOURCE"]
+  delete process.env["KNOWBEE_LOCAL_DEV_ADMIN_UI"]
   delete process.env["NODE_ENV"]
   reloadConfig()
 }
@@ -50,16 +50,16 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
-  if (previousAdminUi === undefined) delete process.env["NOBIE_ADMIN_UI"]
-  else process.env["NOBIE_ADMIN_UI"] = previousAdminUi
-  if (previousAdminUiSource === undefined) delete process.env["NOBIE_ADMIN_UI_SOURCE"]
-  else process.env["NOBIE_ADMIN_UI_SOURCE"] = previousAdminUiSource
-  if (previousLocalDevAdminUi === undefined) delete process.env["NOBIE_LOCAL_DEV_ADMIN_UI"]
-  else process.env["NOBIE_LOCAL_DEV_ADMIN_UI"] = previousLocalDevAdminUi
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
+  if (previousAdminUi === undefined) delete process.env["KNOWBEE_ADMIN_UI"]
+  else process.env["KNOWBEE_ADMIN_UI"] = previousAdminUi
+  if (previousAdminUiSource === undefined) delete process.env["KNOWBEE_ADMIN_UI_SOURCE"]
+  else process.env["KNOWBEE_ADMIN_UI_SOURCE"] = previousAdminUiSource
+  if (previousLocalDevAdminUi === undefined) delete process.env["KNOWBEE_LOCAL_DEV_ADMIN_UI"]
+  else process.env["KNOWBEE_LOCAL_DEV_ADMIN_UI"] = previousLocalDevAdminUi
   if (previousNodeEnv === undefined) delete process.env["NODE_ENV"]
   else process.env["NODE_ENV"] = previousNodeEnv
   reloadConfig()
@@ -76,31 +76,31 @@ describe("task009 admin activation and guard", () => {
       reason: "disabled",
     }))
 
-    expect(resolveAdminUiActivation({ env: { NOBIE_ADMIN_UI: "1" }, argv: [], configEnabled: false, nodeEnv: "development" })).toEqual(expect.objectContaining({
+    expect(resolveAdminUiActivation({ env: { KNOWBEE_ADMIN_UI: "1" }, argv: [], configEnabled: false, nodeEnv: "development" })).toEqual(expect.objectContaining({
       enabled: true,
       envEnabled: true,
       reason: "enabled_by_runtime_flag",
     }))
 
-    expect(resolveAdminUiActivation({ env: {}, argv: ["nobie", "serve", "--admin-ui"], configEnabled: false, nodeEnv: "development" })).toEqual(expect.objectContaining({
+    expect(resolveAdminUiActivation({ env: {}, argv: ["knowbee", "serve", "--admin-ui"], configEnabled: false, nodeEnv: "development" })).toEqual(expect.objectContaining({
       enabled: true,
       cliEnabled: true,
       reason: "enabled_by_runtime_flag",
     }))
 
-    expect(resolveAdminUiActivation({ env: { NOBIE_ADMIN_UI: "1", NOBIE_ADMIN_UI_SOURCE: "local-script" }, argv: [], configEnabled: false, nodeEnv: "development" })).toEqual(expect.objectContaining({
+    expect(resolveAdminUiActivation({ env: { KNOWBEE_ADMIN_UI: "1", KNOWBEE_ADMIN_UI_SOURCE: "local-script" }, argv: [], configEnabled: false, nodeEnv: "development" })).toEqual(expect.objectContaining({
       enabled: true,
       localDevScriptEnabled: true,
       reason: "enabled_by_local_dev_script",
     }))
 
-    expect(resolveAdminUiActivation({ env: { NOBIE_ADMIN_UI: "1" }, argv: [], configEnabled: false, nodeEnv: "production" })).toEqual(expect.objectContaining({
+    expect(resolveAdminUiActivation({ env: { KNOWBEE_ADMIN_UI: "1" }, argv: [], configEnabled: false, nodeEnv: "production" })).toEqual(expect.objectContaining({
       enabled: false,
       productionMode: true,
       reason: "blocked_by_production_config_gate",
     }))
 
-    expect(resolveAdminUiActivation({ env: { NOBIE_ADMIN_UI: "1" }, argv: [], configEnabled: true, nodeEnv: "production" })).toEqual(expect.objectContaining({
+    expect(resolveAdminUiActivation({ env: { KNOWBEE_ADMIN_UI: "1" }, argv: [], configEnabled: true, nodeEnv: "production" })).toEqual(expect.objectContaining({
       enabled: true,
       productionMode: true,
       reason: "enabled_by_config_and_runtime_flag",
@@ -127,7 +127,7 @@ describe("task009 admin activation and guard", () => {
   })
 
   it("opens admin API only when the explicit runtime flag is enabled", async () => {
-    process.env["NOBIE_ADMIN_UI"] = "1"
+    process.env["KNOWBEE_ADMIN_UI"] = "1"
     reloadConfig()
     const app = Fastify({ logger: false })
     registerAdminRoute(app)
@@ -147,7 +147,7 @@ describe("task009 admin activation and guard", () => {
 
   it("keeps production admin API closed until config and runtime flag are both enabled", async () => {
     process.env["NODE_ENV"] = "production"
-    process.env["NOBIE_ADMIN_UI"] = "1"
+    process.env["KNOWBEE_ADMIN_UI"] = "1"
     reloadConfig()
     const blockedApp = Fastify({ logger: false })
     registerAdminRoute(blockedApp)
@@ -178,7 +178,7 @@ describe("task009 admin activation and guard", () => {
   })
 
   it("adds a doctor blocked warning when admin UI is enabled on a remote unauthenticated host", () => {
-    process.env["NOBIE_ADMIN_UI"] = "1"
+    process.env["KNOWBEE_ADMIN_UI"] = "1"
     writeConfig({
       webui: {
         host: "0.0.0.0",

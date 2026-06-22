@@ -15,25 +15,25 @@ import {
   resolveTopologyDispatchFollowupDecision,
 } from "../packages/core/src/runs/topology-dispatch-fallback.ts"
 
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-topology-decision-trace-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-topology-decision-trace-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
 function restoreState(): void {
   closeDb()
-  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "NOBIE_STATE_DIR")
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "NOBIE_CONFIG")
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_STATE_DIR")
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_CONFIG")
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 }
@@ -44,13 +44,13 @@ function plan(): OrchestrationPlan {
       schemaVersion: CONTRACT_SCHEMA_VERSION,
       entityType: "session",
       entityId: "session:trace",
-      owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+      owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
       idempotencyKey: "plan:trace",
     },
     planId: "plan:trace",
     parentRunId: "run:trace",
     parentRequestId: "request:trace",
-    directNobieTasks: [],
+    directKnowbeeTasks: [],
     delegatedTasks: [{
       taskId: "task:finance",
       executionKind: "delegated_sub_agent",
@@ -83,7 +83,7 @@ function plan(): OrchestrationPlan {
     fallbackStrategy: {
       mode: "self_solve",
       reasonCode: "fallback_self_solve",
-      currentExecutorId: "agent:nobie",
+      currentExecutorId: "agent:knowbee",
     },
     createdAt: 1,
   } as OrchestrationPlan
@@ -120,7 +120,7 @@ describe("topology dispatch decision trace persistence", () => {
     const decision = resolveTopologyDispatchFollowupDecision({
       dispatchResult: result,
       plan: activePlan,
-      currentExecutorId: "agent:nobie",
+      currentExecutorId: "agent:knowbee",
       availableDirectChildExecutorIds: ["workspace:draft:node:finance"],
     })
     expect(decision).toBeDefined()

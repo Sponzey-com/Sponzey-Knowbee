@@ -1,12 +1,12 @@
 /**
- * `nobie plugin` CLI commands.
+ * `knowbee plugin` CLI commands.
  */
 
 import { resolve } from "node:path"
 import { existsSync } from "node:fs"
 
 async function getCore() {
-  return import("@nobie/core")
+  return import("@knowbee/core")
 }
 
 export async function pluginListCommand(): Promise<void> {
@@ -55,7 +55,7 @@ export async function pluginInstallCommand(entryPath: string, opts: { name?: str
     process.exit(1)
   }
 
-  const { PluginLoader } = await import("@nobie/core/src/plugins/loader.js" as string)
+  const { PluginLoader } = await import("@knowbee/core/src/plugins/loader.js" as string)
   const meta = PluginLoader.register({
     name,
     version,

@@ -63,7 +63,7 @@ export interface PromptSourceRollbackResult {
     previousChecksum: string;
 }
 export interface PromptSourceExportFile {
-    kind: "nobie.prompt-sources.export";
+    kind: "knowbee.prompt-sources.export";
     version: 1;
     createdAt: number;
     sources: LoadedPromptSource[];
@@ -119,11 +119,11 @@ export interface PromptSourceSeedResult {
     registry: LoadedPromptSource[];
 }
 /**
- * Walk up from workDir (up to 3 parent levels) searching for NOBIE.md first,
+ * Walk up from workDir (up to 3 parent levels) searching for KNOWBEE.md first,
  * then legacy WIZBY.md / HOWIE.md.
  * Returns the file contents (trimmed to 8KB) or null if not found.
  */
-export declare function loadNobieMd(workDir: string): string | null;
+export declare function loadKnowbeeMd(workDir: string): string | null;
 export declare function detectPromptSourceSecretMarkers(content: string): string[];
 export declare function isPromptSourceContentSafe(content: string): boolean;
 export declare function ensurePromptSourceFiles(workDir: string): PromptSourceSeedResult;
@@ -160,10 +160,10 @@ export declare function rollbackPromptSourceBackup(input: {
 }): PromptSourceRollbackResult;
 export declare function dryRunPromptSourceAssembly(workDir: string, locale?: "ko" | "en", states?: PromptSourceState[]): PromptSourceDryRunResult;
 export declare function checkPromptSourceLocaleParity(workDir: string): PromptSourceLocaleParityResult;
-/** Write a NOBIE.md template to the given directory. */
-export declare function initNobieMd(dir: string): string;
-export declare const loadWizbyMd: typeof loadNobieMd;
-export declare const initWizbyMd: typeof initNobieMd;
-export declare const loadHowieMd: typeof loadNobieMd;
-export declare const initHowieMd: typeof initNobieMd;
-//# sourceMappingURL=nobie-md.d.ts.map
+/** Write a KNOWBEE.md template to the given directory. */
+export declare function initKnowbeeMd(dir: string): string;
+export declare const loadWizbyMd: typeof loadKnowbeeMd;
+export declare const initWizbyMd: typeof initKnowbeeMd;
+export declare const loadHowieMd: typeof loadKnowbeeMd;
+export declare const initHowieMd: typeof initKnowbeeMd;
+//# sourceMappingURL=knowbee-md.d.ts.map

@@ -37,7 +37,7 @@ type AdminRawQuery = {
   requester?: string
 }
 
-const OWNER_TYPES = new Set<OwnerScope["ownerType"]>(["nobie", "sub_agent", "team", "system"])
+const OWNER_TYPES = new Set<OwnerScope["ownerType"]>(["knowbee", "sub_agent", "team", "system"])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value)

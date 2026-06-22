@@ -4,15 +4,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PIDS_DIR="$ROOT_DIR/pids"
 
-GATEWAY_PID_FILE="$PIDS_DIR/nobie-gateway.pid"
-WEBUI_PID_FILE="$PIDS_DIR/nobie-webui.pid"
+GATEWAY_PID_FILE="$PIDS_DIR/knowbee-gateway.pid"
+WEBUI_PID_FILE="$PIDS_DIR/knowbee-webui.pid"
 
-STATE_DIR="${NOBIE_STATE_DIR:-${WIZBY_STATE_DIR:-${HOWIE_STATE_DIR:-$HOME/.nobie}}}"
-GATEWAY_HOST="${NOBIE_GATEWAY_HOST:-127.0.0.1}"
-GATEWAY_PORT="${NOBIE_GATEWAY_PORT:-18888}"
-WEBUI_HOST="${NOBIE_WEBUI_HOST:-127.0.0.1}"
-WEBUI_PORT="${NOBIE_WEBUI_PORT:-4220}"
-MQTT_PORT="${NOBIE_MQTT_PORT:-1883}"
+STATE_DIR="${KNOWBEE_STATE_DIR:-${WIZBY_STATE_DIR:-${HOWIE_STATE_DIR:-$HOME/.knowbee}}}"
+GATEWAY_HOST="${KNOWBEE_GATEWAY_HOST:-127.0.0.1}"
+GATEWAY_PORT="${KNOWBEE_GATEWAY_PORT:-18888}"
+WEBUI_HOST="${KNOWBEE_WEBUI_HOST:-127.0.0.1}"
+WEBUI_PORT="${KNOWBEE_WEBUI_PORT:-4220}"
+MQTT_PORT="${KNOWBEE_MQTT_PORT:-1883}"
 
 read_pid() {
   local pid_file="$1"
@@ -99,7 +99,7 @@ print_pid_state() {
 }
 
 extract_status() {
-  NOBIE_STATUS_ROOT_DIR="$ROOT_DIR" node -e '
+  KNOWBEE_STATUS_ROOT_DIR="$ROOT_DIR" node -e '
     const { existsSync, readdirSync, statSync } = require("node:fs")
     const { join, relative } = require("node:path")
     const ignoredDirs = new Set([".git", "node_modules", ".turbo", ".cache"])
@@ -178,7 +178,7 @@ extract_status() {
       }
     }
     function localRuntimeBuild(data) {
-      const root = process.env.NOBIE_STATUS_ROOT_DIR
+      const root = process.env.KNOWBEE_STATUS_ROOT_DIR
       const processStartedAt = data.runtime?.startedAt ?? data.runtimeBuild?.processStartedAt
       const processStartMs = Date.parse(processStartedAt ?? "")
       if (!root) return { packages: [], buildRequired: undefined, restartRequired: undefined, warnings: [] }
@@ -322,7 +322,7 @@ print_migration_safety_hint() {
   echo "  destructiveCleanup: separate explicit admin task only"
 }
 
-echo "Sponzey Nobie local status"
+echo "Sponzey Knowbee local status"
 echo "  repo: $ROOT_DIR"
 echo "  stateDir: $STATE_DIR"
 echo
@@ -330,7 +330,7 @@ print_pid_state "Gateway" "$GATEWAY_PID_FILE" "$GATEWAY_PORT"
 echo
 print_pid_state "WebUI" "$WEBUI_PID_FILE" "$WEBUI_PORT"
 echo
-print_pid_state "MQTT" "/tmp/nonexistent-nobie-mqtt.pid" "$MQTT_PORT"
+print_pid_state "MQTT" "/tmp/nonexistent-knowbee-mqtt.pid" "$MQTT_PORT"
 echo
 print_gateway_health
 echo

@@ -1,4 +1,4 @@
-import type { NobieConfig } from "../config/types.js"
+import type { KnowbeeConfig } from "../config/types.js"
 import { createLogger } from "../logger/index.js"
 import { getTelegramRuntimeStatus } from "./telegram/runtime.js"
 import { TelegramChannelAdapter } from "./telegram/adapter.js"
@@ -27,7 +27,7 @@ import {
 const log = createLogger("channel:registry")
 
 export interface ChannelRegistryOptions {
-  config: NobieConfig
+  config: KnowbeeConfig
   connections?: ChannelConnectionRecord[]
   factories?: ChannelProviderFactory[]
   now?: () => number
@@ -41,7 +41,7 @@ export interface ChannelRegistryPlanItem {
 }
 
 export class ChannelRegistry {
-  private readonly config: NobieConfig
+  private readonly config: KnowbeeConfig
   private readonly now: () => number
   private readonly factories = new Map<string, ChannelProviderFactory>()
   private readonly adapters = new Map<string, ChannelRuntimeAdapter>()
@@ -270,12 +270,12 @@ export function createBuiltInChannelProviderFactories(): ChannelProviderFactory[
   ]
 }
 
-export function buildChannelRegistryRuntimeDiagnostics(config: NobieConfig): ChannelRuntimeSummary[] {
+export function buildChannelRegistryRuntimeDiagnostics(config: KnowbeeConfig): ChannelRuntimeSummary[] {
   return new ChannelRegistry({ config }).getCapabilitySummaries()
 }
 
 function createTelegramRuntimeAdapter(
-  config: NobieConfig,
+  config: KnowbeeConfig,
   connection: ChannelConnectionRecord,
 ): ChannelRuntimeAdapter {
   const adapter = new TelegramChannelAdapter({
@@ -302,7 +302,7 @@ function createTelegramRuntimeAdapter(
 }
 
 function createSlackRuntimeAdapter(
-  config: NobieConfig,
+  config: KnowbeeConfig,
   connection: ChannelConnectionRecord,
 ): ChannelRuntimeAdapter {
   const adapter = new SlackChannelAdapter({
@@ -329,7 +329,7 @@ function createSlackRuntimeAdapter(
 }
 
 function createDiscordRuntimeAdapter(
-  config: NobieConfig,
+  config: KnowbeeConfig,
   connection: ChannelConnectionRecord,
 ): ChannelRuntimeAdapter {
   const adapter = new DiscordChannelAdapter({
@@ -356,7 +356,7 @@ function createDiscordRuntimeAdapter(
 }
 
 function createGoogleChatRuntimeAdapter(
-  config: NobieConfig,
+  config: KnowbeeConfig,
   connection: ChannelConnectionRecord,
 ): ChannelRuntimeAdapter {
   const adapter = new GoogleChatChannelAdapter({

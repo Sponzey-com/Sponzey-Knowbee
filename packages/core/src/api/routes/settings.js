@@ -19,7 +19,7 @@ import { chatWithContextPreflight } from "../../runs/context-preflight.js";
 import { applyChannelConnectionSettingsCompatPatch, buildSettingsChannelConnectionSnapshot, } from "../../channels/connections.js";
 import { getFeatureFlag } from "../../runtime/rollout-safety.js";
 function isOrchestrationMode(value) {
-    return value === "single_nobie" || value === "orchestration";
+    return value === "single_knowbee" || value === "orchestration";
 }
 function buildLegacySettingsSnapshot() {
     const cfg = getConfig();
@@ -60,7 +60,7 @@ function buildLegacySettingsSnapshot() {
             allowedPaths: cfg.security.allowedPaths,
         },
         orchestration: {
-            mode: cfg.orchestration.mode ?? "single_nobie",
+            mode: cfg.orchestration.mode ?? "single_knowbee",
             featureFlagEnabled: cfg.orchestration.featureFlagEnabled === true,
             maxDelegationTurns: cfg.orchestration.maxDelegationTurns,
         },

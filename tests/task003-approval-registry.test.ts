@@ -14,13 +14,13 @@ import {
 import { createRootRun } from "../packages/core/src/runs/store.js"
 import { ToolDispatcher } from "../packages/core/src/tools/dispatcher.ts"
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempConfig(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task003-approval-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task003-approval-"))
   tempDirs.push(stateDir)
   const configPath = join(stateDir, "config.json5")
   writeFileSync(configPath, `{
@@ -31,8 +31,8 @@ function useTempConfig(): void {
     },
     webui: { enabled: true, host: "127.0.0.1", port: 0, auth: { enabled: false } }
   }`, "utf-8")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = configPath
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = configPath
   reloadConfig()
 }
 
@@ -42,10 +42,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()

@@ -104,8 +104,8 @@ function subAgent(
 
 const relationships: AgentRelationship[] = [
   {
-    edgeId: "edge:nobie:researcher",
-    parentAgentId: "agent:nobie",
+    edgeId: "edge:knowbee:researcher",
+    parentAgentId: "agent:knowbee",
     childAgentId: "agent:researcher",
     relationshipType: "parent_child",
     status: "active",
@@ -123,9 +123,9 @@ const relationships: AgentRelationship[] = [
 
 const validationContext: SubAgentSettingsValidationContext = {
   rootAgent: {
-    agentId: "agent:nobie",
-    displayName: "Nobie",
-    nickname: "Nobie",
+    agentId: "agent:knowbee",
+    displayName: "Knowbee",
+    nickname: "Knowbee",
   },
   agents: [
     subAgent("agent:researcher", "Researcher", "Res"),
@@ -179,7 +179,7 @@ describe("task002 sub-agent settings view model and command contracts", () => {
       displayName: "Researcher",
       nickname: "Res",
       attributionLabel: "Res",
-      parentDisplayName: "Nobie",
+      parentDisplayName: "Knowbee",
       childCount: 1,
       isTopLevel: true,
       readinessState: "ready",
@@ -206,7 +206,7 @@ describe("task002 sub-agent settings view model and command contracts", () => {
     expect(validateSubAgentSettingsCommand({
       kind: "create_basic",
       source: "beginner",
-      parentAgentId: "agent:nobie",
+      parentAgentId: "agent:knowbee",
       displayName: "Researcher 2",
       nickname: "Res2",
       role: "Research helper",
@@ -230,12 +230,12 @@ describe("task002 sub-agent settings view model and command contracts", () => {
       kind: "update_identity",
       source: "advanced",
       agentId: "agent:writer",
-      displayName: "Nobie",
-      nickname: "Nobie",
+      displayName: "Knowbee",
+      nickname: "Knowbee",
       role: "Writer role",
       description: "Draft responses.",
-      attributionLabel: "Nobie",
-    }, validationContext).issues.map((issue) => issue.code)).toContain("reserved_nobie_name")
+      attributionLabel: "Knowbee",
+    }, validationContext).issues.map((issue) => issue.code)).toContain("reserved_knowbee_name")
 
     expect(validateSubAgentSettingsCommand({
       kind: "update_skill_mcp_bindings",

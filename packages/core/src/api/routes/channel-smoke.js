@@ -82,8 +82,8 @@ export function registerChannelSmokeRoute(app) {
         const mode = req.body?.mode ?? "dry-run";
         if (mode !== "dry-run" && mode !== "live-run")
             return reply.status(400).send({ error: "invalid smoke mode" });
-        if (mode === "live-run" && process.env["NOBIE_CHANNEL_SMOKE_LIVE"] !== "1") {
-            return reply.status(400).send({ error: "live channel smoke requires NOBIE_CHANNEL_SMOKE_LIVE=1" });
+        if (mode === "live-run" && process.env["KNOWBEE_CHANNEL_SMOKE_LIVE"] !== "1") {
+            return reply.status(400).send({ error: "live channel smoke requires KNOWBEE_CHANNEL_SMOKE_LIVE=1" });
         }
         if (mode === "live-run") {
             return reply.status(501).send({ error: "live channel smoke executor is not configured in this build" });

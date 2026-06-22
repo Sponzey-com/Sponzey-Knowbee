@@ -1,4 +1,4 @@
-import { type NobieConfig } from "../config/index.js";
+import { type KnowbeeConfig } from "../config/index.js";
 import type { CapabilityPolicy, SkillMcpAllowlist } from "../contracts/sub-agent-orchestration.js";
 import { type McpTransport } from "./client.js";
 export interface McpToolStatus {
@@ -30,7 +30,7 @@ export declare function filterMcpStatusesForAgentAllowlist(statuses: McpServerSt
 export declare function toRegisteredToolName(serverName: string, toolName: string): string;
 declare class McpRegistry {
     private readonly entries;
-    loadFromConfig(config?: NobieConfig): Promise<void>;
+    loadFromConfig(config?: KnowbeeConfig): Promise<void>;
     reloadFromConfig(): Promise<McpServerStatus[]>;
     getStatuses(): McpServerStatus[];
     getAgentScopedStatuses(input: SkillMcpAllowlist | CapabilityPolicy): McpServerStatus[];

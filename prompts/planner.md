@@ -99,9 +99,9 @@ Rules:
 
 ## 7. Execution Decision And Delegation
 
-The planner is part of the current agent, not a separate decision component. Root Nobie reads user requests from channels. A delegated agent reads a `WorkOrder`, `DelegationRequest`, or parent handoff. In both cases, the current agent prepares the structured intake that lets the same agent make an execution decision from its own hierarchy position.
+The planner is part of the current agent, not a separate decision component. Root Knowbee reads user requests from channels. A delegated agent reads a `WorkOrder`, `DelegationRequest`, or parent handoff. In both cases, the current agent prepares the structured intake that lets the same agent make an execution decision from its own hierarchy position.
 
-Detailed execution decision, delegation, self-solve, fallback, count-signal, and harness-boundary rules follow `nobie-execution.md`. Do not duplicate or override those rules here.
+Detailed execution decision, delegation, self-solve, fallback, count-signal, and harness-boundary rules follow `knowbee-execution.md`. Do not duplicate or override those rules here.
 
 Planner output must provide only the fields needed by that execution decision.
 
@@ -109,7 +109,7 @@ Planner output must provide only the fields needed by that execution decision.
 - Preserve exact user-provided literals, identifiers, paths, and quoted text.
 - Mark whether the work is executable, schedulable, clarification-only, or already answerable.
 - If execution is required, emit an explicit action item instead of hiding work in prose.
-- If delegation is plausible, include the required outputs, constraints, handoff context, and final owner. The actual executor choice follows `nobie-execution.md` and the accessible direct-child executor profiles.
+- If delegation is plausible, include the required outputs, constraints, handoff context, and final owner. The actual executor choice follows `knowbee-execution.md` and the accessible direct-child executor profiles.
 - If no delegation target is available in the provided context, still emit enough structure for direct execution or a clear unresolved reason.
 
 Depth wording rules:
@@ -123,7 +123,7 @@ Delegation action item rules:
 - Include `target_nickname` or `team_nickname` only when the user explicitly named a nickname. Do not guess internal IDs.
 - `handoff_context` contains only what the child agent needs. Do not pass raw private memory or unrelated session history.
 - If a Team is targeted, do not say that the Team itself will execute. Set `team_expansion_required = true`, `team_owner_scope`, and `member_role_requirements`.
-- For requests started by the user through Nobie, `final_owner` is `nobie`. For delegated work, `final_owner` is the parent/requesting agent. Child output is input for parent review and synthesis, not a final answer candidate.
+- For requests started by the user through Knowbee, `final_owner` is `knowbee`. For delegated work, `final_owner` is the parent/requesting agent. Child output is input for parent review and synthesis, not a final answer candidate.
 
 ---
 
@@ -182,7 +182,7 @@ Original user request: <original request>
 - Selected route reason: <concrete reason>
 - Delegation decision: <must_delegate | self_solve | return_to_parent | ask_user | fail_with_reason | no_candidate | not_applicable>
 - Hierarchy limit: use only this agent's direct children.
-- Final owner: <root Nobie, parent/requesting agent, or current agent>
+- Final owner: <root Knowbee, parent/requesting agent, or current agent>
 
 [checklist]
 - [ ] Confirm goal: <target>

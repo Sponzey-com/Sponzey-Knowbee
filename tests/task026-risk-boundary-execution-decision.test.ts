@@ -39,8 +39,8 @@ function contextFor(overrides: Partial<AgentExecutionContext> = {}): AgentExecut
       available: true,
     },
     parent_executor: {
-      executor_id: "agent:nobie",
-      display_name: "노비",
+      executor_id: "agent:knowbee",
+      display_name: "노우비",
       role_name: "Parent orchestrator",
       can_delegate: true,
       available: true,
@@ -73,7 +73,7 @@ function unsafeSelfSolveDecision(overrides: Partial<AgentExecutionDecision> = {}
   return {
     contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
     current_executor_id: "node:worker",
-    parent_executor_id: "agent:nobie",
+    parent_executor_id: "agent:knowbee",
     domain: "private_local_secret_access",
     behavior_pattern: "execute",
     execution_route: "self_solve",
@@ -107,7 +107,7 @@ describe("task026 risk boundary execution decision", () => {
     expect(result.fallbackReason).toBe("risk_boundary_requires_approval")
     expect(result.validation?.delegation.status).toBe("risk_boundary_requires_approval")
     expect(result.decision.execution_route).toBe("ask_parent")
-    expect(result.decision.selected_executor_id).toBe("agent:nobie")
+    expect(result.decision.selected_executor_id).toBe("agent:knowbee")
     expect(result.decision.risk_boundary.requires_user_approval).toBe(true)
     expect(result.trace.at(-1)).toEqual(expect.objectContaining({
       phase: "fallback",
@@ -115,11 +115,11 @@ describe("task026 risk boundary execution decision", () => {
     }))
   })
 
-  it("sends root Nobie risk boundary violations to the user when there is no parent executor", async () => {
+  it("sends root Knowbee risk boundary violations to the user when there is no parent executor", async () => {
     const rootContext = contextFor({
       current_executor: {
-        executor_id: "agent:nobie",
-        display_name: "노비",
+        executor_id: "agent:knowbee",
+        display_name: "노우비",
         role_name: "Root agent",
         can_delegate: true,
         available: true,
@@ -129,7 +129,7 @@ describe("task026 risk boundary execution decision", () => {
     const result = await runAgentExecutionHarness({
       context: rootContext,
       callModel: async () => JSON.stringify(unsafeSelfSolveDecision({
-        current_executor_id: "agent:nobie",
+        current_executor_id: "agent:knowbee",
         parent_executor_id: undefined,
         fallback_if_unavailable: "ask_user",
       })),
@@ -147,7 +147,7 @@ describe("task026 risk boundary execution decision", () => {
       context: contextFor(),
       decision: unsafeSelfSolveDecision({
         execution_route: "ask_parent",
-        selected_executor_id: "agent:nobie",
+        selected_executor_id: "agent:knowbee",
         selected_connection_path: [],
         reason: "상위 실행자에게 위험 경계 판단을 요청한다.",
       }),

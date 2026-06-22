@@ -218,10 +218,10 @@ function summarizePolicyDecision(input: {
 
 function buildPolicyFailureText(snapshot: ChannelAccessPolicySnapshot): string {
   if (snapshot.reasonCode === "blocked_room") {
-    return "This room is not allowed to use Nobie. Ask an administrator to add it to the channel allowlist."
+    return "This room is not allowed to use Knowbee. Ask an administrator to add it to the channel allowlist."
   }
   if (snapshot.reasonCode === "blocked_user") {
-    return "Your account is not allowed to use Nobie in this channel. Ask an administrator to add you to the channel allowlist."
+    return "Your account is not allowed to use Knowbee in this channel. Ask an administrator to add you to the channel allowlist."
   }
-  return "This channel request is blocked by Nobie's access policy. Ask an administrator to update the channel allowlist."
+  return "This channel request is blocked by Knowbee's access policy. Ask an administrator to update the channel allowlist."
 }

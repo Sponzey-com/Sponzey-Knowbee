@@ -1,7 +1,7 @@
 import {
   type LoadedPromptSource,
   loadPromptSourceRegistry,
-} from "../memory/nobie-md.js"
+} from "../memory/knowbee-md.js"
 
 export const AGENT_PROMPT_BUNDLE_SOURCE_IDS = [
   "definitions",
@@ -9,7 +9,7 @@ export const AGENT_PROMPT_BUNDLE_SOURCE_IDS = [
   "user",
   "soul",
   "planner",
-  "nobie_execution",
+  "knowbee_execution",
   "memory_policy",
   "tool_policy",
   "recovery_policy",
@@ -20,7 +20,7 @@ export const AGENT_PROMPT_BUNDLE_SOURCE_IDS = [
 ] as const
 
 export const EXECUTION_HARNESS_POLICY_SOURCE_IDS = [
-  "nobie_execution",
+  "knowbee_execution",
   "tool_policy",
   "recovery_policy",
   "topology_executor_policy",

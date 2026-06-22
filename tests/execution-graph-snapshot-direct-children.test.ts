@@ -33,16 +33,16 @@ import {
 } from "../packages/core/src/topology/registry.js"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 4, 7, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-execution-graph-snapshot-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-execution-graph-snapshot-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -52,10 +52,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env.NOBIE_STATE_DIR
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.NOBIE_CONFIG
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -267,7 +267,7 @@ describe("ExecutionGraphSnapshot direct child projection", () => {
     expect(snapshot.trace).toEqual({
       execution_graph_id: snapshot.graphId,
       graph_source: "workspace_draft",
-      current_executor_id: "agent:nobie",
+      current_executor_id: "agent:knowbee",
       available_executor_ids: [`${WORKSPACE_DRAFT_TOPOLOGY_ID}:node:intake`],
     })
     expect(snapshot.allActiveExecutorIds).toEqual([

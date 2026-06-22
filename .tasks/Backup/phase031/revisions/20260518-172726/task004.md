@@ -25,7 +25,7 @@
 
 ## 기준 문서
 
-- `.tasks/plan.md`의 `9. Nobie와 서브 에이전트별 동작`
+- `.tasks/plan.md`의 `9. Knowbee와 서브 에이전트별 동작`
 - `.tasks/plan.md`의 `9.3 재위임 시 메모리`
 - `.tasks/plan.md`의 `10. retrieval / restore 정책`
 - `.tasks/plan.md`의 `12.3 sub-session runner`

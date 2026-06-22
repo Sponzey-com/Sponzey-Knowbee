@@ -53,7 +53,7 @@ export interface ApprovalAggregationResult {
     approvedApprovalIds: string[];
 }
 export declare function buildFinalDeliveryAttributions(resultReports?: readonly ResultReport[]): FinalDeliveryAttribution[];
-export declare function buildNobieFinalAnswer(input: {
+export declare function buildKnowbeeFinalAnswer(input: {
     text: string;
     resultReports?: readonly ResultReport[];
 }): {

@@ -17,7 +17,7 @@ import type {
   TeamConfig,
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
-import type { LoadedPromptSource } from "../packages/core/src/memory/nobie-md.ts"
+import type { LoadedPromptSource } from "../packages/core/src/memory/knowbee-md.ts"
 import {
   buildAgentPromptBundle,
   createPromptBundleCache,
@@ -30,13 +30,13 @@ import {
 } from "../packages/core/src/orchestration/sub-session-runner.ts"
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const tempDirs: string[] = []
 
 function owner(ownerId = "agent:researcher"): RuntimeIdentity["owner"] {
-  return ownerId === "agent:nobie"
-    ? { ownerType: "nobie", ownerId }
+  return ownerId === "agent:knowbee"
+    ? { ownerType: "knowbee", ownerId }
     : { ownerType: "sub_agent", ownerId }
 }
 
@@ -213,7 +213,7 @@ function runInput(bundle: AgentPromptBundle, outputs = [expectedOutput()]): RunS
 
 function useTempConfig(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task012-prompt-bundle-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task012-prompt-bundle-"))
   tempDirs.push(stateDir)
   const configPath = join(stateDir, "config.json5")
   writeFileSync(
@@ -221,8 +221,8 @@ function useTempConfig(): void {
     "{ webui: { enabled: true, auth: { enabled: false } }, security: { approvalMode: 'off' } }",
     "utf-8",
   )
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = configPath
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = configPath
   reloadConfig()
 }
 
@@ -232,8 +232,8 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  process.env.NOBIE_STATE_DIR = previousStateDir
-  process.env.NOBIE_CONFIG = previousConfig
+  process.env.KNOWBEE_STATE_DIR = previousStateDir
+  process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()

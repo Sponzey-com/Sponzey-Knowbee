@@ -1,13 +1,13 @@
-# Sponzey Nobie Release, Backup, Restore, Rollback Runbook
+# Sponzey Knowbee Release, Backup, Restore, Rollback Runbook
 
 ## Purpose
 
-This runbook defines the minimum release process for Sponzey Nobie. A release is not just a binary build. It must carry the Gateway/CLI bundle, WebUI static files, prompt seed files, DB migration source, Yeonjang protocol files, package checksums, backup rehearsal evidence, and rollback instructions.
+This runbook defines the minimum release process for Sponzey Knowbee. A release is not just a binary build. It must carry the Gateway/CLI bundle, WebUI static files, prompt seed files, DB migration source, Yeonjang protocol files, package checksums, backup rehearsal evidence, and rollback instructions.
 
 ## Release Version Rule
 
 - The displayed release version is based on `git describe --tags --always --dirty`.
-- `NOBIE_DISPLAY_VERSION` or `NOBIE_GIT_VERSION` may override display version for reproducible CI builds.
+- `KNOWBEE_DISPLAY_VERSION` or `KNOWBEE_GIT_VERSION` may override display version for reproducible CI builds.
 - Gateway `/api/status`, CLI `--version`, and Yeonjang MQTT/node status must expose the same git-tag-derived version when built from the same checkout.
 - `package.json` and `Cargo.toml` remain package baseline versions. They do not replace the release display version.
 
@@ -25,8 +25,8 @@ Required payload:
 Platform payload:
 
 - macOS: `Yeonjang.app` from `scripts/build-yeonjang-macos.sh`.
-- Windows: `nobie-yeonjang.exe`, `build/start/stop-yeonjang-windows.bat`, tray/service packaging notes.
-- Linux: `nobie-yeonjang` binary from a Linux build host.
+- Windows: `knowbee-yeonjang.exe`, `build/start/stop-yeonjang-windows.bat`, tray/service packaging notes.
+- Linux: `knowbee-yeonjang` binary from a Linux build host.
 
 Platform binaries are optional on a single-host local release build, but must be present before publishing a release for that platform.
 
@@ -121,7 +121,7 @@ This gate is intentionally separate from long-running smoke and soak gates. It s
 
 ## Phase 027 Topology Delegation Gate
 
-Before release, `pnpm run test:phase027` must pass. The gate protects the current topology runtime rules: Nobie and every current agent select from accessible direct children, deleted entry-selection fallback concepts stay out of runtime source, model profile timeout/retry fields do not terminate sub-sessions, provider direct routing is not used when topology executors are available, child results wait for parent aggregation, and Runtime Inspector/WebUI show selected executor, pending result, aggregation, and redelegation states instead of internal numeric execution limits.
+Before release, `pnpm run test:phase027` must pass. The gate protects the current topology runtime rules: Knowbee and every current agent select from accessible direct children, deleted entry-selection fallback concepts stay out of runtime source, model profile timeout/retry fields do not terminate sub-sessions, provider direct routing is not used when topology executors are available, child results wait for parent aggregation, and Runtime Inspector/WebUI show selected executor, pending result, aggregation, and redelegation states instead of internal numeric execution limits.
 
 The phase gate is split into:
 
@@ -202,7 +202,7 @@ Regression checklist:
 
 Sub-agent orchestration must move through these release modes in order:
 
-1. `flag_off`: `sub_agent_orchestration=off`, compatibility mode on, single Nobie only.
+1. `flag_off`: `sub_agent_orchestration=off`, compatibility mode on, single Knowbee only.
 2. `dry_run_only`: shadow dry-run evidence only, no sub-agent final answer can become user-facing output.
 3. `limited_beta`: limited operator beta with rollback smoke, benchmark thresholds, and restart-resume soak passing.
 4. `full_enable`: public default only after limited beta evidence remains clean for the release window.
@@ -236,16 +236,16 @@ Rollout stages:
 Required regression gates:
 
 - Feature flag off path must fall back before topology registry lookup.
-- Single Nobie fallback and existing sub-agent release gate must pass.
+- Single Knowbee fallback and existing sub-agent release gate must pass.
 - Channel finalizer regression must preserve duplicate-final zero tolerance and late-result no-reply behavior.
 - WebUI build gate must pass because the builder is GUI-first and should limit ordinary setup typing to executor name, executor work, and run input.
 - Topology Workspace route gate must prove `/advanced/topology` is the only visible topology menu entry, `/advanced/enterprise-topology` redirects to `/advanced/topology?mode=build`, and the old Runtime Topology menu is removed.
 - Topology Workspace layer gate must cover the visible Build, Run, Trace, and Improve layers. Runtime resource projection is internal evidence and must not be exposed as `/advanced/topology?mode=resources`.
-- Executor-first usability gate must pass the happy path: `+ 실행자 추가`, executor name, executor work, `노비가 이해한 내용`, second executor, Smart Connect recommendation chip, run input, 실행, and 기록/고칠 점 review.
+- Executor-first usability gate must pass the happy path: `+ 실행자 추가`, executor name, executor work, `노우비가 이해한 내용`, second executor, Smart Connect recommendation chip, run input, 실행, and 기록/고칠 점 review.
 - Default UX leak gate must prove Task/Decision/Approval/Tool/Data/Group palette labels, WorkOrder Template, Context, AgentConfig, SubSession, CompiledSnapshot, Node Contract, Runtime Resource Topology, and JSON/YAML are hidden from the default surface.
-- Internal stability gate must prove ExecutorGraph compiles to EnterpriseTopology, ExecutorGraph metadata remains projection-only, rule-based inference works without AI-assisted inference, feature flag off keeps single Nobie fallback, and the old Advanced/Developer topology surfaces are no longer exposed.
+- Internal stability gate must prove ExecutorGraph compiles to EnterpriseTopology, ExecutorGraph metadata remains projection-only, rule-based inference works without AI-assisted inference, feature flag off keeps single Knowbee fallback, and the old Advanced/Developer topology surfaces are no longer exposed.
 - Executor observability gate must prove confirmed understanding version, inference evidence id, runtime profile snapshot id, inferred WorkOrder template/context, trace event ids, and FailureReport evidence links can reconstruct `user description -> inference -> NodeContract -> WorkOrder -> FailureReport`.
-- Topology runtime smoke must prove MVP execution with Nobie-owned final answer synthesis.
+- Topology runtime smoke must prove MVP execution with Knowbee-owned final answer synthesis.
 - Rollback smoke must restore the previous active topology and matching compiled snapshot without deleting runtime trace evidence.
 
 Do not enable `topology_runtime_enabled` unless `enterpriseTopologyReleaseGate.gateStatus` is `passed`, the requested mode is `opt_in_routing`, and rollback evidence includes active topology plus compiled snapshot restore verification.
@@ -254,18 +254,18 @@ Workspace flag matrix meaning:
 
 - `enterprise_topology_builder_ui`: controls the unified `/advanced/topology` Workspace. Off hides Workspace controls; the legacy enterprise builder URL still redirects to the canonical route and then follows the same feature gate.
 - `declared_observed_topology_analysis`: controls Trace and Improve evidence that compares declared topology with observed runtime paths. Off must not delete trace tables.
-- `topology_runtime_enabled`: controls Run layer root-run routing only. Off must preserve the existing single Nobie root-run path even when drafts, validation, or Workspace navigation are present.
+- `topology_runtime_enabled`: controls Run layer root-run routing only. Off must preserve the existing single Knowbee root-run path even when drafts, validation, or Workspace navigation are present.
 
 Topology rollback checks:
 
-- Simple mode rollback check: open the Executor Graph surface, confirm Build/Run/Trace/Improve remain visible, confirm `+ 실행자 추가`, 이름, 하는 일, `노비가 이해한 내용`, 입력, 실행, 기록, and 고칠 점 are available, and confirm Resources, Compile Preview, JSON/YAML, raw trace IDs, feature flag status, WorkOrder Template, Context, and direct relation/schema controls are not in the default surface.
+- Simple mode rollback check: open the Executor Graph surface, confirm Build/Run/Trace/Improve remain visible, confirm `+ 실행자 추가`, 이름, 하는 일, `노우비가 이해한 내용`, 입력, 실행, 기록, and 고칠 점 are available, and confirm Resources, Compile Preview, JSON/YAML, raw trace IDs, feature flag status, WorkOrder Template, Context, and direct relation/schema controls are not in the default surface.
 - Removed surface rollback check: open `/advanced/topology?mode=resources`, `/advanced/topology?ux=advanced`, and `/advanced/topology?ux=developer&mode=build`; each must stay on the simple Executor Graph surface without Resources, Compile Preview, JSON/YAML, Developer tools, relation toolbar, Run Target, or advanced inspector settings.
 - Rollback evidence must record which area failed: Simple UX regression, removed advanced surface regression, or runtime routing regression.
-- Rollback evidence must also include `nobie.executor_graph.rollback_projection`: restored topology id/version, ExecutorGraph metadata presence, executor ids, connection ids, confirmed understanding ids, and `sourceOfTruth=executor_topology_v2`.
+- Rollback evidence must also include `knowbee.executor_graph.rollback_projection`: restored topology id/version, ExecutorGraph metadata presence, executor ids, connection ids, confirmed understanding ids, and `sourceOfTruth=executor_topology_v2`.
 
 Executor evidence audit checks:
 
-- In Simple mode, raw evidence ids stay hidden in the default result screen. Users see 실패 위치, 노비가 시도한 것, 다음 조치 first.
+- In Simple mode, raw evidence ids stay hidden in the default result screen. Users see 실패 위치, 노우비가 시도한 것, 다음 조치 first.
 - Internal evidence audit may inspect sanitized developer logs outside the default topology surface, but the topology UI must not expose WorkOrder id, NodeContract id, raw trace ids, or JSON/YAML controls by default.
 - If an inference was confirmed by the user, `confirmedUnderstandingVersion` must be present in topology metadata and node-level `executorGraph.inferenceEvidence`.
 - Failure investigations must be able to follow: userDescription, normalizedUnderstanding, inferenceRuleIds, NodeContract id, WorkOrder id, traceEventIds, and FailureReport id.
@@ -370,7 +370,7 @@ Rollback steps:
 7. Record current active topology id, active version, validation snapshot id, and compiled snapshot id as rollback-of-rollback evidence.
 8. Restore the previous active topology through `rollbackTopologyVersion(topologyId, targetVersion)` or from the verified backup.
 9. Restore the compiled snapshot that matches the target topology version and source hash.
-10. Confirm the single Nobie path can create a run and produce one final answer without deleting data.
+10. Confirm the single Knowbee path can create a run and produce one final answer without deleting data.
 11. Confirm `/advanced/topology` no longer exposes activation controls and `/advanced/enterprise-topology` still redirects to `/advanced/topology?mode=build`.
 12. Restore previous Gateway/CLI/Core bundle when feature flag rollback alone is not enough.
 13. Restore previous WebUI static build.

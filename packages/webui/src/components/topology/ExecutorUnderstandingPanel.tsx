@@ -37,7 +37,7 @@ export function ExecutorUnderstandingPanel({
       <div>
         <div>
           <div className="text-xs font-semibold text-stone-950">
-            {text("노비가 이해한 내용", "What Nobie understood")}
+            {text("노우비가 이해한 내용", "What Knowbee understood")}
           </div>
           <p className="mt-1 text-xs leading-5 text-stone-600">
             {text(resolvedInference.summaryKo, resolvedInference.summaryEn)}
@@ -51,8 +51,8 @@ export function ExecutorUnderstandingPanel({
           data-testid="executor-understanding-low-confidence"
         >
           {text(
-            "설명이 짧아 요청 처리 중 노비가 필요한 내용을 더 물어볼 수 있습니다.",
-            "The description is short, so Nobie may ask for missing details while handling a request.",
+            "설명이 짧아 요청 처리 중 노우비가 필요한 내용을 더 물어볼 수 있습니다.",
+            "The description is short, so Knowbee may ask for missing details while handling a request.",
           )}
         </div>
       ) : null}

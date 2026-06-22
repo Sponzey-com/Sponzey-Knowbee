@@ -128,7 +128,7 @@
 - 고급 설정 runtime monitor의 redaction을 강화했다.
 - API key, OAuth token, MCP secret, bearer token, credential URL, raw screenshot binary, raw diagnostics, run/task/trace id가 사용자-facing markup에 노출되지 않는 테스트를 추가했다.
 - sub-session handoff data exchange provenance가 memory isolation validator에서 인식되는 `opaque:command_request:*` 형태로 저장되도록 수정했다.
-- static architecture audit에서 실제 compatibility boundary로 남겨야 하는 `single_nobie` 경로를 명시적으로 허용하고, `.tasks/architecture-cleanup-inventory.md`에 cleanup 경계를 남겼다.
+- static architecture audit에서 실제 compatibility boundary로 남겨야 하는 `single_knowbee` 경로를 명시적으로 허용하고, `.tasks/architecture-cleanup-inventory.md`에 cleanup 경계를 남겼다.
 
 ### 구현 체크리스트
 
@@ -276,13 +276,13 @@
 
   - 결과: static 35 tests, runtime 24 tests, webui 21 tests, prompts 38 tests, generated 3 tests 통과.
   - 참고: webui gate에서 React Router `useLayoutEffect` SSR warning이 출력되지만 테스트는 통과한다.
-- [x] `pnpm --filter @nobie/core typecheck`
+- [x] `pnpm --filter @knowbee/core typecheck`
 
   - 결과: 통과.
-- [x] `pnpm --filter @nobie/core build`
+- [x] `pnpm --filter @knowbee/core build`
 
   - 결과: 통과.
-- [x] `pnpm --filter @nobie/webui build`
+- [x] `pnpm --filter @knowbee/webui build`
 
   - 결과: 통과.
   - 참고: Vite chunk size warning이 출력된다.
@@ -317,7 +317,7 @@
 - `packages/core/src/orchestration/sub-session-runner.ts`
   - handoff data exchange provenance를 memory isolation validator가 인식하는 opaque ref로 저장.
 - `tests/legacy-routing-static-audit.test.ts`
-  - compatibility boundary로 남은 `single_nobie` 허용 경로 명시.
+  - compatibility boundary로 남은 `single_knowbee` 허용 경로 명시.
 - `.tasks/architecture-cleanup-inventory.md`
   - cleanup inventory와 compatibility boundary 기록.
 - `packages/core/src/**/*.js`, `packages/core/src/**/*.d.ts`, `packages/core/src/**/*.map`

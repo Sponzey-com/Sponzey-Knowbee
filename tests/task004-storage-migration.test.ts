@@ -58,21 +58,21 @@ const require = createRequire(import.meta.url)
 const BetterSqlite3 = require("../packages/core/node_modules/better-sqlite3") as BetterSqlite3Factory
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task004-storage-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task004-storage-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = join(stateDir, "config.json5")
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
   reloadConfig()
 }
 
-function owner(ownerId = "agent:nobie"): RuntimeIdentity["owner"] {
-  return { ownerType: "nobie", ownerId }
+function owner(ownerId = "agent:knowbee"): RuntimeIdentity["owner"] {
+  return { ownerType: "knowbee", ownerId }
 }
 
 function identity(entityType: RuntimeIdentity["entityType"], entityId: string): RuntimeIdentity {
@@ -165,7 +165,7 @@ function teamConfig(overrides: Partial<TeamConfig> = {}): TeamConfig {
     nickname: "Research Team",
     status: "enabled",
     purpose: "Research and evidence collection",
-    ownerAgentId: "agent:nobie",
+    ownerAgentId: "agent:knowbee",
     leadAgentId: "agent:researcher",
     memberCountMin: 1,
     memberCountMax: 2,
@@ -177,7 +177,7 @@ function teamConfig(overrides: Partial<TeamConfig> = {}): TeamConfig {
       membershipId: "team:research:membership:1",
       teamId: "team:research",
       agentId: "agent:researcher",
-      ownerAgentIdSnapshot: "agent:nobie",
+      ownerAgentIdSnapshot: "agent:knowbee",
       teamRoles: ["lead researcher"],
       primaryRole: "lead researcher",
       required: true,
@@ -238,10 +238,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -373,8 +373,8 @@ describe("task004 storage migration", () => {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         "exchange:legacy",
-        "nobie",
-        "agent:nobie",
+        "knowbee",
+        "agent:knowbee",
         "sub_agent",
         "agent:researcher",
         "legacy context",
@@ -449,7 +449,7 @@ describe("task004 storage migration", () => {
       expect(agentRow.delegation_policy_json).toContain("maxParallelSessions")
       expect(teamRow).toMatchObject({
         normalized_nickname: "research team",
-        owner_agent_id: "agent:nobie",
+        owner_agent_id: "agent:knowbee",
         lead_agent_id: "agent:researcher",
         result_policy: "lead_synthesis",
         conflict_policy: "lead_decides",
@@ -507,7 +507,7 @@ describe("task004 storage migration", () => {
           membershipId: "team:research:membership:1",
           teamId: "team:research",
           agentId: "agent:researcher",
-          ownerAgentIdSnapshot: "agent:nobie",
+          ownerAgentIdSnapshot: "agent:knowbee",
           teamRoles: ["lead researcher"],
           primaryRole: "lead researcher",
           required: true,
@@ -518,7 +518,7 @@ describe("task004 storage migration", () => {
           membershipId: "team:research:membership:2",
           teamId: "team:research",
           agentId: "agent:backup",
-          ownerAgentIdSnapshot: "agent:nobie",
+          ownerAgentIdSnapshot: "agent:knowbee",
           teamRoles: ["backup researcher"],
           primaryRole: "backup researcher",
           required: false,
@@ -533,7 +533,7 @@ describe("task004 storage migration", () => {
 
     const relationship: AgentRelationship = {
       edgeId: "edge:parent-child",
-      parentAgentId: "agent:nobie",
+      parentAgentId: "agent:knowbee",
       childAgentId: "agent:researcher",
       relationshipType: "parent_child",
       status: "active",
@@ -550,9 +550,9 @@ describe("task004 storage migration", () => {
     const exchange: DataExchangePackage = {
       identity: identity("data_exchange", "exchange:1"),
       exchangeId: "exchange:1",
-      sourceOwner: { ownerType: "nobie", ownerId: "agent:nobie" },
+      sourceOwner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
       recipientOwner: { ownerType: "sub_agent", ownerId: "agent:researcher" },
-      sourceNicknameSnapshot: "Nobie",
+      sourceNicknameSnapshot: "Knowbee",
       recipientNicknameSnapshot: "Researcher",
       purpose: "verification context",
       allowedUse: "verification_only",
@@ -569,7 +569,7 @@ describe("task004 storage migration", () => {
       parentRunId: "run:root",
       teamId: "team:research",
       teamNicknameSnapshot: "Research Team",
-      ownerAgentId: "agent:nobie",
+      ownerAgentId: "agent:knowbee",
       leadAgentId: "agent:researcher",
       memberTaskAssignments: [{ agentId: "agent:researcher", taskIds: ["task:1"], role: "lead researcher" }],
       reviewerAgentIds: ["agent:reviewer"],
@@ -583,17 +583,17 @@ describe("task004 storage migration", () => {
     expect(insertTeamExecutionPlan(teamExecutionPlan)).toBe(true)
 
     expect(getAgentRelationship("edge:parent-child")).toMatchObject({
-      parent_agent_id: "agent:nobie",
+      parent_agent_id: "agent:knowbee",
       child_agent_id: "agent:researcher",
       status: "active",
     })
-    expect(listAgentRelationships({ parentAgentId: "agent:nobie" })).toHaveLength(1)
+    expect(listAgentRelationships({ parentAgentId: "agent:knowbee" })).toHaveLength(1)
     expect(getRunSubSession("sub-session:child")).toMatchObject({
       parent_sub_session_id: "sub-session:parent",
       idempotency_key: "idempotency:sub_session:sub-session:child",
     })
     expect(getAgentDataExchange("exchange:1")).toMatchObject({
-      source_nickname_snapshot: "Nobie",
+      source_nickname_snapshot: "Knowbee",
       recipient_nickname_snapshot: "Researcher",
     })
     expect(getAgentDataExchange("exchange:1")?.contract_json).toContain("\"exchangeId\":\"exchange:1\"")

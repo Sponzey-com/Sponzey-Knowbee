@@ -92,7 +92,7 @@ function workOrderFixture(overrides: Partial<WorkOrder> = {}): WorkOrder {
     workOrderId: "work-order:intake",
     topologyRunId: "topology-run:task009",
     parentWorkOrderId: null,
-    fromNodeId: "node:nobie",
+    fromNodeId: "node:knowbee",
     to: { type: "node", id: "node:intake" },
     objective: "Triage the customer request and assign priority.",
     scope: {
@@ -126,7 +126,7 @@ function workOrderFixture(overrides: Partial<WorkOrder> = {}): WorkOrder {
       approvalRequired: false,
     },
     failureReportRequired: true,
-    delegationPath: ["node:nobie", "node:intake"],
+    delegationPath: ["node:knowbee", "node:intake"],
     createdAt: now,
   })
 
@@ -184,7 +184,7 @@ describe("task009 Hierarchical Delegation Runtime", () => {
       parentWorkOrderId: "work-order:intake",
       fromNodeId: "node:intake",
       to: { type: "node", id: "node:triage" },
-      delegationPath: ["node:nobie", "node:intake", "node:triage"],
+      delegationPath: ["node:knowbee", "node:intake", "node:triage"],
       permissionScope: {
         allowedToolIds: [],
         allowedSystemIds: [],
@@ -313,7 +313,7 @@ describe("task009 Hierarchical Delegation Runtime", () => {
     const reviewTrace = result.traceEvents.find((event) => event.workOrderId.includes("node:review"))
     expect(reviewTrace).toMatchObject({
       workOrderId: "work-order:intake:child:node:triage:child:node:review",
-      delegationPath: ["node:nobie", "node:intake", "node:triage", "node:review"],
+      delegationPath: ["node:knowbee", "node:intake", "node:triage", "node:review"],
     })
   })
 })

@@ -1,4 +1,4 @@
-import { type NobieConfig } from "../config/index.js";
+import { type KnowbeeConfig } from "../config/index.js";
 import type { AnyTool } from "../tools/types.js";
 export type ExtensionKind = "mcp_server" | "mcp_tool" | "skill" | "hook" | "yeonjang_tool" | "internal_tool" | "plugin";
 export type ExtensionTrustLevel = "builtin" | "local" | "external" | "unknown";
@@ -30,7 +30,7 @@ export interface ExtensionRegistryEntry {
     metadata: Record<string, unknown>;
 }
 export interface ExtensionRegistrySnapshot {
-    kind: "nobie.extension.registry";
+    kind: "knowbee.extension.registry";
     version: 1;
     createdAt: string;
     checksum: string;
@@ -78,7 +78,7 @@ export interface MinimalMcpServerStatus {
     tools: MinimalMcpToolStatus[];
 }
 export declare function buildExtensionRegistrySnapshot(input?: {
-    config?: NobieConfig;
+    config?: KnowbeeConfig;
     tools?: AnyTool[];
     mcpStatuses?: MinimalMcpServerStatus[];
     now?: Date;

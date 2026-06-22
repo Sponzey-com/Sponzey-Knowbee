@@ -73,9 +73,9 @@ function draft(): SetupDraft {
 
 function checks(): SetupChecksResponse {
   return {
-    stateDir: "/tmp/nobie-task006-visual",
-    configFile: "/tmp/nobie-config.json",
-    setupStateFile: "/tmp/nobie-setup.json",
+    stateDir: "/tmp/knowbee-task006-visual",
+    configFile: "/tmp/knowbee-config.json",
+    setupStateFile: "/tmp/knowbee-setup.json",
     setupCompleted: false,
     telegramConfigured: true,
     authEnabled: true,

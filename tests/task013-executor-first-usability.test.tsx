@@ -135,7 +135,7 @@ describe("task013 Executor-first usability", () => {
     expect(combinedHtml).toContain('data-testid="executor-create-name"')
     expect(combinedHtml).toContain('data-testid="executor-create-description"')
     expect(combinedHtml).toContain('data-testid="executor-understanding-panel"')
-    expect(combinedHtml).toContain("노비가 이해한 내용")
+    expect(combinedHtml).toContain("노우비가 이해한 내용")
     expect(combinedHtml).toContain('data-testid="executor-connection-menu"')
     expect(combinedHtml).toContain('data-testid="executor-connection-recommendation-chip"')
     expect(combinedHtml).toContain('data-testid="topology-run-simple-input"')

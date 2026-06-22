@@ -449,7 +449,7 @@ export function createDryRunChannelSmokeExecutor(input = {}) {
                         : {
                             channel: scenario.expectedTarget,
                             mode: "native_file",
-                            filePath: "/tmp/nobie-smoke-dry-run.png",
+                            filePath: "/tmp/knowbee-smoke-dry-run.png",
                         }]
                 : [],
             capabilityFallbacks: scenario.expectsUnsupportedCapability

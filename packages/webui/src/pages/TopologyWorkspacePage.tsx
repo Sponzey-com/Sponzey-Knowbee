@@ -706,7 +706,7 @@ function ExecutorTopologyV2Workspace({
       showFirstStart={false}
       showLeftRail={false}
       saveDisabled={saveStatus === "loading" || !validation.ok}
-      deleteDisabled={!selectedExecutorId || Boolean(subAgentProjection && selectedExecutorId === "agent:nobie")}
+      deleteDisabled={!selectedExecutorId || Boolean(subAgentProjection && selectedExecutorId === "agent:knowbee")}
       onAddExecutor={subAgentProjection ? undefined : handleAddExecutor}
       onDeleteExecutor={handleDeleteExecutor}
       onSaveDraft={() => {
@@ -765,7 +765,7 @@ function ExecutorTopologyV2Workspace({
               workspaceId={DEFAULT_TOPOLOGY_ID}
               topologyId={effectiveTopology.id}
               subAgentSummary={selectedExecutorId ? subAgentProjection?.summaries.get(selectedExecutorId) : undefined}
-              readOnly={Boolean(subAgentProjection && selectedExecutorId === "agent:nobie")}
+              readOnly={Boolean(subAgentProjection && selectedExecutorId === "agent:knowbee")}
               onExecutorChange={handleExecutorChange}
               onConfirmUnderstanding={handleConfirmUnderstanding}
             />

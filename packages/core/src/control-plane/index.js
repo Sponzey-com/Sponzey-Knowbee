@@ -807,7 +807,7 @@ function persistSubAgentSetupDraft(raw, draft) {
         return;
     raw.orchestration = {
         ...toObject(raw.orchestration),
-        mode: draft.subAgents.orchestrationEnabled ? "orchestration" : "single_nobie",
+        mode: draft.subAgents.orchestrationEnabled ? "orchestration" : "single_knowbee",
         featureFlagEnabled: draft.subAgents.orchestrationEnabled,
         subAgents: draft.subAgents.items.map(setupSubAgentItemToConfig),
     };
@@ -1022,7 +1022,7 @@ export function createTransientAuthToken() {
     return randomBytes(32).toString("hex");
 }
 function createEnterpriseTopologyBuilderCapability() {
-    const rawFlag = process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]?.trim().toLowerCase();
+    const rawFlag = process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]?.trim().toLowerCase();
     const explicitlyDisabled = rawFlag === "0" || rawFlag === "false" || rawFlag === "no" || rawFlag === "off";
     return {
         key: "enterprise_topology_builder_ui",

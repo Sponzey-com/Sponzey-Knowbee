@@ -49,8 +49,8 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 
 const now = Date.UTC(2026, 3, 29, 10, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 function topologyFixture(): EnterpriseTopology {
   const topology = structuredClone(buildExampleEnterpriseTopology(now))
@@ -97,10 +97,10 @@ function migratedDb(): SqliteDatabase {
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task015-topology-analysis-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task015-topology-analysis-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -109,10 +109,10 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.NOBIE_STATE_DIR
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.NOBIE_CONFIG
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
 })
 
@@ -261,10 +261,10 @@ describe("task015 declared vs observed topology analysis", () => {
         "work-order:intake",
         "topology-run:extract",
         "node-run:intake",
-        "node:nobie",
+        "node:knowbee",
         "node",
         "node:intake",
-        JSON.stringify(["node:nobie", "node:intake", "node:triage"]),
+        JSON.stringify(["node:knowbee", "node:intake", "node:triage"]),
         "{}",
         now,
       )
@@ -317,7 +317,7 @@ describe("task015 declared vs observed topology analysis", () => {
         "work_order",
         "node-runtime",
         "owner_observed",
-        JSON.stringify(["node:nobie", "node:intake"]),
+        JSON.stringify(["node:knowbee", "node:intake"]),
         JSON.stringify({ observedOwnerRef: { entityType: "position", id: "position:ops-lead" } }),
         "{}",
         now + 3,

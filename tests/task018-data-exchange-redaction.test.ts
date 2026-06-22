@@ -30,26 +30,26 @@ import {
 import { buildFeedbackLoopPackage } from "../packages/core/src/orchestration/feedback-loop.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 const dayMs = 24 * 60 * 60 * 1_000
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task018-data-exchange-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task018-data-exchange-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = undefined
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = undefined
   reloadConfig()
 }
 
 function restoreState(): void {
   closeDb()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -80,9 +80,9 @@ function baseExchange(
   overrides: Partial<Parameters<typeof createDataExchangePackage>[0]> = {},
 ): DataExchangePackage {
   return createDataExchangePackage({
-    sourceOwner: owner("nobie", "agent:nobie"),
+    sourceOwner: owner("knowbee", "agent:knowbee"),
     recipientOwner: owner("sub_agent", "agent:researcher"),
-    sourceNicknameSnapshot: "Nobie",
+    sourceNicknameSnapshot: "Knowbee",
     recipientNicknameSnapshot: "Researcher",
     purpose: "Share bounded task context.",
     allowedUse: "temporary_context",
@@ -249,9 +249,9 @@ describe("task018 data exchange package redaction", () => {
         method: "POST",
         url: "/api/data-exchanges",
         payload: {
-          sourceOwner: owner("nobie", "agent:nobie"),
+          sourceOwner: owner("knowbee", "agent:knowbee"),
           recipientOwner: owner("sub_agent", "agent:researcher"),
-          sourceNicknameSnapshot: "Nobie",
+          sourceNicknameSnapshot: "Knowbee",
           recipientNicknameSnapshot: "Researcher",
           purpose: "temporary verification context",
           allowedUse: "temporary_context",
@@ -300,10 +300,10 @@ describe("task018 data exchange package redaction", () => {
   })
 
   it("excludes expired packages from retrieval and cross-agent memory access without exchange", () => {
-    const nobie = owner("nobie", "agent:nobie")
+    const knowbee = owner("knowbee", "agent:knowbee")
     const researcher = owner("sub_agent", "agent:researcher")
     const exchange = baseExchange({
-      sourceOwner: nobie,
+      sourceOwner: knowbee,
       recipientOwner: researcher,
       exchangeId: "exchange:task018:ttl",
       idempotencyKey: "exchange:task018:ttl",
@@ -322,7 +322,7 @@ describe("task018 data exchange package redaction", () => {
     expect(() =>
       assertMemoryAccessAllowed({
         requester: researcher,
-        owner: nobie,
+        owner: knowbee,
         exchanges: [],
         now,
       }),
@@ -372,8 +372,8 @@ describe("task018 data exchange package redaction", () => {
       targetAgentPolicy: "same_agent",
       targetAgentId: "agent:researcher",
       targetAgentNicknameSnapshot: "Researcher",
-      requestingAgentId: "agent:nobie",
-      requestingAgentNicknameSnapshot: "Nobie",
+      requestingAgentId: "agent:knowbee",
+      requestingAgentNicknameSnapshot: "Knowbee",
       parentRunId: "run:task018",
       persistSynthesizedContext: false,
       idProvider: () => "task018-feedback",
@@ -382,7 +382,7 @@ describe("task018 data exchange package redaction", () => {
 
     expect(built.synthesizedContext.expiresAt).toBe(now + dayMs)
     expect(built.synthesizedContext.redactionState).toBe("redacted")
-    expect(built.synthesizedContext.sourceNicknameSnapshot).toBe("Nobie")
+    expect(built.synthesizedContext.sourceNicknameSnapshot).toBe("Knowbee")
     expect(built.synthesizedContext.recipientNicknameSnapshot).toBe("Researcher")
     expect(built.synthesizedContext.provenanceRefs).toEqual(["result:feedback:task018"])
     expect(JSON.stringify(built.synthesizedContext.payload)).not.toContain(

@@ -29,15 +29,15 @@ import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
 import { executeScheduleContract } from "../packages/core/src/scheduler/contract-executor.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task008-latency-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task008-latency-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
   reloadConfig()
 }
 
@@ -109,10 +109,10 @@ beforeEach(() => {
 afterEach(() => {
   resetLatencyMetrics()
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -219,7 +219,7 @@ describe("task008 fast response latency", () => {
 
     expect(plan.latencyEvents).toEqual(expect.arrayContaining([
       expect.stringMatching(/^normalizer_latency_ms=\d+ms/),
-      expect.stringMatching(/^orchestration_mode_latency_ms=\d+ms mode=single_nobie; reason=mode_single_nobie$/),
+      expect.stringMatching(/^orchestration_mode_latency_ms=\d+ms mode=single_knowbee; reason=mode_single_knowbee$/),
       expect.stringMatching(/^candidate_search_latency_ms=\d+ms provider=active-run-store/),
     ]))
     expect(listLatencyMetrics()).toEqual(expect.arrayContaining([

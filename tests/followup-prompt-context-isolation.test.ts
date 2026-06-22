@@ -110,7 +110,7 @@ function startPlanFixture(overrides: Record<string, unknown> = {}): any {
     },
     orchestrationPlanSnapshot: {
       planId: "plan-test",
-      directNobieTasks: [],
+      directKnowbeeTasks: [],
       delegatedTasks: [],
       dependencyEdges: [],
       resourceLocks: [],

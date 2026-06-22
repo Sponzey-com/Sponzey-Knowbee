@@ -5,22 +5,22 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PIDS_DIR="$ROOT_DIR/pids"
 LOGS_DIR="$ROOT_DIR/logs"
 
-GATEWAY_PID_FILE="$PIDS_DIR/nobie-gateway.pid"
-WEBUI_PID_FILE="$PIDS_DIR/nobie-webui.pid"
+GATEWAY_PID_FILE="$PIDS_DIR/knowbee-gateway.pid"
+WEBUI_PID_FILE="$PIDS_DIR/knowbee-webui.pid"
 
-GATEWAY_LOG_FILE="$LOGS_DIR/nobie-gateway.log"
-WEBUI_LOG_FILE="$LOGS_DIR/nobie-webui.log"
+GATEWAY_LOG_FILE="$LOGS_DIR/knowbee-gateway.log"
+WEBUI_LOG_FILE="$LOGS_DIR/knowbee-webui.log"
 
-STATE_DIR="${NOBIE_STATE_DIR:-${WIZBY_STATE_DIR:-${HOWIE_STATE_DIR:-$HOME/.nobie}}}"
-GATEWAY_HOST="${NOBIE_GATEWAY_HOST:-127.0.0.1}"
-GATEWAY_PORT="${NOBIE_GATEWAY_PORT:-18888}"
-WEBUI_HOST="${NOBIE_WEBUI_HOST:-127.0.0.1}"
-WEBUI_PORT="${NOBIE_WEBUI_PORT:-4220}"
-ADMIN_UI="${NOBIE_ADMIN_UI:-0}"
+STATE_DIR="${KNOWBEE_STATE_DIR:-${WIZBY_STATE_DIR:-${HOWIE_STATE_DIR:-$HOME/.knowbee}}}"
+GATEWAY_HOST="${KNOWBEE_GATEWAY_HOST:-127.0.0.1}"
+GATEWAY_PORT="${KNOWBEE_GATEWAY_PORT:-18888}"
+WEBUI_HOST="${KNOWBEE_WEBUI_HOST:-127.0.0.1}"
+WEBUI_PORT="${KNOWBEE_WEBUI_PORT:-4220}"
+ADMIN_UI="${KNOWBEE_ADMIN_UI:-0}"
 RESTART_LOCAL="0"
 LABEL_SUFFIX="$(printf '%s' "$ROOT_DIR" | cksum | awk '{print $1}')"
-GATEWAY_LAUNCHD_LABEL="com.sponzey.nobie.${LABEL_SUFFIX}.gateway"
-WEBUI_LAUNCHD_LABEL="com.sponzey.nobie.${LABEL_SUFFIX}.webui"
+GATEWAY_LAUNCHD_LABEL="com.sponzey.knowbee.${LABEL_SUFFIX}.gateway"
+WEBUI_LAUNCHD_LABEL="com.sponzey.knowbee.${LABEL_SUFFIX}.webui"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "알 수 없는 옵션: $1"
-      echo "사용법: bash scripts/nobie-start.sh [--admin-ui] [--restart]"
+      echo "사용법: bash scripts/knowbee-start.sh [--admin-ui] [--restart]"
       exit 1
       ;;
   esac
@@ -82,12 +82,12 @@ pid_belongs_to_repo() {
 
   [[ "$cwd" == "$ROOT_DIR"* ]] && return 0
   [[ "$cmd" == *"$ROOT_DIR"* ]] && return 0
-  [[ "$cmd" == *"@nobie/cli"* || "$cmd" == *"packages/cli/dist/index.js serve"* || "$cmd" == *"@nobie/webui"* ]] && [[ "$cwd" == "$ROOT_DIR"* ]] && return 0
+  [[ "$cmd" == *"@knowbee/cli"* || "$cmd" == *"packages/cli/dist/index.js serve"* || "$cmd" == *"@knowbee/webui"* ]] && [[ "$cwd" == "$ROOT_DIR"* ]] && return 0
   return 1
 }
 
 can_use_launchctl() {
-  [[ "${NOBIE_DISABLE_LAUNCHCTL:-0}" != "1" ]] \
+  [[ "${KNOWBEE_DISABLE_LAUNCHCTL:-0}" != "1" ]] \
     && [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]] \
     && command -v launchctl >/dev/null 2>&1
 }
@@ -265,8 +265,8 @@ build_workspace() {
   echo "Gateway 실행 파일을 빌드합니다..."
   (
     cd "$ROOT_DIR"
-    pnpm --filter @nobie/core build
-    pnpm --filter @nobie/cli build
+    pnpm --filter @knowbee/core build
+    pnpm --filter @knowbee/cli build
   )
 }
 
@@ -283,9 +283,9 @@ pnpm_rebuild_package() {
   (
     cd "$ROOT_DIR"
     if [[ -n "$store_dir" ]]; then
-      pnpm --store-dir "$store_dir" --filter @nobie/core rebuild "$package_name"
+      pnpm --store-dir "$store_dir" --filter @knowbee/core rebuild "$package_name"
     else
-      pnpm --filter @nobie/core rebuild "$package_name"
+      pnpm --filter @knowbee/core rebuild "$package_name"
     fi
   )
 }
@@ -473,10 +473,10 @@ wait_for_http() {
 start_gateway_nohup() {
   (
     cd "$ROOT_DIR"
-    export NOBIE_STATE_DIR="$STATE_DIR"
-    export NOBIE_LOG_LEVEL="${NOBIE_LOG_LEVEL:-debug}"
-    export NOBIE_ADMIN_UI="$ADMIN_UI"
-    export NOBIE_ADMIN_UI_SOURCE="local-script"
+    export KNOWBEE_STATE_DIR="$STATE_DIR"
+    export KNOWBEE_LOG_LEVEL="${KNOWBEE_LOG_LEVEL:-debug}"
+    export KNOWBEE_ADMIN_UI="$ADMIN_UI"
+    export KNOWBEE_ADMIN_UI_SOURCE="local-script"
     exec nohup node packages/cli/dist/index.js serve </dev/null
   ) >>"$GATEWAY_LOG_FILE" 2>&1 &
   echo "$!" > "$GATEWAY_PID_FILE"
@@ -496,8 +496,8 @@ start_gateway() {
   if can_use_launchctl; then
     remove_launchctl_job "$GATEWAY_LAUNCHD_LABEL"
     local command
-    printf -v command 'cd %q && export NOBIE_STATE_DIR=%q NOBIE_LOG_LEVEL=%q NOBIE_ADMIN_UI=%q NOBIE_ADMIN_UI_SOURCE=%q PATH=%q && exec node packages/cli/dist/index.js serve >>%q 2>&1' \
-      "$ROOT_DIR" "$STATE_DIR" "${NOBIE_LOG_LEVEL:-debug}" "$ADMIN_UI" "local-script" "$PATH" "$GATEWAY_LOG_FILE"
+    printf -v command 'cd %q && export KNOWBEE_STATE_DIR=%q KNOWBEE_LOG_LEVEL=%q KNOWBEE_ADMIN_UI=%q KNOWBEE_ADMIN_UI_SOURCE=%q PATH=%q && exec node packages/cli/dist/index.js serve >>%q 2>&1' \
+      "$ROOT_DIR" "$STATE_DIR" "${KNOWBEE_LOG_LEVEL:-debug}" "$ADMIN_UI" "local-script" "$PATH" "$GATEWAY_LOG_FILE"
     if launchctl submit -l "$GATEWAY_LAUNCHD_LABEL" -- /bin/bash -lc "$command"; then
       if ! wait_launchctl_pid "Gateway" "$GATEWAY_LAUNCHD_LABEL" "$GATEWAY_PID_FILE"; then
         echo "Gateway launchctl PID 확인에 실패해 nohup 방식으로 전환합니다."
@@ -523,8 +523,8 @@ start_gateway() {
 start_webui_nohup() {
   (
     cd "$ROOT_DIR"
-    export NOBIE_LOG_LEVEL="${NOBIE_LOG_LEVEL:-debug}"
-    exec nohup pnpm --filter @nobie/webui exec vite --host "$WEBUI_HOST" --port "$WEBUI_PORT" --strictPort </dev/null
+    export KNOWBEE_LOG_LEVEL="${KNOWBEE_LOG_LEVEL:-debug}"
+    exec nohup pnpm --filter @knowbee/webui exec vite --host "$WEBUI_HOST" --port "$WEBUI_PORT" --strictPort </dev/null
   ) >>"$WEBUI_LOG_FILE" 2>&1 &
   echo "$!" > "$WEBUI_PID_FILE"
 }
@@ -541,8 +541,8 @@ start_webui() {
   if can_use_launchctl; then
     remove_launchctl_job "$WEBUI_LAUNCHD_LABEL"
     local command
-    printf -v command 'cd %q && export NOBIE_LOG_LEVEL=%q PATH=%q && exec pnpm --filter @nobie/webui exec vite --host %q --port %q --strictPort >>%q 2>&1' \
-      "$ROOT_DIR" "${NOBIE_LOG_LEVEL:-debug}" "$PATH" "$WEBUI_HOST" "$WEBUI_PORT" "$WEBUI_LOG_FILE"
+    printf -v command 'cd %q && export KNOWBEE_LOG_LEVEL=%q PATH=%q && exec pnpm --filter @knowbee/webui exec vite --host %q --port %q --strictPort >>%q 2>&1' \
+      "$ROOT_DIR" "${KNOWBEE_LOG_LEVEL:-debug}" "$PATH" "$WEBUI_HOST" "$WEBUI_PORT" "$WEBUI_LOG_FILE"
     if launchctl submit -l "$WEBUI_LAUNCHD_LABEL" -- /bin/bash -lc "$command"; then
       if ! wait_launchctl_pid "WebUI" "$WEBUI_LAUNCHD_LABEL" "$WEBUI_PID_FILE"; then
         echo "WebUI launchctl PID 확인에 실패해 nohup 방식으로 전환합니다."
@@ -569,12 +569,12 @@ cleanup_stale_pid "Gateway" "$GATEWAY_PID_FILE"
 cleanup_stale_pid "WebUI" "$WEBUI_PID_FILE"
 
 if [[ "$RESTART_LOCAL" == "1" ]]; then
-  echo "스폰지 노비 · Sponzey Nobie 로컬 서비스를 재시작합니다."
+  echo "스폰지 노우비 · Sponzey Knowbee 로컬 서비스를 재시작합니다."
   bash "$ROOT_DIR/scripts/stop-local.sh"
   wait_port_release "Gateway" "$GATEWAY_PORT"
   wait_port_release "WebUI" "$WEBUI_PORT"
 elif is_running "Gateway" "$GATEWAY_PID_FILE" || is_running "WebUI" "$WEBUI_PID_FILE"; then
-  echo "기존 스폰지 노비 · Sponzey Nobie 프로세스를 정리하고 다시 시작합니다..."
+  echo "기존 스폰지 노우비 · Sponzey Knowbee 프로세스를 정리하고 다시 시작합니다..."
   bash "$ROOT_DIR/scripts/stop-local.sh"
   wait_port_release "Gateway" "$GATEWAY_PORT"
   wait_port_release "WebUI" "$WEBUI_PORT"
@@ -593,12 +593,12 @@ start_gateway
 start_webui
 
 echo
-echo "스폰지 노비 · Sponzey Nobie 로컬 실행이 완료되었습니다."
+echo "스폰지 노우비 · Sponzey Knowbee 로컬 실행이 완료되었습니다."
 echo "  Gateway : http://$GATEWAY_HOST:$GATEWAY_PORT"
 echo "  WebUI   : http://$WEBUI_HOST:$WEBUI_PORT"
 echo "  Admin UI: $([[ "$ADMIN_UI" == "1" ]] && echo enabled || echo disabled)"
 echo "  State   : $STATE_DIR"
 echo "  Logs    : $GATEWAY_LOG_FILE / $WEBUI_LOG_FILE"
 echo "  Status  : bash scripts/status-local.sh"
-echo "  Restart : bash scripts/nobie-start.sh --restart"
+echo "  Restart : bash scripts/knowbee-start.sh --restart"
 echo "  Stop    : bash scripts/stop-local.sh"

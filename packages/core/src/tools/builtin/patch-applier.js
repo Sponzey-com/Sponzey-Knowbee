@@ -130,7 +130,7 @@ export function applyPatch(patch, workDir) {
                 }
                 lines = result;
             }
-            const tmpPath = absPath + ".nobie.tmp";
+            const tmpPath = absPath + ".knowbee.tmp";
             try {
                 writeFileSync(tmpPath, lines.join("\n"), "utf-8");
                 renameSync(tmpPath, absPath);

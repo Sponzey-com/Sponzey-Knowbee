@@ -42,7 +42,7 @@ export interface ReleasePerformanceCounterResult {
 }
 
 export interface ReleasePerformanceSummary {
-  kind: "nobie.release.performance"
+  kind: "knowbee.release.performance"
   generatedAt: string
   windowMs: number
   gateStatus: ReleasePerformanceGateStatus
@@ -185,7 +185,7 @@ export function buildReleasePerformanceSummary(input: {
       : "passed"
 
   return {
-    kind: "nobie.release.performance",
+    kind: "knowbee.release.performance",
     generatedAt: now.toISOString(),
     windowMs,
     gateStatus,

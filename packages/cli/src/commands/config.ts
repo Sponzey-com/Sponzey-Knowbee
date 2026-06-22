@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
-import { PATHS, getConfig } from "@nobie/core"
+import { PATHS, getConfig } from "@knowbee/core"
 
-const SAMPLE_CONFIG = `// 스폰지 노비 · Sponzey Nobie configuration
+const SAMPLE_CONFIG = `// 스폰지 노우비 · Sponzey Knowbee configuration
 // Docs: see design/plan.md
 {
   ai: {
@@ -54,7 +54,7 @@ export function initConfig() {
   mkdirSync(dirname(configPath), { recursive: true })
   writeFileSync(configPath, SAMPLE_CONFIG, "utf-8")
   console.log(`Config created: ${configPath}`)
-  console.log("Edit the file to add your API keys, then run: nobie run \"hello\"")
+  console.log("Edit the file to add your API keys, then run: knowbee run \"hello\"")
 }
 
 export function showConfig(): void {
@@ -63,7 +63,7 @@ export function showConfig(): void {
 }
 
 export async function generateAuthToken(): Promise<void> {
-  const { generateAuthToken: gen } = await import("@nobie/core")
+  const { generateAuthToken: gen } = await import("@knowbee/core")
   const { token } = gen()
 
   console.log("WebUI auth token generated and saved to config.")

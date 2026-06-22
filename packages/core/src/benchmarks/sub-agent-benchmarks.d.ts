@@ -75,7 +75,7 @@ export interface SubAgentBenchmarkAggregateMetrics {
     compiledWorkflowRecommendationCount: number;
 }
 export interface SubAgentBenchmarkReleaseGateSummary {
-    kind: "nobie.benchmarks.release_gate";
+    kind: "knowbee.benchmarks.release_gate";
     generatedAt: string;
     gateStatus: SubAgentBenchmarkStatus;
     requiredScenarioIds: SubAgentBenchmarkScenarioId[];
@@ -84,7 +84,7 @@ export interface SubAgentBenchmarkReleaseGateSummary {
     blockingFailures: string[];
 }
 export interface SubAgentBenchmarkSuiteResult {
-    kind: "nobie.benchmarks.sub_agent";
+    kind: "knowbee.benchmarks.sub_agent";
     benchmarkRunId: string;
     seed: string;
     generatedAt: string;

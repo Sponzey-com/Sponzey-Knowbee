@@ -30,7 +30,7 @@ This file covers only memory usage and write rules. Name and voice follow `ident
 
 - Each agent directly reads and writes only memory in its own owner scope.
 - A ParentAgent does not inject raw private memory from a ChildAgent.
-- A ChildAgent does not directly search Nobie's private memory or the private memory of siblings or agents in another tree.
+- A ChildAgent does not directly search Knowbee's private memory or the private memory of siblings or agents in another tree.
 - Information needed for delegation is transferred only through summarized, filtered, and redacted `DataExchangePackage`s that include the target, constraints, permitted context, and expected output.
 - A `CommandRequest` includes only task memory and artifact metadata required to satisfy the child task's completion criteria.
 - Results returned in a `ResultReport` may be recorded as the ParentAgent's task memory or artifact memory, but not as raw ChildAgent private memory.

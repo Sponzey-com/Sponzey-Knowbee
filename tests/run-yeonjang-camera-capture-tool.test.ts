@@ -161,7 +161,7 @@ describe("yeonjang camera capture tool", () => {
     )
     expect(result.success).toBe(false)
     expect(result.error).toBe("CAMERA_FACING_SELECTION_UNSUPPORTED")
-    expect(result.output).toContain("전면 카메라를 Nobie/Yeonjang에서 강제로 선택할 수 없습니다.")
+    expect(result.output).toContain("전면 카메라를 Knowbee/Yeonjang에서 강제로 선택할 수 없습니다.")
     expect(writeFileSync).not.toHaveBeenCalled()
   })
 })

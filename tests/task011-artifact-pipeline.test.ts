@@ -17,8 +17,8 @@ import { PATHS, reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, getArtifactMetadata, getLatestArtifactMetadataByPath } from "../packages/core/src/db/index.js"
 import { resetArtifactDeliveryDedupeForTest } from "../packages/core/src/runs/delivery.js"
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function mkdtempCompat(prefix: string): string {
@@ -29,10 +29,10 @@ function mkdtempCompat(prefix: string): string {
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempCompat("nobie-task011-artifacts-")
+  const stateDir = mkdtempCompat("knowbee-task011-artifacts-")
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
   reloadConfig()
 }
 
@@ -52,10 +52,10 @@ afterEach(() => {
   stopArtifactCleanupScheduler()
   resetArtifactDeliveryDedupeForTest()
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -170,8 +170,8 @@ describe("task011 artifact pipeline", () => {
   })
 
   it("validates external artifact imports by path, size, and MIME type", () => {
-    const allowedRoot = mkdtempCompat("nobie-task011-import-allowed-")
-    const blockedRoot = mkdtempCompat("nobie-task011-import-blocked-")
+    const allowedRoot = mkdtempCompat("knowbee-task011-import-allowed-")
+    const blockedRoot = mkdtempCompat("knowbee-task011-import-blocked-")
     tempDirs.push(allowedRoot, blockedRoot)
     const allowedFile = join(allowedRoot, "capture.png")
     const blockedFile = join(blockedRoot, "capture.png")

@@ -29,7 +29,7 @@ import {
 import { useCapabilitiesStore } from "../packages/webui/src/stores/capabilities"
 
 const now = Date.UTC(2026, 4, 1, 9, 0, 0)
-const previousEnterpriseBuilderFlag = process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
+const previousEnterpriseBuilderFlag = process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
 
 function disabledBuilderCapability(): FeatureCapability {
   return {
@@ -46,9 +46,9 @@ function disabledBuilderCapability(): FeatureCapability {
 afterEach(() => {
   useCapabilitiesStore.getState().setItems([])
   if (previousEnterpriseBuilderFlag === undefined) {
-    delete process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
+    delete process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
   } else {
-    process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = previousEnterpriseBuilderFlag
+    process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = previousEnterpriseBuilderFlag
   }
 })
 
@@ -187,7 +187,7 @@ describe("task001 executor-first UX exposure policy", () => {
   })
 
   it("keeps the feature-flag fallback outside the simple workspace content", () => {
-    process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = "off"
+    process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = "off"
     useCapabilitiesStore.getState().setItems([disabledBuilderCapability()])
     const apiCapability = createCapabilities().find((item) => item.key === "enterprise_topology_builder_ui")
     const html = renderToStaticMarkup(

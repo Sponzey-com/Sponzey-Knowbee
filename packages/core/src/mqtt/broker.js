@@ -74,7 +74,7 @@ function createAuthError() {
 function parseExtensionTopic(topic) {
     if (typeof topic !== "string")
         return null;
-    const match = /^nobie\/v1\/node\/([^/]+)\/(status|capabilities|request|response|event)$/.exec(topic.trim());
+    const match = /^knowbee\/v1\/node\/([^/]+)\/(status|capabilities|request|response|event)$/.exec(topic.trim());
     if (!match)
         return null;
     const extensionId = match[1]?.trim();
@@ -434,7 +434,7 @@ function handleBrokerPublish(packet, client) {
     const clientId = client?.id?.trim() || null;
     const payload = parsePacketPayload(packet.payload);
     appendExchangeLog({
-        direction: ref.kind === "request" ? "nobie_to_extension" : "extension_to_nobie",
+        direction: ref.kind === "request" ? "knowbee_to_extension" : "extension_to_knowbee",
         topic,
         extensionId: ref.extensionId,
         kind: ref.kind,

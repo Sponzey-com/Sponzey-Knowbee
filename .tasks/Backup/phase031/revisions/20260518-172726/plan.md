@@ -1,16 +1,16 @@
-# Nobie / Sub-Agent 메모리 Compact 고도화 계획서
+# Knowbee / Sub-Agent 메모리 Compact 고도화 계획서
 
-> 목적: Nobie와 모든 서브 에이전트가 `고정 크기의 활성 메모리(window)`를 유지하고, 크기 초과 시 `안전한 compaction snapshot`으로 압축해 맥락 손실과 메모리 혼합 없이 장기 실행을 지속할 수 있게 만든다.
+> 목적: Knowbee와 모든 서브 에이전트가 `고정 크기의 활성 메모리(window)`를 유지하고, 크기 초과 시 `안전한 compaction snapshot`으로 압축해 맥락 손실과 메모리 혼합 없이 장기 실행을 지속할 수 있게 만든다.
 >
 > 상태: 작업 기준서
 >
-> 작성 원칙: 본 계획은 유출되었거나 비공개인 타사 소스를 직접 참고하지 않는다. 대신 현재 Nobie 코드베이스의 `memory_policy`, `memory/compaction`, `session_snapshots`, `task_continuity`, `DataExchangePackage` 구조를 기반으로 한 clean-room 설계만 사용한다.
+> 작성 원칙: 본 계획은 유출되었거나 비공개인 타사 소스를 직접 참고하지 않는다. 대신 현재 Knowbee 코드베이스의 `memory_policy`, `memory/compaction`, `session_snapshots`, `task_continuity`, `DataExchangePackage` 구조를 기반으로 한 clean-room 설계만 사용한다.
 
 ---
 
 ## 0. 재검토 메모
 
-현재 초안은 큰 방향은 맞지만, Nobie의 지향점과 현재 코드 경계에 맞추려면 아래 보강이 필요하다.
+현재 초안은 큰 방향은 맞지만, Knowbee의 지향점과 현재 코드 경계에 맞추려면 아래 보강이 필요하다.
 
 1. 구조화 상태를 모델 자유요약에 맡기면 안 된다.
    - `pending approval`, `pending delivery`, `active task`, `target selector`, `tool replay boundary` 같은 값은 런타임이 결정적으로 추출해야 한다.
@@ -110,13 +110,13 @@ tracked mirror 최소 파일:
 
 이번 개선의 핵심 목표는 다음 8가지다.
 
-1. Nobie와 모든 서브 에이전트가 각자 독립적인 메모리 window를 유지해야 한다.
+1. Knowbee와 모든 서브 에이전트가 각자 독립적인 메모리 window를 유지해야 한다.
 2. 메모리 크기가 일정 임계치를 넘으면 오래된 raw context를 그대로 누적하지 말고 compact snapshot으로 축약해야 한다.
 3. compact 이후에도 `열린 작업`, `대기 승인`, `대기 전달`, `핵심 결정`, `확정 사실`, `산출물 참조`는 반드시 보존해야 한다.
 4. 부모 에이전트와 자식 에이전트의 메모리는 계속 분리되어야 하며, 명시적 `DataExchangePackage` 외에는 섞이면 안 된다.
 5. compact된 내용은 단순 한 줄 요약이 아니라, 후속 실행에 다시 주입 가능한 `구조화된 capsule`이어야 한다.
 6. 메모리 compact는 모델 호출 직전에 panic처럼 수행하는 임시 처리로 끝나면 안 되고, 런타임/DB/UI/테스트/운영 지표까지 포함한 정식 기능이어야 한다.
-7. Nobie는 자기 메모리와 각 직속 서브 에이전트의 `compact 상태/마지막 snapshot/압축 이유/복원 흔적`을 모니터링할 수 있어야 한다.
+7. Knowbee는 자기 메모리와 각 직속 서브 에이전트의 `compact 상태/마지막 snapshot/압축 이유/복원 흔적`을 모니터링할 수 있어야 한다.
 8. 긴 세션, 중첩 위임, 재위임, 피드백 루프, 결과 취합 상황에서도 메모리 왜곡과 누락을 줄여야 한다.
 
 ---
@@ -162,9 +162,9 @@ tracked mirror 최소 파일:
 
 ### 3.2 세션 중심이고 에이전트 중심이 아니다
 
-현재 snapshot은 session 기준이다. 하지만 Nobie 프로젝트에서 실제로 필요한 단위는 다음이다.
+현재 snapshot은 session 기준이다. 하지만 Knowbee 프로젝트에서 실제로 필요한 단위는 다음이다.
 
-- Nobie 자신의 메모리
+- Knowbee 자신의 메모리
 - 각 서브 에이전트의 own memory
 - 같은 에이전트 안의 session memory
 - request group / lineage 기준 task continuity
@@ -173,9 +173,9 @@ tracked mirror 최소 파일:
 
 ### 3.3 raw tail 유지 규칙이 에이전트 역할별로 다르지 않다
 
-Nobie와 검증형 reviewer agent, 액션 실행형 agent, 수집형 research agent는 보존해야 할 문맥이 다르다.
+Knowbee와 검증형 reviewer agent, 액션 실행형 agent, 수집형 research agent는 보존해야 할 문맥이 다르다.
 
-- Nobie는 사용자 의도, 최종 답변 방향, 직속 child의 결과 취합 상태가 중요하다.
+- Knowbee는 사용자 의도, 최종 답변 방향, 직속 child의 결과 취합 상태가 중요하다.
 - reviewer는 판단 근거와 충돌 목록이 중요하다.
 - tool-heavy child는 마지막 tool receipt와 재실행 경계가 중요하다.
 
@@ -349,7 +349,7 @@ compact로 raw prompt에서 빠진 오래된 메모리는 DB와 검색 인덱스
 
 ### 5.1 모든 에이전트는 자기 메모리만 직접 읽고 쓴다
 
-- Nobie는 Nobie 자신의 memory scope를 직접 읽고 쓴다.
+- Knowbee는 Knowbee 자신의 memory scope를 직접 읽고 쓴다.
 - 서브 에이전트는 자기 owner scope의 memory만 직접 읽고 쓴다.
 - sibling agent memory는 직접 검색 금지다.
 
@@ -864,11 +864,11 @@ capsule 생성은 자동 long-term promotion이 아니다.
 
 ---
 
-## 9. Nobie와 서브 에이전트별 동작
+## 9. Knowbee와 서브 에이전트별 동작
 
-### 9.1 Nobie 메모리
+### 9.1 Knowbee 메모리
 
-Nobie는 다음을 pinned set으로 더 강하게 유지해야 한다.
+Knowbee는 다음을 pinned set으로 더 강하게 유지해야 한다.
 
 - 사용자 최신 의도
 - 최종 답변에 꼭 포함해야 할 조건
@@ -1248,7 +1248,7 @@ run 종료 시:
 
 ### 13.1 메모리 상태 카드
 
-Nobie와 각 agent inspector에 다음을 노출한다.
+Knowbee와 각 agent inspector에 다음을 노출한다.
 
 - current raw token estimate
 - raw message count
@@ -1355,7 +1355,7 @@ compact 모델 실패 시:
 
 목표:
 
-- Nobie와 각 서브 에이전트가 독립적인 memory state를 갖게 함
+- Knowbee와 각 서브 에이전트가 독립적인 memory state를 갖게 함
 
 작업:
 
@@ -1364,11 +1364,11 @@ compact 모델 실패 시:
 - last capsule / token estimate / block reason 저장
 - nickname snapshot과 internal id ownership 분리
 
-### Phase 4. Nobie 단독 compact 안정화
+### Phase 4. Knowbee 단독 compact 안정화
 
 목표:
 
-- 우선 Nobie 본체 session에서 compact를 안정화
+- 우선 Knowbee 본체 session에서 compact를 안정화
 
 작업:
 
@@ -1480,7 +1480,7 @@ compact 모델 실패 시:
 - 긴 세션에서 preflight compaction이 실제로 작동하는지
 - compact 후 prompt bundle token이 감소하는지
 - pending approval / pending delivery가 유지되는지
-- Nobie memory와 child memory가 섞이지 않는지
+- Knowbee memory와 child memory가 섞이지 않는지
 - child result를 부모가 synthesize해도 raw child memory가 직접 보이지 않는지
 - restart 후 latest capsule 복원이 되는지
 - long session에서 capsule rollup이 bounded injection을 유지하는지
@@ -1651,7 +1651,7 @@ compact 모델 실패 시:
 
 다음이 만족되면 이 계획의 MVP를 완료로 본다.
 
-1. Nobie와 모든 서브 에이전트가 owner-scoped memory state를 가진다.
+1. Knowbee와 모든 서브 에이전트가 owner-scoped memory state를 가진다.
 2. raw context가 일정 budget을 넘으면 structured capsule compaction이 작동한다.
 3. compact 후에도 pending approval, pending delivery, active task, 핵심 제약이 유지된다.
 4. parent/child/sibling memory 혼합이 자동으로 일어나지 않는다.

@@ -51,7 +51,7 @@ function graph(): ExecutionGraphSnapshot {
     agentsById: {
       [rootExecutorId]: {
         agentId: rootExecutorId,
-        displayName: "노비",
+        displayName: "노우비",
         source: "config",
         status: "active",
         delegationEnabled: true,
@@ -178,7 +178,7 @@ function context(): AgentExecutionContext {
     },
     current_executor: {
       executor_id: rootExecutorId,
-      display_name: "노비",
+      display_name: "노우비",
       can_delegate: true,
       available: true,
     },

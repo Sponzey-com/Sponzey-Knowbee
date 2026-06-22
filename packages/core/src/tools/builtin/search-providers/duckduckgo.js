@@ -98,7 +98,7 @@ function decodeUddg(href) {
     return "";
 }
 function getBrowserSpecs() {
-    const preferred = process.env.NOBIE_SELENIUM_BROWSER?.trim();
+    const preferred = process.env.KNOWBEE_SELENIUM_BROWSER?.trim();
     const windowsOrder = [
         { browser: "MicrosoftEdge", label: "Microsoft Edge" },
         { browser: "chrome", label: "Google Chrome" },

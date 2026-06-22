@@ -110,7 +110,7 @@ function booleanMetadata(node, key) {
     return typeof value === "boolean" ? value : undefined;
 }
 function defaultAgentPosition(node, index) {
-    const depth = numberMetadata(node, "depth") ?? (node.entityType === "nobie" ? 0 : 1);
+    const depth = numberMetadata(node, "depth") ?? (node.entityType === "knowbee" ? 0 : 1);
     const row = Number.isFinite(depth) ? index : index + 1;
     return {
         x: 80 + Math.max(0, depth) * 280,
@@ -118,9 +118,9 @@ function defaultAgentPosition(node, index) {
     };
 }
 function agentTopologyNode(input) {
-    const kind = input.node.entityType === "nobie" ? "nobie" : "sub_agent";
+    const kind = input.node.entityType === "knowbee" ? "knowbee" : "sub_agent";
     const metadata = nodeMetadata(input.node);
-    const badges = [kind === "nobie" ? "Nobie" : "SubAgent"];
+    const badges = [kind === "knowbee" ? "Knowbee" : "SubAgent"];
     if (metadata.topLevel === true)
         badges.push("top-level");
     if (metadata.executionCandidate === true)
@@ -192,7 +192,7 @@ function buildAgentInspector(input) {
     return {
         agentId: input.node.entityId,
         nodeId: input.node.nodeId,
-        kind: input.node.entityType === "nobie" ? "nobie" : "sub_agent",
+        kind: input.node.entityType === "knowbee" ? "knowbee" : "sub_agent",
         displayName: redactedText(agent?.displayName ?? input.node.label, input.node.entityId),
         ...(agent?.nickname ? { nickname: redactedText(agent.nickname) } : {}),
         status: redactedText(agent?.status ?? input.node.status ?? "unknown"),

@@ -1,4 +1,4 @@
-import { type NobieConfig } from "../config/index.js";
+import { type KnowbeeConfig } from "../config/index.js";
 import { type AgentConfig, type AgentRelationship, type CapabilityPolicy, type PermissionProfile, type SubAgentConfig, type TeamConfig } from "../contracts/sub-agent-orchestration.js";
 import { type AgentConfigPersistenceOptions, type TeamConfigPersistenceOptions } from "../db/index.js";
 import { type AgentCapabilitySummary, type AgentModelSummary } from "./capability-model.js";
@@ -214,7 +214,7 @@ export interface OrchestrationRegistrySnapshot {
     invalidation?: RegistryInvalidationSnapshot;
     metrics?: OrchestrationRegistryLatencyMetrics;
     fallback?: {
-        mode: "single_nobie";
+        mode: "single_knowbee";
         reasonCode: "registry_load_failed";
         reason: string;
     };
@@ -227,7 +227,7 @@ export interface OrchestrationRegistrySnapshot {
     diagnostics: OrchestrationRegistryDiagnostic[];
 }
 export interface RegistryServiceDependencies {
-    getConfig?: () => Pick<NobieConfig, "orchestration"> & Partial<Pick<NobieConfig, "ai">>;
+    getConfig?: () => Pick<KnowbeeConfig, "orchestration"> & Partial<Pick<KnowbeeConfig, "ai">>;
     now?: () => number;
     failureWindowMs?: number;
 }

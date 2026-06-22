@@ -8,9 +8,9 @@ Phase 022 removes natural-language keyword matching from core execution decision
 2. The current agent produces an `AgentExecutionDecision` from its prompt, available executor profiles, visible connections, tools, and risk policy.
 3. The harness validates only structured facts: executor id, connection path, availability, explicit target permission, and risk boundary.
 4. If no delegated executor is valid, the current agent tries `self_solve` inside its own role and permissions.
-5. If that is impossible, the work returns to the delegating agent or requester with an unresolved reason. Root Nobie may use `nobie_direct` or ask the user.
+5. If that is impossible, the work returns to the delegating agent or requester with an unresolved reason. Root Knowbee may use `knowbee_direct` or ask the user.
 
-There is no separate router agent in the user model. Nobie and every delegated executor use the same execution decision capability from their own position in the graph.
+There is no separate router agent in the user model. Knowbee and every delegated executor use the same execution decision capability from their own position in the graph.
 
 ## Regression Commands
 
@@ -153,7 +153,7 @@ Static audit commands:
 rg "resolveRunRoute\\(" packages/core/src
 rg "provider:openai" packages/core/src/runs packages/core/src/orchestration
 rg "topology_routing_not_opted_in|non_root_request" packages/core/src
-rg "delegate_failure_single_nobie|single_nobie" packages/core/src
+rg "delegate_failure_single_knowbee|single_knowbee" packages/core/src
 rg "activeSubAgents" packages/core/src/orchestration packages/core/src/runs packages/core/src/topology-runtime
 ```
 
@@ -163,14 +163,14 @@ Allowed legacy locations:
 - The explicit provider branch belongs in `orchestration/decide-execution-route.ts` and must run before execution graph selection. It must not be used as root request selection fallback.
 - `provider:openai` may appear in route normalization only. It must not be the implicit child run target for a normal channel request.
 - `topology_routing_not_opted_in` and `non_root_request` may remain in `topology-runtime/harness` as diagnostic fallback reason codes only.
-- `single_nobie` may remain in compatibility contracts, config/settings, mode snapshots, release gates, and runtime inspector warnings. It must not appear in planner or execution harness selection logic.
+- `single_knowbee` may remain in compatibility contracts, config/settings, mode snapshots, release gates, and runtime inspector warnings. It must not appear in planner or execution harness selection logic.
 - `activeSubAgents` may remain in mode projection, topology runtime diagnostics, and start-time dispatch checks. It must not build execution-decision candidates.
 
 Operational smoke procedure:
 
 1. Run `./scripts/status-local.sh`.
-2. If `buildRequired=true`, run `pnpm --filter @nobie/core build` and `pnpm --filter @nobie/cli build`.
-3. If `restartRequired=true`, restart local services with `bash scripts/nobie-start.sh --restart`.
+2. If `buildRequired=true`, run `pnpm --filter @knowbee/core build` and `pnpm --filter @knowbee/cli build`.
+3. If `restartRequired=true`, restart local services with `bash scripts/knowbee-start.sh --restart`.
 4. Run `./scripts/status-local.sh` again and confirm `buildRequired=false` and `restartRequired=false`.
 5. Run WebUI dry channel smoke:
 

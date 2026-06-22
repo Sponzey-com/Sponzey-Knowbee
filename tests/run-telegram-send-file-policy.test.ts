@@ -20,7 +20,7 @@ function createToolContext(userMessage: string): ToolContext {
 }
 
 function createTempFile(name: string, contents: string): string {
-  const dir = mkdtempSync(join(process.cwd(), ".tmp-nobie-telegram-file-"))
+  const dir = mkdtempSync(join(process.cwd(), ".tmp-knowbee-telegram-file-"))
   tempDirs.push(dir)
   const filePath = join(dir, name)
   writeFileSync(filePath, contents)

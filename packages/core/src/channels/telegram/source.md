@@ -2,7 +2,7 @@
 
 ## 역할
 
-- Telegram 연동은 채팅과 thread 메시지를 Nobie의 session과 request group으로 매핑합니다.
+- Telegram 연동은 채팅과 thread 메시지를 Knowbee의 session과 request group으로 매핑합니다.
 
 ## 주요 파일
 

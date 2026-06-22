@@ -26,7 +26,7 @@ import {
   createTextResultReport,
 } from "../packages/core/src/orchestration/sub-session-runner.ts"
 import {
-  buildNobieFinalAnswer,
+  buildKnowbeeFinalAnswer,
   commitFinalDelivery,
   listPendingFinalizers,
   recordApprovalAggregation,
@@ -35,8 +35,8 @@ import { emitAssistantTextDelivery } from "../packages/core/src/runs/delivery.ts
 import { createRootRun } from "../packages/core/src/runs/store.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 const expectedOutput: ExpectedOutputContract = {
@@ -153,9 +153,9 @@ function runInput(id = "researcher"): RunSubSessionInput {
       nickname: "Researcher",
     },
     parentAgent: {
-      agentId: "agent:nobie",
-      displayName: "Nobie",
-      nickname: "노비",
+      agentId: "agent:knowbee",
+      displayName: "Knowbee",
+      nickname: "노우비",
     },
     parentSessionId: "session:task023",
     promptBundle: promptBundle(),
@@ -225,10 +225,10 @@ function setupRun(): void {
 
 beforeEach(() => {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task023-state-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task023-state-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
   getDb()
   setupRun()
@@ -236,10 +236,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "NOBIE_STATE_DIR")
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "NOBIE_CONFIG")
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_STATE_DIR")
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_CONFIG")
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -448,13 +448,13 @@ describe("task023 channel delivery finalizer and late result policy", () => {
     })
   })
 
-  it("preserves source nicknames when Nobie synthesizes a final answer from sub-agent reports", () => {
+  it("preserves source nicknames when Knowbee synthesizes a final answer from sub-agent reports", () => {
     const resultReport = createTextResultReport({
       command: command(),
       idProvider: () => "result:nickname",
       text: "source-backed detail",
     })
-    const answer = buildNobieFinalAnswer({
+    const answer = buildKnowbeeFinalAnswer({
       text: "parent synthesis",
       resultReports: [resultReport],
     })

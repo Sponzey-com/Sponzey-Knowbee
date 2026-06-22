@@ -114,7 +114,7 @@ export function buildMemoryCompactionReleaseGateSummary(input = {}) {
             && audit["heuristicFallbackApplied"] === true);
     }).length;
     return {
-        kind: "nobie.release.memory_compaction",
+        kind: "knowbee.release.memory_compaction",
         generatedAt: now.toISOString(),
         policyVersion: "2026-05-18.memory-compaction.release-gate.v1",
         gateStatus,

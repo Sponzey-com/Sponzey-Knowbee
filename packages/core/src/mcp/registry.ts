@@ -1,4 +1,4 @@
-import { type NobieConfig, getConfig, reloadConfig } from "../config/index.js"
+import { type KnowbeeConfig, getConfig, reloadConfig } from "../config/index.js"
 import type { CapabilityPolicy, SkillMcpAllowlist } from "../contracts/sub-agent-orchestration.js"
 import { createLogger } from "../logger/index.js"
 import { sanitizeUserFacingError } from "../runs/error-sanitizer.js"
@@ -122,7 +122,7 @@ function filterTools(tools: McpDiscoveredTool[], config: McpServerConfig): McpDi
 class McpRegistry {
   private readonly entries = new Map<string, RegistryEntry>()
 
-  async loadFromConfig(config: NobieConfig = getConfig()): Promise<void> {
+  async loadFromConfig(config: KnowbeeConfig = getConfig()): Promise<void> {
     await this.closeAll()
 
     for (const [name, serverConfig] of Object.entries(config.mcp?.servers ?? {})) {

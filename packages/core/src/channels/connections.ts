@@ -1,4 +1,4 @@
-import type { NobieConfig } from "../config/types.js"
+import type { KnowbeeConfig } from "../config/types.js"
 import {
   replaceChannelIdentityMappings,
   upsertChannelCapability,
@@ -104,7 +104,7 @@ export interface ChannelRuntimeSnapshot {
 }
 
 export interface BuildChannelConnectionSnapshotInput {
-  config: NobieConfig
+  config: KnowbeeConfig
   runtime?: Partial<Record<"telegram" | "slack" | "discord" | "googleChat", ChannelRuntimeSnapshot>>
   persist?: boolean
   now?: number
@@ -215,7 +215,7 @@ function googleChatCapabilities(): ChannelCapabilities {
   return buildGoogleChatCapabilityManifest()
 }
 
-function imessageCapabilities(config: NobieConfig): ChannelCapabilities {
+function imessageCapabilities(config: KnowbeeConfig): ChannelCapabilities {
   return buildIMessageCapabilityManifest(config.imessage)
 }
 
@@ -223,7 +223,7 @@ function kakaoTalkOfficialCapabilities(): ChannelCapabilities {
   return buildKakaoTalkOfficialCapabilityManifest()
 }
 
-function kakaoTalkLocalCapabilities(config: NobieConfig): ChannelCapabilities {
+function kakaoTalkLocalCapabilities(config: KnowbeeConfig): ChannelCapabilities {
   return buildKakaoTalkLocalBridgeCapabilityManifest(config.kakaoTalk)
 }
 
@@ -239,7 +239,7 @@ function resolveHealth(input: {
   return { status: "stopped", message: null }
 }
 
-function buildTelegramConnection(config: NobieConfig, runtime: ChannelRuntimeSnapshot | undefined, now: number): ChannelConnectionRecord {
+function buildTelegramConnection(config: KnowbeeConfig, runtime: ChannelRuntimeSnapshot | undefined, now: number): ChannelConnectionRecord {
   const telegram = config.telegram
   const enabled = telegram?.enabled === true
   const configured = Boolean(telegram?.botToken?.trim())
@@ -269,7 +269,7 @@ function buildTelegramConnection(config: NobieConfig, runtime: ChannelRuntimeSna
   }
 }
 
-function buildSlackConnection(config: NobieConfig, runtime: ChannelRuntimeSnapshot | undefined, now: number): ChannelConnectionRecord {
+function buildSlackConnection(config: KnowbeeConfig, runtime: ChannelRuntimeSnapshot | undefined, now: number): ChannelConnectionRecord {
   const slack = config.slack
   const enabled = slack?.enabled === true
   const hasBotToken = Boolean(slack?.botToken?.trim())
@@ -304,7 +304,7 @@ function buildSlackConnection(config: NobieConfig, runtime: ChannelRuntimeSnapsh
   }
 }
 
-function buildDiscordConnection(config: NobieConfig, runtime: ChannelRuntimeSnapshot | undefined, now: number): ChannelConnectionRecord {
+function buildDiscordConnection(config: KnowbeeConfig, runtime: ChannelRuntimeSnapshot | undefined, now: number): ChannelConnectionRecord {
   const discord = config.discord
   const enabled = discord?.enabled === true
   const hasBotToken = Boolean(discord?.botToken?.trim())
@@ -350,7 +350,7 @@ function buildDiscordConnection(config: NobieConfig, runtime: ChannelRuntimeSnap
   }
 }
 
-function buildGoogleChatConnection(config: NobieConfig, runtime: ChannelRuntimeSnapshot | undefined, now: number): ChannelConnectionRecord {
+function buildGoogleChatConnection(config: KnowbeeConfig, runtime: ChannelRuntimeSnapshot | undefined, now: number): ChannelConnectionRecord {
   const googleChat = config.googleChat
   const enabled = googleChat?.enabled === true
   const hasProjectId = Boolean(googleChat?.projectId?.trim())
@@ -398,7 +398,7 @@ function buildGoogleChatConnection(config: NobieConfig, runtime: ChannelRuntimeS
   }
 }
 
-function buildIMessageConnection(config: NobieConfig, now: number): ChannelConnectionRecord {
+function buildIMessageConnection(config: KnowbeeConfig, now: number): ChannelConnectionRecord {
   const imessage = config.imessage
   const enabled = imessage?.enabled === true
   const configured = Boolean(
@@ -439,7 +439,7 @@ function buildIMessageConnection(config: NobieConfig, now: number): ChannelConne
   }
 }
 
-function buildKakaoTalkOfficialConnection(config: NobieConfig, now: number): ChannelConnectionRecord {
+function buildKakaoTalkOfficialConnection(config: KnowbeeConfig, now: number): ChannelConnectionRecord {
   const kakaoTalk = config.kakaoTalk
   const enabled = kakaoTalk?.enabled === true && kakaoTalk?.mode === "official"
   const hasApiKey = Boolean(kakaoTalk?.businessApiKey?.trim())
@@ -477,7 +477,7 @@ function buildKakaoTalkOfficialConnection(config: NobieConfig, now: number): Cha
   }
 }
 
-function buildKakaoTalkLocalConnection(config: NobieConfig, now: number): ChannelConnectionRecord {
+function buildKakaoTalkLocalConnection(config: KnowbeeConfig, now: number): ChannelConnectionRecord {
   const kakaoTalk = config.kakaoTalk
   const enabled = kakaoTalk?.enabled === true && kakaoTalk?.mode === "local_bridge"
   const allowedIds = [...(kakaoTalk?.allowedUserIds ?? []), ...(kakaoTalk?.allowedRoomIds ?? [])]
@@ -520,7 +520,7 @@ function buildKakaoTalkLocalConnection(config: NobieConfig, now: number): Channe
 }
 
 export function buildCompatChannelConnectionsFromConfig(
-  config: NobieConfig,
+  config: KnowbeeConfig,
   options: Omit<BuildChannelConnectionSnapshotInput, "config" | "persist"> = {},
 ): ChannelConnectionRecord[] {
   const now = options.now ?? Date.now()

@@ -11,8 +11,8 @@ const log = createLogger("scheduler:system")
 
 export type ScheduleExecutionDriver = "internal" | "system_crontab" | "system_schtasks"
 
-const CRON_MARKER_PREFIX = "# nobie-schedule:"
-const WINDOWS_TASK_PREFIX = "NobieSchedule-"
+const CRON_MARKER_PREFIX = "# knowbee-schedule:"
+const WINDOWS_TASK_PREFIX = "KnowbeeSchedule-"
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
@@ -93,7 +93,7 @@ function buildManagedEntry(schedule: DbSchedule): string[] {
   mkdirSync(dirname(logsFile), { recursive: true })
 
   const command = [
-    `NOBIE_STATE_DIR=${shellQuote(PATHS.stateDir)}`,
+    `KNOWBEE_STATE_DIR=${shellQuote(PATHS.stateDir)}`,
     shellQuote(nodePath),
     shellQuote(cliPath),
     "schedule",

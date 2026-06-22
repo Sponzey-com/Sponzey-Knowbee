@@ -48,17 +48,17 @@ import type { ToolContext } from "../packages/core/src/tools/types.ts"
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const fixture = resolve(__dirname, "fixtures/fake-mcp-server.mjs")
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
   resetAgentCapabilityRateLimitsForTest()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task020-capability-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task020-capability-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = undefined
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = undefined
   reloadConfig()
 }
 
@@ -66,10 +66,10 @@ async function restoreState(): Promise<void> {
   await mcpRegistry.closeAll()
   closeDb()
   resetAgentCapabilityRateLimitsForTest()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -150,7 +150,7 @@ function identity(entityType: RuntimeIdentity["entityType"], entityId: string): 
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     entityType,
     entityId,
-    owner: owner("nobie", "agent:nobie"),
+    owner: owner("knowbee", "agent:knowbee"),
     idempotencyKey: `idem:${entityId}`,
     auditCorrelationId: `audit:${entityId}`,
     parent: {
@@ -167,9 +167,9 @@ function subSession(): SubSessionContract {
     subSessionId: "sub:task020",
     parentSessionId: "session:task020",
     parentRunId: "run:task020",
-    parentAgentId: "agent:nobie",
-    parentAgentDisplayName: "Nobie",
-    parentAgentNickname: "노비",
+    parentAgentId: "agent:knowbee",
+    parentAgentDisplayName: "Knowbee",
+    parentAgentNickname: "노우비",
     agentId: "agent:a",
     agentDisplayName: "Agent A",
     agentNickname: "A",
@@ -483,7 +483,7 @@ describe("task020 skill, MCP, tool permission isolation and approval", () => {
     })
     insertRunSubSession(subSession(), { now })
     const delegation = buildCapabilityDelegationRequest({
-      requester: owner("nobie", "agent:nobie"),
+      requester: owner("knowbee", "agent:knowbee"),
       provider: owner("sub_agent", "agent:a"),
       capability: "mcp__fake__echo",
       risk: "sensitive",

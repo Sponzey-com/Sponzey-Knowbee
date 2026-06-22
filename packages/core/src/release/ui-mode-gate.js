@@ -115,7 +115,7 @@ function redactionEvidence(audience) {
         slackToken: "xoxb-task017-secret-token-1234567890",
         authorization: "Bearer task017-secret-token",
         rawBody: "<!doctype html><html><body>403</body></html>",
-        localPath: "/Users/dongwooshin/.nobie/private/raw.html",
+        localPath: "/Users/dongwooshin/.knowbee/private/raw.html",
         visible: "safe",
     };
     const redacted = redactUiValue(sample, { audience });
@@ -164,9 +164,9 @@ function resolverEvidence() {
 }
 function adminGuardEvidence() {
     const defaultDenied = !resolveAdminUiActivation({ env: {}, argv: [], configEnabled: false, nodeEnv: "development" }).enabled;
-    const developmentRuntimeFlagAllowed = resolveAdminUiActivation({ env: { NOBIE_ADMIN_UI: "1" }, argv: [], configEnabled: false, nodeEnv: "development" }).enabled;
-    const productionRuntimeFlagWithoutConfigDenied = !resolveAdminUiActivation({ env: { NOBIE_ADMIN_UI: "1" }, argv: [], configEnabled: false, nodeEnv: "production" }).enabled;
-    const productionConfigAndRuntimeFlagAllowed = resolveAdminUiActivation({ env: { NOBIE_ADMIN_UI: "1" }, argv: [], configEnabled: true, nodeEnv: "production" }).enabled;
+    const developmentRuntimeFlagAllowed = resolveAdminUiActivation({ env: { KNOWBEE_ADMIN_UI: "1" }, argv: [], configEnabled: false, nodeEnv: "development" }).enabled;
+    const productionRuntimeFlagWithoutConfigDenied = !resolveAdminUiActivation({ env: { KNOWBEE_ADMIN_UI: "1" }, argv: [], configEnabled: false, nodeEnv: "production" }).enabled;
+    const productionConfigAndRuntimeFlagAllowed = resolveAdminUiActivation({ env: { KNOWBEE_ADMIN_UI: "1" }, argv: [], configEnabled: true, nodeEnv: "production" }).enabled;
     return {
         defaultDenied,
         developmentRuntimeFlagAllowed,

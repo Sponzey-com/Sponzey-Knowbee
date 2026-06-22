@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
-import { loadPromptSourceRegistry } from "../memory/nobie-md.js";
+import { loadPromptSourceRegistry } from "../memory/knowbee-md.js";
 import { MIGRATIONS } from "../db/migrations.js";
 import { getDatabaseMigrationStatus } from "./operations.js";
 import { PATHS } from "./paths.js";
@@ -101,7 +101,7 @@ export function createBackupSnapshot(options = {}) {
     const schemaVersion = safeMigrationStatus(inventory.dbPath)?.currentVersion ?? 0;
     const latestSchemaVersion = MIGRATIONS.reduce((max, migration) => Math.max(max, migration.version), 0);
     const manifestWithoutChecksum = {
-        kind: "nobie.backup.snapshot",
+        kind: "knowbee.backup.snapshot",
         version: 1,
         id,
         createdAt: now,

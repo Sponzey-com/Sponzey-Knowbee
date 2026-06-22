@@ -41,32 +41,32 @@ function projection(): RunRuntimeInspectorProjection {
       mode: "route",
       reasonCode: "execution_decision_selected_executor",
       featureFlagMode: "off",
-      executionDecisionSource: "nobie_harness",
+      executionDecisionSource: "knowbee_harness",
       executionDecisionGraphId: "execution-graph:task024",
       executionDecisionGraphSource: "workspace_draft",
-      executionDecisionCurrentExecutorId: "agent:nobie",
+      executionDecisionCurrentExecutorId: "agent:knowbee",
       executionDecisionAvailableExecutorIds: ["workspace:draft:node:researcher"],
       executionDecisionDiagnosticExecutorIds: ["workspace:draft:node:reviewer"],
       executionDecisionAllExecutorIds: [
-        "agent:nobie",
+        "agent:knowbee",
         "workspace:draft:node:researcher",
         "workspace:draft:node:reviewer",
       ],
       executionDecisionSelectedExecutorId: "workspace:draft:node:researcher",
       executionDecisionSelectedConnectionPath: ["workspace:draft:node:researcher"],
-      executionDecisionNormalizedConnectionPath: ["agent:nobie", "workspace:draft:node:researcher"],
+      executionDecisionNormalizedConnectionPath: ["agent:knowbee", "workspace:draft:node:researcher"],
       executionDecisionRoute: "delegate_to_child",
       executionDecisionFallbackReason: "self_solve",
       executionDecisionValidationStatus: "valid",
       executionDecisionExecutorNameById: {
-        "agent:nobie": "노비",
+        "agent:knowbee": "노우비",
         "workspace:draft:node:researcher": "Researcher",
         "workspace:draft:node:reviewer": "Reviewer",
         "node:researcher": "Researcher",
         "node:reviewer": "Reviewer",
       },
       executionDecisionExecutorRoleNameById: {
-        "agent:nobie": "마스터 실행자",
+        "agent:knowbee": "마스터 실행자",
         "workspace:draft:node:researcher": "시장 분석 실행자",
         "workspace:draft:node:reviewer": "검토 실행자",
         "node:researcher": "시장 분석 실행자",
@@ -96,7 +96,7 @@ function projection(): RunRuntimeInspectorProjection {
       approvalRequirementCount: 1,
       resourceLockCount: 0,
       parallelGroupCount: 0,
-      fallbackMode: "single_nobie",
+      fallbackMode: "single_knowbee",
       fallbackReasonCode: "fallback_if_agent_unavailable",
       taskSummaries: [
         {
@@ -280,14 +280,14 @@ describe("task024 webui runtime inspector helpers", () => {
     expect(runtime.topologyRouting.executionDecisionRoute).toBe("delegate_to_child")
     expect(runtime.topologyRouting.executionDecisionFallbackReason).toBe("self_solve")
     expect(runtimeExecutorDisplayName(runtime.topologyRouting, "workspace:draft:node:researcher")).toBe("Researcher")
-    expect(runtimeExecutorDisplayName(runtime.topologyRouting, "agent:nobie")).toBe("노비")
+    expect(runtimeExecutorDisplayName(runtime.topologyRouting, "agent:knowbee")).toBe("노우비")
     expect(runtimeExecutorRoleName(runtime.topologyRouting, "workspace:draft:node:researcher")).toBe("시장 분석 실행자")
     expect(runtime.topologyRouting.riskBoundaryRequiresUserApproval).toBe(false)
-    expect(runtime.topologyRouting.executionDecisionCurrentExecutorId).toBe("agent:nobie")
+    expect(runtime.topologyRouting.executionDecisionCurrentExecutorId).toBe("agent:knowbee")
     expect(runtime.topologyRouting.executionDecisionAvailableExecutorIds).toEqual(["workspace:draft:node:researcher"])
     expect(runtime.topologyRouting.executionDecisionAllExecutorIds).toContain("workspace:draft:node:reviewer")
     expect(runtime.topologyRouting.executionDecisionNormalizedConnectionPath).toEqual([
-      "agent:nobie",
+      "agent:knowbee",
       "workspace:draft:node:researcher",
     ])
     expect(runtime.topologyRouting.topologySchemaVersion).toBe(2)
@@ -303,10 +303,10 @@ describe("task024 webui runtime inspector helpers", () => {
     const runtime = projection()
     const viewModels = buildRuntimeInspectorViewModels(runtime, text)
 
-    expect(viewModels.basic.currentExecutorName).toBe("노비")
+    expect(viewModels.basic.currentExecutorName).toBe("노우비")
     expect(viewModels.basic.selectedExecutorName).toBe("Researcher")
     expect(viewModels.basic.selectedExecutorRoleName).toBe("시장 분석 실행자")
-    expect(viewModels.basic.selectedPathNames).toEqual(["노비", "Researcher"])
+    expect(viewModels.basic.selectedPathNames).toEqual(["노우비", "Researcher"])
     expect(viewModels.basic.delegationStatus).toBe("하위 실행자에게 위임")
     expect(viewModels.basic.aggregationStatus).toContain("parent finalizer")
     expect(viewModels.diagnostic.identity.map((item) => item.value)).toContain("group:task024")
@@ -334,7 +334,7 @@ describe("task024 webui runtime inspector helpers", () => {
     const migrationSourceStart = html.indexOf("executor_topology_v2_materialized_read_model")
 
     expect(runtimeTopologyReasonLabel("topology_routing_not_opted_in", text)).toBe("저장된 위임 흐름을 쓰지 않음")
-    expect(html).toContain("노비 실행 판단")
+    expect(html).toContain("노우비 실행 판단")
     expect(html).toContain("실행 흐름")
     expect(html).toContain("진단 정보")
     expect(html).toContain("판단 후보 ID")
@@ -343,7 +343,7 @@ describe("task024 webui runtime inspector helpers", () => {
     expect(html).toContain("시장 분석 실행자")
     expect(html).toContain("Researcher")
     expect(html).toContain("Reviewer")
-    expect(html).toContain("노비")
+    expect(html).toContain("노우비")
     expect(html).toContain("위임 흐름")
     expect(html).toContain("스키마")
     expect(html).toContain("executor_topology_v2_materialized_read_model")

@@ -422,7 +422,7 @@ fn startup_paths_for_current_platform() -> Result<AutostartPlatformPaths> {
             startup_entry_path: PathBuf::from(home)
                 .join("Library")
                 .join("LaunchAgents")
-                .join("com.sponzey.nobie.yeonjang.plist"),
+                .join("com.sponzey.knowbee.yeonjang.plist"),
         });
     }
 
@@ -447,7 +447,7 @@ fn startup_paths_for_current_platform() -> Result<AutostartPlatformPaths> {
             startup_entry_path: PathBuf::from(home)
                 .join(".config")
                 .join("autostart")
-                .join("com.sponzey.nobie.yeonjang.desktop"),
+                .join("com.sponzey.knowbee.yeonjang.desktop"),
         });
     }
 
@@ -473,7 +473,7 @@ fn build_autostart_entry_content(path: &PathBuf) -> String {
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.sponzey.nobie.yeonjang</string>
+  <string>com.sponzey.knowbee.yeonjang</string>
   <key>ProgramArguments</key>
   <array>
     <string>{executable}</string>
@@ -505,7 +505,7 @@ fn build_autostart_entry_content(path: &PathBuf) -> String {
     #[cfg(target_os = "linux")]
     {
         format!(
-            "[Desktop Entry]\nType=Application\nVersion=1.0\nName=Yeonjang\nComment=Nobie Yeonjang tray app\nExec=env {}=autostart '{}'\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+            "[Desktop Entry]\nType=Application\nVersion=1.0\nName=Yeonjang\nComment=Knowbee Yeonjang tray app\nExec=env {}=autostart '{}'\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
             STARTUP_MODE_ENV,
             shell_escape_single_quotes(&executable),
         )

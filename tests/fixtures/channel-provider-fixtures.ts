@@ -464,7 +464,7 @@ const slackAppMentionPayload = {
   event: {
     type: "app_mention",
     user: "U_OPERATOR",
-    text: "<@U_NOBIE> run deploy",
+    text: "<@U_KNOWBEE> run deploy",
     channel: "C_APPROVAL",
     ts: "1710000100.000100",
     event_ts: "1710000100.000100",
@@ -538,7 +538,7 @@ export const slackInboundFixtures: ChannelInboundFixture[] = [
       workspace: { id: "T123" },
       text: "run deploy",
       attachments: [],
-      mentions: [{ id: "U_NOBIE", displayName: "Nobie", kind: "agent" }],
+      mentions: [{ id: "U_KNOWBEE", displayName: "Knowbee", kind: "agent" }],
       timestamp: 1_710_000_100_000,
       rawPayloadRef: slackRawRef(slackAppMentionPayload, 1_710_000_100_000),
       dedupeKey: "slack:C_APPROVAL:1710000100.000100",
@@ -653,7 +653,7 @@ const discordMessagePayload = {
     timestamp: "2024-03-09T16:02:10.000Z",
     mentions: [{
       id: "BOT1",
-      username: "Nobie",
+      username: "Knowbee",
       bot: true,
     }],
     attachments: [{
@@ -761,7 +761,7 @@ export const discordInboundFixtures: ChannelInboundFixture[] = [
         url: "https://cdn.discordapp.com/attachments/chart.png",
         contentRef: "discord:attachment:ATTACH1",
       }],
-      mentions: [{ id: "BOT1", displayName: "Nobie", kind: "agent" }],
+      mentions: [{ id: "BOT1", displayName: "Knowbee", kind: "agent" }],
       timestamp: 1_710_000_130_000,
       rawPayloadRef: discordRawRef(discordMessagePayload, 1_710_000_130_000),
       dedupeKey: "discord:GUILD1:CHANNEL1:9001",
@@ -872,7 +872,7 @@ const googleChatMessagePayload = {
     message: {
       name: "spaces/SPACE1/messages/MESSAGE1",
       createTime: "2024-03-09T16:05:00.000Z",
-      text: "@Nobie run deploy",
+      text: "@Knowbee run deploy",
       argumentText: "run deploy",
       sender: {
         name: "users/USER1",
@@ -917,8 +917,8 @@ const googleChatCardActionPayload = {
     message: {
       name: "spaces/SPACE1/messages/MESSAGE1",
       sender: {
-        name: "users/NOBIE_BOT",
-        displayName: "Nobie",
+        name: "users/KNOWBEE_BOT",
+        displayName: "Knowbee",
         type: "BOT",
       },
       space: {

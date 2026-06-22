@@ -1,6 +1,6 @@
-import { type LoadedPromptSource } from "../memory/nobie-md.js";
-export declare const AGENT_PROMPT_BUNDLE_SOURCE_IDS: readonly ["definitions", "identity", "user", "soul", "planner", "nobie_execution", "memory_policy", "tool_policy", "recovery_policy", "topology_executor_policy", "completion_policy", "output_policy", "channel"];
-export declare const EXECUTION_HARNESS_POLICY_SOURCE_IDS: readonly ["nobie_execution", "tool_policy", "recovery_policy", "topology_executor_policy", "completion_policy"];
+import { type LoadedPromptSource } from "../memory/knowbee-md.js";
+export declare const AGENT_PROMPT_BUNDLE_SOURCE_IDS: readonly ["definitions", "identity", "user", "soul", "planner", "knowbee_execution", "memory_policy", "tool_policy", "recovery_policy", "topology_executor_policy", "completion_policy", "output_policy", "channel"];
+export declare const EXECUTION_HARNESS_POLICY_SOURCE_IDS: readonly ["knowbee_execution", "tool_policy", "recovery_policy", "topology_executor_policy", "completion_policy"];
 export type RuntimePromptSourceId = typeof AGENT_PROMPT_BUNDLE_SOURCE_IDS[number] | typeof EXECUTION_HARNESS_POLICY_SOURCE_IDS[number];
 export interface PromptSourceSelectionInput {
     sources: LoadedPromptSource[];

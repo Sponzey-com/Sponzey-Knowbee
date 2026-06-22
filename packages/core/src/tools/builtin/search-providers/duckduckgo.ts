@@ -121,7 +121,7 @@ function decodeUddg(href: string): string {
 }
 
 function getBrowserSpecs(): BrowserSpec[] {
-  const preferred = process.env.NOBIE_SELENIUM_BROWSER?.trim()
+  const preferred = process.env.KNOWBEE_SELENIUM_BROWSER?.trim()
   const windowsOrder: BrowserSpec[] = [
     { browser: "MicrosoftEdge", label: "Microsoft Edge" },
     { browser: "chrome", label: "Google Chrome" },

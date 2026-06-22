@@ -5,7 +5,7 @@ export function registerCommands(bot: Bot, channel: TelegramChannel): void {
   bot.command("start", async (ctx) => {
     const name = ctx.from?.first_name ?? "there"
     await ctx.reply(
-      `👋 Hello, ${name}! I'm 스폰지 노비 · Sponzey Nobie, your personal AI assistant.\n\n` +
+      `👋 Hello, ${name}! I'm 스폰지 노우비 · Sponzey Knowbee, your personal AI assistant.\n\n` +
       `You can send me any message and I'll do my best to help.\n\n` +
       `Available commands:\n` +
       `/start — Show this welcome message\n` +
@@ -57,7 +57,7 @@ export function registerCommands(bot: Bot, channel: TelegramChannel): void {
 
   bot.command("help", async (ctx) => {
     await ctx.reply(
-      `🤖 *스폰지 노비 · Sponzey Nobie Commands*\n\n` +
+      `🤖 *스폰지 노우비 · Sponzey Knowbee Commands*\n\n` +
       `/start — Show welcome message and usage\n` +
       `/new — Start a new session (clears history)\n` +
       `/cancel — Cancel the currently running task\n` +

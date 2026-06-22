@@ -3,20 +3,20 @@ import { writeFileSync, unlinkSync, existsSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import type { ServiceAction } from "./index.js"
-import { which, nobieBinPath } from "./index.js"
+import { which, knowbeeBinPath } from "./index.js"
 
-const SERVICE_NAME = "nobie"
+const SERVICE_NAME = "knowbee"
 const SYSTEMD_DIR = join(homedir(), ".config", "systemd", "user")
 const UNIT_PATH = join(SYSTEMD_DIR, `${SERVICE_NAME}.service`)
 
-function buildUnit(nodePath: string, nobiePath: string): string {
+function buildUnit(nodePath: string, knowbeePath: string): string {
   return `[Unit]
-Description=스폰지 노비 · Sponzey Nobie AI Agent
+Description=스폰지 노우비 · Sponzey Knowbee AI Agent
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=${nodePath} ${nobiePath} serve
+ExecStart=${nodePath} ${knowbeePath} serve
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -39,9 +39,9 @@ export async function run(action: ServiceAction): Promise<void> {
   switch (action) {
     case "install": {
       const nodePath = which("node")
-      const nobiePath = nobieBinPath()
+      const knowbeePath = knowbeeBinPath()
       mkdirSync(SYSTEMD_DIR, { recursive: true })
-      writeFileSync(UNIT_PATH, buildUnit(nodePath, nobiePath), "utf-8")
+      writeFileSync(UNIT_PATH, buildUnit(nodePath, knowbeePath), "utf-8")
       console.log(`Unit file written: ${UNIT_PATH}`)
       systemctl("daemon-reload")
       systemctl("enable", SERVICE_NAME)
@@ -52,7 +52,7 @@ export async function run(action: ServiceAction): Promise<void> {
         console.log("✓ Lingering enabled (service persists across logouts)")
       } catch { /* non-critical */ }
       console.log("✓ Service installed and started")
-      console.log("  Run 'nobie service status' to verify")
+      console.log("  Run 'knowbee service status' to verify")
       break
     }
 

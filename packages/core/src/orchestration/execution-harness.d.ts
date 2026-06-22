@@ -1,5 +1,5 @@
 import { type AgentExecutionContext, type AgentExecutionDecision, type AgentExecutionDecisionTraceSnapshot, type DelegationValidationResult, type SelfSolveAttempt, validateAgentExecutionDecisionShape } from "./execution-decision-contract.js";
-import type { LoadedPromptSource } from "../memory/nobie-md.js";
+import type { LoadedPromptSource } from "../memory/knowbee-md.js";
 export type AgentExecutionHarnessReasonCode = "accepted" | "model_unavailable" | "model_timeout" | "model_call_failed" | "non_json_output" | "schema_invalid" | DelegationValidationResult["status"];
 export interface AgentExecutionModelCallInput {
     prompt: string;

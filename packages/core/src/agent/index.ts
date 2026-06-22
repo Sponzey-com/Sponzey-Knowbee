@@ -7,7 +7,7 @@ import { toolDispatcher } from "../tools/dispatcher.js"
 import type { ToolContext, ToolResult } from "../tools/types.js"
 import { createLogger } from "../logger/index.js"
 import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getMessagesForRun, insertDiagnosticEvent, updateRunPromptSourceSnapshot, upsertPromptSources, getPromptSourceStates } from "../db/index.js"
-import { loadNobieMd, loadPromptSourceRegistry, loadSystemPromptSourceAssembly } from "../memory/nobie-md.js"
+import { loadKnowbeeMd, loadPromptSourceRegistry, loadSystemPromptSourceAssembly } from "../memory/knowbee-md.js"
 import { buildMemoryContext } from "../memory/store.js"
 import { buildFlashFeedbackContext } from "../memory/flash-feedback.js"
 import { buildScheduleMemoryContext } from "../schedules/context.js"
@@ -55,21 +55,21 @@ function renderPromptContext(params: { id: string; tag: TrustTag; title: string;
 }
 
 const DEFAULT_SYSTEM_PROMPT = [
-  "You are Nobie.",
+  "You are Knowbee.",
   "",
   "[Identity]",
-  "Nobie is an orchestration-first personal AI assistant running on the user's personal computer.",
+  "Knowbee is an orchestration-first personal AI assistant running on the user's personal computer.",
   "Your main job is not explanation. Your main job is execution orchestration and problem solving.",
   "You must understand the user's request, choose the best tool, AI, and execution path, and drive the work to completion.",
   "",
   "[Definition of Yeonjang]",
-  "Yeonjang is an external execution tool connected to Nobie.",
+  "Yeonjang is an external execution tool connected to Knowbee.",
   "Yeonjang can perform privileged local operations such as system control, screen capture, camera access, keyboard control, mouse control, and command execution.",
-  "Yeonjang is a separate execution actor from the Nobie core and connects through MQTT.",
-  "A single Nobie instance may have multiple connected Yeonjang extensions.",
+  "Yeonjang is a separate execution actor from the Knowbee core and connects through MQTT.",
+  "A single Knowbee instance may have multiple connected Yeonjang extensions.",
   "Each extension may be on a different computer or device.",
-  "Nobie can choose which extension to use based on extension connection data and extension IDs.",
-  "When a task requires system privileges or device control, the default policy is to choose an appropriate connected extension instead of doing the work directly in the Nobie core.",
+  "Knowbee can choose which extension to use based on extension connection data and extension IDs.",
+  "When a task requires system privileges or device control, the default policy is to choose an appropriate connected extension instead of doing the work directly in the Knowbee core.",
   "If the user explicitly names a computer, operating system, or Yeonjang extension ID, every Yeonjang tool call must keep that same target extension.",
   "Do not invent aliases such as 'yeonjang-windows' unless that is the real connected extension ID.",
   "Do not switch to another extension during recovery unless the user explicitly approves the target change.",
@@ -95,7 +95,7 @@ const DEFAULT_SYSTEM_PROMPT = [
   "If another AI or execution path is better than handling it directly, route the work there.",
   "After delegation or routing, review the result and continue follow-up execution when needed.",
   "For tasks that require system privileges, system control, local device control, command execution, app launch, screen capture, keyboard input, or mouse control, use Yeonjang only.",
-  "Do not fall back to Nobie core local execution for those tasks.",
+  "Do not fall back to Knowbee core local execution for those tasks.",
   "If Yeonjang is unavailable or the connected extension does not support the required method, stop clearly and report that the extension path is required.",
   "Prefer local environment, local files, local tools, memory, and instruction chain context.",
   "If a task can be solved without the web, solve it locally first.",
@@ -299,7 +299,7 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   const provider = params.provider ?? getProvider(resolvedProviderId)
   const forceReasoningMode = shouldForceReasoningMode(resolvedProviderId, model)
 
-  // ── Build system prompt with NOBIE.md + memory context ────────────────
+  // ── Build system prompt with KNOWBEE.md + memory context ────────────────
   const promptStartedAt = Date.now()
   const promptSourceRegistry = loadPromptSourceRegistry(workDir)
   upsertPromptSources(promptSourceRegistry.map(({ content: _content, ...metadata }) => metadata))
@@ -320,8 +320,8 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
 
   const instructions = loadMergedInstructions(workDir)
   const profileContext = buildUserProfilePromptContext()
-  const nobieMd = loadNobieMd(workDir)
-  if (nobieMd) {
+  const knowbeeMd = loadKnowbeeMd(workDir)
+  if (knowbeeMd) {
     appendRunEvent(runId, "prompt_legacy_project_memory_loaded")
     insertDiagnosticEvent({
       kind: "legacy_prompt_source_used",
@@ -330,7 +330,7 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       sessionId,
       ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
       detail: {
-        priority: "prompts/ registry first, legacy NOBIE.md/WIZBY.md/HOWIE.md appended as project memory context",
+        priority: "prompts/ registry first, legacy KNOWBEE.md/WIZBY.md/HOWIE.md appended as project memory context",
         workDir,
       },
     })
@@ -369,7 +369,7 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
     webPolicyDirective,
     instructions.mergedText ? `\n[Instruction Chain]\n${instructions.mergedText}` : "",
     profileContext ? `\n${profileContext}` : "",
-    nobieMd ? renderPromptContext({ id: "project-memory", tag: "file_content", title: "프로젝트 메모리", content: nobieMd }) : "",
+    knowbeeMd ? renderPromptContext({ id: "project-memory", tag: "file_content", title: "프로젝트 메모리", content: knowbeeMd }) : "",
     flashFeedbackContext ? renderPromptContext({ id: "flash-feedback-context", tag: "user_input", title: "Flash Feedback Context", content: flashFeedbackContext }) : "",
     scheduleMemoryContext ? renderPromptContext({ id: "schedule-memory-context", tag: "user_input", title: "Schedule Memory Context", content: scheduleMemoryContext }) : "",
     memoryContext ? renderPromptContext({ id: "memory-context", tag: "tool_result", title: "Memory Context", content: memoryContext }) : "",

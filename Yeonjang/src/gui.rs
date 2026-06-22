@@ -591,13 +591,13 @@ impl YeonjangGuiApp {
             row![
                 column![
                     text("Yeonjang").size(22).color(color_text()),
-                    text(t(lang, "노비 연장", "Nobie Extension"))
+                    text(t(lang, "노우비 연장", "Knowbee Extension"))
                         .size(12)
                         .color(color_muted()),
                     text(t(
                         lang,
-                        "Nobie와 연결되는 로컬 연장",
-                        "Local extension connected to Nobie",
+                        "Knowbee와 연결되는 로컬 연장",
+                        "Local extension connected to Knowbee",
                     ))
                     .size(11)
                     .color(color_muted()),
@@ -633,7 +633,7 @@ impl YeonjangGuiApp {
                     lang,
                     self.active_tab,
                     ActiveTab::Connection,
-                    "노비 연결",
+                    "노우비 연결",
                     "Connection",
                     "Broker",
                     "Broker",
@@ -739,7 +739,7 @@ impl YeonjangGuiApp {
 
         column![
             section_title(
-                t(lang, "노비 연결", "Connection"),
+                t(lang, "노우비 연결", "Connection"),
                 t(
                     lang,
                     "브로커 주소와 인증 정보만 입력합니다.",
@@ -1182,8 +1182,8 @@ impl YeonjangGuiApp {
                 self.connection_state = ConnectionState::Disconnected;
                 self.set_status(t(
                     self.lang(),
-                    "Nobie 브로커에 연결하는 중입니다.",
-                    "Connecting to the Nobie broker.",
+                    "Knowbee 브로커에 연결하는 중입니다.",
+                    "Connecting to the Knowbee broker.",
                 ));
             }
             Err(error) => {
@@ -1235,8 +1235,8 @@ impl YeonjangGuiApp {
                     self.last_error = t(self.lang(), "없음", "None").to_string();
                     self.set_status(t(
                         self.lang(),
-                        "Nobie 브로커에 연결되었습니다.",
-                        "Connected to the Nobie broker.",
+                        "Knowbee 브로커에 연결되었습니다.",
+                        "Connected to the Knowbee broker.",
                     ));
                 }
                 RuntimeEvent::Reconnecting(message) => {
@@ -1381,8 +1381,8 @@ impl YeonjangGuiApp {
             ActiveTab::Connection => match self.connection_state {
                 ConnectionState::Connected => t(
                     self.lang(),
-                    "Nobie 브로커에 연결되어 있습니다.",
-                    "Connected to the Nobie broker.",
+                    "Knowbee 브로커에 연결되어 있습니다.",
+                    "Connected to the Knowbee broker.",
                 )
                 .to_string(),
                 ConnectionState::AuthFailed => t(

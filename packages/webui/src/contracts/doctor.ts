@@ -10,7 +10,7 @@ export interface DoctorCheckResult {
 }
 
 export interface DoctorReport {
-  kind: "nobie.doctor.report"
+  kind: "knowbee.doctor.report"
   version: 1
   id: string
   mode: DoctorMode

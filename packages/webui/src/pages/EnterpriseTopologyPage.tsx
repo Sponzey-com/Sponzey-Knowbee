@@ -1033,7 +1033,7 @@ function topologyAssignedExecutorIdsFromRun(run: RootRun, topologyId: string): s
       ? run.promptSourceSnapshot.orchestrationPlan
       : null
   if (!plan) return []
-  const tasks = [...recordArray(plan.directNobieTasks), ...recordArray(plan.delegatedTasks)]
+  const tasks = [...recordArray(plan.directKnowbeeTasks), ...recordArray(plan.delegatedTasks)]
   return tasks
     .map((task) => topologyExecutorIdFromAgentId(stringValue(task.assignedAgentId), topologyId))
     .filter((executorId): executorId is string => Boolean(executorId))

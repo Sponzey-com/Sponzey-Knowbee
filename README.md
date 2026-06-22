@@ -1,18 +1,18 @@
-# Sponzey Nobie
+# Sponzey Knowbee
 
 [English](./README.md) | [한국어](./README.ko.md)
 
 <p align="center">
-  <img src="./resource/nobie-1-512.png" alt="Nobie" width="220" />
+  <img src="./resource/knowbee-1-512.png" alt="Knowbee" width="220" />
 </p>
 
-Sponzey Nobie is a local-first personal AI assistant that runs on the user's computer. Inside the product, the assistant is called `Nobie`.
+Sponzey Knowbee is a local-first personal AI assistant that runs on the user's computer. Inside the product, the assistant is called `Knowbee`.
 
-Nobie is not meant to be only a chat bot. It receives a request, understands the intent, chooses an execution path, uses local tools and connected services, tracks progress, delivers the result, and decides whether the work is actually complete.
+Knowbee is not meant to be only a chat bot. It receives a request, understands the intent, chooses an execution path, uses local tools and connected services, tracks progress, delivers the result, and decides whether the work is actually complete.
 
 ## Current Direction
 
-The work from `.tasks/phase001` through `.tasks/phase016` has moved Nobie toward a task-centric orchestration product:
+The work from `.tasks/phase001` through `.tasks/phase016` has moved Knowbee toward a task-centric orchestration product:
 
 - setup and onboarding are handled in the WebUI
 - one configured AI connection is used as the main interpretation and execution brain
@@ -24,9 +24,9 @@ The work from `.tasks/phase001` through `.tasks/phase016` has moved Nobie toward
 - topology and setup screens use visual scenes so users can see what is connected
 - sub-agents and teams are represented as explicit contracts, hierarchy, permissions, memory scopes, and delegation sessions
 
-The current product should be understood as `Nobie + local gateway + WebUI + optional channels + optional Yeonjang extension + optional sub-agent/team orchestration`.
+The current product should be understood as `Knowbee + local gateway + WebUI + optional channels + optional Yeonjang extension + optional sub-agent/team orchestration`.
 
-## What Nobie Can Do
+## What Knowbee Can Do
 
 ### WebUI and Setup
 
@@ -54,7 +54,7 @@ The current product should be understood as `Nobie + local gateway + WebUI + opt
 
 ### Local Control Through Yeonjang
 
-Yeonjang is the extension that lets Nobie reach the user's device, screen, keyboard, mouse, camera, and local command surface.
+Yeonjang is the extension that lets Knowbee reach the user's device, screen, keyboard, mouse, camera, and local command surface.
 
 Currently these capabilities require Yeonjang to be running:
 
@@ -83,13 +83,13 @@ The most validated operating system is `macOS`. Windows and Linux paths exist by
 
 Sub-agent support is being built around explicit contracts rather than hidden extra bots.
 
-- `Nobie` is the fixed top-level coordinator.
+- `Knowbee` is the fixed top-level coordinator.
 - sub-agents have unique nicknames, roles, model/capability summaries, permissions, and memory scopes
 - hierarchy is a tree: an agent can delegate only to direct children
 - teams are planning groups owned by an agent, not independent executors
 - team members are drawn from the owner's direct child agents
 - delegation creates sub-sessions, data exchange packages, result reports, review verdicts, and monitoring events
-- final user delivery remains owned by Nobie for user-started requests
+- final user delivery remains owned by Knowbee for user-started requests
 
 ## Project Layout
 
@@ -148,52 +148,97 @@ This repository uses a `pnpm` workspace. Use `pnpm install`, not `npm install`.
 
 ### Step 3. Download the repository
 
+If the GitHub repository has already been renamed to `Sponzey-Knowbee`, use:
+
 ```bash
-git clone <repository-url>
-cd "Sponzey Nobie"
+git clone https://github.com/Sponzey-com/Sponzey-Knowbee.git
+cd Sponzey-Knowbee
+```
+
+If the remote repository has not been renamed yet, use the old URL and then continue with the same commands:
+
+```bash
+git clone https://github.com/Sponzey-com/Sponzey-Nobie.git
+cd Sponzey-Nobie
 ```
 
 ### Step 4. Install dependencies
+
+Run this once after cloning the repository:
 
 ```bash
 pnpm install
 ```
 
-### Step 5. Build Nobie
+This installs every workspace package at once:
+
+- `@knowbee/core`
+- `@knowbee/cli`
+- `@knowbee/webui`
+- `@sponzey/knowbee`
+
+For CI or a strict reproducible install, use:
 
 ```bash
-pnpm build
+pnpm install --frozen-lockfile
 ```
 
-### Step 6. Start Nobie locally
+### Step 5. Build Knowbee
+
+```bash
+pnpm -r build
+```
+
+`pnpm -r build` builds every package in the workspace. `pnpm build` also works from the repository root because it is wired to the same recursive build.
+
+### Step 6. Start Knowbee locally
 
 Start the local Gateway and WebUI on macOS, Linux, or a bash-compatible environment:
 
 ```bash
-bash scripts/nobie-start.sh
+bash scripts/knowbee-start.sh
 ```
 
-This is the easiest way to run Nobie after installation. It starts:
+This is the easiest way to run Knowbee after installation. It starts:
 
 - the local Gateway
 - the WebUI
-- the Nobie runtime entrypoint used by the local stack
+- the Knowbee runtime entrypoint used by the local stack
 
-### Step 7. Open Nobie in your browser
+### Step 7. Open Knowbee in your browser
 
-After `nobie-start.sh` finishes, open:
+After `knowbee-start.sh` finishes, open:
 
 - WebUI: `http://127.0.0.1:4220`
 - Gateway: `http://127.0.0.1:18888`
 
 For most users, the WebUI address is the one to open first.
 
+### Quick install and start
+
+After Node.js 22 and pnpm are ready, the full first-run flow is:
+
+```bash
+git clone https://github.com/Sponzey-com/Sponzey-Knowbee.git
+cd Sponzey-Knowbee
+pnpm install
+pnpm -r build
+bash scripts/knowbee-start.sh
+```
+
+If the repository is still named `Sponzey-Nobie` on GitHub, replace the first two lines with:
+
+```bash
+git clone https://github.com/Sponzey-com/Sponzey-Nobie.git
+cd Sponzey-Nobie
+```
+
 ### Step 8. Useful local control commands
 
 If services are already running and you want a clean restart:
 
 ```bash
-bash scripts/nobie-start.sh --restart
+bash scripts/knowbee-start.sh --restart
 ```
 
 Check current status:
@@ -210,27 +255,27 @@ bash scripts/stop-local.sh
 
 Notes:
 
-- `nobie-start.sh` builds the Gateway runtime packages it needs before launch.
-- If Gateway or WebUI is already running, `nobie-start.sh` can stop and start them again.
+- `knowbee-start.sh` builds the Gateway runtime packages it needs before launch.
+- If Gateway or WebUI is already running, `knowbee-start.sh` can stop and start them again.
 - Use `--restart` when you want the restart step to be explicit in logs and workflow.
 - Windows-native batch entry points are currently provided for Yeonjang. The local Gateway/WebUI flow uses shell scripts, so use a bash-compatible shell on Windows.
 
-### Optional: run the Nobie CLI directly
+### Optional: run the Knowbee CLI directly
 
 If you want to inspect the CLI entrypoint after building:
 
 ```bash
-node packages/nobie/bin/nobie.js --help
-node packages/nobie/bin/nobie.js status
+node packages/knowbee/bin/knowbee.js --help
+node packages/knowbee/bin/knowbee.js status
 ```
 
 If you want to start the backend entrypoint directly without the helper script:
 
 ```bash
-node packages/nobie/bin/nobie.js serve
+node packages/knowbee/bin/knowbee.js serve
 ```
 
-For normal local development and setup, prefer `bash scripts/nobie-start.sh` because it manages the local WebUI and service lifecycle together.
+For normal local development and setup, prefer `bash scripts/knowbee-start.sh` because it manages the local WebUI and service lifecycle together.
 
 ### Run Yeonjang
 

@@ -31,7 +31,7 @@ import {
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
-function owner(ownerType: RuntimeIdentity["owner"]["ownerType"] = "nobie", ownerId = "agent:nobie"): RuntimeIdentity["owner"] {
+function owner(ownerType: RuntimeIdentity["owner"]["ownerType"] = "knowbee", ownerId = "agent:knowbee"): RuntimeIdentity["owner"] {
   return { ownerType, ownerId }
 }
 
@@ -136,7 +136,7 @@ function teamMembership(): TeamMembership {
     membershipId: "membership:research:1",
     teamId: "team:research",
     agentId: "agent:researcher",
-    ownerAgentIdSnapshot: "agent:nobie",
+    ownerAgentIdSnapshot: "agent:knowbee",
     teamRoles: ["research", "evidence"],
     primaryRole: "research",
     required: true,
@@ -154,7 +154,7 @@ function teamConfig(): TeamConfig {
     normalizedNickname: "research",
     status: "enabled",
     purpose: "Collect evidence and draft verified findings.",
-    ownerAgentId: "agent:nobie",
+    ownerAgentId: "agent:knowbee",
     leadAgentId: "agent:researcher",
     memberCountMin: 1,
     memberCountMax: 2,
@@ -196,9 +196,9 @@ function dataExchange(): DataExchangePackage {
   return {
     identity: identity("data_exchange", "exchange:ctx-1"),
     exchangeId: "exchange:ctx-1",
-    sourceOwner: owner("nobie", "agent:nobie"),
+    sourceOwner: owner("knowbee", "agent:knowbee"),
     recipientOwner: owner("sub_agent", "agent:researcher"),
-    sourceNicknameSnapshot: "Nobie",
+    sourceNicknameSnapshot: "Knowbee",
     recipientNicknameSnapshot: "Researcher",
     purpose: "Provide synthesized task context.",
     allowedUse: "temporary_context",
@@ -236,9 +236,9 @@ function orchestrationPlan(): OrchestrationPlan {
     planId: "plan:research",
     parentRunId: "run-parent",
     parentRequestId: "request-parent",
-    directNobieTasks: [{
+    directKnowbeeTasks: [{
       taskId: "task:direct",
-      executionKind: "direct_nobie",
+      executionKind: "direct_knowbee",
       scope: {
         goal: "Integrate verified evidence",
         intentType: "answer",
@@ -279,7 +279,7 @@ function orchestrationPlan(): OrchestrationPlan {
       reasonCode: "external_lookup",
     }],
     fallbackStrategy: {
-      mode: "single_nobie",
+      mode: "single_knowbee",
       reasonCode: "no_sub_agent",
     },
     createdAt: now,
@@ -359,7 +359,7 @@ describe("task003 contract normalization and validators", () => {
         ],
         "nickname": "Research",
         "normalizedNickname": "research",
-        "ownerAgentId": "agent:nobie",
+        "ownerAgentId": "agent:knowbee",
         "profileVersion": 1,
         "purpose": "Collect evidence and synthesize draft findings.",
         "requiredCapabilityTags": [],
@@ -412,7 +412,7 @@ describe("task003 contract normalization and validators", () => {
 
     expect(validation.ok).toBe(true)
     if (validation.ok) {
-      expect(validation.value.directNobieTasks[0]?.executionKind).toBe("direct_nobie")
+      expect(validation.value.directKnowbeeTasks[0]?.executionKind).toBe("direct_knowbee")
       expect(validation.value.delegatedTasks[0]?.executionKind).toBe("delegated_sub_agent")
       expect(validation.value.approvalRequirements[0]?.capability).toBe("web_search")
     }

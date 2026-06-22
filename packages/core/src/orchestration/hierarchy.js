@@ -4,7 +4,7 @@ import { PATHS, getConfig } from "../config/index.js";
 import { validateAgentRelationship, } from "../contracts/sub-agent-orchestration.js";
 import { getAgentRelationship, listAgentRelationships, upsertAgentRelationship, } from "../db/index.js";
 import { createAgentRegistryService } from "./registry.js";
-const DEFAULT_ROOT_AGENT_ID = "agent:nobie";
+const DEFAULT_ROOT_AGENT_ID = "agent:knowbee";
 const DEFAULT_MAX_DEPTH = 5;
 const DEFAULT_MAX_CHILD_COUNT = 10;
 const LAYOUT_SCHEMA_VERSION = 1;
@@ -243,7 +243,7 @@ function positiveIntegerOrDefault(value, fallback) {
 export function createAgentHierarchyService(dependencies = {}) {
     const now = () => dependencies.now?.() ?? Date.now();
     const config = () => configFromDependencies(dependencies);
-    const rootAgentId = () => dependencies.rootAgentId ?? config().orchestration.nobie?.agentId ?? DEFAULT_ROOT_AGENT_ID;
+    const rootAgentId = () => dependencies.rootAgentId ?? config().orchestration.knowbee?.agentId ?? DEFAULT_ROOT_AGENT_ID;
     const maxDepth = () => positiveIntegerOrDefault(dependencies.maxDepth ?? config().orchestration.maxDelegationTurns, DEFAULT_MAX_DEPTH);
     const maxChildCount = () => dependencies.maxChildCount ?? DEFAULT_MAX_CHILD_COUNT;
     const registry = () => createAgentRegistryService(dependencies);
@@ -254,16 +254,16 @@ export function createAgentHierarchyService(dependencies = {}) {
             result.set(entry.agentId, agentFromConfig(entry.config, entry.source));
         for (const agent of registry().list())
             result.set(agent.agentId, agentFromConfig(agent, "db"));
-        const root = config().orchestration.nobie;
+        const root = config().orchestration.knowbee;
         const resolvedRootAgentId = rootAgentId();
         if (root)
             result.set(root.agentId, agentFromConfig(root, "config"));
         if (!result.has(resolvedRootAgentId)) {
             result.set(resolvedRootAgentId, {
                 agentId: resolvedRootAgentId,
-                agentType: "nobie",
-                displayName: "Nobie",
-                nickname: "Nobie",
+                agentType: "knowbee",
+                displayName: "Knowbee",
+                nickname: "Knowbee",
                 status: "enabled",
                 source: "synthetic",
             });
@@ -290,9 +290,9 @@ export function createAgentHierarchyService(dependencies = {}) {
         const agents = agentSummaries();
         if (relationship.childAgentId === resolvedRootAgentId) {
             diagnostics.push({
-                reasonCode: "nobie_parent_forbidden",
+                reasonCode: "knowbee_parent_forbidden",
                 severity: "blocked",
-                message: "Nobie must remain the parentless root and cannot be a child.",
+                message: "Knowbee must remain the parentless root and cannot be a child.",
                 edgeId: relationship.edgeId,
                 parentAgentId: relationship.parentAgentId,
                 childAgentId: relationship.childAgentId,

@@ -12,6 +12,6 @@
 
 ## 의존 관계
 
-- `cli`는 `@nobie/core`에 의존합니다.
+- `cli`는 `@knowbee/core`에 의존합니다.
 - `webui`는 HTTP와 WebSocket API로 `core`와 통신합니다.
 - `core`는 AI, 도구, 메모리, 스케줄링, Telegram, MQTT, Yeonjang을 통합하는 중심점입니다.

@@ -181,7 +181,7 @@ export function insertMemoryJournalRecord(input: MemoryJournalRecordInput): stri
     content,
     summary,
     tags,
-    input.source ?? "nobie",
+    input.source ?? "knowbee",
     now,
     now,
   )

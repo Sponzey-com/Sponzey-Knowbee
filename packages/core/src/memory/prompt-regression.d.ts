@@ -1,4 +1,4 @@
-import { type PromptSourceLocaleParityResult } from "./nobie-md.js";
+import { type PromptSourceLocaleParityResult } from "./knowbee-md.js";
 export type PromptRegressionSeverity = "error" | "warning";
 export type PromptRegressionLocale = "ko" | "en";
 export interface PromptRegressionIssue {

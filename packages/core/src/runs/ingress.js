@@ -5,7 +5,7 @@ function normalizeIngressIdentityPart(value) {
     return value == null ? "-" : String(value).trim() || "-";
 }
 export function buildIngressDedupeKey(identity) {
-    // nobie-critical-decision-audit: ingress.external_identity_dedupe
+    // knowbee-critical-decision-audit: ingress.external_identity_dedupe
     // Preferred fast path: dedupe by channel ids, never by natural-language message text.
     return [
         identity.source,

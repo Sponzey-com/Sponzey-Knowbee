@@ -14,7 +14,7 @@ function scriptText(name: string): string {
 }
 
 describe("task001 local runtime scripts", () => {
-  const scripts = ["nobie-start.sh", "stop-local.sh", "status-local.sh"]
+  const scripts = ["knowbee-start.sh", "stop-local.sh", "status-local.sh"]
 
   for (const script of scripts) {
     it(`${script} is executable bash with valid syntax`, () => {
@@ -27,7 +27,7 @@ describe("task001 local runtime scripts", () => {
   }
 
   it("start script blocks stale-port false positives and verifies the new Gateway process", () => {
-    const text = scriptText("nobie-start.sh")
+    const text = scriptText("knowbee-start.sh")
     expect(text).toContain("assert_port_available")
     expect(text).toContain("verify_gateway_status")
     expect(text).toContain("runtime.pid")
@@ -46,7 +46,7 @@ describe("task001 local runtime scripts", () => {
   })
 
   it("start script restart mode enforces stop, port release, and start order", () => {
-    const text = scriptText("nobie-start.sh")
+    const text = scriptText("knowbee-start.sh")
     const restartIndex = text.indexOf("--restart")
     const stopIndex = text.indexOf("scripts/stop-local.sh")
     const releaseIndex = text.indexOf("wait_port_release", stopIndex)

@@ -41,24 +41,24 @@ import type { ToolContext } from "../packages/core/src/tools/types.ts"
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task027-nested-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task027-nested-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = undefined
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = undefined
   reloadConfig()
 }
 
 function restoreState(): void {
   closeDb()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -81,7 +81,7 @@ function executionDecision(
   return {
     contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
     current_executor_id: currentExecutorId,
-    ...(currentExecutorId === "agent:nobie" ? {} : { parent_executor_id: "agent:nobie" }),
+    ...(currentExecutorId === "agent:knowbee" ? {} : { parent_executor_id: "agent:knowbee" }),
     domain: "nested_delegation_test",
     behavior_pattern: "delegate",
     execution_route: "delegate_to_child",
@@ -234,7 +234,7 @@ function registryAgent(agentId: string): AgentRegistryEntry {
 
 function registry(): OrchestrationRegistrySnapshot {
   const directChildrenByParent = {
-    "agent:nobie": ["agent:a"],
+    "agent:knowbee": ["agent:a"],
     "agent:a": ["agent:b"],
     "agent:b": ["agent:c"],
   }
@@ -244,7 +244,7 @@ function registry(): OrchestrationRegistrySnapshot {
     agents: ["agent:a", "agent:b", "agent:c"].map(registryAgent),
     teams: [],
     hierarchy: {
-      rootAgentId: "agent:nobie",
+      rootAgentId: "agent:knowbee",
       fallbackActive: false,
       directChildrenByParent,
       topLevelSubAgentIds: ["agent:a"],
@@ -254,7 +254,7 @@ function registry(): OrchestrationRegistrySnapshot {
     capabilityIndex: {
       generatedAt: now,
       cacheKey: "task027",
-      rootAgentId: "agent:nobie",
+      rootAgentId: "agent:knowbee",
       topLevelCandidateAgentIds: ["agent:a"],
       directChildAgentIdsByParent: directChildrenByParent,
       candidateAgentIdsByParent: directChildrenByParent,
@@ -294,7 +294,7 @@ function identity(
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     entityType,
     entityId,
-    owner: { ownerType: ownerId === "agent:nobie" ? "nobie" : "sub_agent", ownerId },
+    owner: { ownerType: ownerId === "agent:knowbee" ? "knowbee" : "sub_agent", ownerId },
     idempotencyKey: `idem:${entityId}`,
     parent: {
       parentRunId: "run:task027",
@@ -402,17 +402,17 @@ function rootRun(subSessionsSnapshot: SubSessionContract[]): RootRun {
     contextMode: "full",
     orchestrationMode: "orchestration",
     orchestrationPlanSnapshot: {
-      identity: identity("session", "plan:task027", "agent:nobie"),
+      identity: identity("session", "plan:task027", "agent:knowbee"),
       planId: "plan:task027",
       parentRunId: "run:task027",
       parentRequestId: "request:task027",
-      directNobieTasks: [],
+      directKnowbeeTasks: [],
       delegatedTasks: [],
       dependencyEdges: [],
       resourceLocks: [],
       parallelGroups: [],
       approvalRequirements: [],
-      fallbackStrategy: { mode: "single_nobie", reasonCode: "fallback" },
+      fallbackStrategy: { mode: "single_knowbee", reasonCode: "fallback" },
       createdAt: now,
     } satisfies OrchestrationPlan,
     subSessionsSnapshot,
@@ -488,13 +488,13 @@ describe("task027 nested delegation and depth scoped policy", () => {
     const rootToGrandchild = buildNestedDelegationPlan({
       parentRunId: "run:task027",
       parentRequestId: "request:task027",
-      parentAgentId: "agent:nobie",
+      parentAgentId: "agent:knowbee",
       parentSubSessionDepth: 0,
       userRequest: "delegate explicit descendant",
       modeSnapshot,
       registrySnapshot: registry(),
       intent: { explicitAgentId: "agent:c" },
-      agentExecutionDecision: executionDecision("agent:c", "agent:nobie"),
+      agentExecutionDecision: executionDecision("agent:c", "agent:knowbee"),
       taskScopes: [taskScope("root cannot target grandchild")],
       maxDepth: 3,
       now: () => now,
@@ -599,7 +599,7 @@ describe("task027 nested delegation and depth scoped policy", () => {
   })
 
   it("projects the parentSubSession tree and routes nested result aggregation upward", () => {
-    const parent = subSession("sub:a", "agent:a", "agent:nobie")
+    const parent = subSession("sub:a", "agent:a", "agent:knowbee")
     const child = subSession("sub:b", "agent:b", "agent:a", "sub:a")
     const grandchild = subSession("sub:c", "agent:c", "agent:b", "sub:b")
     const projection = buildRunRuntimeInspectorProjection(rootRun([parent, child, grandchild]), {
@@ -610,7 +610,7 @@ describe("task027 nested delegation and depth scoped policy", () => {
       expect.objectContaining({
         depth: 1,
         childSubSessionIds: ["sub:b"],
-        resultAggregationStage: "nobie_finalization",
+        resultAggregationStage: "knowbee_finalization",
       }),
     )
     expect(byId.get("sub:c")).toEqual(
@@ -625,7 +625,7 @@ describe("task027 nested delegation and depth scoped policy", () => {
   })
 
   it("cascades sub-session kill to nested children", () => {
-    const parent = subSession("sub:a", "agent:a", "agent:nobie")
+    const parent = subSession("sub:a", "agent:a", "agent:knowbee")
     const child = subSession("sub:b", "agent:b", "agent:a", "sub:a")
     const grandchild = subSession("sub:c", "agent:c", "agent:b", "sub:b")
     insertRunSubSession(parent, { now })

@@ -104,7 +104,7 @@ describe("task006 executor create and understanding", () => {
     expect(createHtml).not.toContain("Context")
     expect(createHtml).not.toContain("업무유형")
     expect(understandingHtml).toContain('data-testid="executor-understanding-panel"')
-    expect(understandingHtml).toContain("노비가 이해한 내용")
+    expect(understandingHtml).toContain("노우비가 이해한 내용")
     expect(understandingHtml).toContain("저장")
     expect(understandingHtml).not.toContain("필요한 도구")
     expect(understandingHtml).not.toContain("성공 기준")

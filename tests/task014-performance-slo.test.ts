@@ -40,7 +40,7 @@ const { startIngressRun } = await import("../packages/core/src/runs/ingress.ts")
 const expectedOutput: ExpectedOutputContract = {
   outputId: "answer",
   kind: "text",
-  description: "Answer returned to Nobie review.",
+  description: "Answer returned to Knowbee review.",
   required: true,
   acceptance: {
     requiredEvidenceKinds: [],
@@ -253,25 +253,25 @@ describe("task014 performance slo", () => {
         normalizeTaskProfile: vi.fn((profile) => profile ?? "general_chat"),
         findLatestWorkerSessionRun: vi.fn(() => undefined),
         resolveOrchestrationMode: vi.fn(async () => ({
-          mode: "single_nobie",
+          mode: "single_knowbee",
           status: "ok",
           reasonCode: "feature_flag_off",
           reason: "orchestration disabled",
           configSubAgentCount: 0,
           activeSubAgentCount: 0,
           disabledSubAgentCount: 0,
-          requestedMode: "single_nobie",
+          requestedMode: "single_knowbee",
           featureFlagEnabled: false,
         })),
         buildOrchestrationPlan: vi.fn(() => ({
           plan: {
             planId: "plan-task014-slo",
             plannerVersion: "structured-v1",
-            mode: "single_nobie",
+            mode: "single_knowbee",
             delegatedTasks: [],
             directTasks: [],
             parallelGroups: [],
-            fallbackStrategy: { reasonCode: "single_nobie_mode", summary: "direct execution" },
+            fallbackStrategy: { reasonCode: "single_knowbee_mode", summary: "direct execution" },
             audit: { rationale: [], warnings: [] },
           },
         })),

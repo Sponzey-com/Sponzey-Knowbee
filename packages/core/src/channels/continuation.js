@@ -44,7 +44,7 @@ export function resolveChannelContinuation(input) {
 }
 export function buildContinuationConfirmationPrompt(candidates) {
     const count = candidates.length;
-    return `Found ${count} possible previous Nobie contexts. Please choose which task to continue before this message is attached.`;
+    return `Found ${count} possible previous Knowbee contexts. Please choose which task to continue before this message is attached.`;
 }
 function finalizeContinuationResult(candidates) {
     const unique = uniqueCandidates(candidates);

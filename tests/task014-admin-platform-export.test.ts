@@ -16,18 +16,18 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousAdminUi = process.env["NOBIE_ADMIN_UI"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousAdminUi = process.env["KNOWBEE_ADMIN_UI"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const previousNodeEnv = process.env["NODE_ENV"]
 
 function useTempState(): string {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task014-admin-platform-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task014-admin-platform-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_ADMIN_UI"] = "1"
-  delete process.env["NOBIE_CONFIG"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_ADMIN_UI"] = "1"
+  delete process.env["KNOWBEE_CONFIG"]
   delete process.env["NODE_ENV"]
   reloadConfig()
   getDb()
@@ -36,12 +36,12 @@ function useTempState(): string {
 
 function restoreEnv(): void {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousAdminUi === undefined) delete process.env["NOBIE_ADMIN_UI"]
-  else process.env["NOBIE_ADMIN_UI"] = previousAdminUi
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousAdminUi === undefined) delete process.env["KNOWBEE_ADMIN_UI"]
+  else process.env["KNOWBEE_ADMIN_UI"] = previousAdminUi
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   if (previousNodeEnv === undefined) delete process.env["NODE_ENV"]
   else process.env["NODE_ENV"] = previousNodeEnv
   reloadConfig()
@@ -72,7 +72,7 @@ afterEach(() => {
 
 describe("task014 admin platform inspectors and diagnostic export", () => {
   it("shows Yeonjang/MQTT, DB migration state, and writes sanitized export bundles", async () => {
-    const stateDir = process.env["NOBIE_STATE_DIR"]!
+    const stateDir = process.env["KNOWBEE_STATE_DIR"]!
     const snapshotDir = join(stateDir, "backups", "snapshots", "snapshot-task014")
     mkdirSync(snapshotDir, { recursive: true })
     writeFileSync(join(snapshotDir, "manifest.json"), JSON.stringify({
@@ -91,7 +91,7 @@ describe("task014 admin platform inspectors and diagnostic export", () => {
       detail: {
         extensionId: "yeonjang-main",
         state: "connected",
-        protocolVersion: "nobie-mqtt-v1",
+        protocolVersion: "knowbee-mqtt-v1",
         capabilityHash: "capability-task014",
         methodCount: 7,
         methods: ["screen_capture", "file_read"],
@@ -117,7 +117,7 @@ describe("task014 admin platform inspectors and diagnostic export", () => {
       summary: "fetch blocked by HTML",
       detail: {
         sourceUrl: "https://example.invalid/finance",
-        localPath: "/Users/dongwooshin/.nobie/raw/task014.html",
+        localPath: "/Users/dongwooshin/.knowbee/raw/task014.html",
         token: "Bearer sk-task014-secret-token-value",
         providerRawResponse: "<!doctype html><html><body>blocked</body></html>",
       },
@@ -127,7 +127,7 @@ describe("task014 admin platform inspectors and diagnostic export", () => {
       summary: "TASK014 migration diagnostic",
       requestGroupId: "group-task014",
       detail: {
-        backupPath: "/Users/dongwooshin/.nobie/backups/raw.sqlite3",
+        backupPath: "/Users/dongwooshin/.knowbee/backups/raw.sqlite3",
         token: "sk-task014-diagnostic-secret",
         html: "<html><body>do not export</body></html>",
       },
@@ -137,7 +137,7 @@ describe("task014 admin platform inspectors and diagnostic export", () => {
       session_id: null,
       source: "test",
       tool_name: "task014.audit",
-      params: JSON.stringify({ authorization: "Bearer sk-task014-audit-secret", localPath: "/Users/dongwooshin/.nobie/raw/audit.html" }),
+      params: JSON.stringify({ authorization: "Bearer sk-task014-audit-secret", localPath: "/Users/dongwooshin/.knowbee/raw/audit.html" }),
       output: JSON.stringify({ providerRawResponse: "<html><body>audit</body></html>" }),
       result: "failed",
       duration_ms: null,
@@ -157,7 +157,7 @@ describe("task014 admin platform inspectors and diagnostic export", () => {
       expect(inspector.yeonjang.summary.reconnectAttempts).toBeGreaterThanOrEqual(2)
       expect(inspector.yeonjang.nodes[0]).toEqual(expect.objectContaining({
         extensionId: "yeonjang-main",
-        protocolVersion: "nobie-mqtt-v1",
+        protocolVersion: "knowbee-mqtt-v1",
         capabilityHash: "capability-task014",
         methodCount: 7,
       }))
@@ -181,7 +181,7 @@ describe("task014 admin platform inspectors and diagnostic export", () => {
       expect(job.bundlePath).toBeTruthy()
 
       const bundle = readFileSync(job.bundlePath, "utf-8")
-      expect(bundle).toContain("nobie.admin.diagnostic_export")
+      expect(bundle).toContain("knowbee.admin.diagnostic_export")
       expect(bundle).toContain("[redacted")
       expect(bundle).not.toMatch(/sk-task014|Bearer sk-|\/Users\/dongwooshin|<!doctype|<html/i)
 

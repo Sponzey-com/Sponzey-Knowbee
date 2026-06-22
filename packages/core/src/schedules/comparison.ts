@@ -54,7 +54,7 @@ interface ParsedComparisonResult {
 const DEFAULT_TIMEOUT_MS = 2_000
 
 function comparisonProjection(contract: ScheduleContract): unknown {
-  // nobie-critical-decision-audit: schedules.comparison.contract_projection_only
+  // knowbee-critical-decision-audit: schedules.comparison.contract_projection_only
   // Comparator input must remain contract-only. Raw prompt, display title, and candidate metadata are excluded.
   return {
     schemaVersion: contract.schemaVersion,
@@ -86,7 +86,7 @@ function buildComparisonPrompt(params: {
 
 export function buildScheduleContractComparisonSystemPrompt(): string {
   return [
-    "You are Nobie's isolated schedule-contract comparator.",
+    "You are Knowbee's isolated schedule-contract comparator.",
     "You are memoryless. Use only the provided JSON contracts.",
     "Do not compare natural-language prompt meaning. Compare structured time, payload, and delivery fields.",
     "Return valid JSON only.",

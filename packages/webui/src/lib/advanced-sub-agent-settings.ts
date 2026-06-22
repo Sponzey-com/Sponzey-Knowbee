@@ -56,7 +56,7 @@ export interface SubAgentAdvancedSettingsView {
   selectedAgent: SubAgentAdvancedDetailView | null
   selectedAgentId: string | null
   emptyState: {
-    kind: "single_nobie" | "orchestration_empty" | "filtered_empty" | "none"
+    kind: "single_knowbee" | "orchestration_empty" | "filtered_empty" | "none"
     title: string
     message: string
     ctaLabel: string
@@ -381,9 +381,9 @@ export interface SubAgentAdvancedMutationResult {
 
 const CONTRACT_SCHEMA_VERSION = 1 as const
 const rootAgent = {
-  agentId: "agent:nobie",
-  displayName: "Nobie",
-  nickname: "Nobie",
+  agentId: "agent:knowbee",
+  displayName: "Knowbee",
+  nickname: "Knowbee",
 }
 
 const emptyAllowlist: SkillMcpAllowlist = {
@@ -629,15 +629,15 @@ function buildGlobalPolicy(
   const enabledMcpCount = draft.mcp.servers.filter((server) => server.enabled).length
 
   return {
-    rootAgentLabel: "Nobie",
+    rootAgentLabel: "Knowbee",
     rootAgentNotice: pickUiText(
       language,
-      "Nobie는 메인 agent입니다. 이 화면에서는 일반 서브 에이전트 전용 설정만 편집합니다.",
-      "Nobie is the main agent. This screen edits sub-agent-only settings.",
+      "Knowbee는 메인 agent입니다. 이 화면에서는 일반 서브 에이전트 전용 설정만 편집합니다.",
+      "Knowbee is the main agent. This screen edits sub-agent-only settings.",
     ),
     orchestrationModeLabel: draft.subAgents?.orchestrationEnabled
       ? pickUiText(language, "오케스트레이션", "Orchestration")
-      : pickUiText(language, "단일 노비", "Single Nobie"),
+      : pickUiText(language, "단일 노우비", "Single Knowbee"),
     featureFlagLabel: draft.subAgents?.orchestrationEnabled ? "on" : "off",
     defaultModelLabel,
     defaultMemoryLabel: pickUiText(language, "agent별 독립 메모리", "Private memory per agent"),
@@ -782,8 +782,8 @@ function identityWarningsForItem(
     warnings.push(
       pickUiText(
         language,
-        "Nobie 이름은 메인 agent 전용입니다.",
-        "The Nobie name is reserved for the main agent.",
+        "Knowbee 이름은 메인 agent 전용입니다.",
+        "The Knowbee name is reserved for the main agent.",
       ),
     )
   }
@@ -1909,7 +1909,7 @@ function detailForItem(input: {
   language: UiLanguage
   now: number
 }): SubAgentAdvancedDetailView {
-  const parentLabel = "Nobie"
+  const parentLabel = "Knowbee"
   const identity = identityForItem(input.item, parentLabel, input.draft, input.language)
   const modelPolicy = modelPolicyForItem(input.item, input.draft, input.language)
   const skillMcp = skillMcpViewForItem(input.item, input.draft, input.language)
@@ -1945,8 +1945,8 @@ function detailForItem(input: {
         ),
         helper: pickUiText(
           input.language,
-          "별명은 root Nobie나 다른 active agent와 중복될 수 없습니다.",
-          "Nickname cannot duplicate root Nobie or another active agent.",
+          "별명은 root Knowbee나 다른 active agent와 중복될 수 없습니다.",
+          "Nickname cannot duplicate root Knowbee or another active agent.",
         ),
         inheritanceState: "agent_only",
         tone:
@@ -2286,11 +2286,11 @@ function validationMessage(issue: SubAgentSettingsValidationIssue, language: UiL
         "별명 또는 표시 이름이 중복됩니다.",
         "Nickname or display label is duplicated.",
       )
-    case "reserved_nobie_name":
+    case "reserved_knowbee_name":
       return pickUiText(
         language,
-        "Nobie 이름은 메인 agent 전용입니다.",
-        "The Nobie name is reserved for the main agent.",
+        "Knowbee 이름은 메인 agent 전용입니다.",
+        "The Knowbee name is reserved for the main agent.",
       )
     case "model_provider_unavailable":
       return pickUiText(
@@ -2796,8 +2796,8 @@ function emptyStateFor(input: {
     }
   }
   return {
-    kind: "single_nobie",
-    title: pickUiText(input.language, "단일 노비 모드", "Single Nobie mode"),
+    kind: "single_knowbee",
+    title: pickUiText(input.language, "단일 노우비 모드", "Single Knowbee mode"),
     message: pickUiText(
       input.language,
       "서브 에이전트가 없어도 정상입니다. 필요할 때 추가하세요.",

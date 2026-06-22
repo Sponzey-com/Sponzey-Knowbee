@@ -17,17 +17,17 @@ import {
 } from "../packages/core/src/memory/retrieval-restore.ts"
 import { closeMemoryJournalDb } from "../packages/core/src/memory/journal.js"
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
   closeMemoryJournalDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task005-rollup-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task005-rollup-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
   reloadConfig()
 }
 
@@ -37,14 +37,14 @@ function baseCapsule(index: number): MemoryCapsule {
     capsuleVersion: 1,
     ownerScope: {
       ownerType: "main_agent",
-      ownerId: "agent:nobie",
+      ownerId: "agent:knowbee",
       sessionId: "session-rollup",
       requestGroupId: "group-rollup",
       lineageId: "group-rollup",
       channelKey: "webui",
       threadKey: "thread-rollup",
     },
-    nicknameSnapshot: "노비",
+    nicknameSnapshot: "노우비",
     capsuleKind: "session_compaction",
     summary: `capsule summary ${index}`,
     activeObjectives: [`objective-${index}`],
@@ -69,10 +69,10 @@ beforeEach(() => {
 afterEach(() => {
   closeDb()
   closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -89,7 +89,7 @@ describe("task005 capsule chain rollup", () => {
     const rollup = maybeRollupCapsuleChain({
       ownerScope: {
         ownerType: "main_agent",
-        ownerId: "agent:nobie",
+        ownerId: "agent:knowbee",
         sessionId: "session-rollup",
         requestGroupId: "group-rollup",
         lineageId: "group-rollup",
@@ -113,7 +113,7 @@ describe("task005 capsule chain rollup", () => {
 
     const rollupAudit = listMemoryCapsuleRollups({
       ownerType: "main_agent",
-      ownerId: "agent:nobie",
+      ownerId: "agent:knowbee",
       sessionId: "session-rollup",
       limit: 1,
     })[0]
@@ -128,7 +128,7 @@ describe("task005 capsule chain rollup", () => {
     const maintenanceRestore = buildMaintenanceRestoreContext({
       ownerScope: {
         ownerType: "main_agent",
-        ownerId: "agent:nobie",
+        ownerId: "agent:knowbee",
         sessionId: "session-rollup",
         requestGroupId: "group-rollup",
         lineageId: "group-rollup",

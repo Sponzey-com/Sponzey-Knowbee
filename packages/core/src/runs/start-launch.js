@@ -78,7 +78,7 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         ...(startPlan.agentExecutionDecision
             ? {
                 agentExecutionDecision: startPlan.agentExecutionDecision,
-                executionDecisionSource: "nobie_harness",
+                executionDecisionSource: "knowbee_harness",
             }
             : {}),
         ...(params.agentExecutionDecisionTrace
@@ -109,7 +109,7 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         ...(params.targetLabel?.trim() ? { targetLabel: params.targetLabel.trim() } : {}),
         taskProfile: startPlan.effectiveTaskProfile,
         delegationTurnCount: startPlan.initialDelegationTurnCount,
-        orchestrationMode: startPlan.orchestrationMode ?? "single_nobie",
+        orchestrationMode: startPlan.orchestrationMode ?? "single_knowbee",
         ...(params.workerRuntime ? { workerRuntimeKind: params.workerRuntime.kind } : {}),
         ...(startPlan.workerSessionId ? { workerSessionId: startPlan.workerSessionId } : {}),
         contextMode: startPlan.effectiveContextMode,

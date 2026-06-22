@@ -1,4 +1,4 @@
-const RESERVED_ROOT_NAMES = new Set(["nobie", "노비"]);
+const RESERVED_ROOT_NAMES = new Set(["knowbee", "노우비"]);
 function cleanText(value) {
     return value?.trim() ?? "";
 }
@@ -79,7 +79,7 @@ function buildReadiness(agent, input) {
             : "blocked", "Identity", [
             ...(cleanText(agent.displayName) ? [] : ["display_name_required"]),
             ...(duplicateNickname ? ["nickname_duplicate"] : []),
-            ...(isReservedRootName(agent.displayName) || isReservedRootName(agent.nickname) ? ["reserved_nobie_name"] : []),
+            ...(isReservedRootName(agent.displayName) || isReservedRootName(agent.nickname) ? ["reserved_knowbee_name"] : []),
         ]),
         buildReadinessItem("model", modelMissing ? "blocked" : "ready", agent.modelProfile ? "Model override" : "Inherited model", modelMissing ? ["model_id_missing"] : []),
         buildReadinessItem("skill_mcp", missingSkillIds.length > 0 || missingMcpServerIds.length > 0 ? "blocked" : "ready", "Skill and MCP", [
@@ -236,7 +236,7 @@ export function buildBeginnerSubAgentSetupView(input) {
                 ? "needs_attention"
                 : "ready";
     return {
-        orchestrationMode: savedAgents.length > 0 ? "orchestration" : "single_nobie",
+        orchestrationMode: savedAgents.length > 0 ? "orchestration" : "single_knowbee",
         summary,
         cards: summaries.map((summaryView) => {
             const agent = savedAgents.find((candidate) => candidate.agentId === summaryView.id);
@@ -411,7 +411,7 @@ function validateAgentExists(command, context, issues) {
 function validateIdentityNameSet(values, rootAgent, issues) {
     for (const value of values) {
         if (isReservedRootName(value.value) || conflictsWithRootName(value.value, rootAgent)) {
-            pushIssue(issues, value.path, "reserved_nobie_name", "Only the root agent may use the Nobie name.");
+            pushIssue(issues, value.path, "reserved_knowbee_name", "Only the root agent may use the Knowbee name.");
         }
     }
 }

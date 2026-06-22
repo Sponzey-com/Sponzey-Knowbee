@@ -42,7 +42,7 @@ export function buildAdvancedSettingsTabs(language: UiLanguage): AdvancedSetting
     {
       id: "orchestration",
       label: t("오케스트레이션", "Orchestration"),
-      description: t("마스터 노비와 서브 에이전트 실행 모드를 설정합니다.", "Configure master Nobie and sub-agent execution mode."),
+      description: t("마스터 노우비와 서브 에이전트 실행 모드를 설정합니다.", "Configure master Knowbee and sub-agent execution mode."),
       capabilityKey: "settings.control",
       savesDraft: false,
     },

@@ -1,4 +1,4 @@
-import { checkPromptSourceLocaleParity, dryRunPromptSourceAssembly, loadPromptSourceRegistry, promptSourceFileExists, } from "./nobie-md.js";
+import { checkPromptSourceLocaleParity, dryRunPromptSourceAssembly, loadPromptSourceRegistry, promptSourceFileExists, } from "./knowbee-md.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 const EXPECTED_PROMPT_SOURCE_IDS = [
@@ -7,7 +7,7 @@ const EXPECTED_PROMPT_SOURCE_IDS = [
     "user",
     "soul",
     "planner",
-    "nobie_execution",
+    "knowbee_execution",
     "memory_policy",
     "tool_policy",
     "web_retrieval_planner",

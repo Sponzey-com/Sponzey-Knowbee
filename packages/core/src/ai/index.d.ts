@@ -49,9 +49,9 @@ export interface ResolvedAiProvider {
 }
 export declare function normalizeOpenAICompatibleEndpoint(providerId: "openai" | "ollama" | "llama" | "custom", endpoint: string | undefined): string | undefined;
 export declare function resetAIProviderCache(): void;
-export declare function getActiveAIConnection(config?: import("../config/types.js").NobieConfig): AIConnectionConfig;
+export declare function getActiveAIConnection(config?: import("../config/types.js").KnowbeeConfig): AIConnectionConfig;
 export declare function resolveAIConnection(connection: AIConnectionConfig, providerId?: string): ResolvedAiConnection;
-export declare function resolveProviderResolutionSnapshot(providerId?: string, config?: import("../config/types.js").NobieConfig): ProviderResolutionSnapshot;
+export declare function resolveProviderResolutionSnapshot(providerId?: string, config?: import("../config/types.js").KnowbeeConfig): ProviderResolutionSnapshot;
 export declare function detectAvailableProvider(): string;
 export declare function getDefaultModel(): string;
 export declare function inferProviderId(_model: string): string;

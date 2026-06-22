@@ -197,7 +197,7 @@ const DELIVERY_CHANNELS = new Set<DeliveryChannel>(["current_session", "telegram
 const SCHEDULE_KINDS = new Set<ScheduleKind>(["one_time", "recurring"])
 const MISSED_POLICIES = new Set<ScheduleMissedPolicy>(["skip", "catch_up_once", "next_only"])
 const PAYLOAD_KINDS = new Set<SchedulePayloadKind>(["literal_message", "agent_task", "tool_task", "artifact_delivery"])
-const HASH_PREFIX = "nobie-contract-v1"
+const HASH_PREFIX = "knowbee-contract-v1"
 
 interface CanonicalizeOptions {
   omitKeys?: ReadonlySet<string>

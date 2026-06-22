@@ -22,7 +22,7 @@ function runWithStaleMissingFallback(): RootRun {
         schemaVersion: 1,
         entityType: "session",
         entityId: "plan:stale-routing",
-        owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+        owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
         idempotencyKey: "plan:stale-routing",
         parent: {
           parentRunId: "run:stale-routing",
@@ -32,10 +32,10 @@ function runWithStaleMissingFallback(): RootRun {
       planId: "plan:stale-routing",
       parentRunId: "run:stale-routing",
       parentRequestId: "run:stale-routing",
-      directNobieTasks: [
+      directKnowbeeTasks: [
         {
           taskId: "plan:stale-routing:direct:0",
-          executionKind: "direct_nobie",
+          executionKind: "direct_knowbee",
           scope: {
             goal: "오늘 코스피 시작은 얼마로 시작했고 지금은 얼마지?",
             intentType: "user_request",
@@ -90,12 +90,12 @@ function runWithStaleMissingFallback(): RootRun {
       },
       agentExecutionDecision: {
         contract_version: "agent-execution-decision:v1",
-        current_executor_id: "agent:nobie",
+        current_executor_id: "agent:knowbee",
         domain: "market_lookup",
         behavior_pattern: "delegate",
         execution_route: "delegate_to_child",
         selected_executor_id: "workspace:draft:node:finance",
-        selected_connection_path: ["agent:nobie", "workspace:draft:node:finance"],
+        selected_connection_path: ["agent:knowbee", "workspace:draft:node:finance"],
         task_profile: {
           title: "시장 확인",
           summary: "재무 담당 실행자에게 위임한다.",
@@ -113,17 +113,17 @@ function runWithStaleMissingFallback(): RootRun {
         reason: "재무 담당 실행자 정의가 요청과 맞습니다.",
       },
       executionDecisionTrace: {
-        decision_source: "nobie_harness",
+        decision_source: "knowbee_harness",
         graph_id: "execution-graph:test",
         graph_source: "active_topology",
-        current_executor_id: "agent:nobie",
+        current_executor_id: "agent:knowbee",
         available_executor_ids: [
           "workspace:draft:node:general",
           "workspace:draft:node:finance",
         ],
         selected_executor_id: "workspace:draft:node:finance",
-        selected_connection_path: ["agent:nobie", "workspace:draft:node:finance"],
-        normalized_connection_path: ["agent:nobie", "workspace:draft:node:finance"],
+        selected_connection_path: ["agent:knowbee", "workspace:draft:node:finance"],
+        normalized_connection_path: ["agent:knowbee", "workspace:draft:node:finance"],
         resolved_selected_executor_id: "workspace:draft:node:finance",
         execution_route: "delegate_to_child",
         fallback_reason: "delegate_to_child",
@@ -157,7 +157,7 @@ function runWithStaleMissingFallback(): RootRun {
         id: "event:decision",
         at: now + 1,
         label:
-          "execution_decision_source:nobie_harness; selected_executor=workspace:draft:node:finance; resolved_route=delegate_to_child",
+          "execution_decision_source:knowbee_harness; selected_executor=workspace:draft:node:finance; resolved_route=delegate_to_child",
       },
     ],
   }

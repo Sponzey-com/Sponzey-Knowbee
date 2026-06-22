@@ -67,12 +67,12 @@ export function resolveMemoryOwnerScopePolicy(owner) {
             reasonCode: "team_projection_read_only",
         };
     }
-    if (owner.ownerType === "nobie") {
+    if (owner.ownerType === "knowbee") {
         return {
             owner,
             ownerScopeKey: memoryOwnerScopeKey(owner),
             storageOwnerId: ownerId,
-            kind: "nobie",
+            kind: "knowbee",
             directReadAllowed: true,
             writeAllowed: true,
         };

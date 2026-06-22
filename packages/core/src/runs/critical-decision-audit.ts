@@ -62,7 +62,7 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     languageSensitive: false,
     userFacingRisk: "계약 projection이 부족한 legacy 항목은 자동 재사용하지 않고 clarification/new fallback으로 처리된다.",
     currentRole: "incoming IntentContract와 active run contract projection만 isolated AI에 전달해 continuation/cancel/update 대상을 판단한다.",
-    sourceMarker: "nobie-critical-decision-audit: entry-comparison.contract_projection_comparison",
+    sourceMarker: "knowbee-critical-decision-audit: entry-comparison.contract_projection_comparison",
   },
   {
     id: "schedules.comparison.contract_projection_only",
@@ -74,7 +74,7 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     languageSensitive: false,
     userFacingRisk: "스케줄 비교 AI에 raw prompt나 표시명을 넘기면 언어별 표현 차이가 최종 동일성 판단에 섞일 수 있다.",
     currentRole: "스케줄 comparator는 schedule id와 구조화된 time/payload/delivery/identity projection만 isolated AI에 전달한다.",
-    sourceMarker: "nobie-critical-decision-audit: schedules.comparison.contract_projection_only",
+    sourceMarker: "knowbee-critical-decision-audit: schedules.comparison.contract_projection_only",
   },
   {
     id: "schedules.candidates.semantic_candidate_boundary",
@@ -88,7 +88,7 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     currentRole: "semantic 후보는 candidateReason=semantic_candidate, confidenceKind=semantic, requiresComparison=true로만 남기고 final decision으로 사용하지 않는다.",
     migrationTask: "Task 006",
     migrationReason: "semantic 후보 탐색은 최종 판단이 아니며 contract comparator 또는 명시 ID 기반 후보로 축소해야 한다.",
-    sourceMarker: "nobie-critical-decision-audit: schedules.candidates.semantic_candidate_boundary",
+    sourceMarker: "knowbee-critical-decision-audit: schedules.candidates.semantic_candidate_boundary",
   },
   {
     id: "scheduled.tool_disable_keyword_guard",
@@ -122,7 +122,7 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     languageSensitive: false,
     userFacingRisk: "intake 결과가 잘못 구조화되면 schedule action이 잘못 실행될 수 있으나, 이 위치 자체는 원문 문자열 비교를 하지 않는다.",
     currentRole: "AI intake가 만든 action.type을 실행기로 넘기는 구조화된 dispatch 경계.",
-    sourceMarker: "nobie-critical-decision-audit: action-execution.structured_schedule_action",
+    sourceMarker: "knowbee-critical-decision-audit: action-execution.structured_schedule_action",
   },
   {
     id: "start-plan.contract_continuation_boundary",
@@ -134,7 +134,7 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     languageSensitive: false,
     userFacingRisk: "명시 id가 없고 후보 계약이 부족하면 active run을 자동 재사용하지 않고 보수적으로 새 실행 또는 clarification으로 전환한다.",
     currentRole: "start-plan은 active run projection과 incoming contract만 comparator로 전달하며 raw prompt/candidate prompt를 비교 경계에 넘기지 않는다.",
-    sourceMarker: "nobie-critical-decision-audit: start-plan.contract_continuation_boundary",
+    sourceMarker: "knowbee-critical-decision-audit: start-plan.contract_continuation_boundary",
   },
   {
     id: "completion.followup_prompt_dedupe",
@@ -148,7 +148,7 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     currentRole: "같은 후속 지시 반복으로 무한 루프가 생기는 것을 막는 임시 반복 방지 장치.",
     migrationTask: "Task 006, Task 008",
     migrationReason: "반복 방지는 raw prompt normalize가 아니라 structured follow-up id, recovery key, work order id 기반으로 대체해야 한다.",
-    sourceMarker: "nobie-critical-decision-audit: completion.followup_prompt_dedupe",
+    sourceMarker: "knowbee-critical-decision-audit: completion.followup_prompt_dedupe",
   },
   {
     id: "recovery.normalized_error_key",
@@ -160,7 +160,7 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     languageSensitive: false,
     userFacingRisk: "오류 종류 정규화가 너무 거칠면 다른 실패를 같은 recovery key로 묶을 수 있다.",
     currentRole: "사용자 원문이 아니라 tool/error kind/action/target/channel 기반으로 같은 실패 반복을 막는다.",
-    sourceMarker: "nobie-critical-decision-audit: recovery.normalized_error_key",
+    sourceMarker: "knowbee-critical-decision-audit: recovery.normalized_error_key",
   },
   {
     id: "recovery.command_failure_reason",
@@ -172,7 +172,7 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     languageSensitive: false,
     userFacingRisk: "도구 오류 문구가 예상과 다르면 복구 대안 설명이 부정확할 수 있다.",
     currentRole: "사용자 요청 의미가 아니라 실패 원인 분류와 대안 후보 선택에만 사용한다.",
-    sourceMarker: "nobie-critical-decision-audit: recovery.command_failure_reason",
+    sourceMarker: "knowbee-critical-decision-audit: recovery.command_failure_reason",
   },
   {
     id: "task-model.delivery_channel_label",
@@ -184,7 +184,7 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     languageSensitive: false,
     userFacingRisk: "표시용 채널 라벨이 unknown으로 보일 수 있으나 실행 대상 결정에는 사용하지 않는다.",
     currentRole: "task monitor UI 표시용 channel label 추정.",
-    sourceMarker: "nobie-critical-decision-audit: task-model.delivery_channel_label",
+    sourceMarker: "knowbee-critical-decision-audit: task-model.delivery_channel_label",
   },
   {
     id: "task-model.delivery_status_label",
@@ -198,7 +198,7 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     currentRole: "시스템이 만든 event label에서 task monitor delivery 상태를 투영한다. 사용자 자연어 판단에는 쓰지 않는다.",
     migrationTask: "Task 012",
     migrationReason: "상태 projection은 receipt와 structured event kind 기반으로 정리하고 사용자 요청 의미 판단과 분리해야 한다.",
-    sourceMarker: "nobie-critical-decision-audit: task-model.delivery_status_label",
+    sourceMarker: "knowbee-critical-decision-audit: task-model.delivery_status_label",
   },
   {
     id: "ingress.external_identity_dedupe",
@@ -210,7 +210,7 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     languageSensitive: false,
     userFacingRisk: "채널 event id가 누락되면 중복 접수 방지가 약해질 수 있다.",
     currentRole: "자연어 내용이 아니라 source/session/chat/thread/message id로 inbound event 중복을 막는 권장 fast path.",
-    sourceMarker: "nobie-critical-decision-audit: ingress.external_identity_dedupe",
+    sourceMarker: "knowbee-critical-decision-audit: ingress.external_identity_dedupe",
   },
   {
     id: "store.reconnect_prompt_similarity",

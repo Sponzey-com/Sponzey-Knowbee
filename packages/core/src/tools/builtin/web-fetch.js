@@ -3,7 +3,7 @@ import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
 import { buildWebRetrievalPolicyDecision, evaluateSourceReliabilityGuard, extractSourceTimestampFromHtml, recordBrowserSearchEvidence, } from "../../runs/web-retrieval-policy.js";
 import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js";
-const USER_AGENT = "Sponzey Nobie/0.1.0";
+const USER_AGENT = "Sponzey Knowbee/0.1.0";
 const BLOCKED_SCHEMES = ["file:", "data:", "javascript:"];
 function isBlockedScheme(url) {
     return BLOCKED_SCHEMES.some((s) => url.toLowerCase().startsWith(s));

@@ -14,7 +14,7 @@ function sendAuthorizeError(reply, message, status = 400) {
     return reply
         .status(status)
         .type("text/html; charset=utf-8")
-        .send(`<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Nobie OAuth</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f5f4;color:#1c1917;padding:32px}.card{max-width:640px;margin:0 auto;background:white;border:1px solid #e7e5e4;border-radius:20px;padding:24px;box-shadow:0 12px 30px rgba(0,0,0,.06)}h1{font-size:20px;margin:0 0 16px}p{line-height:1.7;margin:10px 0}.error{color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:14px;padding:12px 14px}</style></head><body><div class="card"><h1>Nobie ChatGPT OAuth</h1><p class="error">${escapeHtml(message)}</p></div></body></html>`);
+        .send(`<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Knowbee OAuth</title><style>body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f5f4;color:#1c1917;padding:32px}.card{max-width:640px;margin:0 auto;background:white;border:1px solid #e7e5e4;border-radius:20px;padding:24px;box-shadow:0 12px 30px rgba(0,0,0,.06)}h1{font-size:20px;margin:0 0 16px}p{line-height:1.7;margin:10px 0}.error{color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:14px;padding:12px 14px}</style></head><body><div class="card"><h1>Knowbee ChatGPT OAuth</h1><p class="error">${escapeHtml(message)}</p></div></body></html>`);
 }
 function escapeHtml(value) {
     return value
@@ -26,14 +26,14 @@ function escapeHtml(value) {
 function renderAuthorizePage(params) {
     const metadata = buildChatGptOAuthMetadata();
     const ownerTokenHelp = params.requireOwnerToken
-        ? `<p>Enter the current Nobie WebUI auth token to approve this ChatGPT connection.</p>`
+        ? `<p>Enter the current Knowbee WebUI auth token to approve this ChatGPT connection.</p>`
         : `<p>Approve this connection to issue an OAuth code for ChatGPT.</p>`;
     return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Nobie ChatGPT OAuth</title>
+    <title>Knowbee ChatGPT OAuth</title>
     <style>
       body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f5f4; color: #1c1917; padding: 32px; }
       .card { max-width: 720px; margin: 0 auto; background: white; border: 1px solid #e7e5e4; border-radius: 20px; padding: 28px; box-shadow: 0 12px 30px rgba(0,0,0,.06); }
@@ -52,8 +52,8 @@ function renderAuthorizePage(params) {
   </head>
   <body>
     <div class="card">
-      <h1>Nobie ChatGPT OAuth approval</h1>
-      <p>ChatGPT is requesting access to your Nobie API.</p>
+      <h1>Knowbee ChatGPT OAuth approval</h1>
+      <p>ChatGPT is requesting access to your Knowbee API.</p>
       ${ownerTokenHelp}
       <div class="meta">
         <div><strong>Client ID:</strong> <code>${escapeHtml(params.clientId)}</code></div>
@@ -65,7 +65,7 @@ function renderAuthorizePage(params) {
         <input type="hidden" name="redirect_uri" value="${escapeHtml(params.redirectUri)}" />
         <input type="hidden" name="state" value="${escapeHtml(params.state)}" />
         <input type="hidden" name="scope" value="${escapeHtml(params.scope)}" />
-        ${params.requireOwnerToken ? `<div><label for="owner_token">Nobie WebUI auth token</label><input id="owner_token" name="owner_token" type="password" autocomplete="off" /></div>` : ""}
+        ${params.requireOwnerToken ? `<div><label for="owner_token">Knowbee WebUI auth token</label><input id="owner_token" name="owner_token" type="password" autocomplete="off" /></div>` : ""}
         ${params.errorMessage ? `<div class="error">${escapeHtml(params.errorMessage)}</div>` : ""}
         <div class="actions">
           <button class="approve" type="submit" name="decision" value="approve">Approve</button>
@@ -98,7 +98,7 @@ export function registerOAuthRoute(app) {
     app.get("/oauth/chatgpt/authorize", async (req, reply) => {
         const metadata = buildChatGptOAuthMetadata();
         if (!metadata.enabled) {
-            return sendAuthorizeError(reply, "ChatGPT OAuth is not enabled on this Nobie instance.", 404);
+            return sendAuthorizeError(reply, "ChatGPT OAuth is not enabled on this Knowbee instance.", 404);
         }
         const input = getAuthorizeInput(req.query ?? {});
         if (input.responseType !== "code") {
@@ -129,7 +129,7 @@ export function registerOAuthRoute(app) {
     app.post("/oauth/chatgpt/authorize", async (req, reply) => {
         const metadata = buildChatGptOAuthMetadata();
         if (!metadata.enabled) {
-            return sendAuthorizeError(reply, "ChatGPT OAuth is not enabled on this Nobie instance.", 404);
+            return sendAuthorizeError(reply, "ChatGPT OAuth is not enabled on this Knowbee instance.", 404);
         }
         const input = getAuthorizeInput((req.body ?? {}));
         if (!input.clientId || !input.redirectUri || !input.state) {
@@ -164,7 +164,7 @@ export function registerOAuthRoute(app) {
                 state: input.state,
                 scope: input.scope || metadata.scope,
                 requireOwnerToken: true,
-                errorMessage: "The Nobie WebUI auth token is invalid.",
+                errorMessage: "The Knowbee WebUI auth token is invalid.",
             }));
         }
         try {

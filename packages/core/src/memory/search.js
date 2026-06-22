@@ -222,7 +222,7 @@ function buildChunkScopeWhere(filters, alias = "c") {
     if (filters?.ownerScope) {
         const ownerIds = uniqueValues([
             filters.ownerScope.ownerId,
-            filters.ownerScope.ownerType === "nobie" ? "global" : undefined,
+            filters.ownerScope.ownerType === "knowbee" ? "global" : undefined,
         ]);
         const placeholders = ownerIds.map(() => "?").join(", ");
         return {

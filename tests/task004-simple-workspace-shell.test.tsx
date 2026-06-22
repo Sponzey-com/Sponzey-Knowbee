@@ -38,7 +38,7 @@ describe("task004 simple workspace shell", () => {
     expect(pageSource).toContain('importSource: "enterprise_topology_simple_builder"')
     expect(pageSource).not.toContain("readStoredEnterpriseTopologyDraft")
     expect(pageSource).not.toContain("writeStoredEnterpriseTopologyDraft")
-    expect(pageSource).not.toContain("nobie_topology_workspace_draft")
+    expect(pageSource).not.toContain("knowbee_topology_workspace_draft")
     expect(clientSource).toContain("enterpriseTopologyGuiDraft: (topologyId: string)")
     expect(clientSource).toContain("/gui-draft")
     expect(serverSource.indexOf("registerTopologyRoutes(server)")).toBeLessThan(

@@ -50,8 +50,8 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 const permissionProfile: PermissionProfile = {
   profileId: "profile:safe",
@@ -92,8 +92,8 @@ const taskScope: StructuredTaskScope = {
   reasonCodes: ["task026"],
 }
 
-function owner(ownerId = "agent:nobie"): RuntimeIdentity["owner"] {
-  return { ownerType: ownerId === "agent:nobie" ? "nobie" : "sub_agent", ownerId }
+function owner(ownerId = "agent:knowbee"): RuntimeIdentity["owner"] {
+  return { ownerType: ownerId === "agent:knowbee" ? "knowbee" : "sub_agent", ownerId }
 }
 
 function memoryPolicy(agentId: string): MemoryPolicy {
@@ -145,7 +145,7 @@ function membership(teamId: string, agentId: string, index = 0): TeamMembership 
     membershipId: `${teamId}:membership:${index}`,
     teamId,
     agentId,
-    ownerAgentIdSnapshot: "agent:nobie",
+    ownerAgentIdSnapshot: "agent:knowbee",
     teamRoles: ["member"],
     primaryRole: "member",
     required: true,
@@ -162,7 +162,7 @@ function teamConfig(): TeamConfig {
     nickname: "Alpha Team",
     status: "enabled",
     purpose: "Task026 direct child team.",
-    ownerAgentId: "agent:nobie",
+    ownerAgentId: "agent:knowbee",
     leadAgentId: "agent:alpha",
     memberCountMin: 1,
     memberCountMax: 1,
@@ -239,8 +239,8 @@ function subSessionContract(id: string): SubSessionContract {
     subSessionId: `sub:${id}`,
     parentSessionId: "session:task026",
     parentRunId: "run:task026",
-    parentAgentId: "agent:nobie",
-    parentAgentDisplayName: "Nobie",
+    parentAgentId: "agent:knowbee",
+    parentAgentDisplayName: "Knowbee",
     agentId: "agent:alpha",
     agentDisplayName: "Alpha",
     agentNickname: "Alpha",
@@ -254,17 +254,17 @@ function subSessionContract(id: string): SubSessionContract {
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task026-command-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task026-command-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
 function restoreState(): void {
   closeDb()
-  process.env.NOBIE_STATE_DIR = previousStateDir
-  process.env.NOBIE_CONFIG = previousConfig
+  process.env.KNOWBEE_STATE_DIR = previousStateDir
+  process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -278,8 +278,8 @@ function seedRegistry(): void {
   agents.createOrUpdate(subAgentConfig("agent:gamma", "Gamma"), { now })
   createTeamRegistryService().createOrUpdate(teamConfig(), { now })
   upsertAgentRelationship({
-    edgeId: "edge:nobie-alpha",
-    parentAgentId: "agent:nobie",
+    edgeId: "edge:knowbee-alpha",
+    parentAgentId: "agent:knowbee",
     childAgentId: "agent:alpha",
     relationshipType: "parent_child",
     status: "active",

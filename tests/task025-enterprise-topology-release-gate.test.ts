@@ -11,7 +11,7 @@ import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, getDb } from "../packages/core/src/db/index.ts"
-import { ensurePromptSourceFiles } from "../packages/core/src/memory/nobie-md.ts"
+import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
 import { buildReleaseManifest, buildReleasePipelinePlan } from "../packages/core/src/release/package.ts"
 import {
   ENTERPRISE_TOPOLOGY_RELEASE_FEATURE_FLAGS,
@@ -32,8 +32,8 @@ import { buildStartPlan, defaultStartPlanDependencies } from "../packages/core/s
 import { resolveTopologyRootRunRouting } from "../packages/core/src/topology-runtime/harness.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 function makeTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -48,7 +48,7 @@ function writeFile(rootDir: string, relativePath: string, content: string): void
 }
 
 function createReleaseFixture(): string {
-  const rootDir = makeTempDir("nobie-task025-release-root-")
+  const rootDir = makeTempDir("knowbee-task025-release-root-")
   writeFile(rootDir, "package.json", JSON.stringify({ version: "9.9.9" }))
   writeFile(rootDir, "packages/cli/dist/index.js", "#!/usr/bin/env node\nconsole.log('cli')\n")
   writeFile(rootDir, "packages/core/dist/index.js", "export const core = true\n")
@@ -63,9 +63,9 @@ function createReleaseFixture(): string {
 
 function useTempState(): void {
   closeDb()
-  const stateDir = makeTempDir("nobie-task025-state-")
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  const stateDir = makeTempDir("knowbee-task025-state-")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
   getDb()
 }
@@ -90,10 +90,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env.NOBIE_STATE_DIR
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.NOBIE_CONFIG
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -117,7 +117,7 @@ describe("task025 Enterprise Topology release gate", () => {
     expect(flags.get("topology_runtime_enabled")?.mode).toBe("off")
   })
 
-  it("keeps the feature-flag-off path on single Nobie fallback", async () => {
+  it("keeps the feature-flag-off path on single Knowbee fallback", async () => {
     const offFlag: RuntimeFeatureFlag = {
       featureKey: "topology_runtime_enabled",
       mode: "off",
@@ -154,7 +154,7 @@ describe("task025 Enterprise Topology release gate", () => {
       explicitTopologyId: "topology:customer-success",
     }))
     expect(plan.topologyRouting).toEqual(decision)
-    expect(plan.orchestrationMode).toBe("single_nobie")
+    expect(plan.orchestrationMode).toBe("single_knowbee")
   })
 
   it("documents rollout stages and release gate regression commands", () => {
@@ -178,7 +178,7 @@ describe("task025 Enterprise Topology release gate", () => {
       "gated_mode_stage",
       "opt_in_routing_stage",
       "feature_flag_off_path",
-      "single_nobie_fallback",
+      "single_knowbee_fallback",
       "sub_agent_regression_suite",
       "channel_finalizer_regression_suite",
       "webui_build_gate",
@@ -202,7 +202,7 @@ describe("task025 Enterprise Topology release gate", () => {
         }),
         expect.objectContaining({
           id: "webui_build_gate",
-          command: ["pnpm", "--filter", "@nobie/webui", "build"],
+          command: ["pnpm", "--filter", "@knowbee/webui", "build"],
         }),
         expect.objectContaining({
           id: "topology_workspace_usability_gate",
@@ -294,7 +294,7 @@ describe("task025 Enterprise Topology release gate", () => {
     const runbook = readFileSync(join(process.cwd(), "docs", "release-runbook.md"), "utf-8")
 
     expect(manifest.enterpriseTopologyReleaseGate.kind).toBe(
-      "nobie.enterprise_topology.release_readiness",
+      "knowbee.enterprise_topology.release_readiness",
     )
     expect(manifest.enterpriseTopologyReleaseGate.gateStatus).toBe("passed")
     expect(manifest.releaseNotes.knownLimitations.join("\n")).toContain(

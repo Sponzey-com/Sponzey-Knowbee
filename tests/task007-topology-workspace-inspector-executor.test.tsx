@@ -57,7 +57,7 @@ describe("task007 topology workspace inspector and executor mapping", () => {
     expect(html).toContain('data-testid="topology-workspace-inspector"')
     expect(html).toContain('data-testid="topology-workspace-task-settings"')
     expect(html).toContain('data-testid="topology-workspace-executor-picker"')
-    expect(html).toContain("Nobie")
+    expect(html).toContain("Knowbee")
     expect(html).toContain("기존 Agent")
     expect(html).toContain("Team")
     expect(html).toContain("Tool")

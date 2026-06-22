@@ -22,21 +22,21 @@ describe("topology dispatch preflight failure trace", () => {
             id: "trace:work-order",
             phase: "work_order",
             reasonCode: "work_order_created",
-            delegationPath: ["node:nobie", "node:finance"],
+            delegationPath: ["node:knowbee", "node:finance"],
             sequence: 1,
           }),
           traceEvent({
             id: "trace:dispatch",
             phase: "child_delegation",
             reasonCode: "sub_agent_dispatch_started",
-            delegationPath: ["node:nobie", "node:finance"],
+            delegationPath: ["node:knowbee", "node:finance"],
             sequence: 2,
           }),
           traceEvent({
             id: "trace:preflight",
             phase: "permission",
             reasonCode: "prompt_bundle_preflight_failed",
-            delegationPath: ["node:nobie", "node:finance"],
+            delegationPath: ["node:knowbee", "node:finance"],
             sequence: 3,
             payload: {
               nodeId: "node:finance",
@@ -47,18 +47,18 @@ describe("topology dispatch preflight failure trace", () => {
             id: "trace:self-solve-after",
             phase: "self_execution",
             reasonCode: "delegated_executor_runtime_failure_direct_current_agent",
-            delegationPath: ["node:nobie"],
+            delegationPath: ["node:knowbee"],
             sequence: 4,
-            payload: { nodeId: "node:nobie" },
+            payload: { nodeId: "node:knowbee" },
           }),
         ],
       }),
       executorNames: {
-        "node:nobie": "노비",
+        "node:knowbee": "노우비",
         "node:finance": "행랑아범",
       },
       edgeIdsByNodePair: {
-        "node:nobie->node:finance": "edge:nobie:finance",
+        "node:knowbee->node:finance": "edge:knowbee:finance",
       },
     })
 
@@ -81,7 +81,7 @@ describe("topology dispatch preflight failure trace", () => {
     })
     expect(model.events.find((event) => event.kind === "failed")).toBeUndefined()
     expect(model.executorStatuses["node:finance"]).toBe("recovering")
-    expect(model.edgeStatuses["edge:nobie:finance"]).toBe("cancelled")
+    expect(model.edgeStatuses["edge:knowbee:finance"]).toBe("cancelled")
   })
 
   it("marks failed nodes with failure code and summary", () => {
@@ -94,14 +94,14 @@ describe("topology dispatch preflight failure trace", () => {
             id: "trace:dispatch",
             phase: "child_delegation",
             reasonCode: "sub_agent_dispatch_started",
-            delegationPath: ["node:nobie", "node:finance"],
+            delegationPath: ["node:knowbee", "node:finance"],
             sequence: 1,
           }),
           traceEvent({
             id: "trace:failed",
             phase: "exhaustion",
             reasonCode: "final_failure_after_exhaustion",
-            delegationPath: ["node:nobie", "node:finance"],
+            delegationPath: ["node:knowbee", "node:finance"],
             sequence: 2,
           }),
         ],
@@ -140,7 +140,7 @@ describe("topology dispatch preflight failure trace", () => {
             id: "trace:dispatch-running",
             phase: "child_delegation",
             reasonCode: "sub_agent_dispatch_started",
-            delegationPath: ["node:nobie", "node:finance"],
+            delegationPath: ["node:knowbee", "node:finance"],
             sequence: 1,
           }),
         ],
@@ -149,14 +149,14 @@ describe("topology dispatch preflight failure trace", () => {
         "node:finance": "행랑아범",
       },
       edgeIdsByNodePair: {
-        "node:nobie->node:finance": "edge:nobie:finance",
+        "node:knowbee->node:finance": "edge:knowbee:finance",
       },
     })
 
     expect(model.activeExecutorIds).toEqual(["node:finance"])
-    expect(model.activeEdgeIds).toEqual(["edge:nobie:finance"])
+    expect(model.activeEdgeIds).toEqual(["edge:knowbee:finance"])
     expect(model.executorStatuses["node:finance"]).toBe("delegating")
-    expect(model.edgeStatuses["edge:nobie:finance"]).toBe("running")
+    expect(model.edgeStatuses["edge:knowbee:finance"]).toBe("running")
   })
 
   it("keeps legacy topology runs without trace in a diagnostic state", () => {
@@ -180,19 +180,19 @@ describe("topology dispatch preflight failure trace", () => {
     const direct = buildTopologyExecutionTraceViewModel({
       topologyRun: projection({
         status: "completed",
-        entryNodeId: "node:nobie",
+        entryNodeId: "node:knowbee",
         traceEvents: [
           traceEvent({
             id: "trace:self",
             phase: "self_execution",
             reasonCode: "node_runtime_self_executing",
-            delegationPath: ["node:nobie"],
+            delegationPath: ["node:knowbee"],
             sequence: 1,
           }),
         ],
       }),
       executorNames: {
-        "node:nobie": "노비",
+        "node:knowbee": "노우비",
       },
     })
 

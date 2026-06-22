@@ -38,18 +38,18 @@ import {
 } from "../packages/core/src/orchestration/registry.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 let now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
   clearAgentCapabilityIndexCache()
   now = Date.UTC(2026, 3, 24, 0, 0, 0)
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task010-planner-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task010-planner-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -160,7 +160,7 @@ function membership(
     membershipId: `${teamId}:membership:${sortOrder}`,
     teamId,
     agentId,
-    ownerAgentIdSnapshot: "agent:nobie",
+    ownerAgentIdSnapshot: "agent:knowbee",
     teamRoles: roles,
     primaryRole: roles[0] ?? "member",
     required: true,
@@ -177,7 +177,7 @@ function teamConfig(): TeamConfig {
     nickname: "Research Team",
     status: "enabled",
     purpose: "Research together.",
-    ownerAgentId: "agent:nobie",
+    ownerAgentId: "agent:knowbee",
     leadAgentId: "agent:alpha",
     memberCountMin: 1,
     memberCountMax: 2,
@@ -243,7 +243,7 @@ function registrySnapshot() {
 
 function executionDecision(
   selectedExecutorId: string,
-  currentExecutorId = "agent:nobie",
+  currentExecutorId = "agent:knowbee",
 ): AgentExecutionDecision {
   return {
     contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
@@ -285,10 +285,10 @@ beforeEach(() => {
 afterEach(() => {
   closeDb()
   clearAgentCapabilityIndexCache()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -324,7 +324,7 @@ describe("task010 planner fast path and explicit targets", () => {
     })
 
     expect(result.fastPathClassification.classification).toBe("delegation_candidate")
-    expect(result.plan.directNobieTasks).toHaveLength(1)
+    expect(result.plan.directKnowbeeTasks).toHaveLength(1)
     expect(result.plan.delegatedTasks).toHaveLength(0)
     expect(result.plan.plannerMetadata?.fastPath?.reasonCodes).toContain("fast_path_delegation_candidate")
     expect(validateOrchestrationPlan(result.plan).ok).toBe(true)
@@ -341,17 +341,17 @@ describe("task010 planner fast path and explicit targets", () => {
     })
 
     expect(result.fastPathClassification.classification).toBe("delegation_candidate")
-    expect(result.plan.directNobieTasks).toHaveLength(1)
+    expect(result.plan.directKnowbeeTasks).toHaveLength(1)
     expect(result.plan.delegatedTasks).toHaveLength(0)
     expect(result.plan.plannerMetadata?.status).toBe("planned")
     expect(result.reasonCodes).not.toContain("requires_workflow_recommendation")
   })
 
-  it("delegates only to Nobie's explicit top-level sub-agent target", () => {
+  it("delegates only to Knowbee's explicit top-level sub-agent target", () => {
     seedSkill()
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
     upsertAgentConfig(subAgent("agent:beta"), { source: "manual", now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha"), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:alpha"), { now })
     upsertAgentRelationship(relationship("agent:alpha", "agent:beta"), { now })
 
     const input = {
@@ -381,8 +381,8 @@ describe("task010 planner fast path and explicit targets", () => {
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
     upsertAgentConfig(subAgent("agent:beta"), { source: "manual", now })
     upsertAgentConfig(subAgent("agent:gamma"), { source: "manual", now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha", 0), { now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:gamma", 1), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:alpha", 0), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:gamma", 1), { now })
     upsertAgentRelationship(relationship("agent:alpha", "agent:beta", 0), { now })
 
     const result = buildOrchestrationPlan({
@@ -409,7 +409,7 @@ describe("task010 planner fast path and explicit targets", () => {
     seedSkill()
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
     upsertAgentConfig(subAgent("agent:beta"), { source: "manual", now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha"), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:alpha"), { now })
     upsertAgentRelationship(relationship("agent:alpha", "agent:beta"), { now })
 
     const result = buildOrchestrationPlan({
@@ -443,8 +443,8 @@ describe("task010 planner fast path and explicit targets", () => {
       { source: "manual", now },
     )
     upsertAgentConfig(subAgent("agent:other"), { source: "manual", now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha", 0), { now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:other", 1), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:alpha", 0), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:other", 1), { now })
 
     const result = buildOrchestrationPlan({
       parentRunId: "run:permission",
@@ -470,7 +470,7 @@ describe("task010 planner fast path and explicit targets", () => {
   it("plans explicit team targets for runtime team expansion", () => {
     seedSkill()
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha"), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:alpha"), { now })
     upsertTeamConfig(teamConfig(), { source: "manual", now })
 
     const result = buildOrchestrationPlan({
@@ -485,7 +485,7 @@ describe("task010 planner fast path and explicit targets", () => {
       idProvider: () => "plan:team",
     })
 
-    expect(result.plan.directNobieTasks).toHaveLength(0)
+    expect(result.plan.directKnowbeeTasks).toHaveLength(0)
     expect(result.plan.delegatedTasks).toHaveLength(1)
     expect(result.plan.delegatedTasks[0]?.assignedTeamId).toBe("team:research")
     expect(result.plan.plannerMetadata?.status).toBe("planned")
@@ -496,7 +496,7 @@ describe("task010 planner fast path and explicit targets", () => {
   it("does not infer hidden team targets or capabilities from natural-language team names", () => {
     seedSkill()
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha"), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:alpha"), { now })
     upsertTeamConfig(
       {
         ...teamConfig(),
@@ -520,13 +520,13 @@ describe("task010 planner fast path and explicit targets", () => {
     })
 
     expect(result.plan.delegatedTasks).toHaveLength(0)
-    expect(result.plan.directNobieTasks).toHaveLength(1)
+    expect(result.plan.directKnowbeeTasks).toHaveLength(1)
     expect(result.plan.fallbackStrategy.reasonCode).toBe("execution_decision_required")
     expect(result.reasonCodes).not.toContain("inferred_team_target_from_request")
     expect(validateOrchestrationPlan(result.plan).ok).toBe(true)
   })
 
-  it("falls back to degraded single Nobie plan on planner timeout", () => {
+  it("falls back to degraded single Knowbee plan on planner timeout", () => {
     let tick = now
     const result = buildOrchestrationPlan({
       parentRunId: "run:timeout",

@@ -22,7 +22,7 @@ import type {
 } from "../packages/core/src/orchestration/registry.ts"
 
 const now = Date.UTC(2026, 4, 7, 0, 0, 0)
-const rootExecutorId = "agent:nobie"
+const rootExecutorId = "agent:knowbee"
 
 const allowlist: SkillMcpAllowlist = {
   enabledSkillIds: ["skill:general"],
@@ -200,7 +200,7 @@ function decision(selectedExecutorId: string): AgentExecutionDecision {
     selected_connection_path: [rootExecutorId, selectedExecutorId],
     task_profile: {
       title: "검증된 위임",
-      summary: "노비가 프롬프트 판단으로 선택한 실행자를 planner가 그대로 계획으로 변환한다.",
+      summary: "노우비가 프롬프트 판단으로 선택한 실행자를 planner가 그대로 계획으로 변환한다.",
       goals: ["선택된 실행자에게만 위임한다."],
       task_units: [
         {
@@ -260,7 +260,7 @@ describe("task007 planner without implicit agent selection", () => {
     })
 
     expect(result.plan.delegatedTasks).toHaveLength(0)
-    expect(result.plan.directNobieTasks).toHaveLength(1)
+    expect(result.plan.directKnowbeeTasks).toHaveLength(1)
     expect(result.plan.fallbackStrategy).toMatchObject({
       mode: "direct_current_agent",
       reasonCode: "execution_decision_required",
@@ -269,7 +269,7 @@ describe("task007 planner without implicit agent selection", () => {
       false,
     )
     expect(result.plan.plannerMetadata?.fallbackReasonCodes?.[0]).not.toBe(
-      "delegate_failure_single_nobie",
+      "delegate_failure_single_knowbee",
     )
     expect(validateOrchestrationPlan(result.plan).ok).toBe(true)
   })
@@ -301,7 +301,7 @@ describe("task007 planner without implicit agent selection", () => {
     })
 
     expect(result.plan.delegatedTasks).toHaveLength(0)
-    expect(result.plan.directNobieTasks).toHaveLength(1)
+    expect(result.plan.directKnowbeeTasks).toHaveLength(1)
     expect(result.plan.fallbackStrategy).toMatchObject({
       mode: "direct_current_agent",
       reasonCode: "execution_decision_required",
@@ -346,7 +346,7 @@ describe("task007 planner without implicit agent selection", () => {
       idProvider: () => "plan:decision",
     })
 
-    expect(result.plan.directNobieTasks).toHaveLength(0)
+    expect(result.plan.directKnowbeeTasks).toHaveLength(0)
     expect(result.plan.delegatedTasks).toHaveLength(1)
     expect(result.plan.delegatedTasks[0]?.assignedAgentId).toBe(
       "workspace:draft:node:executor-5",
@@ -400,7 +400,7 @@ describe("task007 planner without implicit agent selection", () => {
     })
 
     expect(result.plan.delegatedTasks).toHaveLength(0)
-    expect(result.plan.directNobieTasks).toHaveLength(1)
+    expect(result.plan.directKnowbeeTasks).toHaveLength(1)
     expect(result.plan.fallbackStrategy).toMatchObject({
       mode: "ask_user",
       reasonCode: "explicit_agent_target_unavailable",
@@ -418,7 +418,7 @@ describe("task007 planner without implicit agent selection", () => {
       result.plan.plannerMetadata?.candidateScores?.filter((candidate) => candidate.selected),
     ).toEqual([])
     expect(result.plan.plannerMetadata?.fallbackReasonCodes?.[0]).not.toBe(
-      "delegate_failure_single_nobie",
+      "delegate_failure_single_knowbee",
     )
     expect(validateOrchestrationPlan(result.plan).ok).toBe(true)
   })
@@ -443,7 +443,7 @@ describe("task007 planner without implicit agent selection", () => {
     const invalidPlan: OrchestrationPlan = {
       ...result.plan,
       fallbackStrategy: {
-        mode: "root_nobie_direct",
+        mode: "root_knowbee_direct",
         reasonCode: "invalid_child_root_direct",
         currentExecutorId: "workspace:draft:node:worker",
       },

@@ -16,12 +16,12 @@ import { buildSetupDraft } from "../packages/core/src/control-plane/index.ts"
 import { resolveRunRouteFromDraft } from "../packages/core/src/runs/routing.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
 const previousCodexHome = process.env["CODEX_HOME"]
 
 afterEach(() => {
   vi.unstubAllGlobals()
-  process.env["NOBIE_STATE_DIR"] = previousStateDir
+  process.env["KNOWBEE_STATE_DIR"] = previousStateDir
   if (previousCodexHome === undefined) delete process.env["CODEX_HOME"]
   else process.env["CODEX_HOME"] = previousCodexHome
   reloadConfig()
@@ -34,9 +34,9 @@ afterEach(() => {
 })
 
 function useTempState(configText: string): string {
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task008-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task008-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
   writeFileSync(join(stateDir, "config.json5"), configText, "utf-8")
   reloadConfig()
   resetAIProviderCache()

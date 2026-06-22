@@ -1,6 +1,6 @@
 import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
 import { buildDefaultStructuredTaskScope, buildOrchestrationPlan, } from "./planner.js";
-const DEFAULT_ROOT_AGENT_ID = "agent:nobie";
+const DEFAULT_ROOT_AGENT_ID = "agent:knowbee";
 const DEFAULT_MAX_DEPTH = 5;
 const DEFAULT_MAX_CHILDREN_PER_AGENT = 10;
 function normalizedPositiveInteger(value, fallback) {

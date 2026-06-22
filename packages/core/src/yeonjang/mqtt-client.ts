@@ -155,7 +155,7 @@ export function buildYeonjangTopics(extensionId = DEFAULT_YEONJANG_EXTENSION_ID)
   eventTopic: string
 } {
   const normalized = extensionId.trim() || DEFAULT_YEONJANG_EXTENSION_ID
-  const prefix = `nobie/v1/node/${normalized}`
+  const prefix = `knowbee/v1/node/${normalized}`
   return {
     statusTopic: `${prefix}/status`,
     capabilitiesTopic: `${prefix}/capabilities`,
@@ -584,7 +584,7 @@ export function doesYeonjangCapabilitySupportOutputMode(
 export function snapshotToYeonjangCapabilitiesPayload(snapshot: MqttExtensionSnapshot): YeonjangCapabilitiesPayload {
   const matrix = snapshot.capabilityMatrix as Record<string, YeonjangCapabilityMatrixEntry> | undefined
   return {
-    node: "nobie-yeonjang",
+    node: "knowbee-yeonjang",
     ...(snapshot.version ? { version: snapshot.version } : {}),
     ...(snapshot.protocolVersion ? { protocolVersion: snapshot.protocolVersion } : {}),
     ...(snapshot.gitTag ? { gitTag: snapshot.gitTag } : {}),
@@ -694,7 +694,7 @@ function createClient(): MqttClient {
 
   const host = normalizeConnectHost(config.host)
   return mqtt.connect(`mqtt://${host}:${config.port}`, {
-    clientId: `nobie-core-${process.pid}-${randomUUID().slice(0, 8)}`,
+    clientId: `knowbee-core-${process.pid}-${randomUUID().slice(0, 8)}`,
     username: config.username,
     password: config.password,
     connectTimeout: 5_000,

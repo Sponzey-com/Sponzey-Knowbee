@@ -1,4 +1,4 @@
-import type { DoctorMode, DoctorReport, DoctorStatus } from "@nobie/core"
+import type { DoctorMode, DoctorReport, DoctorStatus } from "@knowbee/core"
 
 export interface DoctorCommandOptions {
   quick?: boolean
@@ -19,7 +19,7 @@ function resolveMode(options: DoctorCommandOptions): DoctorMode {
 }
 
 function printTextReport(report: DoctorReport, artifactPath: string | null): void {
-  console.log(`Nobie doctor (${report.mode})`)
+  console.log(`Knowbee doctor (${report.mode})`)
   console.log(`Status: ${STATUS_ICON[report.overallStatus]}`)
   console.log(`Runtime manifest: ${report.runtimeManifestId}`)
   console.log(`Checks: ok=${report.summary.ok}, warning=${report.summary.warning}, blocked=${report.summary.blocked}, unknown=${report.summary.unknown}`)
@@ -31,7 +31,7 @@ function printTextReport(report: DoctorReport, artifactPath: string | null): voi
 }
 
 export async function doctorCommand(options: DoctorCommandOptions): Promise<void> {
-  const core = await import("@nobie/core")
+  const core = await import("@knowbee/core")
   const mode = resolveMode(options)
   const report = core.runDoctor({ mode })
   const artifactPath = options.write ? core.writeDoctorReportArtifact(report) : null

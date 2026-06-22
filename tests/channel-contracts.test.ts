@@ -246,7 +246,7 @@ describe("channel contract", () => {
           room: { id: "C_APPROVAL", type: "channel" },
           text: "run it",
           attachments: [],
-          mentions: [{ id: "U_NOBIE", kind: "agent", displayName: "Nobie" }],
+          mentions: [{ id: "U_KNOWBEE", kind: "agent", displayName: "Knowbee" }],
           timestamp: 1,
           rawPayloadRef: createRawPayloadRef({ provider: "slack", payload: rawPayload, createdAt: 1 }),
           dedupeKey: "slack:C_APPROVAL:1710000000.000100",

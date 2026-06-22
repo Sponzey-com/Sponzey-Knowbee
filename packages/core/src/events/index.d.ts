@@ -3,7 +3,7 @@ import type { ChannelSource } from "../channels/contracts.js";
 export type ApprovalDecision = "allow_once" | "allow_run" | "deny";
 export type ApprovalKind = "approval" | "screen_confirmation";
 export type ApprovalResolutionReason = "user" | "timeout" | "abort" | "system";
-export interface NobieEvents {
+export interface KnowbeeEvents {
     "message.inbound": {
         source: string;
         sessionId: string;
@@ -245,12 +245,12 @@ export interface NobieEvents {
 type Listener<T> = (payload: T) => void | Promise<void>;
 declare class TypedEventBus {
     private listeners;
-    on<K extends keyof NobieEvents>(event: K, listener: Listener<NobieEvents[K]>): () => void;
-    emit<K extends keyof NobieEvents>(event: K, payload: NobieEvents[K]): void;
-    once<K extends keyof NobieEvents>(event: K, listener: Listener<NobieEvents[K]>): () => void;
+    on<K extends keyof KnowbeeEvents>(event: K, listener: Listener<KnowbeeEvents[K]>): () => void;
+    emit<K extends keyof KnowbeeEvents>(event: K, payload: KnowbeeEvents[K]): void;
+    once<K extends keyof KnowbeeEvents>(event: K, listener: Listener<KnowbeeEvents[K]>): () => void;
 }
-export type WizbyEvents = NobieEvents;
-export type HowieEvents = NobieEvents;
+export type WizbyEvents = KnowbeeEvents;
+export type HowieEvents = KnowbeeEvents;
 export declare const eventBus: TypedEventBus;
 export {};
 //# sourceMappingURL=index.d.ts.map

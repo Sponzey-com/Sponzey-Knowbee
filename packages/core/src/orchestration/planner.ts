@@ -20,7 +20,7 @@ export const ORCHESTRATION_PLANNER_VERSION = "structured-v1"
 export const FAST_PATH_CLASSIFIER_TARGET_P95_MS = 100
 export const ORCHESTRATION_PLANNER_TARGET_P95_MS = 700
 
-export type FastPathClassification = "direct_nobie" | "delegation_candidate" | "workflow_candidate"
+export type FastPathClassification = "direct_knowbee" | "delegation_candidate" | "workflow_candidate"
 
 export interface FastPathClassifierInput {
   userRequest: string
@@ -217,15 +217,15 @@ function plannerParentAgentId(
   input: Pick<OrchestrationPlannerInput, "parentAgentId">,
   registry: OrchestrationRegistrySnapshot,
 ): string {
-  return input.parentAgentId ?? registry.hierarchy?.rootAgentId ?? "agent:nobie"
+  return input.parentAgentId ?? registry.hierarchy?.rootAgentId ?? "agent:knowbee"
 }
 
 function plannerCurrentExecutorId(input: Pick<OrchestrationPlannerInput, "parentAgentId">): string {
-  return input.parentAgentId ?? "agent:nobie"
+  return input.parentAgentId ?? "agent:knowbee"
 }
 
-function isRootNobieExecutor(executorId: string | undefined): boolean {
-  return executorId === "agent:nobie"
+function isRootKnowbeeExecutor(executorId: string | undefined): boolean {
+  return executorId === "agent:knowbee"
 }
 
 function directChildAgentIdsFor(
@@ -475,7 +475,7 @@ function buildIdentity(
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     entityType: "session",
     entityId: planId,
-    owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+    owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
     idempotencyKey: `orchestration-plan:${parentRunId}:${parentRequestId}`,
     auditCorrelationId: `orchestration-plan:${planId}`,
     parent: { parentRunId, parentRequestId },
@@ -550,11 +550,11 @@ function directFallbackPlan(input: {
   const task = planTask({
     taskId: `${planId}:direct:0`,
     scope,
-    executionKind: "direct_nobie",
+    executionKind: "direct_knowbee",
     requiredCapabilities: [],
     resourceLockIds: [],
     reasonCodes: input.reasonCodes,
-    explanation: input.userMessage ?? "노비가 직접 후속 처리를 맡는 계획입니다.",
+    explanation: input.userMessage ?? "노우비가 직접 후속 처리를 맡는 계획입니다.",
   })
 
   const plan: OrchestrationPlan = {
@@ -562,7 +562,7 @@ function directFallbackPlan(input: {
     planId,
     parentRunId: input.parentRunId,
     parentRequestId: input.parentRequestId,
-    directNobieTasks: [task],
+    directKnowbeeTasks: [task],
     delegatedTasks: [],
     dependencyEdges: [],
     resourceLocks: [],
@@ -639,7 +639,7 @@ function nonExecutionPlan(input: {
     planId,
     parentRunId: input.parentRunId,
     parentRequestId: input.parentRequestId,
-    directNobieTasks: [],
+    directKnowbeeTasks: [],
     delegatedTasks: [],
     dependencyEdges: [],
     resourceLocks: [],
@@ -703,7 +703,7 @@ function directFallbackModeForExecutionDecision(
   if (decision.execution_route === "ask_user") return "ask_user"
   if (decision.execution_route === "ask_parent") return "ask_parent"
   if (decision.execution_route === "return_to_parent") return "return_to_parent"
-  if (decision.execution_route === "root_nobie_direct") return "root_nobie_direct"
+  if (decision.execution_route === "root_knowbee_direct") return "root_knowbee_direct"
   if (decision.execution_route === "explicit_provider") return "ask_user"
   if (decision.execution_route === "explicit_provider_target") return "ask_user"
   if (decision.execution_route === "boundary_failure") return "ask_user"
@@ -745,14 +745,14 @@ export function buildOrchestrationPlan(
     })
   }
 
-  if (fastPathClassification.classification === "direct_nobie") {
+  if (fastPathClassification.classification === "direct_knowbee") {
     return directFallbackPlan({
       parentRunId: input.parentRunId,
       parentRequestId: input.parentRequestId,
       userRequest: input.userRequest,
       modeSnapshot: input.modeSnapshot,
       reasonCodes: fastPathClassification.reasonCodes,
-      fallbackReasonCode: "direct_nobie_fast_path",
+      fallbackReasonCode: "direct_knowbee_fast_path",
       now: startedAt,
       idProvider,
       timedOut: false,
@@ -840,8 +840,8 @@ export function buildOrchestrationPlan(
       ],
       fallbackReasonCode: `execution_decision_${input.agentExecutionDecision.execution_route}`,
       fallbackMode:
-        input.agentExecutionDecision.execution_route === "root_nobie_direct" &&
-        !isRootNobieExecutor(input.agentExecutionDecision.current_executor_id)
+        input.agentExecutionDecision.execution_route === "root_knowbee_direct" &&
+        !isRootKnowbeeExecutor(input.agentExecutionDecision.current_executor_id)
           ? input.agentExecutionDecision.parent_executor_id
             ? "return_to_parent"
             : "ask_user"
@@ -857,9 +857,9 @@ export function buildOrchestrationPlan(
         ? { parentExecutorId: input.agentExecutionDecision.parent_executor_id }
         : {}),
       unresolvedReasonCode:
-        input.agentExecutionDecision.execution_route === "root_nobie_direct" &&
-        !isRootNobieExecutor(input.agentExecutionDecision.current_executor_id)
-          ? "root_nobie_direct_rejected_for_non_root_executor"
+        input.agentExecutionDecision.execution_route === "root_knowbee_direct" &&
+        !isRootKnowbeeExecutor(input.agentExecutionDecision.current_executor_id)
+          ? "root_knowbee_direct_rejected_for_non_root_executor"
           : `execution_decision_${input.agentExecutionDecision.execution_route}`,
       ...(input.agentExecutionDecision.unresolved_reason
         ? { unresolvedReason: input.agentExecutionDecision.unresolved_reason }
@@ -969,7 +969,7 @@ export function buildOrchestrationPlan(
       planId,
       parentRunId: input.parentRunId,
       parentRequestId: input.parentRequestId,
-      directNobieTasks: [],
+      directKnowbeeTasks: [],
       delegatedTasks,
       dependencyEdges: [...(input.dependencyEdges ?? [])],
       resourceLocks: input.resourceLocks ?? [],
@@ -1209,7 +1209,7 @@ export function buildOrchestrationPlan(
     planId,
     parentRunId: input.parentRunId,
     parentRequestId: input.parentRequestId,
-    directNobieTasks: [],
+    directKnowbeeTasks: [],
     delegatedTasks,
     dependencyEdges,
     resourceLocks,

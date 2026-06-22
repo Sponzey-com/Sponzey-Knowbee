@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { normalizeNicknameSnapshot } from "../contracts/sub-agent-orchestration.js";
 import { normalizeMemoryCapsuleOwnerScope } from "./capsule.js";
-export const ROOT_MAIN_AGENT_ID = "agent:nobie";
+export const ROOT_MAIN_AGENT_ID = "agent:knowbee";
 function normalizeString(value) {
     if (typeof value !== "string")
         return undefined;

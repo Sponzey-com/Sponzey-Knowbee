@@ -8,13 +8,13 @@ const COLORS = {
 const RESET = "\x1b[0m";
 const DIM = "\x1b[2m";
 function getMinLevel() {
-    const env = process.env["NOBIE_LOG_LEVEL"];
+    const env = process.env["KNOWBEE_LOG_LEVEL"];
     if (env && env in LEVELS)
         return env;
     return "info";
 }
 function shouldColor() {
-    return process.env["NOBIE_NO_COLOR"] == null && process.stdout.isTTY === true;
+    return process.env["KNOWBEE_NO_COLOR"] == null && process.stdout.isTTY === true;
 }
 function serializeArg(value) {
     if (value instanceof Error) {
@@ -63,5 +63,5 @@ export function createLogger(namespace) {
         child: (sub) => createLogger(`${namespace}:${sub}`),
     };
 }
-export const logger = createLogger("nobie");
+export const logger = createLogger("knowbee");
 //# sourceMappingURL=index.js.map

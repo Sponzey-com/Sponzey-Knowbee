@@ -234,7 +234,7 @@ export class TelegramChannel {
       recordChannelAccessPolicyResult(access)
       if (!access.allowed) {
         log.warn(`Rejected user=${userId} chat=${chatId} type=${chatType} reason=${access.policy.reasonCode}`)
-        await ctx.reply(access.responseText ?? "This channel request is blocked by Nobie's access policy.").catch(() => undefined)
+        await ctx.reply(access.responseText ?? "This channel request is blocked by Knowbee's access policy.").catch(() => undefined)
         return
       }
 

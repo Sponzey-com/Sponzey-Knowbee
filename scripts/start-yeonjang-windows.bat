@@ -7,7 +7,7 @@ set "PIDS_DIR=%ROOT_DIR%\pids"
 set "LOGS_DIR=%ROOT_DIR%\logs"
 set "PID_FILE=%PIDS_DIR%\yeonjang-windows.pid"
 set "LOG_FILE=%LOGS_DIR%\yeonjang-windows.log"
-set "BINARY_NAME=nobie-yeonjang.exe"
+set "BINARY_NAME=knowbee-yeonjang.exe"
 set "REPO_TARGET_DIR=%ROOT_DIR%\Yeonjang\target"
 set "RESTART_YEONJANG=0"
 

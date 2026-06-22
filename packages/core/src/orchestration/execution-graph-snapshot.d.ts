@@ -1,7 +1,7 @@
-import { type NobieConfig } from "../config/index.js";
+import { type KnowbeeConfig } from "../config/index.js";
 import { type LegacyTopologyRegistryStore } from "../topology/legacy-enterprise-topology-adapter.js";
 import { type ExecutorProfile, type OrchestrationRegistrySnapshot, type RegistryServiceDependencies } from "./registry.js";
-export declare const EXECUTION_GRAPH_ROOT_AGENT_ID: "agent:nobie";
+export declare const EXECUTION_GRAPH_ROOT_AGENT_ID: "agent:knowbee";
 export declare const WORKSPACE_DRAFT_TOPOLOGY_ID: "workspace:draft";
 export type ExecutionGraphBuildMode = "workspace" | "active_deployment" | "db_config";
 export type ExecutionGraphSource = "workspace_draft" | "active_topology" | "db_config";
@@ -80,7 +80,7 @@ export interface BuildExecutionGraphSnapshotInput {
     registrySnapshot?: OrchestrationRegistrySnapshot;
     loadRegistrySnapshot?: () => OrchestrationRegistrySnapshot;
     registryDependencies?: RegistryServiceDependencies;
-    getConfig?: () => Pick<NobieConfig, "orchestration"> & Partial<Pick<NobieConfig, "ai">>;
+    getConfig?: () => Pick<KnowbeeConfig, "orchestration"> & Partial<Pick<KnowbeeConfig, "ai">>;
 }
 export declare function buildExecutionGraphSnapshot(input?: BuildExecutionGraphSnapshotInput): ExecutionGraphSnapshot;
 //# sourceMappingURL=execution-graph-snapshot.d.ts.map

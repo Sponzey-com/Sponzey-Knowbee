@@ -30,25 +30,25 @@ import {
 import { validateAgentPromptBundleContextScope } from "../packages/core/src/runs/context-preflight.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task019-memory-isolation-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task019-memory-isolation-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = undefined
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = undefined
   reloadConfig()
 }
 
 function restoreState(): void {
   closeDb()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -80,8 +80,8 @@ afterEach(() => {
 })
 
 describe("task019 memory isolation and writeback policy", () => {
-  it("blocks sibling and Nobie private memory reads, and records denied memory access audit", async () => {
-    const nobie = owner("nobie", "agent:nobie")
+  it("blocks sibling and Knowbee private memory reads, and records denied memory access audit", async () => {
+    const knowbee = owner("knowbee", "agent:knowbee")
     const writer = owner("sub_agent", "agent:writer")
     const reader = owner("sub_agent", "agent:reader")
 
@@ -93,10 +93,10 @@ describe("task019 memory isolation and writeback policy", () => {
       sourceType: "test",
     })
     await storeOwnerScopedMemory({
-      owner: nobie,
+      owner: knowbee,
       visibility: "private",
       retentionPolicy: "long_term",
-      rawText: "TASK019_NOBIE_PRIVATE parent-only memory",
+      rawText: "TASK019_KNOWBEE_PRIVATE parent-only memory",
       sourceType: "test",
     })
 
@@ -112,8 +112,8 @@ describe("task019 memory isolation and writeback policy", () => {
     await expect(
       searchOwnerScopedMemory({
         requester: reader,
-        owner: nobie,
-        query: "TASK019_NOBIE_PRIVATE",
+        owner: knowbee,
+        query: "TASK019_KNOWBEE_PRIVATE",
         filters: { runId: "run:task019:block", requestGroupId: "request:task019:block" },
       }),
     ).rejects.toMatchObject({ reasonCode: "cross_agent_memory_requires_data_exchange" })
@@ -128,28 +128,28 @@ describe("task019 memory isolation and writeback policy", () => {
   })
 
   it("allows child context only through a parent-created DataExchangePackage", async () => {
-    const nobie = owner("nobie", "agent:nobie")
+    const knowbee = owner("knowbee", "agent:knowbee")
     const child = owner("sub_agent", "agent:researcher")
 
     await storeOwnerScopedMemory({
-      owner: nobie,
+      owner: knowbee,
       visibility: "private",
       retentionPolicy: "long_term",
       rawText: "TASK019_PACKAGED_CONTEXT parent context for bounded sharing",
       sourceType: "test",
     })
     const direct = await searchOwnerScopedMemory({
-      requester: nobie,
-      owner: nobie,
+      requester: knowbee,
+      owner: knowbee,
       query: "TASK019_PACKAGED_CONTEXT",
       filters: { runId: "run:task019:exchange" },
     })
     expect(direct.memoryResults).toHaveLength(1)
 
     const exchange = buildMemorySummaryDataExchange({
-      sourceOwner: nobie,
+      sourceOwner: knowbee,
       recipientOwner: child,
-      sourceNicknameSnapshot: "Nobie",
+      sourceNicknameSnapshot: "Knowbee",
       recipientNicknameSnapshot: "Researcher",
       purpose: "parent-shared bounded context",
       allowedUse: "temporary_context",
@@ -163,7 +163,7 @@ describe("task019 memory isolation and writeback policy", () => {
 
     const viaExchange = await searchOwnerScopedMemory({
       requester: child,
-      owner: nobie,
+      owner: knowbee,
       query: "TASK019_PACKAGED_CONTEXT",
       exchanges: [exchange],
       filters: { runId: "run:task019:exchange" },
@@ -184,7 +184,7 @@ describe("task019 memory isolation and writeback policy", () => {
 
   it("keeps writeback in actor scope by default and separates parent allow, review, and deny policy", async () => {
     const child = owner("sub_agent", "agent:child")
-    const parent = owner("nobie", "agent:nobie")
+    const parent = owner("knowbee", "agent:knowbee")
     const policy = memoryPolicy(child)
 
     const self = prepareAgentMemoryWritebackQueueInput({
@@ -240,7 +240,7 @@ describe("task019 memory isolation and writeback policy", () => {
         content: "TASK019_PARENT_REVIEW parent-scoped candidate",
       },
     })
-    expect(reviewed.ownerId).toBe("agent:nobie")
+    expect(reviewed.ownerId).toBe("agent:knowbee")
     expect(reviewed.status).toBe("pending")
     expect(reviewed.metadata).toMatchObject({
       crossOwnerWriteback: true,
@@ -269,9 +269,9 @@ describe("task019 memory isolation and writeback policy", () => {
         "SELECT owner_id, metadata_json FROM memory_documents WHERE id = ?",
       )
       .get(result.documentId ?? "")
-    expect(stored?.owner_id).toBe("agent:nobie")
+    expect(stored?.owner_id).toBe("agent:knowbee")
     expect(JSON.parse(stored?.metadata_json ?? "{}")).toMatchObject({
-      targetOwnerScopeKey: "nobie:agent:nobie",
+      targetOwnerScopeKey: "knowbee:agent:knowbee",
       crossOwnerWriteback: true,
     })
 
@@ -347,7 +347,7 @@ describe("task019 memory isolation and writeback policy", () => {
       bundle,
       memoryRefs: [
         {
-          owner: owner("nobie", "agent:nobie"),
+          owner: owner("knowbee", "agent:knowbee"),
           visibility: "private",
           sourceRef: "memory:parent-private",
         },

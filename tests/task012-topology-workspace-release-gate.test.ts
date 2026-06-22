@@ -56,7 +56,7 @@ import { resolveTopologyWorkspaceInitialLayer } from "../packages/webui/src/page
 import { useCapabilitiesStore } from "../packages/webui/src/stores/capabilities"
 
 const now = Date.UTC(2026, 3, 30, 22, 0, 0)
-const previousEnterpriseBuilderFlag = process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
+const previousEnterpriseBuilderFlag = process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
 
 function disabledBuilderCapability(): FeatureCapability {
   return {
@@ -126,9 +126,9 @@ function traceOverlay(topologyId: string): TopologyRunTraceOverlayInput {
 afterEach(() => {
   useCapabilitiesStore.getState().setItems([])
   if (previousEnterpriseBuilderFlag === undefined) {
-    delete process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
+    delete process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
   } else {
-    process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = previousEnterpriseBuilderFlag
+    process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = previousEnterpriseBuilderFlag
   }
 })
 
@@ -298,7 +298,7 @@ describe("task012 Topology Workspace release gate", () => {
   })
 
   it("keeps feature-flag-off fallback for workspace routes and root-run routing", () => {
-    process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = "off"
+    process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = "off"
     useCapabilitiesStore.getState().setItems([disabledBuilderCapability()])
     const apiCapability = createCapabilities().find((item) => item.key === "enterprise_topology_builder_ui")
     const featureGateHtml = renderToStaticMarkup(

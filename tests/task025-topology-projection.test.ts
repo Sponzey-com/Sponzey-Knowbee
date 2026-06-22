@@ -37,22 +37,22 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 type FastifyTestApp = ReturnType<typeof Fastify>
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task025-topology-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task025-topology-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
 function owner(
-  ownerType: RuntimeIdentity["owner"]["ownerType"] = "nobie",
-  ownerId = "agent:nobie",
+  ownerType: RuntimeIdentity["owner"]["ownerType"] = "knowbee",
+  ownerId = "agent:knowbee",
 ): RuntimeIdentity["owner"] {
   return { ownerType, ownerId }
 }
@@ -197,9 +197,9 @@ async function seedTopology(app: FastifyTestApp): Promise<void> {
   await createAgent(app, "agent:alpha", "Alpha")
   await createAgent(app, "agent:beta", "Beta")
   await createAgent(app, "agent:gamma", "Gamma")
-  await createRelationship(app, "agent:nobie", "agent:alpha")
+  await createRelationship(app, "agent:knowbee", "agent:alpha")
   await createRelationship(app, "agent:alpha", "agent:beta")
-  await createRelationship(app, "agent:nobie", "agent:gamma")
+  await createRelationship(app, "agent:knowbee", "agent:gamma")
   const team = await app.inject({
     method: "POST",
     url: "/api/teams",
@@ -224,10 +224,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -250,7 +250,7 @@ describe("task025 topology projection", () => {
       const edges = asRecords(body.edges)
       expect(nodes).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ kind: "nobie" }),
+          expect.objectContaining({ kind: "knowbee" }),
           expect.objectContaining({ kind: "sub_agent", entityId: "agent:alpha" }),
           expect.objectContaining({ kind: "team", entityId: "team:topology" }),
         ]),

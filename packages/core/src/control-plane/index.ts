@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 import { randomBytes } from "node:crypto"
 import JSON5 from "json5"
-import { getConfig, PATHS, reloadConfig, type NobieConfig } from "../config/index.js"
+import { getConfig, PATHS, reloadConfig, type KnowbeeConfig } from "../config/index.js"
 import { resetAIProviderCache } from "../ai/index.js"
 import { getProviderCapabilityMatrix, type ProviderCapabilityMatrix } from "../ai/capabilities.js"
 import { DEFAULT_CONFIG } from "../config/types.js"
@@ -553,7 +553,7 @@ function createSingleConnectionRoutingProfiles(targetId: string | undefined): Ro
   }))
 }
 
-function hasConfiguredOpenAIOAuthConnection(config: NobieConfig): boolean {
+function hasConfiguredOpenAIOAuthConnection(config: KnowbeeConfig): boolean {
   const connection = config.ai.connection
   if (connection.provider !== "openai") return false
   if (connection.auth?.mode !== "chatgpt_oauth") return false
@@ -563,11 +563,11 @@ function hasConfiguredOpenAIOAuthConnection(config: NobieConfig): boolean {
   }))
 }
 
-function isActiveConnection(config: NobieConfig, providerType: AIBackendCard["providerType"]): boolean {
+function isActiveConnection(config: KnowbeeConfig, providerType: AIBackendCard["providerType"]): boolean {
   return config.ai.connection.provider === providerType
 }
 
-function hasConfiguredConnection(config: NobieConfig, providerType: AIBackendCard["providerType"]): boolean {
+function hasConfiguredConnection(config: KnowbeeConfig, providerType: AIBackendCard["providerType"]): boolean {
   if (!isActiveConnection(config, providerType)) return false
   const connection = config.ai.connection
 
@@ -604,7 +604,7 @@ function connectionForBackend(
   }
 }
 
-function withBackendCapability(config: NobieConfig, backend: AIBackendCard): AIBackendCard {
+function withBackendCapability(config: KnowbeeConfig, backend: AIBackendCard): AIBackendCard {
   return {
     ...backend,
     capabilityMatrix: getProviderCapabilityMatrix({
@@ -614,7 +614,7 @@ function withBackendCapability(config: NobieConfig, backend: AIBackendCard): AIB
   }
 }
 
-function createDefaultAiBackends(config: NobieConfig): AIBackendCard[] {
+function createDefaultAiBackends(config: KnowbeeConfig): AIBackendCard[] {
   const connection = config.ai.connection
   const openaiAuthMode = isActiveConnection(config, "openai")
     ? (connection.auth?.mode ?? "api_key")
@@ -831,7 +831,7 @@ function sanitizeCustomBackends(value: unknown): AIBackendCard[] {
     .filter((entry): entry is AIBackendCard => entry !== null)
 }
 
-function buildSubAgentSetupDraft(config: NobieConfig): SetupSubAgentDraft {
+function buildSubAgentSetupDraft(config: KnowbeeConfig): SetupSubAgentDraft {
   return {
     orchestrationEnabled: config.orchestration.mode === "orchestration",
     items: (config.orchestration.subAgents ?? []).map((agent) => ({
@@ -1197,7 +1197,7 @@ function persistSubAgentSetupDraft(raw: JsonObject, draft: SetupDraft): void {
   if (!draft.subAgents) return
   raw.orchestration = {
     ...toObject(raw.orchestration),
-    mode: draft.subAgents.orchestrationEnabled ? "orchestration" : "single_nobie",
+    mode: draft.subAgents.orchestrationEnabled ? "orchestration" : "single_knowbee",
     featureFlagEnabled: draft.subAgents.orchestrationEnabled,
     subAgents: draft.subAgents.items.map(setupSubAgentItemToConfig),
   }
@@ -1432,7 +1432,7 @@ export function createTransientAuthToken(): string {
 }
 
 function createEnterpriseTopologyBuilderCapability(): FeatureCapability {
-  const rawFlag = process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]?.trim().toLowerCase()
+  const rawFlag = process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]?.trim().toLowerCase()
   const explicitlyDisabled =
     rawFlag === "0" || rawFlag === "false" || rawFlag === "no" || rawFlag === "off"
 

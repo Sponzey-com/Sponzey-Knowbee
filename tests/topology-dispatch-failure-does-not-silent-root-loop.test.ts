@@ -14,13 +14,13 @@ function orchestrationPlan(agentIds = ["workspace:draft:node:finance"]): Orchest
       schemaVersion: CONTRACT_SCHEMA_VERSION,
       entityType: "session",
       entityId: "session:test",
-      owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+      owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
       idempotencyKey: "plan:test",
     },
     planId: "plan:test",
     parentRunId: "run:test",
     parentRequestId: "request:test",
-    directNobieTasks: [],
+    directKnowbeeTasks: [],
     delegatedTasks: agentIds.map((agentId, index) => ({
       taskId: `task:${index + 1}`,
       executionKind: "delegated_sub_agent",
@@ -57,7 +57,7 @@ function orchestrationPlan(agentIds = ["workspace:draft:node:finance"]): Orchest
     fallbackStrategy: {
       mode: "self_solve",
       reasonCode: "fallback_self_solve",
-      currentExecutorId: "agent:nobie",
+      currentExecutorId: "agent:knowbee",
     },
     createdAt: 1,
   } as OrchestrationPlan
@@ -140,7 +140,7 @@ describe("topology dispatch failure follow-up", () => {
     const decision = resolveTopologyDispatchFollowupDecision({
       dispatchResult: failedDispatch(),
       plan: orchestrationPlan(),
-      currentExecutorId: "agent:nobie",
+      currentExecutorId: "agent:knowbee",
       availableDirectChildExecutorIds: ["workspace:draft:node:finance"],
     })
 
@@ -157,7 +157,7 @@ describe("topology dispatch failure follow-up", () => {
     const decision = resolveTopologyDispatchFollowupDecision({
       dispatchResult: failedDispatch("workspace:draft:node:finance"),
       plan: orchestrationPlan(["workspace:draft:node:finance"]),
-      currentExecutorId: "agent:nobie",
+      currentExecutorId: "agent:knowbee",
       availableDirectChildExecutorIds: [
         "workspace:draft:node:finance",
         "workspace:draft:node:research",

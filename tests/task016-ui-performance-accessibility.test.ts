@@ -64,7 +64,7 @@ function draft(): SetupDraft {
 
 function checks(): SetupChecksResponse {
   return {
-    stateDir: "/tmp/nobie-task016",
+    stateDir: "/tmp/knowbee-task016",
     configFile: "/tmp/config.json",
     setupStateFile: "/tmp/setup.json",
     setupCompleted: true,
@@ -104,7 +104,7 @@ function run(id: string, status: RootRun["status"]): RootRun {
 
 function doctor(): DoctorReport {
   return {
-    kind: "nobie.doctor.report",
+    kind: "knowbee.doctor.report",
     version: 1,
     id: "doctor-task016",
     mode: "quick",

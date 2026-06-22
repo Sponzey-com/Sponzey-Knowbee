@@ -33,7 +33,7 @@ import {
 
 export type MemoryVisibility = MemoryPolicy["visibility"]
 export type MemoryAccessMode = "owner_direct" | "recipient_via_exchange"
-export type MemoryOwnerScopeKind = "nobie" | "agent" | "run" | "system" | "team_projection"
+export type MemoryOwnerScopeKind = "knowbee" | "agent" | "run" | "system" | "team_projection"
 export type ParentMemoryWritebackPolicy = "allow" | "review" | "deny"
 
 export interface RunMemoryOwnerScope {
@@ -269,12 +269,12 @@ export function resolveMemoryOwnerScopePolicy(owner: MemoryOwnerScope): MemoryOw
       reasonCode: "team_projection_read_only",
     }
   }
-  if (owner.ownerType === "nobie") {
+  if (owner.ownerType === "knowbee") {
     return {
       owner,
       ownerScopeKey: memoryOwnerScopeKey(owner),
       storageOwnerId: ownerId,
-      kind: "nobie",
+      kind: "knowbee",
       directReadAllowed: true,
       writeAllowed: true,
     }

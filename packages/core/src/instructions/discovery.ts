@@ -19,7 +19,7 @@ export interface InstructionSource {
   error?: string
   sourceKind?: "instruction_file" | "agent_prompt"
   agentId?: string
-  agentType?: "nobie" | "sub_agent"
+  agentType?: "knowbee" | "sub_agent"
   sourceId?: string
 }
 
@@ -31,7 +31,7 @@ export interface InstructionChain {
 
 export interface AgentInstructionSourceInput {
   agentId: string
-  agentType: "nobie" | "sub_agent"
+  agentType: "knowbee" | "sub_agent"
   sourceId: string
   content: string
   version?: string

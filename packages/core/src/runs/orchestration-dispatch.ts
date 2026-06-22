@@ -88,7 +88,7 @@ export interface DelegatedTaskDispatchDependencies {
   idProvider?: () => string
 }
 
-const ROOT_AGENT_ID = "agent:nobie"
+const ROOT_AGENT_ID = "agent:knowbee"
 
 function uniqueStrings(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value?.trim())))]
@@ -179,7 +179,7 @@ function commandRequestFor(input: {
     identity: identityFor({
       entityType: "sub_session",
       entityId: input.subSessionId,
-      ownerType: "nobie",
+      ownerType: "knowbee",
       ownerId: ROOT_AGENT_ID,
       parentRunId: input.parentRunId,
       parentSessionId: input.parentSessionId,

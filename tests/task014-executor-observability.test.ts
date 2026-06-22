@@ -263,7 +263,7 @@ describe("task014 Executor internal observability and rollback safety", () => {
 
     expect(runbook).toContain("Executor observability gate")
     expect(runbook).toContain("user description -> inference -> NodeContract -> WorkOrder -> FailureReport")
-    expect(runbook).toContain("nobie.executor_graph.rollback_projection")
+    expect(runbook).toContain("knowbee.executor_graph.rollback_projection")
     expect(runbook).toContain("Executor evidence audit checks")
     expect(runbook).toContain("sourceOfTruth=executor_topology_v2")
   })

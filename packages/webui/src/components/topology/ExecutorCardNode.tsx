@@ -218,7 +218,7 @@ export function ExecutorCardNode({
       ) : null}
 
       {capabilities.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1" aria-label={text("노비가 이해한 내용", "What Nobie understood")}>
+        <div className="mt-2 flex flex-wrap gap-1" aria-label={text("노우비가 이해한 내용", "What Knowbee understood")}>
           {capabilities.map((capability) => (
             <span
               key={capability}

@@ -11,15 +11,15 @@ export const AgentExecutionFallbackReason = {
     SelfSolve: "self_solve",
     DirectCurrentAgent: "direct_current_agent",
     DelegateToChild: "delegate_to_child",
-    // Direct requester or parent executor, not root Nobie unless that executor requested the work.
+    // Direct requester or parent executor, not root Knowbee unless that executor requested the work.
     ReturnToParent: "return_to_parent",
-    RootNobieDirect: "root_nobie_direct",
+    RootKnowbeeDirect: "root_knowbee_direct",
     ExplicitProvider: "explicit_provider",
     ExplicitProviderTarget: "explicit_provider_target",
     BoundaryFailure: "boundary_failure",
     // Legacy alias accepted for stored phase022 decisions. New decisions should
-    // use root_nobie_direct when the current executor is root Nobie.
-    NobieDirect: "nobie_direct",
+    // use root_knowbee_direct when the current executor is root Knowbee.
+    KnowbeeDirect: "knowbee_direct",
     AskParent: "ask_parent",
     AskUser: "ask_user",
 };
@@ -29,11 +29,11 @@ export const AGENT_EXECUTION_ROUTES = [
     "direct_current_agent",
     "delegate_to_child",
     "return_to_parent",
-    "root_nobie_direct",
+    "root_knowbee_direct",
     "explicit_provider",
     "explicit_provider_target",
     "boundary_failure",
-    "nobie_direct",
+    "knowbee_direct",
     "ask_parent",
     "ask_user",
     "sub_agent",

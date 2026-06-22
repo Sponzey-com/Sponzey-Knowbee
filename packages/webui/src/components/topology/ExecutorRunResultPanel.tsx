@@ -200,7 +200,7 @@ export function ExecutorRunResultPanel({
                   testId="executor-result-failure-reason"
                 />
                 <div className="rounded-md bg-white/80 px-2.5 py-2" data-testid="executor-result-tried-list">
-                  <div className="text-[11px] font-semibold text-red-900">{text("노비가 시도한 것", "What Nobie tried")}</div>
+                  <div className="text-[11px] font-semibold text-red-900">{text("노우비가 시도한 것", "What Knowbee tried")}</div>
                   <div className="mt-1 flex flex-wrap gap-1">
                     {failure.triedKo.map((item, index) => (
                       <span key={`${item}:${index}`} className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-900">

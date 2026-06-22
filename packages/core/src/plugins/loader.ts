@@ -8,13 +8,13 @@ import { getDb } from "../db/index.js"
 import { toolDispatcher } from "../tools/dispatcher.js"
 import { createLogger } from "../logger/index.js"
 import { getConfig } from "../config/index.js"
-import type { NobiePlugin, PluginContext, PluginMeta } from "./types.js"
+import type { KnowbeePlugin, PluginContext, PluginMeta } from "./types.js"
 import type { AnyTool } from "../tools/types.js"
 
 const log = createLogger("plugins")
 
 export class PluginLoader {
-  private loaded = new Map<string, { plugin: NobiePlugin; meta: PluginMeta }>()
+  private loaded = new Map<string, { plugin: KnowbeePlugin; meta: PluginMeta }>()
 
   /** Load all enabled plugins from the DB */
   async loadAll(): Promise<void> {
@@ -40,10 +40,10 @@ export class PluginLoader {
       throw new Error(`Plugin entry not found: ${entryPath}`)
     }
 
-    const mod = await import(entryPath) as { default?: NobiePlugin }
+    const mod = await import(entryPath) as { default?: KnowbeePlugin }
     const plugin = mod.default
     if (!plugin || typeof plugin.initialize !== "function") {
-      throw new Error(`Plugin "${meta.name}" does not export a valid NobiePlugin as default`)
+      throw new Error(`Plugin "${meta.name}" does not export a valid KnowbeePlugin as default`)
     }
 
     const ctx = this.buildContext(meta)

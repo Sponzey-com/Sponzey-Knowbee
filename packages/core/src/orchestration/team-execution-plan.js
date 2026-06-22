@@ -1,7 +1,7 @@
 import { validateTeamExecutionPlan, } from "../contracts/sub-agent-orchestration.js";
 import { insertTeamExecutionPlan } from "../db/index.js";
 import { createTeamCompositionService, } from "./team-composition.js";
-const ROOT_AGENT_ID = "agent:nobie";
+const ROOT_AGENT_ID = "agent:knowbee";
 const ALLOWED_FALLBACK_REASON_CODES = new Set([
     "member_disabled",
     "member_overloaded",
@@ -89,7 +89,7 @@ function taskScope(input) {
     };
 }
 function executionKindForAgent(agentId) {
-    return agentId === ROOT_AGENT_ID ? "direct_nobie" : "delegated_sub_agent";
+    return agentId === ROOT_AGENT_ID ? "direct_knowbee" : "delegated_sub_agent";
 }
 function requiredCapabilitiesFor(team, member, role) {
     const required = team.requiredCapabilityTags ?? [];

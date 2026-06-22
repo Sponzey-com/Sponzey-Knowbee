@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs"
 import { homedir } from "node:os"
-import { getConfig, type NobieConfig } from "../config/index.js"
+import { getConfig, type KnowbeeConfig } from "../config/index.js"
 import type { McpServerConfig, SkillConfigItem } from "../config/types.js"
 import { McpStdioClient } from "../mcp/client.js"
 import { mcpRegistry } from "../mcp/registry.js"
@@ -76,7 +76,7 @@ function evaluateSkill(item: SkillConfigItem): { status: SetupCapabilityStatus; 
   }
 }
 
-export function buildMcpSetupDraft(config: NobieConfig = getConfig()): { servers: SetupMcpServerDraft[] } {
+export function buildMcpSetupDraft(config: KnowbeeConfig = getConfig()): { servers: SetupMcpServerDraft[] } {
   const statuses = new Map(mcpRegistry.getStatuses().map((status) => [status.name, status]))
   const servers = Object.entries(config.mcp?.servers ?? {}).map(([name, serverConfig]) => {
     const status = statuses.get(name)
@@ -201,7 +201,7 @@ export async function testMcpServerConnection(server: SetupMcpServerDraft): Prom
   }
 }
 
-export function buildSkillsSetupDraft(config: NobieConfig = getConfig()): { items: SetupSkillDraftItem[] } {
+export function buildSkillsSetupDraft(config: KnowbeeConfig = getConfig()): { items: SetupSkillDraftItem[] } {
   const items = (config.skills?.items ?? []).map((item) => {
     const evaluation = evaluateSkill(item)
     return {

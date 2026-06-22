@@ -172,7 +172,7 @@ function executor(
         : inferredRuntimeMode === "human_check"
           ? "review_node"
           : "function",
-      executorKind: inferredRuntimeMode === "auto" ? "nobie" : "manual_approval",
+      executorKind: inferredRuntimeMode === "auto" ? "knowbee" : "manual_approval",
       allowedToolIds: [],
       allowedSystemIds: [],
     },

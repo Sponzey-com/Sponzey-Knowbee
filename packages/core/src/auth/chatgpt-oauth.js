@@ -35,7 +35,7 @@ function getResolvedConfig() {
         publicBaseUrl: normalizeBaseUrl(raw?.publicBaseUrl ?? ""),
         clientId: raw?.clientId?.trim() ?? "",
         clientSecret: raw?.clientSecret?.trim() ?? "",
-        scope: raw?.scope?.trim() || "nobie:api",
+        scope: raw?.scope?.trim() || "knowbee:api",
         accessTokenTtlSec: typeof raw?.accessTokenTtlSec === "number" && Number.isFinite(raw.accessTokenTtlSec) && raw.accessTokenTtlSec > 0
             ? Math.floor(raw.accessTokenTtlSec)
             : 3600,

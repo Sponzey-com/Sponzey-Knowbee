@@ -92,7 +92,7 @@ function identity(
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     entityType,
     entityId,
-    owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+    owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
     idempotencyKey,
     auditCorrelationId: `audit:${entityId}`,
     parent: {
@@ -151,9 +151,9 @@ function runInput(id: string, overrides: Partial<RunSubSessionInput> = {}): RunS
   return {
     command: command(id),
     parentAgent: {
-      agentId: "agent:nobie",
-      displayName: "Nobie",
-      nickname: "노비",
+      agentId: "agent:knowbee",
+      displayName: "Knowbee",
+      nickname: "노우비",
     },
     agent: {
       agentId: "agent:researcher",
@@ -237,14 +237,14 @@ describe("task013 sub-session dry-run lifecycle", () => {
     )
 
     expect(outcome.status).toBe("completed")
-    expect(outcome.subSession.parentAgentNickname).toBe("노비")
+    expect(outcome.subSession.parentAgentNickname).toBe("노우비")
     expect(outcome.subSession.agentNickname).toBe("Res")
     expect(outcome.resultReport?.source?.nicknameSnapshot).toBe("Res")
     expect(statusHistory.get("sub:dry-run")).toEqual(["created", "queued", "running", "completed"])
     expect(events.map((event) => event.label)).toEqual(
       expect.arrayContaining([
         "sub_session_created:sub:dry-run",
-        "sub_session_handoff:sub:dry-run:노비->Res:command:dry-run",
+        "sub_session_handoff:sub:dry-run:노우비->Res:command:dry-run",
         "sub_session_queued:sub:dry-run",
         "sub_session_started:sub:dry-run",
         "sub_session_progress:sub:dry-run:dry-run accepted",

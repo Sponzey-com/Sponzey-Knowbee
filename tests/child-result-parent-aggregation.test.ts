@@ -62,7 +62,7 @@ describe("task008 child result parent aggregation", () => {
     })
     const trace = aggregateSubSessionResultsForParent({
       parentRunId: "run-parent",
-      parentAgentId: "agent:nobie",
+      parentAgentId: "agent:knowbee",
       originalRequest: "확인된 답변을 알려줘",
       successCriteria: ["answer has source evidence"],
       childResults: [{ subSessionId: "sub:child", resultReport: report, review }],
@@ -103,7 +103,7 @@ describe("task008 child result parent aggregation", () => {
     })
     const trace = aggregateSubSessionResultsForParent({
       parentRunId: "run-parent",
-      parentAgentId: "agent:nobie",
+      parentAgentId: "agent:knowbee",
       originalRequest: "현재 코스피와 나스닥 지수를 확인해줘",
       successCriteria: ["both values are source-backed"],
       childResults: [{

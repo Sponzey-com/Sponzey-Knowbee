@@ -9,7 +9,7 @@ import { indexCommand, indexClearCommand } from "./commands/index-cmd.js"
 import { scheduleRunCommand } from "./commands/schedule.js"
 import { channelSmokeCommand } from "./commands/smoke.js"
 import { doctorCommand } from "./commands/doctor.js"
-import { getCurrentDisplayVersion } from "@nobie/core"
+import { getCurrentDisplayVersion } from "@knowbee/core"
 import {
   pluginListCommand,
   pluginInstallCommand,
@@ -22,7 +22,7 @@ import {
 const VERSION = getCurrentDisplayVersion()
 
 function startServeCommand(options: { adminUi?: boolean }): void {
-  if (options.adminUi) process.env["NOBIE_ADMIN_UI"] = "1"
+  if (options.adminUi) process.env["KNOWBEE_ADMIN_UI"] = "1"
   serveCommand().catch((err: unknown) => {
     console.error("Fatal:", err instanceof Error ? err.message : String(err))
     process.exit(1)
@@ -30,11 +30,11 @@ function startServeCommand(options: { adminUi?: boolean }): void {
 }
 
 program
-  .name("nobie")
-  .description("스폰지 노비 · Sponzey Nobie — your local AI assistant")
+  .name("knowbee")
+  .description("스폰지 노우비 · Sponzey Knowbee — your local AI assistant")
   .version(VERSION)
 
-// nobie run "do something"
+// knowbee run "do something"
 program
   .command("run <message>")
   .description("Send a message to the agent and get a response")
@@ -54,22 +54,22 @@ program
     })
   })
 
-// nobie init
+// knowbee init
 program
   .command("init")
-  .description("Create a default config file at ~/.nobie/config.json5")
+  .description("Create a default config file at ~/.knowbee/config.json5")
   .action(() => {
     initConfig()
   })
 
-// nobie status
+// knowbee status
 program
   .command("status")
   .description("Show current agent status and configuration summary")
   .action(async () => {
-    const { getConfig, PATHS } = await import("@nobie/core")
+    const { getConfig, PATHS } = await import("@knowbee/core")
     const cfg = getConfig()
-    console.log(`스폰지 노비 · Sponzey Nobie v${VERSION}`)
+    console.log(`스폰지 노우비 · Sponzey Knowbee v${VERSION}`)
     console.log(`State dir:   ${PATHS.stateDir}`)
     console.log(`Config:      ${PATHS.configFile}`)
     console.log(`DB:          ${PATHS.dbFile}`)
@@ -78,16 +78,16 @@ program
     console.log(`Approval:    ${cfg.security.approvalMode}`)
   })
 
-// nobie serve — daemon entry point (WebUI + scheduler + Telegram)
+// knowbee serve — daemon entry point (WebUI + scheduler + Telegram)
 program
   .command("serve")
-  .description("Start 스폰지 노비 · Sponzey Nobie as a background daemon (WebUI + scheduler + Telegram)")
+  .description("Start 스폰지 노우비 · Sponzey Knowbee as a background daemon (WebUI + scheduler + Telegram)")
   .option("--admin-ui", "Enable Admin UI for this serve process")
   .action(startServeCommand)
 
 program
   .command("start")
-  .description("Install-time friendly alias for `nobie serve`")
+  .description("Install-time friendly alias for `knowbee serve`")
   .option("--admin-ui", "Enable Admin UI for this start process")
   .action(startServeCommand)
 
@@ -108,7 +108,7 @@ smoke
   .command("channels")
   .description("WebUI, Telegram, Slack 채널 파이프라인 smoke 점검을 실행합니다")
   .option("--channel <channel>", "webui | telegram | slack 중 하나만 실행")
-  .option("--live", "실제 채널 live-run 실행 (NOBIE_CHANNEL_SMOKE_LIVE=1 필요)")
+  .option("--live", "실제 채널 live-run 실행 (KNOWBEE_CHANNEL_SMOKE_LIVE=1 필요)")
   .option("--json", "결과를 JSON으로 출력")
   .action((options: { channel?: string; live?: boolean; json?: boolean }) => {
     channelSmokeCommand(options).catch((err: unknown) => {
@@ -131,7 +131,7 @@ program
     })
   })
 
-// nobie service <action>
+// knowbee service <action>
 const svc = program.command("service").description("Manage the system daemon service")
 
 const serviceActions: Array<{ name: ServiceAction; desc: string }> = [
@@ -152,11 +152,11 @@ for (const { name, desc } of serviceActions) {
   })
 }
 
-// nobie memory <action>
+// knowbee memory <action>
 const mem = program.command("memory").description("Project memory and context management")
 mem
   .command("init")
-  .description("Create a NOBIE.md template in the current directory")
+  .description("Create a KNOWBEE.md template in the current directory")
   .action(() => {
     memoryInitCommand().catch((err: unknown) => {
       console.error("Error:", err instanceof Error ? err.message : String(err))
@@ -173,7 +173,7 @@ mem
     })
   })
 
-// nobie index <path>
+// knowbee index <path>
 const idx = program.command("index").description("로컬 파일 인덱싱 관리 (semantic search)")
 idx
   .command("run [path]")
@@ -196,7 +196,7 @@ idx
     })
   })
 
-// nobie plugin <action>
+// knowbee plugin <action>
 const plug = program.command("plugin").description("플러그인 관리")
 plug
   .command("list")
@@ -255,7 +255,7 @@ plug
     })
   })
 
-// nobie auth generate
+// knowbee auth generate
 const auth = program.command("auth").description("WebUI authentication management")
 auth
   .command("generate")

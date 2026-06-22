@@ -34,7 +34,7 @@ const DELIVERY_CHANNELS = new Set(["current_session", "telegram", "slack", "webu
 const SCHEDULE_KINDS = new Set(["one_time", "recurring"]);
 const MISSED_POLICIES = new Set(["skip", "catch_up_once", "next_only"]);
 const PAYLOAD_KINDS = new Set(["literal_message", "agent_task", "tool_task", "artifact_delivery"]);
-const HASH_PREFIX = "nobie-contract-v1";
+const HASH_PREFIX = "knowbee-contract-v1";
 function isRecord(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

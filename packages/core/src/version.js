@@ -43,8 +43,8 @@ export function getCurrentAppVersion() {
     }
 }
 export function getCurrentDisplayVersion() {
-    const explicit = sanitizeDisplayVersion(process.env["NOBIE_DISPLAY_VERSION"])
-        ?? sanitizeDisplayVersion(process.env["NOBIE_GIT_VERSION"]);
+    const explicit = sanitizeDisplayVersion(process.env["KNOWBEE_DISPLAY_VERSION"])
+        ?? sanitizeDisplayVersion(process.env["KNOWBEE_GIT_VERSION"]);
     if (explicit)
         return explicit;
     try {

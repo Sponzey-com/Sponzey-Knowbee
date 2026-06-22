@@ -69,7 +69,7 @@ afterEach(() => {
 })
 
 function createWorkDirWithPromptsAndLegacyMemory(): string {
-  const root = mkdtempSync(join(tmpdir(), "nobie-task005-legacy-"))
+  const root = mkdtempSync(join(tmpdir(), "knowbee-task005-legacy-"))
   tempDirs.push(root)
   const promptsDir = join(root, "prompts")
   mkdirSync(promptsDir)
@@ -83,7 +83,7 @@ function createWorkDirWithPromptsAndLegacyMemory(): string {
   ]) {
     writeFileSync(join(promptsDir, filename), `# ${filename}\n\n${filename} content`, "utf-8")
   }
-  writeFileSync(join(root, "NOBIE.md"), "# legacy project memory\n", "utf-8")
+  writeFileSync(join(root, "KNOWBEE.md"), "# legacy project memory\n", "utf-8")
   return root
 }
 

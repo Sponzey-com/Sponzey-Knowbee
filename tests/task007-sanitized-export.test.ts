@@ -6,13 +6,13 @@ import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, getDb } from "../packages/core/src/db/index.js"
 import { exportRetrievalEvidenceTimeline, recordControlEvent } from "../packages/core/src/control-plane/timeline.js"
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempConfig(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task007-export-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task007-export-"))
   tempDirs.push(stateDir)
   const configPath = join(stateDir, "config.json5")
   writeFileSync(configPath, `{
@@ -21,8 +21,8 @@ function useTempConfig(): void {
     security: { approvalMode: "off" },
     scheduler: { enabled: false, timezone: "Asia/Seoul" }
   }`, "utf-8")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = configPath
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = configPath
   reloadConfig()
 }
 
@@ -32,10 +32,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -55,7 +55,7 @@ describe("task007 retrieval evidence sanitized export", () => {
       detail: {
         method: "direct_fetch",
         sourceUrl: "https://finance.example/ixic",
-        localPath: "/Users/dongwooshin/.nobie/raw/browser.html",
+        localPath: "/Users/dongwooshin/.knowbee/raw/browser.html",
         authorization: "Bearer sk-secret-token-value",
         providerRawResponse: "<!doctype html><html><script>token</script><body>blocked</body></html>",
         verdict: { canAnswer: false, rejectionReason: "candidate_missing", evidenceSufficiency: "insufficient_candidate_missing", conflicts: ["nasdaq_100"] },

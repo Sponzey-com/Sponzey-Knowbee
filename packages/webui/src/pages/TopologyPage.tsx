@@ -126,7 +126,7 @@ function TopologyNodeView(props: NodeProps) {
   const groupedInsideTeam = Boolean(data.teamGroupId)
   const showTopHandle = !groupedInsideTeam && (data.kind === "sub_agent" || data.kind === "team")
   const showBottomHandle =
-    !groupedInsideTeam && (data.kind === "nobie" || data.kind === "sub_agent" || data.kind === "team")
+    !groupedInsideTeam && (data.kind === "knowbee" || data.kind === "sub_agent" || data.kind === "team")
   return (
     <div
       className={`relative min-w-40 max-w-64 rounded-lg border px-3 py-2 shadow-sm ${toneClassName(tone)} ${workingClassName} ${props.selected ? "ring-2 ring-stone-900" : ""}`}
@@ -908,7 +908,7 @@ function AgentInspector({
       </section>
       <AgentCompositionPanel
         composition={composition}
-        parentEmpty={agent.kind === "nobie" ? text("Root", "Root") : text("미배치", "Unassigned")}
+        parentEmpty={agent.kind === "knowbee" ? text("Root", "Root") : text("미배치", "Unassigned")}
         text={text}
       />
       <AgentTeamSetupPanel
@@ -1242,7 +1242,7 @@ function TopologyPageInner() {
   const [draftDetail, setDraftDetail] = useState("")
   const [viewport, setViewport] = useState<{ x: number; y: number; zoom: number } | undefined>()
   const workingAgentIds = useMemo(
-    () => buildTopologyWorkingAgentIds(runs, projection?.rootAgentId ?? "agent:nobie"),
+    () => buildTopologyWorkingAgentIds(runs, projection?.rootAgentId ?? "agent:knowbee"),
     [projection?.rootAgentId, runs],
   )
   const elements = useMemo(
@@ -1400,12 +1400,12 @@ function TopologyPageInner() {
       const deletableNodes = removedNodes.filter((node) =>
         canArchiveTopologySelection(selectionFromTopologyNode(node)),
       )
-      const blockedNodes = removedNodes.filter((node) => node.data.kind === "nobie")
+      const blockedNodes = removedNodes.filter((node) => node.data.kind === "knowbee")
       if (blockedNodes.length > 0) {
         setActionError(
           text(
-            "메인 노비 노드는 삭제할 수 없습니다.",
-            "The main Nobie node cannot be deleted.",
+            "메인 노우비 노드는 삭제할 수 없습니다.",
+            "The main Knowbee node cannot be deleted.",
           ),
         )
       } else if (deletableNodes.length > 0) {

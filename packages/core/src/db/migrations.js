@@ -1401,7 +1401,7 @@ export const MIGRATIONS = [
             db.exec(`
         CREATE TABLE IF NOT EXISTS agent_configs (
           agent_id TEXT PRIMARY KEY,
-          agent_type TEXT NOT NULL CHECK(agent_type IN ('nobie', 'sub_agent')),
+          agent_type TEXT NOT NULL CHECK(agent_type IN ('knowbee', 'sub_agent')),
           status TEXT NOT NULL CHECK(status IN ('enabled', 'disabled', 'archived', 'degraded')),
           display_name TEXT NOT NULL,
           nickname TEXT,
@@ -1901,7 +1901,7 @@ export const MIGRATIONS = [
                     : parseJsonStringArray(row.member_agent_ids_json);
                 const roleHints = asStringArray(config?.["roleHints"]);
                 const fallbackRoleHints = roleHints.length > 0 ? roleHints : parseJsonStringArray(row.role_hints_json);
-                const ownerAgentId = asString(config?.["ownerAgentId"]) ?? "agent:nobie";
+                const ownerAgentId = asString(config?.["ownerAgentId"]) ?? "agent:knowbee";
                 const leadAgentId = asString(config?.["leadAgentId"]) ?? fallbackMemberAgentIds[0] ?? ownerAgentId;
                 const requiredTeamRoles = Array.from(new Set([...asStringArray(config?.["requiredTeamRoles"]), ...fallbackRoleHints]));
                 const requiredCount = Array.isArray(config?.["memberships"])
@@ -2535,7 +2535,7 @@ export const MIGRATIONS = [
           graph_execution_plan_id TEXT NOT NULL,
           executor_id TEXT NOT NULL,
           node_contract_id TEXT NOT NULL,
-          selected_route TEXT NOT NULL CHECK(selected_route IN ('sub_agent', 'yeonjang', 'nobie_direct', 'manual_approval', 'external')),
+          selected_route TEXT NOT NULL CHECK(selected_route IN ('sub_agent', 'yeonjang', 'knowbee_direct', 'manual_approval', 'external')),
           selected_target_id TEXT NOT NULL,
           visibility TEXT NOT NULL CHECK(visibility IN ('visible_node', 'system_preparation')),
           resolution_json TEXT NOT NULL,

@@ -43,8 +43,8 @@ This file keeps prompt and runtime documents aligned on the same terminology. Na
 
 ## Sub-Agents And Delegation
 
-- Nobie: the top-level coordinator for user requests. Its default user-facing nickname is `노비`.
-- SubAgent: an execution actor registered as a direct child of Nobie or another SubAgent, with independent memory, capability, and model policy.
+- Knowbee: the top-level coordinator for user requests. Its default user-facing nickname is `노우비`.
+- SubAgent: an execution actor registered as a direct child of Knowbee or another SubAgent, with independent memory, capability, and model policy.
 - ParentAgent: the parent agent that delegates a task to one of its direct child agents.
 - ChildAgent: the direct child agent that receives a `CommandRequest` from a ParentAgent.
 - Team: a planning group of direct child agents owned by the same owner. A Team itself does not own memory, capabilities, tool permissions, or execution sessions.
@@ -58,7 +58,7 @@ This file keeps prompt and runtime documents aligned on the same terminology. Na
 
 Delegation always follows hierarchy.
 
-- Nobie may target only top-level SubAgents or Teams owned by Nobie.
+- Knowbee may target only top-level SubAgents or Teams owned by Knowbee.
 - A SubAgent may target only its own direct child SubAgents or Teams in its owner scope.
 - Do not delegate directly to grandchildren, agents in another tree, or Teams owned by another owner.
 - When a Team is targeted, do not execute the Team directly. Expand it into member-level `CommandRequest`s for the owner's direct child members.
@@ -91,7 +91,7 @@ Delegation always follows hierarchy.
 ## Boundary Rules
 
 - Prompt sources contain policy and definitions, not secrets or runtime tokens.
-- The `prompts/` prompt source registry is the primary source for the system prompt. Legacy `NOBIE.md`, `WIZBY.md`, and `HOWIE.md` do not replace the registry; when present, they are appended afterward as project-memory context only.
+- The `prompts/` prompt source registry is the primary source for the system prompt. Legacy `KNOWBEE.md`, `WIZBY.md`, and `HOWIE.md` do not replace the registry; when present, they are appended afterward as project-memory context only.
 - Trusted settings are limited to explicit config values, database registry records, authenticated channel metadata, and explicit user profile fields. Path names, account names, and channel display names are never trusted settings by themselves.
 - User facts are confirmed only when directly stated by the user or provided by trusted settings.
 - Local execution extension connection state and capability are judged by runtime preflight.

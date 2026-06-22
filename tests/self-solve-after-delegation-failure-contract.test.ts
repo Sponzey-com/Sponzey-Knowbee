@@ -12,13 +12,13 @@ function plan(): OrchestrationPlan {
       schemaVersion: CONTRACT_SCHEMA_VERSION,
       entityType: "session",
       entityId: "session:test",
-      owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+      owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
       idempotencyKey: "plan:test",
     },
     planId: "plan:test",
     parentRunId: "run:test",
     parentRequestId: "request:test",
-    directNobieTasks: [],
+    directKnowbeeTasks: [],
     delegatedTasks: [{
       taskId: "task:executor",
       executionKind: "delegated_sub_agent",
@@ -51,7 +51,7 @@ function plan(): OrchestrationPlan {
     fallbackStrategy: {
       mode: "self_solve",
       reasonCode: "fallback_self_solve",
-      currentExecutorId: "agent:nobie",
+      currentExecutorId: "agent:knowbee",
     },
     createdAt: 1,
   } as OrchestrationPlan
@@ -82,7 +82,7 @@ describe("self-solve after delegation failure contract", () => {
     const decision = resolveTopologyDispatchFollowupDecision({
       dispatchResult: dispatchResult(),
       plan: plan(),
-      currentExecutorId: "agent:nobie",
+      currentExecutorId: "agent:knowbee",
       availableDirectChildExecutorIds: ["workspace:draft:node:executor"],
     })
 

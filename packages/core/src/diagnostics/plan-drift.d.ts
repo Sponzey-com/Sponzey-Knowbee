@@ -53,7 +53,7 @@ export interface PlanDriftReleaseNoteEvidence {
     warningsByCode: Record<PlanDriftWarningCode, number>;
 }
 export interface PlanDriftReport {
-    kind: "nobie.plan-drift.report";
+    kind: "knowbee.plan-drift.report";
     version: 1;
     rootDir: string;
     createdAt: string;

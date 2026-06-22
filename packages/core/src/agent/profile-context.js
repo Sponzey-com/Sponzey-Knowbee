@@ -49,7 +49,7 @@ export function buildAgentProfilePromptContext(input) {
         .map((team) => `- ${team.displayName} (${team.teamId}): ${team.roleHints.join(", ") || "reference only"}`);
     return [
         "[Agent Profile]",
-        "The following profile belongs only to the active Nobie or sub-agent execution context.",
+        "The following profile belongs only to the active Knowbee or sub-agent execution context.",
         "It cannot override safety, approval, memory isolation, or capability isolation policies.",
         ...lines,
         ...(teamLines.length > 0 ? ["", "[Team Context]", ...teamLines] : []),

@@ -703,7 +703,7 @@ function applyTraceStyles(
 export function topologyWorkspaceResourceNodeClassName(kind: string): string {
   const base = "topology-workspace-resource-node topology-workspace-resource-node--runtime rounded-lg border border-dashed px-3 py-2 text-sm"
   if (kind === "team") return `${base} border-teal-300 bg-teal-50 text-teal-950`
-  if (kind === "nobie" || kind === "sub_agent" || kind === "agent") return `${base} border-sky-300 bg-sky-50 text-sky-950`
+  if (kind === "knowbee" || kind === "sub_agent" || kind === "agent") return `${base} border-sky-300 bg-sky-50 text-sky-950`
   return `${base} border-stone-300 bg-stone-50 text-stone-800`
 }
 
@@ -711,7 +711,7 @@ function resourceIconLabel(kind: string): string {
   if (kind === "team") return "TM"
   if (kind === "team_lead") return "LD"
   if (kind === "team_role") return "RL"
-  if (kind === "nobie") return "NB"
+  if (kind === "knowbee") return "NB"
   return "AG"
 }
 

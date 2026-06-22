@@ -60,7 +60,7 @@ export async function reviewTaskCompletion(params) {
 }
 export function buildCompletionReviewSystemPrompt() {
     return [
-        "You are Nobie's completion reviewer for Sponzey Nobie.",
+        "You are Knowbee's completion reviewer for Sponzey Knowbee.",
         "",
         "Your job is to check whether the latest assistant result fully satisfies the original request.",
         "Always output valid JSON only.",

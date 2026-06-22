@@ -8,7 +8,7 @@
 
 - `store.ts`: 메모리 저장/검색 API와 프롬프트 문맥 조립
 - `journal.ts`: `memory.db3` 실행 저널, FTS 검색, 성공/실패 요약 기록
-- `nobie-md.ts`: 워크스페이스 메모리 파일과 `prompts/` 기반 시스템 프롬프트 source 로딩
+- `knowbee-md.ts`: 워크스페이스 메모리 파일과 `prompts/` 기반 시스템 프롬프트 source 로딩
 - `compressor.ts`: 문맥 압축 로직
 - `embedding.ts`, `search.ts`, `file-indexer.ts`: 시맨틱 검색과 파일 기반 검색 지원
 
@@ -25,13 +25,13 @@
 - vector 검색은 optional입니다. embedding provider가 없거나 실패하면 `fts`/`like` 검색으로 degrade되어 사용자 요청 자체를 중단하지 않습니다.
 - hybrid 검색의 vector 경로는 timeout이 발생하면 빈 결과로 degrade하고, FTS 결과만으로 계속 진행합니다. vector timeout은 run failure로 취급하지 않습니다.
 - run id가 있는 검색에서는 source별 최대 검색 latency를 `memory_fts_ms`, `memory_vector_ms`, `memory_hybrid_ms`, `memory_like_ms` 형태의 run event로 남깁니다. event 기록 실패는 검색 결과를 막지 않습니다.
-- `nobie-md.ts`의 runtime prompt assembly는 prompt source checksum, locale, source state, policy version을 cache key로 사용합니다. prompt source가 바뀌지 않으면 같은 assembly를 재사용합니다.
-- prompt source file loader와 registry metadata 관리는 `nobie-md.ts`가 담당하고, runtime 사용처별 source 선택은 `orchestration/prompt-policy-adapter.ts`가 담당합니다. prompt bundle이나 execution harness가 source id 목록과 usage scope 규칙을 중복 소유하지 않도록 유지합니다.
+- `knowbee-md.ts`의 runtime prompt assembly는 prompt source checksum, locale, source state, policy version을 cache key로 사용합니다. prompt source가 바뀌지 않으면 같은 assembly를 재사용합니다.
+- prompt source file loader와 registry metadata 관리는 `knowbee-md.ts`가 담당하고, runtime 사용처별 source 선택은 `orchestration/prompt-policy-adapter.ts`가 담당합니다. prompt bundle이나 execution harness가 source id 목록과 usage scope 규칙을 중복 소유하지 않도록 유지합니다.
 - prompt 변경은 파일 존재 확인만으로 완료하지 않습니다. source registry, dry-run assembly, agent prompt bundle, execution harness policy block 중 실제 사용처의 assembled prompt regression을 함께 갱신합니다.
-- `nobie-md.ts`의 first-run fallback prompt seed는 `prompts/` source가 없을 때도 서브 에이전트 hierarchy, `CommandRequest`/`DataExchangePackage`/`ResultReport`/`FeedbackRequest`, nickname attribution, team expansion 기본 규칙을 포함해야 합니다.
+- `knowbee-md.ts`의 first-run fallback prompt seed는 `prompts/` source가 없을 때도 서브 에이전트 hierarchy, `CommandRequest`/`DataExchangePackage`/`ResultReport`/`FeedbackRequest`, nickname attribution, team expansion 기본 규칙을 포함해야 합니다.
 - 실행 종료 경로는 `memory_writeback_queue`, `session_snapshots`, `task_continuity`에 instruction/success/failure 후보를 조용히 기록합니다. writeback 실패는 사용자 채널에 노출하지 않고 실행 완료 판정도 직접 막지 않습니다.
 - session snapshot은 후속 run이 열린 task id와 마지막 성공 요약을 회수할 수 있게 유지합니다. task continuity는 같은 request group의 handoff summary와 실패 복구 근거를 남기는 경계입니다.
-- `agent_memory_state`는 Nobie/서브 에이전트별 active memory 경계와 최신 capsule pointer를 추적하는 read model입니다. `session_snapshots`는 root session 호환 요약, `task_continuity`는 lineage handoff/복구 경계이므로 서로 역할이 다릅니다.
+- `agent_memory_state`는 Knowbee/서브 에이전트별 active memory 경계와 최신 capsule pointer를 추적하는 read model입니다. `session_snapshots`는 root session 호환 요약, `task_continuity`는 lineage handoff/복구 경계이므로 서로 역할이 다릅니다.
 - memory compaction은 원본 `messages`/`run_events`/`result reports`를 지우는 기능이 아닙니다. append-only 이력은 유지하고, prompt에 들어가는 active read model만 `memory_capsules`와 compat projection으로 재구성합니다.
 - `MemoryCapsule`은 runtime capsule과 user-facing summary를 구분합니다. capsule 생성은 long-term durable fact 승격과 같은 작업이 아니며, 장기 기억 승격은 계속 writeback review 경로를 따릅니다.
 - 저널 기록은 단순 이력 표시가 아니라 재시도와 후속 판단에 활용되는 것이 목적입니다.

@@ -47,8 +47,8 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 const expectedOutput: ExpectedOutputContract = {
   outputId: "answer",
@@ -101,18 +101,18 @@ const memoryPolicy: MemoryPolicy = {
 function useTempState(): void {
   closeDb()
   resetLatencyMetrics()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task014-subsession-control-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task014-subsession-control-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
 function restoreState(): void {
   closeDb()
   resetLatencyMetrics()
-  process.env.NOBIE_STATE_DIR = previousStateDir
-  process.env.NOBIE_CONFIG = previousConfig
+  process.env.KNOWBEE_STATE_DIR = previousStateDir
+  process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -125,7 +125,7 @@ function identity(entityType: RuntimeIdentity["entityType"], entityId: string): 
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     entityType,
     entityId,
-    owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+    owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
     idempotencyKey: `idem:${entityId}`,
     auditCorrelationId: `audit:${entityId}`,
     parent: {
@@ -193,9 +193,9 @@ function runInput(id: string, parentRunId = "run:task014"): RunSubSessionInput {
   return {
     command: command(id, parentRunId),
     parentAgent: {
-      agentId: "agent:nobie",
-      displayName: "Nobie",
-      nickname: "노비",
+      agentId: "agent:knowbee",
+      displayName: "Knowbee",
+      nickname: "노우비",
     },
     agent: {
       agentId: "agent:researcher",
@@ -290,7 +290,7 @@ describe("task014 sub-session control API", () => {
       expect(info.json().info).toEqual(
         expect.objectContaining({
           subSessionId: "sub:logs",
-          parentAgentNickname: "노비",
+          parentAgentNickname: "노우비",
           agentNickname: "Res",
           promptBundle: expect.objectContaining({ promptChecksum: "sha256:task014" }),
         }),

@@ -78,7 +78,7 @@ export const UI_MESSAGE_CATALOG: Record<UiMessageKey, Record<UiMessageLocale, st
   "tasks.approval.summary": { ko: "{count}개 승인 대기 작업이 있습니다.", en: "{count} item(s) are waiting for approval." },
   "tasks.approval.warning": { ko: "승인 또는 사용자 입력이 필요한 작업이 있습니다.", en: "Some work needs approval or user input." },
   "tasks.open.action": { ko: "작업 확인", en: "Review work" },
-  "beginner.ready.summary": { ko: "Nobie를 사용할 준비가 되어 있습니다.", en: "Nobie is ready to use." },
+  "beginner.ready.summary": { ko: "Knowbee를 사용할 준비가 되어 있습니다.", en: "Knowbee is ready to use." },
   "beginner.attention.summary": { ko: "{count}개 항목 확인이 필요합니다.", en: "{count} item(s) need attention." },
   "beginner.ready.status": { ko: "정상", en: "Normal" },
   "beginner.attention.status": { ko: "확인 필요", en: "Needs attention" },

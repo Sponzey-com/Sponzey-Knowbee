@@ -121,7 +121,7 @@ export const DEFAULT_CONFIG = {
     },
     orchestration: {
         maxDelegationTurns: 0,
-        mode: "single_nobie",
+        mode: "single_knowbee",
         featureFlagEnabled: false,
         subAgents: [],
         teams: [],

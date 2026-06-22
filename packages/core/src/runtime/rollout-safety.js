@@ -12,7 +12,7 @@ const DEFAULT_FEATURE_FLAGS = [
     defaultFlag("provider_resolver", "enforced", "Single provider resolver is the active runtime path."),
     defaultFlag("memory_retrieval", "shadow", "Memory retrieval candidates are compared before stricter ranking."),
     defaultFlag("delivery_outcome", "shadow", "Delivery outcome comparison stays diagnostic-only during rollout."),
-    defaultFlag("sub_agent_orchestration", "off", "Sub-agent orchestration is opt-in and must preserve single Nobie fallback by default."),
+    defaultFlag("sub_agent_orchestration", "off", "Sub-agent orchestration is opt-in and must preserve single Knowbee fallback by default."),
     defaultFlag("channel_registry_runtime", "off", "Channel registry runtime is opt-in while Telegram/Slack keep legacy direct runtime fallback."),
     defaultFlag("enterprise_topology_registry", "off", "Enterprise Topology registry is disabled until validator-only and dry-run rollout gates pass."),
     defaultFlag("enterprise_topology_validator", "shadow", "Enterprise Topology validation can run as diagnostic evidence without routing traffic."),
@@ -23,7 +23,7 @@ const DEFAULT_FEATURE_FLAGS = [
     defaultFlag("topology_exhaustion_failure", "off", "Topology exhaustion failure handling stays disabled until rollback and finalizer smoke pass."),
     defaultFlag("declared_observed_topology_analysis", "off", "Trace and Improve layer declared/observed analysis starts as an opt-in diagnostic path."),
     defaultFlag("enterprise_topology_builder_ui", "off", "Unified /advanced/topology Workspace is opt-in and must not expose routing controls by default."),
-    defaultFlag("topology_runtime_enabled", "off", "Topology Run layer root-run routing is opt-in and must preserve single Nobie fallback by default."),
+    defaultFlag("topology_runtime_enabled", "off", "Topology Run layer root-run routing is opt-in and must preserve single Knowbee fallback by default."),
 ];
 function defaultFlag(featureKey, mode, reason) {
     return {

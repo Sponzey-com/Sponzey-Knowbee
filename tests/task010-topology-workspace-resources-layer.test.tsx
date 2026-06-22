@@ -28,7 +28,7 @@ const now = Date.UTC(2026, 3, 30, 20, 0, 0)
 const runtimeResources: AgentTopologyProjection = {
   schemaVersion: 1,
   generatedAt: now,
-  rootAgentId: "agent:nobie",
+  rootAgentId: "agent:knowbee",
   nodes: [
     {
       id: "agent:intake",

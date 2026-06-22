@@ -4,7 +4,7 @@ import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, getDb } from "../packages/core/src/db/index.ts"
-import { ensurePromptSourceFiles } from "../packages/core/src/memory/nobie-md.ts"
+import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
 import { buildReleaseManifest, buildReleasePipelinePlan } from "../packages/core/src/release/package.ts"
 import {
   DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS,
@@ -20,8 +20,8 @@ import {
 } from "../packages/core/src/benchmarks/sub-agent-benchmarks.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 function makeTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -36,7 +36,7 @@ function writeFile(rootDir: string, relativePath: string, content: string): void
 }
 
 function createReleaseFixture(): string {
-  const rootDir = makeTempDir("nobie-task030-release-root-")
+  const rootDir = makeTempDir("knowbee-task030-release-root-")
   writeFile(rootDir, "package.json", JSON.stringify({ version: "9.9.9" }))
   writeFile(rootDir, "packages/cli/dist/index.js", "#!/usr/bin/env node\nconsole.log('cli')\n")
   writeFile(rootDir, "packages/core/dist/index.js", "export const core = true\n")
@@ -55,19 +55,19 @@ function cloneSuite(suite: SubAgentBenchmarkSuiteResult): SubAgentBenchmarkSuite
 
 beforeEach(() => {
   closeDb()
-  const stateDir = makeTempDir("nobie-task030-state-")
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  const stateDir = makeTempDir("knowbee-task030-state-")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
   getDb()
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -166,7 +166,7 @@ describe("task030 release gate, rollback, and soak", () => {
     expect(rollback.status).toBe("passed")
     expect(rollback.featureFlagModeAfterRollback).toBe("off")
     expect(rollback.dataDeletionRequired).toBe(false)
-    expect(rollback.singleNobieModeRestored).toBe(true)
+    expect(rollback.singleKnowbeeModeRestored).toBe(true)
     expect(rollback.existingRunCreateSmokePassed).toBe(true)
     expect(rollback.finalAnswerSmokePassed).toBe(true)
   })
@@ -184,7 +184,7 @@ describe("task030 release gate, rollback, and soak", () => {
     const pipeline = buildReleasePipelinePlan({ targetPlatforms: [] })
     const runbook = readFileSync(join(process.cwd(), "docs", "release-runbook.md"), "utf-8")
 
-    expect(manifest.subAgentReleaseGate.kind).toBe("nobie.sub_agent.release_readiness")
+    expect(manifest.subAgentReleaseGate.kind).toBe("knowbee.sub_agent.release_readiness")
     expect(manifest.subAgentReleaseGate.gateStatus).toBe("passed")
     expect(manifest.releaseNotes.knownLimitations.join("\n")).toContain(
       "Sub-agent release readiness gate: passed",

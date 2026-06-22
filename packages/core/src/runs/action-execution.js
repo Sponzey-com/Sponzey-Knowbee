@@ -340,7 +340,7 @@ export function executeScheduleActions(actions, intake, params, dependencies) {
     };
 }
 function executeScheduleAction(action, intake, params, receipt, dependencies) {
-    // nobie-critical-decision-audit: action-execution.structured_schedule_action
+    // knowbee-critical-decision-audit: action-execution.structured_schedule_action
     // This dispatch uses structured intake action types, not raw user-language string comparison.
     if (!action || action.type === "create_schedule") {
         return executeCreateScheduleAction(action, intake, params, receipt, dependencies);

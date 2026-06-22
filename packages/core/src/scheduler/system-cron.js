@@ -7,8 +7,8 @@ import { createLogger } from "../logger/index.js";
 import { getSchedule, updateSchedule } from "../db/index.js";
 import { isValidCron } from "./cron.js";
 const log = createLogger("scheduler:system");
-const CRON_MARKER_PREFIX = "# nobie-schedule:";
-const WINDOWS_TASK_PREFIX = "NobieSchedule-";
+const CRON_MARKER_PREFIX = "# knowbee-schedule:";
+const WINDOWS_TASK_PREFIX = "KnowbeeSchedule-";
 function shellQuote(value) {
     return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -84,7 +84,7 @@ function buildManagedEntry(schedule) {
     const logsFile = join(PATHS.logsDir, "schedule-system-cron.log");
     mkdirSync(dirname(logsFile), { recursive: true });
     const command = [
-        `NOBIE_STATE_DIR=${shellQuote(PATHS.stateDir)}`,
+        `KNOWBEE_STATE_DIR=${shellQuote(PATHS.stateDir)}`,
         shellQuote(nodePath),
         shellQuote(cliPath),
         "schedule",

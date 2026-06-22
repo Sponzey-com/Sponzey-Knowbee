@@ -36,18 +36,18 @@ import {
 } from "../packages/core/src/runs/store.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 let now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
   clearAgentCapabilityIndexCache()
   now = Date.UTC(2026, 3, 24, 0, 0, 0)
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task009-registry-index-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task009-registry-index-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -160,7 +160,7 @@ function membership(
     membershipId: `${teamId}:membership:${sortOrder}`,
     teamId,
     agentId,
-    ownerAgentIdSnapshot: "agent:nobie",
+    ownerAgentIdSnapshot: "agent:knowbee",
     teamRoles: roles,
     primaryRole: roles[0] ?? "member",
     required: true,
@@ -180,7 +180,7 @@ function teamConfig(overrides: Partial<TeamConfig> = {}): TeamConfig {
     nickname: "Registry Team",
     status: "enabled",
     purpose: "Registry coverage smoke.",
-    ownerAgentId: "agent:nobie",
+    ownerAgentId: "agent:knowbee",
     leadAgentId: memberAgentIds[0],
     memberCountMin: 1,
     memberCountMax: 6,
@@ -226,10 +226,10 @@ beforeEach(() => {
 afterEach(() => {
   closeDb()
   clearAgentCapabilityIndexCache()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -249,7 +249,7 @@ describe("task009 registry snapshot and capability index", () => {
       { now },
     )
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha"), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:alpha"), { now })
 
     const first = buildSnapshot()
     const second = buildSnapshot()
@@ -259,7 +259,7 @@ describe("task009 registry snapshot and capability index", () => {
     expect(first.agents[0]?.status).toBe("enabled")
     expect(first.agents[0]?.capabilitySummary.enabledSkillIds).toEqual(["skill:research"])
     expect(first.agents[0]?.modelSummary.availability).toBe("available")
-    expect(first.hierarchy?.directChildrenByParent["agent:nobie"]).toEqual(["agent:alpha"])
+    expect(first.hierarchy?.directChildrenByParent["agent:knowbee"]).toEqual(["agent:alpha"])
     expect(first.capabilityIndex?.topLevelCandidateAgentIds).toEqual(["agent:alpha"])
     expect(first.metrics?.coldSnapshotTargetP95Ms).toBe(500)
     expect(first.capabilityIndex?.metrics.targetP95Ms).toBe(100)
@@ -279,10 +279,10 @@ describe("task009 registry snapshot and capability index", () => {
     const snapshot = buildSnapshot()
 
     expect(snapshot.agents.map((agent) => agent.agentId)).toEqual(["agent:alpha", "agent:beta"])
-    expect(snapshot.capabilityIndex?.candidateAgentIdsByParent["agent:nobie"] ?? []).toEqual([
+    expect(snapshot.capabilityIndex?.candidateAgentIdsByParent["agent:knowbee"] ?? []).toEqual([
       "agent:alpha",
     ])
-    expect(snapshot.capabilityIndex?.excludedCandidatesByParent["agent:nobie"] ?? []).toEqual([
+    expect(snapshot.capabilityIndex?.excludedCandidatesByParent["agent:knowbee"] ?? []).toEqual([
       { agentId: "agent:beta", reasonCodes: ["agent_disabled"] },
     ])
     expect(snapshot.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
@@ -290,16 +290,16 @@ describe("task009 registry snapshot and capability index", () => {
     )
   })
 
-  it("uses Nobie top-level children and sub-agent direct children as separate candidate scopes", () => {
+  it("uses Knowbee top-level children and sub-agent direct children as separate candidate scopes", () => {
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
     upsertAgentConfig(subAgent("agent:beta"), { source: "manual", now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha"), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:alpha"), { now })
     upsertAgentRelationship(relationship("agent:alpha", "agent:beta"), { now })
 
     const snapshot = buildSnapshot()
 
     expect(snapshot.hierarchy?.topLevelSubAgentIds).toEqual(["agent:alpha"])
-    expect(snapshot.capabilityIndex?.candidateAgentIdsByParent["agent:nobie"]).toEqual([
+    expect(snapshot.capabilityIndex?.candidateAgentIdsByParent["agent:knowbee"]).toEqual([
       "agent:alpha",
     ])
     expect(snapshot.capabilityIndex?.candidateAgentIdsByParent["agent:alpha"]).toEqual([
@@ -318,7 +318,7 @@ describe("task009 registry snapshot and capability index", () => {
       }),
       { source: "manual", now },
     )
-    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha"), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:alpha"), { now })
 
     const snapshot = buildOrchestrationRegistrySnapshot({
       getConfig: () => ({
@@ -341,7 +341,7 @@ describe("task009 registry snapshot and capability index", () => {
     expect(alpha?.modelSummary.availability).toBe("available")
     expect(snapshot.capabilityIndex?.topLevelCandidateAgentIds).toContain("agent:alpha")
     expect(
-      snapshot.capabilityIndex?.excludedCandidatesByParent["agent:nobie"]?.flatMap(
+      snapshot.capabilityIndex?.excludedCandidatesByParent["agent:knowbee"]?.flatMap(
         (item) => item.reasonCodes,
       ) ?? [],
     ).not.toContain("model_unavailable")
@@ -358,7 +358,7 @@ describe("task009 registry snapshot and capability index", () => {
       { now },
     )
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha"), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:alpha"), { now })
     getDb()
       .prepare(
         `INSERT INTO sessions (id, source, source_id, created_at, updated_at, summary)
@@ -378,7 +378,7 @@ describe("task009 registry snapshot and capability index", () => {
         schemaVersion: CONTRACT_SCHEMA_VERSION,
         entityType: "session",
         entityId: "plan:dispatch",
-        owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+        owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
         idempotencyKey: "plan:dispatch",
         parent: {
           parentRunId: "run:parent",
@@ -389,7 +389,7 @@ describe("task009 registry snapshot and capability index", () => {
       planId: "plan:dispatch",
       parentRunId: "run:parent",
       parentRequestId: "request:parent",
-      directNobieTasks: [],
+      directKnowbeeTasks: [],
       delegatedTasks: [
         {
           taskId: "task:implement",
@@ -424,7 +424,7 @@ describe("task009 registry snapshot and capability index", () => {
       parallelGroups: [],
       approvalRequirements: [],
       fallbackStrategy: {
-        mode: "single_nobie",
+        mode: "single_knowbee",
         reasonCode: "delegation_planned",
       },
       createdAt: now,
@@ -508,8 +508,8 @@ describe("task009 registry snapshot and capability index", () => {
     )
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
     upsertAgentConfig(subAgent("agent:beta"), { source: "manual", now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha", 0), { now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:beta", 1), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:alpha", 0), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:beta", 1), { now })
     upsertTeamConfig(
       teamConfig({
         teamId: "team:delivery",
@@ -543,14 +543,14 @@ describe("task009 registry snapshot and capability index", () => {
         schemaVersion: CONTRACT_SCHEMA_VERSION,
         entityType: "session",
         entityId: "plan:team",
-        owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+        owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
         idempotencyKey: "plan:team",
         parent: { parentRunId: "run:team-parent", parentRequestId: "request:team-parent" },
       },
       planId: "plan:team",
       parentRunId: "run:team-parent",
       parentRequestId: "request:team-parent",
-      directNobieTasks: [],
+      directKnowbeeTasks: [],
       delegatedTasks: [
         {
           taskId: "plan:team:task:0",
@@ -585,7 +585,7 @@ describe("task009 registry snapshot and capability index", () => {
       parallelGroups: [],
       approvalRequirements: [],
       fallbackStrategy: {
-        mode: "single_nobie",
+        mode: "single_knowbee",
         reasonCode: "delegation_planned",
       },
       createdAt: now,
@@ -675,14 +675,14 @@ describe("task009 registry snapshot and capability index", () => {
         schemaVersion: CONTRACT_SCHEMA_VERSION,
         entityType: "session",
         entityId: "plan:inferred-team",
-        owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+        owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
         idempotencyKey: "plan:inferred-team",
         parent: { parentRunId: "run:inferred-team", parentRequestId: "request:inferred-team" },
       },
       planId: "plan:inferred-team",
       parentRunId: "run:inferred-team",
       parentRequestId: "request:inferred-team",
-      directNobieTasks: [],
+      directKnowbeeTasks: [],
       delegatedTasks: [
         {
           taskId: "plan:inferred-team:task:0",
@@ -721,7 +721,7 @@ describe("task009 registry snapshot and capability index", () => {
       parallelGroups: [],
       approvalRequirements: [],
       fallbackStrategy: {
-        mode: "single_nobie",
+        mode: "single_knowbee",
         reasonCode: "delegation_planned",
       },
       createdAt: now,
@@ -785,8 +785,8 @@ describe("task009 registry snapshot and capability index", () => {
       { source: "manual", now },
     )
     upsertAgentConfig(subAgent("agent:researcher"), { source: "manual", now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:lead", 0), { now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:researcher", 1), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:lead", 0), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:researcher", 1), { now })
     upsertTeamConfig(
       teamConfig({
         teamId: "team:coverage",
@@ -818,7 +818,7 @@ describe("task009 registry snapshot and capability index", () => {
     )
   })
 
-  it("returns a degraded single Nobie fallback snapshot when registry loading fails", () => {
+  it("returns a degraded single Knowbee fallback snapshot when registry loading fails", () => {
     const snapshot = buildOrchestrationRegistrySnapshot({
       getConfig: () => {
         throw new Error("config unavailable")
@@ -829,7 +829,7 @@ describe("task009 registry snapshot and capability index", () => {
     expect(snapshot.status).toBe("degraded")
     expect(snapshot.fallback).toEqual(
       expect.objectContaining({
-        mode: "single_nobie",
+        mode: "single_knowbee",
         reasonCode: "registry_load_failed",
       }),
     )
@@ -851,7 +851,7 @@ describe("task009 registry snapshot and capability index", () => {
       { now },
     )
     upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
-    upsertAgentRelationship(relationship("agent:nobie", "agent:alpha"), { now })
+    upsertAgentRelationship(relationship("agent:knowbee", "agent:alpha"), { now })
     const before = buildSnapshot()
 
     now += 1_000
@@ -868,11 +868,11 @@ describe("task009 registry snapshot and capability index", () => {
     const after = buildSnapshot()
 
     expect(after.invalidation?.cacheKey).not.toBe(before.invalidation?.cacheKey)
-    expect(before.capabilityIndex?.candidateAgentIdsByParent["agent:nobie"]).toEqual([
+    expect(before.capabilityIndex?.candidateAgentIdsByParent["agent:knowbee"]).toEqual([
       "agent:alpha",
     ])
-    expect(after.capabilityIndex?.candidateAgentIdsByParent["agent:nobie"]).toEqual([])
-    expect(after.capabilityIndex?.excludedCandidatesByParent["agent:nobie"]).toEqual([
+    expect(after.capabilityIndex?.candidateAgentIdsByParent["agent:knowbee"]).toEqual([])
+    expect(after.capabilityIndex?.excludedCandidatesByParent["agent:knowbee"]).toEqual([
       { agentId: "agent:alpha", reasonCodes: ["capability_unavailable"] },
     ])
   })

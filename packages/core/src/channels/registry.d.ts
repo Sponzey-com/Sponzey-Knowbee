@@ -1,8 +1,8 @@
-import type { NobieConfig } from "../config/types.js";
+import type { KnowbeeConfig } from "../config/types.js";
 import { type ChannelConnectionRecord } from "./connections.js";
 import { type ChannelProviderFactory, type ChannelRuntimeStartResult, type ChannelRuntimeSummary } from "./runtime.js";
 export interface ChannelRegistryOptions {
-    config: NobieConfig;
+    config: KnowbeeConfig;
     connections?: ChannelConnectionRecord[];
     factories?: ChannelProviderFactory[];
     now?: () => number;
@@ -29,5 +29,5 @@ export declare class ChannelRegistry {
     private health;
 }
 export declare function createBuiltInChannelProviderFactories(): ChannelProviderFactory[];
-export declare function buildChannelRegistryRuntimeDiagnostics(config: NobieConfig): ChannelRuntimeSummary[];
+export declare function buildChannelRegistryRuntimeDiagnostics(config: KnowbeeConfig): ChannelRuntimeSummary[];
 //# sourceMappingURL=registry.d.ts.map

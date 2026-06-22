@@ -2,11 +2,11 @@ import type { NodeTaskAnalysis } from "./executor-task-analysis.js";
 import type { AgentExecutionDecision } from "../orchestration/execution-decision-contract.js";
 import type { ExecutionGraphSnapshot } from "../orchestration/execution-graph-snapshot.js";
 import type { OrchestrationRegistrySnapshot } from "../orchestration/registry.js";
-export type DelegationRoute = "sub_agent" | "yeonjang" | "nobie_direct" | "manual_approval" | "external";
+export type DelegationRoute = "sub_agent" | "yeonjang" | "knowbee_direct" | "manual_approval" | "external";
 export interface DelegationCandidate {
     targetId: string;
     targetLabel: string;
-    targetType: "agent" | "team" | "yeonjang" | "nobie";
+    targetType: "agent" | "team" | "yeonjang" | "knowbee";
     matchedCapabilities: string[];
     missingCapabilities: string[];
     confidence: number;

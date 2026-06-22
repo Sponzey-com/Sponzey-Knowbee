@@ -15,7 +15,7 @@ afterEach(() => {
 })
 
 function createCodexAuthFile(): string {
-  const dir = mkdtempSync(join(tmpdir(), "nobie-route-codex-"))
+  const dir = mkdtempSync(join(tmpdir(), "knowbee-route-codex-"))
   tempDirs.push(dir)
   const file = join(dir, "auth.json")
   writeFileSync(file, JSON.stringify({ tokens: { access_token: "test-access-token" } }), "utf-8")

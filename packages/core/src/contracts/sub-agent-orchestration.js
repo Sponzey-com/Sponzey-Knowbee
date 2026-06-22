@@ -60,7 +60,7 @@ function hasArray(record, key, path, issues) {
     return false;
 }
 const RELATIONSHIP_ENTITY_TYPES = new Set([
-    "nobie",
+    "knowbee",
     "sub_agent",
     "team",
     "session",
@@ -68,7 +68,7 @@ const RELATIONSHIP_ENTITY_TYPES = new Set([
     "capability",
     "data_exchange",
 ]);
-const OWNER_SCOPE_TYPES = new Set(["nobie", "sub_agent", "team", "system"]);
+const OWNER_SCOPE_TYPES = new Set(["knowbee", "sub_agent", "team", "system"]);
 const CAPABILITY_RISK_LEVELS = new Set([
     "safe",
     "moderate",
@@ -112,7 +112,7 @@ const FEEDBACK_TARGET_AGENT_POLICIES = new Set([
     "parent_decides",
     "fallback_agent",
     "lead_assigns",
-    "nobie_direct",
+    "knowbee_direct",
 ]);
 const DATA_EXCHANGE_ALLOWED_USE = new Set([
     "temporary_context",
@@ -226,7 +226,7 @@ function validateOwnerScope(value, path, issues) {
     }
     if (typeof value.ownerType !== "string" ||
         !OWNER_SCOPE_TYPES.has(value.ownerType)) {
-        addIssue(issues, `${path}.ownerType`, "ownerType must be nobie, sub_agent, team, or system.");
+        addIssue(issues, `${path}.ownerType`, "ownerType must be knowbee, sub_agent, team, or system.");
     }
     hasNonEmptyString(value, "ownerId", path, issues);
     return true;
@@ -488,7 +488,7 @@ function validateRuntimeIdentity(value, path, issues) {
         addIssue(issues, `${path}.schemaVersion`, "Unsupported contract schema version.");
     if (typeof value.entityType !== "string" ||
         !RELATIONSHIP_ENTITY_TYPES.has(value.entityType)) {
-        addIssue(issues, `${path}.entityType`, "entityType must be nobie, sub_agent, team, session, sub_session, capability, or data_exchange.");
+        addIssue(issues, `${path}.entityType`, "entityType must be knowbee, sub_agent, team, session, sub_session, capability, or data_exchange.");
     }
     hasNonEmptyString(value, "entityId", path, issues);
     hasNonEmptyString(value, "idempotencyKey", path, issues);
@@ -501,10 +501,10 @@ function validateNicknameSnapshot(value, path, issues) {
         return false;
     }
     rejectUserFacingDisplayNameAliases(value, path, issues);
-    if (value.entityType !== "nobie" &&
+    if (value.entityType !== "knowbee" &&
         value.entityType !== "sub_agent" &&
         value.entityType !== "team") {
-        addIssue(issues, `${path}.entityType`, "entityType must be nobie, sub_agent, or team.");
+        addIssue(issues, `${path}.entityType`, "entityType must be knowbee, sub_agent, or team.");
     }
     hasNonEmptyString(value, "entityId", path, issues);
     hasNonEmptyNickname(value, "nicknameSnapshot", path, issues);
@@ -530,8 +530,8 @@ function validateOrchestrationTask(value, path, issues, expectedExecutionKind) {
     }
     hasNonEmptyString(value, "taskId", path, issues);
     if (typeof value.executionKind !== "string" ||
-        (value.executionKind !== "direct_nobie" && value.executionKind !== "delegated_sub_agent")) {
-        addIssue(issues, `${path}.executionKind`, "executionKind must be direct_nobie or delegated_sub_agent.");
+        (value.executionKind !== "direct_knowbee" && value.executionKind !== "delegated_sub_agent")) {
+        addIssue(issues, `${path}.executionKind`, "executionKind must be direct_knowbee or delegated_sub_agent.");
     }
     else if (expectedExecutionKind && value.executionKind !== expectedExecutionKind) {
         addIssue(issues, `${path}.executionKind`, `executionKind must be ${expectedExecutionKind} in this task group.`);
@@ -713,8 +713,8 @@ export function validateAgentConfig(value) {
     }
     if (value.schemaVersion !== CONTRACT_SCHEMA_VERSION)
         addIssue(issues, "$.schemaVersion", "Unsupported contract schema version.");
-    if (value.agentType !== "nobie" && value.agentType !== "sub_agent") {
-        addIssue(issues, "$.agentType", "agentType must be nobie or sub_agent.");
+    if (value.agentType !== "knowbee" && value.agentType !== "sub_agent") {
+        addIssue(issues, "$.agentType", "agentType must be knowbee or sub_agent.");
     }
     hasNonEmptyString(value, "agentId", "$", issues);
     hasNonEmptyString(value, "displayName", "$", issues);
@@ -738,17 +738,17 @@ export function validateAgentConfig(value) {
     hasFiniteNumber(value, "profileVersion", "$", issues, { min: 1 });
     hasFiniteNumber(value, "createdAt", "$", issues, { min: 0 });
     hasFiniteNumber(value, "updatedAt", "$", issues, { min: 0 });
-    if (value.agentType === "nobie") {
+    if (value.agentType === "knowbee") {
         if (!isRecord(value.coordinator)) {
-            addIssue(issues, "$.coordinator", "nobie agent requires coordinator settings.");
+            addIssue(issues, "$.coordinator", "knowbee agent requires coordinator settings.");
         }
         else {
-            if (value.coordinator.defaultMode !== "single_nobie" &&
+            if (value.coordinator.defaultMode !== "single_knowbee" &&
                 value.coordinator.defaultMode !== "orchestration") {
-                addIssue(issues, "$.coordinator.defaultMode", "defaultMode must be single_nobie or orchestration.");
+                addIssue(issues, "$.coordinator.defaultMode", "defaultMode must be single_knowbee or orchestration.");
             }
-            if (value.coordinator.fallbackMode !== "single_nobie") {
-                addIssue(issues, "$.coordinator.fallbackMode", "fallbackMode must be single_nobie.");
+            if (value.coordinator.fallbackMode !== "single_knowbee") {
+                addIssue(issues, "$.coordinator.fallbackMode", "fallbackMode must be single_knowbee.");
             }
             hasFiniteNumber(value.coordinator, "maxDelegatedSubSessions", "$.coordinator", issues, {
                 min: 1,
@@ -1029,11 +1029,11 @@ export function validateOrchestrationPlan(value) {
     hasNonEmptyString(value, "planId", "$", issues);
     hasNonEmptyString(value, "parentRunId", "$", issues);
     hasNonEmptyString(value, "parentRequestId", "$", issues);
-    if (Array.isArray(value.directNobieTasks)) {
-        value.directNobieTasks.forEach((task, index) => validateOrchestrationTask(task, `$.directNobieTasks[${index}]`, issues, "direct_nobie"));
+    if (Array.isArray(value.directKnowbeeTasks)) {
+        value.directKnowbeeTasks.forEach((task, index) => validateOrchestrationTask(task, `$.directKnowbeeTasks[${index}]`, issues, "direct_knowbee"));
     }
     else {
-        addIssue(issues, "$.directNobieTasks", "directNobieTasks must be an array.");
+        addIssue(issues, "$.directKnowbeeTasks", "directKnowbeeTasks must be an array.");
     }
     if (Array.isArray(value.delegatedTasks)) {
         value.delegatedTasks.forEach((task, index) => validateOrchestrationTask(task, `$.delegatedTasks[${index}]`, issues, "delegated_sub_agent"));
@@ -1078,10 +1078,10 @@ export function validateOrchestrationPlan(value) {
             fallbackMode !== "ask_parent" &&
             fallbackMode !== "ask_user" &&
             fallbackMode !== "fail_with_reason" &&
-            fallbackMode !== "root_nobie_direct" &&
+            fallbackMode !== "root_knowbee_direct" &&
             fallbackMode !== "explicit_provider" &&
-            fallbackMode !== "single_nobie") {
-            addIssue(issues, "$.fallbackStrategy.mode", "fallbackStrategy.mode must be self_solve, direct_current_agent, return_to_parent, ask_parent, ask_user, fail_with_reason, root_nobie_direct, explicit_provider, or legacy single_nobie.");
+            fallbackMode !== "single_knowbee") {
+            addIssue(issues, "$.fallbackStrategy.mode", "fallbackStrategy.mode must be self_solve, direct_current_agent, return_to_parent, ask_parent, ask_user, fail_with_reason, root_knowbee_direct, explicit_provider, or legacy single_knowbee.");
         }
         hasNonEmptyString(value.fallbackStrategy, "reasonCode", "$.fallbackStrategy", issues);
         for (const key of [
@@ -1104,9 +1104,9 @@ export function validateOrchestrationPlan(value) {
                 value.fallbackStrategy.providerTargetId.trim().length === 0)) {
             addIssue(issues, "$.fallbackStrategy.providerTargetId", "providerTargetId is required when fallbackStrategy.mode is explicit_provider.");
         }
-        if (fallbackMode === "root_nobie_direct" &&
-            value.fallbackStrategy.currentExecutorId !== "agent:nobie") {
-            addIssue(issues, "$.fallbackStrategy.currentExecutorId", "currentExecutorId must be agent:nobie when fallbackStrategy.mode is root_nobie_direct.");
+        if (fallbackMode === "root_knowbee_direct" &&
+            value.fallbackStrategy.currentExecutorId !== "agent:knowbee") {
+            addIssue(issues, "$.fallbackStrategy.currentExecutorId", "currentExecutorId must be agent:knowbee when fallbackStrategy.mode is root_knowbee_direct.");
         }
         if ((fallbackMode === "return_to_parent" || fallbackMode === "ask_parent") &&
             (typeof value.fallbackStrategy.parentExecutorId !== "string" ||
@@ -1375,7 +1375,7 @@ export function validateFeedbackRequest(value) {
     }
     if (typeof value.targetAgentPolicy !== "string" ||
         !FEEDBACK_TARGET_AGENT_POLICIES.has(value.targetAgentPolicy)) {
-        addIssue(issues, "$.targetAgentPolicy", "targetAgentPolicy must be same_agent, alternative_direct_child, parent_decides, fallback_agent, lead_assigns, or nobie_direct.");
+        addIssue(issues, "$.targetAgentPolicy", "targetAgentPolicy must be same_agent, alternative_direct_child, parent_decides, fallback_agent, lead_assigns, or knowbee_direct.");
     }
     if ("targetAgentId" in value &&
         value.targetAgentId !== undefined &&
@@ -1481,8 +1481,8 @@ export function validateAgentPromptBundle(value) {
         addIssue(issues, "$.sourceProvenance", "sourceProvenance must include at least one prompt/profile source.");
     }
     if (typeof value.agentType !== "string" ||
-        (value.agentType !== "nobie" && value.agentType !== "sub_agent")) {
-        addIssue(issues, "$.agentType", "agentType must be nobie or sub_agent.");
+        (value.agentType !== "knowbee" && value.agentType !== "sub_agent")) {
+        addIssue(issues, "$.agentType", "agentType must be knowbee or sub_agent.");
     }
     return issues.length === 0
         ? { ok: true, value: value, issues: [] }

@@ -1,4 +1,4 @@
-export type RunOrchestrationMode = "single_nobie" | "orchestration"
+export type RunOrchestrationMode = "single_knowbee" | "orchestration"
 
 export type RuntimeInspectorControlAction =
   | "send"

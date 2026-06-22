@@ -455,7 +455,7 @@ function parentAgentIdSnapshot(input: RunSubSessionInput): string | undefined {
   if (input.parentAgent?.agentId) return input.parentAgent.agentId
   const owner = input.command.identity.owner
   if (
-    (owner.ownerType === "nobie" || owner.ownerType === "sub_agent") &&
+    (owner.ownerType === "knowbee" || owner.ownerType === "sub_agent") &&
     owner.ownerId !== input.command.targetAgentId
   ) {
     return owner.ownerId
@@ -579,8 +579,8 @@ function buildPreparedSubSessionMemoryBootstrap(
 }
 
 function ownerScopeForSubSessionAgent(agentId: string): OwnerScope {
-  return agentId === "agent:nobie"
-    ? { ownerType: "nobie", ownerId: agentId }
+  return agentId === "agent:knowbee"
+    ? { ownerType: "knowbee", ownerId: agentId }
     : { ownerType: "sub_agent", ownerId: agentId }
 }
 
@@ -590,7 +590,7 @@ function createAndPersistSubSessionHandoffExchange(input: {
   now: number
 }) {
   const sourceOwner = ownerScopeForSubSessionAgent(
-    input.input.parentAgent?.agentId ?? "agent:nobie",
+    input.input.parentAgent?.agentId ?? "agent:knowbee",
   )
   const recipientOwner = ownerScopeForSubSessionAgent(input.input.agent.agentId)
   const exchange = createDataExchangePackage({

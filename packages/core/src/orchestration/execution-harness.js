@@ -146,7 +146,7 @@ export async function runAgentExecutionHarness(input) {
             context: input.context,
             decision: acceptedDecision,
             validation: delegation,
-            decisionSource: "nobie_harness",
+            decisionSource: "knowbee_harness",
         }),
         validation,
         trace: [
@@ -395,8 +395,8 @@ function normalizeDecisionAction(value) {
         return "delegate";
     if (value === "self_solve" ||
         value === "direct_current_agent" ||
-        value === "root_nobie_direct" ||
-        value === "nobie_direct" ||
+        value === "root_knowbee_direct" ||
+        value === "knowbee_direct" ||
         value === "explicit_provider" ||
         value === "yeonjang") {
         return "self_solve";
@@ -727,7 +727,7 @@ export function buildAgentExecutionDecisionTraceSnapshot(input) {
     });
     return {
         contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
-        decision_source: input.decisionSource ?? "nobie_harness",
+        decision_source: input.decisionSource ?? "knowbee_harness",
         ...(graph?.graph_id ? { graph_id: graph.graph_id } : {}),
         ...(graph?.graph_source ? { graph_source: graph.graph_source } : {}),
         ...(graph?.root_executor_id ? { root_executor_id: graph.root_executor_id } : {}),
@@ -928,8 +928,8 @@ function buildFallbackResult(input) {
     });
     const selfSolveAttempt = fallbackRoute === AgentExecutionFallbackReason.SelfSolve ||
         fallbackRoute === AgentExecutionFallbackReason.DirectCurrentAgent ||
-        fallbackRoute === AgentExecutionFallbackReason.RootNobieDirect ||
-        fallbackRoute === AgentExecutionFallbackReason.NobieDirect
+        fallbackRoute === AgentExecutionFallbackReason.RootKnowbeeDirect ||
+        fallbackRoute === AgentExecutionFallbackReason.KnowbeeDirect
         ? buildSelfSolveAttempt({
             context: input.context,
             decision,
@@ -944,7 +944,7 @@ function buildFallbackResult(input) {
             context: input.context,
             decision: input.proposedDecision ?? decision,
             validation: input.validation?.delegation,
-            decisionSource: "nobie_harness",
+            decisionSource: "knowbee_harness",
             fallbackReason: fallbackRoute,
             resolvedDecision: decision,
         }),
@@ -1037,7 +1037,7 @@ function selectFallbackRoute(input) {
         return AgentExecutionFallbackReason.ReturnToParent;
     }
     if (isRootCurrentExecutor(input.context)) {
-        return AgentExecutionFallbackReason.RootNobieDirect;
+        return AgentExecutionFallbackReason.RootKnowbeeDirect;
     }
     return input.context.requester?.requester_type === "executor"
         ? AgentExecutionFallbackReason.AskParent
@@ -1049,15 +1049,15 @@ function isExecutionDecisionRecoveryReason(reasonCode) {
 function isCurrentExecutorDirectFallback(route) {
     return route === AgentExecutionFallbackReason.SelfSolve ||
         route === AgentExecutionFallbackReason.DirectCurrentAgent ||
-        route === AgentExecutionFallbackReason.RootNobieDirect ||
-        route === AgentExecutionFallbackReason.NobieDirect;
+        route === AgentExecutionFallbackReason.RootKnowbeeDirect ||
+        route === AgentExecutionFallbackReason.KnowbeeDirect;
 }
 function selectedExecutorForFallback(context, route) {
     switch (route) {
         case "self_solve":
         case "direct_current_agent":
-        case "root_nobie_direct":
-        case "nobie_direct":
+        case "root_knowbee_direct":
+        case "knowbee_direct":
             return context.current_executor.executor_id;
         case "delegate_to_child":
             return firstDelegableExecutor(context)?.executor_id;
@@ -1111,10 +1111,10 @@ function fallbackRouteIssues(context, decision) {
         decision.fallback_if_unavailable,
     ];
     for (const route of routes) {
-        if ((route === "root_nobie_direct" || route === "nobie_direct") && !isRootCurrentExecutor(context)) {
+        if ((route === "root_knowbee_direct" || route === "knowbee_direct") && !isRootCurrentExecutor(context)) {
             issues.push({
                 code: "fallback_not_allowed",
-                message: "Root Nobie direct fallback is only valid when the current executor is root Nobie.",
+                message: "Root Knowbee direct fallback is only valid when the current executor is root Knowbee.",
                 executor_id: context.current_executor.executor_id,
             });
         }
@@ -1224,7 +1224,7 @@ function fallbackReasonForValidationStatus(context, status) {
     if (context.parent_executor)
         return AgentExecutionFallbackReason.ReturnToParent;
     if (isRootCurrentExecutor(context))
-        return AgentExecutionFallbackReason.RootNobieDirect;
+        return AgentExecutionFallbackReason.RootKnowbeeDirect;
     return context.requester?.requester_type === "executor"
         ? AgentExecutionFallbackReason.AskParent
         : AgentExecutionFallbackReason.AskUser;

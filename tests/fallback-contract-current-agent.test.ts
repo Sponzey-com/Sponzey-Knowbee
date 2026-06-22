@@ -45,8 +45,8 @@ function contextFor(overrides: Partial<AgentExecutionContext> = {}): AgentExecut
       available: true,
     },
     parent_executor: {
-      executor_id: "agent:nobie",
-      display_name: "노비",
+      executor_id: "agent:knowbee",
+      display_name: "노우비",
       role_name: "Root",
       can_delegate: true,
       available: true,
@@ -72,7 +72,7 @@ function decision(overrides: Partial<AgentExecutionDecision> = {}): AgentExecuti
   return {
     contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
     current_executor_id: "node:worker",
-    parent_executor_id: "agent:nobie",
+    parent_executor_id: "agent:knowbee",
     domain: "general",
     behavior_pattern: "recover",
     execution_route: "self_solve",
@@ -100,7 +100,7 @@ function modeSnapshot(mode: OrchestrationModeSnapshot["mode"]): OrchestrationMod
     totalSubAgentCount: 0,
     disabledSubAgentCount: 0,
     activeSubAgents: [],
-    reasonCode: mode === "orchestration" ? "no_active_sub_agents" : "mode_single_nobie",
+    reasonCode: mode === "orchestration" ? "no_active_sub_agents" : "mode_single_knowbee",
     reason: "test mode",
     generatedAt: now,
   }
@@ -114,7 +114,7 @@ describe("current-agent fallback contract", () => {
       ReturnToParent: "return_to_parent",
       AskParent: "ask_parent",
       AskUser: "ask_user",
-      RootNobieDirect: "root_nobie_direct",
+      RootKnowbeeDirect: "root_knowbee_direct",
       ExplicitProvider: "explicit_provider",
     }))
 
@@ -124,7 +124,7 @@ describe("current-agent fallback contract", () => {
       "return_to_parent",
       "ask_parent",
       "ask_user",
-      "root_nobie_direct",
+      "root_knowbee_direct",
       "explicit_provider",
     ] as const) {
       const target = decision({
@@ -135,11 +135,11 @@ describe("current-agent fallback contract", () => {
       const shape = validateAgentExecutionDecisionAgainstContext({
         context: contextFor({
           ...(fallback === "explicit_provider" ? { explicit_provider_target_id: "provider:openai" } : {}),
-          ...(fallback === "root_nobie_direct"
+          ...(fallback === "root_knowbee_direct"
             ? {
                 current_executor: {
-                  executor_id: "agent:nobie",
-                  display_name: "노비",
+                  executor_id: "agent:knowbee",
+                  display_name: "노우비",
                   can_delegate: true,
                   available: true,
                 },
@@ -147,20 +147,20 @@ describe("current-agent fallback contract", () => {
               }
             : {}),
         }),
-        decision: fallback === "root_nobie_direct"
-          ? { ...target, current_executor_id: "agent:nobie", parent_executor_id: undefined }
+        decision: fallback === "root_knowbee_direct"
+          ? { ...target, current_executor_id: "agent:knowbee", parent_executor_id: undefined }
           : target,
       })
       expect(shape.ok, fallback).toBe(true)
     }
   })
 
-  it("rejects root_nobie_direct when the current executor is not root Nobie", () => {
+  it("rejects root_knowbee_direct when the current executor is not root Knowbee", () => {
     const validation = validateAgentExecutionDecisionAgainstContext({
       context: contextFor(),
       decision: decision({
-        execution_route: "root_nobie_direct",
-        fallback_if_unavailable: AgentExecutionFallbackReason.RootNobieDirect,
+        execution_route: "root_knowbee_direct",
+        fallback_if_unavailable: AgentExecutionFallbackReason.RootKnowbeeDirect,
       }),
     })
 
@@ -188,15 +188,15 @@ describe("current-agent fallback contract", () => {
     const result = await runAgentExecutionHarness({
       context: contextFor({
         current_executor: {
-          executor_id: "agent:nobie",
-          display_name: "노비",
+          executor_id: "agent:knowbee",
+          display_name: "노우비",
           can_delegate: true,
           available: true,
         },
         parent_executor: undefined,
       }),
       callModel: async () => JSON.stringify(decision({
-        current_executor_id: "agent:nobie",
+        current_executor_id: "agent:knowbee",
         parent_executor_id: undefined,
         execution_route: "ask_parent",
         fallback_if_unavailable: AgentExecutionFallbackReason.AskParent,
@@ -208,12 +208,12 @@ describe("current-agent fallback contract", () => {
     expect(result.decision.execution_route).toBe("ask_user")
   })
 
-  it("keeps legacy single_nobie readable while new planner output avoids it", () => {
+  it("keeps legacy single_knowbee readable while new planner output avoids it", () => {
     const result = buildOrchestrationPlan({
       parentRunId: "run:1",
       parentRequestId: "request:1",
       userRequest: "직접 처리",
-      modeSnapshot: modeSnapshot("single_nobie"),
+      modeSnapshot: modeSnapshot("single_knowbee"),
       now: () => now,
       idProvider: () => "plan:current-agent-fallback",
     })
@@ -224,9 +224,9 @@ describe("current-agent fallback contract", () => {
     const legacyPlan: OrchestrationPlan = {
       ...result.plan,
       fallbackStrategy: {
-        mode: "single_nobie",
-        reasonCode: "legacy_single_nobie_fixture",
-        legacyWarning: "legacy_single_nobie_fallback_mode_deprecated",
+        mode: "single_knowbee",
+        reasonCode: "legacy_single_knowbee_fixture",
+        legacyWarning: "legacy_single_knowbee_fallback_mode_deprecated",
       },
     }
     expect(validateOrchestrationPlan(legacyPlan).ok).toBe(true)

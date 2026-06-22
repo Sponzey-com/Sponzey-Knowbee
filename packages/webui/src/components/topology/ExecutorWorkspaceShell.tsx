@@ -129,8 +129,8 @@ export function ExecutorWorkspaceShell({
             </h1>
             <p className="mt-1 text-xs leading-5 text-stone-500">
               {text(
-                "서브에이전트를 추가하고 서로 선으로 연결하세요. 채널이나 사용자 요청이 오면 노비가 이 구성으로 일을 위임합니다.",
-                "Add sub-agents and connect them with lines. Nobie delegates work through this setup when a channel or user request arrives.",
+                "서브에이전트를 추가하고 서로 선으로 연결하세요. 채널이나 사용자 요청이 오면 노우비가 이 구성으로 일을 위임합니다.",
+                "Add sub-agents and connect them with lines. Knowbee delegates work through this setup when a channel or user request arrives.",
               )}
             </p>
           </div>

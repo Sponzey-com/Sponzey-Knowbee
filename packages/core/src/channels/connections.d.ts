@@ -1,4 +1,4 @@
-import type { NobieConfig } from "../config/types.js";
+import type { KnowbeeConfig } from "../config/types.js";
 import { type DbChannelConnectionHealthStatus, type DbChannelConnectionMode, type DbChannelIdentityKind } from "../db/index.js";
 import { type ChannelCapabilities, type ChannelProvider, type JsonValue } from "./contracts.js";
 import { type ChannelPrincipalScope } from "./identity.js";
@@ -61,7 +61,7 @@ export interface ChannelRuntimeSnapshot {
     lastErrorAt: number | null;
 }
 export interface BuildChannelConnectionSnapshotInput {
-    config: NobieConfig;
+    config: KnowbeeConfig;
     runtime?: Partial<Record<"telegram" | "slack" | "discord" | "googleChat", ChannelRuntimeSnapshot>>;
     persist?: boolean;
     now?: number;
@@ -75,7 +75,7 @@ export declare function parseNamespacedChannelIdentity(namespaceId: string): {
     kind: ChannelIdentityKind;
     providerIdentityId: string;
 } | null;
-export declare function buildCompatChannelConnectionsFromConfig(config: NobieConfig, options?: Omit<BuildChannelConnectionSnapshotInput, "config" | "persist">): ChannelConnectionRecord[];
+export declare function buildCompatChannelConnectionsFromConfig(config: KnowbeeConfig, options?: Omit<BuildChannelConnectionSnapshotInput, "config" | "persist">): ChannelConnectionRecord[];
 export declare function persistChannelConnections(connections: ChannelConnectionRecord[]): void;
 export declare function buildSettingsChannelConnectionSnapshot(input: BuildChannelConnectionSnapshotInput): ChannelConnectionRecord[];
 export declare function applyChannelConnectionSettingsCompatPatch(raw: Record<string, unknown>, channelsPatch: unknown): ChannelConnectionSettingsPatchResult;

@@ -62,8 +62,8 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 
 const now = Date.UTC(2026, 3, 29, 9, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 function topologyFixture(): EnterpriseTopology {
   const topology = structuredClone(buildExampleEnterpriseTopology(now))
@@ -94,7 +94,7 @@ function workOrderFixture(overrides: Partial<WorkOrder> = {}): WorkOrder {
     workOrderId: "work-order:intake",
     topologyRunId: "topology-run:task014",
     parentWorkOrderId: null,
-    fromNodeId: "node:nobie",
+    fromNodeId: "node:knowbee",
     to: { type: "node", id: "node:intake" },
     objective: "Triage the customer request and assign priority.",
     scope: {
@@ -128,7 +128,7 @@ function workOrderFixture(overrides: Partial<WorkOrder> = {}): WorkOrder {
       approvalRequired: false,
     },
     failureReportRequired: true,
-    delegationPath: ["node:nobie", "node:intake"],
+    delegationPath: ["node:knowbee", "node:intake"],
     createdAt: now,
   })
 
@@ -211,10 +211,10 @@ function failedSelfExecution() {
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task014-topology-trace-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task014-topology-trace-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -231,7 +231,7 @@ function rootRunFixture(id: string): RootRun {
     status: "completed",
     taskProfile: "coding",
     contextMode: "full",
-    orchestrationMode: "single_nobie",
+    orchestrationMode: "single_knowbee",
     delegationTurnCount: 0,
     maxDelegationTurns: 0,
     currentStepKey: "done",
@@ -251,10 +251,10 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.NOBIE_STATE_DIR
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.NOBIE_CONFIG
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
 })
 
@@ -324,12 +324,12 @@ describe("task014 topology trace store and observability API", () => {
           expect.objectContaining({
             workOrderId: "work-order:intake:child:node:triage",
             parentWorkOrderId: "work-order:intake",
-            delegationPath: ["node:nobie", "node:intake", "node:triage"],
+            delegationPath: ["node:knowbee", "node:intake", "node:triage"],
           }),
         ]),
       )
       expect(projection?.traceEvents.map((event) => event.delegationPath)).toContainEqual([
-        "node:nobie",
+        "node:knowbee",
         "node:intake",
         "node:triage",
       ])
@@ -338,7 +338,7 @@ describe("task014 topology trace store and observability API", () => {
         topologyRunId: "topology-run:task014",
       })).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ fromNodeId: "node:nobie", toNodeId: "node:intake" }),
+          expect.objectContaining({ fromNodeId: "node:knowbee", toNodeId: "node:intake" }),
           expect.objectContaining({ fromNodeId: "node:intake", toNodeId: "node:triage" }),
         ]),
       )

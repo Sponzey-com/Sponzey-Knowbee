@@ -15,17 +15,17 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
-const previousLiveSmoke = process.env["NOBIE_CHANNEL_SMOKE_LIVE"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
+const previousLiveSmoke = process.env["KNOWBEE_CHANNEL_SMOKE_LIVE"]
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-channel-smoke-route-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-channel-smoke-route-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
-  delete process.env["NOBIE_CHANNEL_SMOKE_LIVE"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
+  delete process.env["KNOWBEE_CHANNEL_SMOKE_LIVE"]
   reloadConfig()
 }
 
@@ -35,12 +35,12 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
-  if (previousLiveSmoke === undefined) delete process.env["NOBIE_CHANNEL_SMOKE_LIVE"]
-  else process.env["NOBIE_CHANNEL_SMOKE_LIVE"] = previousLiveSmoke
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
+  if (previousLiveSmoke === undefined) delete process.env["KNOWBEE_CHANNEL_SMOKE_LIVE"]
+  else process.env["KNOWBEE_CHANNEL_SMOKE_LIVE"] = previousLiveSmoke
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -98,7 +98,7 @@ describe("channel smoke route", () => {
         payload: { mode: "live-run", channel: "webui" },
       })
       expect(response.statusCode).toBe(400)
-      expect(response.json()).toEqual(expect.objectContaining({ error: "live channel smoke requires NOBIE_CHANNEL_SMOKE_LIVE=1" }))
+      expect(response.json()).toEqual(expect.objectContaining({ error: "live channel smoke requires KNOWBEE_CHANNEL_SMOKE_LIVE=1" }))
     } finally {
       await app.close()
     }

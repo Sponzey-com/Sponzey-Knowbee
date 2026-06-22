@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig, type NobieConfig } from "../packages/core/src/config/index.js"
+import { reloadConfig, type KnowbeeConfig } from "../packages/core/src/config/index.js"
 import { closeDb, getDb } from "../packages/core/src/db/index.js"
 import { runDoctor } from "../packages/core/src/diagnostics/doctor.js"
 import {
@@ -18,8 +18,8 @@ import {
 } from "../packages/core/src/security/extension-governance.js"
 import { ToolDispatcher } from "../packages/core/src/tools/dispatcher.js"
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function baseConfig(overrides = ""): string {
@@ -38,12 +38,12 @@ function baseConfig(overrides = ""): string {
 function useTempConfig(configText = baseConfig()): string {
   closeDb()
   resetExtensionFailureState()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task011-ext-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task011-ext-"))
   tempDirs.push(stateDir)
   const configPath = join(stateDir, "config.json5")
   writeFileSync(configPath, configText, "utf-8")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = configPath
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = configPath
   reloadConfig()
   return stateDir
 }
@@ -51,10 +51,10 @@ function useTempConfig(configText = baseConfig()): string {
 afterEach(() => {
   resetExtensionFailureState()
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -68,9 +68,9 @@ beforeEach(() => {
 
 describe("task011 extension governance", () => {
   it("builds a registry contract with MCP, skill, and tool entries", () => {
-    const skillPath = join(process.env["NOBIE_STATE_DIR"] ?? tmpdir(), "local-skill.md")
+    const skillPath = join(process.env["KNOWBEE_STATE_DIR"] ?? tmpdir(), "local-skill.md")
     writeFileSync(skillPath, "# local skill", "utf-8")
-    const config: NobieConfig = {
+    const config: KnowbeeConfig = {
       ...JSON.parse(JSON.stringify({
         profile: { profileName: "", displayName: "", language: "ko", timezone: "Asia/Seoul", workspace: "/tmp" },
         ai: { connection: { provider: "ollama", endpoint: "http://127.0.0.1:11434", model: "llama3.2" } },
@@ -98,7 +98,7 @@ describe("task011 extension governance", () => {
       now: new Date("2026-04-17T00:00:00.000Z"),
     })
 
-    expect(snapshot.kind).toBe("nobie.extension.registry")
+    expect(snapshot.kind).toBe("knowbee.extension.registry")
     expect(snapshot.checksum).toHaveLength(64)
     expect(snapshot.entries.map((entry) => entry.id)).toEqual(expect.arrayContaining(["mcp:disabled", "skill:local-skill", "tool:internal_test"]))
     expect(snapshot.entries.find((entry) => entry.id === "mcp:disabled")?.status).toBe("disabled")
@@ -181,7 +181,7 @@ describe("task011 extension governance", () => {
   })
 
   it("creates rollback points and restores extension source checksum", () => {
-    const sourcePath = join(process.env["NOBIE_STATE_DIR"] ?? tmpdir(), "plugin-entry.js")
+    const sourcePath = join(process.env["KNOWBEE_STATE_DIR"] ?? tmpdir(), "plugin-entry.js")
     writeFileSync(sourcePath, "export default { name: 'demo', version: '1.0.0' }\n", "utf-8")
     const rollback = createExtensionRollbackPoint({ extensionId: "plugin:demo", sourcePath })
     writeFileSync(sourcePath, "export default { name: 'demo', version: '2.0.0' }\n", "utf-8")

@@ -33,7 +33,7 @@ export function RemoteAccessForm({
             className="input font-mono"
             value={value.authToken}
             onChange={(event) => onChange({ authToken: event.target.value })}
-            placeholder="nobie-local-token"
+            placeholder="knowbee-local-token"
           />
           {errors?.authToken ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.authToken}</p> : null}
         </div>

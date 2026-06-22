@@ -5,10 +5,10 @@ import { afterEach, describe, expect, it } from "vitest"
 import { discoverInstructionChain } from "../packages/core/src/instructions/discovery.ts"
 
 const tempDirs: string[] = []
-let previousStateDir = process.env["NOBIE_STATE_DIR"]
+let previousStateDir = process.env["KNOWBEE_STATE_DIR"]
 
 afterEach(() => {
-  process.env["NOBIE_STATE_DIR"] = previousStateDir
+  process.env["KNOWBEE_STATE_DIR"] = previousStateDir
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -17,7 +17,7 @@ afterEach(() => {
 
 describe("discoverInstructionChain", () => {
   it("discovers global and project instructions in hierarchical order", () => {
-    const root = mkdtempSync(join(tmpdir(), "nobie-instructions-"))
+    const root = mkdtempSync(join(tmpdir(), "knowbee-instructions-"))
     tempDirs.push(root)
 
     const stateDir = join(root, "state")
@@ -32,7 +32,7 @@ describe("discoverInstructionChain", () => {
     writeFileSync(join(repoDir, "AGENTS.md"), "repo instructions", "utf-8")
     writeFileSync(join(serviceDir, "AGENTS.override.md"), "service override", "utf-8")
 
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     const chain = discoverInstructionChain(serviceDir)
 
     expect(chain.sources.map((source) => source.path)).toEqual([
@@ -44,7 +44,7 @@ describe("discoverInstructionChain", () => {
   })
 
   it("falls back to parent directory chain when git root is missing", () => {
-    const root = mkdtempSync(join(tmpdir(), "nobie-instructions-nogit-"))
+    const root = mkdtempSync(join(tmpdir(), "knowbee-instructions-nogit-"))
     tempDirs.push(root)
 
     const stateDir = join(root, "state")
@@ -58,7 +58,7 @@ describe("discoverInstructionChain", () => {
     writeFileSync(join(parentDir, "AGENTS.md"), "parent instructions", "utf-8")
     writeFileSync(join(childDir, "AGENTS.override.md"), "child override", "utf-8")
 
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     const chain = discoverInstructionChain(childDir)
 
     expect(chain.sources.map((source) => source.path)).toEqual([

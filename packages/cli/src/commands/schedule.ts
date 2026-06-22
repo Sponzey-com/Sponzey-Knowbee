@@ -1,5 +1,5 @@
 export async function scheduleRunCommand(scheduleId: string): Promise<void> {
-  const { bootstrapRuntime, startChannels, runScheduleAndWait, closeServer } = await import("@nobie/core")
+  const { bootstrapRuntime, startChannels, runScheduleAndWait, closeServer } = await import("@knowbee/core")
 
   try {
     await bootstrapRuntime()

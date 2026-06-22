@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import JSON5 from "json5"
-import { DEFAULT_CONFIG, type AIConnectionProvider, type NobieConfig } from "./types.js"
+import { DEFAULT_CONFIG, type AIConnectionProvider, type KnowbeeConfig } from "./types.js"
 import { PATHS } from "./paths.js"
 
 function toObject(value: unknown): Record<string, unknown> {
@@ -210,7 +210,7 @@ function inferConnectionFromLegacyConfig(rawAi: Record<string, unknown>): Record
   return undefined
 }
 
-function normalizeLegacyAiConfig(parsed: Partial<NobieConfig>): Partial<NobieConfig> {
+function normalizeLegacyAiConfig(parsed: Partial<KnowbeeConfig>): Partial<KnowbeeConfig> {
   const root = toObject(parsed)
   const rawAi = toObject(root.ai)
   const rawConnection = toObject(rawAi.connection)
@@ -236,7 +236,7 @@ function normalizeLegacyAiConfig(parsed: Partial<NobieConfig>): Partial<NobieCon
   }
 
   root.ai = rawAi
-  return root as Partial<NobieConfig>
+  return root as Partial<KnowbeeConfig>
 }
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {
@@ -263,13 +263,13 @@ function parseIntegerEnv(value: string | undefined): number | undefined {
   return Number.isInteger(parsed) ? parsed : undefined
 }
 
-function readEnvOverrides(): Partial<NobieConfig> {
-  const mqttEnabled = parseBooleanEnv(process.env["NOBIE_MQTT_ENABLED"])
-  const mqttHost = process.env["NOBIE_MQTT_HOST"]?.trim()
-  const mqttPort = parseIntegerEnv(process.env["NOBIE_MQTT_PORT"])
-  const mqttUsername = process.env["NOBIE_MQTT_USERNAME"]?.trim()
-  const mqttPassword = process.env["NOBIE_MQTT_PASSWORD"]
-  const mqttAllowAnonymous = parseBooleanEnv(process.env["NOBIE_MQTT_ALLOW_ANONYMOUS"])
+function readEnvOverrides(): Partial<KnowbeeConfig> {
+  const mqttEnabled = parseBooleanEnv(process.env["KNOWBEE_MQTT_ENABLED"])
+  const mqttHost = process.env["KNOWBEE_MQTT_HOST"]?.trim()
+  const mqttPort = parseIntegerEnv(process.env["KNOWBEE_MQTT_PORT"])
+  const mqttUsername = process.env["KNOWBEE_MQTT_USERNAME"]?.trim()
+  const mqttPassword = process.env["KNOWBEE_MQTT_PASSWORD"]
+  const mqttAllowAnonymous = parseBooleanEnv(process.env["KNOWBEE_MQTT_ALLOW_ANONYMOUS"])
 
   if (
     mqttEnabled == null &&
@@ -370,9 +370,9 @@ function deepMerge<T>(base: T, override: Partial<T>): T {
   return result as T
 }
 
-let _config: NobieConfig | null = null
+let _config: KnowbeeConfig | null = null
 
-export function loadConfig(): NobieConfig {
+export function loadConfig(): KnowbeeConfig {
   loadEnv()
   const configPath = PATHS.configFile
   const envOverrides = readEnvOverrides()
@@ -383,19 +383,19 @@ export function loadConfig(): NobieConfig {
   }
 
   const raw = readFileSync(configPath, "utf-8")
-  const parsed = JSON5.parse(raw) as Partial<NobieConfig>
+  const parsed = JSON5.parse(raw) as Partial<KnowbeeConfig>
   const normalized = normalizeLegacyAiConfig(parsed)
-  const substituted = substituteDeep(normalized) as Partial<NobieConfig>
+  const substituted = substituteDeep(normalized) as Partial<KnowbeeConfig>
   _config = deepMerge(deepMerge(DEFAULT_CONFIG, substituted), envOverrides)
   return _config
 }
 
-export function getConfig(): NobieConfig {
+export function getConfig(): KnowbeeConfig {
   if (!_config) return loadConfig()
   return _config
 }
 
-export function reloadConfig(): NobieConfig {
+export function reloadConfig(): KnowbeeConfig {
   _config = null
   return loadConfig()
 }
@@ -410,7 +410,7 @@ export {
   runRestoreRehearsal,
   verifyBackupSnapshotManifest,
 } from "./backup-rehearsal.js"
-export type { NobieConfig, WizbyConfig, HowieConfig, SecurityConfig, TelegramConfig, SlackConfig, DiscordConfig, GoogleChatConfig, IMessageConfig, KakaoTalkConfig, MqttConfig, WebuiConfig, OrchestrationConfig, McpConfig, McpServerConfig } from "./types.js"
+export type { KnowbeeConfig, WizbyConfig, HowieConfig, SecurityConfig, TelegramConfig, SlackConfig, DiscordConfig, GoogleChatConfig, IMessageConfig, KakaoTalkConfig, MqttConfig, WebuiConfig, OrchestrationConfig, McpConfig, McpServerConfig } from "./types.js"
 export type {
   BackupInventoryTarget,
   BackupSnapshotFile,

@@ -29,8 +29,8 @@ export function MqttSettingsForm({
         </label>
         <div className="mt-2 text-xs leading-5 text-stone-500">
           {text(
-            "연장이 접속할 브로커를 Nobie 안에서 직접 실행합니다. 아이디와 비밀번호를 모두 입력해야 켤 수 있습니다.",
-            "Run the broker inside Nobie so extensions can connect. You must enter both username and password before enabling it.",
+            "연장이 접속할 브로커를 Knowbee 안에서 직접 실행합니다. 아이디와 비밀번호를 모두 입력해야 켤 수 있습니다.",
+            "Run the broker inside Knowbee so extensions can connect. You must enter both username and password before enabling it.",
           )}
         </div>
         {errors?.enabled ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.enabled}</p> : null}
@@ -70,7 +70,7 @@ export function MqttSettingsForm({
             className="input font-mono"
             value={value.username}
             onChange={(event) => onChange({ username: event.target.value })}
-            placeholder="nobie"
+            placeholder="knowbee"
           />
           {errors?.username ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.username}</p> : null}
         </div>

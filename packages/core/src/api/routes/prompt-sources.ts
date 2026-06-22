@@ -6,7 +6,7 @@ import {
   loadPromptSourceRegistry,
   rollbackPromptSourceBackup,
   writePromptSourceWithBackup,
-} from "../../memory/nobie-md.js"
+} from "../../memory/knowbee-md.js"
 import { runPromptSourceRegression, type PromptRegressionLocale } from "../../memory/prompt-regression.js"
 
 function resolveWorkDir(value: unknown): string {

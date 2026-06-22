@@ -12,7 +12,7 @@ function snapshot(): MemoryInspectorSnapshot {
     generatedAt: Date.UTC(2026, 4, 18, 6, 0, 0),
     filters: {
       ownerType: "main_agent",
-      ownerId: "agent:nobie",
+      ownerId: "agent:knowbee",
       sessionId: "session:task006",
       requestGroupId: "group:task006",
       limit: 12,
@@ -33,12 +33,12 @@ function snapshot(): MemoryInspectorSnapshot {
     },
     ownerCards: [
       {
-        ownerScopeKey: "main_agent:agent:nobie:session:task006",
+        ownerScopeKey: "main_agent:agent:knowbee:session:task006",
         ownerType: "main_agent",
-        ownerId: "agent:nobie",
+        ownerId: "agent:knowbee",
         sessionId: "session:task006",
         requestGroupId: "group:task006",
-        nicknameSnapshot: "노비",
+        nicknameSnapshot: "노우비",
         latestCapsuleId: "capsule:task006",
         currentRawTokenEstimate: 180000,
         currentRawMessageCount: 41,
@@ -54,7 +54,7 @@ function snapshot(): MemoryInspectorSnapshot {
         compactionBlockReason: "approval_waiting",
       },
     ],
-    selectedOwnerScopeKey: "main_agent:agent:nobie:session:task006",
+    selectedOwnerScopeKey: "main_agent:agent:knowbee:session:task006",
     latestCapsule: {
       capsuleId: "capsule:task006",
       capsuleKind: "session_compaction",

@@ -130,7 +130,7 @@ function mcpDraft(): SetupDraft {
 
 function checks(): SetupChecksResponse {
   return {
-    stateDir: "/tmp/nobie-task008",
+    stateDir: "/tmp/knowbee-task008",
     configFile: "/tmp/config.json",
     setupStateFile: "/tmp/setup.json",
     setupCompleted: false,
@@ -246,7 +246,7 @@ describe("task008 setup visualization usability floor", () => {
   it("switches navigator and inspector into responsive panels outside xl", () => {
     const tree = SetupStepShell({
       title: "Initial Setup",
-      description: "Configure Nobie",
+      description: "Configure Knowbee",
       steps: steps(),
       currentStep: "mcp",
       onSelectStep: () => undefined,

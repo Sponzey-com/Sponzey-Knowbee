@@ -1,5 +1,5 @@
 import { type AgentConfig, type AgentPromptBundle, type AgentPromptFragment, type AgentPromptFragmentKind, type AgentPromptFragmentStatus, type DataExchangePackage, type StructuredTaskScope, type TeamConfig } from "../contracts/sub-agent-orchestration.js";
-import { type LoadedPromptSource } from "../memory/nobie-md.js";
+import { type LoadedPromptSource } from "../memory/knowbee-md.js";
 import { type PromptBundleContextMemoryRef } from "../runs/context-preflight.js";
 import type { ExecutorProfile } from "./registry.js";
 export declare const AGENT_PROMPT_BUNDLE_VERSION = "agent-prompt-bundle-v1";

@@ -8,7 +8,7 @@ import {
   validateTeamConfig,
   type AgentPromptBundle,
   type MemoryPolicy,
-  type NobieAgentConfig,
+  type KnowbeeAgentConfig,
   type OrchestrationPlan,
   type PermissionProfile,
   type RuntimeIdentity,
@@ -19,8 +19,8 @@ import {
 
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 
-function owner(ownerId = "agent:nobie"): RuntimeIdentity["owner"] {
-  return { ownerType: "nobie", ownerId }
+function owner(ownerId = "agent:knowbee"): RuntimeIdentity["owner"] {
+  return { ownerType: "knowbee", ownerId }
 }
 
 function identity(entityType: RuntimeIdentity["entityType"], entityId: string): RuntimeIdentity {
@@ -43,7 +43,7 @@ const allowlist: SkillMcpAllowlist = {
   enabledMcpServerIds: ["browser"],
   enabledToolNames: ["web_search"],
   disabledToolNames: ["shell_exec"],
-  secretScopeId: "agent:nobie",
+  secretScopeId: "agent:knowbee",
 }
 
 const permissionProfile: PermissionProfile = {
@@ -66,12 +66,12 @@ const memoryPolicy: MemoryPolicy = {
   writebackReviewRequired: true,
 }
 
-const nobieConfig: NobieAgentConfig = {
+const knowbeeConfig: KnowbeeAgentConfig = {
   schemaVersion: CONTRACT_SCHEMA_VERSION,
-  agentType: "nobie",
-  agentId: "agent:nobie",
-  displayName: "Nobie",
-  nickname: "Nobie",
+  agentType: "knowbee",
+  agentId: "agent:knowbee",
+  displayName: "Knowbee",
+  nickname: "Knowbee",
   status: "enabled",
   role: "coordinator",
   personality: "Pragmatic coordinator",
@@ -87,14 +87,14 @@ const nobieConfig: NobieAgentConfig = {
   createdAt: now,
   updatedAt: now,
   coordinator: {
-    defaultMode: "single_nobie",
-    fallbackMode: "single_nobie",
+    defaultMode: "single_knowbee",
+    fallbackMode: "single_knowbee",
     maxDelegatedSubSessions: 4,
   },
 }
 
 const subAgentConfig: SubAgentConfig = {
-  ...nobieConfig,
+  ...knowbeeConfig,
   agentType: "sub_agent",
   agentId: "agent:researcher",
   displayName: "Researcher",
@@ -108,7 +108,7 @@ const subAgentConfig: SubAgentConfig = {
   },
 }
 
-delete (subAgentConfig as Partial<NobieAgentConfig>).coordinator
+delete (subAgentConfig as Partial<KnowbeeAgentConfig>).coordinator
 
 function teamConfig(): TeamConfig {
   return {
@@ -144,9 +144,9 @@ function orchestrationPlan(): OrchestrationPlan {
     planId: "plan:1",
     parentRunId: "run-parent",
     parentRequestId: "request-parent",
-    directNobieTasks: [{
+    directKnowbeeTasks: [{
       taskId: "task:direct",
-      executionKind: "direct_nobie",
+      executionKind: "direct_knowbee",
       scope: {
         goal: "Integrate worker results",
         intentType: "question",
@@ -177,7 +177,7 @@ function orchestrationPlan(): OrchestrationPlan {
     resourceLocks: [{ lockId: "lock:web", kind: "mcp_server", target: "browser", mode: "shared", reasonCode: "web_rate_limit" }],
     parallelGroups: [],
     approvalRequirements: [],
-    fallbackStrategy: { mode: "single_nobie", reasonCode: "no_agent" },
+    fallbackStrategy: { mode: "single_knowbee", reasonCode: "no_agent" },
     createdAt: now,
   }
 }
@@ -210,16 +210,16 @@ function promptBundle(): AgentPromptBundle {
 }
 
 describe("task001 sub-agent orchestration contracts", () => {
-  it("defines and validates Nobie and sub-agent config contracts", () => {
+  it("defines and validates Knowbee and sub-agent config contracts", () => {
     expect(SUB_AGENT_CONTRACT_SCHEMA_VERSION).toBe(CONTRACT_SCHEMA_VERSION)
-    expect(validateAgentConfig(nobieConfig).ok).toBe(true)
+    expect(validateAgentConfig(knowbeeConfig).ok).toBe(true)
     expect(validateAgentConfig(subAgentConfig).ok).toBe(true)
   })
 
   it("rejects agent-only fields on the wrong entity type", () => {
     const invalid = validateAgentConfig({
-      ...nobieConfig,
-      agentType: "nobie",
+      ...knowbeeConfig,
+      agentType: "knowbee",
       teamIds: ["team:research"],
       delegation: { enabled: true, maxParallelSessions: 1 },
     })
@@ -246,10 +246,10 @@ describe("task001 sub-agent orchestration contracts", () => {
     const plan = validateOrchestrationPlan(orchestrationPlan())
     expect(plan.ok).toBe(true)
     if (plan.ok) {
-      expect(plan.value.directNobieTasks).toHaveLength(1)
+      expect(plan.value.directKnowbeeTasks).toHaveLength(1)
       expect(plan.value.delegatedTasks).toHaveLength(1)
       expect(plan.value.resourceLocks[0]?.kind).toBe("mcp_server")
-      expect(plan.value.fallbackStrategy.mode).toBe("single_nobie")
+      expect(plan.value.fallbackStrategy.mode).toBe("single_knowbee")
     }
   })
 
@@ -258,7 +258,7 @@ describe("task001 sub-agent orchestration contracts", () => {
     expect(validation.ok).toBe(true)
     if (validation.ok) {
       expect(validation.value.identity.idempotencyKey).toBeTruthy()
-      expect(validation.value.memoryPolicy.owner.ownerId).toBe("agent:nobie")
+      expect(validation.value.memoryPolicy.owner.ownerId).toBe("agent:knowbee")
       expect(validation.value.safetyRules.join(" ")).toContain("private memory")
     }
   })

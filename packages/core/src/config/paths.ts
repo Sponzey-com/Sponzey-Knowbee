@@ -3,20 +3,20 @@ import { join } from "node:path"
 import { existsSync } from "node:fs"
 
 function getDefaultStateDir(): string {
-  const nobieDir = join(homedir(), ".nobie")
+  const knowbeeDir = join(homedir(), ".knowbee")
   const wizbyDir = join(homedir(), ".wizby")
   const howieDir = join(homedir(), ".howie")
-  const legacyDir = join(homedir(), ".nobie")
-  if (existsSync(nobieDir)) return nobieDir
+  const legacyDir = join(homedir(), ".knowbee")
+  if (existsSync(knowbeeDir)) return knowbeeDir
   if (existsSync(wizbyDir)) return wizbyDir
   if (existsSync(howieDir)) return howieDir
   if (existsSync(legacyDir)) return legacyDir
-  return nobieDir
+  return knowbeeDir
 }
 
 function getStateDir(): string {
-  if (process.env["NOBIE_STATE_DIR"]) {
-    return process.env["NOBIE_STATE_DIR"]
+  if (process.env["KNOWBEE_STATE_DIR"]) {
+    return process.env["KNOWBEE_STATE_DIR"]
   }
   if (process.env["WIZBY_STATE_DIR"]) {
     return process.env["WIZBY_STATE_DIR"]
@@ -24,8 +24,8 @@ function getStateDir(): string {
   if (process.env["HOWIE_STATE_DIR"]) {
     return process.env["HOWIE_STATE_DIR"]
   }
-  if (process.env["NOBIE_STATE_DIR"]) {
-    return process.env["NOBIE_STATE_DIR"]
+  if (process.env["KNOWBEE_STATE_DIR"]) {
+    return process.env["KNOWBEE_STATE_DIR"]
   }
   return getDefaultStateDir()
 }
@@ -35,7 +35,7 @@ export const PATHS = {
     return getStateDir()
   },
   get configFile() {
-    return process.env["NOBIE_CONFIG"] ?? process.env["WIZBY_CONFIG"] ?? process.env["HOWIE_CONFIG"] ?? process.env["NOBIE_CONFIG"] ?? join(getStateDir(), "config.json5")
+    return process.env["KNOWBEE_CONFIG"] ?? process.env["WIZBY_CONFIG"] ?? process.env["HOWIE_CONFIG"] ?? process.env["KNOWBEE_CONFIG"] ?? join(getStateDir(), "config.json5")
   },
   get dbFile() {
     return join(getStateDir(), "data.db")
@@ -47,7 +47,7 @@ export const PATHS = {
     return join(getStateDir(), "setup-state.json")
   },
   get lockFile() {
-    return join(getStateDir(), "nobie.lock")
+    return join(getStateDir(), "knowbee.lock")
   },
   get logsDir() {
     return join(getStateDir(), "logs")

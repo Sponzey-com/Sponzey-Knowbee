@@ -24,13 +24,13 @@ const topology = buildTopologyWorkspaceStarterDraft("customer-request-flow", {
 const runtimeResources: AgentTopologyProjection = {
   schemaVersion: 1,
   generatedAt: now,
-  rootAgentId: "agent:nobie",
+  rootAgentId: "agent:knowbee",
   nodes: [
     {
-      id: "agent:nobie",
-      kind: "nobie",
-      entityId: "agent:nobie",
-      label: "Nobie",
+      id: "agent:knowbee",
+      kind: "knowbee",
+      entityId: "agent:knowbee",
+      label: "Knowbee",
       status: "active",
       position: { x: 0, y: 0 },
       badges: [],
@@ -51,9 +51,9 @@ const runtimeResources: AgentTopologyProjection = {
   ],
   edges: [
     {
-      id: "edge:nobie-support",
+      id: "edge:knowbee-support",
       kind: "team_membership",
-      source: "agent:nobie",
+      source: "agent:knowbee",
       target: "team:support",
       label: "member",
       valid: true,

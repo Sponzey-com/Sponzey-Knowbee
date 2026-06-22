@@ -10,10 +10,10 @@ function parseJsonLike(text: string): Record<string, any> {
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
 
 afterEach(() => {
-  process.env["NOBIE_STATE_DIR"] = previousStateDir
+  process.env["KNOWBEE_STATE_DIR"] = previousStateDir
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -23,9 +23,9 @@ afterEach(() => {
 
 describe("setup backend merge", () => {
   it("does not enable anthropic provider only from the default anthropic model", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-setup-backend-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-setup-backend-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     reloadConfig()
 
     const draft = buildSetupDraft()
@@ -37,9 +37,9 @@ describe("setup backend merge", () => {
   })
 
   it("does not treat an OpenAI endpoint without credentials as an active connection", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-setup-backend-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-setup-backend-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     writeFileSync(join(stateDir, "config.json5"), `
       {
         ai: {
@@ -63,9 +63,9 @@ describe("setup backend merge", () => {
   })
 
   it("keeps builtin backend identity while clearing stale endpoint and credentials", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-setup-backend-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-setup-backend-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     reloadConfig()
 
     const initialDraft = buildSetupDraft()
@@ -113,9 +113,9 @@ describe("setup backend merge", () => {
   })
 
   it("rejects drafts that enable more than one active ai connection", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-setup-backend-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-setup-backend-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     reloadConfig()
 
     const draft = buildSetupDraft()
@@ -138,9 +138,9 @@ describe("setup backend merge", () => {
   })
 
   it("persists the active ai connection and drops legacy multi-provider config", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-setup-backend-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-setup-backend-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     reloadConfig()
 
     const draft = buildSetupDraft()
@@ -170,9 +170,9 @@ describe("setup backend merge", () => {
   })
 
   it("rebuilds builtin cards from the active single ai connection", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-setup-backend-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-setup-backend-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     reloadConfig()
 
     const draft = buildSetupDraft()

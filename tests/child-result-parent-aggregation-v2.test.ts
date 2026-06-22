@@ -83,8 +83,8 @@ describe("task008 child result parent aggregation v2", () => {
 
     const trace = aggregateSubSessionResultsForParent({
       parentRunId: "run-parent",
-      parentAgentId: "agent:nobie",
-      requestingAgentId: "agent:nobie",
+      parentAgentId: "agent:knowbee",
+      requestingAgentId: "agent:knowbee",
       originalRequest: "현재 코스피와 미국 지수를 확인해줘",
       successCriteria: ["answer and market_context are source-backed"],
       childResults: [{
@@ -162,7 +162,7 @@ describe("task008 child result parent aggregation v2", () => {
       recordOrchestrationEvent: (event) => orchestrationEvents.push(event),
     }).execute({
       parentRunId: "run-parent",
-      parentAgentId: "agent:nobie",
+      parentAgentId: "agent:knowbee",
       successCriteria: ["answer has source evidence"],
       childResults: [{ subSessionId: "sub:finance", resultReport: report, review }],
     })

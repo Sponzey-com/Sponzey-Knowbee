@@ -389,7 +389,7 @@ function traceSummaryKo(
   traceEvent: EnterpriseTopologyTraceEventRecord,
   executorName: string | undefined,
 ): string {
-  const target = executorName ?? "노비"
+  const target = executorName ?? "노우비"
   if (kind === "prompt_preflight_blocked") {
     return `${target} 실행이 안전 경계에서 멈췄습니다. 코드: ${traceEvent.reasonCode}`
   }
@@ -410,7 +410,7 @@ function traceSummaryEn(
   traceEvent: EnterpriseTopologyTraceEventRecord,
   executorName: string | undefined,
 ): string {
-  const target = executorName ?? "Nobie"
+  const target = executorName ?? "Knowbee"
   if (kind === "prompt_preflight_blocked") {
     return `${target} stopped at a safety boundary. Code: ${traceEvent.reasonCode}`
   }

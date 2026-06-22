@@ -132,7 +132,7 @@ function previewFingerprint(value: string): string {
 }
 
 function hostnameCandidate(): string {
-  return normalizeString(process.env["NOBIE_HOSTNAME"])
+  return normalizeString(process.env["KNOWBEE_HOSTNAME"])
     || normalizeString(process.env["COMPUTERNAME"])
     || normalizeString(process.env["HOSTNAME"])
     || "localhost"

@@ -39,7 +39,7 @@ function buildExecutionDecisionModelCaller(input) {
         let output = "";
         for await (const chunk of provider.chat({
             model,
-            system: "You are Nobie's execution-decision harness. Return only the requested JSON decision object.",
+            system: "You are Knowbee's execution-decision harness. Return only the requested JSON decision object.",
             messages: [{ role: "user", content: params.prompt }],
             maxTokens: 4000,
             signal: params.signal,
@@ -367,7 +367,7 @@ export async function runIntakeBridgePass(params, dependencies, moduleDependenci
                         availableExecutorIds: decisionRoute.executionGraph.availableExecutorIds,
                     }
                     : null,
-                executionDecisionSource: decisionRoute.kind === "delegate_to_child" ? "nobie_harness" : null,
+                executionDecisionSource: decisionRoute.kind === "delegate_to_child" ? "knowbee_harness" : null,
             });
             dependencies.incrementDelegationTurnCount(params.runId, `${delegatedAction.title} 후속 작업을 시작합니다.`);
             const delegatedRequestGroupId = `${params.runId}:child:${delegatedFollowupCount + 1}`;

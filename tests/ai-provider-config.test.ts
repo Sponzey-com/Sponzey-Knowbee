@@ -6,14 +6,14 @@ import { detectAvailableProvider, getDefaultModel, getProvider, resetAIProviderC
 import { reloadConfig } from "../packages/core/src/config/index.js"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
 const previousAnthropicApiKey = process.env["ANTHROPIC_API_KEY"]
 const previousOpenAIKey = process.env["OPENAI_API_KEY"]
 const previousGeminiKey = process.env["GEMINI_API_KEY"]
 const previousCodexHome = process.env["CODEX_HOME"]
 
 afterEach(() => {
-  process.env["NOBIE_STATE_DIR"] = previousStateDir
+  process.env["KNOWBEE_STATE_DIR"] = previousStateDir
   if (previousAnthropicApiKey === undefined) delete process.env["ANTHROPIC_API_KEY"]
   else process.env["ANTHROPIC_API_KEY"] = previousAnthropicApiKey
   if (previousOpenAIKey === undefined) delete process.env["OPENAI_API_KEY"]
@@ -32,9 +32,9 @@ afterEach(() => {
 
 describe("ai provider configuration", () => {
   it("does not auto-select an unconfigured external AI backend", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     process.env["ANTHROPIC_API_KEY"] = ""
     process.env["OPENAI_API_KEY"] = ""
     process.env["GEMINI_API_KEY"] = ""
@@ -47,9 +47,9 @@ describe("ai provider configuration", () => {
   })
 
   it("does not read removed legacy llm provider settings", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     writeFileSync(join(stateDir, "config.json5"), `
       {
         llm: {
@@ -72,9 +72,9 @@ describe("ai provider configuration", () => {
   })
 
   it("derives a single ai connection from legacy builtin backend cards", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     writeFileSync(join(stateDir, "config.json5"), `
       {
         ai: {
@@ -101,9 +101,9 @@ describe("ai provider configuration", () => {
   })
 
   it("extracts only one active ai connection from legacy multi-backend config", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     writeFileSync(join(stateDir, "config.json5"), `
       {
         ai: {
@@ -138,9 +138,9 @@ describe("ai provider configuration", () => {
   })
 
   it("does not invent a fallback model when the configured single ai connection has no model", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     writeFileSync(join(stateDir, "config.json5"), `
       {
         ai: {
@@ -162,9 +162,9 @@ describe("ai provider configuration", () => {
   })
 
   it("allows an ollama connection without requiring an OpenAI API key", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     writeFileSync(join(stateDir, "config.json5"), `
       {
         ai: {
@@ -198,9 +198,9 @@ describe("ai provider configuration", () => {
   })
 
   it("allows a llama connection through the same OpenAI-compatible provider path", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     writeFileSync(join(stateDir, "config.json5"), `
       {
         ai: {
@@ -232,9 +232,9 @@ describe("ai provider configuration", () => {
   })
 
   it("normalizes an ollama endpoint to /v1 for OpenAI-compatible requests", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     writeFileSync(join(stateDir, "config.json5"), `
       {
         ai: {
@@ -257,9 +257,9 @@ describe("ai provider configuration", () => {
   })
 
   it("rebuilds the openai provider when auth mode switches to chatgpt oauth", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
 
     const authFilePath = join(stateDir, "codex-auth.json")
     writeFileSync(authFilePath, JSON.stringify({ accessToken: "test" }), "utf-8")
@@ -310,9 +310,9 @@ describe("ai provider configuration", () => {
   })
 
   it("normalizes legacy ChatGPT/Codex OAuth provider aliases to the OpenAI Codex OAuth connection", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "nobie-ai-config-"))
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
     tempDirs.push(stateDir)
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
 
     const authFilePath = join(stateDir, "codex-auth.json")
     writeFileSync(authFilePath, JSON.stringify({ tokens: { access_token: "test-access-token" } }), "utf-8")

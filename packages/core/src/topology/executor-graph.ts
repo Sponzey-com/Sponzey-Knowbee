@@ -60,7 +60,7 @@ export interface ExecutorGraphSourceOfTruth {
 
 export interface ExecutorAdvancedMapping {
   nodeType: NodeType
-  executorKind: "nobie" | "agent" | "team" | "tool" | "manual_approval" | "external"
+  executorKind: "knowbee" | "agent" | "team" | "tool" | "manual_approval" | "external"
   executorId?: string
   allowedToolIds?: string[]
   allowedSystemIds?: string[]
@@ -223,7 +223,7 @@ export interface ExecutorGraphTopologyMetadata {
 }
 
 export interface ExecutorGraphRollbackEvidence {
-  kind: "nobie.executor_graph.rollback_projection"
+  kind: "knowbee.executor_graph.rollback_projection"
   status: "passed" | "failed"
   topologyId: string
   expectedTopologyId?: string
@@ -358,7 +358,7 @@ function executorKindForRuntimeMode(mode: ExecutorRuntimeMode): ExecutorAdvanced
   if (mode === "approval" || mode === "human_check") return "manual_approval"
   if (mode === "tool_execution") return "tool"
   if (mode === "external") return "external"
-  return "nobie"
+  return "knowbee"
 }
 
 function successCriteriaForNode(node: NodeContract): string[] {
@@ -988,7 +988,7 @@ export function buildExecutorGraphRollbackEvidence(input: {
   }
 
   return {
-    kind: "nobie.executor_graph.rollback_projection",
+    kind: "knowbee.executor_graph.rollback_projection",
     status: blockingFailures.length === 0 ? "passed" : "failed",
     topologyId: input.restoredTopology.id,
     expectedTopologyId,

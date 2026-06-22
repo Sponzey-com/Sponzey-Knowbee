@@ -230,7 +230,7 @@ export function runtimeTopologyReasonLabel(
       return text("실행 판단 검증 완료", "Execution decision validated")
     case "plan_snapshot_reconciled_with_execution_decision_trace":
       return text("실제 실행 trace 기준으로 표시", "Displayed from the actual execution trace")
-    case "legacy_single_nobie_fallback_mode_deprecated":
+    case "legacy_single_knowbee_fallback_mode_deprecated":
       return text("이전 직접 실행 계획 감지", "Legacy direct-execution plan detected")
     case undefined:
       return text("실행 판단 정보 없음", "No execution decision details")
@@ -271,7 +271,7 @@ export function runtimeDecisionSourceLabel(
   text: (ko: string, en: string) => string,
 ): string {
   if (!source) return text("판단 정보 없음", "No decision source")
-  if (source === "nobie_harness") return text("노비 실행 판단", "Nobie execution decision")
+  if (source === "knowbee_harness") return text("노우비 실행 판단", "Knowbee execution decision")
   return text("실행 판단", "Execution decision")
 }
 
@@ -285,9 +285,9 @@ export function runtimeExecutionRouteLabel(
     case "self_solve":
     case "direct_current_agent":
       return text("현재 실행자가 직접 처리", "Current executor handles it")
-    case "root_nobie_direct":
-    case "nobie_direct":
-      return text("노비가 직접 처리", "Nobie handles it")
+    case "root_knowbee_direct":
+    case "knowbee_direct":
+      return text("노우비가 직접 처리", "Knowbee handles it")
     case "return_to_parent":
       return text("상위 실행자에게 반환", "Return to parent executor")
     case "ask_parent":
@@ -323,9 +323,9 @@ export function runtimeFallbackReasonLabel(
       return text("상위 실행자 확인", "Ask parent executor")
     case "ask_user":
       return text("사용자 확인", "Ask user")
-    case "root_nobie_direct":
-    case "nobie_direct":
-      return text("노비가 처리", "Nobie handles it")
+    case "root_knowbee_direct":
+    case "knowbee_direct":
+      return text("노우비가 처리", "Knowbee handles it")
     case "explicit_provider":
       return text("명시적 직접 실행", "Explicit direct execution")
     case undefined:
@@ -468,7 +468,7 @@ export function buildRuntimeInspectorViewModels(
       routingTone: routing.mode === "route" || routing.mode === "fallback" ? routing.mode : "unknown",
       routingSummary: describeRuntimeTopologyRouting(routing, text),
       routingPills,
-      currentExecutorName: runtimeExecutorDisplayName(routing, routing.executionDecisionCurrentExecutorId) || text("노비", "Nobie"),
+      currentExecutorName: runtimeExecutorDisplayName(routing, routing.executionDecisionCurrentExecutorId) || text("노우비", "Knowbee"),
       selectedExecutorName:
         runtimeExecutorDisplayName(routing, selectedExecutorId) ||
         routing.entryNodeName ||

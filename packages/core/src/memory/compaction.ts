@@ -646,7 +646,7 @@ function persistRootSessionCompactionCapsule(input: {
     capsuleVersion: 1,
     ...(parentCapsule ? { parentCapsuleId: parentCapsule.capsuleId } : {}),
     ownerScope,
-    nicknameSnapshot: "노비",
+    nicknameSnapshot: "노우비",
     capsuleKind: "session_compaction",
     summary: buildRootSessionCapsuleSummary(input.structuredSummary),
     activeObjectives: input.structuredSummary.currentGoal,

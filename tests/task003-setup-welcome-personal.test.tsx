@@ -80,9 +80,9 @@ function draft(overrides: Partial<SetupDraft> = {}): SetupDraft {
 
 function checks(): SetupChecksResponse {
   return {
-    stateDir: "/tmp/nobie-task003",
-    configFile: "/tmp/nobie-config.json",
-    setupStateFile: "/tmp/nobie-setup.json",
+    stateDir: "/tmp/knowbee-task003",
+    configFile: "/tmp/knowbee-config.json",
+    setupStateFile: "/tmp/knowbee-setup.json",
     setupCompleted: false,
     telegramConfigured: true,
     authEnabled: true,

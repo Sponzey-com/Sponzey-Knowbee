@@ -12,7 +12,7 @@ import {
 const tempDirs: string[] = []
 
 function fixtureRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), "nobie-runtime-build-"))
+  const root = mkdtempSync(join(tmpdir(), "knowbee-runtime-build-"))
   tempDirs.push(root)
   return root
 }

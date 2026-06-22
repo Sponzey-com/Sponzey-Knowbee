@@ -5,7 +5,7 @@ import type { AgentExecutionDecision } from "./execution-decision-contract.js";
 export declare const ORCHESTRATION_PLANNER_VERSION = "structured-v1";
 export declare const FAST_PATH_CLASSIFIER_TARGET_P95_MS = 100;
 export declare const ORCHESTRATION_PLANNER_TARGET_P95_MS = 700;
-export type FastPathClassification = "direct_nobie" | "delegation_candidate" | "workflow_candidate";
+export type FastPathClassification = "direct_knowbee" | "delegation_candidate" | "workflow_candidate";
 export interface FastPathClassifierInput {
     userRequest: string;
     intent?: OrchestrationPlannerIntent;

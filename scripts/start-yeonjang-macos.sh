@@ -8,7 +8,7 @@ PID_FILE="$PIDS_DIR/yeonjang-macos.pid"
 LOG_FILE="$LOGS_DIR/yeonjang-macos.log"
 PROFILE="${YEONJANG_PROFILE:-release}"
 TARGET_TRIPLE="${YEONJANG_TARGET_TRIPLE:-}"
-BINARY_NAME="nobie-yeonjang"
+BINARY_NAME="knowbee-yeonjang"
 APP_NAME="Yeonjang"
 RESTART_YEONJANG="0"
 

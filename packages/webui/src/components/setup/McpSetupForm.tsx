@@ -54,7 +54,7 @@ export function McpSetupForm({
         <div>
           <div className="text-base font-semibold text-stone-900">{text("외부 기능 연결 (MCP)", "External Tool Connection (MCP)")}</div>
           <div className="mt-1 text-sm leading-6 text-stone-600">
-            {text("외부 프로그램이 가진 기능을 Nobie에 연결하는 단계입니다. 지금은 stdio 방식만 바로 사용할 수 있습니다.", "This step connects external program features to Nobie. Right now, only stdio transport is available for direct use.")}
+            {text("외부 프로그램이 가진 기능을 Knowbee에 연결하는 단계입니다. 지금은 stdio 방식만 바로 사용할 수 있습니다.", "This step connects external program features to Knowbee. Right now, only stdio transport is available for direct use.")}
           </div>
         </div>
         <button

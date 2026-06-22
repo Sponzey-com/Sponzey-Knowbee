@@ -70,7 +70,7 @@ export interface RunRuntimeInspectorSubSession {
     parentSubSessionId?: string;
     childSubSessionIds: string[];
     depth: number;
-    resultAggregationStage: "nobie_finalization" | "parent_sub_agent_review";
+    resultAggregationStage: "knowbee_finalization" | "parent_sub_agent_review";
     resultReturnTargetAgentId?: string;
     resultReturnTargetSubSessionId?: string;
     agentId: string;

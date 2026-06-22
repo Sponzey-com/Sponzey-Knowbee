@@ -14,11 +14,11 @@ function buildOpenAICompatibleProfile(providerId, apiKey) {
     if (apiKey)
         return buildProfile([apiKey]);
     if (providerId === "ollama")
-        return buildProfile(["nobie-local"]);
+        return buildProfile(["knowbee-local"]);
     if (providerId === "llama")
-        return buildProfile(["nobie-llama"]);
+        return buildProfile(["knowbee-llama"]);
     if (providerId === "custom")
-        return buildProfile(["nobie-custom"]);
+        return buildProfile(["knowbee-custom"]);
     return buildProfile([]);
 }
 export function normalizeOpenAICompatibleEndpoint(providerId, endpoint) {

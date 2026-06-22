@@ -182,12 +182,12 @@ function routeForCandidate(candidate, approval) {
     if (approval)
         return "manual_approval";
     if (!candidate)
-        return "nobie_direct";
+        return "knowbee_direct";
     if (candidate.targetType === "agent" || candidate.targetType === "team")
         return "sub_agent";
     if (candidate.targetType === "yeonjang")
         return "yeonjang";
-    return "nobie_direct";
+    return "knowbee_direct";
 }
 function labelForRoute(route) {
     if (route === "sub_agent")
@@ -198,7 +198,7 @@ function labelForRoute(route) {
         return "사용자 확인";
     if (route === "external")
         return "외부 실행자";
-    return "노비 직접 처리";
+    return "노우비 직접 처리";
 }
 function buildFallbackRoutes(approval, selected) {
     if (approval)
@@ -206,12 +206,12 @@ function buildFallbackRoutes(approval, selected) {
     if (selected) {
         return [
             { route: "yeonjang", reason: "서브 에이전트 실행이 불가능할 때 로컬 실행 경로를 검토" },
-            { route: "nobie_direct", reason: "다른 실행 경로가 없을 때 노비가 직접 처리" },
+            { route: "knowbee_direct", reason: "다른 실행 경로가 없을 때 노우비가 직접 처리" },
         ];
     }
     return [
         { route: "yeonjang", reason: "서브 에이전트 후보 없음" },
-        { route: "nobie_direct", reason: "연장도 적합하지 않을 때 직접 처리" },
+        { route: "knowbee_direct", reason: "연장도 적합하지 않을 때 직접 처리" },
     ];
 }
 function candidateFromAgent(agent, taskAnalysis) {

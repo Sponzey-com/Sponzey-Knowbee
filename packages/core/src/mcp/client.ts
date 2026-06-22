@@ -44,7 +44,7 @@ export interface McpToolCallPayload extends Record<string, unknown> {
   name: string
   arguments: Record<string, unknown>
   _meta?: {
-    nobie: {
+    knowbee: {
       agent_id: string
       session_id: string
       binding_id?: string
@@ -159,7 +159,7 @@ export function buildMcpToolCallPayload(
     name,
     arguments: args,
     _meta: {
-      nobie: {
+      knowbee: {
         agent_id: context.agentId,
         session_id: context.sessionId,
         ...(context.bindingId ? { binding_id: context.bindingId } : {}),
@@ -215,7 +215,7 @@ export class McpStdioClient {
       {
         protocolVersion: DEFAULT_PROTOCOL_VERSION,
         clientInfo: {
-          name: "nobie",
+          name: "knowbee",
           version: "0.1.0",
         },
         capabilities: {},

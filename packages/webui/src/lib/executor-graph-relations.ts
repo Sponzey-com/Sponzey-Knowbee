@@ -112,35 +112,35 @@ function normalizedName(name: string): string {
 }
 
 function relationLabelKo(kind: ExecutorGraphRelationKind, parentLabel: string | undefined): string {
-  if (kind === "root_direct") return "노비 직속"
+  if (kind === "root_direct") return "노우비 직속"
   if (kind === "child") return `${parentLabel ?? "상위 실행자"}의 하위`
   return "간접 실행자"
 }
 
 function relationLabelEn(kind: ExecutorGraphRelationKind, parentLabel: string | undefined): string {
-  if (kind === "root_direct") return "Direct child of Nobie"
+  if (kind === "root_direct") return "Direct child of Knowbee"
   if (kind === "child") return `Child of ${parentLabel ?? "parent executor"}`
   return "Indirect executor"
 }
 
 function relationDetailKo(kind: ExecutorGraphRelationKind, parentLabel: string | undefined): string {
   if (kind === "root_direct") {
-    return "채널이나 사용자 요청이 들어오면 노비가 바로 후보로 검토할 수 있는 실행자입니다."
+    return "채널이나 사용자 요청이 들어오면 노우비가 바로 후보로 검토할 수 있는 실행자입니다."
   }
   if (kind === "child") {
     return `${parentLabel ?? "상위 실행자"}를 통해 위임 흐름에 들어갑니다. 실행 때는 연결 경로가 필요합니다.`
   }
-  return "노비가 바로 고르는 후보가 아니라 연결된 위임 흐름을 거쳐 도달하는 실행자입니다."
+  return "노우비가 바로 고르는 후보가 아니라 연결된 위임 흐름을 거쳐 도달하는 실행자입니다."
 }
 
 function relationDetailEn(kind: ExecutorGraphRelationKind, parentLabel: string | undefined): string {
   if (kind === "root_direct") {
-    return "Nobie can consider this executor directly when a channel or user request arrives."
+    return "Knowbee can consider this executor directly when a channel or user request arrives."
   }
   if (kind === "child") {
     return `Execution reaches this node through ${parentLabel ?? "its parent executor"}; a connection path is required at runtime.`
   }
-  return "This executor is reached through the delegation flow, not selected directly from Nobie's root decision."
+  return "This executor is reached through the delegation flow, not selected directly from Knowbee's root decision."
 }
 
 function runtimeModeLabel(mode: ExecutorDraft["inferredRuntimeMode"]): string {

@@ -34,7 +34,7 @@ export class PluginLoader {
         const mod = await import(entryPath);
         const plugin = mod.default;
         if (!plugin || typeof plugin.initialize !== "function") {
-            throw new Error(`Plugin "${meta.name}" does not export a valid NobiePlugin as default`);
+            throw new Error(`Plugin "${meta.name}" does not export a valid KnowbeePlugin as default`);
         }
         const ctx = this.buildContext(meta);
         await plugin.initialize(ctx);

@@ -454,7 +454,7 @@ function resolveTaskGroupKey(run: RootRun, runsById: Map<string, RootRun>): stri
 }
 
 function detectDeliveryChannel(label: string): TaskDeliveryChannel {
-  // nobie-critical-decision-audit: task-model.delivery_channel_label
+  // knowbee-critical-decision-audit: task-model.delivery_channel_label
   // Display-only channel projection for task monitor labels.
   const normalized = label.toLowerCase()
   if (normalized.includes("텔레그램") || normalized.includes("telegram")) return "telegram"
@@ -558,7 +558,7 @@ function extractDeliveredArtifact(summary: string): TaskArtifactModel | undefine
 }
 
 function resolveTaskDeliverySignal(orderedRuns: RootRun[], attempts: TaskAttemptModel[]): TaskDeliverySignal {
-  // nobie-critical-decision-audit: task-model.delivery_status_label
+  // knowbee-critical-decision-audit: task-model.delivery_status_label
   // System event-label projection until delivery receipts become the sole status source.
   const sourceAttemptId = attempts.at(-1)?.id
   const recentEvents = orderedRuns

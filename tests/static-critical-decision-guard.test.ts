@@ -53,7 +53,7 @@ describe("static critical decision guard", () => {
   it("does not leave source markers without inventory entries", () => {
     const entriesById = new Set(criticalDecisionAuditEntries.map((entry) => entry.id))
     const files = new Set(criticalDecisionAuditEntries.map((entry) => entry.file))
-    const markerPattern = /nobie-critical-decision-audit:\s*([a-z0-9._-]+)/g
+    const markerPattern = /knowbee-critical-decision-audit:\s*([a-z0-9._-]+)/g
 
     for (const file of files) {
       const source = readRepoFile(file)
@@ -92,7 +92,7 @@ describe("static critical decision guard", () => {
 
   it("keeps semantic or vector schedule hits as comparison-only candidates", () => {
     const source = readRepoFile("packages/core/src/schedules/candidates.ts")
-    const marker = "nobie-critical-decision-audit: schedules.candidates.semantic_candidate_boundary"
+    const marker = "knowbee-critical-decision-audit: schedules.candidates.semantic_candidate_boundary"
     expect(source).toContain(marker)
     const blockStart = source.indexOf(marker)
     const blockEnd = source.indexOf("return [...candidates.values()]", blockStart)

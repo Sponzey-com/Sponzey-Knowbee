@@ -67,7 +67,7 @@ export function createSetupSteps(
     withCapability(
       "mcp",
       t("외부 기능 연결 (MCP)", "External Tools (MCP)"),
-      t("외부 도구와 기능을 Nobie에 연결합니다.", "Connect external tools and capabilities to Nobie."),
+      t("외부 도구와 기능을 Knowbee에 연결합니다.", "Connect external tools and capabilities to Knowbee."),
       capabilities.find((item) => item.key === "mcp.client"),
       false,
       [
@@ -99,7 +99,7 @@ export function createSetupSteps(
       capabilities.find((item) => item.key === "settings.control"),
       false,
       [
-        t("파일 실행이나 도구 사용 전에 얼마나 자주 확인받을지 정합니다.", "Set how often Nobie should ask before using tools or files."),
+        t("파일 실행이나 도구 사용 전에 얼마나 자주 확인받을지 정합니다.", "Set how often Knowbee should ask before using tools or files."),
         t("승인 타임아웃과 기본 동작을 확인합니다.", "Review approval timeouts and default behavior."),
         t("처음에는 기본값을 유지해도 됩니다.", "Keeping the defaults is fine at first."),
       ],
@@ -108,14 +108,14 @@ export function createSetupSteps(
     withSetupChannelCapability(
       "channels",
       t("대화 채널 (Communication)", "Communication"),
-      t("메신저에서 Nobie와 대화할 채널을 연결합니다.", "Connect the messaging channels used to talk with Nobie."),
+      t("메신저에서 Knowbee와 대화할 채널을 연결합니다.", "Connect the messaging channels used to talk with Knowbee."),
       telegramCapability ?? slackCapability,
       draft.channels,
       true,
       [
         t("Telegram 같은 메신저 연결 정보를 입력합니다.", "Enter channel details such as Telegram."),
         t("연결 확인으로 실제 동작 여부를 검사합니다.", "Verify that the channel really works."),
-        t("메신저에서 Nobie와 대화할 준비를 마칩니다.", "Finish preparing the chat channel."),
+        t("메신저에서 Knowbee와 대화할 준비를 마칩니다.", "Finish preparing the chat channel."),
       ],
       hasTelegramChannel,
       language,
@@ -150,7 +150,7 @@ export function createSetupSteps(
     {
       id: "done",
       label: t("완료", "Done"),
-      description: t("설정을 끝내고 Nobie를 사용합니다.", "Finish setup and start using Nobie."),
+      description: t("설정을 끝내고 Knowbee를 사용합니다.", "Finish setup and start using Knowbee."),
       status: "ready",
       required: false,
       highlights: [

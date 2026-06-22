@@ -118,7 +118,7 @@ function visibleText(markup: string): string {
 }
 
 describe("task006 advanced sub-agent identity and model policy", () => {
-  it("renders editable identity/model sections while marking root Nobie as main agent", () => {
+  it("renders editable identity/model sections while marking root Knowbee as main agent", () => {
     const view = buildSubAgentAdvancedSettingsView({
       draft: draft(),
       selectedAgentId: "agent:writer",
@@ -138,7 +138,7 @@ describe("task006 advanced sub-agent identity and model policy", () => {
 
     expect(html).toContain('data-testid="sub-agent-identity-editor"')
     expect(html).toContain('data-testid="sub-agent-model-policy-editor"')
-    expect(text).toContain("Nobie는 메인 agent")
+    expect(text).toContain("Knowbee는 메인 agent")
     expect(text).toContain("기본 정보 저장")
     expect(text).toContain("모델 정책 저장")
     expect(text).toContain("overridden")
@@ -172,15 +172,15 @@ describe("task006 advanced sub-agent identity and model policy", () => {
         kind: "update_identity",
         source: "advanced",
         agentId: "agent:writer",
-        displayName: "Nobie",
-        nickname: "Nobie",
+        displayName: "Knowbee",
+        nickname: "Knowbee",
         role: "답변 작성",
         description: "최종 답변을 정리합니다.",
-        attributionLabel: "Nobie",
+        attributionLabel: "Knowbee",
       },
     })
     expect(reserved.ok).toBe(false)
-    expect(reserved.issueCodes).toContain("reserved_nobie_name")
+    expect(reserved.issueCodes).toContain("reserved_knowbee_name")
 
     const archivedDoesNotBlock = applySubAgentAdvancedIdentityCommand({
       draft: base,

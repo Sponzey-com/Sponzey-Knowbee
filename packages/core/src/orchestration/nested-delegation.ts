@@ -14,7 +14,7 @@ import {
 } from "./planner.js"
 import type { OrchestrationRegistrySnapshot } from "./registry.js"
 
-const DEFAULT_ROOT_AGENT_ID = "agent:nobie"
+const DEFAULT_ROOT_AGENT_ID = "agent:knowbee"
 const DEFAULT_MAX_DEPTH = 5
 const DEFAULT_MAX_CHILDREN_PER_AGENT = 10
 

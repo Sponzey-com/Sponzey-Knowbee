@@ -17,7 +17,7 @@ export interface MemoryCompactionReleaseGateCheck {
 }
 
 export interface MemoryCompactionReleaseGateSummary {
-  kind: "nobie.release.memory_compaction"
+  kind: "knowbee.release.memory_compaction"
   generatedAt: string
   policyVersion: "2026-05-18.memory-compaction.release-gate.v1"
   gateStatus: MemoryCompactionReleaseGateStatus
@@ -158,7 +158,7 @@ export function buildMemoryCompactionReleaseGateSummary(input: {
   }).length
 
   return {
-    kind: "nobie.release.memory_compaction",
+    kind: "knowbee.release.memory_compaction",
     generatedAt: now.toISOString(),
     policyVersion: "2026-05-18.memory-compaction.release-gate.v1",
     gateStatus,

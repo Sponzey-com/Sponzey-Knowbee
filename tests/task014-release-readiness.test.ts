@@ -17,7 +17,7 @@ import type {
   SubSessionContract,
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 import { closeDb, getDb } from "../packages/core/src/db/index.ts"
-import { ensurePromptSourceFiles } from "../packages/core/src/memory/nobie-md.ts"
+import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
 import {
   listLatencyMetrics,
   recordLatencyMetric,
@@ -45,8 +45,8 @@ import {
 import { acknowledgeLiveUpdateMessage } from "../packages/webui/src/api/ws.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 function makeTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -61,7 +61,7 @@ function writeFile(rootDir: string, relativePath: string, content: string): void
 }
 
 function createReleaseFixture(): string {
-  const rootDir = makeTempDir("nobie-task014-release-root-")
+  const rootDir = makeTempDir("knowbee-task014-release-root-")
   writeFile(rootDir, "package.json", JSON.stringify({ version: "9.9.9" }))
   writeFile(rootDir, "packages/cli/dist/index.js", "#!/usr/bin/env node\nconsole.log('cli')\n")
   writeFile(rootDir, "packages/core/dist/index.js", "export const core = true\n")
@@ -87,7 +87,7 @@ function createReleaseFixture(): string {
 const expectedOutput: ExpectedOutputContract = {
   outputId: "answer",
   kind: "text",
-  description: "Answer returned to Nobie review.",
+  description: "Answer returned to Knowbee review.",
   required: true,
   acceptance: {
     requiredEvidenceKinds: [],
@@ -247,9 +247,9 @@ function makeRuntimeDependencies() {
 beforeEach(() => {
   closeDb()
   resetLatencyMetrics()
-  const stateDir = makeTempDir("nobie-task014-state-")
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  const stateDir = makeTempDir("knowbee-task014-state-")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
   getDb()
 })
@@ -257,10 +257,10 @@ beforeEach(() => {
 afterEach(() => {
   closeDb()
   resetLatencyMetrics()
-  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "NOBIE_STATE_DIR")
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "NOBIE_CONFIG")
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_STATE_DIR")
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_CONFIG")
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -286,7 +286,7 @@ describe("task014 release readiness", () => {
       concurrencyBlockedCount: 2,
     })
 
-    expect(summary.kind).toBe("nobie.release.performance")
+    expect(summary.kind).toBe("knowbee.release.performance")
     expect(summary.counters).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "delivery_dedupe_count", count: 3 }),
@@ -415,7 +415,7 @@ describe("task014 release readiness", () => {
       featureKey: "sub_agent_orchestration",
       mode: "off",
       updatedBy: "task014",
-      reason: "single nobie is the safe default",
+      reason: "single knowbee is the safe default",
     })
     recordLatencyMetric({
       name: "ingress_ack_latency_ms",
@@ -445,9 +445,9 @@ describe("task014 release readiness", () => {
         expect.objectContaining({ featureKey: "sub_agent_orchestration", mode: "off" }),
       ]),
     )
-    expect(manifest.performanceEvidence.kind).toBe("nobie.release.performance")
+    expect(manifest.performanceEvidence.kind).toBe("knowbee.release.performance")
     expect(manifest.orchestrationEvidence).toMatchObject({
-      kind: "nobie.release.orchestration",
+      kind: "knowbee.release.orchestration",
       gateStatus: "passed",
       checks: expect.arrayContaining([
         expect.objectContaining({ id: "feature_flag_off_parity", status: "passed" }),
@@ -548,25 +548,25 @@ describe("task014 release readiness", () => {
         normalizeTaskProfile: vi.fn((profile) => profile ?? "general_chat"),
         findLatestWorkerSessionRun: vi.fn(() => undefined),
         resolveOrchestrationMode: vi.fn(async () => ({
-          mode: "single_nobie",
+          mode: "single_knowbee",
           status: "ok",
           reasonCode: "feature_flag_off",
           reason: "orchestration disabled",
           configSubAgentCount: 0,
           activeSubAgentCount: 0,
           disabledSubAgentCount: 0,
-          requestedMode: "single_nobie",
+          requestedMode: "single_knowbee",
           featureFlagEnabled: false,
         })),
         buildOrchestrationPlan: vi.fn(() => ({
           plan: {
             planId: "plan-task014",
             plannerVersion: "structured-v1",
-            mode: "single_nobie",
+            mode: "single_knowbee",
             delegatedTasks: [],
             directTasks: [],
             parallelGroups: [],
-            fallbackStrategy: { reasonCode: "single_nobie_mode", summary: "direct execution" },
+            fallbackStrategy: { reasonCode: "single_knowbee_mode", summary: "direct execution" },
             audit: { rationale: [], warnings: [] },
           },
         })),

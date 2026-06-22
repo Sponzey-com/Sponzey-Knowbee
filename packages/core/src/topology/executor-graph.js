@@ -107,7 +107,7 @@ function executorKindForRuntimeMode(mode) {
         return "tool";
     if (mode === "external")
         return "external";
-    return "nobie";
+    return "knowbee";
 }
 function successCriteriaForNode(node) {
     const criteria = metadataStringArray(node.template?.metadata?.successCriteria);
@@ -687,7 +687,7 @@ export function buildExecutorGraphRollbackEvidence(input) {
         blockingFailures.push("source_of_truth_boundary_mismatch");
     }
     return {
-        kind: "nobie.executor_graph.rollback_projection",
+        kind: "knowbee.executor_graph.rollback_projection",
         status: blockingFailures.length === 0 ? "passed" : "failed",
         topologyId: input.restoredTopology.id,
         expectedTopologyId,

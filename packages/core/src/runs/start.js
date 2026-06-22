@@ -229,7 +229,7 @@ export function startRootRun(params) {
                                 topologyDispatchFollowupDecision = resolveTopologyDispatchFollowupDecision({
                                     dispatchResult,
                                     plan: startPlan.orchestrationPlanSnapshot,
-                                    currentExecutorId: "agent:nobie",
+                                    currentExecutorId: "agent:knowbee",
                                     availableDirectChildExecutorIds: topologyRouting.mode === "route"
                                         ? topologyRouting.availableDirectChildExecutorIds
                                         : [],

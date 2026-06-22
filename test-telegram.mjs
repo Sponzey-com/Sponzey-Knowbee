@@ -34,11 +34,11 @@ if (!allowedUsers) {
 }
 
 // 2. config.json5 에 telegram 설정 주입 (없는 경우)
-const nobieConfigPath = join(homedir(), ".nobie", "config.json5")
+const knowbeeConfigPath = join(homedir(), ".knowbee", "config.json5")
 const wizbyConfigPath = join(homedir(), ".wizby", "config.json5")
 const howieConfigPath = join(homedir(), ".howie", "config.json5")
-const legacyConfigPath = join(homedir(), ".nobie", "config.json5")
-const configPath = existsSync(nobieConfigPath) ? nobieConfigPath : existsSync(wizbyConfigPath) ? wizbyConfigPath : existsSync(howieConfigPath) ? howieConfigPath : legacyConfigPath
+const legacyConfigPath = join(homedir(), ".knowbee", "config.json5")
+const configPath = existsSync(knowbeeConfigPath) ? knowbeeConfigPath : existsSync(wizbyConfigPath) ? wizbyConfigPath : existsSync(howieConfigPath) ? howieConfigPath : legacyConfigPath
 if (existsSync(configPath)) {
   const content = Buffer.from(await import("node:fs").then(m => m.readFileSync(configPath, "utf-8")))
   if (!content.toString().includes("telegram")) {
@@ -52,7 +52,7 @@ if (existsSync(configPath)) {
 }
 
 // 3. 부트스트랩 + 채널 시작
-console.log("🚀  스폰지 노비 · Sponzey Nobie 시작 중...")
+console.log("🚀  스폰지 노우비 · Sponzey Knowbee 시작 중...")
 bootstrap()
 await startChannels()
 console.log("✅  Telegram 봇이 실행되었습니다. 텔레그램에서 메시지를 보내보세요.")

@@ -1,6 +1,6 @@
 import { MemoryIsolationError, buildDataExchangeAdminRawView, buildDataExchangeSanitizedView, createDataExchangePackage, getDataExchangePackage, listActiveDataExchangePackagesForRecipient, listActiveDataExchangePackagesForSource, persistDataExchangePackage, validateDataExchangePackage, } from "../../memory/isolation.js";
 import { authMiddleware } from "../middleware/auth.js";
-const OWNER_TYPES = new Set(["nobie", "sub_agent", "team", "system"]);
+const OWNER_TYPES = new Set(["knowbee", "sub_agent", "team", "system"]);
 function isRecord(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

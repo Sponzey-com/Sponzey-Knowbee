@@ -1,5 +1,5 @@
 /**
- * `nobie index` — file indexing command.
+ * `knowbee index` — file indexing command.
  */
 
 import { resolve } from "node:path"
@@ -8,10 +8,10 @@ export async function indexCommand(
   targetPath: string,
   opts: { exclude?: string[]; stats?: boolean },
 ): Promise<void> {
-  const { bootstrap } = await import("@nobie/core")
+  const { bootstrap } = await import("@knowbee/core")
   bootstrap()
 
-  const { fileIndexer } = await import("@nobie/core/src/memory/file-indexer.js" as string)
+  const { fileIndexer } = await import("@knowbee/core/src/memory/file-indexer.js" as string)
 
   const absPath = resolve(targetPath)
   console.log(`인덱싱 시작: ${absPath}`)
@@ -43,17 +43,17 @@ export async function indexCommand(
 }
 
 export async function indexClearCommand(targetPath?: string): Promise<void> {
-  const { bootstrap } = await import("@nobie/core")
+  const { bootstrap } = await import("@knowbee/core")
   bootstrap()
 
-  const { fileIndexer } = await import("@nobie/core/src/memory/file-indexer.js" as string)
+  const { fileIndexer } = await import("@knowbee/core/src/memory/file-indexer.js" as string)
 
   if (targetPath) {
     const absPath = resolve(targetPath)
     fileIndexer.removeDirectory(absPath)
     console.log(`✓ "${absPath}" 인덱스 제거 완료`)
   } else {
-    const { getDb } = await import("@nobie/core")
+    const { getDb } = await import("@knowbee/core")
     getDb().prepare("DELETE FROM file_chunks").run()
     console.log("✓ 전체 파일 인덱스 초기화 완료")
   }

@@ -1,4 +1,4 @@
-# Task 002 - Nobie Root Session Structured Compaction과 Context Preflight 연동
+# Task 002 - Knowbee Root Session Structured Compaction과 Context Preflight 연동
 
 상태: auto_verified
 자동 검증 상태: 완료
@@ -14,14 +14,14 @@
 
 ## 목표
 
-Nobie 본체의 root session에서 실제로 compact가 동작하도록 만든다.  
+Knowbee 본체의 root session에서 실제로 compact가 동작하도록 만든다.  
 이 태스크의 목표는 다음 3가지다.
 
 1. root session raw context에서 `결정적 상태`와 `pinned working set`을 먼저 추출한다.
 2. 오래된 raw head를 구조화된 summary로 compact하고 capsule로 저장한다.
 3. `context-preflight`에 compact를 연결해 oversized context가 모델 호출 전에 안정적으로 줄어들게 만든다.
 
-이 단계가 완료돼야 긴 WebUI 세션, 긴 채널 대화, 반복적인 도구 실행 상황에서 Nobie가 문맥을 잃지 않고 지속 실행할 수 있다.
+이 단계가 완료돼야 긴 WebUI 세션, 긴 채널 대화, 반복적인 도구 실행 상황에서 Knowbee가 문맥을 잃지 않고 지속 실행할 수 있다.
 
 ## 기준 문서
 

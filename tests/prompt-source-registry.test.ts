@@ -10,16 +10,16 @@ import {
   loadFirstRunPromptSourceAssembly,
   loadPromptSourceRegistry,
   loadSystemPromptSourceAssembly,
-} from "../packages/core/src/memory/nobie-md.ts"
+} from "../packages/core/src/memory/knowbee-md.ts"
 import { closeDb, getDb, getPromptSourceStates } from "../packages/core/src/db/index.ts"
 import { sanitizeUserFacingError } from "../packages/core/src/runs/error-sanitizer.js"
 
 const tempDirs: string[] = []
 const originalCwd = cwd()
-const originalStateDir = process.env["NOBIE_STATE_DIR"]
+const originalStateDir = process.env["KNOWBEE_STATE_DIR"]
 
 function createPromptFixture(): string {
-  const root = mkdtempSync(join(tmpdir(), "nobie-prompt-sources-"))
+  const root = mkdtempSync(join(tmpdir(), "knowbee-prompt-sources-"))
   tempDirs.push(root)
   const promptsDir = join(root, "prompts")
   mkdirSync(promptsDir)
@@ -29,7 +29,7 @@ function createPromptFixture(): string {
     "user.md",
     "soul.md",
     "planner.md",
-    "nobie-execution.md",
+    "knowbee-execution.md",
     "memory_policy.md",
     "tool_policy.md",
     "web_retrieval_planner.md",
@@ -48,8 +48,8 @@ function createPromptFixture(): string {
 afterEach(() => {
   closeDb()
   chdir(originalCwd)
-  if (originalStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = originalStateDir
+  if (originalStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = originalStateDir
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -67,7 +67,7 @@ describe("prompt source registry", () => {
       "user",
       "soul",
       "planner",
-      "nobie_execution",
+      "knowbee_execution",
       "memory_policy",
       "tool_policy",
       "web_retrieval_planner",
@@ -86,7 +86,7 @@ describe("prompt source registry", () => {
       "user",
       "soul",
       "planner",
-      "nobie_execution",
+      "knowbee_execution",
       "memory_policy",
       "tool_policy",
       "recovery_policy",
@@ -100,7 +100,7 @@ describe("prompt source registry", () => {
     expect(assembly?.text).toContain("identity.md content")
     expect(assembly?.text).toContain("soul.md content")
     expect(assembly?.text).toContain("planner.md content")
-    expect(assembly?.text).toContain("nobie-execution.md content")
+    expect(assembly?.text).toContain("knowbee-execution.md content")
     expect(assembly?.text).toContain("topology_executor_policy.md content")
     expect(assembly?.text).toContain("output_policy.md content")
     expect(assembly?.text).toContain("channel.md content")
@@ -157,7 +157,7 @@ describe("prompt source registry", () => {
   })
 
   it("seeds missing prompt sources idempotently without overwriting user edits", () => {
-    const root = mkdtempSync(join(tmpdir(), "nobie-prompt-seed-"))
+    const root = mkdtempSync(join(tmpdir(), "knowbee-prompt-seed-"))
     tempDirs.push(root)
 
     const first = ensurePromptSourceFiles(root)
@@ -165,7 +165,7 @@ describe("prompt source registry", () => {
     expect(first.created).toContain("identity.md")
     expect(first.created).toContain("user.md")
     expect(first.created).toContain("planner.md")
-    expect(first.created).toContain("nobie-execution.md")
+    expect(first.created).toContain("knowbee-execution.md")
     expect(first.created).toContain("memory_policy.md")
     expect(first.created).toContain("tool_policy.md")
     expect(first.created).toContain("web_retrieval_planner.md")
@@ -177,7 +177,7 @@ describe("prompt source registry", () => {
     expect(first.created).toContain("bootstrap.md")
     expect(existsSync(join(first.promptsDir, "user.md"))).toBe(true)
     expect(existsSync(join(first.promptsDir, "web_retrieval_planner.md"))).toBe(true)
-    expect(existsSync(join(first.promptsDir, "nobie-execution.md"))).toBe(true)
+    expect(existsSync(join(first.promptsDir, "knowbee-execution.md"))).toBe(true)
     expect(existsSync(join(first.promptsDir, "topology_executor_policy.md"))).toBe(true)
     expect(existsSync(join(first.promptsDir, "output_policy.md"))).toBe(true)
 
@@ -211,7 +211,7 @@ describe("prompt source registry", () => {
       "user.md",
       "soul.md",
       "planner.md",
-      "nobie-execution.md",
+      "knowbee-execution.md",
       "memory_policy.md",
       "tool_policy.md",
       "recovery_policy.md",
@@ -244,9 +244,9 @@ describe("prompt source registry", () => {
 
   it("bootstraps prompt source metadata into an empty DB without duplicate rows", () => {
     closeDb()
-    const root = mkdtempSync(join(tmpdir(), "nobie-prompt-bootstrap-"))
+    const root = mkdtempSync(join(tmpdir(), "knowbee-prompt-bootstrap-"))
     tempDirs.push(root)
-    process.env["NOBIE_STATE_DIR"] = join(root, "state")
+    process.env["KNOWBEE_STATE_DIR"] = join(root, "state")
     chdir(root)
 
     bootstrap()

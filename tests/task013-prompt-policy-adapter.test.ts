@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import type { LoadedPromptSource } from "../packages/core/src/memory/nobie-md.ts"
+import type { LoadedPromptSource } from "../packages/core/src/memory/knowbee-md.ts"
 import { runPromptSourceRegression } from "../packages/core/src/memory/prompt-regression.ts"
 import {
   AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
@@ -53,8 +53,8 @@ function context(): AgentExecutionContext {
       },
     },
     current_executor: {
-      executor_id: "agent:nobie",
-      display_name: "노비",
+      executor_id: "agent:knowbee",
+      display_name: "노우비",
       can_delegate: true,
       available: true,
     },
@@ -68,7 +68,7 @@ function context(): AgentExecutionContext {
     }],
     diagnostic_executors: [],
     accessible_connections: [{
-      from_executor_id: "agent:nobie",
+      from_executor_id: "agent:knowbee",
       to_executor_id: "node:finance",
       relation: "delegates_to",
     }],
@@ -95,7 +95,7 @@ function contextJsonFromPrompt(prompt: string): Record<string, unknown> {
 }
 
 function seededPromptRootWithUnsafeLine(): string {
-  const root = mkdtempSync(join(tmpdir(), "nobie-task013-prompt-policy-"))
+  const root = mkdtempSync(join(tmpdir(), "knowbee-task013-prompt-policy-"))
   tempDirs.push(root)
   const promptsDir = join(root, "prompts")
   mkdirSync(promptsDir)
@@ -110,11 +110,11 @@ function seededPromptRootWithUnsafeLine(): string {
   )
   const files = new Map<string, string>([
     ["definitions.md", "# Shared Definitions\n\n기본 정의"],
-    ["identity.md", "# Identity\n\nDefault name: Nobie"],
+    ["identity.md", "# Identity\n\nDefault name: Knowbee"],
     ["user.md", "# User\n\nReference timezone: Asia/Seoul"],
     ["soul.md", "# Soul\n\nLong-term operating rules"],
     ["planner.md", "# Planner\n\nPlanning"],
-    ["nobie-execution.md", "# Nobie Execution\n\nUse keyword routing to select executors."],
+    ["knowbee-execution.md", "# Knowbee Execution\n\nUse keyword routing to select executors."],
     ["memory_policy.md", "# Memory\n\nMemory"],
     ["tool_policy.md", "# Tool\n\nTool"],
     ["recovery_policy.md", "# Recovery\n\nMax attempts reached means failure."],
@@ -163,7 +163,7 @@ describe("task013 prompt policy adapter", () => {
   it("injects topology and recovery policies plus structured decision blocks into the execution harness prompt", () => {
     const prompt = buildAgentExecutionDecisionPrompt(context(), {
       promptSources: [
-        promptSource("nobie_execution", 55, "nobie execution marker"),
+        promptSource("knowbee_execution", 55, "knowbee execution marker"),
         promptSource("recovery_policy", 80, "recovery policy marker"),
         promptSource("topology_executor_policy", 85, "topology executor policy marker"),
       ],

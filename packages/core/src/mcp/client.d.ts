@@ -33,7 +33,7 @@ export interface McpToolCallPayload extends Record<string, unknown> {
     name: string;
     arguments: Record<string, unknown>;
     _meta?: {
-        nobie: {
+        knowbee: {
             agent_id: string;
             session_id: string;
             binding_id?: string;

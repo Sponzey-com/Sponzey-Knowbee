@@ -570,7 +570,7 @@ function topologyNodeNames(topologyById) {
 }
 function topologyExecutorNameRecord(topologyById) {
     const result = {
-        "agent:nobie": "노비",
+        "agent:knowbee": "노우비",
     };
     for (const [topologyId, topology] of topologyById) {
         for (const node of topology.nodes) {
@@ -594,7 +594,7 @@ function topologyNodeRoleName(node) {
 }
 function topologyExecutorRoleNameRecord(topologyById) {
     const result = {
-        "agent:nobie": "마스터 실행자",
+        "agent:knowbee": "마스터 실행자",
     };
     for (const [topologyId, topology] of topologyById) {
         for (const node of topology.nodes) {
@@ -661,7 +661,7 @@ function topologyIdsFromRunAndPlan(run, plan) {
     const decisionAssignment = topologyAgentAssignmentIdParts(stringValue(executionDecision.selected_executor_id));
     if (decisionAssignment)
         ids.add(decisionAssignment.topologyId);
-    for (const task of [...(plan?.directNobieTasks ?? []), ...(plan?.delegatedTasks ?? [])]) {
+    for (const task of [...(plan?.directKnowbeeTasks ?? []), ...(plan?.delegatedTasks ?? [])]) {
         const assigned = topologyAgentAssignmentIdParts(task.assignedAgentId);
         if (assigned)
             ids.add(assigned.topologyId);
@@ -700,7 +700,7 @@ function buildTopologyRoutingContext(run, plan) {
     const entryNodeName = topologyId && entryNodeId
         ? topologyNodeNameByKey.get(`${topologyId}:${entryNodeId}`)
         : undefined;
-    const assignedTopologyAgentIds = [...(plan?.delegatedTasks ?? []), ...(plan?.directNobieTasks ?? [])]
+    const assignedTopologyAgentIds = [...(plan?.delegatedTasks ?? []), ...(plan?.directKnowbeeTasks ?? [])]
         .map((task) => task.assignedAgentId)
         .filter((agentId) => Boolean(topologyAgentAssignmentIdParts(agentId)))
         .map((agentId) => redactedText(agentId));
@@ -764,7 +764,7 @@ function buildTopologyRoutingContext(run, plan) {
     const providerTarget = typeof run.targetId === "string" && run.targetId.startsWith("provider:");
     const directFallback = mode === "fallback" &&
         assignedTopologyAgentIds.length === 0 &&
-        (plan?.directNobieTasks.length ?? 0) > 0;
+        (plan?.directKnowbeeTasks.length ?? 0) > 0;
     const providerFallback = providerTarget || (!hasSelectedExecutionDecision && directFallback);
     const providerFallbackBlockedEvent = [...run.recentEvents].reverse().find((event) => event.label.includes("provider_direct_blocked_without_explicit_target"));
     const providerFallbackBlocked = Boolean(providerFallbackBlockedEvent);
@@ -866,7 +866,7 @@ function buildTopologyRoutingContext(run, plan) {
     return { routing, topologyById, topologyNodeNameByKey };
 }
 function planProjection(plan, topologyContext) {
-    const directTasks = plan?.directNobieTasks ?? [];
+    const directTasks = plan?.directKnowbeeTasks ?? [];
     const delegatedTasks = plan?.delegatedTasks ?? [];
     const executionDecisionDelegatedTask = (() => {
         const selectedExecutorId = topologyContext.routing.executionDecisionSelectedExecutorId;
@@ -962,8 +962,8 @@ function planProjection(plan, topologyContext) {
                 rejectedReasonCodes: plan.plannerMetadata.rejectedReasonCodes.map((code) => redactedText(code)),
             }
             : {}),
-        ...(plan?.fallbackStrategy.mode === "single_nobie"
-            ? { fallbackWarnings: ["legacy_single_nobie_fallback_mode_deprecated"] }
+        ...(plan?.fallbackStrategy.mode === "single_knowbee"
+            ? { fallbackWarnings: ["legacy_single_knowbee_fallback_mode_deprecated"] }
             : executionDecisionDelegatedTask
                 ? { fallbackWarnings: ["plan_snapshot_reconciled_with_execution_decision_trace"] }
                 : {}),
@@ -1108,7 +1108,7 @@ function collectSubSessions(run, contracts, ledgerEvents, orchestrationEvents, a
             depth: metadata?.depth ?? 1,
             resultAggregationStage: contract.identity.parent?.parentSubSessionId
                 ? "parent_sub_agent_review"
-                : "nobie_finalization",
+                : "knowbee_finalization",
             ...(metadata?.resultReturnTargetAgentId
                 ? { resultReturnTargetAgentId: redactedText(metadata.resultReturnTargetAgentId) }
                 : {}),
@@ -1167,7 +1167,7 @@ function subSessionTreeMetadata(contracts) {
         result.set(contract.subSessionId, {
             depth: depthFor(contract),
             childSubSessionIds: [...(childrenByParent.get(contract.subSessionId) ?? [])].sort((a, b) => a.localeCompare(b)),
-            resultReturnTargetAgentId: parent?.agentId ?? contract.parentAgentId ?? "agent:nobie",
+            resultReturnTargetAgentId: parent?.agentId ?? contract.parentAgentId ?? "agent:knowbee",
         });
     }
     return result;
@@ -1237,7 +1237,7 @@ export function buildRunRuntimeInspectorProjection(run, options = {}) {
         requestGroupId: redactedText(run.requestGroupId || run.id),
         requestIdentity: requestIdentityFrom(run),
         generatedAt: now,
-        orchestrationMode: run.orchestrationMode ?? "single_nobie",
+        orchestrationMode: run.orchestrationMode ?? "single_knowbee",
         topologyRouting: topologyContext.routing,
         plan: planProjection(run.orchestrationPlanSnapshot, topologyContext),
         subSessions,

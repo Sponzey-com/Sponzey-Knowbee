@@ -82,13 +82,13 @@ export declare function maskSecretsDeep(value: unknown): {
     maskedCount: number;
 };
 export declare function exportMaskedConfig(): ConfigExportResult;
-export declare function recoverPromptSources(workDir?: string): import("../memory/nobie-md.js").PromptSourceSeedResult;
-export declare function exportPromptSources(workDir?: string): import("../memory/nobie-md.js").PromptSourceExportResult;
+export declare function recoverPromptSources(workDir?: string): import("../memory/knowbee-md.js").PromptSourceSeedResult;
+export declare function exportPromptSources(workDir?: string): import("../memory/knowbee-md.js").PromptSourceExportResult;
 export declare function importPromptSources(input: {
     workDir?: string;
     exportPath: string;
     overwrite?: boolean;
-}): import("../memory/nobie-md.js").PromptSourceImportResult;
+}): import("../memory/knowbee-md.js").PromptSourceImportResult;
 export declare function buildConfigurationOperationsSnapshot(workDir?: string): ConfigurationOperationsSnapshot;
 export declare function replaceFileAtomically(sourcePath: string, targetPath: string): void;
 //# sourceMappingURL=operations.d.ts.map

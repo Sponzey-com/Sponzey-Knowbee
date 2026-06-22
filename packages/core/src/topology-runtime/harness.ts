@@ -316,8 +316,8 @@ export async function runTopologyRootRun(
       },
     },
     successCriteria: [{
-      criterionId: `criterion:${topologyRunId}:nobie-final-answer`,
-      description: "Produce a result that Nobie can synthesize into the final user answer.",
+      criterionId: `criterion:${topologyRunId}:knowbee-final-answer`,
+      description: "Produce a result that Knowbee can synthesize into the final user answer.",
       required: true,
       validationKind: "manual",
     }],
@@ -726,7 +726,7 @@ function buildTopologyFinalAnswer(input: {
     : ""
   return [
     `요청을 active Enterprise Topology "${input.topology.name}"의 "${input.entryNode.name}" 노드로 처리했습니다.`,
-    `Nobie final answer: ${outputSummary}`,
+    `Knowbee final answer: ${outputSummary}`,
     `요청: ${input.userRequest}`,
   ].join("\n\n") + risks
 }

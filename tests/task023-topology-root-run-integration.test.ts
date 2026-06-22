@@ -36,15 +36,15 @@ import {
 
 const now = Date.UTC(2026, 3, 30, 13, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task023-topology-root-run-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task023-topology-root-run-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -76,7 +76,7 @@ function activateTopology(topology: EnterpriseTopology = topologyFixture()) {
 function executionDecision(selectedExecutorId = "node:intake"): AgentExecutionDecision {
   return {
     contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
-    current_executor_id: "agent:nobie",
+    current_executor_id: "agent:knowbee",
     domain: "task023_topology_root_run",
     behavior_pattern: "delegate",
     execution_route: "delegate_to_child",
@@ -113,10 +113,10 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.NOBIE_STATE_DIR
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.NOBIE_CONFIG
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
 })
 
@@ -155,7 +155,7 @@ describe("task023 topology root-run opt-in integration", () => {
       mode: "fallback",
       reasonCode: "active_topology_not_found",
     }))
-    expect(plan.orchestrationMode).toBe("single_nobie")
+    expect(plan.orchestrationMode).toBe("single_knowbee")
   })
 
   it("does not route explicit topology targets without a selected executor", async () => {
@@ -216,7 +216,7 @@ describe("task023 topology root-run opt-in integration", () => {
     ])
   })
 
-  it("completes a root run through topology runtime and delivers a Nobie final answer", async () => {
+  it("completes a root run through topology runtime and delivers a Knowbee final answer", async () => {
     useTempState()
     enableTopologyRuntime()
     const { topology } = activateTopology()
@@ -337,7 +337,7 @@ describe("task023 topology root-run opt-in integration", () => {
       status: "completed",
       summary: expect.stringContaining("active Enterprise Topology"),
     }))
-    expect(chunks.some((chunk) => chunk.type === "text" && chunk.delta?.includes("Nobie final answer"))).toBe(true)
+    expect(chunks.some((chunk) => chunk.type === "text" && chunk.delta?.includes("Knowbee final answer"))).toBe(true)
     expect(ledger.map((event) => event.event_kind)).toContain("final_answer_delivered")
     expect(listTopologyRuns({ rootRunId: "run:topology-final" })).toEqual([
       expect.objectContaining({

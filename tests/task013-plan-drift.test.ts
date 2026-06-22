@@ -16,7 +16,7 @@ afterEach(() => {
 })
 
 function createWorkspace(): string {
-  const root = mkdtempSync(join(tmpdir(), "nobie-task013-plan-drift-"))
+  const root = mkdtempSync(join(tmpdir(), "knowbee-task013-plan-drift-"))
   tempDirs.push(root)
   mkdirSync(join(root, ".tasks", "phase001"), { recursive: true })
   mkdirSync(join(root, ".tasks", "phase002"), { recursive: true })

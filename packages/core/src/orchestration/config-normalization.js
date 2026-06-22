@@ -42,7 +42,7 @@ export function normalizeLegacyAgentConfigRow(value) {
     const delegationPolicy = isRecord(value.delegationPolicy)
         ? value.delegationPolicy
         : {
-            enabled: asBoolean(delegation.enabled) ?? value.agentType === "nobie",
+            enabled: asBoolean(delegation.enabled) ?? value.agentType === "knowbee",
             maxParallelSessions: asNumber(delegation.maxParallelSessions) ?? asNumber(coordinator.maxDelegatedSubSessions) ?? 1,
         };
     return {
@@ -108,7 +108,7 @@ export function normalizeLegacyTeamConfigRow(value) {
                 status: normalizeMembershipStatus(undefined, value.status === "disabled" ? "inactive" : "active"),
             };
         });
-    const ownerAgentId = asString(value.ownerAgentId) ?? "agent:nobie";
+    const ownerAgentId = asString(value.ownerAgentId) ?? "agent:knowbee";
     const leadAgentId = asString(value.leadAgentId) ?? memberships[0]?.agentId ?? ownerAgentId;
     const requiredTeamRoles = Array.from(new Set([
         ...asStringArray(value.requiredTeamRoles),

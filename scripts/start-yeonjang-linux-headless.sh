@@ -8,7 +8,7 @@ PID_FILE="$PIDS_DIR/yeonjang-linux-headless.pid"
 LOG_FILE="$LOGS_DIR/yeonjang-linux-headless.log"
 PROFILE="${YEONJANG_PROFILE:-release}"
 TARGET_TRIPLE="${YEONJANG_TARGET_TRIPLE:-}"
-BINARY_NAME="nobie-yeonjang"
+BINARY_NAME="knowbee-yeonjang"
 RESTART_YEONJANG="0"
 
 while (($# > 0)); do

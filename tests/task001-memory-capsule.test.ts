@@ -14,14 +14,14 @@ function baseCapsule(overrides: Partial<MemoryCapsule> = {}): MemoryCapsule {
     capsuleVersion: 1,
     ownerScope: {
       ownerType: "main_agent",
-      ownerId: "agent:nobie",
+      ownerId: "agent:knowbee",
       sessionId: "session-1",
       requestGroupId: "group-1",
       lineageId: "lineage-1",
       channelKey: "webui",
       threadKey: "thread-1",
     },
-    nicknameSnapshot: "노비",
+    nicknameSnapshot: "노우비",
     capsuleKind: "session_compaction",
     summary: " 최근 진행 상황 요약 ",
     activeObjectives: [" 현재 작업 유지 ", "현재 작업 유지"],
@@ -46,7 +46,7 @@ describe("task001 memory capsule contract", () => {
     const validation = validateMemoryCapsule(capsule, {
       expectedOwnerScope: {
         ownerType: "main_agent",
-        ownerId: "agent:nobie",
+        ownerId: "agent:knowbee",
         sessionId: "session-1",
         channelKey: "webui",
       },

@@ -120,7 +120,7 @@ export function runPlanDriftCheck(options = {}) {
     const releaseNoteEvidence = buildReleaseNoteEvidenceSummary(tasks, warnings);
     const blockedCount = warnings.filter((warning) => warning.severity === "blocked").length;
     return {
-        kind: "nobie.plan-drift.report",
+        kind: "knowbee.plan-drift.report",
         version: 1,
         rootDir,
         createdAt: (options.now ?? new Date()).toISOString(),
@@ -229,7 +229,7 @@ function hasCheckedItem(content) {
     return /^- \[[xX]\]/m.test(content);
 }
 function extractEvidenceCommands(content) {
-    const commands = Array.from(content.matchAll(/`([^`\n]*(?:pnpm|npm|node|cargo|vitest|nobie|bash|scripts\/)[^`\n]*)`/g))
+    const commands = Array.from(content.matchAll(/`([^`\n]*(?:pnpm|npm|node|cargo|vitest|knowbee|bash|scripts\/)[^`\n]*)`/g))
         .map((match) => match[1]?.trim() ?? "")
         .filter(Boolean);
     return unique(commands);

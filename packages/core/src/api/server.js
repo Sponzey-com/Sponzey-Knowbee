@@ -119,7 +119,7 @@ export async function startServer() {
             }
             return reply
                 .status(404)
-                .send({ error: "WebUI not built. Run: pnpm build --filter @nobie/webui" });
+                .send({ error: "WebUI not built. Run: pnpm build --filter @knowbee/webui" });
         });
     }
     const { host, port } = cfg.webui;

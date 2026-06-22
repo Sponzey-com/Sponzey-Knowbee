@@ -3,7 +3,7 @@ import { getConfig } from "../config/index.js";
 import { listAgentRelationships } from "../db/index.js";
 import { createLegacyTopologyRegistry, legacyTopologyEnvelopeToExecutorCompatibilityEnvelope, } from "../topology/legacy-enterprise-topology-adapter.js";
 import { buildExecutorProfileFromNode, buildOrchestrationRegistrySnapshot, normalizeExecutorProfile, } from "./registry.js";
-export const EXECUTION_GRAPH_ROOT_AGENT_ID = "agent:nobie";
+export const EXECUTION_GRAPH_ROOT_AGENT_ID = "agent:knowbee";
 export const WORKSPACE_DRAFT_TOPOLOGY_ID = "workspace:draft";
 function sortedUniqueStrings(values) {
     return [...new Set(values.filter((value) => Boolean(value?.trim())))]
@@ -27,7 +27,7 @@ function rootAgentIdFromInput(input) {
     if (input.rootAgentId?.trim())
         return input.rootAgentId;
     const cfg = input.getConfig?.() ?? getConfig();
-    return cfg.orchestration.nobie?.agentId ?? EXECUTION_GRAPH_ROOT_AGENT_ID;
+    return cfg.orchestration.knowbee?.agentId ?? EXECUTION_GRAPH_ROOT_AGENT_ID;
 }
 function topologyAgentId(topologyId, nodeId) {
     return `${topologyId}:${nodeId}`;

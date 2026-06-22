@@ -93,7 +93,7 @@ export function resolveChannelContinuation(input: ChannelContinuationLookupInput
 
 export function buildContinuationConfirmationPrompt(candidates: ChannelContinuationLookupCandidate[]): string {
   const count = candidates.length
-  return `Found ${count} possible previous Nobie contexts. Please choose which task to continue before this message is attached.`
+  return `Found ${count} possible previous Knowbee contexts. Please choose which task to continue before this message is attached.`
 }
 
 function finalizeContinuationResult(candidates: ChannelContinuationLookupCandidate[]): ChannelContinuationLookupResult {

@@ -95,7 +95,7 @@ describe("slack channel", () => {
           type: "app_mention",
           user: "U_ALLOWED",
           channel: "C_ALLOWED",
-          text: "<@B_NOBIE> 메인화면 캡쳐해서 보여줘",
+          text: "<@B_KNOWBEE> 메인화면 캡쳐해서 보여줘",
           ts: "1712570000.100000",
         },
       },
@@ -108,7 +108,7 @@ describe("slack channel", () => {
           type: "message",
           user: "U_ALLOWED",
           channel: "C_ALLOWED",
-          text: "<@B_NOBIE> 메인화면 캡쳐해서 보여줘",
+          text: "<@B_KNOWBEE> 메인화면 캡쳐해서 보여줘",
           ts: "1712570000.100000",
         },
       },
@@ -121,7 +121,7 @@ describe("slack channel", () => {
     expect(sendReceiptMock).toHaveBeenCalledTimes(1)
   })
 
-  it("continues a request group when a user comments in a Slack thread under a Nobie response", async () => {
+  it("continues a request group when a user comments in a Slack thread under a Knowbee response", async () => {
     findLatestChannelMessageRefForThreadMock.mockReturnValue({
       id: "ref-thread-final",
       source: "slack",

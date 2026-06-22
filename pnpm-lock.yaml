@@ -23,7 +23,7 @@ importers:
 
   packages/cli:
     dependencies:
-      '@nobie/core':
+      '@knowbee/core':
         specifier: workspace:*
         version: link:../core
       commander:
@@ -100,12 +100,12 @@ importers:
         specifier: ^5.0.6
         version: 5.0.6
 
-  packages/nobie:
+  packages/knowbee:
     dependencies:
-      '@nobie/cli':
+      '@knowbee/cli':
         specifier: workspace:*
         version: link:../cli
-      '@nobie/webui':
+      '@knowbee/webui':
         specifier: workspace:*
         version: link:../webui
 

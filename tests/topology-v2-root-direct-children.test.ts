@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION,
-  NOBIE_ROOT_AGENT_ID,
+  KNOWBEE_ROOT_AGENT_ID,
   buildExecutorRuntimeGraphSnapshotV2,
   type ExecutorEdgeV2,
   type ExecutorNodeV2,
@@ -55,7 +55,7 @@ function topology(input: {
 }
 
 describe("ExecutorTopologyV2 root direct children", () => {
-  it("projects incoming-edge-free active nodes as Nobie direct children", () => {
+  it("projects incoming-edge-free active nodes as Knowbee direct children", () => {
     const snapshot = buildExecutorRuntimeGraphSnapshotV2(topology({
       nodes: [
         node("node:lead"),
@@ -69,7 +69,7 @@ describe("ExecutorTopologyV2 root direct children", () => {
       ],
     }))
 
-    expect(snapshot.rootAgentId).toBe(NOBIE_ROOT_AGENT_ID)
+    expect(snapshot.rootAgentId).toBe(KNOWBEE_ROOT_AGENT_ID)
     expect(snapshot.rootDirectChildIds).toEqual(["node:lead", "node:finance"])
     expect(snapshot.directChildrenByNodeId).toEqual({
       "node:lead": ["node:worker"],

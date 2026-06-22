@@ -9,8 +9,8 @@ import { buildReleaseArtifactDefinitions } from "../packages/core/src/release/pa
 import { buildRuntimeManifest } from "../packages/core/src/runtime/manifest.js"
 import { upsertYeonjangRegistryObservation } from "../packages/core/src/yeonjang/registry.ts"
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function makeTempDir(prefix: string): string {
@@ -26,7 +26,7 @@ function writeFile(rootDir: string, relativePath: string, content: string): void
 }
 
 function createReleaseFixture(): string {
-  const rootDir = makeTempDir("nobie-task006-yeonjang-release-")
+  const rootDir = makeTempDir("knowbee-task006-yeonjang-release-")
   writeFile(rootDir, "package.json", JSON.stringify({ version: "1.2.3" }))
   writeFile(rootDir, "scripts/build-yeonjang-linux.sh", "#!/usr/bin/env bash\n")
   writeFile(rootDir, "scripts/start-yeonjang-linux.sh", "#!/usr/bin/env bash\n")
@@ -38,18 +38,18 @@ function createReleaseFixture(): string {
 
 beforeEach(() => {
   closeDb()
-  const stateDir = makeTempDir("nobie-task006-yeonjang-profile-")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
+  const stateDir = makeTempDir("knowbee-task006-yeonjang-profile-")
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
   reloadConfig()
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()

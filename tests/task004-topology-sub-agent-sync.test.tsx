@@ -59,25 +59,25 @@ function visibleText(markup: string): string {
 }
 
 describe("task004 topology sub-agent sync", () => {
-  it("projects setup sub-agents into a Nobie-rooted topology without exposing internal ids", () => {
+  it("projects setup sub-agents into a Knowbee-rooted topology without exposing internal ids", () => {
     const projection = buildSubAgentTopologyProjection({
       draft: draft(),
       now: 1_780_000_001_000,
     })
 
-    expect(projection.topology.nodes.map((node) => node.id)).toEqual(["agent:nobie", "agent:research"])
+    expect(projection.topology.nodes.map((node) => node.id)).toEqual(["agent:knowbee", "agent:research"])
     expect(projection.topology.edges).toEqual([
       expect.objectContaining({
-        sourceNodeId: "agent:nobie",
+        sourceNodeId: "agent:knowbee",
         targetNodeId: "agent:research",
         type: "delegates_to",
       }),
     ])
-    expect(projection.graph.executors.map((executor) => executor.name)).toEqual(["Nobie", "Res"])
+    expect(projection.graph.executors.map((executor) => executor.name)).toEqual(["Knowbee", "Res"])
     expect(projection.summaries.get("agent:research")).toEqual(expect.objectContaining({
       displayName: "Researcher",
       nickname: "Res",
-      parentDisplayName: "Nobie",
+      parentDisplayName: "Knowbee",
       childCount: 0,
       readinessLabel: "실행 반영 전",
       runtimeLabel: "실행 반영 전",
@@ -108,18 +108,18 @@ describe("task004 topology sub-agent sync", () => {
     expect(nodeHtml).toContain("하위 0")
     expect(inspectorHtml).toContain("Researcher")
     expect(inspectorHtml).toContain("자료를 찾고 근거를 정리합니다.")
-    expect(inspectorHtml).toContain("Nobie")
+    expect(inspectorHtml).toContain("Knowbee")
     expect(inspectorHtml).toContain("Skill/MCP")
-    expect(visibleText(`${nodeHtml}\n${inspectorHtml}`)).not.toMatch(/agent:research|nickname_duplicate|reserved_nobie_name/)
+    expect(visibleText(`${nodeHtml}\n${inspectorHtml}`)).not.toMatch(/agent:research|nickname_duplicate|reserved_knowbee_name/)
   })
 
-  it("renders root Nobie as a main agent instead of a configurable sub-agent", () => {
+  it("renders root Knowbee as a main agent instead of a configurable sub-agent", () => {
     const projection = buildSubAgentTopologyProjection({
       draft: draft(),
       now: 1_780_000_001_000,
     })
-    const executor = projection.graph.executors.find((item) => item.id === "agent:nobie")!
-    const summary = projection.summaries.get("agent:nobie")!
+    const executor = projection.graph.executors.find((item) => item.id === "agent:knowbee")!
+    const summary = projection.summaries.get("agent:knowbee")!
     const html = renderToStaticMarkup(createElement(ExecutorInspector, {
       executor,
       graph: projection.graph,
@@ -131,7 +131,7 @@ describe("task004 topology sub-agent sync", () => {
     expect(html).toContain("직접 하위")
     expect(html).toContain("Researcher")
     expect(html).toContain("disabled")
-    expect(visibleText(html)).not.toMatch(/모델 자유 설정|agent:nobie/)
+    expect(visibleText(html)).not.toMatch(/모델 자유 설정|agent:knowbee/)
   })
 
   it("round-trips topology executor edits back into setup sub-agent draft", () => {
@@ -170,7 +170,7 @@ describe("task004 topology sub-agent sync", () => {
           lastRuntimeSeenAtByAgentId: { "agent:research": 1_780_000_003_000 },
         },
       },
-      graphExecutorIds: ["agent:nobie", "agent:research"],
+      graphExecutorIds: ["agent:knowbee", "agent:research"],
       now: 1_780_000_004_000,
     }).get("agent:research")!
 

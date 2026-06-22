@@ -76,7 +76,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">
             {msg("layout.brand.eyebrow")}
           </div>
-          <div className="mt-2 text-lg font-semibold">스폰지 노비 · Sponzey Nobie</div>
+          <div className="mt-2 text-lg font-semibold">스폰지 노우비 · Sponzey Knowbee</div>
           <div className="mt-3 flex items-center gap-2 text-xs text-stone-400">
             <span
               className={`h-2 w-2 rounded-full ${connected ? "bg-emerald-400" : "bg-red-400"}`}

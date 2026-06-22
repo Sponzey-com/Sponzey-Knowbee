@@ -5,7 +5,7 @@ export type ApprovalDecision = "allow_once" | "allow_run" | "deny"
 export type ApprovalKind = "approval" | "screen_confirmation"
 export type ApprovalResolutionReason = "user" | "timeout" | "abort" | "system"
 
-export interface NobieEvents {
+export interface KnowbeeEvents {
   "message.inbound": { source: string; sessionId: string; content: string; userId?: string }
   "gateway.started": { host: string; port: number }
   "channel.connected": {
@@ -196,7 +196,7 @@ type Listener<T> = (payload: T) => void | Promise<void>
 class TypedEventBus {
   private listeners = new Map<string, Set<Listener<unknown>>>()
 
-  on<K extends keyof NobieEvents>(event: K, listener: Listener<NobieEvents[K]>): () => void {
+  on<K extends keyof KnowbeeEvents>(event: K, listener: Listener<KnowbeeEvents[K]>): () => void {
     const key = event as string
     let set = this.listeners.get(key)
     if (!set) {
@@ -207,7 +207,7 @@ class TypedEventBus {
     return () => set.delete(listener as Listener<unknown>)
   }
 
-  emit<K extends keyof NobieEvents>(event: K, payload: NobieEvents[K]): void {
+  emit<K extends keyof KnowbeeEvents>(event: K, payload: KnowbeeEvents[K]): void {
     const key = event as string
     const set = this.listeners.get(key)
     if (!set) return
@@ -218,7 +218,7 @@ class TypedEventBus {
     }
   }
 
-  once<K extends keyof NobieEvents>(event: K, listener: Listener<NobieEvents[K]>): () => void {
+  once<K extends keyof KnowbeeEvents>(event: K, listener: Listener<KnowbeeEvents[K]>): () => void {
     const unsub = this.on(event, (payload) => {
       unsub()
       return listener(payload)
@@ -227,7 +227,7 @@ class TypedEventBus {
   }
 }
 
-export type WizbyEvents = NobieEvents
-export type HowieEvents = NobieEvents
+export type WizbyEvents = KnowbeeEvents
+export type HowieEvents = KnowbeeEvents
 
 export const eventBus = new TypedEventBus()

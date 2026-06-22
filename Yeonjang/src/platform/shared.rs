@@ -18,12 +18,12 @@ pub fn collect_system_info(platform: PlatformKind) -> SystemSnapshot {
         .display()
         .to_string();
     let executable = env::current_exe()
-        .unwrap_or_else(|_| PathBuf::from("nobie-yeonjang"))
+        .unwrap_or_else(|_| PathBuf::from("knowbee-yeonjang"))
         .display()
         .to_string();
 
     SystemSnapshot {
-        node: "nobie-yeonjang".to_string(),
+        node: "knowbee-yeonjang".to_string(),
         version: option_env!("YEONJANG_GIT_DESCRIBE")
             .unwrap_or(env!("CARGO_PKG_VERSION"))
             .to_string(),

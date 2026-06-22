@@ -159,7 +159,7 @@ function buildSafeAlternatives(executor: ExecutorDraft): RecoveryAlternative[] {
       alternativeId: `alternative:${executor.id}:fallback-route`,
       title: "다른 실행 경로 찾기",
       changedDimension: "fallback_route",
-      description: "맞는 서브 에이전트, 연장, 노비 직접 처리 순서로 다른 경로를 찾는다.",
+      description: "맞는 서브 에이전트, 연장, 노우비 직접 처리 순서로 다른 경로를 찾는다.",
     },
   ]
 }

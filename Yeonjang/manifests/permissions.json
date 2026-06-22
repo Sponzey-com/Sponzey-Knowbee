@@ -1,10 +1,10 @@
 {
   "macos": {
-    "bundleId": "com.sponzey.nobie.yeonjang",
+    "bundleId": "com.sponzey.knowbee.yeonjang",
     "usageDescriptions": {
-      "camera": "Yeonjang needs camera access so Nobie can capture still images from this Mac.",
+      "camera": "Yeonjang needs camera access so Knowbee can capture still images from this Mac.",
       "microphone": "Reserved for future camera and media extensions.",
-      "appleEvents": "Yeonjang may control local applications for Nobie automation tasks."
+      "appleEvents": "Yeonjang may control local applications for Knowbee automation tasks."
     },
     "runtimePermissions": {
       "screenRecording": {

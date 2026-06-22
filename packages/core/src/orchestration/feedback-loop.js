@@ -270,11 +270,11 @@ export function buildRedelegatedSubSessionInput(input) {
     return {
         command,
         parentAgent: {
-            agentId: source.parentAgentId ?? "agent:nobie",
+            agentId: source.parentAgentId ?? "agent:knowbee",
             ...(source.parentAgentDisplayName
                 ? { displayName: source.parentAgentDisplayName }
                 : {
-                    displayName: source.parentAgentId ?? "Nobie",
+                    displayName: source.parentAgentId ?? "Knowbee",
                 }),
             ...(source.parentAgentNickname ? { nickname: source.parentAgentNickname } : {}),
         },
@@ -429,7 +429,7 @@ function ownerForAgent(agentId) {
     if (!agentId)
         return undefined;
     return {
-        ownerType: agentId === "agent:nobie" ? "nobie" : "sub_agent",
+        ownerType: agentId === "agent:knowbee" ? "knowbee" : "sub_agent",
         ownerId: agentId,
     };
 }

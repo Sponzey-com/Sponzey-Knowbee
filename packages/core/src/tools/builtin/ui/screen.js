@@ -213,8 +213,8 @@ export const screenFindTextTool = {
                 };
             }
             recordYeonjangRemoteExecutionApproval({ selection: reboundSelection, toolName: "screen.capture", ctx });
-            const tmpPng = join(tmpdir(), `nobie-screen-ocr-${Date.now()}.png`);
-            const tmpTxt = join(tmpdir(), `nobie-ocr-${Date.now()}`);
+            const tmpPng = join(tmpdir(), `knowbee-screen-ocr-${Date.now()}.png`);
+            const tmpTxt = join(tmpdir(), `knowbee-ocr-${Date.now()}`);
             const { base64 } = await captureScreenViaYeonjang({ options: yeonjangOptions });
             writeFileSync(tmpPng, Buffer.from(base64, "base64"));
             const { execFile } = await import("node:child_process");

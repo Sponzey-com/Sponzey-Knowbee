@@ -39,7 +39,7 @@ export function GoogleChatSettingsForm({
             className="input font-mono"
             value={value.googleChatServiceAccountEmail}
             onChange={(event) => onChange({ googleChatServiceAccountEmail: event.target.value })}
-            placeholder="nobie@project.iam.gserviceaccount.com"
+            placeholder="knowbee@project.iam.gserviceaccount.com"
           />
         </div>
       </div>

@@ -5,10 +5,10 @@ import { afterEach, describe, expect, it } from "vitest"
 import { loadMergedInstructions } from "../packages/core/src/instructions/merge.ts"
 
 const tempDirs: string[] = []
-let previousStateDir = process.env["NOBIE_STATE_DIR"]
+let previousStateDir = process.env["KNOWBEE_STATE_DIR"]
 
 afterEach(() => {
-  process.env["NOBIE_STATE_DIR"] = previousStateDir
+  process.env["KNOWBEE_STATE_DIR"] = previousStateDir
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -17,7 +17,7 @@ afterEach(() => {
 
 describe("loadMergedInstructions", () => {
   it("merges global and project instructions while preserving order", () => {
-    const root = mkdtempSync(join(tmpdir(), "nobie-instruction-merge-"))
+    const root = mkdtempSync(join(tmpdir(), "knowbee-instruction-merge-"))
     tempDirs.push(root)
 
     const stateDir = join(root, "state")
@@ -32,7 +32,7 @@ describe("loadMergedInstructions", () => {
     writeFileSync(join(repoDir, "AGENTS.md"), "repo rule", "utf-8")
     writeFileSync(join(nestedDir, "AGENTS.override.md"), "nested override", "utf-8")
 
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     const bundle = loadMergedInstructions(nestedDir)
 
     expect(bundle.mergedText).toContain("global rule")
@@ -48,7 +48,7 @@ describe("loadMergedInstructions", () => {
   })
 
   it("invalidates cached instructions immediately when source content changes", () => {
-    const root = mkdtempSync(join(tmpdir(), "nobie-instruction-cache-"))
+    const root = mkdtempSync(join(tmpdir(), "knowbee-instruction-cache-"))
     tempDirs.push(root)
 
     const stateDir = join(root, "state")
@@ -60,7 +60,7 @@ describe("loadMergedInstructions", () => {
     const globalPath = join(stateDir, "AGENTS.md")
     writeFileSync(globalPath, "global v1", "utf-8")
 
-    process.env["NOBIE_STATE_DIR"] = stateDir
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
     const first = loadMergedInstructions(repoDir)
     expect(first.mergedText).toContain("global v1")
 

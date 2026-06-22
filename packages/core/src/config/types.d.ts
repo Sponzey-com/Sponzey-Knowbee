@@ -1,4 +1,4 @@
-import type { NobieConfig as NobieAgentConfig, SubAgentConfig, TeamConfig } from "../contracts/sub-agent-orchestration.js";
+import type { KnowbeeConfig as KnowbeeAgentConfig, SubAgentConfig, TeamConfig } from "../contracts/sub-agent-orchestration.js";
 export type AIConnectionProvider = "openai" | "anthropic" | "gemini" | "ollama" | "llama" | "custom" | "";
 export interface AIConnectionConfig {
     provider: AIConnectionProvider;
@@ -151,9 +151,9 @@ export interface MemoryConfig {
 }
 export interface OrchestrationConfig {
     maxDelegationTurns: number;
-    mode?: "single_nobie" | "orchestration";
+    mode?: "single_knowbee" | "orchestration";
     featureFlagEnabled?: boolean;
-    nobie?: NobieAgentConfig;
+    knowbee?: KnowbeeAgentConfig;
     subAgents?: SubAgentConfig[];
     teams?: TeamConfig[];
 }
@@ -186,7 +186,7 @@ export interface SkillConfigItem {
 export interface SkillsConfig {
     items: SkillConfigItem[];
 }
-export interface NobieConfig {
+export interface KnowbeeConfig {
     profile: ProfileConfig;
     ai: {
         connection: AIConnectionConfig;
@@ -207,7 +207,7 @@ export interface NobieConfig {
     mcp?: McpConfig;
     skills?: SkillsConfig;
 }
-export type WizbyConfig = NobieConfig;
-export type HowieConfig = NobieConfig;
-export declare const DEFAULT_CONFIG: NobieConfig;
+export type WizbyConfig = KnowbeeConfig;
+export type HowieConfig = KnowbeeConfig;
+export declare const DEFAULT_CONFIG: KnowbeeConfig;
 //# sourceMappingURL=types.d.ts.map

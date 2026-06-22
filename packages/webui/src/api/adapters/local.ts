@@ -19,7 +19,7 @@ import type {
 const BASE = ""
 
 function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem("nobie_token") ?? localStorage.getItem("wizby_token") ?? localStorage.getItem("howie_token") ?? ""
+  const token = localStorage.getItem("knowbee_token") ?? localStorage.getItem("wizby_token") ?? localStorage.getItem("howie_token") ?? ""
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 

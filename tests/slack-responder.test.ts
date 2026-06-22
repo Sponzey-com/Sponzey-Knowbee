@@ -25,7 +25,7 @@ afterEach(() => {
 
 describe("Slack responder delivery receipts", () => {
   it("returns file upload delivery receipt with Slack file permalink", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "nobie-slack-responder-"))
+    const tempDir = mkdtempSync(join(tmpdir(), "knowbee-slack-responder-"))
     tempDirs.push(tempDir)
     const filePath = join(tempDir, "report.txt")
     writeFileSync(filePath, "hello")

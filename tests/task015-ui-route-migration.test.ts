@@ -25,21 +25,21 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
-const previousAdminUi = process.env["NOBIE_ADMIN_UI"]
-const previousRollback = process.env["NOBIE_UI_MODE_ROLLBACK"]
-const previousLegacyUi = process.env["NOBIE_LEGACY_UI"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
+const previousAdminUi = process.env["KNOWBEE_ADMIN_UI"]
+const previousRollback = process.env["KNOWBEE_UI_MODE_ROLLBACK"]
+const previousLegacyUi = process.env["KNOWBEE_LEGACY_UI"]
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task015-ui-migration-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task015-ui-migration-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
-  delete process.env["NOBIE_ADMIN_UI"]
-  delete process.env["NOBIE_UI_MODE_ROLLBACK"]
-  delete process.env["NOBIE_LEGACY_UI"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
+  delete process.env["KNOWBEE_ADMIN_UI"]
+  delete process.env["KNOWBEE_UI_MODE_ROLLBACK"]
+  delete process.env["KNOWBEE_LEGACY_UI"]
   reloadConfig()
 }
 
@@ -49,16 +49,16 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
-  if (previousAdminUi === undefined) delete process.env["NOBIE_ADMIN_UI"]
-  else process.env["NOBIE_ADMIN_UI"] = previousAdminUi
-  if (previousRollback === undefined) delete process.env["NOBIE_UI_MODE_ROLLBACK"]
-  else process.env["NOBIE_UI_MODE_ROLLBACK"] = previousRollback
-  if (previousLegacyUi === undefined) delete process.env["NOBIE_LEGACY_UI"]
-  else process.env["NOBIE_LEGACY_UI"] = previousLegacyUi
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
+  if (previousAdminUi === undefined) delete process.env["KNOWBEE_ADMIN_UI"]
+  else process.env["KNOWBEE_ADMIN_UI"] = previousAdminUi
+  if (previousRollback === undefined) delete process.env["KNOWBEE_UI_MODE_ROLLBACK"]
+  else process.env["KNOWBEE_UI_MODE_ROLLBACK"] = previousRollback
+  if (previousLegacyUi === undefined) delete process.env["KNOWBEE_LEGACY_UI"]
+  else process.env["KNOWBEE_LEGACY_UI"] = previousLegacyUi
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -129,7 +129,7 @@ describe("task015 UI route migration and rollback", () => {
   })
 
   it("uses an environment rollback flag to disable UI mode switching without data migration", async () => {
-    process.env["NOBIE_UI_MODE_ROLLBACK"] = "1"
+    process.env["KNOWBEE_UI_MODE_ROLLBACK"] = "1"
     reloadConfig()
 
     expect(resolveUiModeRollbackActivation()).toEqual(expect.objectContaining({

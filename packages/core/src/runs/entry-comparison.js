@@ -58,7 +58,7 @@ export async function compareRequestContinuationWithAI(params) {
         return safeFallbackDecision(params.candidates.length, "no configured provider");
     }
     const provider = params.provider ?? getProvider(providerId);
-    // nobie-critical-decision-audit: entry-comparison.contract_projection_comparison
+    // knowbee-critical-decision-audit: entry-comparison.contract_projection_comparison
     // Comparator inputs are canonical contract projections and stable ids only.
     const messages = [
         {
@@ -121,7 +121,7 @@ export async function compareRequestContinuationWithAI(params) {
 }
 export function buildRequestContinuationSystemPrompt() {
     return [
-        "You are Nobie's isolated request-continuation classifier.",
+        "You are Knowbee's isolated request-continuation classifier.",
         "You are memoryless. Use only the provided JSON contract projections.",
         "Raw user prompts, summaries, titles, and chat history are intentionally unavailable.",
         "Return valid JSON only.",

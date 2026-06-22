@@ -234,8 +234,8 @@ export function readGraphWorkOrderMetadata(workOrder) {
         ...(typeof record.edgeId === "string" ? { edgeId: record.edgeId } : {}),
         delegationResolutionId: record.delegationResolutionId,
         taskAnalysisId: record.taskAnalysisId,
-        selectedRoute: typeof record.selectedRoute === "string" ? record.selectedRoute : "nobie_direct",
-        selectedTargetId: typeof record.selectedTargetId === "string" ? record.selectedTargetId : "nobie_direct",
+        selectedRoute: typeof record.selectedRoute === "string" ? record.selectedRoute : "knowbee_direct",
+        selectedTargetId: typeof record.selectedTargetId === "string" ? record.selectedTargetId : "knowbee_direct",
         systemPreparation: record.systemPreparation === true,
     };
 }

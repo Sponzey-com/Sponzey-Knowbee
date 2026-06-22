@@ -36,13 +36,13 @@ import {
 import { createRootRun } from "../packages/core/src/runs/store.ts"
 import type { RootRun } from "../packages/core/src/runs/types.ts"
 
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const tempDirs: string[] = []
 
 function useTempConfig(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task013-channel-delivery-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task013-channel-delivery-"))
   tempDirs.push(stateDir)
   const configPath = join(stateDir, "config.json5")
   writeFileSync(
@@ -56,17 +56,17 @@ function useTempConfig(): void {
   }`,
     "utf-8",
   )
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = configPath
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = configPath
   reloadConfig()
 }
 
 function restoreEnv(): void {
   closeDb()
-  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "NOBIE_STATE_DIR")
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "NOBIE_CONFIG")
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_STATE_DIR")
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_CONFIG")
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()

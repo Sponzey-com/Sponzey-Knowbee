@@ -7,7 +7,7 @@ export const TOPOLOGY_DISPATCH_FOLLOWUP_ACTIONS = [
     "return_to_parent",
     "fail_with_reason",
 ];
-const ROOT_NODE_ID = "node:nobie";
+const ROOT_NODE_ID = "node:knowbee";
 function uniqueStrings(values) {
     return [...new Set(values.filter((value) => Boolean(value?.trim())))];
 }

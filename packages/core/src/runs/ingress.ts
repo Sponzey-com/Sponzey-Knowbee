@@ -36,7 +36,7 @@ function normalizeIngressIdentityPart(value: string | number | undefined): strin
 }
 
 export function buildIngressDedupeKey(identity: IngressExternalIdentity): string {
-  // nobie-critical-decision-audit: ingress.external_identity_dedupe
+  // knowbee-critical-decision-audit: ingress.external_identity_dedupe
   // Preferred fast path: dedupe by channel ids, never by natural-language message text.
   return [
     identity.source,

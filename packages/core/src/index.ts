@@ -24,7 +24,7 @@ export type {
   MigrationPreflightReport,
   MigrationPreflightRisk,
   MigrationRollbackRunbook,
-  NobieConfig,
+  KnowbeeConfig,
   WizbyConfig,
   HowieConfig,
   SecurityConfig,
@@ -644,7 +644,7 @@ export type { Logger } from "./logger/index.js"
 
 // Events
 export { eventBus } from "./events/index.js"
-export type { NobieEvents, WizbyEvents, HowieEvents } from "./events/index.js"
+export type { KnowbeeEvents, WizbyEvents, HowieEvents } from "./events/index.js"
 
 // Control-plane timeline
 export {
@@ -709,7 +709,7 @@ export type {
 export {
   buildFinalDeliveryAttributions,
   buildNamedResultDeliveryEvent,
-  buildNobieFinalAnswer,
+  buildKnowbeeFinalAnswer,
   commitFinalDelivery,
   findCommittedFinalDelivery,
   listPendingFinalizers,
@@ -1228,7 +1228,7 @@ export {
 } from "./topology/executor-graph.js"
 export {
   EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION,
-  NOBIE_ROOT_AGENT_ID,
+  KNOWBEE_ROOT_AGENT_ID,
   buildExecutorRuntimeGraphSnapshotV2,
   buildExecutorTopologyV2MigrationDryRunReport,
   buildExecutorTopologyV2RuntimeReadModelFromEnterpriseTopology,
@@ -2045,7 +2045,7 @@ export type {
   NicknameNamespaceConflict,
   NicknameNamespaceEntry,
   NicknameSnapshot,
-  NobieConfig as NobieAgentConfig,
+  KnowbeeConfig as KnowbeeAgentConfig,
   OrchestrationMode,
   OrchestrationPlan,
   OrchestrationTask,
@@ -2405,7 +2405,7 @@ export type {
   PromptSourceLocaleParityResult,
   PromptSourceRollbackResult,
   PromptSourceWriteResult,
-} from "./memory/nobie-md.js"
+} from "./memory/knowbee-md.js"
 export type {
   PromptImpactScenarioResult,
   PromptRegressionIssue,
@@ -2414,8 +2414,8 @@ export type {
   PromptSourceRegressionResult,
 } from "./memory/prompt-regression.js"
 export {
-  loadNobieMd,
-  initNobieMd,
+  loadKnowbeeMd,
+  initKnowbeeMd,
   loadWizbyMd,
   initWizbyMd,
   loadHowieMd,
@@ -2432,7 +2432,7 @@ export {
   checkPromptSourceLocaleParity,
   detectPromptSourceSecretMarkers,
   isPromptSourceContentSafe,
-} from "./memory/nobie-md.js"
+} from "./memory/knowbee-md.js"
 export { runPromptSourceRegression } from "./memory/prompt-regression.js"
 export { fileIndexer, FileIndexer } from "./memory/file-indexer.js"
 export {
@@ -2446,7 +2446,7 @@ export {
 // Plugins
 export { pluginLoader, PluginLoader } from "./plugins/loader.js"
 export type {
-  NobiePlugin,
+  KnowbeePlugin,
   WizbyPlugin,
   HowiePlugin,
   PluginContext,
@@ -2838,7 +2838,7 @@ import {
   upsertPromptSources as _upsertPromptSources,
 } from "./db/index.js"
 import { mcpRegistry as _mcpRegistry } from "./mcp/registry.js"
-import { ensurePromptSourceFiles as _ensurePromptSourceFiles } from "./memory/nobie-md.js"
+import { ensurePromptSourceFiles as _ensurePromptSourceFiles } from "./memory/knowbee-md.js"
 import {
   startMqttBroker as _startMqttBroker,
   stopMqttBroker as _stopMqttBroker,

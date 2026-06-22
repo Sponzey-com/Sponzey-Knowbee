@@ -112,24 +112,24 @@ function draft(overrides: Partial<SetupDraft> = {}): SetupDraft {
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 beforeEach(() => {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task003-beginner-subagents-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task003-beginner-subagents-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env.NOBIE_STATE_DIR
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.NOBIE_CONFIG
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -138,7 +138,7 @@ afterEach(() => {
 })
 
 describe("task003 beginner sub-agent setup", () => {
-  it("treats zero sub-agents in single Nobie mode as a normal empty state", () => {
+  it("treats zero sub-agents in single Knowbee mode as a normal empty state", () => {
     const panel = buildBeginnerSubAgentReadinessPanel({
       draft: draft(),
       language: "ko",
@@ -216,14 +216,14 @@ describe("task003 beginner sub-agent setup", () => {
     expect(duplicate.message).not.toMatch(/nickname_duplicate|agent:/)
 
     const reserved = createBeginnerSubAgent(base, {
-      displayName: "Nobie",
-      nickname: "노비",
+      displayName: "Knowbee",
+      nickname: "노우비",
       role: "예약명 테스트",
       description: "",
     }, 1_780_000_001_000)
     expect(reserved.ok).toBe(false)
-    expect(reserved.message).toContain("노비")
-    expect(reserved.message).not.toMatch(/reserved_nobie_name|agent:/)
+    expect(reserved.message).toContain("노우비")
+    expect(reserved.message).not.toMatch(/reserved_knowbee_name|agent:/)
   })
 
   it("renders the readiness panel and create dialog without exposing internal ids", () => {

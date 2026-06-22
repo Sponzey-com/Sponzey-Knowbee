@@ -172,7 +172,7 @@ describe("task013 Executor-first release gate", () => {
     expect(runbook).toContain("Internal stability gate")
     expect(runbook).toContain("WorkOrder Template")
     expect(runbook).toContain("Simple mode rollback check")
-    expect(runbook).toContain("노비가 이해한 내용")
+    expect(runbook).toContain("노우비가 이해한 내용")
   })
 })
 

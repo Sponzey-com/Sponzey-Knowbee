@@ -1,4 +1,4 @@
-import { type NobieConfig } from "../config/index.js";
+import { type KnowbeeConfig } from "../config/index.js";
 export type SetupCapabilityStatus = "ready" | "disabled" | "planned" | "error";
 export interface SetupMcpServerDraft {
     id: string;
@@ -25,7 +25,7 @@ export interface SetupSkillDraftItem {
     status: SetupCapabilityStatus;
     reason?: string;
 }
-export declare function buildMcpSetupDraft(config?: NobieConfig): {
+export declare function buildMcpSetupDraft(config?: KnowbeeConfig): {
     servers: SetupMcpServerDraft[];
 };
 export declare function persistMcpSetupDraft(raw: Record<string, unknown>, draft: {
@@ -36,7 +36,7 @@ export declare function testMcpServerConnection(server: SetupMcpServerDraft): Pr
     message: string;
     tools: string[];
 }>;
-export declare function buildSkillsSetupDraft(config?: NobieConfig): {
+export declare function buildSkillsSetupDraft(config?: KnowbeeConfig): {
     items: SetupSkillDraftItem[];
 };
 export declare function persistSkillsSetupDraft(raw: Record<string, unknown>, draft: {

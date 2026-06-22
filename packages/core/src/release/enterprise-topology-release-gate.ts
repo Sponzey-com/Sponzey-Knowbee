@@ -27,7 +27,7 @@ export type EnterpriseTopologyReleaseGateCheckId =
   | "gated_mode_stage"
   | "opt_in_routing_stage"
   | "feature_flag_off_path"
-  | "single_nobie_fallback"
+  | "single_knowbee_fallback"
   | "sub_agent_regression_suite"
   | "channel_finalizer_regression_suite"
   | "webui_build_gate"
@@ -87,28 +87,28 @@ export interface EnterpriseTopologyReleaseFlagMatrixRow {
 }
 
 export interface EnterpriseTopologyRuntimeSmoke {
-  kind: "nobie.enterprise_topology.runtime_smoke"
+  kind: "knowbee.enterprise_topology.runtime_smoke"
   generatedAt: string
   featureFlagKey: "topology_runtime_enabled"
   featureFlagModeForSmoke: FeatureFlagMode
   featureFlagOffPathPassed: boolean
-  singleNobieFallbackPassed: boolean
+  singleKnowbeeFallbackPassed: boolean
   subAgentRuntimePreserved: boolean
   topologyRuntimeMvpPassed: boolean
-  nobieFinalAnswerOwnershipPreserved: boolean
+  knowbeeFinalAnswerOwnershipPreserved: boolean
   channelFinalizerDedupePreserved: boolean
   status: EnterpriseTopologyReleaseGateStatus
   blockingFailures: string[]
 }
 
 export interface EnterpriseTopologyRollbackSmoke {
-  kind: "nobie.enterprise_topology.rollback_smoke"
+  kind: "knowbee.enterprise_topology.rollback_smoke"
   generatedAt: string
   featureFlagKey: "topology_runtime_enabled"
   featureFlagModeBeforeRollback: FeatureFlagMode
   featureFlagModeAfterRollback: "off"
   dataDeletionRequired: false
-  singleNobieModeRestored: boolean
+  singleKnowbeeModeRestored: boolean
   activeTopologyRollbackVerified: boolean
   compiledSnapshotRestoreVerified: boolean
   registryHistoryPreserved: boolean
@@ -164,7 +164,7 @@ export interface EnterpriseTopologyWorkspaceInternalStability {
   executorGraphCompilesToEnterpriseTopology: boolean
   executorGraphMetadataProjectionOnly: boolean
   ruleBasedInferenceFallback: boolean
-  featureFlagOffSingleNobieFallback: boolean
+  featureFlagOffSingleKnowbeeFallback: boolean
   advancedTopologySurfaceRemoved: boolean
   rollbackProjectionRestoreVerified: boolean
 }
@@ -178,7 +178,7 @@ export interface EnterpriseTopologyWorkspaceRouteCompatibility {
 }
 
 export interface EnterpriseTopologyWorkspaceUsabilityGate {
-  kind: "nobie.enterprise_topology.workspace_usability"
+  kind: "knowbee.enterprise_topology.workspace_usability"
   generatedAt: string
   featureFlagKey: "enterprise_topology_builder_ui"
   canonicalRoute: "/advanced/topology"
@@ -221,7 +221,7 @@ export interface EnterpriseTopologyReleaseGateCheck {
 }
 
 export interface EnterpriseTopologyReleaseReadinessSummary {
-  kind: "nobie.enterprise_topology.release_readiness"
+  kind: "knowbee.enterprise_topology.release_readiness"
   version: 1
   generatedAt: string
   requestedMode: EnterpriseTopologyReleaseModeId
@@ -280,7 +280,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_FEATURE_FLAGS: EnterpriseTopologyReleas
     defaultMode: "off",
     defaultCompatibilityMode: true,
     owner: "runtime",
-    description: "MVP topology node runtime and Nobie-owned final answer synthesis.",
+    description: "MVP topology node runtime and Knowbee-owned final answer synthesis.",
   },
   {
     featureKey: "topology_runtime_recursive_delegation",
@@ -322,7 +322,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_FEATURE_FLAGS: EnterpriseTopologyReleas
     defaultMode: "off",
     defaultCompatibilityMode: true,
     owner: "runtime",
-    description: "Run layer root-run routing gate. Off must always preserve the single Nobie path.",
+    description: "Run layer root-run routing gate. Off must always preserve the single Knowbee path.",
   },
 ]
 
@@ -386,13 +386,13 @@ export const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH: EnterpriseTopologyEx
   },
   {
     id: "enter_executor_work",
-    label: "Type only what the executor does; Nobie infers runtime mode, tools, outputs, and success criteria.",
+    label: "Type only what the executor does; Knowbee infers runtime mode, tools, outputs, and success criteria.",
     actionKind: "text_input",
     inputKind: "executor_work",
   },
   {
     id: "review_understanding",
-    label: "Review 노비가 이해한 내용 and confirm or revise it before execution.",
+    label: "Review 노우비가 이해한 내용 and confirm or revise it before execution.",
     actionKind: "review",
   },
   {
@@ -455,7 +455,7 @@ export const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_INTERNAL_STABILITY: EnterpriseTo
   executorGraphCompilesToEnterpriseTopology: true,
   executorGraphMetadataProjectionOnly: true,
   ruleBasedInferenceFallback: true,
-  featureFlagOffSingleNobieFallback: true,
+  featureFlagOffSingleKnowbeeFallback: true,
   advancedTopologySurfaceRemoved: true,
   rollbackProjectionRestoreVerified: true,
 }
@@ -510,7 +510,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_MODE_SEQUENCE: EnterpriseTopologyReleas
     promotionCriteria: [
       "Operator can activate, inspect, and rollback a topology version without deleting data.",
       "Unified workspace route compatibility, layer coverage, and Executor-first usability evidence pass.",
-      "Topology runtime smoke proves final answers still flow through Nobie finalization.",
+      "Topology runtime smoke proves final answers still flow through Knowbee finalization.",
     ],
     rollbackAction: "Set topology_runtime_mvp and enterprise_topology_builder_ui to off, then rollback active topology if operator beta changed it.",
   },
@@ -527,7 +527,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_MODE_SEQUENCE: EnterpriseTopologyReleas
       requirement("topology_runtime_enabled", ["enforced"], "The final routing flag must remain explicit opt-in."),
     ],
     promotionCriteria: [
-      "Feature flag off path and single Nobie fallback are verified in the same release gate.",
+      "Feature flag off path and single Knowbee fallback are verified in the same release gate.",
       "Run Strip, Trace, and Improve layers are verified before opt-in routing is exposed.",
       "Sub-agent and channel finalizer regression suites pass with topology routing enabled.",
       "Rollback smoke restores the previous active topology and compiled snapshot without data deletion.",
@@ -567,7 +567,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_REGRESSION_COMMANDS: EnterpriseTopology
   {
     id: "webui_build_gate",
     title: "WebUI build gate",
-    command: ["pnpm", "--filter", "@nobie/webui", "build"],
+    command: ["pnpm", "--filter", "@knowbee/webui", "build"],
     required: true,
     smoke: false,
     description: "Ensure the GUI-first topology builder and existing WebUI compile before release.",
@@ -610,7 +610,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_REGRESSION_COMMANDS: EnterpriseTopology
     command: ["pnpm", "test", "tests/task025-enterprise-topology-release-gate.test.ts"],
     required: true,
     smoke: true,
-    description: "Verify release flag matrix, single Nobie fallback, rollback runbook, and snapshot restore evidence.",
+    description: "Verify release flag matrix, single Knowbee fallback, rollback runbook, and snapshot restore evidence.",
   },
 ]
 
@@ -622,10 +622,10 @@ export function buildEnterpriseTopologyRuntimeSmoke(
       Pick<
         EnterpriseTopologyRuntimeSmoke,
         | "featureFlagOffPathPassed"
-        | "singleNobieFallbackPassed"
+        | "singleKnowbeeFallbackPassed"
         | "subAgentRuntimePreserved"
         | "topologyRuntimeMvpPassed"
-        | "nobieFinalAnswerOwnershipPreserved"
+        | "knowbeeFinalAnswerOwnershipPreserved"
         | "channelFinalizerDedupePreserved"
       >
     >
@@ -634,31 +634,31 @@ export function buildEnterpriseTopologyRuntimeSmoke(
   const now = input.now ?? new Date()
   const base = {
     featureFlagOffPathPassed: true,
-    singleNobieFallbackPassed: true,
+    singleKnowbeeFallbackPassed: true,
     subAgentRuntimePreserved: true,
     topologyRuntimeMvpPassed: true,
-    nobieFinalAnswerOwnershipPreserved: true,
+    knowbeeFinalAnswerOwnershipPreserved: true,
     channelFinalizerDedupePreserved: true,
     ...input.overrides,
   }
   const blockingFailures: string[] = []
   if (!base.featureFlagOffPathPassed) blockingFailures.push("feature_flag_off_path_failed")
-  if (!base.singleNobieFallbackPassed) blockingFailures.push("single_nobie_fallback_failed")
+  if (!base.singleKnowbeeFallbackPassed) blockingFailures.push("single_knowbee_fallback_failed")
   if (!base.subAgentRuntimePreserved) blockingFailures.push("sub_agent_runtime_regression")
   if (!base.topologyRuntimeMvpPassed) blockingFailures.push("topology_runtime_mvp_failed")
-  if (!base.nobieFinalAnswerOwnershipPreserved) blockingFailures.push("nobie_final_answer_ownership_regression")
+  if (!base.knowbeeFinalAnswerOwnershipPreserved) blockingFailures.push("knowbee_final_answer_ownership_regression")
   if (!base.channelFinalizerDedupePreserved) blockingFailures.push("channel_finalizer_dedupe_regression")
 
   return {
-    kind: "nobie.enterprise_topology.runtime_smoke",
+    kind: "knowbee.enterprise_topology.runtime_smoke",
     generatedAt: now.toISOString(),
     featureFlagKey: "topology_runtime_enabled",
     featureFlagModeForSmoke: input.featureFlagModeForSmoke ?? "enforced",
     featureFlagOffPathPassed: base.featureFlagOffPathPassed,
-    singleNobieFallbackPassed: base.singleNobieFallbackPassed,
+    singleKnowbeeFallbackPassed: base.singleKnowbeeFallbackPassed,
     subAgentRuntimePreserved: base.subAgentRuntimePreserved,
     topologyRuntimeMvpPassed: base.topologyRuntimeMvpPassed,
-    nobieFinalAnswerOwnershipPreserved: base.nobieFinalAnswerOwnershipPreserved,
+    knowbeeFinalAnswerOwnershipPreserved: base.knowbeeFinalAnswerOwnershipPreserved,
     channelFinalizerDedupePreserved: base.channelFinalizerDedupePreserved,
     status: statusFromFailures(blockingFailures),
     blockingFailures,
@@ -672,7 +672,7 @@ export function buildEnterpriseTopologyRollbackSmoke(
     overrides?: Partial<
       Pick<
         EnterpriseTopologyRollbackSmoke,
-        | "singleNobieModeRestored"
+        | "singleKnowbeeModeRestored"
         | "activeTopologyRollbackVerified"
         | "compiledSnapshotRestoreVerified"
         | "registryHistoryPreserved"
@@ -682,26 +682,26 @@ export function buildEnterpriseTopologyRollbackSmoke(
 ): EnterpriseTopologyRollbackSmoke {
   const now = input.now ?? new Date()
   const base = {
-    singleNobieModeRestored: true,
+    singleKnowbeeModeRestored: true,
     activeTopologyRollbackVerified: true,
     compiledSnapshotRestoreVerified: true,
     registryHistoryPreserved: true,
     ...input.overrides,
   }
   const blockingFailures: string[] = []
-  if (!base.singleNobieModeRestored) blockingFailures.push("single_nobie_mode_not_restored")
+  if (!base.singleKnowbeeModeRestored) blockingFailures.push("single_knowbee_mode_not_restored")
   if (!base.activeTopologyRollbackVerified) blockingFailures.push("active_topology_rollback_not_verified")
   if (!base.compiledSnapshotRestoreVerified) blockingFailures.push("compiled_snapshot_restore_not_verified")
   if (!base.registryHistoryPreserved) blockingFailures.push("registry_history_not_preserved")
 
   return {
-    kind: "nobie.enterprise_topology.rollback_smoke",
+    kind: "knowbee.enterprise_topology.rollback_smoke",
     generatedAt: now.toISOString(),
     featureFlagKey: "topology_runtime_enabled",
     featureFlagModeBeforeRollback: input.featureFlagModeBeforeRollback ?? "enforced",
     featureFlagModeAfterRollback: "off",
     dataDeletionRequired: false,
-    singleNobieModeRestored: base.singleNobieModeRestored,
+    singleKnowbeeModeRestored: base.singleKnowbeeModeRestored,
     activeTopologyRollbackVerified: base.activeTopologyRollbackVerified,
     compiledSnapshotRestoreVerified: base.compiledSnapshotRestoreVerified,
     registryHistoryPreserved: base.registryHistoryPreserved,
@@ -748,7 +748,7 @@ export function buildEnterpriseTopologyWorkspaceUsabilityGate(
   const featureFlagOffFallbacks = input.featureFlagOffFallbacks ?? [
     "/advanced/topology is hidden by enterprise_topology_builder_ui when disabled.",
     "/advanced/enterprise-topology redirects to /advanced/topology?mode=build and then follows the same feature gate.",
-    "topology_runtime_enabled=off preserves single Nobie root-run routing.",
+    "topology_runtime_enabled=off preserves single Knowbee root-run routing.",
   ]
   const layerSet = new Set(requiredLayers)
   const requiredStepSet = new Set(ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH.map((step) => step.id))
@@ -797,8 +797,8 @@ export function buildEnterpriseTopologyWorkspaceUsabilityGate(
   if (!internalStability.ruleBasedInferenceFallback) {
     blockingFailures.push("rule_based_inference_fallback_missing")
   }
-  if (!internalStability.featureFlagOffSingleNobieFallback) {
-    blockingFailures.push("feature_flag_off_single_nobie_fallback_missing")
+  if (!internalStability.featureFlagOffSingleKnowbeeFallback) {
+    blockingFailures.push("feature_flag_off_single_knowbee_fallback_missing")
   }
   if (!internalStability.advancedTopologySurfaceRemoved) {
     blockingFailures.push("advanced_topology_surface_still_exposed")
@@ -824,12 +824,12 @@ export function buildEnterpriseTopologyWorkspaceUsabilityGate(
   if (!featureFlagOffFallbacks.some((item) => item.includes("enterprise_topology_builder_ui"))) {
     blockingFailures.push("builder_ui_feature_flag_off_fallback_missing")
   }
-  if (!featureFlagOffFallbacks.some((item) => item.includes("single Nobie"))) {
-    blockingFailures.push("single_nobie_root_run_fallback_missing")
+  if (!featureFlagOffFallbacks.some((item) => item.includes("single Knowbee"))) {
+    blockingFailures.push("single_knowbee_root_run_fallback_missing")
   }
 
   return {
-    kind: "nobie.enterprise_topology.workspace_usability",
+    kind: "knowbee.enterprise_topology.workspace_usability",
     generatedAt: now.toISOString(),
     featureFlagKey: "enterprise_topology_builder_ui",
     canonicalRoute: "/advanced/topology",
@@ -872,7 +872,7 @@ export function buildEnterpriseTopologyRollbackRunbook(): EnterpriseTopologyRoll
     steps: [
       "Verify the release manifest checksum and the backup snapshot checksum.",
       "Record current active topology id, active version, validation snapshot id, and compiled snapshot id as rollback-of-rollback evidence.",
-      "Set topology_runtime_enabled=off and verify new root requests choose the single Nobie fallback path.",
+      "Set topology_runtime_enabled=off and verify new root requests choose the single Knowbee fallback path.",
       "Set enterprise_topology_builder_ui=off and verify /advanced/topology hides workspace controls while /advanced/enterprise-topology still redirects to /advanced/topology?mode=build.",
       "Set declared_observed_topology_analysis=off when Trace or Improve layer evidence is suspected, without deleting topology runtime trace tables.",
       "Use registry rollbackTopologyVersion(topologyId, targetVersion) or restore the previous active topology record from the verified backup.",
@@ -882,7 +882,7 @@ export function buildEnterpriseTopologyRollbackRunbook(): EnterpriseTopologyRoll
       "Keep topology_runtime_enabled=off until post-incident review accepts the restored active topology and compiled snapshot evidence.",
     ],
     verification: [
-      "topology_runtime_enabled is off and the single Nobie start plan still creates a root run.",
+      "topology_runtime_enabled is off and the single Knowbee start plan still creates a root run.",
       "enterprise_topology_builder_ui is off or rollback and the unified workspace route is not exposing activation controls.",
       "/advanced/enterprise-topology remains a compatibility redirect to /advanced/topology?mode=build.",
       "Active topology version matches the selected target version.",
@@ -895,7 +895,7 @@ export function buildEnterpriseTopologyRollbackRunbook(): EnterpriseTopologyRoll
       "Release or backup checksum verification fails.",
       "The target topology version has no executable validation snapshot.",
       "The compiled snapshot source hash does not match the target topology version.",
-      "Feature flag off path does not restore single Nobie fallback.",
+      "Feature flag off path does not restore single Knowbee fallback.",
       "Channel finalizer duplicate-final regression fails.",
     ],
   }
@@ -1032,11 +1032,11 @@ export function buildEnterpriseTopologyReleaseReadinessSummary(
       evidence: runtimeSmoke,
     }),
     gate({
-      id: "single_nobie_fallback",
-      title: "Single Nobie fallback",
+      id: "single_knowbee_fallback",
+      title: "Single Knowbee fallback",
       releaseModes: ["contracts_validator_only", "dry_run_shadow", "gated_mode", "opt_in_routing"],
-      pass: runtimeSmoke.singleNobieFallbackPassed && runtimeSmoke.subAgentRuntimePreserved,
-      summary: "Existing single Nobie and sub-agent runtime behavior is preserved when topology routing is disabled.",
+      pass: runtimeSmoke.singleKnowbeeFallbackPassed && runtimeSmoke.subAgentRuntimePreserved,
+      summary: "Existing single Knowbee and sub-agent runtime behavior is preserved when topology routing is disabled.",
       evidence: runtimeSmoke,
     }),
     commandGate("sub_agent_regression_suite", regressionCommands),
@@ -1082,7 +1082,7 @@ export function buildEnterpriseTopologyReleaseReadinessSummary(
         workspaceUsability.internalStability.executorGraphCompilesToEnterpriseTopology &&
         workspaceUsability.internalStability.executorGraphMetadataProjectionOnly &&
         workspaceUsability.internalStability.ruleBasedInferenceFallback &&
-        workspaceUsability.internalStability.featureFlagOffSingleNobieFallback &&
+        workspaceUsability.internalStability.featureFlagOffSingleKnowbeeFallback &&
         workspaceUsability.internalStability.advancedTopologySurfaceRemoved &&
         workspaceUsability.internalStability.rollbackProjectionRestoreVerified,
       summary: "The default happy path only asks for executor name, executor work, and run input while internal topology safety remains gated.",
@@ -1096,9 +1096,9 @@ export function buildEnterpriseTopologyReleaseReadinessSummary(
       pass:
         runtimeSmoke.status !== "failed" &&
         runtimeSmoke.topologyRuntimeMvpPassed &&
-        runtimeSmoke.nobieFinalAnswerOwnershipPreserved &&
+        runtimeSmoke.knowbeeFinalAnswerOwnershipPreserved &&
         runtimeSmoke.channelFinalizerDedupePreserved,
-      summary: "Topology MVP runtime can execute behind an opt-in flag while Nobie owns final synthesis.",
+      summary: "Topology MVP runtime can execute behind an opt-in flag while Knowbee owns final synthesis.",
       evidence: {
         runtimeSmoke,
         command: regressionCommands.find((command) => command.id === "topology_runtime_smoke") ?? null,
@@ -1143,7 +1143,7 @@ export function buildEnterpriseTopologyReleaseReadinessSummary(
   ]
 
   return {
-    kind: "nobie.enterprise_topology.release_readiness",
+    kind: "knowbee.enterprise_topology.release_readiness",
     version: 1,
     generatedAt: now.toISOString(),
     requestedMode,

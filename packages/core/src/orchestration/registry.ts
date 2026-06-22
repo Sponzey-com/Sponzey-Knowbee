@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { type NobieConfig, type OrchestrationConfig, getConfig } from "../config/index.js"
+import { type KnowbeeConfig, type OrchestrationConfig, getConfig } from "../config/index.js"
 import {
   type AgentConfig,
   type AgentRelationship,
@@ -276,7 +276,7 @@ export interface OrchestrationRegistrySnapshot {
   invalidation?: RegistryInvalidationSnapshot
   metrics?: OrchestrationRegistryLatencyMetrics
   fallback?: {
-    mode: "single_nobie"
+    mode: "single_knowbee"
     reasonCode: "registry_load_failed"
     reason: string
   }
@@ -290,12 +290,12 @@ export interface OrchestrationRegistrySnapshot {
 }
 
 export interface RegistryServiceDependencies {
-  getConfig?: () => Pick<NobieConfig, "orchestration"> & Partial<Pick<NobieConfig, "ai">>
+  getConfig?: () => Pick<KnowbeeConfig, "orchestration"> & Partial<Pick<KnowbeeConfig, "ai">>
   now?: () => number
   failureWindowMs?: number
 }
 
-const DEFAULT_ROOT_AGENT_ID = "agent:nobie"
+const DEFAULT_ROOT_AGENT_ID = "agent:knowbee"
 const COLD_REGISTRY_TARGET_P95_MS = 500
 const HOT_INDEX_TARGET_P95_MS = 100
 const TEAM_RECALCULATION_KEYS = [
@@ -361,10 +361,10 @@ function subAgentFromAgentConfig(config: AgentConfig): SubAgentConfig | undefine
 }
 
 function rootAgentIdFromConfig(config: OrchestrationConfig): string {
-  return config.nobie?.agentId ?? DEFAULT_ROOT_AGENT_ID
+  return config.knowbee?.agentId ?? DEFAULT_ROOT_AGENT_ID
 }
 
-function runtimeConfigModelProfile(config: Pick<NobieConfig, "orchestration"> & Partial<Pick<NobieConfig, "ai">>): ModelProfile | undefined {
+function runtimeConfigModelProfile(config: Pick<KnowbeeConfig, "orchestration"> & Partial<Pick<KnowbeeConfig, "ai">>): ModelProfile | undefined {
   const connection = config.ai?.connection ?? getConfig().ai.connection
   const rawProviderId = connection.provider?.trim()
   const modelId = connection.model?.trim()
@@ -588,7 +588,7 @@ function topologySubAgentConfigs(
             memoryPolicy: {
               owner: { ownerType: "sub_agent", ownerId: agentId },
               visibility: "coordinator_visible",
-              readScopes: [{ ownerType: "nobie", ownerId: rootAgentId }],
+              readScopes: [{ ownerType: "knowbee", ownerId: rootAgentId }],
               writeScope: { ownerType: "sub_agent", ownerId: agentId },
               retentionPolicy: "short_term",
               writebackReviewRequired: true,
@@ -761,7 +761,7 @@ function buildInvalidationSnapshot(
   }
   const configHash = sha256(
     stableStringify({
-      nobie: config.nobie,
+      knowbee: config.knowbee,
       subAgents: config.subAgents ?? [],
       teams: config.teams ?? [],
       runtimeModelProfile,
@@ -1760,9 +1760,9 @@ function fallbackRegistrySnapshot(input: {
       hotIndexTargetP95Ms: HOT_INDEX_TARGET_P95_MS,
     },
     fallback: {
-      mode: "single_nobie",
+      mode: "single_knowbee",
       reasonCode: "registry_load_failed",
-      reason: `Registry snapshot failed and fell back to single Nobie mode: ${detail}`,
+      reason: `Registry snapshot failed and fell back to single Knowbee mode: ${detail}`,
     },
     membershipEdges: [],
     diagnostics: [

@@ -9,7 +9,7 @@
     <key>CFBundleExecutable</key>
     <string>Yeonjang</string>
     <key>CFBundleIdentifier</key>
-    <string>com.sponzey.nobie.yeonjang</string>
+    <string>com.sponzey.knowbee.yeonjang</string>
     <key>CFBundleIconFile</key>
     <string>YeonjangIcon.png</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -27,11 +27,11 @@
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>NSCameraUsageDescription</key>
-    <string>Yeonjang needs camera access so Nobie can capture still images from this Mac.</string>
+    <string>Yeonjang needs camera access so Knowbee can capture still images from this Mac.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Yeonjang does not record audio by default, but this description is prepared for future camera extensions.</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Yeonjang may need permission to control local applications for Nobie automation tasks.</string>
+    <string>Yeonjang may need permission to control local applications for Knowbee automation tasks.</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © Sponzey</string>
 </dict>

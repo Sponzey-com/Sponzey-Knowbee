@@ -21,8 +21,8 @@ const taskProfile: AgentExecutionTaskProfile = {
 }
 
 const connections: AgentExecutionConnection[] = [
-  { from_executor_id: "agent:nobie", to_executor_id: "node:finance", relation: "delegates_to" },
-  { from_executor_id: "agent:nobie", to_executor_id: "node:lead", relation: "delegates_to" },
+  { from_executor_id: "agent:knowbee", to_executor_id: "node:finance", relation: "delegates_to" },
+  { from_executor_id: "agent:knowbee", to_executor_id: "node:lead", relation: "delegates_to" },
   { from_executor_id: "node:lead", to_executor_id: "node:backend", relation: "delegates_to" },
 ]
 
@@ -35,8 +35,8 @@ function context(): AgentExecutionContext {
       structured_goal: "적합한 실행자에게 위임한다.",
     },
     current_executor: {
-      executor_id: "agent:nobie",
-      display_name: "노비",
+      executor_id: "agent:knowbee",
+      display_name: "노우비",
       can_delegate: true,
       available: true,
     },
@@ -72,11 +72,11 @@ function context(): AgentExecutionContext {
     execution_graph: {
       graph_id: "execution-graph:v2",
       graph_source: "workspace_draft",
-      root_executor_id: "agent:nobie",
-      current_executor_id: "agent:nobie",
+      root_executor_id: "agent:knowbee",
+      current_executor_id: "agent:knowbee",
       available_executor_ids: ["node:finance", "node:lead"],
       diagnostic_executor_ids: ["node:backend"],
-      all_active_executor_ids: ["agent:nobie", "node:finance", "node:lead", "node:backend"],
+      all_active_executor_ids: ["agent:knowbee", "node:finance", "node:lead", "node:backend"],
       allowed_connections: connections,
       validation_issue_codes: [],
       topology_id: "workspace:draft",
@@ -88,7 +88,7 @@ function context(): AgentExecutionContext {
 function decision(overrides: Partial<AgentExecutionDecisionV2> = {}): AgentExecutionDecisionV2 {
   return {
     contract_version: AGENT_EXECUTION_DECISION_V2_CONTRACT_VERSION,
-    current_executor_id: "agent:nobie",
+    current_executor_id: "agent:knowbee",
     domain: "finance",
     behavior_pattern: "delegate",
     action: "delegate",

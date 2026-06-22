@@ -258,7 +258,7 @@ export async function buildStartPlan(
         const comparisonStartedAt = Date.now()
         try {
           return await dependencies.compareRequestContinuation({
-            // nobie-critical-decision-audit: start-plan.contract_continuation_boundary
+            // knowbee-critical-decision-audit: start-plan.contract_continuation_boundary
             // Continuation comparison receives contracts and projection ids, never candidate raw prompts.
             incomingContract,
             sessionId: params.sessionId,

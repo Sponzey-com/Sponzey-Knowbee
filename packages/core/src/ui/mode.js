@@ -29,8 +29,8 @@ function parseBooleanEnv(value) {
 }
 export function resolveUiModeRollbackActivation(input = {}) {
     const env = input.env ?? process.env;
-    const envEnabled = parseBooleanEnv(env["NOBIE_UI_MODE_ROLLBACK"]);
-    const legacyAliasEnabled = parseBooleanEnv(env["NOBIE_LEGACY_UI"]);
+    const envEnabled = parseBooleanEnv(env["KNOWBEE_UI_MODE_ROLLBACK"]);
+    const legacyAliasEnabled = parseBooleanEnv(env["KNOWBEE_LEGACY_UI"]);
     return {
         enabled: envEnabled || legacyAliasEnabled,
         envEnabled,
@@ -55,9 +55,9 @@ export function resolveAdminUiActivation(input = {}) {
     const env = input.env ?? process.env;
     const argv = input.argv ?? process.argv;
     const configEnabled = input.configEnabled ?? (getConfig().webui.admin?.enabled ?? false);
-    const envEnabled = parseBooleanEnv(env["NOBIE_ADMIN_UI"]);
+    const envEnabled = parseBooleanEnv(env["KNOWBEE_ADMIN_UI"]);
     const cliEnabled = hasAdminCliFlag(argv);
-    const localDevScriptEnabled = parseBooleanEnv(env["NOBIE_LOCAL_DEV_ADMIN_UI"]) || (env["NOBIE_ADMIN_UI_SOURCE"] === "local-script" && envEnabled);
+    const localDevScriptEnabled = parseBooleanEnv(env["KNOWBEE_LOCAL_DEV_ADMIN_UI"]) || (env["KNOWBEE_ADMIN_UI_SOURCE"] === "local-script" && envEnabled);
     const runtimeFlagEnabled = envEnabled || cliEnabled || localDevScriptEnabled;
     const productionMode = isProductionMode(input.nodeEnv ?? env["NODE_ENV"]);
     if (productionMode && runtimeFlagEnabled && !configEnabled) {

@@ -286,7 +286,7 @@ export function buildExtensionRegistrySnapshot(input = {}) {
         permissionScope: entry.permissionScope,
     })));
     return {
-        kind: "nobie.extension.registry",
+        kind: "knowbee.extension.registry",
         version: 1,
         createdAt: (input.now ?? new Date()).toISOString(),
         checksum,

@@ -49,24 +49,24 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task028-learning-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task028-learning-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = undefined
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = undefined
   reloadConfig()
 }
 
 function restoreState(): void {
   closeDb()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -103,12 +103,12 @@ function capabilityPolicy(): CapabilityPolicy {
 function executionDecision(selectedExecutorId: string): AgentExecutionDecision {
   return {
     contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
-    current_executor_id: "agent:nobie",
+    current_executor_id: "agent:knowbee",
     domain: "learning_history_test",
     behavior_pattern: "delegate",
     execution_route: "delegate_to_child",
     selected_executor_id: selectedExecutorId,
-    selected_connection_path: ["agent:nobie", selectedExecutorId],
+    selected_connection_path: ["agent:knowbee", selectedExecutorId],
     task_profile: {
       title: "learning hint validated target",
       summary: "A decision-selected direct child should not be bypassed by learning hints.",
@@ -223,7 +223,7 @@ function registryAgent(agentId: string, specialtyTags: string[]): AgentRegistryE
 
 function registry(): OrchestrationRegistrySnapshot {
   const directChildrenByParent = {
-    "agent:nobie": ["agent:a"],
+    "agent:knowbee": ["agent:a"],
     "agent:a": ["agent:b"],
   }
   return {
@@ -232,7 +232,7 @@ function registry(): OrchestrationRegistrySnapshot {
     agents: [registryAgent("agent:a", ["research"]), registryAgent("agent:b", ["research"])],
     teams: [],
     hierarchy: {
-      rootAgentId: "agent:nobie",
+      rootAgentId: "agent:knowbee",
       fallbackActive: false,
       directChildrenByParent,
       topLevelSubAgentIds: ["agent:a"],
@@ -242,7 +242,7 @@ function registry(): OrchestrationRegistrySnapshot {
     capabilityIndex: {
       generatedAt: now,
       cacheKey: "task028",
-      rootAgentId: "agent:nobie",
+      rootAgentId: "agent:knowbee",
       topLevelCandidateAgentIds: ["agent:a"],
       directChildAgentIdsByParent: directChildrenByParent,
       candidateAgentIdsByParent: directChildrenByParent,

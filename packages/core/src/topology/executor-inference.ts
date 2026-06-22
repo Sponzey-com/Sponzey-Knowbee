@@ -323,7 +323,7 @@ function nodeTypeForRuntimeMode(mode: ExecutorRuntimeMode): ExecutorAdvancedMapp
 function executorKindForRuntimeMode(mode: ExecutorRuntimeMode): NonNullable<ExecutorDraft["advancedMapping"]>["executorKind"] {
   if (mode === "tool_execution") return "tool"
   if (mode === "external") return "external"
-  return "nobie"
+  return "knowbee"
 }
 
 function executorIdFromName(name: string, now: EnterpriseTimestamp | undefined): string {

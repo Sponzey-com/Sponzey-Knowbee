@@ -9,7 +9,7 @@ import {
 import { createSlackChunkDeliveryHandler } from "../packages/core/src/channels/slack/chunk-delivery.ts"
 import { createTelegramChunkDeliveryHandler } from "../packages/core/src/channels/telegram/chunk-delivery.ts"
 import { PATHS } from "../packages/core/src/config/index.js"
-import { eventBus, type ApprovalDecision, type ApprovalResolutionReason, type NobieEvents } from "../packages/core/src/events/index.js"
+import { eventBus, type ApprovalDecision, type ApprovalResolutionReason, type KnowbeeEvents } from "../packages/core/src/events/index.js"
 import { resetArtifactDeliveryDedupeForTest } from "../packages/core/src/runs/delivery.js"
 import {
   createSlackInboundSimulation,
@@ -137,7 +137,7 @@ describe("channel E2E simulator", () => {
     }
     const resolve = vi.fn()
     const timedOutResolve = vi.fn()
-    const approvalResolved: NobieEvents["approval.resolved"][] = []
+    const approvalResolved: KnowbeeEvents["approval.resolved"][] = []
     const off = eventBus.on("approval.resolved", (event) => approvalResolved.push(event))
 
     try {
@@ -256,7 +256,7 @@ describe("channel E2E simulator", () => {
       sendFinalResponse: vi.fn(),
       sendError: vi.fn(),
     }
-    const artifacts: NobieEvents["agent.artifact"][] = []
+    const artifacts: KnowbeeEvents["agent.artifact"][] = []
     const off = eventBus.on("agent.artifact", (artifact) => artifacts.push(artifact))
 
     try {

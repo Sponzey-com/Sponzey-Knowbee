@@ -35,7 +35,7 @@ describe("buildTaskIntakeSystemPrompt", () => {
     const prompt = buildTaskIntakeSystemPrompt()
 
     expect(prompt).toContain("sub_agent/delegate_to_child -> yeonjang -> self_solve")
-    expect(prompt).toContain("root_nobie_direct")
+    expect(prompt).toContain("root_knowbee_direct")
     expect(prompt).toContain("not as a delegation trigger by itself")
     expect(prompt).toContain("small clearly scoped change")
   })

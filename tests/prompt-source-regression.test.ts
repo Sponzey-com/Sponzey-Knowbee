@@ -2,13 +2,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { ensurePromptSourceFiles } from "../packages/core/src/memory/nobie-md.ts"
+import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
 import { runPromptSourceRegression } from "../packages/core/src/memory/prompt-regression.ts"
 
 const tempDirs: string[] = []
 
 function createSeededPromptRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), "nobie-prompt-regression-"))
+  const root = mkdtempSync(join(tmpdir(), "knowbee-prompt-regression-"))
   tempDirs.push(root)
   ensurePromptSourceFiles(root)
   return root
@@ -98,8 +98,8 @@ describe("prompt source regression suite", () => {
       "utf-8",
     )
     writeFileSync(
-      `${root}/prompts/nobie-execution.md`,
-      "# Nobie Execution\n\nUse keyword routing to select executors.",
+      `${root}/prompts/knowbee-execution.md`,
+      "# Knowbee Execution\n\nUse keyword routing to select executors.",
       "utf-8",
     )
     writeFileSync(

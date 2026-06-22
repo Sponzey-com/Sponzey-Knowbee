@@ -16,7 +16,7 @@ import {
 } from "../packages/core/src/channels/connections.ts"
 import type { ChannelCapabilities } from "../packages/core/src/channels/contracts.ts"
 import { reloadConfig } from "../packages/core/src/config/index.js"
-import { DEFAULT_CONFIG, type NobieConfig } from "../packages/core/src/config/types.ts"
+import { DEFAULT_CONFIG, type KnowbeeConfig } from "../packages/core/src/config/types.ts"
 import {
   closeDb,
   listChannelConnections,
@@ -24,16 +24,16 @@ import {
 } from "../packages/core/src/db/index.js"
 import { getFeatureFlag, setFeatureFlagMode } from "../packages/core/src/runtime/rollout-safety.ts"
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-channel-registry-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-channel-registry-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
   reloadConfig()
 }
 
@@ -43,10 +43,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -54,7 +54,7 @@ afterEach(() => {
   }
 })
 
-function configWithTelegram(patch: Partial<NobieConfig["telegram"]> = {}): NobieConfig {
+function configWithTelegram(patch: Partial<KnowbeeConfig["telegram"]> = {}): KnowbeeConfig {
   const config = structuredClone(DEFAULT_CONFIG)
   config.telegram = {
     enabled: true,

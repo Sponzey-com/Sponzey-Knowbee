@@ -2250,7 +2250,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nobie-yeonjang"
+name = "knowbee-yeonjang"
 version = "0.1.0"
 dependencies = [
  "anyhow",

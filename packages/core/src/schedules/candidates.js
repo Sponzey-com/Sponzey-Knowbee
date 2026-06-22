@@ -148,7 +148,7 @@ export function findScheduleCandidatesByContract(input) {
             matchedKey: `${incomingPayloadHash}:destination`,
         });
     }
-    // nobie-critical-decision-audit: schedules.candidates.semantic_candidate_boundary
+    // knowbee-critical-decision-audit: schedules.candidates.semantic_candidate_boundary
     // Vector/semantic/FTS hits can only enter as comparison-required candidates, never as final identity decisions.
     for (const schedule of input.semanticCandidates ?? []) {
         if (!includeDisabled && schedule.enabled !== 1)

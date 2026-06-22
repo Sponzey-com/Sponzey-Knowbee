@@ -28,8 +28,8 @@ vi.mock("../packages/core/src/memory/store.js", () => ({
   buildMemoryContext: (...args: unknown[]) => buildMemoryContextMock(...args),
 }))
 
-vi.mock("../packages/core/src/memory/nobie-md.js", () => ({
-  loadNobieMd: vi.fn(() => ""),
+vi.mock("../packages/core/src/memory/knowbee-md.js", () => ({
+  loadKnowbeeMd: vi.fn(() => ""),
   loadPromptSourceRegistry: vi.fn(() => []),
   loadSystemPromptSourceAssembly: vi.fn(() => null),
 }))
@@ -445,7 +445,7 @@ describe("runAgent streaming policy", () => {
     dispatchMock.mockResolvedValueOnce({
       success: false,
       output: [
-        "선택한 카메라 \"SamJokO's iPhone-17 Pro Max\" 에서는 전면 카메라를 Nobie/Yeonjang에서 강제로 선택할 수 없습니다.",
+        "선택한 카메라 \"SamJokO's iPhone-17 Pro Max\" 에서는 전면 카메라를 Knowbee/Yeonjang에서 강제로 선택할 수 없습니다.",
         "iPhone 연속성 카메라는 현재 렌즈(전면/후면) 전환 제어를 노출하지 않습니다.",
       ].join("\n"),
       error: "CAMERA_FACING_SELECTION_UNSUPPORTED",
@@ -497,7 +497,7 @@ describe("runAgent streaming policy", () => {
         toolName: "yeonjang_camera_capture",
         success: false,
         output: [
-          "선택한 카메라 \"SamJokO's iPhone-17 Pro Max\" 에서는 전면 카메라를 Nobie/Yeonjang에서 강제로 선택할 수 없습니다.",
+          "선택한 카메라 \"SamJokO's iPhone-17 Pro Max\" 에서는 전면 카메라를 Knowbee/Yeonjang에서 강제로 선택할 수 없습니다.",
           "iPhone 연속성 카메라는 현재 렌즈(전면/후면) 전환 제어를 노출하지 않습니다.",
         ].join("\n"),
       },

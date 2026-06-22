@@ -173,11 +173,11 @@ export function describeUnsupportedCapability(
     case "supportsEdits":
       return "This channel does not support message edits. A new corrected message is required."
     case "supportsDeletes":
-      return "This channel does not support message deletion through Nobie."
+      return "This channel does not support message deletion through Knowbee."
     case "supportsButtons":
-      return "This channel does not support interactive buttons. Nobie must use a text fallback or Web UI approval."
+      return "This channel does not support interactive buttons. Knowbee must use a text fallback or Web UI approval."
     case "supportsFiles":
-      return "This channel does not support native file delivery. Nobie must use a download link or another channel."
+      return "This channel does not support native file delivery. Knowbee must use a download link or another channel."
     case "supportsTypingIndicator":
       return "This channel does not support typing indicators. Progress must be shown with normal status messages."
     default:

@@ -8,7 +8,7 @@ function previewFingerprint(value) {
     return value.length <= 12 ? value : `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 function hostnameCandidate() {
-    return normalizeString(process.env["NOBIE_HOSTNAME"])
+    return normalizeString(process.env["KNOWBEE_HOSTNAME"])
         || normalizeString(process.env["COMPUTERNAME"])
         || normalizeString(process.env["HOSTNAME"])
         || "localhost";

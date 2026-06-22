@@ -2,7 +2,7 @@ import type { JsonObject } from "../contracts/index.js";
 import type { AgentRelationship, MemoryPolicy, TeamConfig, TeamMembership } from "../contracts/sub-agent-orchestration.js";
 import { type AgentTreeLayoutPreference } from "./hierarchy.js";
 import { type RegistryCoverageDimensionSnapshot, type RegistryServiceDependencies, type RegistryTeamHealthSnapshot } from "./registry.js";
-export type AgentTopologyNodeKind = "nobie" | "sub_agent" | "team" | "team_lead" | "team_role";
+export type AgentTopologyNodeKind = "knowbee" | "sub_agent" | "team" | "team_lead" | "team_role";
 export type AgentTopologyEdgeKind = "parent_child" | "team_membership";
 export type AgentTopologyDiagnosticSeverity = "info" | "warning" | "blocked" | "invalid";
 export type AgentTopologyEdgeStyle = "hierarchy" | "membership" | "membership_reference" | "lead" | "invalid";
@@ -47,7 +47,7 @@ export interface AgentTopologyEdge {
 export interface AgentTopologyAgentInspector {
     agentId: string;
     nodeId: string;
-    kind: "nobie" | "sub_agent";
+    kind: "knowbee" | "sub_agent";
     displayName: string;
     nickname?: string;
     status: string;

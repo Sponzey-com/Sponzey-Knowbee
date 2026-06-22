@@ -322,7 +322,7 @@ export function resolveTopologyConnectionIntent(
   target?: TopologyFlowNodeData,
 ): TopologyConnectionIntent {
   const sourceAgentId =
-    source?.kind === "nobie" || source?.kind === "sub_agent" ? source.entityId : ""
+    source?.kind === "knowbee" || source?.kind === "sub_agent" ? source.entityId : ""
   const targetSubAgentId = target?.kind === "sub_agent" ? target.entityId : ""
   if (sourceAgentId && targetSubAgentId) {
     return { kind: "parent_child", parentAgentId: sourceAgentId, childAgentId: targetSubAgentId }
@@ -370,7 +370,7 @@ export function topologyNodeTone(kind: AgentTopologyNodeKind, status?: string): 
   if (kind === "team") return "sky"
   if (kind === "team_lead") return "blue"
   if (kind === "team_role") return "teal"
-  if (kind === "nobie") return "stone"
+  if (kind === "knowbee") return "stone"
   return "emerald"
 }
 
@@ -473,7 +473,7 @@ function topologyTeamLayouts(
   const memberRolesByAgentId = new Map<string, "lead" | "member">()
   const availableAgentIds = new Set(
     projection.nodes
-      .filter((node) => node.kind === "nobie" || node.kind === "sub_agent")
+      .filter((node) => node.kind === "knowbee" || node.kind === "sub_agent")
       .map((node) => node.entityId),
   )
   for (const node of projection.nodes) {
@@ -813,7 +813,7 @@ export function buildTopologySummaryCards(
     ]
   }
   const agents = projection.nodes.filter(
-    (node) => node.kind === "nobie" || node.kind === "sub_agent",
+    (node) => node.kind === "knowbee" || node.kind === "sub_agent",
   )
   const teams = projection.nodes.filter((node) => node.kind === "team")
   const blocked = projection.diagnostics.filter(
@@ -873,7 +873,7 @@ export function buildTopologyAgentComposition(
 ): TopologyAgentComposition {
   const nodeById = new Map(projection.nodes.map((node) => [node.id, node]))
   const selectedNode = projection.nodes.find(
-    (node) => (node.kind === "nobie" || node.kind === "sub_agent") && node.entityId === agentId,
+    (node) => (node.kind === "knowbee" || node.kind === "sub_agent") && node.entityId === agentId,
   )
   const selectedNodeId = selectedNode?.id ?? ""
   const hierarchyEdges = projection.edges.filter((edge) => edge.kind === "parent_child")
@@ -888,7 +888,7 @@ export function buildTopologyAgentComposition(
     (parentTeam
       ? projection.nodes.find(
           (node) =>
-            (node.kind === "nobie" || node.kind === "sub_agent") &&
+            (node.kind === "knowbee" || node.kind === "sub_agent") &&
             node.entityId === parentTeam.ownerAgentId,
         )
       : undefined)
@@ -904,7 +904,7 @@ export function buildTopologyAgentComposition(
     .map((childAgentId) =>
       projection.nodes.find(
         (node) =>
-          (node.kind === "nobie" || node.kind === "sub_agent") &&
+          (node.kind === "knowbee" || node.kind === "sub_agent") &&
           node.entityId === childAgentId,
       ),
     )
@@ -956,7 +956,7 @@ export function buildTopologyTeamCompositionSummary(
 ): TopologyTeamCompositionSummary {
   const ownerNode = projection.nodes.find(
     (node) =>
-      (node.kind === "nobie" || node.kind === "sub_agent") && node.entityId === team.ownerAgentId,
+      (node.kind === "knowbee" || node.kind === "sub_agent") && node.entityId === team.ownerAgentId,
   )
   const referenceMemberCount = team.members.filter((member) => !member.active).length
   const blockedCandidateCount = team.builder.candidates.filter(

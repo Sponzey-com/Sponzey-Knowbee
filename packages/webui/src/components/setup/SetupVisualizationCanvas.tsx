@@ -76,7 +76,7 @@ export function SetupVisualizationCanvas({
                 : scene.id === "scene:personal"
                   ? t("프로필, 언어, 시간대, 작업 폴더가 이후 동작에 어떤 영향을 주는지 보여줍니다.", "Shows how identity, language, timezone, and workspace affect later behavior.")
                   : scene.id === "scene:ai_backends"
-                    ? t("노비 실행 경로를 중심으로 활성 AI와 대기 AI를 구분해 보여줍니다.", "Centers the Nobie execution path and separates the live AI from standby connections.")
+                    ? t("노우비 실행 경로를 중심으로 활성 AI와 대기 AI를 구분해 보여줍니다.", "Centers the Knowbee execution path and separates the live AI from standby connections.")
                     : scene.id === "scene:ai_routing"
                       ? t("AI 실행 대상이 현재 어떤 순서로 backend에 연결되는지 확장 장면으로 보여줍니다.", "Shows the current AI execution target order as an advanced expansion scene.")
                       : scene.id === "scene:mcp"

@@ -104,7 +104,7 @@ export interface BeginnerSubAgentCardView extends SubAgentSummaryView {
 }
 
 export interface BeginnerSubAgentSetupView {
-  orchestrationMode: "single_nobie" | "orchestration"
+  orchestrationMode: "single_knowbee" | "orchestration"
   summary: {
     rootDisplayName: string
     topLevelAgentCount: number
@@ -341,7 +341,7 @@ export type SubAgentSettingsValidationCode =
   | "display_name_required"
   | "attribution_label_required"
   | "nickname_duplicate"
-  | "reserved_nobie_name"
+  | "reserved_knowbee_name"
   | "catalog_id_missing"
   | "catalog_item_unavailable"
   | "model_id_missing"
@@ -369,7 +369,7 @@ export interface SubAgentSettingsValidationResult {
   issues: SubAgentSettingsValidationIssue[]
 }
 
-const RESERVED_ROOT_NAMES = new Set(["nobie", "노비"])
+const RESERVED_ROOT_NAMES = new Set(["knowbee", "노우비"])
 
 function cleanText(value: string | undefined): string {
   return value?.trim() ?? ""
@@ -501,7 +501,7 @@ function buildReadiness(
       [
         ...(cleanText(agent.displayName) ? [] : ["display_name_required"]),
         ...(duplicateNickname ? ["nickname_duplicate"] : []),
-        ...(isReservedRootName(agent.displayName) || isReservedRootName(agent.nickname) ? ["reserved_nobie_name"] : []),
+        ...(isReservedRootName(agent.displayName) || isReservedRootName(agent.nickname) ? ["reserved_knowbee_name"] : []),
       ],
     ),
     buildReadinessItem(
@@ -732,7 +732,7 @@ export function buildBeginnerSubAgentSetupView(input: BuildSubAgentSettingsViewI
           ? "needs_attention"
           : "ready"
   return {
-    orchestrationMode: savedAgents.length > 0 ? "orchestration" : "single_nobie",
+    orchestrationMode: savedAgents.length > 0 ? "orchestration" : "single_knowbee",
     summary,
     cards: summaries.map((summaryView) => {
       const agent = savedAgents.find((candidate) => candidate.agentId === summaryView.id)
@@ -940,7 +940,7 @@ function validateIdentityNameSet(
 ): void {
   for (const value of values) {
     if (isReservedRootName(value.value) || conflictsWithRootName(value.value, rootAgent)) {
-      pushIssue(issues, value.path, "reserved_nobie_name", "Only the root agent may use the Nobie name.")
+      pushIssue(issues, value.path, "reserved_knowbee_name", "Only the root agent may use the Knowbee name.")
     }
   }
 }

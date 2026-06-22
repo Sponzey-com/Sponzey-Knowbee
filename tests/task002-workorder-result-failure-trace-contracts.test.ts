@@ -24,7 +24,7 @@ function workOrder(): WorkOrder {
     workOrderId: "work-order:intake",
     topologyRunId: "topology-run:001",
     parentWorkOrderId: null,
-    fromNodeId: "node:nobie",
+    fromNodeId: "node:knowbee",
     to: { type: "node", id: "node:intake" },
     objective: "Triage the customer request.",
     scope: {
@@ -58,7 +58,7 @@ function workOrder(): WorkOrder {
       approvalRequired: false,
     },
     failureReportRequired: true,
-    delegationPath: ["node:nobie", "node:intake"],
+    delegationPath: ["node:knowbee", "node:intake"],
     createdAt: now,
   }
 }
@@ -105,7 +105,7 @@ function traceEvent(): TraceEvent {
     nodeRunId: "node-run:intake",
     workOrderId: "work-order:intake",
     parentWorkOrderId: null,
-    delegationPath: ["node:nobie", "node:intake"],
+    delegationPath: ["node:knowbee", "node:intake"],
     phase: "work_order",
     component: "work-order-builder",
     at: now,
@@ -243,7 +243,7 @@ describe("task002 WorkOrder, Result, Failure, Trace contracts", () => {
       authorityScope: workOrder().authorityScope,
       allowedToolIds: ["tool:crm-search"],
       allowedSystemIds: ["system:crm"],
-      delegationPath: ["node:nobie", "node:intake"],
+      delegationPath: ["node:knowbee", "node:intake"],
       createdAt: now,
       source: {
         nodeContractId: "node:intake",

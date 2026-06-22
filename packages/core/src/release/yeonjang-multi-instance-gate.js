@@ -342,7 +342,7 @@ export function buildYeonjangMultiInstanceReleaseGateSummary(options = {}) {
     const manualSmoke = buildManualSmokeChecklist();
     const warnings = manualSmoke.length > 0 ? ["manual_smoke_not_run"] : [];
     return {
-        kind: "nobie.release.yeonjang_multi_instance",
+        kind: "knowbee.release.yeonjang_multi_instance",
         generatedAt: (options.now ?? new Date()).toISOString(),
         policyVersion: "2026-05-18.yeonjang-multi-instance.release-gate.v1",
         gateStatus: blockingFailures.length > 0 ? "failed" : warnings.length > 0 ? "warning" : "passed",

@@ -7,12 +7,12 @@ export const SUB_AGENT_RELEASE_MODE_SEQUENCE = [
         title: "Feature flag off",
         featureFlagMode: "off",
         compatibilityMode: true,
-        trafficPolicy: "single_nobie_only",
+        trafficPolicy: "single_knowbee_only",
         promotionCriteria: [
-            "Single Nobie run creation and final-answer smoke pass.",
+            "Single Knowbee run creation and final-answer smoke pass.",
             "Registry is not touched when orchestration is disabled.",
         ],
-        rollbackAction: "Keep sub_agent_orchestration=off and continue on the single Nobie path.",
+        rollbackAction: "Keep sub_agent_orchestration=off and continue on the single Knowbee path.",
     },
     {
         id: "dry_run_only",
@@ -120,7 +120,7 @@ export function runSubAgentRestartResumeSoak(input = {}) {
         blockingFailures.push(`restart_recovery_p95:${base.restartRecoveryP95Ms}ms`);
     }
     return {
-        kind: "nobie.sub_agent.restart_resume_soak",
+        kind: "knowbee.sub_agent.restart_resume_soak",
         profileId: "release-short",
         generatedAt: now.toISOString(),
         durationMs: 30_000,
@@ -142,15 +142,15 @@ export function runSubAgentRestartResumeSoak(input = {}) {
 export function buildSubAgentRollbackEvidence(input = {}) {
     const now = input.now ?? new Date();
     const base = {
-        singleNobieModeRestored: true,
+        singleKnowbeeModeRestored: true,
         existingRunCreateSmokePassed: true,
         finalAnswerSmokePassed: true,
         migrationStatePreserved: true,
         ...input.overrides,
     };
     const blockingFailures = [];
-    if (!base.singleNobieModeRestored)
-        blockingFailures.push("single_nobie_mode_not_restored");
+    if (!base.singleKnowbeeModeRestored)
+        blockingFailures.push("single_knowbee_mode_not_restored");
     if (!base.existingRunCreateSmokePassed)
         blockingFailures.push("existing_run_create_smoke_failed");
     if (!base.finalAnswerSmokePassed)
@@ -158,13 +158,13 @@ export function buildSubAgentRollbackEvidence(input = {}) {
     if (!base.migrationStatePreserved)
         blockingFailures.push("migration_state_not_preserved");
     return {
-        kind: "nobie.sub_agent.rollback_evidence",
+        kind: "knowbee.sub_agent.rollback_evidence",
         generatedAt: now.toISOString(),
         featureFlagKey: "sub_agent_orchestration",
         featureFlagModeBeforeRollback: input.featureFlagModeBeforeRollback ?? "dual_write",
         featureFlagModeAfterRollback: "off",
         dataDeletionRequired: false,
-        singleNobieModeRestored: base.singleNobieModeRestored,
+        singleKnowbeeModeRestored: base.singleKnowbeeModeRestored,
         existingRunCreateSmokePassed: base.existingRunCreateSmokePassed,
         finalAnswerSmokePassed: base.finalAnswerSmokePassed,
         migrationStatePreserved: base.migrationStatePreserved,
@@ -192,7 +192,7 @@ function buildDryRunSummary(input) {
         ? "passed"
         : "failed";
     return {
-        kind: "nobie.sub_agent.release_dry_run",
+        kind: "knowbee.sub_agent.release_dry_run",
         generatedAt: input.now.toISOString(),
         orchestrationMode: {
             requestedMode: input.requestedMode,
@@ -350,7 +350,7 @@ export function buildSubAgentReleaseReadinessSummary(options = {}) {
             pass: rollback.status === "passed" &&
                 (featureFlagOffParity ? featureFlagOffParity.status === "passed" : true),
             releaseModes: ["flag_off", "dry_run_only", "limited_beta", "full_enable"],
-            summary: "Feature flag off returns to single Nobie mode without deleting runtime data.",
+            summary: "Feature flag off returns to single Knowbee mode without deleting runtime data.",
             evidence: {
                 rollback,
                 orchestrationCheck: featureFlagOffParity ?? null,
@@ -361,7 +361,7 @@ export function buildSubAgentReleaseReadinessSummary(options = {}) {
             title: "No sub-agent fallback",
             pass: noAgentFallback ? noAgentFallback.status === "passed" : true,
             releaseModes: ["flag_off", "dry_run_only", "limited_beta", "full_enable"],
-            summary: "No active sub-agent state falls back to the single Nobie path.",
+            summary: "No active sub-agent state falls back to the single Knowbee path.",
             evidence: { orchestrationCheck: noAgentFallback ?? null },
         }),
         gate({
@@ -574,7 +574,7 @@ export function buildSubAgentReleaseReadinessSummary(options = {}) {
             title: "Rollback by feature flag off",
             pass: rollback.status === "passed" && rollback.dataDeletionRequired === false,
             releaseModes: ["flag_off", "dry_run_only", "limited_beta", "full_enable"],
-            summary: "Rollback returns to single Nobie mode by disabling the feature flag without deleting data.",
+            summary: "Rollback returns to single Knowbee mode by disabling the feature flag without deleting data.",
             evidence: rollback,
         }),
     ];
@@ -592,7 +592,7 @@ export function buildSubAgentReleaseReadinessSummary(options = {}) {
             .map((check) => `${check.id}: ${check.summary}`),
     ];
     return {
-        kind: "nobie.sub_agent.release_readiness",
+        kind: "knowbee.sub_agent.release_readiness",
         version: 1,
         generatedAt: now.toISOString(),
         requestedMode,

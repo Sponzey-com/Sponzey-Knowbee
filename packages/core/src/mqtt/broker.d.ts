@@ -55,7 +55,7 @@ export interface MqttExtensionSnapshot {
 export interface MqttExchangeLogEntry {
     id: string;
     timestamp: number;
-    direction: "nobie_to_extension" | "extension_to_nobie";
+    direction: "knowbee_to_extension" | "extension_to_knowbee";
     topic: string;
     extensionId: string | null;
     kind: ExtensionTopicKind | "unknown";

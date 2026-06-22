@@ -21,16 +21,16 @@ import { buildExampleEnterpriseTopology } from "../packages/core/src/topology/ex
 import { createEnterpriseTopologyRegistry } from "../packages/core/src/topology/registry.js"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const now = Date.UTC(2026, 3, 23, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task001-orchestration-mode-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task001-orchestration-mode-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = join(stateDir, "config.json5")
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -40,10 +40,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -83,7 +83,7 @@ function memoryPolicy(agentId: string): MemoryPolicy {
 function orchestrationConfig(overrides: Partial<OrchestrationConfig> = {}): OrchestrationConfig {
   return {
     maxDelegationTurns: 5,
-    mode: "single_nobie",
+    mode: "single_knowbee",
     featureFlagEnabled: false,
     subAgents: [],
     teams: [],
@@ -141,7 +141,7 @@ describe("task001 orchestration mode baseline", () => {
     })
 
     expect(snapshot).toMatchObject({
-      mode: "single_nobie",
+      mode: "single_knowbee",
       status: "ready",
       requestedMode: "orchestration",
       featureFlagEnabled: false,
@@ -150,7 +150,7 @@ describe("task001 orchestration mode baseline", () => {
     })
   })
 
-  it("falls back to single_nobie and counts disabled DB agents when no active agent is available", () => {
+  it("falls back to single_knowbee and counts disabled DB agents when no active agent is available", () => {
     upsertAgentConfig(subAgent({ agentId: "agent:disabled", status: "disabled" }), { now })
 
     const snapshot = resolveOrchestrationModeSnapshotSync({
@@ -164,7 +164,7 @@ describe("task001 orchestration mode baseline", () => {
     })
 
     expect(snapshot).toMatchObject({
-      mode: "single_nobie",
+      mode: "single_knowbee",
       status: "ready",
       reasonCode: "no_active_sub_agents",
       activeSubAgentCount: 0,
@@ -187,7 +187,7 @@ describe("task001 orchestration mode baseline", () => {
     })
 
     expect(snapshot).toMatchObject({
-      mode: "single_nobie",
+      mode: "single_knowbee",
       reasonCode: "no_active_sub_agents",
       totalSubAgentCount: 1,
       disabledSubAgentCount: 1,
@@ -236,7 +236,7 @@ describe("task001 orchestration mode baseline", () => {
     ]))
   })
 
-  it("returns a degraded single_nobie snapshot when registry loading fails", () => {
+  it("returns a degraded single_knowbee snapshot when registry loading fails", () => {
     const snapshot = resolveOrchestrationModeSnapshotSync({
       getConfig: () => ({
         orchestration: orchestrationConfig({
@@ -251,7 +251,7 @@ describe("task001 orchestration mode baseline", () => {
     })
 
     expect(snapshot).toMatchObject({
-      mode: "single_nobie",
+      mode: "single_knowbee",
       status: "degraded",
       reasonCode: "registry_load_failed",
       activeSubAgentCount: 0,
@@ -272,13 +272,13 @@ describe("task001 orchestration mode baseline", () => {
     const statusBody = await routes.get("/api/status")?.()
     expect(statusBody).toMatchObject({
       orchestration: {
-        mode: "single_nobie",
+        mode: "single_knowbee",
         status: "ready",
-        reasonCode: "mode_single_nobie",
+        reasonCode: "mode_single_knowbee",
       },
       orchestratorStatus: {
-        mode: "single_nobie",
-        reasonCode: "mode_single_nobie",
+        mode: "single_knowbee",
+        reasonCode: "mode_single_knowbee",
       },
     })
 
@@ -287,15 +287,15 @@ describe("task001 orchestration mode baseline", () => {
       items: Array<{ key: string }>
     }
     expect(capabilitiesBody.orchestration).toMatchObject({
-      mode: "single_nobie",
+      mode: "single_knowbee",
       status: "ready",
-      reasonCode: "mode_single_nobie",
+      reasonCode: "mode_single_knowbee",
     })
     expect(capabilitiesBody.items.find((item) => item.key === "gateway.orchestrator")).toMatchObject({
       enabled: false,
       metadata: expect.objectContaining({
-        mode: "single_nobie",
-        reasonCode: "mode_single_nobie",
+        mode: "single_knowbee",
+        reasonCode: "mode_single_knowbee",
       }),
     })
   })

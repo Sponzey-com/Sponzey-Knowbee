@@ -19,8 +19,8 @@ import {
 } from "../packages/core/src/memory/inspector.ts"
 import { closeMemoryJournalDb } from "../packages/core/src/memory/journal.js"
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 class ManualControlProvider implements AIProvider {
@@ -53,7 +53,7 @@ class ManualControlProvider implements AIProvider {
 function useTempState(): void {
   closeDb()
   closeMemoryJournalDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task006-memory-controls-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task006-memory-controls-"))
   tempDirs.push(stateDir)
   const configPath = join(stateDir, "config.json5")
   writeFileSync(configPath, `{
@@ -73,8 +73,8 @@ function useTempState(): void {
       }
     }
   }`, "utf-8")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = configPath
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = configPath
   reloadConfig()
 }
 
@@ -114,7 +114,7 @@ function seedRootSessionState(): void {
       threadKey: "thread-task006-memory-controls",
     }),
     ownerScopeKey: "",
-    nicknameSnapshot: "노비",
+    nicknameSnapshot: "노우비",
     currentRawTokenEstimate: 180_000,
     currentRawMessageCount: 1,
     createdAt: now,
@@ -125,10 +125,10 @@ function seedRootSessionState(): void {
 afterEach(() => {
   closeDb()
   closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -143,7 +143,7 @@ describe("task006 memory inspector controls", () => {
 
     const before = buildMemoryInspectorSnapshot({
       ownerType: "main_agent",
-      ownerId: "agent:nobie",
+      ownerId: "agent:knowbee",
       sessionId: "session-task006-memory-controls",
       limit: 12,
     })
@@ -156,7 +156,7 @@ describe("task006 memory inspector controls", () => {
     const compactResult = await runMemoryInspectorControl({
       action: "force_compaction",
       ownerType: "main_agent",
-      ownerId: "agent:nobie",
+      ownerId: "agent:knowbee",
       sessionId: "session-task006-memory-controls",
       provider: new ManualControlProvider(),
       model: "compact-manual-control",
@@ -173,7 +173,7 @@ describe("task006 memory inspector controls", () => {
 
     const afterCompact = buildMemoryInspectorSnapshot({
       ownerType: "main_agent",
-      ownerId: "agent:nobie",
+      ownerId: "agent:knowbee",
       sessionId: "session-task006-memory-controls",
       limit: 12,
     })
@@ -187,7 +187,7 @@ describe("task006 memory inspector controls", () => {
     const invalidateResult = await runMemoryInspectorControl({
       action: "capsule_invalidate",
       ownerType: "main_agent",
-      ownerId: "agent:nobie",
+      ownerId: "agent:knowbee",
       sessionId: "session-task006-memory-controls",
       limit: 12,
     })
@@ -196,7 +196,7 @@ describe("task006 memory inspector controls", () => {
 
     const afterInvalidate = buildMemoryInspectorSnapshot({
       ownerType: "main_agent",
-      ownerId: "agent:nobie",
+      ownerId: "agent:knowbee",
       sessionId: "session-task006-memory-controls",
       limit: 12,
     })

@@ -16,8 +16,8 @@ import type { SourceEvidence } from "../packages/core/src/runs/web-retrieval-pol
 import type { RetrievalVerificationVerdict } from "../packages/core/src/runs/web-retrieval-verification.ts"
 
 let stateDir: string
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 
 const target = createRetrievalTargetContract({ kind: "finance_index", canonicalName: "KOSPI", symbols: ["KOSPI"], market: "KRX" })
 const sourceEvidence: SourceEvidence = {
@@ -52,19 +52,19 @@ const verdict: RetrievalVerificationVerdict = {
 
 beforeEach(() => {
   closeDb()
-  stateDir = mkdtempSync(join(tmpdir(), "nobie-task009-cache-"))
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = join(stateDir, "config.json5")
+  stateDir = mkdtempSync(join(tmpdir(), "knowbee-task009-cache-"))
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
   reloadConfig()
   getDb()
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   rmSync(stateDir, { recursive: true, force: true })
 })

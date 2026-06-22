@@ -27,7 +27,7 @@ jobs:
       - run: npm pack ./release/npm/core --pack-destination release/npm/tarballs
       - run: npm pack ./release/npm/webui --pack-destination release/npm/tarballs
       - run: npm pack ./release/npm/cli --pack-destination release/npm/tarballs
-      - run: npm pack ./release/npm/nobie --pack-destination release/npm/tarballs
+      - run: npm pack ./release/npm/knowbee --pack-destination release/npm/tarballs
       - uses: actions/upload-artifact@v4
         with:
           name: npm-js-tarballs
@@ -130,7 +130,7 @@ jobs:
             gh release upload "$GITHUB_REF_NAME" "${package_files[@]}" --clobber
           else
             gh release create "$GITHUB_REF_NAME" "${package_files[@]}" \
-              --title "Sponzey Nobie $GITHUB_REF_NAME" \
+              --title "Sponzey Knowbee $GITHUB_REF_NAME" \
               --notes "Compiled npm install packages for $GITHUB_REF_NAME."
           fi
         env:
@@ -160,7 +160,7 @@ jobs:
             'sponzey-webui-*.tgz' \
             'sponzey-cli-*.tgz' \
             'sponzey-yeonjang-*.tgz' \
-            'sponzey-nobie-*.tgz'
+            'sponzey-knowbee-*.tgz'
           do
             while IFS= read -r package_file
             do

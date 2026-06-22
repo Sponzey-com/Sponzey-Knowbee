@@ -34,7 +34,7 @@ Create the following sources if they do not exist.
 - `definitions`: `prompts/definitions.md`, shared terms and runtime concepts
 - `soul`: `prompts/soul.md`, long-term operating policy and completion rules
 - `planner`: `prompts/planner.md`, intake and execution-brief policy
-- `nobie_execution`: `prompts/nobie-execution.md`, shared execution decision policy for root Nobie and delegated agents
+- `knowbee_execution`: `prompts/knowbee-execution.md`, shared execution decision policy for root Knowbee and delegated agents
 - `memory_policy`: `prompts/memory_policy.md`, memory injection and write policy
 - `tool_policy`: `prompts/tool_policy.md`, tool selection and execution policy
 - `recovery_policy`: `prompts/recovery_policy.md`, failure classification and recovery policy
@@ -72,7 +72,7 @@ Create the following definitions if they do not exist.
 - task identity definition: separate run id, session key, request group id, lineage root run id, and parent run id.
 - receipt definition: execution and delivery completion are judged by structured receipts, not text claims.
 - recovery definition: record a recovery key to avoid repeating the same target and same error.
-- sub-agent hierarchy definition: separate Nobie, SubAgent, ParentAgent, ChildAgent, Team, TeamLead, and OrchestrationPlan.
+- sub-agent hierarchy definition: separate Knowbee, SubAgent, ParentAgent, ChildAgent, Team, TeamLead, and OrchestrationPlan.
 - delegation contract definition: separate `CommandRequest`, `DataExchangePackage`, `ResultReport`, and `FeedbackRequest`.
 - execution decision definition: every current agent can decide domain, behavior pattern, delegation, self-solve, and fallback from its own hierarchy position.
 - topology executor definition: visible executor nodes map user-facing work to graph execution plans, and count signals trigger alternative search instead of failure.

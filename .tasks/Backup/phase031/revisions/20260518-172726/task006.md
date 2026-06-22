@@ -63,7 +63,7 @@
 
 ### 구현 체크리스트
 
-- [x] Nobie와 각 agent inspector에 메모리 상태 카드를 추가한다.
+- [x] Knowbee와 각 agent inspector에 메모리 상태 카드를 추가한다.
 - [x] 표시 항목 정의:
 
   - [x] current raw token estimate

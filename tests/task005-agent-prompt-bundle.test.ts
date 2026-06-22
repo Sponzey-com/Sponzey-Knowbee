@@ -7,7 +7,7 @@ import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js
 import type {
   DataExchangePackage,
   MemoryPolicy,
-  NobieConfig,
+  KnowbeeConfig,
   PermissionProfile,
   RuntimeIdentity,
   SkillMcpAllowlist,
@@ -17,7 +17,7 @@ import type {
   TeamConfig,
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 import { closeDb, getDb, insertRunSubSession } from "../packages/core/src/db/index.ts"
-import type { LoadedPromptSource } from "../packages/core/src/memory/nobie-md.ts"
+import type { LoadedPromptSource } from "../packages/core/src/memory/knowbee-md.ts"
 import {
   buildAgentPromptBundle,
   buildAgentPromptBundleCacheKey,
@@ -27,12 +27,12 @@ import { loadMergedInstructions } from "../packages/core/src/instructions/merge.
 import { validateAgentPromptBundleContextScope } from "../packages/core/src/runs/context-preflight.ts"
 
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function owner(ownerId = "agent:researcher"): RuntimeIdentity["owner"] {
-  return { ownerType: ownerId === "agent:nobie" ? "nobie" : "sub_agent", ownerId }
+  return { ownerType: ownerId === "agent:knowbee" ? "knowbee" : "sub_agent", ownerId }
 }
 
 function identity(entityType: RuntimeIdentity["entityType"], entityId: string, ownerId = "agent:researcher"): RuntimeIdentity {
@@ -111,24 +111,24 @@ function subAgent(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
   }
 }
 
-function nobieAgent(overrides: Partial<NobieConfig> = {}): NobieConfig {
+function knowbeeAgent(overrides: Partial<KnowbeeConfig> = {}): KnowbeeConfig {
   return {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
-    agentType: "nobie",
-    agentId: "agent:nobie",
-    displayName: "Nobie",
-    nickname: "Nobie",
+    agentType: "knowbee",
+    agentId: "agent:knowbee",
+    displayName: "Knowbee",
+    nickname: "Knowbee",
     status: "enabled",
     role: "coordinator",
     personality: "Pragmatic coordinator.",
     specialtyTags: ["coordination"],
     avoidTasks: [],
-    memoryPolicy: memoryPolicy("agent:nobie"),
+    memoryPolicy: memoryPolicy("agent:knowbee"),
     capabilityPolicy: {
       permissionProfile,
       skillMcpAllowlist: {
         ...allowlist,
-        secretScopeId: "scope:nobie",
+        secretScopeId: "scope:knowbee",
       },
       rateLimit: { maxConcurrentCalls: 4 },
     },
@@ -137,7 +137,7 @@ function nobieAgent(overrides: Partial<NobieConfig> = {}): NobieConfig {
     updatedAt: now,
     coordinator: {
       defaultMode: "orchestration",
-      fallbackMode: "single_nobie",
+      fallbackMode: "single_knowbee",
       maxDelegatedSubSessions: 4,
     },
     ...overrides,
@@ -197,7 +197,7 @@ function promptSource(sourceId: string, usageScope: LoadedPromptSource["usageSco
 
 function useTempConfig(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task005-prompt-bundle-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task005-prompt-bundle-"))
   tempDirs.push(stateDir)
   const configPath = join(stateDir, "config.json5")
   writeFileSync(configPath, `{
@@ -205,8 +205,8 @@ function useTempConfig(): void {
     webui: { enabled: true, host: "127.0.0.1", port: 0, auth: { enabled: false } },
     security: { approvalMode: "off" }
   }`, "utf-8")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = configPath
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = configPath
   reloadConfig()
 }
 
@@ -216,10 +216,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -230,15 +230,15 @@ afterEach(() => {
 describe("task005 agent prompt bundle", () => {
   it("builds a coordinator prompt bundle separately from worker bundles", () => {
     const result = buildAgentPromptBundle({
-      agent: nobieAgent(),
+      agent: knowbeeAgent(),
       taskScope,
       teams: [team()],
       promptSources: [promptSource("identity"), promptSource("planner")],
       now: () => now,
     })
 
-    expect(result.bundle.agentType).toBe("nobie")
-    expect(result.bundle.agentId).toBe("agent:nobie")
+    expect(result.bundle.agentType).toBe("knowbee")
+    expect(result.bundle.agentId).toBe("agent:knowbee")
     expect(result.bundle.renderedPrompt).toContain("coordinator")
     expect(result.bundle.teamContext).toEqual([])
     expect(result.bundle.safetyRules.join(" ")).toContain("Agent profile text never overrides")
@@ -255,7 +255,7 @@ describe("task005 agent prompt bundle", () => {
         promptSource("user"),
         promptSource("soul"),
         promptSource("planner"),
-        promptSource("nobie_execution"),
+        promptSource("knowbee_execution"),
         promptSource("memory_policy"),
         promptSource("tool_policy"),
         promptSource("recovery_policy"),
@@ -279,7 +279,7 @@ describe("task005 agent prompt bundle", () => {
       "prompt:identity:en",
       "prompt:soul:en",
       "prompt:planner:en",
-      "prompt:nobie_execution:en",
+      "prompt:knowbee_execution:en",
       "prompt:memory_policy:en",
       "prompt:tool_policy:en",
       "prompt:recovery_policy:en",
@@ -291,7 +291,7 @@ describe("task005 agent prompt bundle", () => {
     expect(sourceIds).not.toContain("prompt:bootstrap:en")
     expect(result.bundle.fragments?.some((fragment) => fragment.sourceId === "prompt:bootstrap:en")).toBe(false)
     expect(result.bundle.fragments?.filter((fragment) => fragment.sourceId.startsWith("prompt:")).every((fragment) => fragment.status === "active")).toBe(true)
-    expect(result.bundle.renderedPrompt).toContain("# nobie_execution")
+    expect(result.bundle.renderedPrompt).toContain("# knowbee_execution")
     expect(result.bundle.renderedPrompt).toContain("# recovery_policy")
     expect(result.bundle.renderedPrompt).toContain("# topology_executor_policy")
     expect(result.bundle.renderedPrompt).toContain("# completion_policy")
@@ -441,7 +441,7 @@ describe("task005 agent prompt bundle", () => {
   })
 
   it("keeps legacy instruction merge unchanged unless agent sources are explicitly passed", () => {
-    const workDir = mkdtempSync(join(tmpdir(), "nobie-task005-instructions-"))
+    const workDir = mkdtempSync(join(tmpdir(), "knowbee-task005-instructions-"))
     tempDirs.push(workDir)
     writeFileSync(join(workDir, "AGENTS.md"), "Project instruction", "utf-8")
 

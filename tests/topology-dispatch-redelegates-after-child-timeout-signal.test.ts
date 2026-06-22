@@ -10,13 +10,13 @@ function plan(): OrchestrationPlan {
       schemaVersion: CONTRACT_SCHEMA_VERSION,
       entityType: "session",
       entityId: "session:phase027",
-      owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+      owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
       idempotencyKey: "plan:phase027",
     },
     planId: "plan:phase027",
     parentRunId: "run:phase027",
     parentRequestId: "request:phase027",
-    directNobieTasks: [],
+    directKnowbeeTasks: [],
     delegatedTasks: [
       {
         taskId: "task:finance",
@@ -51,7 +51,7 @@ function plan(): OrchestrationPlan {
     fallbackStrategy: {
       mode: "self_solve",
       reasonCode: "fallback_self_solve",
-      currentExecutorId: "agent:nobie",
+      currentExecutorId: "agent:knowbee",
     },
     createdAt: 1,
   }
@@ -83,7 +83,7 @@ describe("phase027 topology redispatch after child timeout signal", () => {
     const decision = resolveTopologyDispatchFollowupDecision({
       dispatchResult: dispatchResult(),
       plan: plan(),
-      currentExecutorId: "agent:nobie",
+      currentExecutorId: "agent:knowbee",
       availableDirectChildExecutorIds: [
         "workspace:draft:node:madang",
         "workspace:draft:node:hangrang",

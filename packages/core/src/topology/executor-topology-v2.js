@@ -1,7 +1,7 @@
 import { ENTERPRISE_TOPOLOGY_SCHEMA_VERSION } from "../contracts/enterprise-topology.js";
 import { buildExecutorProfileFromNode, } from "./executor-profile.js";
 export const EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION = 2;
-export const NOBIE_ROOT_AGENT_ID = "agent:nobie";
+export const KNOWBEE_ROOT_AGENT_ID = "agent:knowbee";
 export const EXECUTOR_TOPOLOGY_V2_SOURCE_FIELDS = [
     "node.id",
     "node.name",
@@ -61,7 +61,7 @@ const STALE_METADATA_KEYS = new Set([
     "inferredTools",
     "lastSelectedNodeId",
     "nodeDefinitionAlternatives",
-    "nobieUnderstanding",
+    "knowbeeUnderstanding",
     "recommendedEntry",
     "runtimeDiagnostic",
     "runtimeDiagnostics",
@@ -69,7 +69,7 @@ const STALE_METADATA_KEYS = new Set([
     "selectedNodeId",
     "suggestionAlternatives",
     "understanding",
-    "understoodByNobie",
+    "understoodByKnowbee",
     "workspace",
 ]);
 function isRecord(value) {
@@ -1344,7 +1344,7 @@ export function buildExecutorRuntimeGraphSnapshotV2(topology) {
     return {
         topologyId: topology.id,
         schemaVersion: EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION,
-        rootAgentId: NOBIE_ROOT_AGENT_ID,
+        rootAgentId: KNOWBEE_ROOT_AGENT_ID,
         nodes: activeNodes,
         edges: activeEdges,
         rootDirectChildIds,

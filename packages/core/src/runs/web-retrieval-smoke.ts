@@ -351,7 +351,7 @@ function liveScenario(id: string, title: string, request: string, target: WebRet
 }
 
 export function isLiveWebSmokeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env["NOBIE_LIVE_WEB_SMOKE"] === "1"
+  return env["KNOWBEE_LIVE_WEB_SMOKE"] === "1"
 }
 
 export function createDryRunWebRetrievalLiveSmokeExecutor(input: { traceOverrides?: Partial<Record<string, Partial<WebRetrievalLiveSmokeTrace>>> } = {}): (scenario: WebRetrievalLiveSmokeScenario) => Promise<WebRetrievalLiveSmokeTrace> {

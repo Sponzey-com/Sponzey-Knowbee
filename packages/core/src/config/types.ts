@@ -1,5 +1,5 @@
 import { homedir } from "node:os"
-import type { NobieConfig as NobieAgentConfig, SubAgentConfig, TeamConfig } from "../contracts/sub-agent-orchestration.js"
+import type { KnowbeeConfig as KnowbeeAgentConfig, SubAgentConfig, TeamConfig } from "../contracts/sub-agent-orchestration.js"
 
 export type AIConnectionProvider =
   | "openai"
@@ -175,9 +175,9 @@ export interface MemoryConfig {
 
 export interface OrchestrationConfig {
   maxDelegationTurns: number
-  mode?: "single_nobie" | "orchestration"
+  mode?: "single_knowbee" | "orchestration"
   featureFlagEnabled?: boolean
-  nobie?: NobieAgentConfig
+  knowbee?: KnowbeeAgentConfig
   subAgents?: SubAgentConfig[]
   teams?: TeamConfig[]
 }
@@ -215,7 +215,7 @@ export interface SkillsConfig {
   items: SkillConfigItem[]
 }
 
-export interface NobieConfig {
+export interface KnowbeeConfig {
   profile: ProfileConfig
   ai: {
     connection: AIConnectionConfig
@@ -237,10 +237,10 @@ export interface NobieConfig {
   skills?: SkillsConfig
 }
 
-export type WizbyConfig = NobieConfig
-export type HowieConfig = NobieConfig
+export type WizbyConfig = KnowbeeConfig
+export type HowieConfig = KnowbeeConfig
 
-export const DEFAULT_CONFIG: NobieConfig = {
+export const DEFAULT_CONFIG: KnowbeeConfig = {
   profile: {
     profileName: "",
     displayName: "",
@@ -362,7 +362,7 @@ export const DEFAULT_CONFIG: NobieConfig = {
   },
   orchestration: {
     maxDelegationTurns: 0,
-    mode: "single_nobie",
+    mode: "single_knowbee",
     featureFlagEnabled: false,
     subAgents: [],
     teams: [],

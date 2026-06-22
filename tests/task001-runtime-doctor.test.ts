@@ -8,18 +8,18 @@ import { buildRuntimeManifest } from "../packages/core/src/runtime/manifest.js"
 import { runDoctor, writeDoctorReportArtifact } from "../packages/core/src/diagnostics/doctor.js"
 import { createRootRun } from "../packages/core/src/runs/store.js"
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempConfig(configBody: string): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task001-doctor-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task001-doctor-"))
   tempDirs.push(stateDir)
   const configPath = join(stateDir, "config.json5")
   writeFileSync(configPath, configBody, "utf-8")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = configPath
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = configPath
   reloadConfig()
 }
 
@@ -72,10 +72,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -92,7 +92,7 @@ describe("task001 runtime manifest and doctor", () => {
     })
     const serialized = JSON.stringify(manifest)
 
-    expect(manifest.kind).toBe("nobie.runtime.manifest")
+    expect(manifest.kind).toBe("knowbee.runtime.manifest")
     expect(manifest.id).toHaveLength(24)
     expect(manifest.provider).toMatchObject({
       provider: "openai",

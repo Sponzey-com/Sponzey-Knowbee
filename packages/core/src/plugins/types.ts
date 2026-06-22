@@ -1,5 +1,5 @@
 /**
- * 스폰지 노비 · Sponzey Nobie Plugin System — type definitions.
+ * 스폰지 노우비 · Sponzey Knowbee Plugin System — type definitions.
  */
 
 import type { AnyTool } from "../tools/types.js"
@@ -28,7 +28,7 @@ export interface PluginMeta {
 }
 
 /** Interface that every plugin module must export as default */
-export interface NobiePlugin {
+export interface KnowbeePlugin {
   /** Unique name, kebab-case (e.g. "my-plugin") */
   name: string
   version: string
@@ -41,5 +41,5 @@ export interface NobiePlugin {
   teardown?(): Promise<void> | void
 }
 
-export type WizbyPlugin = NobiePlugin
-export type HowiePlugin = NobiePlugin
+export type WizbyPlugin = KnowbeePlugin
+export type HowiePlugin = KnowbeePlugin

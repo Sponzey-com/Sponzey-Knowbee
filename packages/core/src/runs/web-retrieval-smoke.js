@@ -180,7 +180,7 @@ function liveScenario(id, title, request, target) {
     };
 }
 export function isLiveWebSmokeEnabled(env = process.env) {
-    return env["NOBIE_LIVE_WEB_SMOKE"] === "1";
+    return env["KNOWBEE_LIVE_WEB_SMOKE"] === "1";
 }
 export function createDryRunWebRetrievalLiveSmokeExecutor(input = {}) {
     return async (scenario) => {

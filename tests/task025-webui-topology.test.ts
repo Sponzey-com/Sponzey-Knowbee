@@ -142,16 +142,16 @@ function projection(): AgentTopologyProjection {
   return {
     schemaVersion: 1,
     generatedAt: now,
-    rootAgentId: "agent:nobie",
+    rootAgentId: "agent:knowbee",
     nodes: [
       {
-        id: "agent:agent:nobie",
-        kind: "nobie",
-        entityId: "agent:nobie",
-        label: "Nobie",
+        id: "agent:agent:knowbee",
+        kind: "knowbee",
+        entityId: "agent:knowbee",
+        label: "Knowbee",
         status: "enabled",
         position: { x: 80, y: 80 },
-        badges: ["Nobie"],
+        badges: ["Knowbee"],
         data: {},
         diagnostics: [],
       },
@@ -191,9 +191,9 @@ function projection(): AgentTopologyProjection {
     ],
     edges: [
       {
-        id: "relationship:agent:nobie->agent:alpha",
+        id: "relationship:agent:knowbee->agent:alpha",
         kind: "parent_child",
-        source: "agent:agent:nobie",
+        source: "agent:agent:knowbee",
         target: "agent:agent:alpha",
         label: "parent child",
         valid: true,
@@ -436,9 +436,9 @@ describe("task025 webui topology helpers", () => {
           ],
         },
       ],
-      "agent:nobie",
+      "agent:knowbee",
     )
-    expect([...workingAgentIds].sort()).toEqual(["agent:beta", "agent:gamma", "agent:nobie"])
+    expect([...workingAgentIds].sort()).toEqual(["agent:beta", "agent:gamma", "agent:knowbee"])
 
     const runtime = projection()
     runtime.nodes.push({
@@ -591,7 +591,7 @@ describe("task025 webui topology helpers", () => {
     const team = teamInspector()
     const summary = buildTopologyTeamCompositionSummary(runtime, team)
 
-    expect(alpha.parent?.id).toBe("agent:nobie")
+    expect(alpha.parent?.id).toBe("agent:knowbee")
     expect(alpha.children.map((child) => child.id)).toEqual(["agent:beta"])
     expect(alpha.ownedTeams.map((ownedTeam) => ownedTeam.id)).toEqual(["team:topology"])
     expect(buildTopologyAgentTeamAssignments(alpha).map((team) => team.id)).toEqual([
@@ -705,9 +705,9 @@ describe("task025 webui topology helpers", () => {
     ).toBe(true)
     expect(
       canArchiveTopologySelection({
-        nodeId: "agent:agent:nobie",
-        kind: "nobie",
-        entityId: "agent:nobie",
+        nodeId: "agent:agent:knowbee",
+        kind: "knowbee",
+        entityId: "agent:knowbee",
       }),
     ).toBe(false)
   })

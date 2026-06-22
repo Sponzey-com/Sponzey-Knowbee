@@ -37,8 +37,8 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
   }): Promise<{ statusCode: number; json(): Record<string, unknown> }>
 }
 
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const tempDirs: string[] = []
 
 function draftFixture(overrides: Partial<NodeDefinitionDraft> = {}): NodeDefinitionDraft {
@@ -59,10 +59,10 @@ function draftFixture(overrides: Partial<NodeDefinitionDraft> = {}): NodeDefinit
 function useTempState(): void {
   closeDb()
   resetTopologyGuiDraftStoreForTest()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task021b-node-definition-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task021b-node-definition-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json")
   reloadConfig()
 }
 
@@ -73,10 +73,10 @@ afterEach(() => {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.NOBIE_STATE_DIR
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.NOBIE_CONFIG
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
 })
 
@@ -355,7 +355,7 @@ describe("task021b node definition suggestion contract", () => {
 
   it("returns a friendly API error when no registered LLM is configured", async () => {
     useTempState()
-    writeFileSync(process.env.NOBIE_CONFIG!, JSON.stringify({ ai: { connection: { provider: "", model: "" } } }), "utf-8")
+    writeFileSync(process.env.KNOWBEE_CONFIG!, JSON.stringify({ ai: { connection: { provider: "", model: "" } } }), "utf-8")
     reloadConfig()
     const app = Fastify({ logger: false })
     registerTopologyRoutes(app)

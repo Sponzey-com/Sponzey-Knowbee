@@ -127,7 +127,7 @@ export async function startServer(): Promise<void> {
       }
       return reply
         .status(404)
-        .send({ error: "WebUI not built. Run: pnpm build --filter @nobie/webui" })
+        .send({ error: "WebUI not built. Run: pnpm build --filter @knowbee/webui" })
     })
   }
 

@@ -69,7 +69,7 @@ fn main() -> Result<()> {
     }
 
     eprintln!(
-        "Usage: nobie-yeonjang [--gui | --managed | --stdio | --write-icon <path> | --exec <command> | --exec-bin <program> [args...] | --camera-capture-helper <args...>]"
+        "Usage: knowbee-yeonjang [--gui | --managed | --stdio | --write-icon <path> | --exec <command> | --exec-bin <program> [args...] | --camera-capture-helper <args...>]"
     );
     std::process::exit(2);
 }
@@ -118,7 +118,7 @@ fn run_exec_shell(command: String) -> Result<()> {
 
 fn run_exec_binary(args: Vec<String>) -> Result<()> {
     let Some(program) = args.first().cloned() else {
-        eprintln!("Usage: nobie-yeonjang --exec-bin <program> [args...]");
+        eprintln!("Usage: knowbee-yeonjang --exec-bin <program> [args...]");
         std::process::exit(2);
     };
 

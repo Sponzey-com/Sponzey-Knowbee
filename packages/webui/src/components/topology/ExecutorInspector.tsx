@@ -184,8 +184,8 @@ export function ExecutorInspector({
         </div>
         <div className="mt-3 rounded-lg border border-dashed border-stone-200 p-4 text-sm text-stone-500">
           {text(
-            "실행자를 선택하면 여기에서 노비가 이해한 내용을 확인합니다.",
-            "Select an executor to review what Nobie understood.",
+            "실행자를 선택하면 여기에서 노우비가 이해한 내용을 확인합니다.",
+            "Select an executor to review what Knowbee understood.",
           )}
         </div>
       </section>
@@ -225,19 +225,19 @@ export function ExecutorInspector({
           <div className="mt-1 break-words text-xs text-stone-500 [overflow-wrap:anywhere]">
             {subAgentSummary?.kind === "root"
               ? text(
-                  "노비는 직접 하위 서브 에이전트에게만 일을 위임합니다.",
-                  "Nobie delegates only to direct child sub-agents.",
+                  "노우비는 직접 하위 서브 에이전트에게만 일을 위임합니다.",
+                  "Knowbee delegates only to direct child sub-agents.",
                 )
               : text(
-                  "이름과 성격을 정하면 노비가 실행 구조를 안에서 정리합니다.",
-                  "Define the name and character; Nobie prepares the run structure internally.",
+                  "이름과 성격을 정하면 노우비가 실행 구조를 안에서 정리합니다.",
+                  "Define the name and character; Knowbee prepares the run structure internally.",
                 )}
           </div>
         </div>
         <span
           className="max-w-full shrink-0 break-words rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-semibold leading-4 text-stone-700 [overflow-wrap:anywhere]"
           title={text(
-            "아래 노비가 이해한 내용에서 저장을 누르면 이 정의가 저장됩니다.",
+            "아래 노우비가 이해한 내용에서 저장을 누르면 이 정의가 저장됩니다.",
             "Press Save in the understanding panel below to save this definition.",
           )}
         >

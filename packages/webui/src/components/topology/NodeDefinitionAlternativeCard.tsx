@@ -13,7 +13,7 @@ export const NODE_DEFINITION_FIELD_LABELS: Record<NodeDefinitionField, string> =
   successCriteria: "성공 기준",
   capabilityHints: "필요한 능력",
   toolHints: "필요한 도구",
-  understandingSummary: "노비가 이해한 내용",
+  understandingSummary: "노우비가 이해한 내용",
 }
 
 export interface NodeDefinitionAlternativeCardProps {

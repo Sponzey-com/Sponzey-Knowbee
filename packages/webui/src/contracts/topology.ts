@@ -1,4 +1,4 @@
-export type AgentTopologyNodeKind = "nobie" | "sub_agent" | "team" | "team_lead" | "team_role"
+export type AgentTopologyNodeKind = "knowbee" | "sub_agent" | "team" | "team_lead" | "team_role"
 
 export type AgentTopologyEdgeKind = "parent_child" | "team_membership"
 export type AgentTopologyEdgeStyle =
@@ -53,7 +53,7 @@ export interface AgentTopologyEdge {
 export interface AgentTopologyAgentInspector {
   agentId: string
   nodeId: string
-  kind: "nobie" | "sub_agent"
+  kind: "knowbee" | "sub_agent"
   displayName: string
   nickname?: string
   status: string
@@ -267,7 +267,7 @@ export interface ExecutorTopologyV2 {
 export interface ExecutorRuntimeGraphSnapshotV2 {
   topologyId: string
   schemaVersion: ExecutorTopologyV2SchemaVersion
-  rootAgentId: "agent:nobie"
+  rootAgentId: "agent:knowbee"
   nodes: ExecutorNodeV2[]
   edges: ExecutorEdgeV2[]
   rootDirectChildIds: string[]

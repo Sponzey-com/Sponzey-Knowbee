@@ -137,7 +137,7 @@ function normalizeGatewayArch() {
     }
 }
 function hostnameCandidate() {
-    return normalizeString(process.env["NOBIE_HOSTNAME"])
+    return normalizeString(process.env["KNOWBEE_HOSTNAME"])
         || normalizeString(process.env["COMPUTERNAME"])
         || normalizeString(process.env["HOSTNAME"])
         || "localhost";
@@ -154,10 +154,10 @@ function gatewayHostFingerprint() {
     return stableHexHash(`${hostnameCandidate()}|${normalizeGatewayOs()}|${normalizeGatewayArch()}`);
 }
 function defaultWorkspaceScopeId() {
-    return normalizeString(process.env["NOBIE_YEONJANG_WORKSPACE_SCOPE_ID"]) || DEFAULT_WORKSPACE_SCOPE_ID;
+    return normalizeString(process.env["KNOWBEE_YEONJANG_WORKSPACE_SCOPE_ID"]) || DEFAULT_WORKSPACE_SCOPE_ID;
 }
 function defaultOwnerUserId() {
-    return normalizeString(process.env["NOBIE_YEONJANG_OWNER_USER_ID"]) || DEFAULT_OWNER_USER_ID;
+    return normalizeString(process.env["KNOWBEE_YEONJANG_OWNER_USER_ID"]) || DEFAULT_OWNER_USER_ID;
 }
 export function hashYeonjangPairingSecret(secret) {
     return createHash("sha256").update(secret.trim(), "utf8").digest("hex");

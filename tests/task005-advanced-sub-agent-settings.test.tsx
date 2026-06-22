@@ -127,7 +127,7 @@ function visibleText(markup: string): string {
 }
 
 describe("task005 advanced sub-agent settings", () => {
-  it("builds an empty advanced shell without treating single Nobie mode as an error", () => {
+  it("builds an empty advanced shell without treating single Knowbee mode as an error", () => {
     const view = buildSubAgentAdvancedSettingsView({
       draft: {
         ...draft(),
@@ -141,7 +141,7 @@ describe("task005 advanced sub-agent settings", () => {
       language: "ko",
     })
 
-    expect(view.emptyState.kind).toBe("single_nobie")
+    expect(view.emptyState.kind).toBe("single_knowbee")
     expect(view.rows).toHaveLength(0)
     expect(view.statusBar.validationTone).toBe("info")
     expect(view.globalPolicy.orchestrationModeLabel).toContain("단일")

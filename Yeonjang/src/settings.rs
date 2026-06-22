@@ -131,7 +131,7 @@ impl Default for PermissionSettings {
 
 impl YeonjangSettings {
     pub fn reset_topics_from_node_id(&mut self) {
-        let prefix = format!("nobie/v1/node/{}", self.node_id.trim());
+        let prefix = format!("knowbee/v1/node/{}", self.node_id.trim());
         self.mqtt.status_topic = format!("{prefix}/status");
         self.mqtt.capabilities_topic = format!("{prefix}/capabilities");
         self.mqtt.request_topic = format!("{prefix}/request");
@@ -183,7 +183,7 @@ impl YeonjangSettings {
 }
 
 pub fn settings_path() -> PathBuf {
-    if let Some(project_dirs) = ProjectDirs::from("com", "Sponzey", "Nobie") {
+    if let Some(project_dirs) = ProjectDirs::from("com", "Sponzey", "Knowbee") {
         return project_dirs
             .config_dir()
             .join("yeonjang")
@@ -234,7 +234,7 @@ fn ensure_parent_dir(path: &Path) -> Result<()> {
 }
 
 fn hostname_candidate() -> String {
-    env::var("NOBIE_HOSTNAME")
+    env::var("KNOWBEE_HOSTNAME")
         .or_else(|_| env::var("COMPUTERNAME"))
         .or_else(|_| env::var("HOSTNAME"))
         .unwrap_or_else(|_| "localhost".to_string())

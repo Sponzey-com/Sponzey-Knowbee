@@ -17,24 +17,24 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousAdminUi = process.env["NOBIE_ADMIN_UI"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousAdminUi = process.env["KNOWBEE_ADMIN_UI"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const previousNodeEnv = process.env["NODE_ENV"]
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-admin-shell-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-admin-shell-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
-  delete process.env["NOBIE_ADMIN_UI"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
+  delete process.env["KNOWBEE_ADMIN_UI"]
   delete process.env["NODE_ENV"]
   reloadConfig()
 }
 
 function enableAdminUi(): void {
-  process.env["NOBIE_ADMIN_UI"] = "1"
+  process.env["KNOWBEE_ADMIN_UI"] = "1"
   reloadConfig()
 }
 
@@ -44,12 +44,12 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousAdminUi === undefined) delete process.env["NOBIE_ADMIN_UI"]
-  else process.env["NOBIE_ADMIN_UI"] = previousAdminUi
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousAdminUi === undefined) delete process.env["KNOWBEE_ADMIN_UI"]
+  else process.env["KNOWBEE_ADMIN_UI"] = previousAdminUi
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   if (previousNodeEnv === undefined) delete process.env["NODE_ENV"]
   else process.env["NODE_ENV"] = previousNodeEnv
   reloadConfig()

@@ -8,7 +8,7 @@ import { getDb, getRunSubSession, listRunSubSessionsForParentRun } from "../db/i
 import { redactUiValue } from "../ui/redaction.js";
 import { createAgentRegistryService, createTeamRegistryService, } from "./registry.js";
 import { controlSubSession, getSubSessionInfo, listSubSessionLogs, sanitizeSubSessionControlText, spawnSubSessionAck, } from "./sub-session-control.js";
-const DEFAULT_PARENT_AGENT_ID = "agent:nobie";
+const DEFAULT_PARENT_AGENT_ID = "agent:knowbee";
 const FOCUS_BINDINGS_FILE = "focus-bindings.json";
 const COMMAND_LIMIT = 80;
 const COMMANDS = [

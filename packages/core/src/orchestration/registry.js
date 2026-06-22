@@ -7,7 +7,7 @@ import { normalizeLegacyAgentConfigRow, normalizeLegacyTeamConfigRow, } from "./
 import { createLegacyTopologyRegistry, legacyTopologyEnvelopeToExecutorCompatibilityEnvelope, } from "../topology/legacy-enterprise-topology-adapter.js";
 export const EXECUTOR_PROFILE_SCHEMA_VERSION = 1;
 export const EXECUTOR_PROFILE_METADATA_KEY = "executorProfile";
-const DEFAULT_ROOT_AGENT_ID = "agent:nobie";
+const DEFAULT_ROOT_AGENT_ID = "agent:knowbee";
 const COLD_REGISTRY_TARGET_P95_MS = 500;
 const HOT_INDEX_TARGET_P95_MS = 100;
 const TEAM_RECALCULATION_KEYS = [
@@ -66,7 +66,7 @@ function subAgentFromAgentConfig(config) {
     return config.agentType === "sub_agent" ? config : undefined;
 }
 function rootAgentIdFromConfig(config) {
-    return config.nobie?.agentId ?? DEFAULT_ROOT_AGENT_ID;
+    return config.knowbee?.agentId ?? DEFAULT_ROOT_AGENT_ID;
 }
 function runtimeConfigModelProfile(config) {
     const connection = config.ai?.connection ?? getConfig().ai.connection;
@@ -249,7 +249,7 @@ function topologySubAgentConfigs(now, runtimeModelProfile, rootAgentId) {
                 memoryPolicy: {
                     owner: { ownerType: "sub_agent", ownerId: agentId },
                     visibility: "coordinator_visible",
-                    readScopes: [{ ownerType: "nobie", ownerId: rootAgentId }],
+                    readScopes: [{ ownerType: "knowbee", ownerId: rootAgentId }],
                     writeScope: { ownerType: "sub_agent", ownerId: agentId },
                     retentionPolicy: "short_term",
                     writebackReviewRequired: true,
@@ -393,7 +393,7 @@ function buildInvalidationSnapshot(config, runtimeModelProfile) {
         enterprise_topology_versions: tableFingerprint("enterprise_topology_versions"),
     };
     const configHash = sha256(stableStringify({
-        nobie: config.nobie,
+        knowbee: config.knowbee,
         subAgents: config.subAgents ?? [],
         teams: config.teams ?? [],
         runtimeModelProfile,
@@ -1237,9 +1237,9 @@ function fallbackRegistrySnapshot(input) {
             hotIndexTargetP95Ms: HOT_INDEX_TARGET_P95_MS,
         },
         fallback: {
-            mode: "single_nobie",
+            mode: "single_knowbee",
             reasonCode: "registry_load_failed",
-            reason: `Registry snapshot failed and fell back to single Nobie mode: ${detail}`,
+            reason: `Registry snapshot failed and fell back to single Knowbee mode: ${detail}`,
         },
         membershipEdges: [],
         diagnostics: [

@@ -1,15 +1,15 @@
 import { type ContractSchemaVersion, type ContractValidationResult, type JsonObject, type JsonValue } from "./index.js";
 import type { ChannelSource } from "../channels/contracts.js";
 export declare const SUB_AGENT_CONTRACT_SCHEMA_VERSION: 1;
-export type AgentEntityType = "nobie" | "sub_agent";
+export type AgentEntityType = "knowbee" | "sub_agent";
 export type RelationshipEntityType = AgentEntityType | "team" | "session" | "sub_session" | "capability" | "data_exchange";
 export type AgentStatus = "enabled" | "disabled" | "archived" | "degraded";
-export type OrchestrationMode = "single_nobie" | "orchestration";
-export type OrchestrationFallbackStrategyMode = "self_solve" | "direct_current_agent" | "return_to_parent" | "ask_parent" | "ask_user" | "fail_with_reason" | "root_nobie_direct" | "explicit_provider" | "single_nobie";
+export type OrchestrationMode = "single_knowbee" | "orchestration";
+export type OrchestrationFallbackStrategyMode = "self_solve" | "direct_current_agent" | "return_to_parent" | "ask_parent" | "ask_user" | "fail_with_reason" | "root_knowbee_direct" | "explicit_provider" | "single_knowbee";
 export type OrchestrationSelectedExecutorSource = "execution_decision";
 export type SessionContractSource = ChannelSource | "scheduler" | "system";
 export type SubSessionStatus = "created" | "queued" | "running" | "waiting_for_input" | "awaiting_approval" | "completed" | "needs_revision" | "failed" | "cancelled";
-export type TaskExecutionKind = "direct_nobie" | "delegated_sub_agent";
+export type TaskExecutionKind = "direct_knowbee" | "delegated_sub_agent";
 export type ResourceLockKind = "file" | "display" | "channel" | "mcp_server" | "secret_scope" | "external_target" | "custom";
 export type CapabilityRiskLevel = "safe" | "moderate" | "external" | "sensitive" | "dangerous";
 export type DepthScopedToolKind = "session_control" | "system" | "mcp" | "shell" | "filesystem" | "network" | "screen" | "other";
@@ -22,7 +22,7 @@ export type TeamResultPolicyMode = "lead_synthesis" | "owner_synthesis" | "revie
 export type TeamConflictPolicyMode = "lead_decides" | "owner_decides" | "reviewer_decides" | "report_conflict";
 export type TeamMembershipStatus = "active" | "inactive" | "fallback_only" | "removed";
 export type AgentRelationshipStatus = "active" | "disabled" | "archived";
-export type FeedbackTargetAgentPolicy = "same_agent" | "alternative_direct_child" | "parent_decides" | "fallback_agent" | "lead_assigns" | "nobie_direct";
+export type FeedbackTargetAgentPolicy = "same_agent" | "alternative_direct_child" | "parent_decides" | "fallback_agent" | "lead_assigns" | "knowbee_direct";
 export interface ModelProfile {
     providerId: string;
     modelId: string;
@@ -81,7 +81,7 @@ export interface NicknameNamespaceConflict {
     attempted: NicknameNamespaceEntry;
 }
 export interface OwnerScope {
-    ownerType: "nobie" | "sub_agent" | "team" | "system";
+    ownerType: "knowbee" | "sub_agent" | "team" | "system";
     ownerId: string;
 }
 export interface ParentLinkage {
@@ -163,11 +163,11 @@ export interface BaseAgentConfig {
     createdAt: number;
     updatedAt: number;
 }
-export interface NobieConfig extends BaseAgentConfig {
-    agentType: "nobie";
+export interface KnowbeeConfig extends BaseAgentConfig {
+    agentType: "knowbee";
     coordinator: {
         defaultMode: OrchestrationMode;
-        fallbackMode: "single_nobie";
+        fallbackMode: "single_knowbee";
         maxDelegatedSubSessions: number;
     };
 }
@@ -176,7 +176,7 @@ export interface SubAgentConfig extends BaseAgentConfig {
     teamIds: string[];
     delegation: DelegationPolicy;
 }
-export type AgentConfig = NobieConfig | SubAgentConfig;
+export type AgentConfig = KnowbeeConfig | SubAgentConfig;
 export interface TeamMembership {
     membershipId: string;
     teamId: string;
@@ -437,7 +437,7 @@ export interface OrchestrationPlan {
     planId: string;
     parentRunId: string;
     parentRequestId: string;
-    directNobieTasks: OrchestrationTask[];
+    directKnowbeeTasks: OrchestrationTask[];
     delegatedTasks: OrchestrationTask[];
     dependencyEdges: DependencyEdgeContract[];
     resourceLocks: ResourceLockContract[];
@@ -453,7 +453,7 @@ export interface OrchestrationPlan {
         semanticComparisonUsed: false;
         reasonCodes: string[];
         fastPath?: {
-            classification: "direct_nobie" | "delegation_candidate" | "workflow_candidate";
+            classification: "direct_knowbee" | "delegation_candidate" | "workflow_candidate";
             reasonCodes: string[];
             targetP95Ms: number;
             latencyMs: number;
@@ -489,7 +489,7 @@ export interface OrchestrationFallbackStrategy {
     unresolvedReason?: string;
     userMessage?: string;
     /**
-     * Legacy snapshots may still contain `single_nobie`; new planners must not
+     * Legacy snapshots may still contain `single_knowbee`; new planners must not
      * emit it. The field lets readers surface a non-fatal compatibility warning
      * without rejecting stored runs.
      */

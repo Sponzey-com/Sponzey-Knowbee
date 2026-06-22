@@ -62,7 +62,7 @@ function draft(overrides: Partial<SetupDraft> = {}): SetupDraft {
 
 function checks(overrides: Partial<SetupChecksResponse> = {}): SetupChecksResponse {
   return {
-    stateDir: "/tmp/nobie-task006",
+    stateDir: "/tmp/knowbee-task006",
     configFile: "",
     setupStateFile: "",
     setupCompleted: false,

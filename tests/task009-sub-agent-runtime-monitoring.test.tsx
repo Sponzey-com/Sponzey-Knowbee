@@ -94,9 +94,9 @@ function baseDraft(): SetupDraft {
             at: 1_780_000_200_000,
             kind: "request_received",
             status: "running",
-            actorAgentId: "agent:nobie",
+            actorAgentId: "agent:knowbee",
             targetAgentId: "agent:lead",
-            summary: "Nobie가 Lead에게 요청을 전달했습니다.",
+            summary: "Knowbee가 Lead에게 요청을 전달했습니다.",
             reason: "channel token=raw-secret sk-raw-secret-should-hide",
             debug: { relatedTaskId: "task:secret-debug" },
           },
@@ -172,8 +172,8 @@ function baseDraft(): SetupDraft {
             kind: "final_delivery_prepared",
             status: "completed",
             actorAgentId: "agent:lead",
-            targetAgentId: "agent:nobie",
-            summary: "Lead가 Nobie에게 최종 전달 준비를 마쳤습니다.",
+            targetAgentId: "agent:knowbee",
+            summary: "Lead가 Knowbee에게 최종 전달 준비를 마쳤습니다.",
             reviewStatus: "final_ready",
             quality: "sufficient",
             latestResultSummary: "최종 답변 준비 완료",
@@ -223,7 +223,7 @@ describe("task009 sub-agent runtime monitoring", () => {
     )
     expect(view.selectedAgent?.monitoring.traceItems.map((item) => item.actorLabel)).not.toContain("agent:lead")
     expect(view.selectedAgent?.monitoring.traceItems.map((item) => item.targetLabel)).not.toContain("agent:research")
-    expect(view.selectedAgent?.monitoring.treePaths).toContain("Nobie -> Lead -> Researcher")
+    expect(view.selectedAgent?.monitoring.treePaths).toContain("Knowbee -> Lead -> Researcher")
   })
 
   it("renders review, aggregation, and redelegation state before final delivery", () => {

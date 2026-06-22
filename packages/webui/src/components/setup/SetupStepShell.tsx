@@ -72,7 +72,7 @@ export function SetupStepShell({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-stone-500">
-                {pickUiText(language, "Nobie 설정", "Nobie Setup")}
+                {pickUiText(language, "Knowbee 설정", "Knowbee Setup")}
               </div>
               <h1 className="mt-2 text-2xl font-semibold leading-tight">{title}</h1>
             </div>

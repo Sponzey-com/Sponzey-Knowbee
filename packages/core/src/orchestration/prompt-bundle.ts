@@ -14,7 +14,7 @@ import {
   type TeamConfig,
   normalizeNicknameSnapshot,
 } from "../contracts/sub-agent-orchestration.js"
-import { type LoadedPromptSource, loadPromptSourceRegistry } from "../memory/nobie-md.js"
+import { type LoadedPromptSource, loadPromptSourceRegistry } from "../memory/knowbee-md.js"
 import {
   type PromptBundleContextMemoryRef,
   validateAgentPromptBundleContextScope,

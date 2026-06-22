@@ -866,7 +866,7 @@ function buildPersistedTeamMemberships(config) {
 }
 function persistedTeamShape(input) {
     const memberships = buildPersistedTeamMemberships(input);
-    const ownerAgentId = input.ownerAgentId ?? memberships[0]?.agentId ?? "agent:nobie";
+    const ownerAgentId = input.ownerAgentId ?? memberships[0]?.agentId ?? "agent:knowbee";
     const leadAgentId = input.leadAgentId ?? memberships[0]?.agentId ?? ownerAgentId;
     const memberAgentIds = uniqueStrings([
         ...input.memberAgentIds,
@@ -987,7 +987,7 @@ function reconcileSubAgentStorageDerivedFields(db) {
             const fallbackMemberAgentIds = memberAgentIds.length > 0 ? memberAgentIds : parseJsonStringArray(row.member_agent_ids_json);
             const roleHints = asStringArray(config?.["roleHints"]);
             const fallbackRoleHints = roleHints.length > 0 ? roleHints : parseJsonStringArray(row.role_hints_json);
-            const ownerAgentId = asString(config?.["ownerAgentId"]) ?? fallbackMemberAgentIds[0] ?? "agent:nobie";
+            const ownerAgentId = asString(config?.["ownerAgentId"]) ?? fallbackMemberAgentIds[0] ?? "agent:knowbee";
             const leadAgentId = asString(config?.["leadAgentId"]) ?? fallbackMemberAgentIds[0] ?? ownerAgentId;
             const requiredCount = memberships.length > 0
                 ? memberships.filter((membership) => isRecord(membership) ? (asBoolean(membership["required"]) ?? true) : false).length

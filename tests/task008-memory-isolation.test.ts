@@ -20,25 +20,25 @@ import { validateAgentPromptBundleContextScope } from "../packages/core/src/runs
 import { buildDataExchangeJournalRecord } from "../packages/core/src/runs/journaling.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task008-memory-isolation-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task008-memory-isolation-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
   reloadConfig()
 }
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -67,13 +67,13 @@ function memoryPolicy(writeOwner: OwnerScope): MemoryPolicy {
 
 describe("task008 memory isolation and data exchange", () => {
   it("keeps owner memory scoped and requires data exchange for cross-agent context", async () => {
-    const nobie = owner("nobie", "agent:nobie")
+    const knowbee = owner("knowbee", "agent:knowbee")
     const researcher = owner("sub_agent", "agent:researcher")
     const stored = await storeOwnerScopedMemory({
-      owner: nobie,
+      owner: knowbee,
       visibility: "private",
       retentionPolicy: "long_term",
-      rawText: "TASK008_NOBIE_PRIVATE_CONTEXT coordinator-only evidence",
+      rawText: "TASK008_KNOWBEE_PRIVATE_CONTEXT coordinator-only evidence",
       sourceType: "test",
       title: "coordinator memory",
     })
@@ -83,10 +83,10 @@ describe("task008 memory isolation and data exchange", () => {
         `SELECT owner_id, metadata_json FROM memory_documents WHERE id = ?`,
       )
       .get(stored.documentId)
-    expect(document?.owner_id).toBe("agent:nobie")
+    expect(document?.owner_id).toBe("agent:knowbee")
     expect(JSON.parse(document?.metadata_json ?? "{}")).toMatchObject({
-      ownerType: "nobie",
-      ownerId: "agent:nobie",
+      ownerType: "knowbee",
+      ownerId: "agent:knowbee",
       visibility: "private",
       retentionPolicy: "long_term",
       historyVersion: 1,
@@ -94,22 +94,22 @@ describe("task008 memory isolation and data exchange", () => {
 
     await expect(searchOwnerScopedMemory({
       requester: researcher,
-      owner: nobie,
-      query: "TASK008_NOBIE_PRIVATE_CONTEXT",
+      owner: knowbee,
+      query: "TASK008_KNOWBEE_PRIVATE_CONTEXT",
     })).rejects.toMatchObject({
       reasonCode: "cross_agent_memory_requires_data_exchange",
     })
 
     const direct = await searchOwnerScopedMemory({
-      requester: nobie,
-      owner: nobie,
-      query: "TASK008_NOBIE_PRIVATE_CONTEXT",
+      requester: knowbee,
+      owner: knowbee,
+      query: "TASK008_KNOWBEE_PRIVATE_CONTEXT",
     })
     expect(direct.accessMode).toBe("owner_direct")
     expect(direct.memoryResults).toHaveLength(1)
 
     const exchange = buildMemorySummaryDataExchange({
-      sourceOwner: nobie,
+      sourceOwner: knowbee,
       recipientOwner: researcher,
       purpose: "temporary sub-agent context",
       allowedUse: "temporary_context",
@@ -129,15 +129,15 @@ describe("task008 memory isolation and data exchange", () => {
 
     const viaExchange = await searchOwnerScopedMemory({
       requester: researcher,
-      owner: nobie,
-      query: "TASK008_NOBIE_PRIVATE_CONTEXT",
+      owner: knowbee,
+      query: "TASK008_KNOWBEE_PRIVATE_CONTEXT",
       exchanges: [exchange],
       now,
     })
     expect(viaExchange.accessMode).toBe("recipient_via_exchange")
     expect(viaExchange.memoryResults).toHaveLength(0)
     expect(viaExchange.exchangeRefs).toMatchObject([{
-      owner: nobie,
+      owner: knowbee,
       visibility: "private",
       sourceRef: "exchange:exchange:task008:context",
       dataExchangeId: "exchange:task008:context",
@@ -146,7 +146,7 @@ describe("task008 memory isolation and data exchange", () => {
 
   it("redacts sensitive exchange payloads and validates required exchange metadata", () => {
     const pkg = createDataExchangePackage({
-      sourceOwner: owner("nobie", "agent:nobie"),
+      sourceOwner: owner("knowbee", "agent:knowbee"),
       recipientOwner: owner("sub_agent", "agent:researcher"),
       purpose: "verification",
       allowedUse: "verification_only",
@@ -176,7 +176,7 @@ describe("task008 memory isolation and data exchange", () => {
   })
 
   it("blocks prompt context when exchange is expired, missing provenance, or not context-allowed", () => {
-    const nobie = owner("nobie", "agent:nobie")
+    const knowbee = owner("knowbee", "agent:knowbee")
     const researcher = owner("sub_agent", "agent:researcher")
     const bundle = {
       agentId: "agent:researcher",
@@ -184,7 +184,7 @@ describe("task008 memory isolation and data exchange", () => {
       memoryPolicy: memoryPolicy(researcher),
     }
     const baseMemoryRef = {
-      owner: nobie,
+      owner: knowbee,
       visibility: "private" as const,
       sourceRef: "memory:coordinator-private",
     }
@@ -197,7 +197,7 @@ describe("task008 memory isolation and data exchange", () => {
     expect(noExchange.issueCodes).toContain("private_memory_without_explicit_exchange")
 
     const expired = createDataExchangePackage({
-      sourceOwner: nobie,
+      sourceOwner: knowbee,
       recipientOwner: researcher,
       purpose: "context",
       allowedUse: "temporary_context",
@@ -219,7 +219,7 @@ describe("task008 memory isolation and data exchange", () => {
     expect(expiredValidation.issueCodes).toContain("data_exchange_expired")
 
     const memoryCandidate = createDataExchangePackage({
-      sourceOwner: nobie,
+      sourceOwner: knowbee,
       recipientOwner: researcher,
       purpose: "candidate",
       allowedUse: "memory_candidate",
@@ -275,7 +275,7 @@ describe("task008 memory isolation and data exchange", () => {
   it("records exchange id and source session in the run journal payload", () => {
     const exchange = createDataExchangePackage({
       sourceOwner: owner("sub_agent", "agent:researcher"),
-      recipientOwner: owner("nobie", "agent:nobie"),
+      recipientOwner: owner("knowbee", "agent:knowbee"),
       purpose: "parent verification",
       allowedUse: "verification_only",
       retentionPolicy: "discard_after_review",

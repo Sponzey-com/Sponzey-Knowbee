@@ -223,7 +223,7 @@ describe("task001 visualization foundation", () => {
   it("extends SetupStepShell with non-breaking visualization slots", () => {
     const tree = SetupStepShell({
       title: "Initial Setup",
-      description: "Configure Nobie",
+      description: "Configure Knowbee",
       steps: steps(),
       currentStep: "personal",
       onSelectStep: () => undefined,
@@ -260,7 +260,7 @@ describe("task001 visualization foundation", () => {
   it("keeps SetupStepShell body-only rendering unchanged when slots are absent", () => {
     const tree = SetupStepShell({
       title: "Initial Setup",
-      description: "Configure Nobie",
+      description: "Configure Knowbee",
       steps: steps(),
       currentStep: "welcome",
       onSelectStep: () => undefined,

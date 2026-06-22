@@ -45,8 +45,8 @@ export interface SubAgentTopologyProjection {
   summaries: Map<string, TopologySubAgentSummary>
 }
 
-const NOBIE_AGENT_ID = "agent:nobie"
-const NOBIE_DISPLAY_NAME = "Nobie"
+const KNOWBEE_AGENT_ID = "agent:knowbee"
+const KNOWBEE_DISPLAY_NAME = "Knowbee"
 
 export function hasSetupSubAgentTopology(draft: SetupDraft): boolean {
   return (draft.subAgents?.items ?? []).some((item) => item.status !== "archived")
@@ -63,8 +63,8 @@ export function buildSubAgentTopologyProjection(input: {
     ...items.map((item, index) => subAgentNode(item, index, now)),
   ]
   const edges: ExecutorEdgeV2[] = items.map((item, index) => ({
-    id: `edge:nobie:${index + 1}`,
-    sourceNodeId: NOBIE_AGENT_ID,
+    id: `edge:knowbee:${index + 1}`,
+    sourceNodeId: KNOWBEE_AGENT_ID,
     targetNodeId: item.agentId,
     type: "delegates_to",
     label: "위임",
@@ -73,7 +73,7 @@ export function buildSubAgentTopologyProjection(input: {
   const topology: ExecutorTopologyV2 = {
     schemaVersion: EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION,
     id: "topology:sub-agent-setup",
-    name: "Nobie sub-agent team",
+    name: "Knowbee sub-agent team",
     status: input.draft.subAgents?.orchestrationEnabled ? "active" : "draft",
     activeVersion: 1,
     nodes,
@@ -113,13 +113,13 @@ export function buildTopologySubAgentSummaryMap(input: {
   const lastRuntimeSeenAtByAgentId = input.draft.subAgents?.lastRuntimeSeenAtByAgentId ?? {}
   const map = new Map<string, TopologySubAgentSummary>()
 
-  if (graphIds.has(NOBIE_AGENT_ID) || items.length > 0) {
-    map.set(NOBIE_AGENT_ID, {
+  if (graphIds.has(KNOWBEE_AGENT_ID) || items.length > 0) {
+    map.set(KNOWBEE_AGENT_ID, {
       kind: "root",
-      displayName: NOBIE_DISPLAY_NAME,
-      nickname: NOBIE_DISPLAY_NAME,
+      displayName: KNOWBEE_DISPLAY_NAME,
+      nickname: KNOWBEE_DISPLAY_NAME,
       role: "메인 에이전트",
-      description: "노비는 최상위에서 직접 하위 서브 에이전트에게만 일을 위임합니다.",
+      description: "노우비는 최상위에서 직접 하위 서브 에이전트에게만 일을 위임합니다.",
       parentDisplayName: "",
       directChildLabels: items.map((item) => item.displayName),
       childCount: items.length,
@@ -152,7 +152,7 @@ export function buildTopologySubAgentSummaryMap(input: {
       nickname: item.nickname || item.displayName,
       role: item.role,
       description: item.description,
-      parentDisplayName: NOBIE_DISPLAY_NAME,
+      parentDisplayName: KNOWBEE_DISPLAY_NAME,
       directChildLabels: [],
       childCount: 0,
       readinessState,
@@ -179,7 +179,7 @@ export function applyTopologyExecutorToSetupDraft(
   executor: ExecutorDraft,
   now: number | string = Date.now(),
 ): SetupDraft {
-  if (executor.id === NOBIE_AGENT_ID || !draft.subAgents) return draft
+  if (executor.id === KNOWBEE_AGENT_ID || !draft.subAgents) return draft
   const updatedAt = typeof now === "number" ? now : Date.now()
   const items = draft.subAgents.items.map((item) => {
     if (item.agentId !== executor.id) return item
@@ -211,15 +211,15 @@ function activeSubAgentItems(draft: SetupDraft): SetupSubAgentDraftItem[] {
 
 function rootNode(now: number | string): ExecutorNodeV2 {
   return {
-    id: NOBIE_AGENT_ID,
-    name: NOBIE_DISPLAY_NAME,
+    id: KNOWBEE_AGENT_ID,
+    name: KNOWBEE_DISPLAY_NAME,
     roleName: "메인 에이전트",
     description: "최상위에서 직접 하위 서브 에이전트에게 일을 위임합니다.",
     position: { x: 120, y: 80 },
     status: "active",
     profile: executorProfile({
-      id: NOBIE_AGENT_ID,
-      name: NOBIE_DISPLAY_NAME,
+      id: KNOWBEE_AGENT_ID,
+      name: KNOWBEE_DISPLAY_NAME,
       roleName: "메인 에이전트",
       description: "최상위에서 직접 하위 서브 에이전트에게 일을 위임합니다.",
     }),
@@ -311,8 +311,8 @@ function executorDraftFromNode(node: ExecutorNodeV2): ExecutorDraft {
     name: node.name,
     description: node.description,
     position: node.position,
-    inferredRuntimeMode: node.id === NOBIE_AGENT_ID ? "auto" : "tool_execution",
-    inferredCapabilities: node.id === NOBIE_AGENT_ID ? ["직접 하위 위임"] : [node.roleName ?? node.description],
+    inferredRuntimeMode: node.id === KNOWBEE_AGENT_ID ? "auto" : "tool_execution",
+    inferredCapabilities: node.id === KNOWBEE_AGENT_ID ? ["직접 하위 위임"] : [node.roleName ?? node.description],
     inferredTools: [],
     inferredOutputs: ["처리 결과"],
     inferredSuccessCriteria: ["맡은 일을 완료하고 상위 에이전트에게 보고"],
@@ -323,7 +323,7 @@ function executorDraftFromNode(node: ExecutorNodeV2): ExecutorDraft {
     sourceNodeId: node.id,
     advancedMapping: {
       nodeType: "function",
-      executorKind: node.id === NOBIE_AGENT_ID ? "nobie" : "agent",
+      executorKind: node.id === KNOWBEE_AGENT_ID ? "knowbee" : "agent",
       executorId: node.id,
     },
   }

@@ -73,7 +73,7 @@ interface DispatchTraceEvent {
   sequence: number
 }
 
-const ROOT_NODE_ID = "node:nobie"
+const ROOT_NODE_ID = "node:knowbee"
 
 function uniqueStrings(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value?.trim())))]

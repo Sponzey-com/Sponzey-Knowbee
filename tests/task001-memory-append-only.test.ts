@@ -20,16 +20,16 @@ import { closeMemoryJournalDb } from "../packages/core/src/memory/journal.js"
 import type { MemoryCapsule } from "../packages/core/src/memory/capsule.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 
 function useTempState(): void {
   closeDb()
   closeMemoryJournalDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task001-memory-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task001-memory-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
   reloadConfig()
 }
 
@@ -39,14 +39,14 @@ function baseCapsule(capsuleId: string, createdAt: number): MemoryCapsule {
     capsuleVersion: 1,
     ownerScope: {
       ownerType: "main_agent",
-      ownerId: "agent:nobie",
+      ownerId: "agent:knowbee",
       sessionId: "session-append",
       requestGroupId: "group-append",
       lineageId: "lineage-append",
       channelKey: "webui",
       threadKey: "thread-append",
     },
-    nicknameSnapshot: "노비",
+    nicknameSnapshot: "노우비",
     capsuleKind: "session_compaction",
     summary: `캡슐 ${capsuleId} 요약`,
     activeObjectives: ["현재 작업 유지"],
@@ -71,10 +71,10 @@ beforeEach(() => {
 afterEach(() => {
   closeDb()
   closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -131,7 +131,7 @@ describe("task001 append-only memory capsule persistence", () => {
       sourceKind: "message",
       sourceId: "msg-1",
       ownerType: "main_agent",
-      ownerId: "agent:nobie",
+      ownerId: "agent:knowbee",
       metadata: { ordinal: 0 },
     })
     const projection = projectMemoryCapsuleToCompatibilityStores(firstCapsule)
@@ -154,7 +154,7 @@ describe("task001 append-only memory capsule persistence", () => {
     const continuity = getTaskContinuity("lineage-append")
     const listedCapsules = listMemoryCapsulesForOwner({
       ownerType: "main_agent",
-      ownerId: "agent:nobie",
+      ownerId: "agent:knowbee",
       sessionId: "session-append",
     })
 

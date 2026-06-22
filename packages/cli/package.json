@@ -1,9 +1,9 @@
 {
-  "name": "@nobie/cli",
+  "name": "@knowbee/cli",
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "nobie": "./dist/index.js",
+    "knowbee": "./dist/index.js",
     "wizby": "./dist/index.js",
     "howie": "./dist/index.js"
   },
@@ -17,7 +17,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@nobie/core": "workspace:*",
+    "@knowbee/core": "workspace:*",
     "commander": "^12.1.0"
   }
 }

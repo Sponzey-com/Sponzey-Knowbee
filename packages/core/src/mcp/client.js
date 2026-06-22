@@ -58,7 +58,7 @@ export function buildMcpToolCallPayload(name, args, context) {
         name,
         arguments: args,
         _meta: {
-            nobie: {
+            knowbee: {
                 agent_id: context.agentId,
                 session_id: context.sessionId,
                 ...(context.bindingId ? { binding_id: context.bindingId } : {}),
@@ -105,7 +105,7 @@ export class McpStdioClient {
         await this.request("initialize", {
             protocolVersion: DEFAULT_PROTOCOL_VERSION,
             clientInfo: {
-                name: "nobie",
+                name: "knowbee",
                 version: "0.1.0",
             },
             capabilities: {},

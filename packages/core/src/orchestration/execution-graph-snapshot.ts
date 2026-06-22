@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { getConfig, type NobieConfig } from "../config/index.js"
+import { getConfig, type KnowbeeConfig } from "../config/index.js"
 import { listAgentRelationships } from "../db/index.js"
 import {
   createLegacyTopologyRegistry,
@@ -21,7 +21,7 @@ import {
   type RegistryServiceDependencies,
 } from "./registry.js"
 
-export const EXECUTION_GRAPH_ROOT_AGENT_ID = "agent:nobie" as const
+export const EXECUTION_GRAPH_ROOT_AGENT_ID = "agent:knowbee" as const
 export const WORKSPACE_DRAFT_TOPOLOGY_ID = "workspace:draft" as const
 
 export type ExecutionGraphBuildMode = "workspace" | "active_deployment" | "db_config"
@@ -107,7 +107,7 @@ export interface BuildExecutionGraphSnapshotInput {
   registrySnapshot?: OrchestrationRegistrySnapshot
   loadRegistrySnapshot?: () => OrchestrationRegistrySnapshot
   registryDependencies?: RegistryServiceDependencies
-  getConfig?: () => Pick<NobieConfig, "orchestration"> & Partial<Pick<NobieConfig, "ai">>
+  getConfig?: () => Pick<KnowbeeConfig, "orchestration"> & Partial<Pick<KnowbeeConfig, "ai">>
 }
 
 interface SelectedTopologyGraph {
@@ -139,7 +139,7 @@ function sha256(value: string): string {
 function rootAgentIdFromInput(input: BuildExecutionGraphSnapshotInput): string {
   if (input.rootAgentId?.trim()) return input.rootAgentId
   const cfg = input.getConfig?.() ?? getConfig()
-  return cfg.orchestration.nobie?.agentId ?? EXECUTION_GRAPH_ROOT_AGENT_ID
+  return cfg.orchestration.knowbee?.agentId ?? EXECUTION_GRAPH_ROOT_AGENT_ID
 }
 
 function topologyAgentId(topologyId: string, nodeId: string): string {

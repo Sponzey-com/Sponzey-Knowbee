@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   base: "/",
   server: {
-    port: Number(process.env.NOBIE_WEBUI_PORT ?? 4220),
+    port: Number(process.env.KNOWBEE_WEBUI_PORT ?? 4220),
     strictPort: true,
     proxy: {
       "/api": "http://localhost:18888",

@@ -105,7 +105,7 @@ function retrievalTimeline(): RetrievalTimeline {
 
 function doctor(): DoctorReport {
   return {
-    kind: "nobie.doctor.report",
+    kind: "knowbee.doctor.report",
     version: 1,
     id: "doctor-task008",
     mode: "quick",

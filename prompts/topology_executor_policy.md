@@ -1,6 +1,6 @@
 # Topology Executor Policy
 
-This policy defines how the current agent interprets and executes the visible executor graph. Root Nobie and delegated agents use the same graph boundary rules from their own hierarchy position.
+This policy defines how the current agent interprets and executes the visible executor graph. Root Knowbee and delegated agents use the same graph boundary rules from their own hierarchy position.
 
 ---
 
@@ -40,7 +40,7 @@ This policy defines how the current agent interprets and executes the visible ex
 
 - When an executor node has a matching accessible direct child sub-agent, connected next executor, or team member, prefer that route.
 - If no suitable sub-agent exists, evaluate Yeonjang.
-- If Yeonjang is not suitable, the current agent may self-solve within its own role, tools, and permission boundary. Root Nobie uses direct handling when there is no parent/requesting agent.
+- If Yeonjang is not suitable, the current agent may self-solve within its own role, tools, and permission boundary. Root Knowbee uses direct handling when there is no parent/requesting agent.
 - Missing topology runtime opt-in, an inactive topology, or an unavailable topology route is not permission to jump to a provider. It is a graph/runtime fallback signal for the current agent.
 - Simple, clearly scoped changes can be handled directly when direct handling is faster and lower risk.
 - Phrases such as "deeply", "thoroughly", "carefully", or "깊게 봐줘" increase reasoning and verification depth. They are not by themselves delegation triggers.

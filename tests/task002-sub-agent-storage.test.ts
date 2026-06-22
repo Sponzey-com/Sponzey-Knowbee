@@ -50,21 +50,21 @@ import {
 } from "../packages/core/src/index.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task002-sub-agent-storage-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task002-sub-agent-storage-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = join(stateDir, "config.json5")
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
   reloadConfig()
 }
 
-function owner(ownerId = "agent:nobie"): RuntimeIdentity["owner"] {
-  return { ownerType: "nobie", ownerId }
+function owner(ownerId = "agent:knowbee"): RuntimeIdentity["owner"] {
+  return { ownerType: "knowbee", ownerId }
 }
 
 function identity(entityType: RuntimeIdentity["entityType"], entityId: string): RuntimeIdentity {
@@ -176,10 +176,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -234,7 +234,7 @@ describe("task002 sub-agent storage", () => {
     })
     const memory = storeMemoryDocument({
       scope: "long-term",
-      ownerId: "agent:nobie",
+      ownerId: "agent:knowbee",
       sourceType: "test",
       sourceRef: "task002",
       title: "Existing memory",
@@ -295,7 +295,7 @@ describe("task002 sub-agent storage", () => {
     const exchange: DataExchangePackage = {
       identity: identity("data_exchange", "exchange:1"),
       exchangeId: "exchange:1",
-      sourceOwner: { ownerType: "nobie", ownerId: "agent:nobie" },
+      sourceOwner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
       recipientOwner: { ownerType: "sub_agent", ownerId: "agent:researcher" },
       purpose: "verification context",
       allowedUse: "verification_only",
@@ -312,7 +312,7 @@ describe("task002 sub-agent storage", () => {
     const delegation: CapabilityDelegationRequest = {
       identity: identity("capability", "delegation:1"),
       delegationId: "delegation:1",
-      requester: { ownerType: "nobie", ownerId: "agent:nobie" },
+      requester: { ownerType: "knowbee", ownerId: "agent:knowbee" },
       provider: { ownerType: "sub_agent", ownerId: "agent:researcher" },
       capability: "web_search",
       risk: "safe",

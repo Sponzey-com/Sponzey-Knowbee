@@ -82,7 +82,7 @@ interface OperationsDiagnosticsSnapshot {
   nextRuns: Array<{ scheduleId: string; name: string; nextRunAt: number }>
 }
 
-type OrchestrationMode = "single_nobie" | "orchestration"
+type OrchestrationMode = "single_knowbee" | "orchestration"
 
 interface OrchestrationSettingsDraft {
   mode: OrchestrationMode
@@ -90,7 +90,7 @@ interface OrchestrationSettingsDraft {
 }
 
 const DEFAULT_ORCHESTRATION_SETTINGS: OrchestrationSettingsDraft = {
-  mode: "single_nobie",
+  mode: "single_knowbee",
   featureFlagEnabled: false,
 }
 
@@ -104,7 +104,7 @@ function normalizeOrchestrationSettings(settings: Record<string, unknown>): Orch
   const rawMode = orchestration.mode
 
   return {
-    mode: rawMode === "orchestration" ? "orchestration" : "single_nobie",
+    mode: rawMode === "orchestration" ? "orchestration" : "single_knowbee",
     featureFlagEnabled: orchestration.featureFlagEnabled === true,
   }
 }
@@ -2058,7 +2058,7 @@ function OrchestrationSettingsPanel({
       ) : null}
       {requestedButBlocked ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
-          {text("오케스트레이션 모드를 선택했지만 feature flag가 꺼져 있으면 단일 노비로 동작합니다.", "Orchestration mode falls back to single Nobie while the feature flag is off.")}
+          {text("오케스트레이션 모드를 선택했지만 feature flag가 꺼져 있으면 단일 노우비로 동작합니다.", "Orchestration mode falls back to single Knowbee while the feature flag is off.")}
         </div>
       ) : null}
       {error ? (
@@ -2095,7 +2095,7 @@ function OrchestrationSettingsPanel({
             disabled={loading || saving}
             onChange={(event) => onChange({ mode: event.target.value as OrchestrationMode })}
           >
-            <option value="single_nobie">{text("단일 노비", "Single Nobie")}</option>
+            <option value="single_knowbee">{text("단일 노우비", "Single Knowbee")}</option>
             <option value="orchestration">{text("토폴로지 노드 사용", "Use topology nodes")}</option>
           </select>
         </div>

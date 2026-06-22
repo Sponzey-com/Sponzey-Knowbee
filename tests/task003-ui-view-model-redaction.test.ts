@@ -38,7 +38,7 @@ describe("task003 UI view model redaction", () => {
       apiKey: "sk-task003-secret-value-1234567890",
       rawBody: "{\"token\":\"xoxb-task003-secret-token-1234567890\"}",
       html: "<!doctype html><html><body>403</body></html>",
-      artifactPath: "/Users/dongwooshin/.nobie/artifacts/screens/raw.png",
+      artifactPath: "/Users/dongwooshin/.knowbee/artifacts/screens/raw.png",
       visible: "ok",
     }
 
@@ -99,13 +99,13 @@ describe("task003 UI view model redaction", () => {
         yeonjang: { mqttEnabled: true, connectedExtensions: 1 },
       },
     })
-    const rawWithSecret = { ...input, rawApiBody: "Bearer sk-task003-admin-secret-1234567890", localPath: "/Users/dongwooshin/.nobie/private/log.txt" }
+    const rawWithSecret = { ...input, rawApiBody: "Bearer sk-task003-admin-secret-1234567890", localPath: "/Users/dongwooshin/.knowbee/private/log.txt" }
     const normalized = buildNormalizedUiState(input)
     const admin = buildAdminUiViewModel(rawWithSecret as UiShellDomainState, normalized)
     const serialized = JSON.stringify(admin)
 
     expect(serialized).not.toContain("sk-task003-admin-secret")
-    expect(serialized).not.toContain("/Users/dongwooshin/.nobie/private")
+    expect(serialized).not.toContain("/Users/dongwooshin/.knowbee/private")
     expect(serialized).toContain("sanitizedRaw")
   })
 
@@ -113,7 +113,7 @@ describe("task003 UI view model redaction", () => {
     const raw = {
       ai: { auth: { apiKey: "sk-task003-export-secret-1234567890" } },
       providerRawResponse: "<!doctype html><html><body>blocked</body></html>",
-      logPath: "/Users/dongwooshin/.nobie/raw/response.html",
+      logPath: "/Users/dongwooshin/.knowbee/raw/response.html",
       channelId: "C12345",
     }
 

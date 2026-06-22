@@ -12,7 +12,7 @@ import {
   exportPromptSourcesToFile,
   importPromptSourcesFromFile,
   loadPromptSourceRegistry,
-} from "../memory/nobie-md.js"
+} from "../memory/knowbee-md.js"
 import { redactUiValue } from "../ui/redaction.js"
 
 export interface MigrationVersionStatus {
@@ -278,7 +278,7 @@ export function exportMaskedConfig(): ConfigExportResult {
   const exportPath = join(backupRoot(), "config", `${id}.json`)
   mkdirSync(dirname(exportPath), { recursive: true })
   const payload = {
-    kind: "nobie.config.export",
+    kind: "knowbee.config.export",
     createdAt,
     masking: {
       secretsMasked: masked.maskedCount,

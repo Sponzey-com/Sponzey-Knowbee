@@ -20,14 +20,14 @@ import {
 import { closeMemoryJournalDb } from "../packages/core/src/memory/journal.js"
 import { storeMemoryDocument } from "../packages/core/src/memory/store.ts"
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
   closeMemoryJournalDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task005-restore-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task005-restore-"))
   tempDirs.push(stateDir)
   const configPath = join(stateDir, "config.json5")
   writeFileSync(configPath, `{
@@ -36,8 +36,8 @@ function useTempState(): void {
     webui: { enabled: true, host: "127.0.0.1", port: 0, auth: { enabled: false } },
     security: { approvalMode: "off" }
   }`, "utf-8")
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  process.env["NOBIE_CONFIG"] = configPath
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  process.env["KNOWBEE_CONFIG"] = configPath
   reloadConfig()
 }
 
@@ -47,14 +47,14 @@ function baseCapsule(capsuleId: string, createdAt: number, summary: string): Mem
     capsuleVersion: 1,
     ownerScope: {
       ownerType: "main_agent",
-      ownerId: "agent:nobie",
+      ownerId: "agent:knowbee",
       sessionId: "session-task005",
       requestGroupId: "group-task005",
       lineageId: "group-task005",
       channelKey: "webui",
       threadKey: "thread-main",
     },
-    nicknameSnapshot: "노비",
+    nicknameSnapshot: "노우비",
     capsuleKind: "session_compaction",
     summary,
     activeObjectives: ["현재 작업 유지"],
@@ -79,10 +79,10 @@ beforeEach(() => {
 afterEach(() => {
   closeDb()
   closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -107,7 +107,7 @@ describe("task005 memory restore policy", () => {
     const context = buildMaintenanceRestoreContext({
       ownerScope: {
         ownerType: "main_agent",
-        ownerId: "agent:nobie",
+        ownerId: "agent:knowbee",
         sessionId: "session-task005",
         requestGroupId: "group-task005",
         lineageId: "group-task005",
@@ -172,7 +172,7 @@ describe("task005 memory restore policy", () => {
       context: recall,
       ownerScope: {
         ownerType: "main_agent",
-        ownerId: "agent:nobie",
+        ownerId: "agent:knowbee",
         sessionId: "session-task005",
         requestGroupId: "group-task005",
         lineageId: "group-task005",

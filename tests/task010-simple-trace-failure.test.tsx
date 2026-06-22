@@ -41,7 +41,7 @@ describe("task010 simple trace and failure explanation", () => {
     expect(html).toContain("고객 접수 담당자 -> CRM 조회")
     expect(html).toContain("실패 이유")
     expect(html).toContain("완료 기준을 만족하지 못해 실패했습니다.")
-    expect(html).toContain("노비가 시도한 것")
+    expect(html).toContain("노우비가 시도한 것")
     expect(html).toContain("도구 실행")
     expect(html).toContain("tool:crm-search 실행")
     expect(html).toContain("다음 조치")

@@ -380,11 +380,11 @@ export function buildRedelegatedSubSessionInput(
   return {
     command,
     parentAgent: {
-      agentId: source.parentAgentId ?? "agent:nobie",
+      agentId: source.parentAgentId ?? "agent:knowbee",
       ...(source.parentAgentDisplayName
         ? { displayName: source.parentAgentDisplayName }
         : {
-            displayName: source.parentAgentId ?? "Nobie",
+            displayName: source.parentAgentId ?? "Knowbee",
           }),
       ...(source.parentAgentNickname ? { nickname: source.parentAgentNickname } : {}),
     },
@@ -554,7 +554,7 @@ function collectCarryForwardOutputs(
 function ownerForAgent(agentId: string | undefined): OwnerScope | undefined {
   if (!agentId) return undefined
   return {
-    ownerType: agentId === "agent:nobie" ? "nobie" : "sub_agent",
+    ownerType: agentId === "agent:knowbee" ? "knowbee" : "sub_agent",
     ownerId: agentId,
   }
 }

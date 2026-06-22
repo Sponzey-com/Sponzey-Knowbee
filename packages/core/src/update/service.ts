@@ -5,7 +5,7 @@ import { PATHS } from "../config/paths.js"
 import { createLogger } from "../logger/index.js"
 
 const log = createLogger("update:service")
-const DEFAULT_GITHUB_REPOSITORY_URL = "https://github.com/Sponzey-com/Sponzey-Nobie"
+const DEFAULT_GITHUB_REPOSITORY_URL = "https://github.com/Sponzey-com/Sponzey-Knowbee"
 
 type UpdateStatus = "idle" | "latest" | "update_available" | "unsupported" | "error"
 
@@ -137,7 +137,7 @@ function sanitizeRepositoryUrl(value: string | null | undefined): string | null 
 }
 
 function getConfiguredRepositoryUrl(): string {
-  const explicit = process.env["NOBIE_UPDATE_REPOSITORY"] ?? process.env["WIZBY_UPDATE_REPOSITORY"] ?? process.env["HOWIE_UPDATE_REPOSITORY"]
+  const explicit = process.env["KNOWBEE_UPDATE_REPOSITORY"] ?? process.env["WIZBY_UPDATE_REPOSITORY"] ?? process.env["HOWIE_UPDATE_REPOSITORY"]
   const explicitRepository = sanitizeRepositoryUrl(explicit)
   if (explicitRepository) return explicitRepository
 
@@ -173,7 +173,7 @@ function parseGithubRepository(repositoryUrl: string | null): GithubRepoRef | nu
 async function fetchGithubLatestRelease(ref: GithubRepoRef, currentVersion: string, repositoryUrl: string): Promise<UpdateSnapshot> {
   const headers = {
     Accept: "application/vnd.github+json",
-    "User-Agent": `Sponzey-Nobie/${currentVersion}`,
+    "User-Agent": `Sponzey-Knowbee/${currentVersion}`,
   }
 
   const releaseResponse = await fetch(`https://api.github.com/repos/${ref.owner}/${ref.repo}/releases/latest`, { headers })

@@ -28,13 +28,13 @@ function capability(status: FeatureCapability["status"], reason?: string): Featu
 const runtimeResources: AgentTopologyProjection = {
   schemaVersion: 1,
   generatedAt: now,
-  rootAgentId: "agent:nobie",
+  rootAgentId: "agent:knowbee",
   nodes: [
     {
-      id: "agent:nobie",
-      kind: "nobie",
-      entityId: "agent:nobie",
-      label: "Nobie",
+      id: "agent:knowbee",
+      kind: "knowbee",
+      entityId: "agent:knowbee",
+      label: "Knowbee",
       status: "active",
       position: { x: 0, y: 0 },
       badges: [],
@@ -55,9 +55,9 @@ const runtimeResources: AgentTopologyProjection = {
   ],
   edges: [
     {
-      id: "edge:nobie-support",
+      id: "edge:knowbee-support",
       kind: "team_membership",
-      source: "agent:nobie",
+      source: "agent:knowbee",
       target: "team:support",
       label: "member",
       valid: true,
@@ -168,7 +168,7 @@ describe("task003 topology workspace view model", () => {
     expect(model.runtimeResources.source).toBe("agent_topology")
     expect(model.runtimeResources.nodeCount).toBe(2)
     expect(model.runtimeResources.edgeCount).toBe(1)
-    expect(model.runtimeResources.projection?.rootAgentId).toBe("agent:nobie")
+    expect(model.runtimeResources.projection?.rootAgentId).toBe("agent:knowbee")
     expect(model.layers.resources.enabled).toBe(true)
     expect(model.layers.resources.readOnly).toBe(true)
   })

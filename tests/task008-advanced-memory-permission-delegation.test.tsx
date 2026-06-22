@@ -293,7 +293,7 @@ describe("task008 advanced memory, permission, and delegation policy", () => {
       command: {
         kind: "update_delegation_policy",
         source: "advanced",
-        agentId: "agent:nobie",
+        agentId: "agent:knowbee",
         canDelegate: true,
         directChildOnly: true,
         allowedChildAgentIds: ["agent:writer"],

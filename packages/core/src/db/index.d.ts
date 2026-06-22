@@ -1,7 +1,7 @@
 import BetterSqlite3 from "better-sqlite3";
 import { type ScheduleContract } from "../contracts/index.js";
 import { type AgentConfig, type AgentEntityType, type AgentRelationship, type AgentStatus, type CapabilityDelegationRequest, type CapabilityPolicy, type CapabilityRiskLevel, type DataExchangePackage, type HistoryVersion, type LearningEvent, type OwnerScope, type PermissionProfile, type RestoreEvent, type SubSessionContract, type TeamConfig, type TeamConflictPolicyMode, type TeamExecutionPlan, type TeamResultPolicyMode } from "../contracts/sub-agent-orchestration.js";
-import type { PromptSourceMetadata, PromptSourceSnapshot, PromptSourceState } from "../memory/nobie-md.js";
+import type { PromptSourceMetadata, PromptSourceSnapshot, PromptSourceState } from "../memory/knowbee-md.js";
 import { type AgentMemoryState } from "../memory/agent-state.js";
 import { type MemoryCapsule, type MemoryCapsuleKind, type MemoryCapsuleOwnerType } from "../memory/capsule.js";
 export declare function getDb(): BetterSqlite3.Database;

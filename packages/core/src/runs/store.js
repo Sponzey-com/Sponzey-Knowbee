@@ -114,7 +114,7 @@ function parseOrchestrationModeFromSnapshot(snapshot) {
     if (!orchestration || typeof orchestration !== "object" || Array.isArray(orchestration))
         return undefined;
     const mode = orchestration.mode;
-    return mode === "single_nobie" || mode === "orchestration" ? mode : undefined;
+    return mode === "single_knowbee" || mode === "orchestration" ? mode : undefined;
 }
 function parseOrchestrationPlanFromSnapshot(snapshot) {
     const validation = validateOrchestrationPlan(snapshot?.orchestrationPlan);

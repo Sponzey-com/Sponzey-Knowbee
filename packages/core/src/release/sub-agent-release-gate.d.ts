@@ -12,7 +12,7 @@ export interface SubAgentReleaseModeDefinition {
     title: string;
     featureFlagMode: FeatureFlagMode;
     compatibilityMode: boolean;
-    trafficPolicy: "single_nobie_only" | "shadow_dry_run" | "limited_operator_beta" | "public_default";
+    trafficPolicy: "single_knowbee_only" | "shadow_dry_run" | "limited_operator_beta" | "public_default";
     promotionCriteria: string[];
     rollbackAction: string;
 }
@@ -25,7 +25,7 @@ export interface SubAgentReleaseThresholds {
     restartRecoveryP95Ms: number;
 }
 export interface SubAgentRestartResumeSoakResult {
-    kind: "nobie.sub_agent.restart_resume_soak";
+    kind: "knowbee.sub_agent.restart_resume_soak";
     profileId: "release-short";
     generatedAt: string;
     durationMs: number;
@@ -44,13 +44,13 @@ export interface SubAgentRestartResumeSoakResult {
     blockingFailures: string[];
 }
 export interface SubAgentRollbackEvidence {
-    kind: "nobie.sub_agent.rollback_evidence";
+    kind: "knowbee.sub_agent.rollback_evidence";
     generatedAt: string;
     featureFlagKey: "sub_agent_orchestration";
     featureFlagModeBeforeRollback: FeatureFlagMode;
     featureFlagModeAfterRollback: "off";
     dataDeletionRequired: false;
-    singleNobieModeRestored: boolean;
+    singleKnowbeeModeRestored: boolean;
     existingRunCreateSmokePassed: boolean;
     finalAnswerSmokePassed: boolean;
     migrationStatePreserved: boolean;
@@ -58,7 +58,7 @@ export interface SubAgentRollbackEvidence {
     blockingFailures: string[];
 }
 export interface SubAgentReleaseDryRunSummary {
-    kind: "nobie.sub_agent.release_dry_run";
+    kind: "knowbee.sub_agent.release_dry_run";
     generatedAt: string;
     orchestrationMode: {
         requestedMode: SubAgentReleaseModeId;
@@ -109,7 +109,7 @@ export interface SubAgentReleaseGateCheck {
     evidence: unknown;
 }
 export interface SubAgentReleaseReadinessSummary {
-    kind: "nobie.sub_agent.release_readiness";
+    kind: "knowbee.sub_agent.release_readiness";
     version: 1;
     generatedAt: string;
     requestedMode: SubAgentReleaseModeId;
@@ -165,7 +165,7 @@ export declare function runSubAgentRestartResumeSoak(input?: {
 export declare function buildSubAgentRollbackEvidence(input?: {
     now?: Date;
     featureFlagModeBeforeRollback?: FeatureFlagMode;
-    overrides?: Partial<Pick<SubAgentRollbackEvidence, "singleNobieModeRestored" | "existingRunCreateSmokePassed" | "finalAnswerSmokePassed" | "migrationStatePreserved">>;
+    overrides?: Partial<Pick<SubAgentRollbackEvidence, "singleKnowbeeModeRestored" | "existingRunCreateSmokePassed" | "finalAnswerSmokePassed" | "migrationStatePreserved">>;
 }): SubAgentRollbackEvidence;
 export declare function buildSubAgentReleaseReadinessSummary(options?: SubAgentReleaseReadinessOptions): SubAgentReleaseReadinessSummary;
 //# sourceMappingURL=sub-agent-release-gate.d.ts.map

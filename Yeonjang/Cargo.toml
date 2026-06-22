@@ -1,8 +1,8 @@
 [package]
-name = "nobie-yeonjang"
+name = "knowbee-yeonjang"
 version = "0.1.0"
 edition = "2024"
-description = "Rust extension node for Nobie system control and local automation"
+description = "Rust extension node for Knowbee system control and local automation"
 license = "MIT"
 
 [dependencies]

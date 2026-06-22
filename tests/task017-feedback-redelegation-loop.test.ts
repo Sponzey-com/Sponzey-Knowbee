@@ -51,8 +51,8 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 const evidenceOutput: ExpectedOutputContract = {
   outputId: "answer",
@@ -104,19 +104,19 @@ const memoryPolicy: MemoryPolicy = {
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task017-feedback-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task017-feedback-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
 function restoreState(): void {
   closeDb()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -210,9 +210,9 @@ function runInput(id = "feedback"): RunSubSessionInput {
   return {
     command: command(id),
     parentAgent: {
-      agentId: "agent:nobie",
-      displayName: "Nobie",
-      nickname: "노비",
+      agentId: "agent:knowbee",
+      displayName: "Knowbee",
+      nickname: "노우비",
     },
     agent: {
       agentId: "agent:researcher",
@@ -269,7 +269,7 @@ describe("task017 feedback request and redelegation loop", () => {
       expectedOutputs: [evidenceOutput],
       targetAgentPolicy: "same_agent",
       targetAgentId: "agent:researcher",
-      requestingAgentId: "agent:nobie",
+      requestingAgentId: "agent:knowbee",
       parentRunId: "run:task017",
       parentSessionId: "session:task017",
       additionalConstraints: ["Add one cited source."],
@@ -343,7 +343,7 @@ describe("task017 feedback request and redelegation loop", () => {
     expect(
       validateRedelegationTarget({
         policy: "alternative_direct_child",
-        parentAgentId: "agent:nobie",
+        parentAgentId: "agent:knowbee",
         currentAgentId: "agent:researcher",
         targetAgentId: "agent:alternate",
         directChildAgentIds: ["agent:researcher", "agent:alternate"],
@@ -353,7 +353,7 @@ describe("task017 feedback request and redelegation loop", () => {
     expect(
       validateRedelegationTarget({
         policy: "alternative_direct_child",
-        parentAgentId: "agent:nobie",
+        parentAgentId: "agent:knowbee",
         currentAgentId: "agent:researcher",
         targetAgentId: "agent:external",
         directChildAgentIds: ["agent:researcher"],
@@ -410,8 +410,8 @@ describe("task017 feedback request and redelegation loop", () => {
       })
       markNeedsRevision()
       upsertAgentRelationship({
-        edgeId: "relationship:agent:nobie->agent:alternate",
-        parentAgentId: "agent:nobie",
+        edgeId: "relationship:agent:knowbee->agent:alternate",
+        parentAgentId: "agent:knowbee",
         childAgentId: "agent:alternate",
         relationshipType: "parent_child",
         status: "active",

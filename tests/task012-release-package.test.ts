@@ -5,7 +5,7 @@ import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { PATHS, reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, getDb } from "../packages/core/src/db/index.ts"
-import { ensurePromptSourceFiles } from "../packages/core/src/memory/nobie-md.ts"
+import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
 import {
   buildReleaseManifest,
   buildReleasePipelinePlan,
@@ -15,8 +15,8 @@ import {
 } from "../packages/core/src/release/package.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 function makeTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -31,7 +31,7 @@ function writeFile(rootDir: string, relativePath: string, content: string): void
 }
 
 function createReleaseFixture(): string {
-  const rootDir = makeTempDir("nobie-task012-release-root-")
+  const rootDir = makeTempDir("knowbee-task012-release-root-")
   writeFile(rootDir, "package.json", JSON.stringify({ version: "9.9.9" }))
   writeFile(rootDir, "packages/cli/dist/index.js", "#!/usr/bin/env node\nconsole.log('cli')\n")
   writeFile(rootDir, "packages/core/dist/index.js", "export const core = true\n")
@@ -56,19 +56,19 @@ function createReleaseFixture(): string {
 
 beforeEach(() => {
   closeDb()
-  const stateDir = makeTempDir("nobie-task012-state-")
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  const stateDir = makeTempDir("knowbee-task012-state-")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
   getDb()
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.NOBIE_STATE_DIR = undefined
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.NOBIE_CONFIG = undefined
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -88,7 +88,7 @@ describe("task012 release package", () => {
       now: new Date("2026-04-16T00:00:00.000Z"),
     })
 
-    expect(manifest.kind).toBe("nobie.release.package")
+    expect(manifest.kind).toBe("knowbee.release.package")
     expect(manifest.releaseVersion).toBe("v1.2.3-test")
     expect(manifest.gitTag).toBe("v1.2.3-test")
     expect(manifest.requiredMissing).toEqual([])
@@ -130,10 +130,10 @@ describe("task012 release package", () => {
     expect(
       manifest.featureFlags.some((flag) => flag.featureKey === "sub_agent_orchestration"),
     ).toBe(true)
-    expect(manifest.performanceEvidence.kind).toBe("nobie.release.performance")
-    expect(manifest.benchmarkEvidence.kind).toBe("nobie.benchmarks.release_gate")
+    expect(manifest.performanceEvidence.kind).toBe("knowbee.release.performance")
+    expect(manifest.benchmarkEvidence.kind).toBe("knowbee.benchmarks.release_gate")
     expect(manifest.benchmarkEvidence.gateStatus).toBe("passed")
-    expect(manifest.subAgentReleaseGate.kind).toBe("nobie.sub_agent.release_readiness")
+    expect(manifest.subAgentReleaseGate.kind).toBe("knowbee.sub_agent.release_readiness")
     expect(manifest.subAgentReleaseGate.gateStatus).toBe("passed")
     expect(manifest.releaseNotes.featureFlagDefaults.join("\n")).toContain(
       "sub_agent_orchestration",
@@ -162,7 +162,7 @@ describe("task012 release package", () => {
 
   it("writes release manifest, checksum file, and copied payload", () => {
     const rootDir = createReleaseFixture()
-    const outputDir = makeTempDir("nobie-task012-release-output-")
+    const outputDir = makeTempDir("knowbee-task012-release-output-")
     const result = writeReleasePackage({
       rootDir,
       outputDir,
@@ -201,6 +201,7 @@ describe("task012 release package", () => {
       "unit-tests",
       "orchestration-release-gate",
       "memory-isolation-release-gate",
+      "memory-compaction-release-gate",
       "capability-isolation-release-gate",
       "model-execution-release-gate",
       "performance-release-gate",
@@ -209,6 +210,7 @@ describe("task012 release package", () => {
       "enterprise-topology-release-gate",
       "web-retrieval-fixture-regression",
       "ui-mode-release-gate",
+      "yeonjang-multi-instance-release-gate",
       "backup-rehearsal",
       "admin-diagnostic-export",
       "channel-delivery-release-gate",
@@ -233,7 +235,7 @@ describe("task012 release package", () => {
   })
 
   it("runs release script in dry-run mode and writes manifest evidence", () => {
-    const outputDir = makeTempDir("nobie-task012-script-output-")
+    const outputDir = makeTempDir("knowbee-task012-script-output-")
     const stdout = execFileSync(
       "node",
       [
@@ -259,7 +261,7 @@ describe("task012 release package", () => {
     }
 
     expect(parsed.dryRun).toBe(true)
-    expect(parsed.manifest.kind).toBe("nobie.release.package")
+    expect(parsed.manifest.kind).toBe("knowbee.release.package")
     expect(parsed.manifest.pipeline.order).toContain("package-manifest")
     expect(existsSync(parsed.manifestPath)).toBe(true)
     expect(existsSync(parsed.checksumPath)).toBe(true)

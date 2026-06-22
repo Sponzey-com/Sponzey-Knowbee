@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
 import { normalizeNicknameSnapshot, } from "../contracts/sub-agent-orchestration.js";
-import { loadPromptSourceRegistry } from "../memory/nobie-md.js";
+import { loadPromptSourceRegistry } from "../memory/knowbee-md.js";
 import { validateAgentPromptBundleContextScope, } from "../runs/context-preflight.js";
 import { normalizeSkillMcpAllowlist } from "../security/capability-isolation.js";
 import { resolveAgentCapabilityModelSummary, } from "./capability-model.js";

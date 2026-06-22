@@ -44,16 +44,16 @@ const { mouseMoveTool } = await import("../packages/core/src/tools/builtin/ui/mo
 const { keyboardTypeTool } = await import("../packages/core/src/tools/builtin/ui/keyboard.ts")
 const { windowFocusTool } = await import("../packages/core/src/tools/builtin/ui/window.ts")
 
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-run-yeonjang-required-tools-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-run-yeonjang-required-tools-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
   reloadConfig()
 }
 
@@ -150,10 +150,10 @@ describe("yeonjang required tools", () => {
 
   afterEach(() => {
     closeDb()
-    if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-    else process.env["NOBIE_STATE_DIR"] = previousStateDir
-    if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-    else process.env["NOBIE_CONFIG"] = previousConfig
+    if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+    else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+    if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+    else process.env["KNOWBEE_CONFIG"] = previousConfig
     reloadConfig()
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop()

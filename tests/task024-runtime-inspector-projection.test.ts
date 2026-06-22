@@ -28,8 +28,8 @@ import { buildRunRuntimeInspectorProjection } from "../packages/core/src/runs/ru
 import { createRootRun, getRootRun } from "../packages/core/src/runs/store.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 24, 1, 0, 0)
 
 const expectedOutput: ExpectedOutputContract = {
@@ -152,9 +152,9 @@ function subSession(
     subSessionId: id,
     parentSessionId: "session:task024",
     parentRunId: "run:task024",
-    parentAgentId: "agent:nobie",
-    parentAgentDisplayName: "Nobie",
-    parentAgentNickname: "노비",
+    parentAgentId: "agent:knowbee",
+    parentAgentDisplayName: "Knowbee",
+    parentAgentNickname: "노우비",
     agentId,
     agentDisplayName: nickname,
     agentNickname: nickname,
@@ -170,11 +170,11 @@ function subSession(
 
 function orchestrationPlan(): OrchestrationPlan {
   return {
-    identity: identity("session", "plan:task024", "agent:nobie"),
+    identity: identity("session", "plan:task024", "agent:knowbee"),
     planId: "plan:task024",
     parentRunId: "run:task024",
     parentRequestId: "request:task024",
-    directNobieTasks: [],
+    directKnowbeeTasks: [],
     delegatedTasks: [
       {
         taskId: "task:research",
@@ -199,7 +199,7 @@ function orchestrationPlan(): OrchestrationPlan {
       },
     ],
     fallbackStrategy: {
-      mode: "single_nobie",
+      mode: "single_knowbee",
       reasonCode: "fallback_if_agent_unavailable",
     },
     plannerMetadata: {
@@ -262,10 +262,10 @@ function setupRun(): void {
 
 beforeEach(() => {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task024-state-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task024-state-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
   getDb()
   setupRun()
@@ -273,10 +273,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "NOBIE_STATE_DIR")
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "NOBIE_CONFIG")
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_STATE_DIR")
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_CONFIG")
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()

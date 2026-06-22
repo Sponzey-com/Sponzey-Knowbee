@@ -205,7 +205,7 @@ function resolveTaskGroupKey(run, runsById) {
     return current.lineageRootRunId || current.requestGroupId || current.id;
 }
 function detectDeliveryChannel(label) {
-    // nobie-critical-decision-audit: task-model.delivery_channel_label
+    // knowbee-critical-decision-audit: task-model.delivery_channel_label
     // Display-only channel projection for task monitor labels.
     const normalized = label.toLowerCase();
     if (normalized.includes("텔레그램") || normalized.includes("telegram"))
@@ -297,7 +297,7 @@ function extractDeliveredArtifact(summary) {
     };
 }
 function resolveTaskDeliverySignal(orderedRuns, attempts) {
-    // nobie-critical-decision-audit: task-model.delivery_status_label
+    // knowbee-critical-decision-audit: task-model.delivery_status_label
     // System event-label projection until delivery receipts become the sole status source.
     const sourceAttemptId = attempts.at(-1)?.id;
     const recentEvents = orderedRuns

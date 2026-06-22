@@ -28,7 +28,7 @@ const TOPOLOGY_WORKSPACE_KIND_LABELS: Record<EnterpriseTopologyCanvasNodeData["k
 }
 
 export type TopologyWorkspaceExecutorKind =
-  | "nobie"
+  | "knowbee"
   | "agent"
   | "team"
   | "tool"
@@ -64,12 +64,12 @@ export interface TopologyWorkspaceRuntimeExecutorResourceOption {
 
 export const TOPOLOGY_WORKSPACE_EXECUTOR_OPTIONS: TopologyWorkspaceExecutorOption[] = [
   {
-    kind: "nobie",
+    kind: "knowbee",
     labelKo: "자동 처리",
     labelEn: "Auto processing",
-    descriptionKo: "노비가 기본 실행자로 업무를 처리합니다.",
-    descriptionEn: "Nobie handles this step with the default executor.",
-    defaultExecutorId: "nobie:default",
+    descriptionKo: "노우비가 기본 실행자로 업무를 처리합니다.",
+    descriptionEn: "Knowbee handles this step with the default executor.",
+    defaultExecutorId: "knowbee:default",
   },
   {
     kind: "agent",
@@ -107,7 +107,7 @@ export const TOPOLOGY_WORKSPACE_EXECUTOR_OPTIONS: TopologyWorkspaceExecutorOptio
 
 function runtimeExecutorKindForResource(node: AgentTopologyNode): TopologyWorkspaceRuntimeExecutorResourceOption["kind"] | null {
   if (node.kind === "team") return "team"
-  if (node.kind === "nobie" || node.kind === "sub_agent") return "agent"
+  if (node.kind === "knowbee" || node.kind === "sub_agent") return "agent"
   return null
 }
 
@@ -355,7 +355,7 @@ export function TopologyWorkspaceExecutorPicker({
   onExecutorMappingChange?: (nodeId: string, mapping: TopologyWorkspaceExecutorMapping) => void
 }) {
   const { text } = useUiI18n()
-  const selectedKind = mapping?.executorKind ?? "nobie"
+  const selectedKind = mapping?.executorKind ?? "knowbee"
   const canPersist = selectedData.entityType === "node"
   const resourceOptions = React.useMemo(
     () => buildTopologyWorkspaceRuntimeExecutorResourceOptions(runtimeResources),

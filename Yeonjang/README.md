@@ -1,8 +1,8 @@
 # Yeonjang
 
-`Yeonjang` is a Rust-based extension node for Nobie.
+`Yeonjang` is a Rust-based extension node for Knowbee.
 
-The node is intended to handle local-device and operating-system level work that is better separated from the main Nobie gateway process, including:
+The node is intended to handle local-device and operating-system level work that is better separated from the main Knowbee gateway process, including:
 
 - camera management
 - system control
@@ -111,7 +111,7 @@ Each response is emitted as a single JSON object per line.
   "id": "req-1",
   "ok": true,
   "result": {
-    "node": "nobie-yeonjang"
+    "node": "knowbee-yeonjang"
   }
 }
 ```
@@ -125,10 +125,10 @@ Each response is emitted as a single JSON object per line.
   - `headless_managed`: managed MQTT runtime with no tray/window expectation
 - The tray menu exposes window open/hide, connection status, permission summary, version, and explicit quit.
 - Windows supports tray double-click reopen. Linux should be treated as tray-menu-first because portable tray click events are limited there.
-- Linux desktop launch requires `DISPLAY` or `WAYLAND_DISPLAY`. Without either, use `scripts/start-yeonjang-linux-headless.sh` or run `nobie-yeonjang --managed` with `YEONJANG_SUPPORT_PROFILE=headless_managed`.
+- Linux desktop launch requires `DISPLAY` or `WAYLAND_DISPLAY`. Without either, use `scripts/start-yeonjang-linux-headless.sh` or run `knowbee-yeonjang --managed` with `YEONJANG_SUPPORT_PROFILE=headless_managed`.
 - `Launch on Startup` writes an OS-specific autostart entry that relaunches Yeonjang in the same tray-first mode.
 - 설정 화면에는 broker 접속 정보, 자동 접속, 시스템 시작 시 실행, node id, MQTT topic, 권한 토글이 포함됩니다.
-- `system.exec` supports direct command execution and shell-based execution, and now receives environment variables and timeout hints from Nobie.
+- `system.exec` supports direct command execution and shell-based execution, and now receives environment variables and timeout hints from Knowbee.
 - `system.exec` now respects the Yeonjang permission toggle. If `명령 실행 / Command Execution` is off, request handling returns a permission error.
 - `application.launch` now respects its own Yeonjang permission toggle.
 - camera support is the first platform feature to implement on top of the abstraction layer.

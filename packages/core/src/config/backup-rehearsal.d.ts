@@ -1,4 +1,4 @@
-import { type PromptSourceMetadata } from "../memory/nobie-md.js";
+import { type PromptSourceMetadata } from "../memory/knowbee-md.js";
 import { type MigrationVersionStatus } from "./operations.js";
 export type BackupTargetKind = "config" | "prompt_source" | "sqlite_db" | "sqlite_sidecar" | "vector_db" | "setup_state" | "logical_sqlite_table" | "excluded_path";
 export type BackupTargetReason = "required" | "optional_missing" | "secret_reentry_required" | "large_retention_binary" | "cache_or_build_output" | "transient_runtime" | "logical_coverage";
@@ -34,7 +34,7 @@ export interface BackupSnapshotFile {
     checksum: string;
 }
 export interface BackupSnapshotManifest {
-    kind: "nobie.backup.snapshot";
+    kind: "knowbee.backup.snapshot";
     version: 1;
     id: string;
     createdAt: number;

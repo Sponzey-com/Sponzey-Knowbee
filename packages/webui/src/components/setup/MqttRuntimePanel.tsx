@@ -198,9 +198,9 @@ export function MqttRuntimePanel({
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-500">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="rounded-full bg-stone-200 px-2 py-1 font-semibold text-stone-700">
-                      {entry.direction === "nobie_to_extension"
-                        ? text("Nobie → 연장", "Nobie → Extension")
-                        : text("연장 → Nobie", "Extension → Nobie")}
+                      {entry.direction === "knowbee_to_extension"
+                        ? text("Knowbee → 연장", "Knowbee → Extension")
+                        : text("연장 → Knowbee", "Extension → Knowbee")}
                     </span>
                     <span>{formatTimestamp(entry.timestamp)}</span>
                     <span className="font-mono">{entry.topic}</span>

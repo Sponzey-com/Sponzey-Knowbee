@@ -92,10 +92,10 @@ export interface ApprovalAggregationResult {
   approvedApprovalIds: string[]
 }
 
-const NOBIE_SPEAKER: NicknameSnapshot = {
-  entityType: "nobie",
-  entityId: "agent:nobie",
-  nicknameSnapshot: "노비",
+const KNOWBEE_SPEAKER: NicknameSnapshot = {
+  entityType: "knowbee",
+  entityId: "agent:knowbee",
+  nicknameSnapshot: "노우비",
 }
 
 function finalDeliveryTargetKey(input: {
@@ -123,9 +123,9 @@ function finalDeliveryIdempotencyKey(input: {
 }
 
 function normalizeSpeaker(speaker: NicknameSnapshot | undefined): NicknameSnapshot {
-  if (!speaker) return NOBIE_SPEAKER
+  if (!speaker) return KNOWBEE_SPEAKER
   const nicknameSnapshot = normalizeNicknameSnapshot(speaker.nicknameSnapshot)
-  return nicknameSnapshot ? { ...speaker, nicknameSnapshot } : NOBIE_SPEAKER
+  return nicknameSnapshot ? { ...speaker, nicknameSnapshot } : KNOWBEE_SPEAKER
 }
 
 function recordOrchestrationEventSafely(
@@ -148,7 +148,7 @@ function identity(input: {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     entityType: input.entityType,
     entityId: input.entityId,
-    owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+    owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
     idempotencyKey: input.idempotencyKey,
     parent: { parentRunId: input.parentRunId },
   }
@@ -193,7 +193,7 @@ export function buildFinalDeliveryAttributions(
   return attributions
 }
 
-export function buildNobieFinalAnswer(input: {
+export function buildKnowbeeFinalAnswer(input: {
   text: string
   resultReports?: readonly ResultReport[]
 }): { text: string; attributions: FinalDeliveryAttribution[] } {
@@ -292,7 +292,7 @@ export async function commitFinalDelivery(input: {
   onDeliveryError?: (message: string) => void
 }): Promise<FinalDeliveryCommitResult> {
   const speaker = normalizeSpeaker(input.speaker)
-  const answer = buildNobieFinalAnswer({
+  const answer = buildKnowbeeFinalAnswer({
     text: input.text,
     ...(input.resultReports ? { resultReports: input.resultReports } : {}),
   })
@@ -373,7 +373,7 @@ export async function commitFinalDelivery(input: {
 
   const visibleMessage: UserVisibleAgentMessage = {
     identity: identity({
-      entityType: "nobie",
+      entityType: "knowbee",
       entityId: `final-message:${input.parentRunId}`,
       parentRunId: input.parentRunId,
       idempotencyKey: `final-message:${input.parentRunId}`,

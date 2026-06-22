@@ -8,7 +8,7 @@ import { normalizeNicknameSnapshot } from "../contracts/sub-agent-orchestration.
 import type { MemoryCapsule } from "./capsule.js"
 import { normalizeMemoryCapsuleOwnerScope } from "./capsule.js"
 
-export const ROOT_MAIN_AGENT_ID = "agent:nobie"
+export const ROOT_MAIN_AGENT_ID = "agent:knowbee"
 
 export interface AgentMemoryState {
   stateId: string

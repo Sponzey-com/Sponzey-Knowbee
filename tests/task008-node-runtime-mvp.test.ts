@@ -46,7 +46,7 @@ function workOrderFixture(overrides: Partial<WorkOrder> = {}): WorkOrder {
     workOrderId: "work-order:intake",
     topologyRunId: "topology-run:task008",
     parentWorkOrderId: null,
-    fromNodeId: "node:nobie",
+    fromNodeId: "node:knowbee",
     to: { type: "node", id: "node:intake" },
     objective: "Triage the customer request and assign priority.",
     scope: {
@@ -80,7 +80,7 @@ function workOrderFixture(overrides: Partial<WorkOrder> = {}): WorkOrder {
       approvalRequired: false,
     },
     failureReportRequired: true,
-    delegationPath: ["node:nobie", "node:intake"],
+    delegationPath: ["node:knowbee", "node:intake"],
     createdAt: now,
   })
 

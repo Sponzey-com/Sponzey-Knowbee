@@ -6,7 +6,7 @@ import { type DetailedMemorySearchResult, type StoreMemoryDocumentParams } from 
 import { type MemoryWritebackCandidate, type PreparedMemoryWritebackCandidate } from "./writeback.js";
 export type MemoryVisibility = MemoryPolicy["visibility"];
 export type MemoryAccessMode = "owner_direct" | "recipient_via_exchange";
-export type MemoryOwnerScopeKind = "nobie" | "agent" | "run" | "system" | "team_projection";
+export type MemoryOwnerScopeKind = "knowbee" | "agent" | "run" | "system" | "team_projection";
 export type ParentMemoryWritebackPolicy = "allow" | "review" | "deny";
 export interface RunMemoryOwnerScope {
     ownerType: "run";

@@ -1,192 +1,47 @@
-import { createHash } from "node:crypto"
-import { copyFileSync, mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs"
-import { join, dirname, basename } from "node:path"
-
-const MAX_NOBIE_MD_SIZE = 8000
-const MAX_SYSTEM_PROMPT_SIZE = 90000
-const MEMORY_FILENAMES = ["NOBIE.md", "WIZBY.md", "HOWIE.md"] as const
-const PROMPTS_DIRNAME = "prompts"
-const PROMPT_ASSEMBLY_POLICY_VERSION = 1
-export type PromptSourceUsageScope = "runtime" | "first_run" | "planner" | "diagnostic"
-
-export interface PromptSourceMetadata {
-  sourceId: string
-  locale: "ko" | "en"
-  path: string
-  version: string
-  priority: number
-  enabled: boolean
-  required: boolean
-  usageScope: PromptSourceUsageScope
-  checksum: string
-}
-
-export interface LoadedPromptSource extends PromptSourceMetadata {
-  content: string
-}
-
-export interface PromptSourceState {
-  sourceId: string
-  locale: "ko" | "en"
-  enabled: boolean
-}
-
-export interface PromptSourceSnapshot {
-  assemblyVersion: 1
-  createdAt: number
-  sources: PromptSourceMetadata[]
-  diagnostics: PromptSourceDiagnostic[]
-}
-
-export interface PromptSourceAssembly {
-  text: string
-  snapshot: PromptSourceSnapshot
-  sources: LoadedPromptSource[]
-}
-
-export interface PromptSourceDiffLine {
-  kind: "unchanged" | "added" | "removed" | "changed"
-  beforeLine?: number
-  afterLine?: number
-  before?: string
-  after?: string
-}
-
-export interface PromptSourceDiffResult {
-  beforeChecksum: string
-  afterChecksum: string
-  changed: boolean
-  lines: PromptSourceDiffLine[]
-}
-
-export interface PromptSourceBackupResult {
-  backupId: string
-  sourceId: string
-  locale: "ko" | "en"
-  sourcePath: string
-  backupPath: string
-  checksum: string
-  createdAt: number
-}
-
-export interface PromptSourceWriteResult {
-  backup: PromptSourceBackupResult | null
-  source: LoadedPromptSource
-  diff: PromptSourceDiffResult
-}
-
-export interface PromptSourceRollbackResult {
-  sourcePath: string
-  backupPath: string
-  restoredChecksum: string
-  previousChecksum: string
-}
-
-export interface PromptSourceExportFile {
-  kind: "nobie.prompt-sources.export"
-  version: 1
-  createdAt: number
-  sources: LoadedPromptSource[]
-}
-
-export interface PromptSourceExportResult {
-  exportPath: string
-  checksum: string
-  createdAt: number
-  sourceCount: number
-  sources: PromptSourceMetadata[]
-}
-
-export interface PromptSourceImportResult {
-  exportPath: string
-  imported: string[]
-  skipped: string[]
-  backups: PromptSourceBackupResult[]
-  registry: PromptSourceMetadata[]
-}
-
-export interface PromptSourceDryRunResult {
-  assembly: PromptSourceAssembly | null
-  sourceOrder: Array<{ sourceId: string; locale: "ko" | "en"; checksum: string; version: string; path: string }>
-  totalChars: number
-  diagnostics: PromptSourceDiagnostic[]
-}
-
-export interface PromptSourceLocaleParityIssue {
-  sourceId: string
-  code: "missing_locale" | "section_mismatch"
-  locale?: "ko" | "en"
-  message: string
-}
-
-export interface PromptSourceLocaleParityResult {
-  ok: boolean
-  issues: PromptSourceLocaleParityIssue[]
-}
-
-export interface PromptSourceDiagnostic {
-  severity: "error" | "warning"
-  code: "required_prompt_source_missing"
-  sourceId: string
-  locale: "ko" | "en"
-  message: string
-}
-
-interface PromptSourceDefinition {
-  sourceId: string
-  filenames: { ko: string; en: string }
-  priority: number
-  required: boolean
-  usageScope: PromptSourceUsageScope
-  defaultRuntime: boolean
-}
-
-const PROMPT_SOURCE_DEFINITIONS: PromptSourceDefinition[] = [
-  { sourceId: "definitions", filenames: { ko: "definitions.ko.md", en: "definitions.md" }, priority: 10, required: true, usageScope: "runtime", defaultRuntime: true },
-  { sourceId: "identity", filenames: { ko: "identity.ko.md", en: "identity.md" }, priority: 20, required: true, usageScope: "runtime", defaultRuntime: true },
-  { sourceId: "user", filenames: { ko: "user.ko.md", en: "user.md" }, priority: 30, required: true, usageScope: "runtime", defaultRuntime: true },
-  { sourceId: "soul", filenames: { ko: "soul.ko.md", en: "soul.md" }, priority: 40, required: true, usageScope: "runtime", defaultRuntime: true },
-  { sourceId: "planner", filenames: { ko: "planner.ko.md", en: "planner.md" }, priority: 50, required: true, usageScope: "runtime", defaultRuntime: true },
-  { sourceId: "nobie_execution", filenames: { ko: "nobie-execution.ko.md", en: "nobie-execution.md" }, priority: 55, required: false, usageScope: "runtime", defaultRuntime: true },
-  { sourceId: "memory_policy", filenames: { ko: "memory_policy.ko.md", en: "memory_policy.md" }, priority: 60, required: false, usageScope: "runtime", defaultRuntime: true },
-  { sourceId: "tool_policy", filenames: { ko: "tool_policy.ko.md", en: "tool_policy.md" }, priority: 70, required: false, usageScope: "runtime", defaultRuntime: true },
-  { sourceId: "web_retrieval_planner", filenames: { ko: "web_retrieval_planner.ko.md", en: "web_retrieval_planner.md" }, priority: 75, required: false, usageScope: "runtime", defaultRuntime: false },
-  { sourceId: "recovery_policy", filenames: { ko: "recovery_policy.ko.md", en: "recovery_policy.md" }, priority: 80, required: false, usageScope: "runtime", defaultRuntime: true },
-  { sourceId: "topology_executor_policy", filenames: { ko: "topology_executor_policy.ko.md", en: "topology_executor_policy.md" }, priority: 85, required: false, usageScope: "runtime", defaultRuntime: true },
-  { sourceId: "completion_policy", filenames: { ko: "completion_policy.ko.md", en: "completion_policy.md" }, priority: 90, required: false, usageScope: "runtime", defaultRuntime: true },
-  { sourceId: "output_policy", filenames: { ko: "output_policy.ko.md", en: "output_policy.md" }, priority: 100, required: false, usageScope: "runtime", defaultRuntime: true },
-  { sourceId: "channel", filenames: { ko: "channel.ko.md", en: "channel.md" }, priority: 110, required: false, usageScope: "runtime", defaultRuntime: true },
-  { sourceId: "bootstrap", filenames: { ko: "bootstrap.ko.md", en: "bootstrap.md" }, priority: 120, required: true, usageScope: "first_run", defaultRuntime: false },
-]
-
-const DEFAULT_PROMPT_SOURCE_SEED_LOCALES = ["en"] as const
-
+import { createHash } from "node:crypto";
+import { copyFileSync, mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import { join, dirname, basename } from "node:path";
+const MAX_KNOWBEE_MD_SIZE = 8000;
+const MAX_SYSTEM_PROMPT_SIZE = 90000;
+const MEMORY_FILENAMES = ["KNOWBEE.md", "WIZBY.md", "HOWIE.md"];
+const PROMPTS_DIRNAME = "prompts";
+const PROMPT_ASSEMBLY_POLICY_VERSION = 1;
+const PROMPT_SOURCE_DEFINITIONS = [
+    { sourceId: "definitions", filenames: { ko: "definitions.ko.md", en: "definitions.md" }, priority: 10, required: true, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "identity", filenames: { ko: "identity.ko.md", en: "identity.md" }, priority: 20, required: true, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "user", filenames: { ko: "user.ko.md", en: "user.md" }, priority: 30, required: true, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "soul", filenames: { ko: "soul.ko.md", en: "soul.md" }, priority: 40, required: true, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "planner", filenames: { ko: "planner.ko.md", en: "planner.md" }, priority: 50, required: true, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "knowbee_execution", filenames: { ko: "knowbee-execution.ko.md", en: "knowbee-execution.md" }, priority: 55, required: false, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "memory_policy", filenames: { ko: "memory_policy.ko.md", en: "memory_policy.md" }, priority: 60, required: false, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "tool_policy", filenames: { ko: "tool_policy.ko.md", en: "tool_policy.md" }, priority: 70, required: false, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "web_retrieval_planner", filenames: { ko: "web_retrieval_planner.ko.md", en: "web_retrieval_planner.md" }, priority: 75, required: false, usageScope: "runtime", defaultRuntime: false },
+    { sourceId: "recovery_policy", filenames: { ko: "recovery_policy.ko.md", en: "recovery_policy.md" }, priority: 80, required: false, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "topology_executor_policy", filenames: { ko: "topology_executor_policy.ko.md", en: "topology_executor_policy.md" }, priority: 85, required: false, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "completion_policy", filenames: { ko: "completion_policy.ko.md", en: "completion_policy.md" }, priority: 90, required: false, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "output_policy", filenames: { ko: "output_policy.ko.md", en: "output_policy.md" }, priority: 100, required: false, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "channel", filenames: { ko: "channel.ko.md", en: "channel.md" }, priority: 110, required: false, usageScope: "runtime", defaultRuntime: true },
+    { sourceId: "bootstrap", filenames: { ko: "bootstrap.ko.md", en: "bootstrap.md" }, priority: 120, required: true, usageScope: "first_run", defaultRuntime: false },
+];
+const DEFAULT_PROMPT_SOURCE_SEED_LOCALES = ["en"];
 export const REQUIRED_RUNTIME_PROMPT_SOURCE_IDS = PROMPT_SOURCE_DEFINITIONS
-  .filter((definition) => definition.required && definition.defaultRuntime)
-  .map((definition) => definition.sourceId)
-
-export interface PromptSourceSeedResult {
-  promptsDir: string
-  created: string[]
-  existing: string[]
-  registry: LoadedPromptSource[]
-}
-
-const DEFAULT_PROMPT_SOURCE_CONTENT: Record<string, { ko: string; en: string }> = {
-  identity: {
-    ko: `# 정체성
+    .filter((definition) => definition.required && definition.defaultRuntime)
+    .map((definition) => definition.sourceId);
+const DEFAULT_PROMPT_SOURCE_CONTENT = {
+    identity: {
+        ko: `# 정체성
 
 ## 이름
 
-- 기본 이름: \`노비\`
-- 영문 이름: \`Nobie\`
+- 기본 이름: \`노우비\`
+- 영문 이름: \`Knowbee\`
 - 로컬 실행 확장 표시 이름: \`연장\` / \`Yeonjang\`
 
 ## 역할
 
 - 사용자-facing 역할: 개인 작업 허브
 - 서브 에이전트 구조에서 역할: 최상위 조정자
-- 사용자 요청의 최종 답변 책임자: 노비
+- 사용자 요청의 최종 답변 책임자: 노우비
 - 실행 정책과 완료 기준: \`soul.md\`를 따른다.
 
 ## 말투
@@ -200,18 +55,18 @@ const DEFAULT_PROMPT_SOURCE_CONTENT: Record<string, { ko: string; en: string }> 
 - 기본적으로 사용자 호칭 없이 직접 응답한다.
 - 사용자가 호칭을 지정하면 \`user.md\`를 따른다.
 `,
-    en: `# Identity
+        en: `# Identity
 
 ## Name
 
-- Default name: \`Nobie\`
+- Default name: \`Knowbee\`
 - Local execution extension display name: \`Yeonjang\`
 
 ## Role
 
 - User-facing role: personal work hub
 - Role in sub-agent structure: top-level coordinator
-- Final answer owner for user requests: Nobie
+- Final answer owner for user requests: Knowbee
 - Execution policy and completion criteria follow \`soul.md\`.
 
 ## Voice
@@ -225,9 +80,9 @@ const DEFAULT_PROMPT_SOURCE_CONTENT: Record<string, { ko: string; en: string }> 
 - By default, respond without a special user title.
 - If the user sets an address style, follow \`user.md\`.
 `,
-  },
-  user: {
-    ko: `# 사용자
+    },
+    user: {
+        ko: `# 사용자
 
 ## 식별
 
@@ -257,7 +112,7 @@ const DEFAULT_PROMPT_SOURCE_CONTENT: Record<string, { ko: string; en: string }> 
 - 사용자 정보는 직접 진술 또는 신뢰 가능한 설정으로 확인된 경우에만 확정한다.
 - 경로명, 계정명, 채널 표시명만 보고 사용자 이름을 추정하지 않는다.
 `,
-    en: `# User
+        en: `# User
 
 ## Identification
 
@@ -287,9 +142,9 @@ const DEFAULT_PROMPT_SOURCE_CONTENT: Record<string, { ko: string; en: string }> 
 - Confirm user facts only from direct user statements or trusted settings.
 - Do not infer the user name from paths, account names, or channel display names.
 `,
-  },
-  definitions: {
-    ko: `# 공통 정의
+    },
+    definitions: {
+        ko: `# 공통 정의
 
 이 파일은 프롬프트와 런타임 문서가 같은 용어를 쓰도록 만드는 공통 정의다. 이름, 말투, 호칭은 \`identity.md\`와 \`user.md\`가 담당한다. 실행 원칙은 \`soul.md\`가 담당한다.
 
@@ -318,8 +173,8 @@ const DEFAULT_PROMPT_SOURCE_CONTENT: Record<string, { ko: string; en: string }> 
 
 ## 서브 에이전트와 위임
 
-- Nobie는 사용자 요청의 최상위 조정자다.
-- SubAgent는 Nobie 또는 다른 SubAgent의 직속 하위로 등록된 독립 실행 주체다.
+- Knowbee는 사용자 요청의 최상위 조정자다.
+- SubAgent는 Knowbee 또는 다른 SubAgent의 직속 하위로 등록된 독립 실행 주체다.
 - Team은 같은 owner의 직속 하위 에이전트를 묶는 planning group이며 직접 실행 주체가 아니다.
 - OrchestrationPlan은 직접 실행할 일과 직속 하위 에이전트에게 위임할 일을 나눈다.
 - CommandRequest, DataExchangePackage, ResultReport, FeedbackRequest를 구분한다.
@@ -352,7 +207,7 @@ const DEFAULT_PROMPT_SOURCE_CONTENT: Record<string, { ko: string; en: string }> 
 - 완료는 텍스트 주장보다 receipt와 실제 결과를 우선한다.
 - 불가능한 작업은 다른 대상으로 바꾸지 않고 불가능 사유로 완료한다.
 `,
-    en: `# Shared Definitions
+        en: `# Shared Definitions
 
 This file keeps prompt and runtime documents aligned on the same terminology. Names, voice, and address style belong in \`identity.md\` and \`user.md\`. Operating policy belongs in \`soul.md\`.
 
@@ -381,8 +236,8 @@ This file keeps prompt and runtime documents aligned on the same terminology. Na
 
 ## Sub-Agents And Delegation
 
-- Nobie is the top-level coordinator for user requests.
-- A SubAgent is an independent execution actor registered as a direct child of Nobie or another SubAgent.
+- Knowbee is the top-level coordinator for user requests.
+- A SubAgent is an independent execution actor registered as a direct child of Knowbee or another SubAgent.
 - A Team is a planning group of direct child agents owned by the same owner, not an execution actor.
 - An OrchestrationPlan separates direct work from work delegated to direct child agents.
 - Keep CommandRequest, DataExchangePackage, ResultReport, and FeedbackRequest separate.
@@ -415,9 +270,9 @@ This file keeps prompt and runtime documents aligned on the same terminology. Na
 - Completion prioritizes receipts and actual results over text claims.
 - Impossible work is completed by returning the reason, not by changing the target.
 `,
-  },
-  soul: {
-    ko: `# 소울 프롬프트
+    },
+    soul: {
+        ko: `# 소울 프롬프트
 
 이 파일은 장기 실행 원칙을 정의한다. 이름, 호칭, 역할 인식, 분위기, 말투처럼 사용자가 체감하는 정체성은 \`identity.md\`가 담당한다. run, session, memory scope, receipt 같은 공통 용어는 \`definitions.md\`가 담당한다.
 
@@ -433,7 +288,7 @@ This file keeps prompt and runtime documents aligned on the same terminology. Na
 - 같은 실패를 반복하지 않는다.
 - 완료에는 실제 결과 또는 명확한 불가능 사유가 필요하다.
 `,
-    en: `# Soul Prompt
+        en: `# Soul Prompt
 
 This file defines long-term operating principles. User-facing identity belongs in \`identity.md\`. Shared terms belong in \`definitions.md\`.
 
@@ -449,9 +304,9 @@ This file defines long-term operating principles. User-facing identity belongs i
 - Do not repeat the same failure path.
 - Completion requires an actual result or a clear impossible-reason result.
 `,
-  },
-  planner: {
-    ko: `# 플래너 프롬프트
+    },
+    planner: {
+        ko: `# 플래너 프롬프트
 
 이 파일은 에이전트 내부의 태스크 intake 및 실행 계획 프롬프트를 문서화한다. 이름과 말투는 \`identity.md\`, 공통 용어는 \`definitions.md\`, 장기 운영 원칙은 \`soul.md\`를 따른다.
 
@@ -473,7 +328,7 @@ This file defines long-term operating principles. User-facing identity belongs i
 - 결과물 전달이 필요하면 전달 receipt가 있어야 한다.
 - 불가능한 요청은 사유를 반환하고 완료한다.
 `,
-    en: `# Planner Prompt
+        en: `# Planner Prompt
 
 This file documents the internal task intake and execution-planning prompt. Name and voice follow \`identity.md\`, shared terms follow \`definitions.md\`, and long-term policy follows \`soul.md\`.
 
@@ -495,11 +350,11 @@ This file documents the internal task intake and execution-planning prompt. Name
 - If artifact delivery is required, a delivery receipt is required.
 - Impossible requests complete by returning the reason.
 `,
-  },
-  nobie_execution: {
-    ko: `# 노비 실행 판단 정책
+    },
+    knowbee_execution: {
+        ko: `# 노우비 실행 판단 정책
 
-이 파일은 루트 노비와 위임받은 모든 에이전트가 공통으로 사용하는 실행 판단 규칙이다.
+이 파일은 루트 노우비와 위임받은 모든 에이전트가 공통으로 사용하는 실행 판단 규칙이다.
 
 ## 원칙
 
@@ -515,7 +370,7 @@ This file documents the internal task intake and execution-planning prompt. Name
 2. 로컬 장치/시스템 실행이 필요하면 연장을 검토한다.
 3. 위임과 연장이 부적합하면 현재 에이전트가 자신의 역할과 도구 범위 안에서 자체 해결한다.
 4. 자체 해결도 권한, 안전, 개인정보, 계층 경계 때문에 불가능하면 상위 에이전트/요청자에게 미해결 사유를 반환하거나 필요한 확인을 요청한다.
-5. 루트 노비만 상위 에이전트가 없을 때 직접 처리 또는 사용자 확인으로 전환한다.
+5. 루트 노우비만 상위 에이전트가 없을 때 직접 처리 또는 사용자 확인으로 전환한다.
 
 ## 출력 계약
 
@@ -526,9 +381,9 @@ This file documents the internal task intake and execution-planning prompt. Name
 - confidence가 낮다는 이유만으로 실패하지 않는다. 구조적으로 불가능할 때 fallback한다.
 - 실패 횟수는 실패 조건이 아니라 다른 방법을 찾기 위한 신호다.
 `,
-    en: `# Nobie Execution Decision Policy
+        en: `# Knowbee Execution Decision Policy
 
-This file defines the shared execution-decision rules for root Nobie and every delegated agent.
+This file defines the shared execution-decision rules for root Knowbee and every delegated agent.
 
 ## Principles
 
@@ -544,7 +399,7 @@ This file defines the shared execution-decision rules for root Nobie and every d
 2. If local device or system execution is needed, check Yeonjang.
 3. If delegation and Yeonjang are not suitable, self-solve within the current agent's role and tool boundary.
 4. If self-solve is blocked by permission, safety, privacy, or hierarchy boundaries, return an unresolved reason to the parent/requester or ask for the required decision.
-5. Only root Nobie uses direct handling or user confirmation when there is no parent agent.
+5. Only root Knowbee uses direct handling or user confirmation when there is no parent agent.
 
 ## Output Contract
 
@@ -555,9 +410,9 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - Low confidence alone is not failure. Fall back only when the selected path is structurally impossible.
 - Attempt count is a signal to search for another method, not a failure condition.
 `,
-  },
-  memory_policy: {
-    ko: `# 메모리 정책
+    },
+    memory_policy: {
+        ko: `# 메모리 정책
 
 - short-term, session, task, artifact, diagnostic, long-term memory를 구분한다.
 - 현재 요청에 필요한 memory scope만 주입한다.
@@ -568,7 +423,7 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - 진단 memory는 오류 분석 요청이 아니면 일반 응답에 주입하지 않는다.
 - 산출물 경로, 전달 receipt, 실행 결과 metadata는 artifact memory로 관리한다.
 `,
-    en: `# Memory Policy
+        en: `# Memory Policy
 
 - Separate short-term, session, task, artifact, diagnostic, and long-term memory.
 - Inject only the memory scopes needed by the current request.
@@ -579,9 +434,9 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - Do not inject diagnostic memory into normal replies unless the request asks for error analysis.
 - Store artifact paths, delivery receipts, and execution-result metadata as artifact memory.
 `,
-  },
-  tool_policy: {
-    ko: `# 도구 정책
+    },
+    tool_policy: {
+        ko: `# 도구 정책
 
 - 실행 가능한 요청은 적절한 도구로 실제 수행한다.
 - 로컬 장치와 시스템 작업은 연결된 로컬 실행 확장을 우선한다.
@@ -596,7 +451,7 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - provider direct 실행은 요청 또는 상위 handoff에 명시 provider target이 있을 때만 허용한다. 실행 판단 실패, 토폴로지 runtime off, 직속 하위 후보 없음의 기본 fallback으로 쓰지 않는다.
 - 프롬프트 안에 자연어 폴더 별칭 목록을 두지 않는다. 위치는 명시 경로, 도구 또는 OS가 제공한 well-known folder 메타데이터, 검증된 이전 맥락, 사용자 확인으로만 확정한다.
 `,
-    en: `# Tool Policy
+        en: `# Tool Policy
 
 - Execute actionable requests with the appropriate tool.
 - Prefer the connected local execution extension for local device and system work.
@@ -611,9 +466,9 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - Provider direct execution is allowed only when the request or parent handoff provides an explicit provider target. It is not the default fallback for execution-decision failure, topology runtime off, or missing direct-child candidates.
 - Do not keep natural-language folder alias lists in prompts. Resolve locations only from explicit paths, tool or OS-provided well-known folder metadata, prior verified context, or user confirmation.
 `,
-  },
-  web_retrieval_planner: {
-    ko: `# 웹 검색 회복 플래너
+    },
+    web_retrieval_planner: {
+        ko: `# 웹 검색 회복 플래너
 
 - 값, 가격, 날씨, 지수, 범위, 결론을 생성하지 않는다.
 - 사용자가 요청한 대상, 지역, 심볼, 시장, 시간 기준을 바꾸지 않는다.
@@ -622,7 +477,7 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - 출력은 JSON만 사용하고 nextActions 또는 stopReason만 반환한다.
 - action은 method, query, url, expectedTargetBinding, reason, risk만 포함한다.
 `,
-    en: `# Web Retrieval Recovery Planner
+        en: `# Web Retrieval Recovery Planner
 
 - Do not generate values, prices, weather, index values, ranges, or conclusions.
 - Do not change the requested target, location, symbol, market, or time basis.
@@ -631,9 +486,9 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - Output JSON only and return only nextActions or stopReason.
 - Each action may contain only method, query, url, expectedTargetBinding, reason, and risk.
 `,
-  },
-  recovery_policy: {
-    ko: `# 복구 정책
+    },
+    recovery_policy: {
+        ko: `# 복구 정책
 
 - 실패하면 같은 입력으로 같은 도구를 반복하기 전에 원인을 분류한다.
 - recovery key는 tool, target, normalized error kind, action으로 만든다.
@@ -644,7 +499,7 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - 실행 판단 실패는 provider direct로 빠지지 않는다. 현재 에이전트 기준 self-solve, direct-current-agent, return-to-parent, ask-parent, ask-user 또는 명확한 불가능 사유로 정리한다.
 - 대안이 없으면 raw 오류 대신 사용자에게 이해 가능한 실패 사유를 반환한다.
 `,
-    en: `# Recovery Policy
+        en: `# Recovery Policy
 
 - Classify the cause before repeating the same tool with the same input.
 - Build recovery keys from tool, target, normalized error kind, and action.
@@ -655,9 +510,9 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - Execution-decision failure must not fall through to provider direct execution. Use self-solve, direct-current-agent handling, return-to-parent, ask-parent, ask-user, or an explicit impossible reason.
 - If no alternative remains, return a user-readable failure reason instead of a raw error.
 `,
-  },
-  topology_executor_policy: {
-    ko: `# 토폴로지 실행자 정책
+    },
+    topology_executor_policy: {
+        ko: `# 토폴로지 실행자 정책
 
 - 보이는 실행자 노드는 사용자 업무를 계획, 위임, 실행, 추적, 취소할 수 있는 단위다.
 - 사용자 업무 sub-session은 보이는 executorId에 매핑되어야 한다.
@@ -670,7 +525,7 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - 안전한 대안이 없을 때만 실패로 종료한다.
 - 사용자가 중단하면 복구보다 취소가 우선한다.
 `,
-    en: `# Topology Executor Policy
+        en: `# Topology Executor Policy
 
 - A visible executor node is the unit for user-facing planning, delegation, execution, trace, and cancellation.
 - User-facing sub-session work must map back to a visible executorId.
@@ -683,33 +538,33 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - Terminal failure is allowed only when no safe alternative remains.
 - User cancellation has priority over recovery.
 `,
-  },
-  completion_policy: {
-    ko: `# 완료 정책
+    },
+    completion_policy: {
+        ko: `# 완료 정책
 
 - 완료는 실제 결과 또는 명확한 불가능 사유가 있을 때만 선언한다.
 - 실행 완료와 전달 완료를 분리한다.
 - 위임 작업은 필수 ResultReport가 도착하고 ParentAgent가 검증과 취합을 마쳐야 완료 후보가 된다.
-- Nobie가 시작한 사용자 요청은 Nobie가 최종 검증과 전달을 끝내야 완료다.
+- Knowbee가 시작한 사용자 요청은 Knowbee가 최종 검증과 전달을 끝내야 완료다.
 - 결과물 전달 요청은 delivery receipt가 있어야 완료다.
 - 텍스트 답변만으로 완료되는 요청은 artifact delivery나 artifact recovery로 전환하지 않는다.
 - 일부 하위 단계가 끝났어도 완료 조건이 남아 있으면 계속 진행한다.
 - 물리적 또는 논리적으로 불가능한 작업은 다른 대상으로 바꾸지 않고 사유를 반환해 완료한다.
 `,
-    en: `# Completion Policy
+        en: `# Completion Policy
 
 - Declare completion only when there is an actual result or a clear impossible-reason result.
 - Separate execution completion from delivery completion.
 - Delegated work becomes a completion candidate only after required ResultReports arrive and the ParentAgent has reviewed and synthesized them.
-- For requests started through Nobie, completion requires Nobie's final review and delivery.
+- For requests started through Knowbee, completion requires Knowbee's final review and delivery.
 - Artifact delivery requests require a delivery receipt to be complete.
 - Text-only answers that satisfy the request do not need artifact delivery or artifact recovery.
 - Continue if completion criteria remain, even when some substeps are done.
 - If work is physically or logically impossible, return the reason and complete without changing the target.
 `,
-  },
-  output_policy: {
-    ko: `# 출력 정책
+    },
+    output_policy: {
+        ko: `# 출력 정책
 
 - provider raw 오류, HTML 오류 페이지, stack trace, secret, token을 그대로 사용자에게 노출하지 않는다.
 - 사용자가 이해할 수 있는 원인과 다음 가능한 조치만 간결하게 반환한다.
@@ -719,7 +574,7 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - 사용자가 요청한 언어를 유지한다.
 - 완료되지 않은 작업을 완료된 것처럼 말하지 않는다.
 `,
-    en: `# Output Policy
+        en: `# Output Policy
 
 - Do not expose provider raw errors, HTML error pages, stack traces, secrets, or tokens directly to the user.
 - Return only a concise user-readable cause and possible next action.
@@ -729,9 +584,9 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - Preserve the user's request language.
 - Do not describe unfinished work as completed.
 `,
-  },
-  channel: {
-    ko: `# 채널 정책
+    },
+    channel: {
+        ko: `# 채널 정책
 
 - 현재 요청이 들어온 채널을 기본 응답 및 결과물 전달 채널로 사용한다.
 - WebUI, Telegram, Slack은 서로 다른 session, thread, delivery 경계를 가진다.
@@ -742,7 +597,7 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - ChildAgent는 사용자 채널로 최종 답변을 직접 완료 처리하지 않는다.
 - 채널 전송이 실패하면 같은 전송 경로를 반복하기 전에 원인을 분류한다.
 `,
-    en: `# Channel Policy
+        en: `# Channel Policy
 
 - Use the channel where the current request arrived as the default reply and artifact-delivery channel.
 - WebUI, Telegram, and Slack have separate session, thread, and delivery boundaries.
@@ -753,9 +608,9 @@ This file defines the shared execution-decision rules for root Nobie and every d
 - A ChildAgent does not complete the user channel with a final answer directly.
 - If channel delivery fails, classify the cause before repeating the same delivery path.
 `,
-  },
-  bootstrap: {
-    ko: `# 최초 실행 부트스트랩 프롬프트
+    },
+    bootstrap: {
+        ko: `# 최초 실행 부트스트랩 프롬프트
 
 이 파일은 최초 실행 또는 prompt source registry 복구 시에만 사용한다. 일반 사용자 요청을 처리하는 run에는 자동 주입하지 않는다.
 
@@ -769,13 +624,13 @@ This file defines the shared execution-decision rules for root Nobie and every d
 ## 완료 기준
 
 - 필수 prompt source가 모두 존재한다.
-- 선택 prompt source(nobie execution, channel, memory/tool/recovery/completion/output policy)가 누락 없이 seed된다.
+- 선택 prompt source(knowbee execution, channel, memory/tool/recovery/completion/output policy)가 누락 없이 seed된다.
 - source metadata와 checksum이 기록된다.
 - sub-agent hierarchy, delegation contract, nickname attribution, team expansion 기본 정의가 생성된다.
 - 사용자 정보는 확인되지 않은 값을 추정하지 않는다.
 - bootstrap source는 일반 runtime assembly에서 제외된다.
 `,
-    en: `# First-Run Bootstrap Prompt
+        en: `# First-Run Bootstrap Prompt
 
 Use this file only during first-run initialization or prompt source registry repair. Do not inject it automatically into normal user-request runs.
 
@@ -789,597 +644,554 @@ Use this file only during first-run initialization or prompt source registry rep
 ## Completion Criteria
 
 - All required prompt sources exist.
-- Optional prompt sources (nobie execution, channel, memory/tool/recovery/completion/output policy) are seeded without gaps.
+- Optional prompt sources (knowbee execution, channel, memory/tool/recovery/completion/output policy) are seeded without gaps.
 - Source metadata and checksums are recorded.
 - Default definitions for sub-agent hierarchy, delegation contracts, nickname attribution, and team expansion are created.
 - Unconfirmed user facts are not inferred.
 - The bootstrap source is excluded from normal runtime assembly.
 `,
-  },
-}
-
-const PROMPT_SOURCE_SECRET_PATTERNS: Array<{ marker: string; pattern: RegExp }> = [
-  { marker: "api_key_assignment", pattern: /\b(?:api[_ -]?key|apikey)\b\s*[:=]\s*["']?(?!unknown|none|미확정|없음)[A-Za-z0-9_./+=-]{16,}/i },
-  { marker: "oauth_token_assignment", pattern: /\b(?:oauth[_ -]?token|access[_ -]?token|refresh[_ -]?token)\b\s*[:=]\s*["']?(?!unknown|none|미확정|없음)[A-Za-z0-9_./+=-]{16,}/i },
-  { marker: "bot_token_assignment", pattern: /\b(?:bot[_ -]?token|telegram[_ -]?token|slack[_ -]?token)\b\s*[:=]\s*["']?(?!unknown|none|미확정|없음)[A-Za-z0-9_./+=-]{16,}/i },
-  { marker: "channel_secret_assignment", pattern: /\b(?:channel[_ -]?secret|client[_ -]?secret|signing[_ -]?secret)\b\s*[:=]\s*["']?(?!unknown|none|미확정|없음)[A-Za-z0-9_./+=-]{16,}/i },
-  { marker: "openai_secret_key", pattern: /\bsk-[A-Za-z0-9_-]{20,}\b/ },
-]
-
-const promptAssemblyCache = new Map<string, PromptSourceAssembly>()
-
+    },
+};
+const PROMPT_SOURCE_SECRET_PATTERNS = [
+    { marker: "api_key_assignment", pattern: /\b(?:api[_ -]?key|apikey)\b\s*[:=]\s*["']?(?!unknown|none|미확정|없음)[A-Za-z0-9_./+=-]{16,}/i },
+    { marker: "oauth_token_assignment", pattern: /\b(?:oauth[_ -]?token|access[_ -]?token|refresh[_ -]?token)\b\s*[:=]\s*["']?(?!unknown|none|미확정|없음)[A-Za-z0-9_./+=-]{16,}/i },
+    { marker: "bot_token_assignment", pattern: /\b(?:bot[_ -]?token|telegram[_ -]?token|slack[_ -]?token)\b\s*[:=]\s*["']?(?!unknown|none|미확정|없음)[A-Za-z0-9_./+=-]{16,}/i },
+    { marker: "channel_secret_assignment", pattern: /\b(?:channel[_ -]?secret|client[_ -]?secret|signing[_ -]?secret)\b\s*[:=]\s*["']?(?!unknown|none|미확정|없음)[A-Za-z0-9_./+=-]{16,}/i },
+    { marker: "openai_secret_key", pattern: /\bsk-[A-Za-z0-9_-]{20,}\b/ },
+];
+const promptAssemblyCache = new Map();
 /**
- * Walk up from workDir (up to 3 parent levels) searching for NOBIE.md first,
+ * Walk up from workDir (up to 3 parent levels) searching for KNOWBEE.md first,
  * then legacy WIZBY.md / HOWIE.md.
  * Returns the file contents (trimmed to 8KB) or null if not found.
  */
-export function loadNobieMd(workDir: string): string | null {
-  let current = workDir
-  for (let i = 0; i < 4; i++) {
-    for (const filename of MEMORY_FILENAMES) {
-      const candidate = join(current, filename)
-      if (existsSync(candidate)) {
-        try {
-          return readFileSync(candidate, "utf-8").slice(0, MAX_NOBIE_MD_SIZE)
-        } catch {
-          return null
+export function loadKnowbeeMd(workDir) {
+    let current = workDir;
+    for (let i = 0; i < 4; i++) {
+        for (const filename of MEMORY_FILENAMES) {
+            const candidate = join(current, filename);
+            if (existsSync(candidate)) {
+                try {
+                    return readFileSync(candidate, "utf-8").slice(0, MAX_KNOWBEE_MD_SIZE);
+                }
+                catch {
+                    return null;
+                }
+            }
         }
-      }
+        const parent = dirname(current);
+        if (parent === current)
+            break;
+        current = parent;
     }
-    const parent = dirname(current)
-    if (parent === current) break
-    current = parent
-  }
-  return null
+    return null;
 }
-
-function findPromptsDirInAncestors(workDir: string): string | null {
-  let current = workDir
-  for (let i = 0; i < 4; i++) {
-    const candidate = join(current, PROMPTS_DIRNAME)
-    if (existsSync(candidate)) return candidate
-    const parent = dirname(current)
-    if (parent === current) break
-    current = parent
-  }
-  return null
-}
-
-function findPromptsDir(workDir: string): string | null {
-  const ancestorCandidate = findPromptsDirInAncestors(workDir)
-  if (ancestorCandidate) return ancestorCandidate
-
-  const cwdCandidate = join(process.cwd(), PROMPTS_DIRNAME)
-  if (existsSync(cwdCandidate)) return cwdCandidate
-
-  return null
-}
-
-function resolvePromptsDirForSeed(workDir: string): string {
-  return findPromptsDirInAncestors(workDir) ?? join(workDir, PROMPTS_DIRNAME)
-}
-
-function checksumContent(content: string): string {
-  return createHash("sha256").update(content).digest("hex")
-}
-
-export function detectPromptSourceSecretMarkers(content: string): string[] {
-  return PROMPT_SOURCE_SECRET_PATTERNS
-    .filter(({ pattern }) => pattern.test(content))
-    .map(({ marker }) => marker)
-}
-
-export function isPromptSourceContentSafe(content: string): boolean {
-  return detectPromptSourceSecretMarkers(content).length === 0
-}
-
-export function ensurePromptSourceFiles(workDir: string): PromptSourceSeedResult {
-  const promptsDir = resolvePromptsDirForSeed(workDir)
-  mkdirSync(promptsDir, { recursive: true })
-
-  const created: string[] = []
-  const existing: string[] = []
-  for (const definition of PROMPT_SOURCE_DEFINITIONS) {
-    const defaults = DEFAULT_PROMPT_SOURCE_CONTENT[definition.sourceId]
-    if (!defaults) continue
-    for (const locale of DEFAULT_PROMPT_SOURCE_SEED_LOCALES) {
-      const filename = definition.filenames[locale]
-      const target = join(promptsDir, filename)
-      if (existsSync(target)) {
-        existing.push(filename)
-        continue
-      }
-      writeFileSync(target, defaults[locale].trim() + "\n", "utf-8")
-      created.push(filename)
+function findPromptsDirInAncestors(workDir) {
+    let current = workDir;
+    for (let i = 0; i < 4; i++) {
+        const candidate = join(current, PROMPTS_DIRNAME);
+        if (existsSync(candidate))
+            return candidate;
+        const parent = dirname(current);
+        if (parent === current)
+            break;
+        current = parent;
     }
-  }
-
-  return {
-    promptsDir,
-    created,
-    existing,
-    registry: loadPromptSourceRegistry(promptsDir),
-  }
+    return null;
 }
-
-export function loadPromptSourceRegistry(workDir: string): LoadedPromptSource[] {
-  const promptsDir = findPromptsDir(workDir)
-  if (!promptsDir) return []
-
-  const sources: LoadedPromptSource[] = []
-  for (const definition of PROMPT_SOURCE_DEFINITIONS) {
-    for (const locale of ["ko", "en"] as const) {
-      const filename = definition.filenames[locale]
-      const candidate = join(promptsDir, filename)
-      if (!existsSync(candidate)) continue
-      try {
-        const content = readFileSync(candidate, "utf-8").trim()
-        if (!content) continue
-        if (!isPromptSourceContentSafe(content)) continue
-        const checksum = checksumContent(content)
-        sources.push({
-          sourceId: definition.sourceId,
-          locale,
-          path: candidate,
-          version: checksum.slice(0, 12),
-          priority: definition.priority,
-          enabled: true,
-          required: definition.required,
-          usageScope: definition.usageScope,
-          checksum,
-          content,
-        })
-      } catch {
-        // Ignore one unreadable prompt source. Required-source validation is handled by assembly.
-      }
+function findPromptsDir(workDir) {
+    const ancestorCandidate = findPromptsDirInAncestors(workDir);
+    if (ancestorCandidate)
+        return ancestorCandidate;
+    const cwdCandidate = join(process.cwd(), PROMPTS_DIRNAME);
+    if (existsSync(cwdCandidate))
+        return cwdCandidate;
+    return null;
+}
+function resolvePromptsDirForSeed(workDir) {
+    return findPromptsDirInAncestors(workDir) ?? join(workDir, PROMPTS_DIRNAME);
+}
+function checksumContent(content) {
+    return createHash("sha256").update(content).digest("hex");
+}
+export function detectPromptSourceSecretMarkers(content) {
+    return PROMPT_SOURCE_SECRET_PATTERNS
+        .filter(({ pattern }) => pattern.test(content))
+        .map(({ marker }) => marker);
+}
+export function isPromptSourceContentSafe(content) {
+    return detectPromptSourceSecretMarkers(content).length === 0;
+}
+export function ensurePromptSourceFiles(workDir) {
+    const promptsDir = resolvePromptsDirForSeed(workDir);
+    mkdirSync(promptsDir, { recursive: true });
+    const created = [];
+    const existing = [];
+    for (const definition of PROMPT_SOURCE_DEFINITIONS) {
+        const defaults = DEFAULT_PROMPT_SOURCE_CONTENT[definition.sourceId];
+        if (!defaults)
+            continue;
+        for (const locale of DEFAULT_PROMPT_SOURCE_SEED_LOCALES) {
+            const filename = definition.filenames[locale];
+            const target = join(promptsDir, filename);
+            if (existsSync(target)) {
+                existing.push(filename);
+                continue;
+            }
+            writeFileSync(target, defaults[locale].trim() + "\n", "utf-8");
+            created.push(filename);
+        }
     }
-  }
-
-  return sources.sort((a, b) => (a.priority - b.priority) || a.sourceId.localeCompare(b.sourceId) || a.locale.localeCompare(b.locale))
+    return {
+        promptsDir,
+        created,
+        existing,
+        registry: loadPromptSourceRegistry(promptsDir),
+    };
 }
-
-function applyPromptSourceStates(sources: LoadedPromptSource[], states: PromptSourceState[]): LoadedPromptSource[] {
-  if (states.length === 0) return sources
-  const stateByKey = new Map(states.map((state) => [`${state.sourceId}:${state.locale}`, state]))
-  return sources.map((source) => {
-    const state = stateByKey.get(`${source.sourceId}:${source.locale}`)
-    return state ? { ...source, enabled: state.enabled } : source
-  })
+export function loadPromptSourceRegistry(workDir) {
+    const promptsDir = findPromptsDir(workDir);
+    if (!promptsDir)
+        return [];
+    const sources = [];
+    for (const definition of PROMPT_SOURCE_DEFINITIONS) {
+        for (const locale of ["ko", "en"]) {
+            const filename = definition.filenames[locale];
+            const candidate = join(promptsDir, filename);
+            if (!existsSync(candidate))
+                continue;
+            try {
+                const content = readFileSync(candidate, "utf-8").trim();
+                if (!content)
+                    continue;
+                if (!isPromptSourceContentSafe(content))
+                    continue;
+                const checksum = checksumContent(content);
+                sources.push({
+                    sourceId: definition.sourceId,
+                    locale,
+                    path: candidate,
+                    version: checksum.slice(0, 12),
+                    priority: definition.priority,
+                    enabled: true,
+                    required: definition.required,
+                    usageScope: definition.usageScope,
+                    checksum,
+                    content,
+                });
+            }
+            catch {
+                // Ignore one unreadable prompt source. Required-source validation is handled by assembly.
+            }
+        }
+    }
+    return sources.sort((a, b) => (a.priority - b.priority) || a.sourceId.localeCompare(b.sourceId) || a.locale.localeCompare(b.locale));
 }
-
-function selectRuntimePromptSources(sources: LoadedPromptSource[], locale: "ko" | "en"): LoadedPromptSource[] {
-  const bySourceId = new Map<string, LoadedPromptSource[]>()
-  for (const source of sources) {
-    if (source.usageScope !== "runtime") continue
-    if (!source.enabled && !source.required) continue
-    if (!PROMPT_SOURCE_DEFINITIONS.find((definition) => definition.sourceId === source.sourceId)?.defaultRuntime) continue
-    const bucket = bySourceId.get(source.sourceId) ?? []
-    bucket.push(source)
-    bySourceId.set(source.sourceId, bucket)
-  }
-
-  const selected: LoadedPromptSource[] = []
-  for (const definition of PROMPT_SOURCE_DEFINITIONS.filter((item) => item.defaultRuntime)) {
-    const candidates = bySourceId.get(definition.sourceId) ?? []
-    const preferred = candidates.find((source) => source.locale === locale)
-      ?? candidates.find((source) => source.locale === "ko")
-      ?? candidates[0]
-    if (preferred) selected.push(preferred)
-  }
-
-  return selected.sort((a, b) => a.priority - b.priority)
+function applyPromptSourceStates(sources, states) {
+    if (states.length === 0)
+        return sources;
+    const stateByKey = new Map(states.map((state) => [`${state.sourceId}:${state.locale}`, state]));
+    return sources.map((source) => {
+        const state = stateByKey.get(`${source.sourceId}:${source.locale}`);
+        return state ? { ...source, enabled: state.enabled } : source;
+    });
 }
-
-function selectPromptSourcesByUsageScope(
-  sources: LoadedPromptSource[],
-  locale: "ko" | "en",
-  usageScope: PromptSourceUsageScope,
-): LoadedPromptSource[] {
-  const bySourceId = new Map<string, LoadedPromptSource[]>()
-  for (const source of sources) {
-    if (source.usageScope !== usageScope) continue
-    if (!source.enabled && !source.required) continue
-    const bucket = bySourceId.get(source.sourceId) ?? []
-    bucket.push(source)
-    bySourceId.set(source.sourceId, bucket)
-  }
-
-  const selected: LoadedPromptSource[] = []
-  for (const definition of PROMPT_SOURCE_DEFINITIONS.filter((item) => item.usageScope === usageScope)) {
-    const candidates = bySourceId.get(definition.sourceId) ?? []
-    const preferred = candidates.find((source) => source.locale === locale)
-      ?? candidates.find((source) => source.locale === "ko")
-      ?? candidates[0]
-    if (preferred) selected.push(preferred)
-  }
-
-  return selected.sort((a, b) => a.priority - b.priority)
+function selectRuntimePromptSources(sources, locale) {
+    const bySourceId = new Map();
+    for (const source of sources) {
+        if (source.usageScope !== "runtime")
+            continue;
+        if (!source.enabled && !source.required)
+            continue;
+        if (!PROMPT_SOURCE_DEFINITIONS.find((definition) => definition.sourceId === source.sourceId)?.defaultRuntime)
+            continue;
+        const bucket = bySourceId.get(source.sourceId) ?? [];
+        bucket.push(source);
+        bySourceId.set(source.sourceId, bucket);
+    }
+    const selected = [];
+    for (const definition of PROMPT_SOURCE_DEFINITIONS.filter((item) => item.defaultRuntime)) {
+        const candidates = bySourceId.get(definition.sourceId) ?? [];
+        const preferred = candidates.find((source) => source.locale === locale)
+            ?? candidates.find((source) => source.locale === "ko")
+            ?? candidates[0];
+        if (preferred)
+            selected.push(preferred);
+    }
+    return selected.sort((a, b) => a.priority - b.priority);
 }
-
-function buildRequiredPromptSourceDiagnostics(
-  selected: LoadedPromptSource[],
-  locale: "ko" | "en",
-  usageScope: PromptSourceUsageScope,
-): PromptSourceDiagnostic[] {
-  const selectedIds = new Set(selected.map((source) => source.sourceId))
-  return PROMPT_SOURCE_DEFINITIONS
-    .filter((definition) => definition.required && definition.usageScope === usageScope)
-    .filter((definition) => usageScope !== "runtime" || definition.defaultRuntime)
-    .filter((definition) => !selectedIds.has(definition.sourceId))
-    .map((definition) => ({
-      severity: "error" as const,
-      code: "required_prompt_source_missing" as const,
-      sourceId: definition.sourceId,
-      locale,
-      message: `Required prompt source '${definition.sourceId}' is missing for ${usageScope} assembly.`,
-    }))
+function selectPromptSourcesByUsageScope(sources, locale, usageScope) {
+    const bySourceId = new Map();
+    for (const source of sources) {
+        if (source.usageScope !== usageScope)
+            continue;
+        if (!source.enabled && !source.required)
+            continue;
+        const bucket = bySourceId.get(source.sourceId) ?? [];
+        bucket.push(source);
+        bySourceId.set(source.sourceId, bucket);
+    }
+    const selected = [];
+    for (const definition of PROMPT_SOURCE_DEFINITIONS.filter((item) => item.usageScope === usageScope)) {
+        const candidates = bySourceId.get(definition.sourceId) ?? [];
+        const preferred = candidates.find((source) => source.locale === locale)
+            ?? candidates.find((source) => source.locale === "ko")
+            ?? candidates[0];
+        if (preferred)
+            selected.push(preferred);
+    }
+    return selected.sort((a, b) => a.priority - b.priority);
 }
-
-function buildPromptStateSignature(states: PromptSourceState[]): string {
-  return states
-    .map((state) => `${state.sourceId}:${state.locale}:${state.enabled ? "1" : "0"}`)
-    .sort()
-    .join("|")
+function buildRequiredPromptSourceDiagnostics(selected, locale, usageScope) {
+    const selectedIds = new Set(selected.map((source) => source.sourceId));
+    return PROMPT_SOURCE_DEFINITIONS
+        .filter((definition) => definition.required && definition.usageScope === usageScope)
+        .filter((definition) => usageScope !== "runtime" || definition.defaultRuntime)
+        .filter((definition) => !selectedIds.has(definition.sourceId))
+        .map((definition) => ({
+        severity: "error",
+        code: "required_prompt_source_missing",
+        sourceId: definition.sourceId,
+        locale,
+        message: `Required prompt source '${definition.sourceId}' is missing for ${usageScope} assembly.`,
+    }));
 }
-
-function buildPromptRegistrySignature(sources: LoadedPromptSource[]): string {
-  return sources
-    .map((source) => [
-      source.sourceId,
-      source.locale,
-      source.checksum,
-      source.enabled ? "1" : "0",
-      source.priority,
-      source.usageScope,
+function buildPromptStateSignature(states) {
+    return states
+        .map((state) => `${state.sourceId}:${state.locale}:${state.enabled ? "1" : "0"}`)
+        .sort()
+        .join("|");
+}
+function buildPromptRegistrySignature(sources) {
+    return sources
+        .map((source) => [
+        source.sourceId,
+        source.locale,
+        source.checksum,
+        source.enabled ? "1" : "0",
+        source.priority,
+        source.usageScope,
     ].join(":"))
-    .join("|")
+        .join("|");
 }
-
-export function loadSystemPromptSourceAssembly(workDir: string, locale: "ko" | "en" = "en", states: PromptSourceState[] = []): PromptSourceAssembly | null {
-  const registry = applyPromptSourceStates(loadPromptSourceRegistry(workDir), states)
-  const runtimeSources = selectRuntimePromptSources(registry, locale)
-  if (runtimeSources.length === 0) return null
-
-  const cacheKey = [
-    `policy=${PROMPT_ASSEMBLY_POLICY_VERSION}`,
-    `workDir=${workDir}`,
-    `locale=${locale}`,
-    `states=${buildPromptStateSignature(states)}`,
-    `sources=${buildPromptRegistrySignature(runtimeSources)}`,
-  ].join("\n")
-  const cached = promptAssemblyCache.get(cacheKey)
-  if (cached) return cached
-
-  const text = runtimeSources
-    .map((source) => `[Prompt Source: ${source.sourceId}:${source.locale}@${source.version}]\n${source.content}`)
-    .join("\n\n---\n\n")
-    .slice(0, MAX_SYSTEM_PROMPT_SIZE)
-
-  const assembly: PromptSourceAssembly = {
-    text,
-    snapshot: {
-      assemblyVersion: 1,
-      createdAt: Date.now(),
-      sources: runtimeSources.map(({ content: _content, ...metadata }) => metadata),
-      diagnostics: buildRequiredPromptSourceDiagnostics(runtimeSources, locale, "runtime"),
-    },
-    sources: runtimeSources,
-  }
-  promptAssemblyCache.set(cacheKey, assembly)
-  return assembly
+export function loadSystemPromptSourceAssembly(workDir, locale = "en", states = []) {
+    const registry = applyPromptSourceStates(loadPromptSourceRegistry(workDir), states);
+    const runtimeSources = selectRuntimePromptSources(registry, locale);
+    if (runtimeSources.length === 0)
+        return null;
+    const cacheKey = [
+        `policy=${PROMPT_ASSEMBLY_POLICY_VERSION}`,
+        `workDir=${workDir}`,
+        `locale=${locale}`,
+        `states=${buildPromptStateSignature(states)}`,
+        `sources=${buildPromptRegistrySignature(runtimeSources)}`,
+    ].join("\n");
+    const cached = promptAssemblyCache.get(cacheKey);
+    if (cached)
+        return cached;
+    const text = runtimeSources
+        .map((source) => `[Prompt Source: ${source.sourceId}:${source.locale}@${source.version}]\n${source.content}`)
+        .join("\n\n---\n\n")
+        .slice(0, MAX_SYSTEM_PROMPT_SIZE);
+    const assembly = {
+        text,
+        snapshot: {
+            assemblyVersion: 1,
+            createdAt: Date.now(),
+            sources: runtimeSources.map(({ content: _content, ...metadata }) => metadata),
+            diagnostics: buildRequiredPromptSourceDiagnostics(runtimeSources, locale, "runtime"),
+        },
+        sources: runtimeSources,
+    };
+    promptAssemblyCache.set(cacheKey, assembly);
+    return assembly;
 }
-
-export function loadFirstRunPromptSourceAssembly(workDir: string, locale: "ko" | "en" = "en", states: PromptSourceState[] = []): PromptSourceAssembly | null {
-  const registry = applyPromptSourceStates(loadPromptSourceRegistry(workDir), states)
-  const firstRunSources = selectPromptSourcesByUsageScope(registry, locale, "first_run")
-  if (firstRunSources.length === 0) return null
-
-  const cacheKey = [
-    `policy=${PROMPT_ASSEMBLY_POLICY_VERSION}`,
-    "scope=first_run",
-    `workDir=${workDir}`,
-    `locale=${locale}`,
-    `states=${buildPromptStateSignature(states)}`,
-    `sources=${buildPromptRegistrySignature(firstRunSources)}`,
-  ].join("\n")
-  const cached = promptAssemblyCache.get(cacheKey)
-  if (cached) return cached
-
-  const text = firstRunSources
-    .map((source) => `[Prompt Source: ${source.sourceId}:${source.locale}@${source.version}]\n${source.content}`)
-    .join("\n\n---\n\n")
-    .slice(0, MAX_SYSTEM_PROMPT_SIZE)
-
-  const assembly: PromptSourceAssembly = {
-    text,
-    snapshot: {
-      assemblyVersion: 1,
-      createdAt: Date.now(),
-      sources: firstRunSources.map(({ content: _content, ...metadata }) => metadata),
-      diagnostics: buildRequiredPromptSourceDiagnostics(firstRunSources, locale, "first_run"),
-    },
-    sources: firstRunSources,
-  }
-  promptAssemblyCache.set(cacheKey, assembly)
-  return assembly
+export function loadFirstRunPromptSourceAssembly(workDir, locale = "en", states = []) {
+    const registry = applyPromptSourceStates(loadPromptSourceRegistry(workDir), states);
+    const firstRunSources = selectPromptSourcesByUsageScope(registry, locale, "first_run");
+    if (firstRunSources.length === 0)
+        return null;
+    const cacheKey = [
+        `policy=${PROMPT_ASSEMBLY_POLICY_VERSION}`,
+        "scope=first_run",
+        `workDir=${workDir}`,
+        `locale=${locale}`,
+        `states=${buildPromptStateSignature(states)}`,
+        `sources=${buildPromptRegistrySignature(firstRunSources)}`,
+    ].join("\n");
+    const cached = promptAssemblyCache.get(cacheKey);
+    if (cached)
+        return cached;
+    const text = firstRunSources
+        .map((source) => `[Prompt Source: ${source.sourceId}:${source.locale}@${source.version}]\n${source.content}`)
+        .join("\n\n---\n\n")
+        .slice(0, MAX_SYSTEM_PROMPT_SIZE);
+    const assembly = {
+        text,
+        snapshot: {
+            assemblyVersion: 1,
+            createdAt: Date.now(),
+            sources: firstRunSources.map(({ content: _content, ...metadata }) => metadata),
+            diagnostics: buildRequiredPromptSourceDiagnostics(firstRunSources, locale, "first_run"),
+        },
+        sources: firstRunSources,
+    };
+    promptAssemblyCache.set(cacheKey, assembly);
+    return assembly;
 }
-
 /**
  * Load canonical runtime prompt sources from prompts/.
  * Bootstrap prompts are intentionally excluded from the default runtime assembly.
  */
-export function loadSystemPromptSources(workDir: string): string | null {
-  return loadSystemPromptSourceAssembly(workDir)?.text ?? null
+export function loadSystemPromptSources(workDir) {
+    return loadSystemPromptSourceAssembly(workDir)?.text ?? null;
 }
-
-function resolvePromptSourceDefinition(sourceId: string): PromptSourceDefinition | undefined {
-  return PROMPT_SOURCE_DEFINITIONS.find((definition) => definition.sourceId === sourceId)
+function resolvePromptSourceDefinition(sourceId) {
+    return PROMPT_SOURCE_DEFINITIONS.find((definition) => definition.sourceId === sourceId);
 }
-
-function resolvePromptSourcePath(workDir: string, sourceId: string, locale: "ko" | "en"): string {
-  const definition = resolvePromptSourceDefinition(sourceId)
-  if (!definition) throw new Error(`unknown prompt source: ${sourceId}`)
-  const promptsDir = findPromptsDir(workDir) ?? resolvePromptsDirForSeed(workDir)
-  return join(promptsDir, definition.filenames[locale])
+function resolvePromptSourcePath(workDir, sourceId, locale) {
+    const definition = resolvePromptSourceDefinition(sourceId);
+    if (!definition)
+        throw new Error(`unknown prompt source: ${sourceId}`);
+    const promptsDir = findPromptsDir(workDir) ?? resolvePromptsDirForSeed(workDir);
+    return join(promptsDir, definition.filenames[locale]);
 }
-
-export function promptSourceFileExists(workDir: string, sourceId: string, locale: "ko" | "en"): boolean {
-  try {
-    return existsSync(resolvePromptSourcePath(workDir, sourceId, locale))
-  } catch {
-    return false
-  }
-}
-
-function requirePromptSourceFile(workDir: string, sourceId: string, locale: "ko" | "en"): string {
-  const sourcePath = resolvePromptSourcePath(workDir, sourceId, locale)
-  if (!existsSync(sourcePath)) throw new Error(`prompt source not found: ${sourceId}:${locale}`)
-  return sourcePath
-}
-
-function normalizePromptSourceComparableContent(content: string): string {
-  return content.replace(/\r/g, "").trim()
-}
-
-function splitPromptSourceComparableLines(content: string): string[] {
-  const normalized = normalizePromptSourceComparableContent(content)
-  return normalized ? normalized.split("\n") : []
-}
-
-export function buildPromptSourceContentDiff(beforeContent: string, afterContent: string): PromptSourceDiffResult {
-  const normalizedBefore = normalizePromptSourceComparableContent(beforeContent)
-  const normalizedAfter = normalizePromptSourceComparableContent(afterContent)
-  const beforeLines = splitPromptSourceComparableLines(normalizedBefore)
-  const afterLines = splitPromptSourceComparableLines(normalizedAfter)
-  const max = Math.max(beforeLines.length, afterLines.length)
-  const lines: PromptSourceDiffLine[] = []
-  for (let index = 0; index < max; index++) {
-    const before = beforeLines[index]
-    const after = afterLines[index]
-    if (before === after) {
-      if (before !== undefined) lines.push({ kind: "unchanged", beforeLine: index + 1, afterLine: index + 1, before, after: before })
-      continue
-    }
-    if (before !== undefined && after !== undefined) {
-      lines.push({ kind: "changed", beforeLine: index + 1, afterLine: index + 1, before, after })
-      continue
-    }
-    if (before !== undefined) {
-      lines.push({ kind: "removed", beforeLine: index + 1, before })
-      continue
-    }
-    if (after !== undefined) {
-      lines.push({ kind: "added", afterLine: index + 1, after })
-    }
-  }
-  const beforeChecksum = checksumContent(normalizedBefore)
-  const afterChecksum = checksumContent(normalizedAfter)
-  return {
-    beforeChecksum,
-    afterChecksum,
-    changed: beforeChecksum !== afterChecksum,
-    lines,
-  }
-}
-
-export function createPromptSourceBackup(workDir: string, sourceId: string, locale: "ko" | "en"): PromptSourceBackupResult {
-  const sourcePath = requirePromptSourceFile(workDir, sourceId, locale)
-  const content = readFileSync(sourcePath, "utf-8")
-  const checksum = checksumContent(content)
-  const createdAt = Date.now()
-  const backupDir = join(dirname(sourcePath), ".backups")
-  mkdirSync(backupDir, { recursive: true })
-  const backupId = `${sourceId}.${locale}.${createdAt}.${checksum.slice(0, 12)}.${basename(sourcePath)}`
-  const backupPath = join(backupDir, backupId)
-  copyFileSync(sourcePath, backupPath)
-  return { backupId, sourceId, locale, sourcePath, backupPath, checksum, createdAt }
-}
-
-export function exportPromptSourcesToFile(input: { workDir: string; outputPath: string }): PromptSourceExportResult {
-  const sources = loadPromptSourceRegistry(input.workDir)
-  const createdAt = Date.now()
-  const payload: PromptSourceExportFile = {
-    kind: "nobie.prompt-sources.export",
-    version: 1,
-    createdAt,
-    sources,
-  }
-  mkdirSync(dirname(input.outputPath), { recursive: true })
-  writeFileSync(input.outputPath, JSON.stringify(payload, null, 2) + "\n", "utf-8")
-  const checksum = checksumContent(readFileSync(input.outputPath, "utf-8"))
-  return {
-    exportPath: input.outputPath,
-    checksum,
-    createdAt,
-    sourceCount: sources.length,
-    sources: sources.map(({ content: _content, ...metadata }) => metadata),
-  }
-}
-
-export function importPromptSourcesFromFile(input: {
-  workDir: string
-  exportPath: string
-  overwrite?: boolean
-}): PromptSourceImportResult {
-  const parsed = JSON.parse(readFileSync(input.exportPath, "utf-8")) as Partial<PromptSourceExportFile>
-  if (parsed.kind !== "nobie.prompt-sources.export" || parsed.version !== 1 || !Array.isArray(parsed.sources)) {
-    throw new Error("invalid prompt source export file")
-  }
-
-  const imported: string[] = []
-  const skipped: string[] = []
-  const backups: PromptSourceBackupResult[] = []
-  for (const source of parsed.sources) {
-    const sourceId = source.sourceId
-    const locale = source.locale
-    const key = `${sourceId}:${locale}`
-    if (locale !== "ko" && locale !== "en") {
-      skipped.push(key)
-      continue
-    }
-    if (!isPromptSourceContentSafe(source.content)) throw new Error(`prompt source export contains secret-like content: ${key}`)
-
-    let targetPath: string
+export function promptSourceFileExists(workDir, sourceId, locale) {
     try {
-      targetPath = resolvePromptSourcePath(input.workDir, sourceId, locale)
-    } catch {
-      skipped.push(key)
-      continue
+        return existsSync(resolvePromptSourcePath(workDir, sourceId, locale));
     }
-
-    if (existsSync(targetPath)) {
-      if (!input.overwrite) {
-        skipped.push(key)
-        continue
-      }
-      const result = writePromptSourceWithBackup({
-        workDir: input.workDir,
-        sourceId,
-        locale,
-        content: source.content,
-      })
-      if (result.backup) backups.push(result.backup)
-      if (result.diff.changed) imported.push(key)
-      else skipped.push(key)
-      continue
+    catch {
+        return false;
     }
-
-    mkdirSync(dirname(targetPath), { recursive: true })
-    writeFileSync(targetPath, source.content.trimEnd() + "\n", "utf-8")
-    imported.push(key)
-  }
-
-  promptAssemblyCache.clear()
-  return {
-    exportPath: input.exportPath,
-    imported,
-    skipped,
-    backups,
-    registry: loadPromptSourceRegistry(input.workDir).map(({ content: _content, ...metadata }) => metadata),
-  }
 }
-
-export function writePromptSourceWithBackup(input: {
-  workDir: string
-  sourceId: string
-  locale: "ko" | "en"
-  content: string
-  createBackup?: boolean
-}): PromptSourceWriteResult {
-  const sourcePath = requirePromptSourceFile(input.workDir, input.sourceId, input.locale)
-  const beforeContent = readFileSync(sourcePath, "utf-8")
-  const nextContent = input.content.trimEnd() + "\n"
-  if (!isPromptSourceContentSafe(nextContent)) throw new Error("prompt source contains secret-like content")
-  const diff = buildPromptSourceContentDiff(
-    normalizePromptSourceComparableContent(beforeContent),
-    normalizePromptSourceComparableContent(nextContent),
-  )
-  const backup = diff.changed && input.createBackup !== false
-    ? createPromptSourceBackup(input.workDir, input.sourceId, input.locale)
-    : null
-  if (diff.changed) writeFileSync(sourcePath, nextContent, "utf-8")
-  const source = loadPromptSourceRegistry(input.workDir).find((item) => item.sourceId === input.sourceId && item.locale === input.locale)
-  if (!source) throw new Error(`prompt source reload failed: ${input.sourceId}:${input.locale}`)
-  promptAssemblyCache.clear()
-  return { backup, source, diff }
+function requirePromptSourceFile(workDir, sourceId, locale) {
+    const sourcePath = resolvePromptSourcePath(workDir, sourceId, locale);
+    if (!existsSync(sourcePath))
+        throw new Error(`prompt source not found: ${sourceId}:${locale}`);
+    return sourcePath;
 }
-
-export function rollbackPromptSourceBackup(input: { sourcePath: string; backupPath: string }): PromptSourceRollbackResult {
-  if (!existsSync(input.sourcePath)) throw new Error("prompt source file not found")
-  if (!existsSync(input.backupPath)) throw new Error("prompt source backup not found")
-  const previousContent = readFileSync(input.sourcePath, "utf-8")
-  const restoredContent = readFileSync(input.backupPath, "utf-8")
-  if (!isPromptSourceContentSafe(restoredContent)) throw new Error("prompt source backup contains secret-like content")
-  writeFileSync(input.sourcePath, restoredContent, "utf-8")
-  promptAssemblyCache.clear()
-  return {
-    sourcePath: input.sourcePath,
-    backupPath: input.backupPath,
-    restoredChecksum: checksumContent(normalizePromptSourceComparableContent(restoredContent)),
-    previousChecksum: checksumContent(normalizePromptSourceComparableContent(previousContent)),
-  }
+function normalizePromptSourceComparableContent(content) {
+    return content.replace(/\r/g, "").trim();
 }
-
-export function dryRunPromptSourceAssembly(
-  workDir: string,
-  locale: "ko" | "en" = "en",
-  states: PromptSourceState[] = [],
-): PromptSourceDryRunResult {
-  const assembly = loadSystemPromptSourceAssembly(workDir, locale, states)
-  const sources = assembly?.sources ?? []
-  return {
-    assembly,
-    sourceOrder: sources.map((source) => ({
-      sourceId: source.sourceId,
-      locale: source.locale,
-      checksum: source.checksum,
-      version: source.version,
-      path: source.path,
-    })),
-    totalChars: assembly?.text.length ?? 0,
-    diagnostics: assembly?.snapshot.diagnostics ?? buildRequiredPromptSourceDiagnostics([], locale, "runtime"),
-  }
+function splitPromptSourceComparableLines(content) {
+    const normalized = normalizePromptSourceComparableContent(content);
+    return normalized ? normalized.split("\n") : [];
 }
-
-function extractHeadingKeys(content: string): string[] {
-  return content
-    .split(/\n/u)
-    .map((line) => line.match(/^#{1,3}\s+(.+)$/u)?.[1]?.trim().toLowerCase())
-    .filter((value): value is string => Boolean(value))
-}
-
-export function checkPromptSourceLocaleParity(workDir: string): PromptSourceLocaleParityResult {
-  const promptsDir = findPromptsDir(workDir)
-  if (!promptsDir) {
-    return { ok: false, issues: [{ sourceId: "prompts", code: "missing_locale", message: "prompts directory was not found" }] }
-  }
-
-  const issues: PromptSourceLocaleParityIssue[] = []
-  for (const definition of PROMPT_SOURCE_DEFINITIONS) {
-    const koPath = join(promptsDir, definition.filenames.ko)
-    const enPath = join(promptsDir, definition.filenames.en)
-    const hasKo = existsSync(koPath)
-    const hasEn = existsSync(enPath)
-    if (!hasEn) issues.push({ sourceId: definition.sourceId, code: "missing_locale", locale: "en", message: `${definition.sourceId} is missing English source` })
-    if (!hasKo || !hasEn) continue
-
-    const koHeadings = extractHeadingKeys(readFileSync(koPath, "utf-8"))
-    const enHeadings = extractHeadingKeys(readFileSync(enPath, "utf-8"))
-    const minHeadingCount = Math.min(koHeadings.length, enHeadings.length)
-    if (minHeadingCount === 0) continue
-    const headingDelta = Math.abs(koHeadings.length - enHeadings.length)
-    if (headingDelta > 2) {
-      issues.push({
-        sourceId: definition.sourceId,
-        code: "section_mismatch",
-        message: `${definition.sourceId} locale headings differ too much (${koHeadings.length} vs ${enHeadings.length})`,
-      })
+export function buildPromptSourceContentDiff(beforeContent, afterContent) {
+    const normalizedBefore = normalizePromptSourceComparableContent(beforeContent);
+    const normalizedAfter = normalizePromptSourceComparableContent(afterContent);
+    const beforeLines = splitPromptSourceComparableLines(normalizedBefore);
+    const afterLines = splitPromptSourceComparableLines(normalizedAfter);
+    const max = Math.max(beforeLines.length, afterLines.length);
+    const lines = [];
+    for (let index = 0; index < max; index++) {
+        const before = beforeLines[index];
+        const after = afterLines[index];
+        if (before === after) {
+            if (before !== undefined)
+                lines.push({ kind: "unchanged", beforeLine: index + 1, afterLine: index + 1, before, after: before });
+            continue;
+        }
+        if (before !== undefined && after !== undefined) {
+            lines.push({ kind: "changed", beforeLine: index + 1, afterLine: index + 1, before, after });
+            continue;
+        }
+        if (before !== undefined) {
+            lines.push({ kind: "removed", beforeLine: index + 1, before });
+            continue;
+        }
+        if (after !== undefined) {
+            lines.push({ kind: "added", afterLine: index + 1, after });
+        }
     }
-  }
-
-  return { ok: issues.length === 0, issues }
+    const beforeChecksum = checksumContent(normalizedBefore);
+    const afterChecksum = checksumContent(normalizedAfter);
+    return {
+        beforeChecksum,
+        afterChecksum,
+        changed: beforeChecksum !== afterChecksum,
+        lines,
+    };
 }
-
+export function createPromptSourceBackup(workDir, sourceId, locale) {
+    const sourcePath = requirePromptSourceFile(workDir, sourceId, locale);
+    const content = readFileSync(sourcePath, "utf-8");
+    const checksum = checksumContent(content);
+    const createdAt = Date.now();
+    const backupDir = join(dirname(sourcePath), ".backups");
+    mkdirSync(backupDir, { recursive: true });
+    const backupId = `${sourceId}.${locale}.${createdAt}.${checksum.slice(0, 12)}.${basename(sourcePath)}`;
+    const backupPath = join(backupDir, backupId);
+    copyFileSync(sourcePath, backupPath);
+    return { backupId, sourceId, locale, sourcePath, backupPath, checksum, createdAt };
+}
+export function exportPromptSourcesToFile(input) {
+    const sources = loadPromptSourceRegistry(input.workDir);
+    const createdAt = Date.now();
+    const payload = {
+        kind: "knowbee.prompt-sources.export",
+        version: 1,
+        createdAt,
+        sources,
+    };
+    mkdirSync(dirname(input.outputPath), { recursive: true });
+    writeFileSync(input.outputPath, JSON.stringify(payload, null, 2) + "\n", "utf-8");
+    const checksum = checksumContent(readFileSync(input.outputPath, "utf-8"));
+    return {
+        exportPath: input.outputPath,
+        checksum,
+        createdAt,
+        sourceCount: sources.length,
+        sources: sources.map(({ content: _content, ...metadata }) => metadata),
+    };
+}
+export function importPromptSourcesFromFile(input) {
+    const parsed = JSON.parse(readFileSync(input.exportPath, "utf-8"));
+    if (parsed.kind !== "knowbee.prompt-sources.export" || parsed.version !== 1 || !Array.isArray(parsed.sources)) {
+        throw new Error("invalid prompt source export file");
+    }
+    const imported = [];
+    const skipped = [];
+    const backups = [];
+    for (const source of parsed.sources) {
+        const sourceId = source.sourceId;
+        const locale = source.locale;
+        const key = `${sourceId}:${locale}`;
+        if (locale !== "ko" && locale !== "en") {
+            skipped.push(key);
+            continue;
+        }
+        if (!isPromptSourceContentSafe(source.content))
+            throw new Error(`prompt source export contains secret-like content: ${key}`);
+        let targetPath;
+        try {
+            targetPath = resolvePromptSourcePath(input.workDir, sourceId, locale);
+        }
+        catch {
+            skipped.push(key);
+            continue;
+        }
+        if (existsSync(targetPath)) {
+            if (!input.overwrite) {
+                skipped.push(key);
+                continue;
+            }
+            const result = writePromptSourceWithBackup({
+                workDir: input.workDir,
+                sourceId,
+                locale,
+                content: source.content,
+            });
+            if (result.backup)
+                backups.push(result.backup);
+            if (result.diff.changed)
+                imported.push(key);
+            else
+                skipped.push(key);
+            continue;
+        }
+        mkdirSync(dirname(targetPath), { recursive: true });
+        writeFileSync(targetPath, source.content.trimEnd() + "\n", "utf-8");
+        imported.push(key);
+    }
+    promptAssemblyCache.clear();
+    return {
+        exportPath: input.exportPath,
+        imported,
+        skipped,
+        backups,
+        registry: loadPromptSourceRegistry(input.workDir).map(({ content: _content, ...metadata }) => metadata),
+    };
+}
+export function writePromptSourceWithBackup(input) {
+    const sourcePath = requirePromptSourceFile(input.workDir, input.sourceId, input.locale);
+    const beforeContent = readFileSync(sourcePath, "utf-8");
+    const nextContent = input.content.trimEnd() + "\n";
+    if (!isPromptSourceContentSafe(nextContent))
+        throw new Error("prompt source contains secret-like content");
+    const diff = buildPromptSourceContentDiff(normalizePromptSourceComparableContent(beforeContent), normalizePromptSourceComparableContent(nextContent));
+    const backup = diff.changed && input.createBackup !== false
+        ? createPromptSourceBackup(input.workDir, input.sourceId, input.locale)
+        : null;
+    if (diff.changed)
+        writeFileSync(sourcePath, nextContent, "utf-8");
+    const source = loadPromptSourceRegistry(input.workDir).find((item) => item.sourceId === input.sourceId && item.locale === input.locale);
+    if (!source)
+        throw new Error(`prompt source reload failed: ${input.sourceId}:${input.locale}`);
+    promptAssemblyCache.clear();
+    return { backup, source, diff };
+}
+export function rollbackPromptSourceBackup(input) {
+    if (!existsSync(input.sourcePath))
+        throw new Error("prompt source file not found");
+    if (!existsSync(input.backupPath))
+        throw new Error("prompt source backup not found");
+    const previousContent = readFileSync(input.sourcePath, "utf-8");
+    const restoredContent = readFileSync(input.backupPath, "utf-8");
+    if (!isPromptSourceContentSafe(restoredContent))
+        throw new Error("prompt source backup contains secret-like content");
+    writeFileSync(input.sourcePath, restoredContent, "utf-8");
+    promptAssemblyCache.clear();
+    return {
+        sourcePath: input.sourcePath,
+        backupPath: input.backupPath,
+        restoredChecksum: checksumContent(normalizePromptSourceComparableContent(restoredContent)),
+        previousChecksum: checksumContent(normalizePromptSourceComparableContent(previousContent)),
+    };
+}
+export function dryRunPromptSourceAssembly(workDir, locale = "en", states = []) {
+    const assembly = loadSystemPromptSourceAssembly(workDir, locale, states);
+    const sources = assembly?.sources ?? [];
+    return {
+        assembly,
+        sourceOrder: sources.map((source) => ({
+            sourceId: source.sourceId,
+            locale: source.locale,
+            checksum: source.checksum,
+            version: source.version,
+            path: source.path,
+        })),
+        totalChars: assembly?.text.length ?? 0,
+        diagnostics: assembly?.snapshot.diagnostics ?? buildRequiredPromptSourceDiagnostics([], locale, "runtime"),
+    };
+}
+function extractHeadingKeys(content) {
+    return content
+        .split(/\n/u)
+        .map((line) => line.match(/^#{1,3}\s+(.+)$/u)?.[1]?.trim().toLowerCase())
+        .filter((value) => Boolean(value));
+}
+export function checkPromptSourceLocaleParity(workDir) {
+    const promptsDir = findPromptsDir(workDir);
+    if (!promptsDir) {
+        return { ok: false, issues: [{ sourceId: "prompts", code: "missing_locale", message: "prompts directory was not found" }] };
+    }
+    const issues = [];
+    for (const definition of PROMPT_SOURCE_DEFINITIONS) {
+        const koPath = join(promptsDir, definition.filenames.ko);
+        const enPath = join(promptsDir, definition.filenames.en);
+        const hasKo = existsSync(koPath);
+        const hasEn = existsSync(enPath);
+        if (!hasEn)
+            issues.push({ sourceId: definition.sourceId, code: "missing_locale", locale: "en", message: `${definition.sourceId} is missing English source` });
+        if (!hasKo || !hasEn)
+            continue;
+        const koHeadings = extractHeadingKeys(readFileSync(koPath, "utf-8"));
+        const enHeadings = extractHeadingKeys(readFileSync(enPath, "utf-8"));
+        const minHeadingCount = Math.min(koHeadings.length, enHeadings.length);
+        if (minHeadingCount === 0)
+            continue;
+        const headingDelta = Math.abs(koHeadings.length - enHeadings.length);
+        if (headingDelta > 2) {
+            issues.push({
+                sourceId: definition.sourceId,
+                code: "section_mismatch",
+                message: `${definition.sourceId} locale headings differ too much (${koHeadings.length} vs ${enHeadings.length})`,
+            });
+        }
+    }
+    return { ok: issues.length === 0, issues };
+}
 const TEMPLATE = `# 프로젝트 메모리
 
 ## 기술 스택
@@ -1396,18 +1208,17 @@ const TEMPLATE = `# 프로젝트 메모리
 
 ## 기타 메모
 - (에이전트가 알아야 할 기타 사항)
-`
-
-/** Write a NOBIE.md template to the given directory. */
-export function initNobieMd(dir: string): string {
-  const target = join(dir, "NOBIE.md")
-  if (!existsSync(target)) {
-    writeFileSync(target, TEMPLATE, "utf-8")
-  }
-  return target
+`;
+/** Write a KNOWBEE.md template to the given directory. */
+export function initKnowbeeMd(dir) {
+    const target = join(dir, "KNOWBEE.md");
+    if (!existsSync(target)) {
+        writeFileSync(target, TEMPLATE, "utf-8");
+    }
+    return target;
 }
-
-export const loadWizbyMd = loadNobieMd
-export const initWizbyMd = initNobieMd
-export const loadHowieMd = loadNobieMd
-export const initHowieMd = initNobieMd
+export const loadWizbyMd = loadKnowbeeMd;
+export const initWizbyMd = initKnowbeeMd;
+export const loadHowieMd = loadKnowbeeMd;
+export const initHowieMd = initKnowbeeMd;
+//# sourceMappingURL=knowbee-md.js.map

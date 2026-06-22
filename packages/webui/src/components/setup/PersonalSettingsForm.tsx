@@ -109,7 +109,7 @@ export function PersonalSettingsForm({
 
       <div className="rounded-2xl bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-600">
         <div className="font-medium text-stone-800">{text("이 값은 어디에 쓰이나요?", "Where is this used?")}</div>
-        <div className="mt-2">{text("이름과 표시 이름은 Nobie가 사용자를 구분하고 화면에 보여줄 때 사용합니다.", "Name and display name are used when Nobie identifies you and shows your profile on screen.")}</div>
+        <div className="mt-2">{text("이름과 표시 이름은 Knowbee가 사용자를 구분하고 화면에 보여줄 때 사용합니다.", "Name and display name are used when Knowbee identifies you and shows your profile on screen.")}</div>
         <div>{text("기본 언어와 시간대는 이후 응답 언어, 일정 처리, 알림 시간 계산의 기준값이 됩니다.", "Default language and timezone are used for response language, scheduling, and notification timing.")}</div>
         <div>{text("기본 작업 폴더는 이후 파일 작업이나 자동화가 시작될 때 기본 위치로 재사용됩니다.", "The default workspace is reused as the starting location for later file work and automation.")}</div>
       </div>

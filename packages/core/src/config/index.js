@@ -236,12 +236,12 @@ function parseIntegerEnv(value) {
     return Number.isInteger(parsed) ? parsed : undefined;
 }
 function readEnvOverrides() {
-    const mqttEnabled = parseBooleanEnv(process.env["NOBIE_MQTT_ENABLED"]);
-    const mqttHost = process.env["NOBIE_MQTT_HOST"]?.trim();
-    const mqttPort = parseIntegerEnv(process.env["NOBIE_MQTT_PORT"]);
-    const mqttUsername = process.env["NOBIE_MQTT_USERNAME"]?.trim();
-    const mqttPassword = process.env["NOBIE_MQTT_PASSWORD"];
-    const mqttAllowAnonymous = parseBooleanEnv(process.env["NOBIE_MQTT_ALLOW_ANONYMOUS"]);
+    const mqttEnabled = parseBooleanEnv(process.env["KNOWBEE_MQTT_ENABLED"]);
+    const mqttHost = process.env["KNOWBEE_MQTT_HOST"]?.trim();
+    const mqttPort = parseIntegerEnv(process.env["KNOWBEE_MQTT_PORT"]);
+    const mqttUsername = process.env["KNOWBEE_MQTT_USERNAME"]?.trim();
+    const mqttPassword = process.env["KNOWBEE_MQTT_PASSWORD"];
+    const mqttAllowAnonymous = parseBooleanEnv(process.env["KNOWBEE_MQTT_ALLOW_ANONYMOUS"]);
     if (mqttEnabled == null &&
         !mqttHost &&
         mqttPort == null &&

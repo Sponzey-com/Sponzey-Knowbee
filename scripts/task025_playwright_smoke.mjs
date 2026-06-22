@@ -91,16 +91,16 @@ const topology = {
   ok: true,
   schemaVersion: 1,
   generatedAt: now,
-  rootAgentId: "agent:nobie",
+  rootAgentId: "agent:knowbee",
   nodes: [
     {
-      id: "agent:agent:nobie",
-      kind: "nobie",
-      entityId: "agent:nobie",
-      label: "Nobie",
+      id: "agent:agent:knowbee",
+      kind: "knowbee",
+      entityId: "agent:knowbee",
+      label: "Knowbee",
       status: "enabled",
       position: { x: 80, y: 80 },
-      badges: ["Nobie"],
+      badges: ["Knowbee"],
       data: {},
       diagnostics: [],
     },
@@ -140,9 +140,9 @@ const topology = {
   ],
   edges: [
     {
-      id: "relationship:agent:nobie->agent:alpha",
+      id: "relationship:agent:knowbee->agent:alpha",
       kind: "parent_child",
-      source: "agent:agent:nobie",
+      source: "agent:agent:knowbee",
       target: "agent:agent:alpha",
       label: "parent child",
       valid: true,
@@ -216,7 +216,7 @@ const topology = {
         displayName: "Topology Team",
         status: "enabled",
         purpose: "Smoke test",
-        ownerAgentId: "agent:nobie",
+        ownerAgentId: "agent:knowbee",
         leadAgentId: "agent:alpha",
         memberAgentIds: ["agent:alpha"],
         activeMemberAgentIds: ["agent:alpha"],
@@ -260,7 +260,7 @@ const topology = {
           degradedReasonCodes: [],
         },
         builder: {
-          ownerAgentId: "agent:nobie",
+          ownerAgentId: "agent:knowbee",
           directChildAgentIds: ["agent:alpha"],
           candidates: [
             {
@@ -365,7 +365,7 @@ function server() {
         paths: {
           stateDir: "/tmp",
           configFile: "/tmp/config.json5",
-          dbFile: "/tmp/nobie.db",
+          dbFile: "/tmp/knowbee.db",
           setupStateFile: "/tmp/setup.json",
         },
         webui: { port: 0, host: "127.0.0.1", authEnabled: false },

@@ -26,16 +26,16 @@ import { buildMcpToolCallPayload } from "../packages/core/src/mcp/client.ts"
 import { filterMcpStatusesForAgentAllowlist } from "../packages/core/src/mcp/registry.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["NOBIE_STATE_DIR"]
-const previousConfig = process.env["NOBIE_CONFIG"]
+const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
+const previousConfig = process.env["KNOWBEE_CONFIG"]
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task009-capability-isolation-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task009-capability-isolation-"))
   tempDirs.push(stateDir)
-  process.env["NOBIE_STATE_DIR"] = stateDir
-  delete process.env["NOBIE_CONFIG"]
+  process.env["KNOWBEE_STATE_DIR"] = stateDir
+  delete process.env["KNOWBEE_CONFIG"]
   reloadConfig()
   resetAgentCapabilityRateLimitsForTest()
 }
@@ -43,10 +43,10 @@ function useTempState(): void {
 afterEach(() => {
   closeDb()
   resetAgentCapabilityRateLimitsForTest()
-  if (previousStateDir === undefined) delete process.env["NOBIE_STATE_DIR"]
-  else process.env["NOBIE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["NOBIE_CONFIG"]
-  else process.env["NOBIE_CONFIG"] = previousConfig
+  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
+  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
+  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
+  else process.env["KNOWBEE_CONFIG"] = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -265,7 +265,7 @@ describe("task009 capability isolation", () => {
     const policy = capabilityPolicy()
     const payload = buildMcpToolCallPayload(
       "search",
-      { q: "nobie" },
+      { q: "knowbee" },
       {
         agentId: "agent:researcher",
         sessionId: "session:task009",
@@ -279,7 +279,7 @@ describe("task009 capability isolation", () => {
       },
     )
 
-    expect(payload._meta?.nobie).toMatchObject({
+    expect(payload._meta?.knowbee).toMatchObject({
       agent_id: "agent:researcher",
       session_id: "session:task009",
       secret_scope: "secret:agent:researcher",
@@ -288,7 +288,7 @@ describe("task009 capability isolation", () => {
       request_group_id: "group:task009",
       capability_delegation_id: "delegation:task009",
     })
-    expect(payload._meta?.nobie.permission_profile.profile_id).toBe("profile:researcher")
+    expect(payload._meta?.knowbee.permission_profile.profile_id).toBe("profile:researcher")
   })
 
   it("applies agent-specific rate limits", () => {
@@ -305,7 +305,7 @@ describe("task009 capability isolation", () => {
   })
 
   it("records capability delegation and shares results only through data exchange packages", () => {
-    const requester = owner("nobie", "agent:nobie")
+    const requester = owner("knowbee", "agent:knowbee")
     const provider = owner("sub_agent", "agent:researcher")
     const delegation = buildCapabilityDelegationRequest({
       requester,

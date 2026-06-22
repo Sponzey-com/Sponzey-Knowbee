@@ -7,13 +7,13 @@ import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js
 import type { EnterpriseTopology, NodeContract } from "../packages/core/src/contracts/enterprise-topology.ts"
 import type {
   MemoryPolicy,
-  NobieConfig,
+  KnowbeeConfig,
   PermissionProfile,
   SkillMcpAllowlist,
   StructuredTaskScope,
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
-import { loadPromptSourceRegistry } from "../packages/core/src/memory/nobie-md.ts"
+import { loadPromptSourceRegistry } from "../packages/core/src/memory/knowbee-md.ts"
 import {
   buildAgentExecutionContextFromGraphSnapshot,
   buildExecutorProfilePromptProjectionFromGraphSnapshot,
@@ -25,15 +25,15 @@ import { createEnterpriseTopologyRegistry } from "../packages/core/src/topology/
 
 const now = Date.UTC(2026, 4, 7, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-prompt-direct-executors-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-prompt-direct-executors-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -43,10 +43,10 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env.NOBIE_STATE_DIR
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.NOBIE_CONFIG
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -149,7 +149,7 @@ function topologyFixture(): EnterpriseTopology {
 }
 
 const permissionProfile: PermissionProfile = {
-  profileId: "profile:nobie",
+  profileId: "profile:knowbee",
   riskCeiling: "moderate",
   approvalRequiredFrom: "sensitive",
   allowExternalNetwork: true,
@@ -168,21 +168,21 @@ const allowlist: SkillMcpAllowlist = {
 
 function memoryPolicy(): MemoryPolicy {
   return {
-    owner: { ownerType: "nobie", ownerId: "agent:nobie" },
+    owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
     visibility: "private",
-    readScopes: [{ ownerType: "nobie", ownerId: "agent:nobie" }],
-    writeScope: { ownerType: "nobie", ownerId: "agent:nobie" },
+    readScopes: [{ ownerType: "knowbee", ownerId: "agent:knowbee" }],
+    writeScope: { ownerType: "knowbee", ownerId: "agent:knowbee" },
     retentionPolicy: "long_term",
     writebackReviewRequired: true,
   }
 }
 
-function nobieAgent(): NobieConfig {
+function knowbeeAgent(): KnowbeeConfig {
   return {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
-    agentType: "nobie",
-    agentId: "agent:nobie",
-    displayName: "Nobie",
+    agentType: "knowbee",
+    agentId: "agent:knowbee",
+    displayName: "Knowbee",
     status: "enabled",
     role: "coordinator",
     personality: "Coordinate work.",
@@ -199,7 +199,7 @@ function nobieAgent(): NobieConfig {
     updatedAt: now,
     coordinator: {
       defaultMode: "orchestration",
-      fallbackMode: "single_nobie",
+      fallbackMode: "single_knowbee",
       maxDelegatedSubSessions: 2,
     },
   }
@@ -261,7 +261,7 @@ describe("task004 prompt direct executor projection", () => {
     ])
     expect(context.execution_graph).toMatchObject({
       graph_source: "workspace_draft",
-      current_executor_id: "agent:nobie",
+      current_executor_id: "agent:knowbee",
       available_executor_ids: [
         `${WORKSPACE_DRAFT_TOPOLOGY_ID}:node:finance`,
         `${WORKSPACE_DRAFT_TOPOLOGY_ID}:node:lead`,
@@ -297,7 +297,7 @@ describe("task004 prompt direct executor projection", () => {
     const graph = workspaceGraph()
     const projection = buildExecutorProfilePromptProjectionFromGraphSnapshot(graph)
     const result = buildAgentPromptBundle({
-      agent: nobieAgent(),
+      agent: knowbeeAgent(),
       taskScope,
       executorProfileProjection: projection,
       promptSources: loadPromptSourceRegistry(process.cwd()),
@@ -321,17 +321,17 @@ describe("task004 prompt direct executor projection", () => {
     const runtimeSourceIds = sources
       .filter((source) => source.locale === "en" && source.usageScope === "runtime")
       .map((source) => source.sourceId)
-    const nobieExecution = sources.find((source) => source.sourceId === "nobie_execution" && source.locale === "en")
+    const knowbeeExecution = sources.find((source) => source.sourceId === "knowbee_execution" && source.locale === "en")
     const toolPolicy = sources.find((source) => source.sourceId === "tool_policy" && source.locale === "en")
     const topologyPolicy = sources.find((source) => source.sourceId === "topology_executor_policy" && source.locale === "en")
 
-    expect(nobieExecution?.content).toContain("direct children")
-    expect(nobieExecution?.content).toContain("diagnostic_executors")
-    expect(nobieExecution?.content).toContain("Broad coordination, management, review, or summary ability is weak evidence")
-    expect(nobieExecution?.content).toContain("concrete profile-fit evidence")
+    expect(knowbeeExecution?.content).toContain("direct children")
+    expect(knowbeeExecution?.content).toContain("diagnostic_executors")
+    expect(knowbeeExecution?.content).toContain("Broad coordination, management, review, or summary ability is weak evidence")
+    expect(knowbeeExecution?.content).toContain("concrete profile-fit evidence")
     expect(toolPolicy?.content).toContain("explicit provider target")
     expect(topologyPolicy?.content).toContain("first hop must be a direct child")
-    expect(runtimeSourceIds).toContain("nobie_execution")
+    expect(runtimeSourceIds).toContain("knowbee_execution")
     expect(runtimeSourceIds).toContain("tool_policy")
     expect(runtimeSourceIds).toContain("recovery_policy")
     expect(runtimeSourceIds).toContain("topology_executor_policy")

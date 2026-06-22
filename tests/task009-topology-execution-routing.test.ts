@@ -56,15 +56,15 @@ import {
 
 const now = Date.UTC(2026, 4, 4, 9, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.NOBIE_STATE_DIR
-const previousConfig = process.env.NOBIE_CONFIG
+const previousStateDir = process.env.KNOWBEE_STATE_DIR
+const previousConfig = process.env.KNOWBEE_CONFIG
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "nobie-task009-topology-routing-"))
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task009-topology-routing-"))
   tempDirs.push(stateDir)
-  process.env.NOBIE_STATE_DIR = stateDir
-  process.env.NOBIE_CONFIG = join(stateDir, "config.json5")
+  process.env.KNOWBEE_STATE_DIR = stateDir
+  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
   reloadConfig()
 }
 
@@ -92,8 +92,8 @@ function runtimeConfig() {
 }
 
 function writeRuntimeConfig(overrides: Partial<OrchestrationConfig> = {}): void {
-  if (!process.env.NOBIE_CONFIG) throw new Error("NOBIE_CONFIG is not set")
-  writeFileSync(process.env.NOBIE_CONFIG, JSON.stringify({
+  if (!process.env.KNOWBEE_CONFIG) throw new Error("KNOWBEE_CONFIG is not set")
+  writeFileSync(process.env.KNOWBEE_CONFIG, JSON.stringify({
     orchestration: orchestrationConfig(overrides),
     ai: {
       connection: {
@@ -112,7 +112,7 @@ function executionDecisionForTopology(input: {
 }): AgentExecutionDecision {
   return {
     contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
-    current_executor_id: "agent:nobie",
+    current_executor_id: "agent:knowbee",
     domain: "topology-runtime",
     behavior_pattern: "delegate",
     execution_route: "delegate_to_child",
@@ -247,10 +247,10 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.NOBIE_STATE_DIR
-  else process.env.NOBIE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.NOBIE_CONFIG
-  else process.env.NOBIE_CONFIG = previousConfig
+  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
+  else process.env.KNOWBEE_STATE_DIR = previousStateDir
+  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
+  else process.env.KNOWBEE_CONFIG = previousConfig
   reloadConfig()
 })
 
@@ -317,7 +317,7 @@ describe("task009 topology execution routing", () => {
       targetId: `${topology.id}:node:intake`,
       targetLabel: "Customer Request Intake",
       agentExecutionDecision: expect.objectContaining({
-        current_executor_id: "agent:nobie",
+        current_executor_id: "agent:knowbee",
         execution_route: "delegate_to_child",
         selected_executor_id: `${topology.id}:node:intake`,
         selected_connection_path: [`${topology.id}:node:intake`],
@@ -326,7 +326,7 @@ describe("task009 topology execution routing", () => {
     }))
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith(
       "run:task009-intake-topology",
-      expect.stringContaining("execution_decision_source:nobie_harness"),
+      expect.stringContaining("execution_decision_source:knowbee_harness"),
     )
   })
 
@@ -702,7 +702,7 @@ describe("task009 topology execution routing", () => {
         orchestration: startPlan.orchestrationRegistrySnapshot,
         orchestrationPlan: startPlan.orchestrationPlanSnapshot,
         agentExecutionDecision: inspectorExecutionDecision,
-        executionDecisionSource: "nobie_harness",
+        executionDecisionSource: "knowbee_harness",
         topologyRouting: startPlan.topologyRouting,
       },
     })
@@ -717,7 +717,7 @@ describe("task009 topology execution routing", () => {
       topologyId: topology.id,
       entryNodeId: "node:intake",
       providerFallback: false,
-      executionDecisionSource: "nobie_harness",
+      executionDecisionSource: "knowbee_harness",
       executionDecisionSelectedExecutorId: `${topology.id}:node:intake`,
       executionDecisionRoute: "delegate_to_child",
       executionDecisionFallbackReason: "self_solve",
@@ -758,9 +758,9 @@ describe("task009 topology execution routing", () => {
         orchestrationPlan: {
           ...startPlan.orchestrationPlanSnapshot,
           delegatedTasks: [],
-          directNobieTasks: [{ ...directTask, executionKind: "direct_nobie" }],
+          directKnowbeeTasks: [{ ...directTask, executionKind: "direct_knowbee" }],
           fallbackStrategy: {
-            mode: "single_nobie",
+            mode: "single_knowbee",
             reasonCode: "active_topology_not_found",
           },
         },
@@ -811,7 +811,7 @@ describe("task009 topology execution routing", () => {
         delegationEnabled: true,
       }),
     ]))
-    expect(registry.hierarchy?.directChildrenByParent["agent:nobie"]).toEqual([
+    expect(registry.hierarchy?.directChildrenByParent["agent:knowbee"]).toEqual([
       `${topology.id}:node:intake`,
     ])
     expect(registry.hierarchy?.directChildrenByParent[`${topology.id}:node:intake`])

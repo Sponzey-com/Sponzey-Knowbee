@@ -6,7 +6,7 @@ import { buildBackupTargetInventory, buildMigrationPreflightReport, } from "../c
 import { runSubAgentBenchmarkSuite, } from "../benchmarks/sub-agent-benchmarks.js";
 import { DEFAULT_CONFIG } from "../config/types.js";
 import { runPlanDriftCheck } from "../diagnostics/plan-drift.js";
-import { loadPromptSourceRegistry } from "../memory/nobie-md.js";
+import { loadPromptSourceRegistry } from "../memory/knowbee-md.js";
 import { resolveOrchestrationModeSnapshotSync, } from "../orchestration/mode.js";
 import { buildFixtureRegressionFromWorkspace, buildWebRetrievalReleaseGateSummary, } from "../runs/web-retrieval-smoke.js";
 import { buildRolloutSafetySnapshot } from "../runtime/rollout-safety.js";
@@ -98,7 +98,7 @@ export function buildReleaseManifest(options = {}) {
         memoryCompactionEvidence,
     });
     return {
-        kind: "nobie.release.package",
+        kind: "knowbee.release.package",
         version: 1,
         releaseVersion,
         appVersion,
@@ -190,13 +190,13 @@ export function buildReleaseArtifactDefinitions(input) {
         definitions.push(requiredArtifact("yeonjang:macos:start-script", "yeonjang_script", rootDir, "scripts/start-yeonjang-macos.sh", "scripts/start-yeonjang-macos.sh", "macOS Yeonjang start script.", "macos"));
     }
     if (targetPlatforms.has("windows")) {
-        definitions.push(optionalArtifact("yeonjang:windows:exe", "yeonjang_windows_exe", rootDir, "Yeonjang/target/release/nobie-yeonjang.exe", "yeonjang/windows/nobie-yeonjang.exe", "Windows tray executable.", "windows"));
+        definitions.push(optionalArtifact("yeonjang:windows:exe", "yeonjang_windows_exe", rootDir, "Yeonjang/target/release/knowbee-yeonjang.exe", "yeonjang/windows/knowbee-yeonjang.exe", "Windows tray executable.", "windows"));
         definitions.push(requiredArtifact("yeonjang:windows:build-script", "yeonjang_script", rootDir, "scripts/build-yeonjang-windows.bat", "scripts/build-yeonjang-windows.bat", "Windows Yeonjang build script.", "windows"));
         definitions.push(requiredArtifact("yeonjang:windows:start-script", "yeonjang_script", rootDir, "scripts/start-yeonjang-windows.bat", "scripts/start-yeonjang-windows.bat", "Windows Yeonjang start script.", "windows"));
         definitions.push(requiredArtifact("yeonjang:windows:stop-script", "yeonjang_script", rootDir, "scripts/stop-yeonjang-windows.bat", "scripts/stop-yeonjang-windows.bat", "Windows Yeonjang stop script.", "windows"));
     }
     if (targetPlatforms.has("linux")) {
-        definitions.push(optionalArtifact("yeonjang:linux:binary", "yeonjang_linux_binary", rootDir, "Yeonjang/target/release/nobie-yeonjang", "yeonjang/linux/nobie-yeonjang", "Linux Yeonjang executable.", "linux"));
+        definitions.push(optionalArtifact("yeonjang:linux:binary", "yeonjang_linux_binary", rootDir, "Yeonjang/target/release/knowbee-yeonjang", "yeonjang/linux/knowbee-yeonjang", "Linux Yeonjang executable.", "linux"));
         definitions.push(requiredArtifact("yeonjang:linux:build-script", "yeonjang_script", rootDir, "scripts/build-yeonjang-linux.sh", "scripts/build-yeonjang-linux.sh", "Linux Yeonjang build script.", "linux"));
         definitions.push(requiredArtifact("yeonjang:linux:start-script", "yeonjang_script", rootDir, "scripts/start-yeonjang-linux.sh", "scripts/start-yeonjang-linux.sh", "Linux Yeonjang desktop start script.", "linux"));
         definitions.push(requiredArtifact("yeonjang:linux:headless-start-script", "yeonjang_script", rootDir, "scripts/start-yeonjang-linux-headless.sh", "scripts/start-yeonjang-linux-headless.sh", "Linux Yeonjang headless managed start script.", "linux"));
@@ -242,7 +242,7 @@ export function buildReleasePipelinePlan(input = {}) {
             "tests/task013-executor-first-release-gate.test.ts",
             "tests/task013-executor-first-usability.test.tsx",
             "tests/task012-topology-workspace-release-gate.test.ts",
-        ], true, false, "Verify topology feature flag matrix, workspace route/layer/Executor-first usability, contracts/validator-only rollout, dry-run/shadow, gated mode, opt-in routing, single Nobie fallback, sub-agent and channel finalizer regressions, WebUI build gate, runtime smoke, and rollback smoke."),
+        ], true, false, "Verify topology feature flag matrix, workspace route/layer/Executor-first usability, contracts/validator-only rollout, dry-run/shadow, gated mode, opt-in routing, single Knowbee fallback, sub-agent and channel finalizer regressions, WebUI build gate, runtime smoke, and rollback smoke."),
         step("web-retrieval-fixture-regression", "Web retrieval fixture regression", ["pnpm", "test", "tests/task008-web-retrieval-fixtures.test.ts"], true, false, "Run offline KOSPI, KOSDAQ, NASDAQ, weather, timeout, and no-network retrieval regression fixtures."),
         step("ui-mode-release-gate", "UI mode release gate", ["pnpm", "test", "tests/task017-ui-release-gate.test.ts"], true, false, "Verify beginner, advanced, and admin smoke matrix, redaction, admin guard, route redirects, and UI regression blockers."),
         step("yeonjang-multi-instance-release-gate", "Yeonjang multi-instance release gate", [
@@ -275,16 +275,16 @@ export function buildReleasePipelinePlan(input = {}) {
     if (targetPlatforms.has("linux"))
         steps.push(step("yeonjang-linux", "Yeonjang Linux package", ["bash", "scripts/build-yeonjang-linux.sh"], false, true, "Build Linux Yeonjang binary via the Linux build script on a Linux build host."));
     steps.push(step("package-manifest", "Package manifest and checksums", ["node", "scripts/release-package.mjs"], true, false, "Copy release payload entries and generate manifest.json plus SHA256SUMS."));
-    steps.push(step("rollout-shadow-evidence", "Rollout shadow evidence review", ["pnpm", "exec", "nobie", "doctor", "--json"], true, false, "Confirm feature flags, migration lock status, and shadow compare evidence before enforced rollout."));
-    steps.push(step("plan-drift-evidence", "Plan and task evidence review", ["pnpm", "exec", "nobie", "doctor", "--json"], true, false, "Confirm phase plans, task evidence, and release-note evidence summary before publishing."));
+    steps.push(step("rollout-shadow-evidence", "Rollout shadow evidence review", ["pnpm", "exec", "knowbee", "doctor", "--json"], true, false, "Confirm feature flags, migration lock status, and shadow compare evidence before enforced rollout."));
+    steps.push(step("plan-drift-evidence", "Plan and task evidence review", ["pnpm", "exec", "knowbee", "doctor", "--json"], true, false, "Confirm phase plans, task evidence, and release-note evidence summary before publishing."));
     steps.push(step("web-retrieval-live-smoke", "Web retrieval live smoke", [
         "env",
-        "NOBIE_LIVE_WEB_SMOKE=1",
+        "KNOWBEE_LIVE_WEB_SMOKE=1",
         "pnpm",
         "test",
         "tests/task008-live-web-smoke-dry-run.test.ts",
     ], false, true, "Opt-in latest-value smoke gate for KOSPI, KOSDAQ, NASDAQ, and weather; exact values are not asserted."));
-    steps.push(step("live-smoke-gate", "Live smoke gate", ["pnpm", "exec", "nobie", "smoke", "channels", "--live"], false, true, "Run at least one real channel live smoke before publishing a public release."));
+    steps.push(step("live-smoke-gate", "Live smoke gate", ["pnpm", "exec", "knowbee", "smoke", "channels", "--live"], false, true, "Run at least one real channel live smoke before publishing a public release."));
     return { dryRunSafe: true, order: steps.map((item) => item.id), steps };
 }
 export function buildReleaseRollbackRunbook() {
@@ -350,7 +350,7 @@ export function buildCleanMachineInstallChecklist() {
         {
             id: "state-dir",
             required: true,
-            description: "A writable NOBIE_STATE_DIR or default ~/.nobie state directory exists.",
+            description: "A writable KNOWBEE_STATE_DIR or default ~/.knowbee state directory exists.",
         },
         {
             id: "prompt-seed",
@@ -405,7 +405,7 @@ export function buildCleanMachineInstallChecklist() {
         {
             id: "enterprise-topology-release-gate",
             required: true,
-            description: "Enterprise Topology feature flag matrix, single Nobie fallback, sub-agent and channel finalizer regressions, WebUI build gate, runtime smoke, active topology rollback, and compiled snapshot restore evidence pass before opt-in routing.",
+            description: "Enterprise Topology feature flag matrix, single Knowbee fallback, sub-agent and channel finalizer regressions, WebUI build gate, runtime smoke, active topology rollback, and compiled snapshot restore evidence pass before opt-in routing.",
         },
         {
             id: "plan-drift",
@@ -485,7 +485,7 @@ function buildReleaseNoteSummary(input) {
             `Yeonjang multi-instance release gate: ${input.yeonjangMultiInstanceEvidence.gateStatus}`,
             `Memory compaction release gate: ${input.memoryCompactionEvidence.gateStatus}`,
             orchestrationFlag
-                ? `Sub-agent orchestration default is ${orchestrationFlag.mode}; public rollout should keep single Nobie fallback intact.`
+                ? `Sub-agent orchestration default is ${orchestrationFlag.mode}; public rollout should keep single Knowbee fallback intact.`
                 : "Sub-agent orchestration feature flag state is missing from the rollout snapshot.",
         ],
     };
@@ -722,13 +722,13 @@ export function buildReleaseOrchestrationEvidence(input) {
     });
     checks.push(buildOrchestrationCheck({
         id: "feature_flag_off_parity",
-        pass: offParitySnapshot.mode === "single_nobie" &&
+        pass: offParitySnapshot.mode === "single_knowbee" &&
             offParitySnapshot.reasonCode === "feature_flag_off" &&
             offRegistryLookups === 0,
-        summary: offParitySnapshot.mode === "single_nobie" &&
+        summary: offParitySnapshot.mode === "single_knowbee" &&
             offParitySnapshot.reasonCode === "feature_flag_off"
-            ? "Feature flag off state keeps the resolver on the single Nobie path without touching the registry."
-            : "Feature flag off state no longer guarantees a clean single Nobie fallback.",
+            ? "Feature flag off state keeps the resolver on the single Knowbee path without touching the registry."
+            : "Feature flag off state no longer guarantees a clean single Knowbee fallback.",
         detail: {
             registryLookups: offRegistryLookups,
             snapshot: serializeOrchestrationSnapshot(offParitySnapshot),
@@ -751,12 +751,12 @@ export function buildReleaseOrchestrationEvidence(input) {
     });
     checks.push(buildOrchestrationCheck({
         id: "no_agent_fallback",
-        pass: noAgentFallbackSnapshot.mode === "single_nobie" &&
+        pass: noAgentFallbackSnapshot.mode === "single_knowbee" &&
             noAgentFallbackSnapshot.reasonCode === "no_active_sub_agents",
-        summary: noAgentFallbackSnapshot.mode === "single_nobie" &&
+        summary: noAgentFallbackSnapshot.mode === "single_knowbee" &&
             noAgentFallbackSnapshot.reasonCode === "no_active_sub_agents"
-            ? "No-agent orchestration requests still fall back to single Nobie automatically."
-            : "No-agent fallback no longer resolves cleanly to the single Nobie path.",
+            ? "No-agent orchestration requests still fall back to single Knowbee automatically."
+            : "No-agent fallback no longer resolves cleanly to the single Knowbee path.",
         detail: {
             snapshot: serializeOrchestrationSnapshot(noAgentFallbackSnapshot),
         },
@@ -790,7 +790,7 @@ export function buildReleaseOrchestrationEvidence(input) {
         .filter((check) => check.status === "failed")
         .map((check) => `${check.id}: ${check.summary}`);
     return {
-        kind: "nobie.release.orchestration",
+        kind: "knowbee.release.orchestration",
         generatedAt: input.now.toISOString(),
         gateStatus: blockingFailures.length > 0 ? "failed" : warnings.length > 0 ? "warning" : "passed",
         checks,

@@ -1530,7 +1530,7 @@ export function SetupPage() {
             <div className="rounded-3xl border border-stone-200 bg-white p-6">
               <div className="text-sm font-semibold text-stone-900">이 단계에서 확인할 것</div>
               <div className="mt-4 grid gap-3 text-sm leading-6 text-stone-700">
-                <ChecklistItem text="이름과 표시 이름은 Nobie가 사용자를 구분하고 화면에 노출할 때 사용됩니다." />
+                <ChecklistItem text="이름과 표시 이름은 Knowbee가 사용자를 구분하고 화면에 노출할 때 사용됩니다." />
                 <ChecklistItem text="기본 언어와 시간대는 이후 AI 응답과 일정/알림 시간 계산 기준이 됩니다." />
                 <ChecklistItem text="작업 폴더는 전체 경로여야 하며, 이후 파일 작업의 시작 위치가 됩니다." />
               </div>
@@ -1543,7 +1543,7 @@ export function SetupPage() {
           <div className="space-y-6">
             <SectionIntro
               title="AI 연결을 준비합니다"
-              description="이 단계는 노비 실행 경로 기준의 topology로 연결 상태를 보여주고, Inspector에서 같은 backend 편집 UI를 재사용합니다."
+              description="이 단계는 노우비 실행 경로 기준의 topology로 연결 상태를 보여주고, Inspector에서 같은 backend 편집 UI를 재사용합니다."
             />
             {shouldShowValidation && currentValidation.summary.length > 0 ? (
               <ValidationNotice messages={currentValidation.summary} />
@@ -1646,7 +1646,7 @@ export function SetupPage() {
           <div className="space-y-6">
             <SectionIntro
               title="외부 기능 연결을 준비합니다"
-              description="Nobie가 외부 프로그램의 도구를 쓰려면 MCP 서버를 연결해야 합니다. 먼저 서버를 추가하고 연결 확인을 진행합니다."
+              description="Knowbee가 외부 프로그램의 도구를 쓰려면 MCP 서버를 연결해야 합니다. 먼저 서버를 추가하고 연결 확인을 진행합니다."
             />
             {shouldShowValidation && currentValidation.summary.length > 0 ? (
               <ValidationNotice messages={currentValidation.summary} />
@@ -1729,7 +1729,7 @@ export function SetupPage() {
           <div className="space-y-6">
             <SectionIntro
               title="작업 능력을 확장합니다"
-              description="반복적으로 필요한 지침이나 로컬 Skill을 연결해 Nobie가 더 잘 일하도록 준비하는 단계입니다."
+              description="반복적으로 필요한 지침이나 로컬 Skill을 연결해 Knowbee가 더 잘 일하도록 준비하는 단계입니다."
             />
             {shouldShowValidation && currentValidation.summary.length > 0 ? (
               <ValidationNotice messages={currentValidation.summary} />
@@ -1814,7 +1814,7 @@ export function SetupPage() {
           <div className="space-y-6">
             <SectionIntro
               title="안전 규칙을 정합니다"
-              description="Nobie가 파일을 읽거나 실행할 때 얼마나 자주 확인을 받을지 정합니다. 기본값으로 시작해도 됩니다."
+              description="Knowbee가 파일을 읽거나 실행할 때 얼마나 자주 확인을 받을지 정합니다. 기본값으로 시작해도 됩니다."
             />
             {shouldShowValidation && currentValidation.summary.length > 0 ? (
               <ValidationNotice messages={currentValidation.summary} />
@@ -1883,7 +1883,7 @@ export function SetupPage() {
           <div className="space-y-6">
             <SectionIntro
               title="대화 채널을 연결합니다"
-              description="메신저에서 Nobie와 대화하려면 채널 정보를 입력하고 연결 확인을 해야 합니다. Telegram과 Slack을 모두 연결할 수 있습니다."
+              description="메신저에서 Knowbee와 대화하려면 채널 정보를 입력하고 연결 확인을 해야 합니다. Telegram과 Slack을 모두 연결할 수 있습니다."
             />
             {shouldShowValidation && currentValidation.summary.length > 0 ? (
               <ValidationNotice messages={currentValidation.summary} />
@@ -1905,7 +1905,7 @@ export function SetupPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-base font-semibold text-stone-900">Telegram</div>
-                    <div className="mt-1 text-sm leading-6 text-stone-600">지금 바로 연결해서 Nobie와 대화할 수 있는 메신저 채널입니다.</div>
+                    <div className="mt-1 text-sm leading-6 text-stone-600">지금 바로 연결해서 Knowbee와 대화할 수 있는 메신저 채널입니다.</div>
                   </div>
                   <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${currentStep.status === "error"
                     ? "border-red-200 bg-red-50 text-red-700"
@@ -1924,7 +1924,7 @@ export function SetupPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-base font-semibold text-stone-900">Slack</div>
-                    <div className="mt-1 text-sm leading-6 text-stone-600">회사나 팀용 메신저로 Nobie와 대화할 때 쓰는 채널입니다.</div>
+                    <div className="mt-1 text-sm leading-6 text-stone-600">회사나 팀용 메신저로 Knowbee와 대화할 때 쓰는 채널입니다.</div>
                   </div>
                   <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${activeDraft.channels.slackEnabled && activeDraft.channels.slackBotToken.trim() && activeDraft.channels.slackAppToken.trim()
                     ? "border-emerald-200 bg-emerald-50 text-emerald-700"
@@ -2013,7 +2013,7 @@ export function SetupPage() {
           <div className="space-y-6">
             <SectionIntro
               title="원격 접근을 선택합니다"
-              description="다른 기기에서 Nobie 설정 화면에 들어올 수 있게 하는 기능입니다. 지금 꼭 필요하지 않다면 나중에 설정해도 됩니다."
+              description="다른 기기에서 Knowbee 설정 화면에 들어올 수 있게 하는 기능입니다. 지금 꼭 필요하지 않다면 나중에 설정해도 됩니다."
             />
             {shouldShowValidation && currentValidation.summary.length > 0 ? (
               <ValidationNotice messages={currentValidation.summary} />
@@ -2147,7 +2147,7 @@ export function SetupPage() {
             <div className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-400">Completed</div>
             <h2 className="mt-3 text-3xl font-semibold text-stone-900">설정이 끝났습니다</h2>
             <p className="mt-3 text-sm leading-7 text-stone-600">
-              이제 Nobie를 사용할 준비가 끝났습니다. 대시보드로 이동하거나 Run Monitor에서 현재 상태를 바로 확인할 수 있습니다.
+              이제 Knowbee를 사용할 준비가 끝났습니다. 대시보드로 이동하거나 Run Monitor에서 현재 상태를 바로 확인할 수 있습니다.
             </p>
             <div className="mt-6 grid gap-4 md:grid-cols-2">
               <StatCard label="완료 상태" value={state.completed ? "completed" : state.currentStep} />
@@ -2192,7 +2192,7 @@ export function SetupPage() {
   return (
     <SetupStepShell
       title={pickUiText(uiLanguage, "처음 설정", "Initial Setup")}
-      description={pickUiText(uiLanguage, "필수 단계부터 차례대로 입력하면 Nobie를 바로 사용할 수 있습니다.", "Complete the required steps in order to start using Nobie quickly.")}
+      description={pickUiText(uiLanguage, "필수 단계부터 차례대로 입력하면 Knowbee를 바로 사용할 수 있습니다.", "Complete the required steps in order to start using Knowbee quickly.")}
       steps={steps}
       currentStep={stepContextId}
       onSelectStep={(stepId) => {
@@ -3221,7 +3221,7 @@ function formatSetupCompletionError(value: string): string {
     return "채널 연결 정보에 문제가 있어 설정 완료를 마치지 못했습니다. Telegram 토큰과 연결 상태를 다시 확인해 주세요."
   }
   if (lower.includes("network") || lower.includes("fetch") || lower.includes("econnrefused") || lower.includes("connect")) {
-    return "로컬 서비스 연결에 실패했습니다. Nobie gateway가 실행 중인지 확인한 뒤 다시 시도해 주세요."
+    return "로컬 서비스 연결에 실패했습니다. Knowbee gateway가 실행 중인지 확인한 뒤 다시 시도해 주세요."
   }
   return "설정을 완료하지 못했습니다. " + message
 }

@@ -6,7 +6,7 @@ export interface MemoryCompactionReleaseGateCheck {
     detail: Record<string, unknown>;
 }
 export interface MemoryCompactionReleaseGateSummary {
-    kind: "nobie.release.memory_compaction";
+    kind: "knowbee.release.memory_compaction";
     generatedAt: string;
     policyVersion: "2026-05-18.memory-compaction.release-gate.v1";
     gateStatus: MemoryCompactionReleaseGateStatus;

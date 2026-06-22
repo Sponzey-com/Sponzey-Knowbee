@@ -29,7 +29,7 @@ export interface ReleasePerformanceCounterResult {
     warning: string | null;
 }
 export interface ReleasePerformanceSummary {
-    kind: "nobie.release.performance";
+    kind: "knowbee.release.performance";
     generatedAt: string;
     windowMs: number;
     gateStatus: ReleasePerformanceGateStatus;

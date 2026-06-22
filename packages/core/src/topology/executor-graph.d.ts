@@ -17,7 +17,7 @@ export interface ExecutorGraphSourceOfTruth {
 }
 export interface ExecutorAdvancedMapping {
     nodeType: NodeType;
-    executorKind: "nobie" | "agent" | "team" | "tool" | "manual_approval" | "external";
+    executorKind: "knowbee" | "agent" | "team" | "tool" | "manual_approval" | "external";
     executorId?: string;
     allowedToolIds?: string[];
     allowedSystemIds?: string[];
@@ -137,7 +137,7 @@ export interface ExecutorGraphTopologyMetadata {
     };
 }
 export interface ExecutorGraphRollbackEvidence {
-    kind: "nobie.executor_graph.rollback_projection";
+    kind: "knowbee.executor_graph.rollback_projection";
     status: "passed" | "failed";
     topologyId: string;
     expectedTopologyId?: string;

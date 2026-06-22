@@ -17,7 +17,7 @@ import {
 } from "../packages/webui/src/lib/ui-mode.js"
 import { useCapabilitiesStore } from "../packages/webui/src/stores/capabilities"
 
-const previousEnterpriseBuilderFlag = process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
+const previousEnterpriseBuilderFlag = process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
 
 function capability(status: FeatureCapability["status"]): FeatureCapability {
   return {
@@ -34,9 +34,9 @@ function capability(status: FeatureCapability["status"]): FeatureCapability {
 afterEach(() => {
   useCapabilitiesStore.getState().setItems([])
   if (previousEnterpriseBuilderFlag === undefined) {
-    delete process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
+    delete process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
   } else {
-    process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = previousEnterpriseBuilderFlag
+    process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = previousEnterpriseBuilderFlag
   }
 })
 
@@ -68,7 +68,7 @@ describe("task016 enterprise topology UI shell", () => {
   })
 
   it("keeps the Enterprise Builder route behind its feature gate", () => {
-    process.env["NOBIE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = "off"
+    process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = "off"
     useCapabilitiesStore.getState().setItems([capability("disabled")])
     const apiCapability = createCapabilities().find((item) => item.key === "enterprise_topology_builder_ui")
 

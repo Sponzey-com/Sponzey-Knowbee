@@ -106,9 +106,9 @@ function draft(): SetupDraft {
 
 function checks(): SetupChecksResponse {
   return {
-    stateDir: "/tmp/nobie-task004",
-    configFile: "/tmp/nobie-config.json",
-    setupStateFile: "/tmp/nobie-setup.json",
+    stateDir: "/tmp/knowbee-task004",
+    configFile: "/tmp/knowbee-config.json",
+    setupStateFile: "/tmp/knowbee-setup.json",
     setupCompleted: false,
     telegramConfigured: true,
     authEnabled: true,
@@ -243,7 +243,7 @@ describe("task004 AI visualization topology", () => {
     const anthropic = scene.nodes.find((node) => node.id === "node:ai:provider:anthropic")
 
     expect(router).toEqual(expect.objectContaining({
-      label: "노비 실행 경로",
+      label: "노우비 실행 경로",
       badges: expect.arrayContaining(["profiles:1", "single-ai"]),
     }))
     expect(openai).toEqual(expect.objectContaining({
@@ -289,7 +289,7 @@ describe("task004 AI visualization topology", () => {
       "node:ai:provider:ollama",
     ]))
     expect(collectText(backendsCanvas)).toEqual(expect.arrayContaining([
-      "노비 실행 경로",
+      "노우비 실행 경로",
       "대기 중이거나 아직 준비되지 않은 연결",
       "현재 선택된 backend",
     ]))
@@ -300,7 +300,7 @@ describe("task004 AI visualization topology", () => {
       "node:routing:provider:openai",
     ]))
     expect(collectText(routingCanvas)).toEqual(expect.arrayContaining([
-      "노비 실행 경로",
+      "노우비 실행 경로",
       "Default",
       "이 장면은 list editor의 우선순위를 그대로 보여주는 projection입니다.",
     ]))

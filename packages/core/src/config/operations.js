@@ -7,7 +7,7 @@ import { PATHS } from "./paths.js";
 import { MIGRATIONS } from "../db/migrations.js";
 import { closeDb, getDb } from "../db/index.js";
 import { sanitizeUserFacingError } from "../runs/error-sanitizer.js";
-import { ensurePromptSourceFiles, exportPromptSourcesToFile, importPromptSourcesFromFile, loadPromptSourceRegistry, } from "../memory/nobie-md.js";
+import { ensurePromptSourceFiles, exportPromptSourcesToFile, importPromptSourcesFromFile, loadPromptSourceRegistry, } from "../memory/knowbee-md.js";
 import { redactUiValue } from "../ui/redaction.js";
 function backupRoot() {
     return join(PATHS.stateDir, "backups");
@@ -184,7 +184,7 @@ export function exportMaskedConfig() {
     const exportPath = join(backupRoot(), "config", `${id}.json`);
     mkdirSync(dirname(exportPath), { recursive: true });
     const payload = {
-        kind: "nobie.config.export",
+        kind: "knowbee.config.export",
         createdAt,
         masking: {
             secretsMasked: masked.maskedCount,

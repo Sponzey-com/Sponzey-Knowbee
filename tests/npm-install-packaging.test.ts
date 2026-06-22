@@ -24,18 +24,18 @@ afterEach(() => {
 })
 
 describe("npm install packaging", () => {
-  it("defines a publishable Nobie meta package with the nobie binary", () => {
-    const packageJson = readJson("packages/nobie/package.json")
+  it("defines a publishable Knowbee meta package with the knowbee binary", () => {
+    const packageJson = readJson("packages/knowbee/package.json")
 
     expect(packageJson).toMatchObject({
-      name: "@sponzey/nobie",
+      name: "@sponzey/knowbee",
       version: "0.1.0",
       type: "module",
     })
     expect(packageJson.private).not.toBe(true)
-    expect(packageJson.bin).toEqual({ nobie: "./bin/nobie.js" })
+    expect(packageJson.bin).toEqual({ knowbee: "./bin/knowbee.js" })
     expect(packageJson.files).toEqual(expect.arrayContaining(["bin"]))
-    expect(existsSync("packages/nobie/bin/nobie.js")).toBe(true)
+    expect(existsSync("packages/knowbee/bin/knowbee.js")).toBe(true)
   })
 
   it("keeps CLI, Core, and WebUI publishable for npm installation", () => {
@@ -54,7 +54,7 @@ describe("npm install packaging", () => {
   })
 
   it("stages the meta npm package with registry dependencies and Yeonjang optional packages", () => {
-    const outputDir = makeTempDir("nobie-npm-package-")
+    const outputDir = makeTempDir("knowbee-npm-package-")
     execFileSync(
       "node",
       ["scripts/package-npm.mjs", "--version", "v9.8.7", "--output-dir", outputDir],
@@ -64,11 +64,11 @@ describe("npm install packaging", () => {
       },
     )
 
-    const staged = readJson(join(outputDir, "nobie", "package.json"))
+    const staged = readJson(join(outputDir, "knowbee", "package.json"))
     expect(staged).toMatchObject({
-      name: "@sponzey/nobie",
+      name: "@sponzey/knowbee",
       version: "9.8.7",
-      bin: { nobie: "./bin/nobie.js" },
+      bin: { knowbee: "./bin/knowbee.js" },
     })
     expect(staged.dependencies).toMatchObject({
       "@sponzey/cli": "9.8.7",
@@ -79,7 +79,7 @@ describe("npm install packaging", () => {
       "@sponzey/yeonjang-linux-x64": "9.8.7",
       "@sponzey/yeonjang-win32-x64": "9.8.7",
     })
-    expect(existsSync(join(outputDir, "nobie", "bin", "nobie.js"))).toBe(true)
+    expect(existsSync(join(outputDir, "knowbee", "bin", "knowbee.js"))).toBe(true)
 
     const core = readJson(join(outputDir, "core", "package.json"))
     const cli = readJson(join(outputDir, "cli", "package.json"))
@@ -96,14 +96,14 @@ describe("npm install packaging", () => {
     expect(readFileSync(join(outputDir, "cli", "dist", "index.js"), "utf-8")).toContain(
       "@sponzey/core",
     )
-    expect(readFileSync(join(outputDir, "nobie", "bin", "nobie.js"), "utf-8")).toContain(
+    expect(readFileSync(join(outputDir, "knowbee", "bin", "knowbee.js"), "utf-8")).toContain(
       "@sponzey/cli",
     )
   })
 
   it("stages a compiled Yeonjang platform package from a built binary", () => {
-    const fixtureDir = makeTempDir("nobie-yeonjang-fixture-")
-    const outputDir = makeTempDir("nobie-yeonjang-package-")
+    const fixtureDir = makeTempDir("knowbee-yeonjang-fixture-")
+    const outputDir = makeTempDir("knowbee-yeonjang-package-")
     const binaryPath = join(fixtureDir, "Yeonjang")
     writeFileSync(binaryPath, "fake-binary\n", "utf-8")
 
@@ -130,7 +130,7 @@ describe("npm install packaging", () => {
       os: ["darwin"],
       cpu: ["arm64"],
     })
-    expect(existsSync(join(outputDir, "yeonjang-darwin-arm64", "bin", "nobie-yeonjang"))).toBe(
+    expect(existsSync(join(outputDir, "yeonjang-darwin-arm64", "bin", "knowbee-yeonjang"))).toBe(
       true,
     )
     expect(existsSync(join(outputDir, "yeonjang-darwin-arm64", "index.js"))).toBe(true)
@@ -159,9 +159,9 @@ describe("npm install packaging", () => {
   })
 
   it("finds a Windows Yeonjang binary from the build target directory", () => {
-    const targetDir = makeTempDir("nobie-yeonjang-windows-target-")
-    const outputDir = makeTempDir("nobie-yeonjang-windows-package-")
-    const binaryPath = join(targetDir, "release", "nobie-yeonjang.exe")
+    const targetDir = makeTempDir("knowbee-yeonjang-windows-target-")
+    const outputDir = makeTempDir("knowbee-yeonjang-windows-package-")
+    const binaryPath = join(targetDir, "release", "knowbee-yeonjang.exe")
     mkdirSync(dirname(binaryPath), { recursive: true })
     writeFileSync(binaryPath, "fake-windows-binary\n", "utf-8")
 
@@ -172,7 +172,7 @@ describe("npm install packaging", () => {
         "--target",
         "win32-x64",
         "--binary",
-        "Yeonjang/target/release/nobie-yeonjang.exe",
+        "Yeonjang/target/release/knowbee-yeonjang.exe",
         "--output-dir",
         outputDir,
       ],
@@ -192,7 +192,7 @@ describe("npm install packaging", () => {
       os: ["win32"],
       cpu: ["x64"],
     })
-    expect(existsSync(join(outputDir, "yeonjang-win32-x64", "bin", "nobie-yeonjang.exe"))).toBe(
+    expect(existsSync(join(outputDir, "yeonjang-win32-x64", "bin", "knowbee-yeonjang.exe"))).toBe(
       true,
     )
   })
