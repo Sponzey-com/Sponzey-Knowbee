@@ -95,7 +95,7 @@ export interface ApprovalAggregationResult {
 const KNOWBEE_SPEAKER: NicknameSnapshot = {
   entityType: "knowbee",
   entityId: "agent:knowbee",
-  nicknameSnapshot: "노우비",
+  nicknameSnapshot: "노비",
 }
 
 function finalDeliveryTargetKey(input: {

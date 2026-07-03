@@ -65,6 +65,9 @@ export interface SetupDraft {
         timezone: string;
         workspace: string;
     };
+    mainAgent?: {
+        name: string;
+    };
     aiBackends: AIBackendCard[];
     routingProfiles: RoutingProfile[];
     mcp: {

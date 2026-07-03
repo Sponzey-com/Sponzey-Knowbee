@@ -577,8 +577,8 @@ function TopologyWorkspaceResourceLayer({
         </div>
         <div className="mt-3 rounded-md border border-stone-200 bg-stone-50 px-2.5 py-2 leading-5">
           {text(
-            "Agent/Team hierarchy는 참고용 projection입니다. Enterprise relation으로 자동 변환하지 않고, 선택한 업무 node의 실행자로만 연결합니다.",
-            "Agent/Team hierarchy is a read-only projection. It is not auto-converted into enterprise relations and is linked only as a node executor.",
+            "Agent/Team hierarchy는 참고용 projection입니다. Enterprise relation으로 자동 변환하지 않고, 선택한 서브 에이전트의 실행 리소스로만 연결합니다.",
+            "Agent/Team hierarchy is a read-only projection. It is not auto-converted into enterprise relations and is linked only as a sub-agent execution resource.",
           )}
         </div>
         <section className="mt-4 rounded-md border border-stone-200 bg-white p-3" data-testid="topology-workspace-resource-import-action">

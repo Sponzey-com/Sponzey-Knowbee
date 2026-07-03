@@ -274,6 +274,43 @@ describe("task001 visualization foundation", () => {
     expect(collectText(tree)).toContain("Body only")
   })
 
+  it("embeds SetupStepShell inside the app layout without a second navigation shell", () => {
+    const tree = SetupStepShell({
+      layout: "embedded",
+      title: "Initial Setup",
+      description: "Configure Knowbee",
+      steps: steps(),
+      currentStep: "personal",
+      onSelectStep: () => undefined,
+      language: "en",
+      legend: createElement("div", null, "Legend"),
+      canvas: createElement("div", null, "Canvas"),
+      inspector: createElement("div", null, "Inspector"),
+      assistPanel: createElement("div", null, "Assist"),
+      footer: createElement("div", null, "Footer"),
+      children: createElement("div", null, "Body"),
+    })
+
+    expect(findSlotNames(tree)).toEqual([
+      "content",
+      "inspector",
+      "legend",
+      "canvas",
+      "assist-panel",
+    ])
+    expect(findClassNames(tree).some((value) => value.includes("md:left-[260px]"))).toBe(false)
+    expect(findClassNames(tree).some((value) => value.includes("xl:right-[360px]"))).toBe(false)
+    expect(collectText(tree)).toEqual(expect.arrayContaining([
+      "Initial Setup",
+      "View setup structure",
+      "Body",
+      "Inspector",
+      "Legend",
+      "Canvas",
+      "Footer",
+    ]))
+  })
+
   it("preserves step-scoped dirty, merge, and revert semantics", () => {
     const savedDraft = draft()
     const localDraft = {

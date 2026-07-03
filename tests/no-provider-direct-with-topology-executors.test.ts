@@ -344,8 +344,8 @@ describe("run_task provider direct guard", () => {
     })
 
     const result = await runIntakeBridgePass({
-      message: "실행자가 판단하지 못하면 노우비가 직접 처리해줘",
-      originalRequest: "실행자가 판단하지 못하면 노우비가 직접 처리해줘",
+      message: "실행자가 판단하지 못하면 노비가 직접 처리해줘",
+      originalRequest: "실행자가 판단하지 못하면 노비가 직접 처리해줘",
       sessionId: "session:fallback",
       requestGroupId: "run:fallback",
       model: "gpt-test",

@@ -1,8 +1,11 @@
+import { createElement } from "../packages/webui/node_modules/react/index.js"
+import { renderToStaticMarkup } from "../packages/webui/node_modules/react-dom/server.js"
 import { describe, expect, it } from "vitest"
 import type { SetupChecksResponse } from "../packages/webui/src/api/adapters/types.ts"
 import type { UiShellResponse } from "../packages/webui/src/api/client.ts"
 import type { FeatureCapability } from "../packages/webui/src/contracts/capabilities.ts"
 import type { SetupDraft, SetupState } from "../packages/webui/src/contracts/setup.ts"
+import { PersonalSettingsForm } from "../packages/webui/src/components/setup/PersonalSettingsForm.tsx"
 import { SetupVisualizationCanvas, SetupVisualizationLegend } from "../packages/webui/src/components/setup/SetupVisualizationCanvas.tsx"
 import { isSetupStepDirty, revertSetupStepDraft } from "../packages/webui/src/lib/setupFlow.ts"
 import { buildSetupVisualizationRegistry } from "../packages/webui/src/lib/setup-visualization-scenes.ts"
@@ -15,6 +18,9 @@ function draft(overrides: Partial<SetupDraft> = {}): SetupDraft {
       language: "ko",
       timezone: "Asia/Seoul",
       workspace: "/Users/dongwoo/work",
+    },
+    mainAgent: {
+      name: "노비",
     },
     aiBackends: [
       {
@@ -262,12 +268,13 @@ describe("task003 welcome/personal visualization", () => {
     const nodeStatusById = Object.fromEntries(personalScene.nodes.map((node) => [node.id, node.status]))
 
     expect(nodeStatusById["node:personal:identity"]).toBe("required")
+    expect(personalScene.nodes.find((node) => node.id === "node:personal:main_agent")?.label).toBe("노비")
     expect(nodeStatusById["node:personal:language"]).toBe("required")
     expect(nodeStatusById["node:personal:timezone"]).toBe("required")
     expect(nodeStatusById["node:personal:workspace"]).toBe("error")
     expect(personalScene.alerts).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        message: "이름을 입력해야 합니다.",
+        message: "사용자 이름을 입력해야 합니다.",
         relatedNodeIds: ["node:personal:identity"],
       }),
       expect.objectContaining({
@@ -282,7 +289,7 @@ describe("task003 welcome/personal visualization", () => {
     const savedDraft = draft()
     const localDraft = draft({
       personal: {
-        profileName: "dongwoo",
+        profileName: "",
         displayName: "",
         language: "ko",
         timezone: "Asia/Seoul",
@@ -317,5 +324,20 @@ describe("task003 welcome/personal visualization", () => {
     expect(revertedScene.nodes.find((node) => node.id === "node:personal:identity")?.status).toBe("ready")
     expect(revertedScene.nodes.find((node) => node.id === "node:personal:workspace")?.status).toBe("ready")
     expect(revertedScene.alerts).toBeUndefined()
+  })
+
+  it("renders one user name field and a separate main agent self-name field", () => {
+    const html = renderToStaticMarkup(createElement(PersonalSettingsForm, {
+      value: draft().personal,
+      mainAgentName: "노비",
+      onChange: () => undefined,
+      onMainAgentNameChange: () => undefined,
+    }))
+
+    expect(html).toContain("사용자 이름")
+    expect(html).toContain("메인 에이전트 이름")
+    expect(html).toContain("노비")
+    expect(html).not.toContain("표시 이름")
+    expect(html).not.toContain("Profile Name")
   })
 })

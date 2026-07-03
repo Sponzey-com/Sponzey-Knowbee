@@ -345,6 +345,8 @@ export function SetupPage() {
     [activeDraft, capabilityCounts, checks, runtimeStatus, state, uiLanguage, uiShell],
   )
   const currentValidation = useMemo(() => validateSetupStep(stepContextId, activeDraft), [stepContextId, activeDraft])
+  const personalValidation = useMemo(() => validateSetupStep("personal", activeDraft), [activeDraft])
+  const defaultMainAgentName = pickUiText(uiLanguage, "노비", "Knowbee")
   const mcpEnabledCount = activeDraft.mcp.servers.filter((server) => server.enabled).length
   const mcpRequiredCount = activeDraft.mcp.servers.filter((server) => server.required).length
   const mcpReadyCount = activeDraft.mcp.servers.filter((server) => server.status === "ready").length
@@ -1120,8 +1122,10 @@ export function SetupPage() {
       <PersonalSetupInspector
         language={uiLanguage}
         value={activeDraft.personal}
+        mainAgentName={activeDraft.mainAgent?.name ?? defaultMainAgentName}
         selectedNodeLabel={currentScene.nodes.find((node) => node.id === selectedVisualizationNodeId)?.label}
         onChange={(patch) => patchDraft("personal", { ...activeDraft.personal, ...patch })}
+        onMainAgentNameChange={(name) => patchDraft("mainAgent", { name })}
         errors={shouldShowValidation ? {
           profileName: currentValidation.fieldErrors.profileName,
           displayName: currentValidation.fieldErrors.displayName,
@@ -1259,7 +1263,23 @@ export function SetupPage() {
     switch (beginnerStepId) {
       case "ai":
         return (
-          <section id="setup-ai" className="rounded-[1.75rem] border border-stone-200 bg-white p-5 shadow-sm">
+          <div id="setup-ai" className="space-y-6">
+          <section className="space-y-4">
+            <div className="mb-5">
+              <h2 className="text-xl font-semibold text-stone-900">{pickUiText(uiLanguage, "기본 이름", "Basic names")}</h2>
+              <p className="mt-2 text-sm leading-6 text-stone-600">
+                {pickUiText(uiLanguage, "사용자 이름과 메인 에이전트가 자기 자신을 부를 이름을 정합니다.", "Set the user name and the name the main agent uses for itself.")}
+              </p>
+            </div>
+            <PersonalSettingsForm
+              value={activeDraft.personal}
+              mainAgentName={activeDraft.mainAgent?.name ?? defaultMainAgentName}
+              onChange={(patch) => patchDraft("personal", { ...activeDraft.personal, ...patch })}
+              onMainAgentNameChange={(name) => patchDraft("mainAgent", { name })}
+              errors={personalValidation.fieldErrors}
+            />
+          </section>
+          <section className="rounded-[1.75rem] border border-stone-200 bg-white p-5 shadow-sm">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h2 className="text-xl font-semibold text-stone-900">{uiCatalogText(uiLanguage, "beginner.setup.aiTitle")}</h2>
@@ -1338,6 +1358,7 @@ export function SetupPage() {
               <button type="button" onClick={() => setBeginnerStepId("channels")} className="rounded-2xl border border-stone-200 px-5 py-3 text-sm font-semibold text-stone-700">{pickUiText(uiLanguage, "다음", "Next")}</button>
             </div>
           </section>
+          </div>
         )
       case "channels":
         return (
@@ -1522,15 +1543,29 @@ export function SetupPage() {
               <ValidationNotice messages={currentValidation.summary} />
             ) : null}
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <StatCard label="이름" value={activeDraft.personal.profileName.trim() || "미입력"} />
-              <StatCard label="표시 이름" value={activeDraft.personal.displayName.trim() || "미입력"} />
+              <StatCard label="사용자 이름" value={(activeDraft.personal.displayName || activeDraft.personal.profileName).trim() || "미입력"} />
+              <StatCard label="메인 에이전트" value={activeDraft.mainAgent?.name.trim() || defaultMainAgentName} />
               <StatCard label="기본 언어" value={activeDraft.personal.language.trim() || "미선택"} />
               <StatCard label="시간대" value={activeDraft.personal.timezone.trim() || "미선택"} />
             </div>
+            <PersonalSettingsForm
+              value={activeDraft.personal}
+              mainAgentName={activeDraft.mainAgent?.name ?? defaultMainAgentName}
+              onChange={(patch) => patchDraft("personal", { ...activeDraft.personal, ...patch })}
+              onMainAgentNameChange={(name) => patchDraft("mainAgent", { name })}
+              errors={shouldShowValidation ? {
+                profileName: currentValidation.fieldErrors.profileName,
+                displayName: currentValidation.fieldErrors.displayName,
+                language: currentValidation.fieldErrors.language,
+                timezone: currentValidation.fieldErrors.timezone,
+                workspace: currentValidation.fieldErrors.workspace,
+              } : undefined}
+            />
             <div className="rounded-3xl border border-stone-200 bg-white p-6">
               <div className="text-sm font-semibold text-stone-900">이 단계에서 확인할 것</div>
               <div className="mt-4 grid gap-3 text-sm leading-6 text-stone-700">
-                <ChecklistItem text="이름과 표시 이름은 Knowbee가 사용자를 구분하고 화면에 노출할 때 사용됩니다." />
+                <ChecklistItem text="사용자 이름은 대화와 화면에서 사용자를 지칭할 때 사용됩니다." />
+                <ChecklistItem text="메인 에이전트 이름은 에이전트가 자기 자신을 소개하고 응답할 때 사용됩니다." />
                 <ChecklistItem text="기본 언어와 시간대는 이후 AI 응답과 일정/알림 시간 계산 기준이 됩니다." />
                 <ChecklistItem text="작업 폴더는 전체 경로여야 하며, 이후 파일 작업의 시작 위치가 됩니다." />
               </div>
@@ -1543,7 +1578,7 @@ export function SetupPage() {
           <div className="space-y-6">
             <SectionIntro
               title="AI 연결을 준비합니다"
-              description="이 단계는 노우비 실행 경로 기준의 topology로 연결 상태를 보여주고, Inspector에서 같은 backend 편집 UI를 재사용합니다."
+              description="이 단계는 노비 실행 경로 기준의 topology로 연결 상태를 보여주고, Inspector에서 같은 backend 편집 UI를 재사용합니다."
             />
             {shouldShowValidation && currentValidation.summary.length > 0 ? (
               <ValidationNotice messages={currentValidation.summary} />
@@ -2191,6 +2226,7 @@ export function SetupPage() {
 
   return (
     <SetupStepShell
+      layout="embedded"
       title={pickUiText(uiLanguage, "처음 설정", "Initial Setup")}
       description={pickUiText(uiLanguage, "필수 단계부터 차례대로 입력하면 Knowbee를 바로 사용할 수 있습니다.", "Complete the required steps in order to start using Knowbee quickly.")}
       steps={steps}
@@ -2703,14 +2739,18 @@ function WelcomeSetupInspector({
 function PersonalSetupInspector({
   language,
   value,
+  mainAgentName,
   selectedNodeLabel,
   onChange,
+  onMainAgentNameChange,
   errors,
 }: {
   language: UiLanguage
   value: SetupDraft["personal"]
+  mainAgentName: string
   selectedNodeLabel?: string
   onChange: (patch: Partial<SetupDraft["personal"]>) => void
+  onMainAgentNameChange: (name: string) => void
   errors?: Partial<Record<keyof SetupDraft["personal"], string>>
 }) {
   return (
@@ -2726,7 +2766,13 @@ function PersonalSetupInspector({
           {pickUiText(language, "입력값을 바꾸면 지도 노드 상태가 즉시 같이 바뀝니다.", "Changing a value updates the map node state immediately.")}
         </div>
       </div>
-      <PersonalSettingsForm value={value} onChange={onChange} errors={errors} />
+      <PersonalSettingsForm
+        value={value}
+        mainAgentName={mainAgentName}
+        onChange={onChange}
+        onMainAgentNameChange={onMainAgentNameChange}
+        errors={errors}
+      />
     </div>
   )
 }

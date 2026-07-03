@@ -251,7 +251,7 @@ describe("prompt source registry", () => {
 
     bootstrap()
     const firstCount = (getDb().prepare("SELECT COUNT(*) AS count FROM prompt_sources").get() as { count: number }).count
-    expect(firstCount).toBe(15)
+    expect(firstCount).toBe(25)
     expect(getPromptSourceStates().some((source) => source.sourceId === "bootstrap" && source.locale === "en")).toBe(true)
 
     bootstrap()

@@ -25,7 +25,7 @@ afterEach(() => {
 describe("task002 executor-first UX language", () => {
   it("keeps the beginner copy surface centered on executor graph concepts", () => {
     expect(TOPOLOGY_WORKSPACE_SIMPLE_CONCEPTS).toEqual([
-      "실행자",
+      "서브 에이전트",
       "연결",
       "입력",
       "실행",
@@ -98,10 +98,10 @@ describe("task002 executor-first UX language", () => {
       }),
     )
 
-    expect(shellHtml).toContain("서브에이전트 구성하기")
+    expect(shellHtml).toContain("서브 에이전트 구성하기")
     expect(shellHtml).not.toContain("Topology Workspace")
-    expect(firstStartHtml).toContain("첫 실행자 추가")
-    expect(firstStartHtml).toContain("실행자 예시")
+    expect(firstStartHtml).toContain("첫 서브 에이전트 추가")
+    expect(firstStartHtml).toContain("서브 에이전트 예시")
     expect(firstStartHtml).not.toContain("업무유형")
     expect(firstStartHtml).not.toContain("WorkOrder Template")
   })
@@ -110,17 +110,17 @@ describe("task002 executor-first UX language", () => {
     const html = renderToStaticMarkup(
       createElement(
         FeatureGate,
-        { capabilityKey: "enterprise_topology_builder_ui", title: "서브에이전트 설정" },
+        { capabilityKey: "enterprise_topology_builder_ui", title: "서브 에이전트 설정" },
         createElement("div", null, "workspace route content"),
       ),
     )
 
     expect(TOPOLOGY_WORKSPACE_FEATURE_FALLBACK_COPY.disabledReasonKo).toContain("관리자")
     expect(TOPOLOGY_WORKSPACE_FEATURE_FALLBACK_COPY.disabledReasonKo).toContain("기능 플래그")
-    expect(TOPOLOGY_WORKSPACE_FEATURE_FALLBACK_COPY.disabledReasonKo).toContain("실행자 그래프")
-    expect(html).toContain("서브에이전트 설정")
+    expect(TOPOLOGY_WORKSPACE_FEATURE_FALLBACK_COPY.disabledReasonKo).toContain("서브 에이전트 작업공간")
+    expect(html).toContain("서브 에이전트 설정")
     expect(html).toContain("관리자 설정")
-    expect(html).toContain("실행자 그래프")
+    expect(html).toContain("서브 에이전트 작업공간")
     expect(html).not.toContain("workspace route content")
   })
 })

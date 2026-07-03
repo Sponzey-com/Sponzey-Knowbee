@@ -58,18 +58,21 @@ export function buildSubAgentTopologyProjection(input: {
 }): SubAgentTopologyProjection {
   const now = input.now ?? Date.now()
   const items = activeSubAgentItems(input.draft)
-  const nodes: ExecutorNodeV2[] = [
-    rootNode(now),
-    ...items.map((item, index) => subAgentNode(item, index, now)),
-  ]
-  const edges: ExecutorEdgeV2[] = items.map((item, index) => ({
-    id: `edge:knowbee:${index + 1}`,
-    sourceNodeId: KNOWBEE_AGENT_ID,
-    targetNodeId: item.agentId,
-    type: "delegates_to",
-    label: "위임",
-    status: "active",
-  }))
+  const rootDisplayName = rootAgentDisplayName(input.draft)
+  const nodes: ExecutorNodeV2[] = items.map((item, index) => subAgentNode(item, index, now))
+  const activeItemIds = new Set(items.map((item) => item.agentId))
+  const edges: ExecutorEdgeV2[] = items.flatMap((item, index) => {
+    const parentAgentId = item.parentAgentId?.trim()
+    if (!parentAgentId || parentAgentId === KNOWBEE_AGENT_ID || !activeItemIds.has(parentAgentId)) return []
+    return [{
+      id: `edge:${parentAgentId}:${item.agentId}:${index + 1}`,
+      sourceNodeId: parentAgentId,
+      targetNodeId: item.agentId,
+      type: "delegates_to",
+      label: "위임",
+      status: "active" as const,
+    }]
+  })
   const topology: ExecutorTopologyV2 = {
     schemaVersion: EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION,
     id: "topology:sub-agent-setup",
@@ -96,6 +99,7 @@ export function buildSubAgentTopologyProjection(input: {
     summaries: buildTopologySubAgentSummaryMap({
       draft: input.draft,
       graphExecutorIds: graph.executors.map((executor) => executor.id),
+      rootDisplayName,
       now,
     }),
   }
@@ -104,9 +108,11 @@ export function buildSubAgentTopologyProjection(input: {
 export function buildTopologySubAgentSummaryMap(input: {
   draft: SetupDraft
   graphExecutorIds: string[]
+  rootDisplayName?: string | undefined
   now?: number | string
 }): Map<string, TopologySubAgentSummary> {
   const now = typeof input.now === "number" ? input.now : Date.now()
+  const rootDisplayName = input.rootDisplayName?.trim() || rootAgentDisplayName(input.draft)
   const items = activeSubAgentItems(input.draft)
   const graphIds = new Set(input.graphExecutorIds)
   const activeRuntimeIds = new Set(input.draft.subAgents?.runtimeActiveAgentIds ?? [])
@@ -116,10 +122,10 @@ export function buildTopologySubAgentSummaryMap(input: {
   if (graphIds.has(KNOWBEE_AGENT_ID) || items.length > 0) {
     map.set(KNOWBEE_AGENT_ID, {
       kind: "root",
-      displayName: KNOWBEE_DISPLAY_NAME,
-      nickname: KNOWBEE_DISPLAY_NAME,
+      displayName: rootDisplayName,
+      nickname: rootDisplayName,
       role: "메인 에이전트",
-      description: "노우비는 최상위에서 직접 하위 서브 에이전트에게만 일을 위임합니다.",
+      description: `${rootDisplayName}은 최상위에서 직접 하위 서브 에이전트에게만 일을 위임합니다.`,
       parentDisplayName: "",
       directChildLabels: items.map((item) => item.displayName),
       childCount: items.length,
@@ -152,7 +158,7 @@ export function buildTopologySubAgentSummaryMap(input: {
       nickname: item.nickname || item.displayName,
       role: item.role,
       description: item.description,
-      parentDisplayName: KNOWBEE_DISPLAY_NAME,
+      parentDisplayName: rootDisplayName,
       directChildLabels: [],
       childCount: 0,
       readinessState,
@@ -209,26 +215,8 @@ function activeSubAgentItems(draft: SetupDraft): SetupSubAgentDraftItem[] {
   return (draft.subAgents?.items ?? []).filter((item) => item.status !== "archived")
 }
 
-function rootNode(now: number | string): ExecutorNodeV2 {
-  return {
-    id: KNOWBEE_AGENT_ID,
-    name: KNOWBEE_DISPLAY_NAME,
-    roleName: "메인 에이전트",
-    description: "최상위에서 직접 하위 서브 에이전트에게 일을 위임합니다.",
-    position: { x: 120, y: 80 },
-    status: "active",
-    profile: executorProfile({
-      id: KNOWBEE_AGENT_ID,
-      name: KNOWBEE_DISPLAY_NAME,
-      roleName: "메인 에이전트",
-      description: "최상위에서 직접 하위 서브 에이전트에게 일을 위임합니다.",
-    }),
-    metadata: {
-      source: "setup_sub_agents",
-      kind: "root",
-      updatedAt: String(now),
-    },
-  }
+function rootAgentDisplayName(draft: SetupDraft): string {
+  return draft.mainAgent?.name.trim() || KNOWBEE_DISPLAY_NAME
 }
 
 function subAgentNode(item: SetupSubAgentDraftItem, index: number, now: number | string): ExecutorNodeV2 {
@@ -240,7 +228,7 @@ function subAgentNode(item: SetupSubAgentDraftItem, index: number, now: number |
     description: item.description || item.role,
     position: {
       x: 80 + (index % 3) * 310,
-      y: 300 + Math.floor(index / 3) * 200,
+      y: 80 + Math.floor(index / 3) * 200,
     },
     status: "active",
     profile: executorProfile({
@@ -303,7 +291,7 @@ function executorDraftFromNode(node: ExecutorNodeV2): ExecutorDraft {
   const profile = executorProfile({
     id: node.id,
     name: node.name,
-    roleName: node.roleName ?? "실행자",
+    roleName: node.roleName ?? "서브 에이전트",
     description: node.description,
   })
   return {
@@ -311,8 +299,8 @@ function executorDraftFromNode(node: ExecutorNodeV2): ExecutorDraft {
     name: node.name,
     description: node.description,
     position: node.position,
-    inferredRuntimeMode: node.id === KNOWBEE_AGENT_ID ? "auto" : "tool_execution",
-    inferredCapabilities: node.id === KNOWBEE_AGENT_ID ? ["직접 하위 위임"] : [node.roleName ?? node.description],
+    inferredRuntimeMode: "tool_execution",
+    inferredCapabilities: [node.roleName ?? node.description],
     inferredTools: [],
     inferredOutputs: ["처리 결과"],
     inferredSuccessCriteria: ["맡은 일을 완료하고 상위 에이전트에게 보고"],
@@ -323,7 +311,7 @@ function executorDraftFromNode(node: ExecutorNodeV2): ExecutorDraft {
     sourceNodeId: node.id,
     advancedMapping: {
       nodeType: "function",
-      executorKind: node.id === KNOWBEE_AGENT_ID ? "knowbee" : "agent",
+      executorKind: "agent",
       executorId: node.id,
     },
   }

@@ -7,6 +7,7 @@ import {
 import type { Message } from "../ai/types.js"
 import { loadMergedInstructions } from "../instructions/merge.js"
 import { createLogger } from "../logger/index.js"
+import { loadPromptTemplate } from "../memory/knowbee-md.js"
 import { chatWithContextPreflight } from "../runs/context-preflight.js"
 import { buildUserProfilePromptContext } from "./profile-context.js"
 export {
@@ -73,18 +74,17 @@ export async function reviewTaskCompletion(params: {
   const messages: Message[] = [
     {
       role: "user",
-      content: [
-        "Review whether the latest assistant result fully satisfies the original user request.",
-        "Return valid JSON only.",
-        "",
-        `Original request:\n${originalRequest}`,
-        params.priorAssistantMessages && params.priorAssistantMessages.length > 0
-          ? `\nPreviously completed assistant results:\n${params.priorAssistantMessages.map((item, index) => `${index + 1}. ${item}`).join("\n")}`
-          : "",
-        `\nLatest assistant result:\n${latestAssistantMessage}`,
-      ]
-        .filter(Boolean)
-        .join("\n"),
+      content: loadPromptTemplate({
+        sourceId: "completion_review_user",
+        workDir: params.workDir,
+        variables: {
+          originalRequest,
+          priorAssistantMessagesBlock: params.priorAssistantMessages && params.priorAssistantMessages.length > 0
+            ? `Previously completed assistant results:\n${params.priorAssistantMessages.map((item, index) => `${index + 1}. ${item}`).join("\n")}`
+            : "",
+          latestAssistantMessage,
+        },
+      }),
     },
   ]
 
@@ -95,7 +95,7 @@ export async function reviewTaskCompletion(params: {
     model,
     messages,
     system: [
-      buildCompletionReviewSystemPrompt(),
+      buildCompletionReviewSystemPrompt({ workDir: params.workDir }),
       instructions.mergedText ? `\n[Instruction Chain]\n${instructions.mergedText}` : "",
       profileContext ? `\n${profileContext}` : "",
     ].join("\n"),
@@ -116,37 +116,12 @@ export async function reviewTaskCompletion(params: {
   return parsed
 }
 
-export function buildCompletionReviewSystemPrompt(): string {
-  return [
-    "You are Knowbee's completion reviewer for Sponzey Knowbee.",
-    "",
-    "Your job is to check whether the latest assistant result fully satisfies the original request.",
-    "Always output valid JSON only.",
-    "Do not output markdown or explanatory prose.",
-    "",
-    "Return JSON with this shape:",
-    "{",
-    '  "status": "complete | followup | ask_user",',
-    '  "summary": "short Korean summary",',
-    '  "reason": "why you chose this status",',
-    '  "followup_prompt": "required only when status = followup",',
-    '  "user_message": "required only when status = ask_user",',
-    '  "remaining_items": ["list of remaining items if any"]',
-    "}",
-    "",
-    "Rules:",
-    "- Choose complete when the original request is already satisfied.",
-    "- Choose followup when work is still missing but the system can continue autonomously without user input.",
-    "- Choose ask_user when required information is missing, the request is ambiguous, or the assistant explicitly needs user confirmation.",
-    "- If the original request asked for a current/latest externally retrievable value and the latest result only says the value was not extracted, cannot be confirmed, or asks whether to continue checking, choose followup instead of complete or ask_user.",
-    "- If the original request asked for multiple current/latest values and any requested value is still missing or unverified, choose followup instead of complete or ask_user.",
-    "- For that followup, instruct the next pass to use a different concrete source path such as web_fetch on an already discovered result URL or a known direct source URL. Do not repeat only the same web_search query.",
-    "- If you choose followup, provide a focused followup_prompt that tells the next agent pass exactly what remains to be done.",
-    "- The followup_prompt must avoid repeating already completed work.",
-    "- Be conservative: do not request followup unless something concrete is still missing.",
-    "- Do not ask for web access unless the original request clearly requires it.",
-    "- Keep summary, reason, user_message, and followup_prompt in the same language as the original user request unless the user explicitly asked for translation.",
-  ].join("\n")
+export function buildCompletionReviewSystemPrompt(options: { workDir?: string | undefined; locale?: "ko" | "en" | undefined } = {}): string {
+  return loadPromptTemplate({
+    sourceId: "completion_review",
+    workDir: options.workDir,
+    locale: options.locale ?? "en",
+  })
 }
 
 export function parseCompletionReviewResult(raw: string): CompletionReviewResult | null {

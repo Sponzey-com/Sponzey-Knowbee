@@ -270,7 +270,7 @@ export function ExecutorRunPanel({
             data-testid="topology-run-target"
           >
             <span className="max-w-48 truncate">
-              {startLabel(resolved) ?? text("시작 실행자 자동 선택 대기", "Waiting for start executor")}
+              {startLabel(resolved) ?? text("시작 서브 에이전트 자동 선택 대기", "Waiting for start sub-agent")}
             </span>
           </div>
         </div>
@@ -335,7 +335,7 @@ export function ExecutorRunPanel({
             </React.Fragment>
           )) : (
             <span className="text-xs text-stone-500" data-testid="executor-test-flow-empty">
-              {text("실행자를 만들면 채널 요청이 흐를 경로가 여기에 표시됩니다.", "Create executors to preview the channel request path here.")}
+              {text("서브 에이전트를 만들면 채널 요청이 흐를 경로가 여기에 표시됩니다.", "Create sub-agents to preview the channel request path here.")}
             </span>
           )}
         </div>
@@ -368,13 +368,13 @@ export function ExecutorRunPanel({
           className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
           data-testid="topology-run-entry-quick-fix"
         >
-          <span>{text("요청을 받을 시작 실행자가 없습니다.", "No start executor is available.")}</span>
+          <span>{text("요청을 받을 시작 서브 에이전트가 없습니다.", "No start sub-agent is available.")}</span>
           <button
             type="button"
             onClick={onStartNodeQuickFix}
             className="h-7 rounded-md border border-amber-300 bg-white px-2.5 text-[11px] font-semibold text-amber-900"
           >
-            {text("시작 실행자 지정", "Set start executor")}
+            {text("시작 서브 에이전트 지정", "Set start sub-agent")}
           </button>
         </div>
       ) : null}

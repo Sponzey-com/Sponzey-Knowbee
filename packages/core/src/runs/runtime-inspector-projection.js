@@ -570,7 +570,7 @@ function topologyNodeNames(topologyById) {
 }
 function topologyExecutorNameRecord(topologyById) {
     const result = {
-        "agent:knowbee": "노우비",
+        "agent:knowbee": "노비",
     };
     for (const [topologyId, topology] of topologyById) {
         for (const node of topology.nodes) {

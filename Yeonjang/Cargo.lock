@@ -1922,6 +1922,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
+name = "knowbee-yeonjang"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "iced",
+ "png",
+ "rumqttc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tray-icon",
+]
+
+[[package]]
 name = "kurbo"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2247,21 +2262,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
-]
-
-[[package]]
-name = "knowbee-yeonjang"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "directories",
- "iced",
- "png",
- "rumqttc",
- "serde",
- "serde_json",
- "sha2",
- "tray-icon",
 ]
 
 [[package]]

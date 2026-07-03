@@ -221,10 +221,10 @@ export type WebUiMessageKey =
   | "error.repeated"
 
 export const WEB_UI_MESSAGE_CATALOG: Record<WebUiMessageKey, { ko: string; en: string }> = {
-  "advanced.notice.eyebrow": { ko: "고급 화면", en: "Advanced mode" },
-  "advanced.notice.title": { ko: "고급 화면입니다", en: "This is an advanced screen" },
-  "advanced.notice.description": { ko: "현재는 초보 모드입니다. 이 화면은 설정, 진단, 실행 세부 정보를 다루므로 고급 모드로 전환한 뒤 확인할 수 있습니다.", en: "You are currently in beginner mode. This screen contains setup, diagnostics, and execution details, so switch to advanced mode to continue." },
-  "advanced.notice.switch": { ko: "고급 모드로 전환", en: "Switch to advanced mode" },
+  "advanced.notice.eyebrow": { ko: "세부 설정", en: "Detailed settings" },
+  "advanced.notice.title": { ko: "세부 설정 화면입니다", en: "This screen contains detailed settings" },
+  "advanced.notice.description": { ko: "이 화면은 설정, 진단, 실행 세부 정보를 다룹니다. 통합 설정에서 필요한 항목을 확인한 뒤 세부 항목을 열 수 있습니다.", en: "This screen contains setup, diagnostics, and execution details. Review the required items in unified settings before opening detailed controls." },
+  "advanced.notice.switch": { ko: "세부 설정 열기", en: "Open detailed settings" },
   "advanced.notice.backToChat": { ko: "채팅으로 돌아가기", en: "Back to chat" },
   "admin.placeholder.eyebrow": { ko: "어드민", en: "Admin" },
   "admin.placeholder.title": { ko: "어드민 도구", en: "Admin tools" },

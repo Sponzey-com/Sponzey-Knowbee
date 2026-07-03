@@ -8,6 +8,7 @@ import {
   resolveModeSwitchRoute,
   resolveRollbackRoute,
   resolveRouteMigration,
+  resolveUnifiedRoute,
 } from "./route-migration"
 
 export {
@@ -17,6 +18,7 @@ export {
   resolveModeSwitchRoute,
   resolveRollbackRoute,
   resolveRouteMigration,
+  resolveUnifiedRoute,
   type UiRouteInventoryItem,
   type UiRouteMigrationResult,
 }
@@ -31,125 +33,46 @@ export interface UiNavItem {
   adminOnly?: boolean
 }
 
-const BEGINNER_NAV: UiNavItem[] = [
+const UNIFIED_NAV: UiNavItem[] = [
   {
     path: "/chat",
-    labelKo: "홈/채팅",
-    labelEn: "Home / Chat",
+    labelKo: "대화",
+    labelEn: "Chat",
     capabilityKey: "chat.workspace",
     descriptionKo: "요청과 결과 확인",
     descriptionEn: "Requests and results",
   },
   {
     path: "/setup",
-    labelKo: "처음 설정",
-    labelEn: "First setup",
+    labelKo: "연결",
+    labelEn: "Connections",
     capabilityKey: "setup.wizard",
-    descriptionKo: "필수 연결 구성",
-    descriptionEn: "Required connections",
+    descriptionKo: "AI, 채널, 연장 연결",
+    descriptionEn: "AI, channel, and extension connections",
   },
   {
     path: "/sub-agents",
-    labelKo: "서브에이전트 설정",
-    labelEn: "Sub-agent settings",
+    labelKo: "서브 에이전트 설정",
+    labelEn: "Sub-Agent Settings",
     capabilityKey: "enterprise_topology_builder_ui",
-    descriptionKo: "서브에이전트 추가와 연결",
-    descriptionEn: "Add and connect sub-agents",
+    descriptionKo: "에이전트 추가와 위임 구조",
+    descriptionEn: "Agents and delegation structure",
   },
   {
     path: "/tasks",
-    labelKo: "작업 확인",
-    labelEn: "Tasks",
+    labelKo: "실행 기록",
+    labelEn: "Run History",
     capabilityKey: "runs.monitor",
-    descriptionKo: "진행 중 작업 요약",
-    descriptionEn: "Active task summary",
+    descriptionKo: "진행과 결과 확인",
+    descriptionEn: "Progress and results",
   },
   {
     path: "/status",
-    labelKo: "연결 상태",
-    labelEn: "Status",
+    labelKo: "관리",
+    labelEn: "Management",
     capabilityKey: "dashboard.overview",
-    descriptionKo: "연결 상태 요약",
-    descriptionEn: "Connection summary",
-  },
-]
-
-const ADVANCED_NAV: UiNavItem[] = [
-  { path: "/advanced/chat", labelKo: "대화", labelEn: "Chat", capabilityKey: "chat.workspace" },
-  { path: "/advanced/runs", labelKo: "실행 현황", labelEn: "Runs", capabilityKey: "runs.monitor" },
-  {
-    path: "/advanced/topology",
-    labelKo: "서브에이전트 설정",
-    labelEn: "Sub-agent settings",
-    capabilityKey: "enterprise_topology_builder_ui",
-    descriptionKo: "서브에이전트 만들기, 연결, 실행 기록 확인",
-    descriptionEn: "Create, connect, and inspect sub-agents",
-  },
-  {
-    path: "/advanced/orchestration",
-    labelKo: "오케스트레이션",
-    labelEn: "Orchestration",
-    capabilityKey: "settings.control",
-  },
-  {
-    path: "/advanced/ai",
-    labelKo: "AI 연결",
-    labelEn: "AI Connections",
-    capabilityKey: "ai.backends",
-  },
-  {
-    path: "/advanced/channels",
-    labelKo: "채널",
-    labelEn: "Channels",
-    capabilityKey: "telegram.channel",
-  },
-  {
-    path: "/advanced/extensions",
-    labelKo: "연장",
-    labelEn: "Extensions",
-    capabilityKey: "mqtt.broker",
-  },
-  {
-    path: "/advanced/schedules",
-    labelKo: "스케줄",
-    labelEn: "Schedules",
-    capabilityKey: "scheduler.core",
-  },
-  {
-    path: "/advanced/memory",
-    labelKo: "메모리",
-    labelEn: "Memory",
-    capabilityKey: "memory.semantic_search",
-  },
-  {
-    path: "/advanced/tools",
-    labelKo: "도구 권한",
-    labelEn: "Tool Permissions",
-    capabilityKey: "settings.control",
-  },
-  {
-    path: "/advanced/dashboard",
-    labelKo: "진단",
-    labelEn: "Diagnostics",
-    capabilityKey: "dashboard.overview",
-  },
-  {
-    path: "/advanced/release",
-    labelKo: "배포/버전",
-    labelEn: "Release / Version",
-    capabilityKey: "dashboard.overview",
-  },
-  {
-    path: "/advanced/audit",
-    labelKo: "감사 기록",
-    labelEn: "Audit",
-    capabilityKey: "audit.viewer",
-  },
-  {
-    path: "/advanced/plugins",
-    labelKo: "플러그인",
-    labelEn: "Plugins",
-    capabilityKey: "plugins.runtime",
+    descriptionKo: "상태와 진단 요약",
+    descriptionEn: "Status and diagnostics summary",
   },
 ]
 
@@ -164,10 +87,8 @@ const ADMIN_NAV: UiNavItem[] = [
   },
 ]
 
-export function getUiNavigation(mode: UiMode, adminEnabled: boolean): UiNavItem[] {
-  if (mode === "advanced" || mode === "admin")
-    return adminEnabled ? [...ADVANCED_NAV, ...ADMIN_NAV] : ADVANCED_NAV
-  return adminEnabled ? [...BEGINNER_NAV, ...ADMIN_NAV] : BEGINNER_NAV
+export function getUiNavigation(_mode: UiMode, adminEnabled: boolean): UiNavItem[] {
+  return adminEnabled ? [...UNIFIED_NAV, ...ADMIN_NAV] : UNIFIED_NAV
 }
 
 export function isAdvancedRoute(pathname: string): boolean {

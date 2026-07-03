@@ -54,7 +54,7 @@ function baseCapsule(capsuleId: string, createdAt: number, summary: string): Mem
       channelKey: "webui",
       threadKey: "thread-main",
     },
-    nicknameSnapshot: "노우비",
+    nicknameSnapshot: "노비",
     capsuleKind: "session_compaction",
     summary,
     activeObjectives: ["현재 작업 유지"],

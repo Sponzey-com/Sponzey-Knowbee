@@ -16,7 +16,9 @@ import type { SetupDraft } from "../packages/webui/src/contracts/setup.ts"
 import {
   buildBeginnerSubAgentReadinessPanel,
   createBeginnerSubAgent,
+  createDefaultBeginnerSubAgent,
   ensureSubAgentSetupDraft,
+  nextDefaultSubAgentDisplayName,
 } from "../packages/webui/src/lib/beginner-sub-agents.ts"
 import {
   BeginnerSubAgentCreateDialog,
@@ -190,6 +192,27 @@ describe("task003 beginner sub-agent setup", () => {
     expect(panel.stats.pendingRuntimeCount).toBe(1)
   })
 
+  it("creates default sub-agents for the topology workspace without duplicate names", () => {
+    const first = createDefaultBeginnerSubAgent(draft(), 1_780_000_000_000, "ko")
+    expect(first.ok).toBe(true)
+    expect(first.draft?.subAgents?.orchestrationEnabled).toBe(true)
+    expect(first.draft?.subAgents?.items[0]).toEqual(expect.objectContaining({
+      displayName: "새 서브 에이전트 1",
+      nickname: "새 서브 에이전트 1",
+      role: "서브 에이전트",
+      description: "이 서브 에이전트가 맡을 일을 적어주세요.",
+      status: "enabled",
+    }))
+
+    const second = createDefaultBeginnerSubAgent(first.draft!, 1_780_000_001_000, "ko")
+    expect(second.ok).toBe(true)
+    expect(second.draft?.subAgents?.items.map((item) => item.displayName)).toEqual([
+      "새 서브 에이전트 1",
+      "새 서브 에이전트 2",
+    ])
+    expect(nextDefaultSubAgentDisplayName(second.draft!)).toBe("새 서브 에이전트 3")
+  })
+
   it("returns user-facing validation messages for missing, duplicate, and reserved names", () => {
     const base = createBeginnerSubAgent(draft(), {
       displayName: "Researcher",
@@ -217,12 +240,12 @@ describe("task003 beginner sub-agent setup", () => {
 
     const reserved = createBeginnerSubAgent(base, {
       displayName: "Knowbee",
-      nickname: "노우비",
+      nickname: "노비",
       role: "예약명 테스트",
       description: "",
     }, 1_780_000_001_000)
     expect(reserved.ok).toBe(false)
-    expect(reserved.message).toContain("노우비")
+    expect(reserved.message).toContain("노비")
     expect(reserved.message).not.toMatch(/reserved_knowbee_name|agent:/)
   })
 

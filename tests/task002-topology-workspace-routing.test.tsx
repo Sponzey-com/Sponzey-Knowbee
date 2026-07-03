@@ -46,7 +46,7 @@ describe("task002 topology workspace routing", () => {
     )
 
     expect(html).toContain('data-testid="topology-workspace-route-shell"')
-    expect(html).toContain("서브에이전트 구성하기")
+    expect(html).toContain("서브 에이전트 구성하기")
     expect(html).toContain('data-testid="topology-workspace-layer-build"')
     expect(html).toContain('data-testid="topology-workspace-layer-run"')
     expect(html).toContain('data-testid="topology-workspace-layer-trace"')
@@ -62,21 +62,21 @@ describe("task002 topology workspace routing", () => {
   it("exposes sub-agent settings in beginner and advanced navigation", () => {
     const beginnerNav = getUiNavigation("beginner", false)
     const nav = getUiNavigation("advanced", false)
-    const topologyItems = nav.filter((item) => item.path.includes("topology"))
+    const subAgentItems = nav.filter((item) => item.path === "/sub-agents")
 
     expect(beginnerNav).toEqual(expect.arrayContaining([
       expect.objectContaining({
         path: "/sub-agents",
-        labelKo: "서브에이전트 설정",
-        labelEn: "Sub-agent settings",
+        labelKo: "서브 에이전트 설정",
+        labelEn: "Sub-Agent Settings",
         capabilityKey: "enterprise_topology_builder_ui",
       }),
     ]))
-    expect(topologyItems).toEqual([
+    expect(subAgentItems).toEqual([
       expect.objectContaining({
-        path: "/advanced/topology",
-        labelKo: "서브에이전트 설정",
-        labelEn: "Sub-agent settings",
+        path: "/sub-agents",
+        labelKo: "서브 에이전트 설정",
+        labelEn: "Sub-Agent Settings",
         capabilityKey: "enterprise_topology_builder_ui",
       }),
     ])
@@ -113,11 +113,12 @@ describe("task002 topology workspace routing", () => {
       replacementPath: "/advanced/topology?mode=build",
     }))
     expect(resolveLegacyAdvancedRoute("/topology")).toBe("/sub-agents")
-    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/advanced/topology")
+    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/sub-agents")
     expect(appSource).toContain("TopologyWorkspacePage")
     expect(appSource).toContain('path="/sub-agents"')
     expect(appSource).toContain('path="/advanced/enterprise-topology"')
-    expect(appSource).toContain('to="/advanced/topology?mode=build"')
+    expect(appSource).toContain("UnifiedRouteRedirect")
+    expect(appSource).not.toContain('to="/advanced/topology?mode=build"')
   })
 
   it("keeps the unified workspace behind the enterprise topology feature gate", () => {
@@ -128,7 +129,7 @@ describe("task002 topology workspace routing", () => {
     const html = renderToStaticMarkup(
       createElement(
         FeatureGate,
-        { capabilityKey: "enterprise_topology_builder_ui", title: "서브에이전트 설정" },
+        { capabilityKey: "enterprise_topology_builder_ui", title: "서브 에이전트 설정" },
         createElement("div", null, "workspace route content"),
       ),
     )
@@ -137,7 +138,7 @@ describe("task002 topology workspace routing", () => {
       status: "disabled",
       enabled: false,
     }))
-    expect(html).toContain("서브에이전트 설정")
+    expect(html).toContain("서브 에이전트 설정")
     expect(html).toContain("기능 플래그")
     expect(html).not.toContain("workspace route content")
   })
@@ -145,7 +146,7 @@ describe("task002 topology workspace routing", () => {
   it("keeps beginner and advanced mode switch policy stable", () => {
     expect(resolveModeSwitchRoute("/advanced/topology", "beginner")).toBe("/sub-agents")
     expect(resolveModeSwitchRoute("/advanced/enterprise-topology", "beginner")).toBe("/sub-agents")
-    expect(resolveModeSwitchRoute("/sub-agents", "advanced")).toBe("/advanced/topology")
-    expect(resolveModeSwitchRoute("/status", "advanced")).toBe("/advanced/dashboard")
+    expect(resolveModeSwitchRoute("/sub-agents", "advanced")).toBe("/sub-agents")
+    expect(resolveModeSwitchRoute("/status", "advanced")).toBe("/status")
   })
 })

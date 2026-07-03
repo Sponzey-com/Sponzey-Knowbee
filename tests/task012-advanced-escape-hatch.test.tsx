@@ -62,7 +62,7 @@ describe("task012 removed advanced topology surfaces", () => {
     expect(resolveTopologyWorkspaceInitialLayer("?mode=resources", "simple")).toBe("build")
     expect(resolveTopologyWorkspaceInitialLayer("?mode=resources", "advanced")).toBe("build")
     expect(advancedShell).not.toContain('data-testid="topology-workspace-layer-resources"')
-    expect(advancedShell).toContain("서브에이전트 구성하기")
+    expect(advancedShell).toContain("서브 에이전트 구성하기")
     expect(advancedPage).toContain('data-testid="executor-workspace-shell"')
     expect(advancedPage).toContain('data-testid="executor-graph-canvas"')
     expect(advancedPage).not.toContain('data-testid="topology-workspace-resources-layer"')
@@ -117,12 +117,12 @@ describe("task012 removed advanced topology surfaces", () => {
     const fallbackHtml = renderToStaticMarkup(
       createElement(
         FeatureGate,
-        { capabilityKey: "enterprise_topology_builder_ui", title: "서브에이전트 설정" },
+        { capabilityKey: "enterprise_topology_builder_ui", title: "서브 에이전트 설정" },
         createElement("div", null, "workspace body"),
       ),
     )
 
-    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/advanced/topology")
+    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/sub-agents")
     expect(fallbackHtml).toContain("기능 플래그")
     expect(fallbackHtml).toContain("관리자 설정")
     expect(fallbackHtml).not.toContain("workspace body")

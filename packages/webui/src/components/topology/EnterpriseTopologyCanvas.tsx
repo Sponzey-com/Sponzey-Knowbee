@@ -268,11 +268,11 @@ function TopologyWorkspaceSimpleCreatePanel({
       data-testid="topology-simple-create-panel"
     >
       <div className="text-sm font-semibold text-stone-950">
-        {text("실행자 흐름", "Executor flow")}
+        {text("서브 에이전트 흐름", "Sub-agent flow")}
       </div>
       <div className="mt-1 text-xs leading-5 text-stone-500">
         {text(
-          "실행자를 추가하고 연결하면 내부 구조는 노우비가 정리합니다.",
+          "서브 에이전트를 추가하고 연결하면 내부 구조는 노비가 정리합니다.",
           "Add executors and connect them; Knowbee organizes the internal structure.",
         )}
       </div>
@@ -284,7 +284,7 @@ function TopologyWorkspaceSimpleCreatePanel({
           className="h-10 rounded-lg bg-stone-900 px-3 text-left text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           data-testid="topology-simple-add-executor"
         >
-          {text("+ 실행자 추가", "+ Add executor")}
+          {text("+ 서브 에이전트 추가", "+ Add sub-agent")}
         </button>
         <button
           type="button"
@@ -298,7 +298,7 @@ function TopologyWorkspaceSimpleCreatePanel({
       </div>
       <div className="mt-4 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-600">
         {text(
-          "토폴로지 화면은 실행자 추가와 연결 중심으로 정리되었습니다.",
+          "서브 에이전트 설정 화면은 서브 에이전트 추가와 연결 중심으로 정리되었습니다.",
           "The topology screen is organized around adding and connecting executors.",
         )}
       </div>
@@ -612,7 +612,7 @@ export function EnterpriseTopologyCanvasShell({
             className="border-b border-stone-200 bg-stone-50 px-4 py-2 text-xs font-medium text-stone-600"
             data-testid="topology-simple-relation-policy"
           >
-            {text("연결 의미는 노우비가 자동으로 추천합니다.", "Knowbee recommends connection meaning automatically.")}
+            {text("연결 의미는 노비가 자동으로 추천합니다.", "Knowbee recommends connection meaning automatically.")}
           </div>
         )}
         <div className="min-h-0 flex-1">

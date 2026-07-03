@@ -2,6 +2,7 @@ import { checkPromptSourceLocaleParity, dryRunPromptSourceAssembly, loadPromptSo
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 const EXPECTED_PROMPT_SOURCE_IDS = [
+    "system",
     "definitions",
     "identity",
     "user",
@@ -17,6 +18,15 @@ const EXPECTED_PROMPT_SOURCE_IDS = [
     "output_policy",
     "channel",
     "bootstrap",
+    "task_intake",
+    "completion_review",
+    "task_intake_user",
+    "completion_review_user",
+    "request_continuation",
+    "execution_decision_harness",
+    "ai_connection_test",
+    "schedule_comparison",
+    "node_definition_suggestion",
 ];
 const RESPONSIBILITY_RULES = [
     {

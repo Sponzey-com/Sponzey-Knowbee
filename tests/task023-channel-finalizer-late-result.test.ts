@@ -155,7 +155,7 @@ function runInput(id = "researcher"): RunSubSessionInput {
     parentAgent: {
       agentId: "agent:knowbee",
       displayName: "Knowbee",
-      nickname: "노우비",
+      nickname: "노비",
     },
     parentSessionId: "session:task023",
     promptBundle: promptBundle(),

@@ -18,6 +18,7 @@ import {
 import { getActiveTelegramChannel, getTelegramRuntimeError } from "../channels/telegram/runtime.js"
 import { getActiveSlackChannel, getSlackRuntimeError } from "../channels/slack/runtime.js"
 import { resetEmbeddingProvider } from "../memory/embedding.js"
+import { loadPromptTemplate } from "../memory/knowbee-md.js"
 import { mcpRegistry } from "../mcp/registry.js"
 import { getMqttBrokerSnapshot } from "../mqtt/broker.js"
 import {
@@ -35,11 +36,13 @@ import {
 } from "../auth/openai-codex-oauth.js"
 import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js"
 import type {
+  KnowbeeConfig as KnowbeeAgentConfig,
   MemoryPolicy,
   PermissionProfile,
   SkillMcpAllowlist,
   SubAgentConfig,
 } from "../contracts/sub-agent-orchestration.js"
+import { normalizeNickname } from "../contracts/sub-agent-orchestration.js"
 
 export type CapabilityStatus = "ready" | "disabled" | "planned" | "error"
 
@@ -130,6 +133,9 @@ export interface SetupDraft {
     language: string
     timezone: string
     workspace: string
+  }
+  mainAgent?: {
+    name: string
   }
   aiBackends: AIBackendCard[]
   routingProfiles: RoutingProfile[]
@@ -403,6 +409,10 @@ const GENERIC_BACKEND_SUMMARIES = new Set([
   "로컬 대체 추론 서버",
   "사용자 추가 backend",
 ])
+
+const DEFAULT_MAIN_AGENT_ID = "agent:knowbee"
+const DEFAULT_MAIN_AGENT_NAME = "Knowbee"
+const DEFAULT_MAIN_AGENT_NAME_KO = "노비"
 
 function countCapabilities(items: FeatureCapability[]): CapabilityCounts {
   return items.reduce<CapabilityCounts>(
@@ -928,6 +938,111 @@ function osSensitiveCapabilityIdsFromPermissionProfile(profile: PermissionProfil
   return profile.allowScreenControl ? ["capability:screen_capture", "capability:keyboard_control", "capability:mouse_control"] : ["capability:screen_capture"]
 }
 
+function resolveMainAgentName(config: KnowbeeConfig): string {
+  const configured = config.orchestration.knowbee?.nickname?.trim()
+    || config.orchestration.knowbee?.displayName?.trim()
+    || ""
+  return configured && !isDefaultMainAgentAlias(configured) && !isProfileNameAlias(config.profile, configured)
+    ? configured
+    : defaultMainAgentNameForLanguage(config.profile.language)
+}
+
+function defaultMainAgentNameForLanguage(language: string | undefined): string {
+  return language?.trim().toLowerCase().startsWith("ko") ? DEFAULT_MAIN_AGENT_NAME_KO : DEFAULT_MAIN_AGENT_NAME
+}
+
+function isDefaultMainAgentAlias(value: string): boolean {
+  const normalized = value.trim().normalize("NFKC").toLowerCase()
+  return normalized === DEFAULT_MAIN_AGENT_NAME.toLowerCase()
+    || normalized === DEFAULT_MAIN_AGENT_NAME_KO
+}
+
+function isProfileNameAlias(profile: KnowbeeConfig["profile"], value: string): boolean {
+  const normalized = value.trim().normalize("NFKC").toLowerCase()
+  if (!normalized) return false
+  return [profile.displayName, profile.profileName]
+    .map((alias) => alias?.trim() ?? "")
+    .filter((alias) => alias.length > 0)
+    .map((alias) => alias.normalize("NFKC").toLowerCase())
+    .includes(normalized)
+}
+
+function defaultKnowbeeMemoryPolicy(agentId: string): MemoryPolicy {
+  const owner = { ownerType: "knowbee" as const, ownerId: agentId }
+  return {
+    owner,
+    visibility: "private",
+    readScopes: [owner],
+    writeScope: owner,
+    retentionPolicy: "long_term",
+    writebackReviewRequired: false,
+    rawWindowSize: 48_000,
+    compactThreshold: 64_000,
+    capsuleMode: "session_compaction",
+    archiveReferenceMode: "summary_reference",
+    handoffCapsuleAllowed: true,
+    capsuleCount: 0,
+  }
+}
+
+function defaultKnowbeeCapabilityPolicy(agentId: string): KnowbeeAgentConfig["capabilityPolicy"] {
+  return {
+    permissionProfile: {
+      profileId: "profile:knowbee-main",
+      riskCeiling: "moderate",
+      approvalRequiredFrom: "moderate",
+      allowExternalNetwork: true,
+      allowFilesystemWrite: false,
+      allowShellExecution: false,
+      allowScreenControl: false,
+      allowedPaths: [],
+    },
+    skillMcpAllowlist: {
+      enabledSkillIds: [],
+      enabledMcpServerIds: [],
+      enabledToolNames: [],
+      disabledToolNames: [],
+      secretScopeId: agentId,
+    },
+    rateLimit: { maxConcurrentCalls: 2 },
+  }
+}
+
+function buildKnowbeeAgentConfig(input: {
+  existing?: KnowbeeAgentConfig | undefined
+  name: string
+  maxDelegationTurns: number
+  now: number
+}): KnowbeeAgentConfig {
+  const agentId = input.existing?.agentId?.trim() || DEFAULT_MAIN_AGENT_ID
+  const name = input.name.trim() || DEFAULT_MAIN_AGENT_NAME
+  return {
+    schemaVersion: input.existing?.schemaVersion ?? CONTRACT_SCHEMA_VERSION,
+    agentType: "knowbee",
+    agentId,
+    displayName: name,
+    nickname: name,
+    normalizedNickname: normalizeNickname(name),
+    status: input.existing?.status ?? "enabled",
+    role: input.existing?.role?.trim() || "Main personal assistant coordinator",
+    personality: input.existing?.personality?.trim() || "Pragmatic, concise, and careful.",
+    specialtyTags: input.existing?.specialtyTags ?? ["coordination"],
+    avoidTasks: input.existing?.avoidTasks ?? [],
+    ...(input.existing?.modelProfile ? { modelProfile: input.existing.modelProfile } : {}),
+    memoryPolicy: input.existing?.memoryPolicy ?? defaultKnowbeeMemoryPolicy(agentId),
+    capabilityPolicy: input.existing?.capabilityPolicy ?? defaultKnowbeeCapabilityPolicy(agentId),
+    ...(input.existing?.delegationPolicy ? { delegationPolicy: input.existing.delegationPolicy } : {}),
+    profileVersion: Math.max(1, Math.floor(Number.isFinite(input.existing?.profileVersion) ? input.existing!.profileVersion : 1)),
+    createdAt: Number.isFinite(input.existing?.createdAt) ? input.existing!.createdAt : input.now,
+    updatedAt: input.now,
+    coordinator: input.existing?.coordinator ?? {
+      defaultMode: "single_knowbee",
+      fallbackMode: "single_knowbee",
+      maxDelegatedSubSessions: Math.max(1, Math.floor(Number.isFinite(input.maxDelegationTurns) ? input.maxDelegationTurns : 1)),
+    },
+  }
+}
+
 export function buildSetupDraft(): SetupDraft {
   const config = getConfig()
   const raw = readRawConfig()
@@ -964,6 +1079,9 @@ export function buildSetupDraft(): SetupDraft {
       language: config.profile.language ?? "ko",
       timezone: config.profile.timezone ?? config.scheduler.timezone,
       workspace: config.profile.workspace ?? "",
+    },
+    mainAgent: {
+      name: resolveMainAgentName(config),
     },
     aiBackends: [...defaults, ...customBackends],
     routingProfiles: createSingleConnectionRoutingProfiles(activeTarget),
@@ -1205,6 +1323,8 @@ function persistSubAgentSetupDraft(raw: JsonObject, draft: SetupDraft): void {
 
 export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: SetupDraft; state: SetupState } {
   const raw = readRawConfig()
+  const currentConfig = getConfig()
+  const userName = draft.personal.displayName.trim() || draft.personal.profileName.trim()
   const rawWebuiAuth = {
     ...toObject(toObject(raw.webui).auth),
   }
@@ -1212,8 +1332,8 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
 
   raw.profile = {
     ...toObject(raw.profile),
-    profileName: draft.personal.profileName,
-    displayName: draft.personal.displayName,
+    profileName: userName,
+    displayName: userName,
     language: draft.personal.language,
     timezone: draft.personal.timezone,
     workspace: draft.personal.workspace,
@@ -1234,6 +1354,23 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
   raw.orchestration = {
     ...toObject(raw.orchestration),
     maxDelegationTurns: Math.max(0, Math.floor(Number.isFinite(draft.security.maxDelegationTurns) ? draft.security.maxDelegationTurns : 0)),
+  }
+
+  const draftMainAgentName = draft.mainAgent?.name.trim() ?? ""
+  const mainAgentName = draft.mainAgent
+    ? draftMainAgentName && !isDefaultMainAgentAlias(draftMainAgentName) && !isProfileNameAlias(raw.profile as KnowbeeConfig["profile"], draftMainAgentName)
+      ? draftMainAgentName
+      : defaultMainAgentNameForLanguage(draft.personal.language)
+    : ""
+  if (draft.mainAgent) {
+    const rawOrchestration = toObject(raw.orchestration)
+    rawOrchestration.knowbee = buildKnowbeeAgentConfig({
+      existing: currentConfig.orchestration.knowbee,
+      name: mainAgentName,
+      maxDelegationTurns: draft.security.maxDelegationTurns,
+      now: Date.now(),
+    })
+    raw.orchestration = rawOrchestration
   }
 
   raw.telegram = {
@@ -1846,7 +1983,7 @@ export async function discoverModelsFromEndpoint(
       body: JSON.stringify({
         model: OPENAI_CODEX_KNOWN_MODELS[0],
         input: [{ role: "user", content: [{ type: "input_text", text: "ping" }] }],
-        instructions: "You are Codex.",
+        instructions: loadPromptTemplate({ sourceId: "ai_connection_test" }),
         store: false,
         stream: true,
       }),

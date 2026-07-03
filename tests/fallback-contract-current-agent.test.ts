@@ -46,7 +46,7 @@ function contextFor(overrides: Partial<AgentExecutionContext> = {}): AgentExecut
     },
     parent_executor: {
       executor_id: "agent:knowbee",
-      display_name: "노우비",
+      display_name: "노비",
       role_name: "Root",
       can_delegate: true,
       available: true,
@@ -139,7 +139,7 @@ describe("current-agent fallback contract", () => {
             ? {
                 current_executor: {
                   executor_id: "agent:knowbee",
-                  display_name: "노우비",
+                  display_name: "노비",
                   can_delegate: true,
                   available: true,
                 },
@@ -189,7 +189,7 @@ describe("current-agent fallback contract", () => {
       context: contextFor({
         current_executor: {
           executor_id: "agent:knowbee",
-          display_name: "노우비",
+          display_name: "노비",
           can_delegate: true,
           available: true,
         },

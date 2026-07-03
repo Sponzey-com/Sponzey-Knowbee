@@ -637,7 +637,7 @@ function buildGlobalPolicy(
     ),
     orchestrationModeLabel: draft.subAgents?.orchestrationEnabled
       ? pickUiText(language, "오케스트레이션", "Orchestration")
-      : pickUiText(language, "단일 노우비", "Single Knowbee"),
+      : pickUiText(language, "단일 노비", "Single Knowbee"),
     featureFlagLabel: draft.subAgents?.orchestrationEnabled ? "on" : "off",
     defaultModelLabel,
     defaultMemoryLabel: pickUiText(language, "agent별 독립 메모리", "Private memory per agent"),
@@ -2797,7 +2797,7 @@ function emptyStateFor(input: {
   }
   return {
     kind: "single_knowbee",
-    title: pickUiText(input.language, "단일 노우비 모드", "Single Knowbee mode"),
+    title: pickUiText(input.language, "단일 노비 모드", "Single Knowbee mode"),
     message: pickUiText(
       input.language,
       "서브 에이전트가 없어도 정상입니다. 필요할 때 추가하세요.",

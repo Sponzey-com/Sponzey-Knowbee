@@ -28,7 +28,7 @@ export function knowbeeBinPath(): string {
   try { return which("knowbee") } catch { /* ignore */ }
   try { return which("wizby") } catch { /* ignore */ }
   try { return which("howie") } catch { /* ignore */ }
-  throw new Error("Cannot determine 스폰지 노우비 · Sponzey Knowbee binary path")
+  throw new Error("Cannot determine 스폰지 노비 · Sponzey Knowbee binary path")
 }
 
 export const wizbyBinPath = knowbeeBinPath

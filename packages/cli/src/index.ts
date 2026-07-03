@@ -31,7 +31,7 @@ function startServeCommand(options: { adminUi?: boolean }): void {
 
 program
   .name("knowbee")
-  .description("스폰지 노우비 · Sponzey Knowbee — your local AI assistant")
+  .description("스폰지 노비 · Sponzey Knowbee — your local AI assistant")
   .version(VERSION)
 
 // knowbee run "do something"
@@ -69,7 +69,7 @@ program
   .action(async () => {
     const { getConfig, PATHS } = await import("@knowbee/core")
     const cfg = getConfig()
-    console.log(`스폰지 노우비 · Sponzey Knowbee v${VERSION}`)
+    console.log(`스폰지 노비 · Sponzey Knowbee v${VERSION}`)
     console.log(`State dir:   ${PATHS.stateDir}`)
     console.log(`Config:      ${PATHS.configFile}`)
     console.log(`DB:          ${PATHS.dbFile}`)
@@ -81,7 +81,7 @@ program
 // knowbee serve — daemon entry point (WebUI + scheduler + Telegram)
 program
   .command("serve")
-  .description("Start 스폰지 노우비 · Sponzey Knowbee as a background daemon (WebUI + scheduler + Telegram)")
+  .description("Start 스폰지 노비 · Sponzey Knowbee as a background daemon (WebUI + scheduler + Telegram)")
   .option("--admin-ui", "Enable Admin UI for this serve process")
   .action(startServeCommand)
 

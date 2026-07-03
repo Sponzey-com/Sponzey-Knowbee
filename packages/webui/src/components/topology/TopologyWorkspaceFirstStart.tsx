@@ -18,9 +18,9 @@ export function TopologyWorkspaceFirstStartPanel({
 }: TopologyWorkspaceFirstStartPanelProps) {
   const { text } = useUiI18n()
   const recommendedExecutorLabels = [
-    text("고객 접수 담당자", "Customer intake executor"),
+    text("고객 접수 담당자", "Customer intake sub-agent"),
     text("검토자", "Reviewer"),
-    text("운영 담당자", "Operations executor"),
+    text("운영 담당자", "Operations sub-agent"),
     text("예외 처리 담당자", "Exception handler"),
   ]
   return (
@@ -34,12 +34,12 @@ export function TopologyWorkspaceFirstStartPanel({
             {text(TOPOLOGY_WORKSPACE_FIRST_START_COPY.templateSectionKo, TOPOLOGY_WORKSPACE_FIRST_START_COPY.templateSectionEn)}
           </div>
           <h2 className="mt-0.5 text-base font-semibold text-stone-950">
-            {text("먼저 실행자 1명을 추가하세요", "Add one executor first")}
+            {text("먼저 서브 에이전트 1개를 추가하세요", "Add one sub-agent first")}
           </h2>
           <p className="mt-0.5 text-xs leading-5 text-stone-500">
             {text("누가 어떤 일을 하는지만 적으면 됩니다.", "Just describe who does what.")}
           </p>
-          <div className="mt-1 flex flex-wrap gap-1.5" aria-label={text("실행자 예시", "Executor examples")}>
+          <div className="mt-1 flex flex-wrap gap-1.5" aria-label={text("서브 에이전트 예시", "Sub-agent examples")}>
             {recommendedExecutorLabels.map((label) => (
               <span
                 key={label}

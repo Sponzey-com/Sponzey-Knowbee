@@ -105,10 +105,10 @@ describe("task004 simple workspace shell", () => {
     expect(html).toContain("md:pb-0")
     expect(html).not.toContain("pb-20")
     expect(html).not.toContain("md:pb-16")
-    expect(html).toContain("서브에이전트 구성하기")
-    expect(html).toContain("서브에이전트를 추가하고 서로 선으로 연결하세요.")
-    expect(html).toContain("1. 서브에이전트 추가")
-    expect(html).toContain("2. 서브에이전트끼리 연결")
+    expect(html).toContain("서브 에이전트 구성하기")
+    expect(html).toContain("서브 에이전트를 추가하고 서로 선으로 연결하세요.")
+    expect(html).toContain("1. 서브 에이전트 추가")
+    expect(html).toContain("2. 서브 에이전트끼리 연결")
     expect(html).toContain("3. 요청이 오면 자동 실행")
     expect(html).toContain('data-testid="executor-workspace-top-add-executor"')
     expect(html).toContain('data-testid="executor-workspace-top-delete-executor"')
@@ -116,7 +116,7 @@ describe("task004 simple workspace shell", () => {
     expect(html).not.toContain('data-testid="executor-workspace-advanced-entry"')
     expect(html).not.toContain("?ux=advanced")
     expect(html).not.toContain('data-testid="executor-workspace-top-connect-executor"')
-    expect(html).toContain("노드 추가")
+    expect(html).toContain("서브 에이전트 추가")
     expect(html).toContain("삭제")
     expect(html).toContain("저장")
     expect(html).not.toContain("자동 점검")
@@ -125,10 +125,10 @@ describe("task004 simple workspace shell", () => {
     expect(html.indexOf('data-testid="executor-workspace-add-executor"')).toBeLessThan(
       html.indexOf('data-testid="executor-workspace-add-section"'),
     )
-    expect(html).toContain("+ 실행자 추가")
+    expect(html).toContain("+ 서브 에이전트 추가")
     expect(html).toContain("+ 영역 추가")
-    expect(html).toContain("실행자 목록")
-    expect(html).toContain("추천 실행자")
+    expect(html).toContain("서브 에이전트 목록")
+    expect(html).toContain("추천 서브 에이전트")
     expect(html).toContain("고객 접수 담당자")
     expect(html).not.toContain('data-testid="executor-workspace-layer-build"')
     expect(html).not.toContain('data-testid="executor-workspace-layer-run"')
@@ -155,7 +155,7 @@ describe("task004 simple workspace shell", () => {
     )
 
     expect(html).toContain('data-testid="executor-workspace-shell"')
-    expect(html).toContain("서브에이전트 구성하기")
+    expect(html).toContain("서브 에이전트 구성하기")
     expect(html).toContain("flex min-h-0 flex-1 overflow-hidden")
     expect(html).toContain('data-testid="executor-workspace-guide-steps"')
     expect(html).toContain('data-testid="executor-create-panel"')
@@ -184,9 +184,9 @@ describe("task004 simple workspace shell", () => {
     expect(html).not.toContain('data-testid="topology-workspace-simple-test-card"')
     expect(html).not.toContain('data-testid="topology-run-simple-panel"')
     expect(html).not.toContain("요청 흐름")
-    expect(html).toContain("실행자 이름과 성격 정하기")
+    expect(html).toContain("서브 에이전트 이름과 성격 정하기")
     expect(html).toContain("성격과 하는 일")
-    expect(html).toContain("실행자를 추가하면 여기에 업무 흐름이 표시됩니다.")
+    expect(html).toContain("서브 에이전트를 추가하면 여기에 업무 흐름이 표시됩니다.")
     expect(html).not.toContain("추천 흐름으로 시작")
     expect(html).not.toContain("추천 흐름 보기")
     expect(html).not.toContain('data-testid="executor-workspace-left-rail"')
@@ -211,7 +211,7 @@ describe("task004 simple workspace shell", () => {
     expect(html).toContain('data-testid="topology-workspace-add-first-step"')
     expect(html).toContain('data-testid="topology-workspace-start-recommended-flow"')
     expect(html).toContain('data-testid="topology-workspace-template-gallery"')
-    expect(html).toContain("첫 실행자 추가")
+    expect(html).toContain("첫 서브 에이전트 추가")
     expect(html).toContain("추천 흐름으로 시작")
     expect(html).toContain("고객 접수 담당자")
     expect(html).toContain("고객 요청 처리 흐름")
@@ -229,18 +229,18 @@ describe("task004 simple workspace shell", () => {
     const fallbackHtml = renderToStaticMarkup(
       createElement(
         FeatureGate,
-        { capabilityKey: "enterprise_topology_builder_ui", title: "서브에이전트 설정" },
+        { capabilityKey: "enterprise_topology_builder_ui", title: "서브 에이전트 설정" },
         createElement("div", null, "simple workspace content"),
       ),
     )
 
     expect(advancedHtml).toContain('data-testid="topology-workspace-layer-build"')
     expect(advancedHtml).not.toContain('data-testid="topology-workspace-layer-resources"')
-    expect(advancedHtml).toContain("서브에이전트 구성하기")
+    expect(advancedHtml).toContain("서브 에이전트 구성하기")
     expect(advancedHtml).not.toContain("Topology Workspace")
-    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/advanced/topology")
+    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/sub-agents")
     expect(fallbackHtml).toContain("관리자 설정")
-    expect(fallbackHtml).toContain("실행자 그래프")
+    expect(fallbackHtml).toContain("서브 에이전트 작업공간")
     expect(fallbackHtml).not.toContain("simple workspace content")
   })
 })

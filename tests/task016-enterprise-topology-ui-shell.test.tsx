@@ -43,14 +43,14 @@ afterEach(() => {
 describe("task016 enterprise topology UI shell", () => {
   it("unifies Runtime Resource Topology and Enterprise Builder behind the Topology workspace route", () => {
     const nav = getUiNavigation("advanced", false)
-    const topologyNav = nav.find((item) => item.path === "/advanced/topology")
+    const topologyNav = nav.find((item) => item.path === "/sub-agents")
     const oldBuilderNav = nav.find((item) => item.path === "/advanced/enterprise-topology")
     const inventory = getUiRouteInventory()
     const workspaceRoute = inventory.find((item) => item.path === "/advanced/topology")
     const builderAlias = inventory.find((item) => item.path === "/advanced/enterprise-topology")
 
     expect(topologyNav).toEqual(expect.objectContaining({
-      labelEn: "Topology",
+      labelEn: "Sub-Agent Settings",
       capabilityKey: "enterprise_topology_builder_ui",
     }))
     expect(oldBuilderNav).toBeUndefined()
@@ -63,8 +63,8 @@ describe("task016 enterprise topology UI shell", () => {
       status: "compatibility",
       replacementPath: "/advanced/topology?mode=build",
     }))
-    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/advanced/topology")
-    expect(resolveModeSwitchRoute("/advanced/enterprise-topology", "beginner")).toBe("/status")
+    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/sub-agents")
+    expect(resolveModeSwitchRoute("/advanced/enterprise-topology", "beginner")).toBe("/sub-agents")
   })
 
   it("keeps the Enterprise Builder route behind its feature gate", () => {

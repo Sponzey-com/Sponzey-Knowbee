@@ -37,6 +37,10 @@ export interface SetupPersonalDraft {
   workspace: string
 }
 
+export interface SetupMainAgentDraft {
+  name: string
+}
+
 export interface SetupMcpServerDraft {
   id: string
   name: string
@@ -296,6 +300,7 @@ export interface SetupSubAgentDraft {
 
 export interface SetupDraft {
   personal: SetupPersonalDraft
+  mainAgent?: SetupMainAgentDraft
   aiBackends: AIBackendCard[]
   routingProfiles: RoutingProfile[]
   mcp: {

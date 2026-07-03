@@ -33,14 +33,14 @@ export async function serveCommand(): Promise<void> {
   mkdirSync(LOGS_DIR, { recursive: true })
   writeFileSync(PID_FILE, String(process.pid), "utf-8")
 
-  console.log(`스폰지 노우비 · Sponzey Knowbee daemon starting (PID=${process.pid})`)
+  console.log(`스폰지 노비 · Sponzey Knowbee daemon starting (PID=${process.pid})`)
 
   const { bootstrapAsync } = await import("@knowbee/core")
 
   // Bootstrap: load config, init DB, register tools, start WebUI + scheduler
   await bootstrapAsync()
 
-  console.log("스폰지 노우비 · Sponzey Knowbee daemon running. Press Ctrl+C to stop.")
+  console.log("스폰지 노비 · Sponzey Knowbee daemon running. Press Ctrl+C to stop.")
 
   // Keep alive
   process.on("SIGTERM", () => {

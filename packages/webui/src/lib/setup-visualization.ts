@@ -335,6 +335,7 @@ function mapFieldValidationTargets(
         return {
           nodeIds: ["node:personal:identity"],
           edgeIds: [
+            "edge:personal:identity:main_agent",
             "edge:personal:identity:language",
             "edge:personal:identity:timezone",
             "edge:personal:identity:workspace",

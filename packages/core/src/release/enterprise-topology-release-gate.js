@@ -133,7 +133,7 @@ export const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH = [
     },
     {
         id: "review_understanding",
-        label: "Review 노우비가 이해한 내용 and confirm or revise it before execution.",
+        label: "Review 노비가 이해한 내용 and confirm or revise it before execution.",
         actionKind: "review",
     },
     {

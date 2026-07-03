@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { getUiNavigation, resolveLegacyAdvancedRoute, resolveModeSwitchRoute, resolveRollbackRoute } from "../packages/webui/src/lib/ui-mode.js"
 
 describe("task002 UI navigation policy", () => {
-  it("keeps beginner navigation to the minimum operator surface", () => {
+  it("keeps navigation to one unified operator surface", () => {
     expect(getUiNavigation("beginner", false).map((item) => item.path)).toEqual([
       "/chat",
       "/setup",
@@ -10,24 +10,12 @@ describe("task002 UI navigation policy", () => {
       "/tasks",
       "/status",
     ])
-  })
-
-  it("uses advanced routes for the current full control surface", () => {
     expect(getUiNavigation("advanced", false).map((item) => item.path)).toEqual([
-      "/advanced/chat",
-      "/advanced/runs",
-      "/advanced/topology",
-      "/advanced/orchestration",
-      "/advanced/ai",
-      "/advanced/channels",
-      "/advanced/extensions",
-      "/advanced/schedules",
-      "/advanced/memory",
-      "/advanced/tools",
-      "/advanced/dashboard",
-      "/advanced/release",
-      "/advanced/audit",
-      "/advanced/plugins",
+      "/chat",
+      "/setup",
+      "/sub-agents",
+      "/tasks",
+      "/status",
     ])
   })
 
@@ -37,22 +25,22 @@ describe("task002 UI navigation policy", () => {
     expect(getUiNavigation("advanced", true).some((item) => item.path === "/admin")).toBe(true)
   })
 
-  it("maps legacy control-plane routes to advanced routes during migration", () => {
-    expect(resolveLegacyAdvancedRoute("/settings")).toBe("/advanced/ai")
-    expect(resolveLegacyAdvancedRoute("/settings/ai")).toBe("/advanced/ai")
-    expect(resolveLegacyAdvancedRoute("/runs")).toBe("/advanced/runs")
+  it("maps legacy control-plane routes to unified routes during migration", () => {
+    expect(resolveLegacyAdvancedRoute("/settings")).toBe("/setup")
+    expect(resolveLegacyAdvancedRoute("/settings/ai")).toBe("/setup")
+    expect(resolveLegacyAdvancedRoute("/runs")).toBe("/tasks")
     expect(resolveLegacyAdvancedRoute("/topology")).toBe("/sub-agents")
-    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/advanced/topology")
+    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/sub-agents")
     expect(resolveLegacyAdvancedRoute("/chat")).toBeNull()
   })
 
-  it("moves setup and core beginner routes to the right advanced destinations on mode switch", () => {
-    expect(resolveModeSwitchRoute("/setup", "advanced")).toBe("/advanced/ai")
-    expect(resolveModeSwitchRoute("/chat", "advanced")).toBe("/advanced/chat")
-    expect(resolveModeSwitchRoute("/tasks", "advanced")).toBe("/advanced/runs")
-    expect(resolveModeSwitchRoute("/status", "advanced")).toBe("/advanced/dashboard")
-    expect(resolveModeSwitchRoute("/sub-agents", "advanced")).toBe("/advanced/topology")
+  it("keeps core routes stable on compatibility mode switch", () => {
+    expect(resolveModeSwitchRoute("/setup", "advanced")).toBe("/setup")
+    expect(resolveModeSwitchRoute("/chat", "advanced")).toBe("/chat")
+    expect(resolveModeSwitchRoute("/tasks", "advanced")).toBe("/tasks")
+    expect(resolveModeSwitchRoute("/status", "advanced")).toBe("/status")
+    expect(resolveModeSwitchRoute("/sub-agents", "advanced")).toBe("/sub-agents")
     expect(resolveModeSwitchRoute("/advanced/topology", "beginner")).toBe("/sub-agents")
-    expect(resolveRollbackRoute("/setup")).toBe("/advanced/ai")
+    expect(resolveRollbackRoute("/setup")).toBe("/setup")
   })
 })

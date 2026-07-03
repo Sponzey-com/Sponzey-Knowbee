@@ -170,6 +170,8 @@ function buildPersonalScene(
   const channelsStep = stepMap.get("channels")
   const profileName = input.draft.personal.profileName.trim()
   const displayName = input.draft.personal.displayName.trim()
+  const userName = displayName || profileName
+  const mainAgentName = input.draft.mainAgent?.name.trim() || pickUiText(input.language, "노비", "Knowbee")
   const language = input.draft.personal.language.trim()
   const timezone = input.draft.personal.timezone.trim()
   const workspace = input.draft.personal.workspace.trim()
@@ -179,13 +181,23 @@ function buildPersonalScene(
     {
       id: "node:personal:identity",
       kind: "profile",
-      label: displayName || profileName || "Identity",
+      label: userName || "User name",
       status: validation.fieldErrors.profileName || validation.fieldErrors.displayName ? "required" : "ready",
-      description: profileName && displayName ? `${profileName} / ${displayName}` : step.description,
+      description: userName ? "Name used for the user in conversation and UI" : step.description,
       badges: [
-        profileName || "profileName",
-        displayName || "displayName",
+        userName || "user",
       ],
+      semanticStepIds: ["personal"],
+      draftOwnedByStepIds: ["personal"],
+      inspectorId: "profile",
+    },
+    {
+      id: "node:personal:main_agent",
+      kind: "profile",
+      label: mainAgentName,
+      status: "ready",
+      description: "Name used by the main agent for itself",
+      badges: ["main_agent"],
       semanticStepIds: ["personal"],
       draftOwnedByStepIds: ["personal"],
       inspectorId: "profile",
@@ -277,6 +289,13 @@ function buildPersonalScene(
     nodes,
     edges: [
       {
+        id: "edge:personal:identity:main_agent",
+        from: "node:personal:identity",
+        to: "node:personal:main_agent",
+        kind: "belongs_to",
+        semanticStepIds: ["personal"],
+      },
+      {
         id: "edge:personal:identity:language",
         from: "node:personal:identity",
         to: "node:personal:language",
@@ -323,8 +342,8 @@ function buildPersonalScene(
       {
         id: "profile",
         label: "Identity",
-        description: "User identity values used across the UI.",
-        fieldKeys: ["profileName", "displayName"],
+        description: "User name and main agent self-name used across the UI.",
+        fieldKeys: ["profileName", "displayName", "mainAgent.name"],
       },
       {
         id: "preferences",
@@ -355,7 +374,7 @@ function buildAiBackendsScene(
     {
       id: "node:ai:router",
       kind: "router",
-      label: t("노우비 실행 경로", "Knowbee execution path"),
+      label: t("노비 실행 경로", "Knowbee execution path"),
       status:
         enabledBackends.length === 1
           ? validation.valid
@@ -1541,7 +1560,7 @@ function buildAiRoutingScene(
       {
         id: "node:routing:router",
         kind: "router",
-        label: t("노우비 실행 경로", "Knowbee execution path"),
+        label: t("노비 실행 경로", "Knowbee execution path"),
         status: baseStep?.completed ? "ready" : "draft",
         description: t(
           "실행 경로 보기는 연결 설정을 바꾸지 않고 현재 AI 실행 대상 순서만 시각적으로 보여줍니다.",

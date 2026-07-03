@@ -133,7 +133,7 @@ describe("task003 agent memory state", () => {
         threadKey: "session-webui",
       }),
       latestCapsuleId: result.capsuleId,
-      nicknameSnapshot: "노우비",
+      nicknameSnapshot: "노비",
       currentRawMessageCount: messages.length,
     }))
   })

@@ -114,7 +114,7 @@ function seedRootSessionState(): void {
       threadKey: "thread-task006-memory-controls",
     }),
     ownerScopeKey: "",
-    nicknameSnapshot: "노우비",
+    nicknameSnapshot: "노비",
     currentRawTokenEstimate: 180_000,
     currentRawMessageCount: 1,
     createdAt: now,

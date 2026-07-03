@@ -77,7 +77,7 @@ describe("task012 execution decision regression gate", () => {
       expect(sources, `user-facing copy must not contain ${forbidden}`).not.toContain(forbidden)
     }
 
-    expect(sources).toContain("노우비 실행 경로")
+    expect(sources).toContain("노비 실행 경로")
     expect(sources).toContain("실행 대상")
     expect(sources).toContain("AI 실행 대상")
     expect(sources).toContain("AI 실행 경로")

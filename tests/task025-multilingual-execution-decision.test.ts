@@ -61,7 +61,7 @@ function contextFor(message: string, overrides: Partial<AgentExecutionContext> =
     },
     current_executor: {
       executor_id: "agent:knowbee",
-      display_name: "노우비",
+      display_name: "노비",
       role_name: "Root agent",
       definition: "Receives channel requests and delegates to visible executor profiles when useful.",
       can_delegate: true,
@@ -228,7 +228,7 @@ describe("task025 multilingual execution decision", () => {
       context: contextFor("정의되지 않은 요청", {
         current_executor: {
           executor_id: "agent:knowbee",
-          display_name: "노우비",
+          display_name: "노비",
           can_delegate: true,
           available: false,
         },

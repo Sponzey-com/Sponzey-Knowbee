@@ -154,7 +154,7 @@ function subSession(
     parentRunId: "run:task024",
     parentAgentId: "agent:knowbee",
     parentAgentDisplayName: "Knowbee",
-    parentAgentNickname: "노우비",
+    parentAgentNickname: "노비",
     agentId,
     agentDisplayName: nickname,
     agentNickname: nickname,

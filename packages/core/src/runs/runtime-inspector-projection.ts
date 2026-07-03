@@ -1023,7 +1023,7 @@ function topologyExecutorNameRecord(
   topologyById: Map<string, LegacyTopology>,
 ): Record<string, string> {
   const result: Record<string, string> = {
-    "agent:knowbee": "노우비",
+    "agent:knowbee": "노비",
   }
   for (const [topologyId, topology] of topologyById) {
     for (const node of topology.nodes) {

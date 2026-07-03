@@ -113,7 +113,7 @@ function simplifyUserCopy(value: unknown, fallback: string): string {
     .replace(/선언된\s*/g, "")
     .replace(/관계 후보/g, "연결 후보")
     .replace(/fallback path/g, "예외 처리 경로")
-    .replace(/backup node/g, "대체 실행자")
+    .replace(/backup node/g, "대체 서브 에이전트")
 }
 
 function findingRecord(finding: unknown): Record<string, unknown> {
@@ -454,7 +454,7 @@ function categoryLabel(category: TopologyImproveCategory): { ko: string; en: str
   if (category === "permission") return { ko: "필요한 권한", en: "Needed permission" }
   if (category === "tool") return { ko: "도구 실패", en: "Tool issue" }
   if (category === "blocked_connection") return { ko: "막힌 연결", en: "Blocked connection" }
-  if (category === "frequent_failure") return { ko: "자주 실패한 실행자", en: "Frequent failure" }
+  if (category === "frequent_failure") return { ko: "자주 실패한 서브 에이전트", en: "Frequent failure" }
   if (category === "failure_policy") return { ko: "실패 대비", en: "Failure handling" }
   return { ko: "실제 실행과 다른 점", en: "Runtime difference" }
 }
@@ -519,7 +519,7 @@ function buildFindingCopy(input: {
     const refId = String(input.detail.refId ?? input.detail.toolId ?? input.detail.systemId ?? input.record.refId ?? input.record.toolId ?? input.record.systemId ?? "필요 권한")
     return {
       title: `${targetName}에게 ${refId} 권한이 필요합니다.`,
-      detail: "권한이 없으면 실행자가 도구나 시스템을 사용할 수 없어 같은 지점에서 멈출 수 있습니다.",
+      detail: "권한이 없으면 서브 에이전트가 도구나 시스템을 사용할 수 없어 같은 지점에서 멈출 수 있습니다.",
       evidenceKo: reason ? `최근 이유: ${reason}` : "권한 부족으로 실행이 막힌 후보입니다.",
       evidenceEn: reason ? `Recent reason: ${reason}` : "The run appears blocked by missing permission.",
       recommendedActionKo: "권한 추가 미리보기를 확인한 뒤 반영하세요.",
@@ -557,10 +557,10 @@ function buildFindingCopy(input: {
 
   return {
     title: `${targetName}의 실패 대비가 부족합니다.`,
-    detail: failureCount ? `최근 실행에서 ${failureCount}회 실패했습니다.` : "실패했을 때 넘길 예외 처리 또는 대체 실행자가 부족합니다.",
+    detail: failureCount ? `최근 실행에서 ${failureCount}회 실패했습니다.` : "실패했을 때 넘길 예외 처리 또는 대체 서브 에이전트가 부족합니다.",
     evidenceKo: reason ? `최근 실패 이유: ${reason}` : "실패 시 복구할 후보 경로가 필요합니다.",
     evidenceEn: reason ? `Recent failure reason: ${reason}` : "A fallback or backup path is needed.",
-    recommendedActionKo: "예외 처리 경로나 대체 실행자를 미리보기로 확인하세요.",
+    recommendedActionKo: "예외 처리 경로나 대체 서브 에이전트를 미리보기로 확인하세요.",
     recommendedActionEn: "Preview an exception or backup path before applying it.",
     failureCount,
     recentFailureReason: reason,
@@ -724,7 +724,7 @@ export function TopologyImprovePanel({
             {text("고칠 점", "What to fix")}
           </div>
           <div className="mt-1 text-xs leading-5 text-stone-500">
-            {text("실제 실행과 다른 점, 실패가 잦은 실행자, 막힌 연결, 필요한 권한을 확인합니다.", "Review runtime differences, repeated failures, blocked connections, and needed permissions.")}
+            {text("실제 실행과 다른 점, 실패가 잦은 서브 에이전트, 막힌 연결, 필요한 권한을 확인합니다.", "Review runtime differences, repeated failures, blocked connections, and needed permissions.")}
           </div>
         </div>
         <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-semibold text-sky-800">

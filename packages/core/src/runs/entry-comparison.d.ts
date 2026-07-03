@@ -26,7 +26,10 @@ export declare function compareRequestContinuationWithAI(params: {
     provider?: AIProvider;
     timeoutMs?: number;
 }): Promise<RequestContinuationDecision>;
-export declare function buildRequestContinuationSystemPrompt(): string;
+export declare function buildRequestContinuationSystemPrompt(options?: {
+    workDir?: string | undefined;
+    locale?: "ko" | "en" | undefined;
+}): string;
 export declare function parseRequestContinuationDecision(raw: string): ParsedRequestContinuationDecision | null;
 export {};
 //# sourceMappingURL=entry-comparison.d.ts.map

@@ -50,6 +50,11 @@ export function mergeSetupStepDraft(savedDraft: SetupDraft, localDraft: SetupDra
   switch (stepId) {
     case "personal":
       nextDraft.personal = cloneValue(localSlice.personal ?? savedDraft.personal)
+      if (localSlice.mainAgent ?? savedDraft.mainAgent) {
+        nextDraft.mainAgent = cloneValue((localSlice.mainAgent ?? savedDraft.mainAgent)!)
+      } else {
+        delete nextDraft.mainAgent
+      }
       break
     case "ai_backends":
       nextDraft.aiBackends = cloneValue(localSlice.aiBackends ?? savedDraft.aiBackends)
@@ -88,6 +93,11 @@ export function revertSetupStepDraft(localDraft: SetupDraft, savedDraft: SetupDr
   switch (stepId) {
     case "personal":
       nextDraft.personal = cloneValue(savedSlice.personal ?? savedDraft.personal)
+      if (savedSlice.mainAgent ?? savedDraft.mainAgent) {
+        nextDraft.mainAgent = cloneValue((savedSlice.mainAgent ?? savedDraft.mainAgent)!)
+      } else {
+        delete nextDraft.mainAgent
+      }
       break
     case "ai_backends":
       nextDraft.aiBackends = cloneValue(savedSlice.aiBackends ?? savedDraft.aiBackends)
@@ -148,15 +158,13 @@ export function validateSetupStep(stepId: SetupStepId, draft: SetupDraft): StepV
 function validatePersonal(draft: SetupDraft): StepValidation {
   const fieldErrors: Record<string, string> = {}
   const summary: string[] = []
+  const userName = draft.personal.displayName.trim() || draft.personal.profileName.trim()
 
-  if (!draft.personal.profileName.trim()) {
-    fieldErrors.profileName = "이름을 입력해야 합니다."
-    summary.push(fieldErrors.profileName)
-  }
-
-  if (!draft.personal.displayName.trim()) {
-    fieldErrors.displayName = "표시 이름을 입력해야 합니다."
-    summary.push(fieldErrors.displayName)
+  if (!userName) {
+    const message = "사용자 이름을 입력해야 합니다."
+    fieldErrors.profileName = message
+    fieldErrors.displayName = message
+    summary.push(message)
   }
 
   if (!draft.personal.language.trim()) {
@@ -449,7 +457,7 @@ function validateReview(draft: SetupDraft): StepValidation {
 function getSetupStepSlice(draft: SetupDraft, stepId: SetupStepId) {
   switch (stepId) {
     case "personal":
-      return { personal: draft.personal }
+      return { personal: draft.personal, mainAgent: draft.mainAgent }
     case "ai_backends":
       return { aiBackends: draft.aiBackends, routingProfiles: draft.routingProfiles }
     case "ai_routing":

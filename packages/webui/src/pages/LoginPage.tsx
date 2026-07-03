@@ -44,7 +44,7 @@ export function LoginPage({ onLogin }: Props) {
     <div className="flex min-h-screen items-center justify-center bg-gray-100">
       <div className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
         <div className="mb-6">
-          <h1 className="text-xl font-bold text-gray-800">스폰지 노우비 · Sponzey Knowbee</h1>
+          <h1 className="text-xl font-bold text-gray-800">스폰지 노비 · Sponzey Knowbee</h1>
           <p className="mt-1 text-sm text-gray-500">{text("액세스 토큰을 입력하세요", "Enter the access token")}</p>
         </div>
 

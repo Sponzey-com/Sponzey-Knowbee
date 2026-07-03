@@ -7,10 +7,10 @@
 ## 아키텍처 정리 기준
 
 - WebUI는 core 내부 runtime 타입을 직접 해석하지 않고 API contract와 view model을 통해 표시한다.
-- 기본 topology 화면은 실행자 노드, 연결선, 선택 노드 정의, 저장, 실행 상태 확인만 단순하게 제공한다.
+- 기본 서브 에이전트 설정 화면은 서브 에이전트, 연결선, 선택한 서브 에이전트 정의, 저장, 실행 상태 확인만 단순하게 제공한다.
 - EnterpriseTopology V1, WorkOrder, compile preview, manual run, 내부 route code는 기본 UI에 노출하지 않는다.
 - V1 화면이 남아야 하면 `LegacyEnterpriseTopologyPage`처럼 legacy/diagnostic 이름으로만 노출하고 기본 route에서 import하지 않는다.
-- 실행자 선택, 위험 경계 판단, 자연어 의미 판단은 WebUI가 구현하지 않는다.
+- 서브 에이전트 선택, 위험 경계 판단, 자연어 의미 판단은 WebUI가 구현하지 않는다.
 - Runtime Inspector와 실행현황은 사용자 이름/역할명과 최신 요청 순서를 우선 표시하고, raw id는 diagnostic 영역으로 분리한다.
 
 ## 검증 게이트

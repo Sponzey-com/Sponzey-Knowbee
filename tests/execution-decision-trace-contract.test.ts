@@ -83,7 +83,7 @@ function context(): AgentExecutionContext {
     },
     current_executor: {
       executor_id: "agent:knowbee",
-      display_name: "노우비",
+      display_name: "노비",
       role_name: "root",
       can_delegate: true,
       available: true,

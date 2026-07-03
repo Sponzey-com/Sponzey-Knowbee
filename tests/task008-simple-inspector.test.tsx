@@ -40,7 +40,7 @@ describe("task008 simple inspector and advanced isolation", () => {
     )
 
     expect(html).toContain('data-testid="executor-inspector"')
-    expect(html).toContain("노우비가 이해한 내용")
+    expect(html).toContain("노비가 이해한 내용")
     expect(html).toContain("연결된 실행자")
     expect(html).toContain("운영 담당자에게 넘김")
     expect(html).not.toContain("필요한 도구")
@@ -116,7 +116,7 @@ describe("task008 simple inspector and advanced isolation", () => {
     )
 
     expect(html).toContain("선택한 실행자")
-    expect(html).toContain("노우비가 이해한 내용")
+    expect(html).toContain("노비가 이해한 내용")
     expect(html).not.toContain('data-testid="executor-inspector-advanced-settings"')
     expect(html).not.toContain('data-testid="executor-inspector-runtime-mode"')
     expect(html).not.toContain('data-testid="executor-inspector-advanced-contract"')

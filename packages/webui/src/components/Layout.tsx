@@ -1,7 +1,8 @@
-import { Link, useLocation, useNavigate } from "react-router-dom"
+import * as React from "react"
+import { Link, useLocation } from "react-router-dom"
 import { uiCatalogText } from "../lib/message-catalog"
 import { useUiI18n } from "../lib/ui-i18n"
-import { getUiNavigation, resolveModeSwitchRoute } from "../lib/ui-mode"
+import { getUiNavigation } from "../lib/ui-mode"
 import { useCapabilitiesStore } from "../stores/capabilities"
 import { useConnectionStore } from "../stores/connection"
 import { useRunsStore } from "../stores/runs"
@@ -17,9 +18,17 @@ function isActive(pathname: string, itemPath: string) {
   return pathname === itemPath || pathname.startsWith(`${itemPath}/`)
 }
 
+function SetupStatusRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+      <span className="text-stone-500">{label}</span>
+      <span className="min-w-0 truncate text-right font-semibold text-stone-300">{value}</span>
+    </div>
+  )
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
-  const navigate = useNavigate()
   const uiLanguage = useUiLanguageStore((state) => state.language)
   const msg = (
     key: Parameters<typeof uiCatalogText>[1],
@@ -32,11 +41,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const capabilities = useCapabilitiesStore((state) => state.items)
   const setupCompleted = useSetupStore((state) => state.state.completed)
   const mode = useUiModeStore((state) => state.mode)
-  const preferredUiMode = useUiModeStore((state) => state.preferredUiMode)
   const adminEnabled = useUiModeStore((state) => state.adminEnabled)
   const shell = useUiModeStore((state) => state.shell)
   const chatSessionId = useChatStore((state) => state.sessionId)
-  const setPreferredMode = useUiModeStore((state) => state.setPreferredMode)
   const storeActiveRuns = useRunsStore(
     (state) =>
       state.runs.filter((run) =>
@@ -44,12 +51,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
       ).length,
   )
   const visibleNav = getUiNavigation(mode, adminEnabled)
-  const modeLabel =
-    mode === "admin"
-      ? msg("layout.mode.admin")
-      : preferredUiMode === "advanced"
-        ? msg("layout.mode.advanced")
-        : msg("layout.mode.beginner")
   const shellComponents = shell?.viewModel.advanced.components ?? []
   const aiComponent = shellComponents.find((component) => component.key === "ai")
   const channelComponent = shellComponents.find((component) => component.key === "channels")
@@ -59,15 +60,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     typeof tasksComponent?.configSummary.total === "number"
       ? tasksComponent.configSummary.total
       : storeActiveRuns
-
-  async function handlePreferredModeChange(nextMode: "beginner" | "advanced") {
-    if (preferredUiMode === nextMode) return
-    const nextPath = resolveModeSwitchRoute(location.pathname, nextMode)
-    await setPreferredMode(nextMode)
-    if (nextPath !== location.pathname) {
-      navigate(nextPath, { replace: true })
-    }
-  }
+  const setupInProgress = location.pathname === "/setup" && !setupCompleted
 
   return (
     <div className="flex h-screen overflow-hidden flex-col bg-stone-100 text-stone-900 lg:flex-row">
@@ -76,7 +69,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">
             {msg("layout.brand.eyebrow")}
           </div>
-          <div className="mt-2 text-lg font-semibold">스폰지 노우비 · Sponzey Knowbee</div>
+          <div className="mt-2 text-lg font-semibold">스폰지 노비 · Sponzey Knowbee</div>
           <div className="mt-3 flex items-center gap-2 text-xs text-stone-400">
             <span
               className={`h-2 w-2 rounded-full ${connected ? "bg-emerald-400" : "bg-red-400"}`}
@@ -86,31 +79,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </span>
           </div>
           <UiLanguageSwitcher className="mt-4 border-white/10 bg-white/5" />
-          <CommandPalette threadId={chatSessionId ?? "default"} />
-          <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-xs text-stone-400">
-            <div className="flex items-center justify-between gap-2">
-              <span>{msg("layout.currentMode")}</span>
-              <span className="rounded-full bg-stone-800 px-2 py-1 text-stone-100">
-                {modeLabel}
-              </span>
+          {setupInProgress ? (
+            <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3 text-xs leading-5 text-stone-300" data-layout-setup-locked-command="true">
+              <div className="font-semibold text-stone-100">
+                {pickUiText(uiLanguage, "초기 설정 진행 중", "Initial setup in progress")}
+              </div>
+              <div className="mt-1 text-stone-500">
+                {pickUiText(uiLanguage, "설정을 마친 뒤 대화와 명령을 사용할 수 있습니다.", "Chat and commands become available after setup is complete.")}
+              </div>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => void handlePreferredModeChange("beginner")}
-                className={`rounded-xl px-3 py-2 font-semibold ${preferredUiMode === "beginner" ? "bg-white text-stone-900" : "bg-white/5 text-stone-300"}`}
-              >
-                {msg("layout.mode.beginner")}
-              </button>
-              <button
-                type="button"
-                onClick={() => void handlePreferredModeChange("advanced")}
-                className={`rounded-xl px-3 py-2 font-semibold ${preferredUiMode === "advanced" ? "bg-white text-stone-900" : "bg-white/5 text-stone-300"}`}
-              >
-                {msg("layout.mode.advanced")}
-              </button>
-            </div>
-          </div>
+          ) : (
+            <CommandPalette threadId={chatSessionId ?? "default"} />
+          )}
           {adminEnabled ? (
             <div className="mt-3 rounded-2xl border border-red-400/30 bg-red-500/10 p-3 text-xs leading-5 text-red-100">
               {msg("admin.shell.sidebarWarning")}
@@ -140,52 +120,84 @@ export function Layout({ children }: { children: React.ReactNode }) {
           ) : null}
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-4">
-          <div className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-500">
-            {msg("layout.nav.title")}
-          </div>
-          <div className="space-y-1">
-            {visibleNav.map((item) => {
-              const capability = item.capabilityKey
-                ? capabilities.find((candidate) => candidate.key === item.capabilityKey)
-                : undefined
-              const active = isActive(location.pathname, item.path)
-              const itemLabel = pickUiText(uiLanguage, item.labelKo, item.labelEn)
-              return (
-                <Link
-                  key={item.path}
-                  to={item.path}
-                  className={`block rounded-2xl border px-3 py-3 transition ${
-                    active
-                      ? "border-stone-700 bg-stone-800 text-white"
-                      : "border-transparent text-stone-300 hover:border-white/10 hover:bg-white/5"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-medium">{itemLabel}</span>
-                    {capability ? <CapabilityBadge status={capability.status} /> : null}
-                  </div>
-                  {item.path.endsWith("/runs") || item.path === "/tasks" ? (
-                    <div className="mt-2 text-xs text-stone-500">
-                      {msg("layout.activeRuns", { count: activeRuns })}
-                    </div>
-                  ) : item.descriptionKo || item.descriptionEn ? (
-                    <div className="mt-2 text-xs text-stone-500">
-                      {pickUiText(uiLanguage, item.descriptionKo ?? "", item.descriptionEn ?? "")}
-                    </div>
-                  ) : capability?.reason ? (
-                    <div className="mt-2 line-clamp-2 text-xs leading-5 text-stone-500">
-                      {displayText(capability.reason)}
-                    </div>
-                  ) : (
-                    <div className="mt-2 text-xs text-stone-500">
-                      {capability?.label ?? pickUiText(uiLanguage, "준비 중", "Coming soon")}
-                    </div>
-                  )}
-                </Link>
-              )
-            })}
-          </div>
+        <nav className="flex-1 overflow-y-auto px-3 py-4" aria-label={setupInProgress ? pickUiText(uiLanguage, "초기 설정 상태", "Initial setup status") : msg("layout.nav.title")}>
+          {setupInProgress ? (
+            <div className="space-y-3" data-layout-setup-status-panel="true">
+              <div className="px-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-500">
+                {pickUiText(uiLanguage, "현재 단계", "Current step")}
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div className="text-sm font-semibold text-stone-100">
+                  {pickUiText(uiLanguage, "초기 설정", "Initial setup")}
+                </div>
+                <div className="mt-2 text-xs leading-5 text-stone-500">
+                  {pickUiText(uiLanguage, "필수 설정 완료 전 상태 요약입니다.", "Status summary before required setup is complete.")}
+                </div>
+              </div>
+              <div className="grid gap-2 px-1 text-xs text-stone-400">
+                <SetupStatusRow
+                  label={pickUiText(uiLanguage, "AI", "AI")}
+                  value={aiComponent?.statusLabel ?? msg("beginner.status.needsCheck")}
+                />
+                <SetupStatusRow
+                  label={pickUiText(uiLanguage, "채널", "Channels")}
+                  value={channelComponent?.statusLabel ?? msg("layout.status.webui")}
+                />
+                <SetupStatusRow
+                  label={pickUiText(uiLanguage, "연장", "Extension")}
+                  value={yeonjangComponent?.statusLabel ?? pickUiText(uiLanguage, "대기 중", "Idle")}
+                />
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-500">
+                {msg("layout.nav.title")}
+              </div>
+              <div className="space-y-1">
+                {visibleNav.map((item) => {
+                  const capability = item.capabilityKey
+                    ? capabilities.find((candidate) => candidate.key === item.capabilityKey)
+                    : undefined
+                  const active = isActive(location.pathname, item.path)
+                  const itemLabel = pickUiText(uiLanguage, item.labelKo, item.labelEn)
+                  return (
+                    <Link
+                      key={item.path}
+                      to={item.path}
+                      className={`block rounded-2xl border px-3 py-3 transition ${
+                        active
+                          ? "border-stone-700 bg-stone-800 text-white"
+                          : "border-transparent text-stone-300 hover:border-white/10 hover:bg-white/5"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-medium">{itemLabel}</span>
+                        {capability ? <CapabilityBadge status={capability.status} /> : null}
+                      </div>
+                      {item.path.endsWith("/runs") || item.path === "/tasks" ? (
+                        <div className="mt-2 text-xs text-stone-500">
+                          {msg("layout.activeRuns", { count: activeRuns })}
+                        </div>
+                      ) : item.descriptionKo || item.descriptionEn ? (
+                        <div className="mt-2 text-xs text-stone-500">
+                          {pickUiText(uiLanguage, item.descriptionKo ?? "", item.descriptionEn ?? "")}
+                        </div>
+                      ) : capability?.reason ? (
+                        <div className="mt-2 line-clamp-2 text-xs leading-5 text-stone-500">
+                          {displayText(capability.reason)}
+                        </div>
+                      ) : (
+                        <div className="mt-2 text-xs text-stone-500">
+                          {capability?.label ?? pickUiText(uiLanguage, "준비 중", "Coming soon")}
+                        </div>
+                      )}
+                    </Link>
+                  )
+                })}
+              </div>
+            </>
+          )}
         </nav>
 
         <div className="border-t border-white/10 px-6 py-4">

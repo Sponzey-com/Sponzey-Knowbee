@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { buildRetrievalDedupeKey } from "./web-retrieval-session.js";
+import { loadPromptTemplate } from "../memory/knowbee-md.js";
 const ALLOWED_METHODS = new Set(["official_api", "direct_fetch", "fast_text_search", "browser_search", "known_source_adapter"]);
 const STOP_REASONS = new Set(["policy_block", "target_ambiguity", "no_further_safe_source", "budget_exhausted", "provider_unavailable"]);
 const RISKS = new Set(["low", "medium", "high"]);
@@ -211,16 +212,10 @@ export function buildWebRetrievalPlannerPrompt(input) {
         freshnessPolicy: input.freshnessPolicy,
         now: (input.now ?? new Date()).toISOString(),
     };
-    return [
-        "You are the memoryless Web Retrieval Recovery Planner.",
-        "Do not use long-term memory, prior conversation history, unrelated run results, or model knowledge to answer values.",
-        "Do not generate current values, prices, weather numbers, index values, ranges, or conclusions.",
-        "Do not change the target contract. Propose only next retrieval actions that keep the same target.",
-        "Return JSON only with top-level nextActions and optional stopReason.",
-        "Each nextActions item may contain only method, query, url, expectedTargetBinding, reason, risk.",
-        "Input:",
-        stableStringify(payload),
-    ].join("\n");
+    return loadPromptTemplate({
+        sourceId: "web_retrieval_planner",
+        variables: { inputJson: stableStringify(payload) },
+    });
 }
 export function validateWebRetrievalPlannerOutput(input) {
     const errors = [];

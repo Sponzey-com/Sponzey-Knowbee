@@ -44,7 +44,7 @@ function baseCapsule(index: number): MemoryCapsule {
       channelKey: "webui",
       threadKey: "thread-rollup",
     },
-    nicknameSnapshot: "노우비",
+    nicknameSnapshot: "노비",
     capsuleKind: "session_compaction",
     summary: `capsule summary ${index}`,
     activeObjectives: [`objective-${index}`],

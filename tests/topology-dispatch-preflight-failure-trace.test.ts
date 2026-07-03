@@ -54,7 +54,7 @@ describe("topology dispatch preflight failure trace", () => {
         ],
       }),
       executorNames: {
-        "node:knowbee": "노우비",
+        "node:knowbee": "노비",
         "node:finance": "행랑아범",
       },
       edgeIdsByNodePair: {
@@ -192,7 +192,7 @@ describe("topology dispatch preflight failure trace", () => {
         ],
       }),
       executorNames: {
-        "node:knowbee": "노우비",
+        "node:knowbee": "노비",
       },
     })
 

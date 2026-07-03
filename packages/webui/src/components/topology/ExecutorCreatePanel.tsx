@@ -54,9 +54,9 @@ const DESCRIPTION_EXAMPLES = [
 export function ExecutorCreatePanel({
   initialName = "",
   initialDescription = "",
-  titleKo = "실행자 추가",
-  titleEn = "Add executor",
-  helperKo = "이름과 하는 일만 적으면 나머지는 노우비가 먼저 추론합니다.",
+  titleKo = "서브 에이전트 추가",
+  titleEn = "Add sub-agent",
+  helperKo = "이름과 하는 일만 적으면 나머지는 노비가 먼저 추론합니다.",
   helperEn = "Enter only the name and what it does; Knowbee infers the rest first.",
   descriptionLabelKo = "하는 일",
   descriptionLabelEn = "What it does",
@@ -211,7 +211,7 @@ export function ExecutorCreatePanel({
             data-testid="executor-create-waiting-understanding"
           >
             {text(
-              "이름과 성격을 입력하면 노우비가 이해한 내용을 바로 보여줍니다.",
+              "이름과 성격을 입력하면 노비가 이해한 내용을 바로 보여줍니다.",
               "Enter a name and character to preview what Knowbee understood.",
             )}
           </div>

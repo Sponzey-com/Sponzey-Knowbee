@@ -9,6 +9,7 @@ import { SetupInspectorDrawer } from "./SetupInspectorDrawer"
 import { SetupInspectorSheet } from "./SetupInspectorSheet"
 
 export function SetupStepShell({
+  layout = "standalone",
   title,
   description,
   steps,
@@ -31,6 +32,7 @@ export function SetupStepShell({
   onMobileNavigatorOpen,
   onMobileNavigatorClose,
 }: {
+  layout?: "standalone" | "embedded"
   title: string
   description: string
   steps: SetupStepMeta[]
@@ -64,6 +66,135 @@ export function SetupStepShell({
   const responsiveInspector = mobileInspector ?? inspector
   const responsiveInspectorTitle = inspectorTitle ?? pickUiText(language, "현재 단계 Inspector", "Current step inspector")
   const responsiveInspectorDescription = inspectorDescription ?? pickUiText(language, "선택한 노드와 연결된 편집 패널을 엽니다.", "Opens the editing panel tied to the selected node.")
+
+  if (layout === "embedded") {
+    return (
+      <div className="flex h-full min-h-0 flex-col bg-stone-100 text-stone-900" data-setup-shell-layout="embedded">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 pb-8 sm:px-6 lg:px-8">
+          <div className="mx-auto w-full max-w-6xl space-y-6">
+            <header className="flex flex-col gap-4 border-b border-stone-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
+              <div className="max-w-3xl">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-stone-500">
+                  {pickUiText(language, "설정", "Setup")}
+                </div>
+                <h1 className="mt-2 text-3xl font-semibold leading-tight text-stone-950">{title}</h1>
+                {description.trim() ? <p className="mt-3 text-sm leading-6 text-stone-600">{description}</p> : null}
+              </div>
+              <div className="w-full rounded-2xl border border-stone-200 bg-white p-4 shadow-sm lg:w-[280px]">
+                <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em] text-stone-500">
+                  <span>{pickUiText(language, "진행률", "Progress")}</span>
+                  <span>{progress}%</span>
+                </div>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-stone-100">
+                  <div className="h-full rounded-full bg-stone-900 transition-all" style={{ width: `${progress}%` }} />
+                </div>
+                <div className="mt-3 flex items-center justify-between text-xs text-stone-500">
+                  <span>
+                    Step {String(currentIndex + 1).padStart(2, "0")} / {String(steps.length).padStart(2, "0")}
+                  </span>
+                  <span>{pickUiText(language, `완료 ${completedCount}개`, `${completedCount} completed`)}</span>
+                </div>
+              </div>
+            </header>
+
+            <nav
+              aria-label={pickUiText(language, "설정 단계", "Setup steps")}
+              className="overflow-x-auto rounded-2xl border border-stone-200 bg-white p-2 shadow-sm"
+              data-setup-embedded-navigation="steps"
+            >
+              <div className="flex min-w-max gap-2">
+                {steps.map((step, index) => {
+                  const isCurrent = currentStep === step.id
+                  const disabled = step.locked && !isCurrent
+
+                  return (
+                    <button
+                      key={step.id}
+                      type="button"
+                      onClick={() => {
+                        if (disabled) return
+                        onSelectStep(step.id)
+                      }}
+                      disabled={disabled}
+                      aria-current={isCurrent ? "step" : undefined}
+                      className={`w-[220px] rounded-xl border px-3 py-3 text-left transition ${
+                        isCurrent
+                          ? "border-stone-900 bg-stone-900 text-white shadow-sm"
+                          : disabled
+                            ? "cursor-not-allowed border-transparent bg-stone-50 text-stone-400 opacity-75"
+                            : "border-transparent bg-white text-stone-700 hover:border-stone-200 hover:bg-stone-50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-[10px] font-semibold uppercase tracking-[0.18em] ${isCurrent ? "text-stone-300" : "text-stone-400"}`}>
+                          Step {String(index + 1).padStart(2, "0")}
+                        </span>
+                        <CapabilityStateBadge status={step.status} language={language} />
+                      </div>
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="truncate text-sm font-semibold">{step.label}</span>
+                        <StepStateBadge current={isCurrent} completed={step.completed} locked={step.locked} language={language} />
+                      </div>
+                      <div className={`mt-1 line-clamp-2 text-xs leading-5 ${isCurrent ? "text-stone-300" : "text-stone-500"}`}>
+                        {step.description}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </nav>
+
+            <div className="space-y-6">
+              <div data-setup-slot="content">{children}</div>
+              {responsiveInspector ? (
+                <details
+                  open={inspectorOpen}
+                  onToggle={(event) => {
+                    if (event.currentTarget.open) {
+                      onInspectorOpen?.()
+                    } else {
+                      onInspectorClose?.()
+                    }
+                  }}
+                  className="rounded-2xl border border-stone-200 bg-white shadow-sm"
+                  data-setup-embedded-panel="inspector"
+                >
+                  <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-stone-900">
+                    {responsiveInspectorTitle}
+                    <span className="ml-2 text-xs font-normal text-stone-500">{responsiveInspectorDescription}</span>
+                  </summary>
+                  <div className="border-t border-stone-200" data-setup-slot="inspector">
+                    {responsiveInspector}
+                  </div>
+                </details>
+              ) : null}
+              {hasVisualizationSlots ? (
+                <details className="rounded-2xl border border-stone-200 bg-white shadow-sm" data-setup-embedded-panel="visualization">
+                  <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-stone-900">
+                    {pickUiText(language, "설정 구조 보기", "View setup structure")}
+                    <span className="ml-2 text-xs font-normal text-stone-500">
+                      {pickUiText(language, "필요할 때만 현재 단계의 연결 관계를 확인합니다.", "Open only when you need to inspect the current step relationship.")}
+                    </span>
+                  </summary>
+                  <div className="space-y-4 border-t border-stone-200 p-5">
+                    {legend ? <div data-setup-slot="legend">{legend}</div> : null}
+                    {canvas ? <div data-setup-slot="canvas">{canvas}</div> : null}
+                  </div>
+                </details>
+              ) : null}
+              {assistPanel ? <div data-setup-slot="assist-panel">{assistPanel}</div> : null}
+            </div>
+          </div>
+        </div>
+
+        {footer ? (
+          <div className="shrink-0 border-t border-stone-200 bg-white/95 px-4 py-4 shadow-[0_-10px_26px_rgba(15,23,42,0.08)] backdrop-blur sm:px-6 lg:px-8" data-setup-embedded-footer="actions">
+            <div className="mx-auto w-full max-w-6xl">{footer}</div>
+          </div>
+        ) : null}
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-screen bg-[#efe8db] text-stone-900">

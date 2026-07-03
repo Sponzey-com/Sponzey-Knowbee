@@ -591,7 +591,7 @@ impl YeonjangGuiApp {
             row![
                 column![
                     text("Yeonjang").size(22).color(color_text()),
-                    text(t(lang, "노우비 연장", "Knowbee Extension"))
+                    text(t(lang, "노비 연장", "Knowbee Extension"))
                         .size(12)
                         .color(color_muted()),
                     text(t(
@@ -633,7 +633,7 @@ impl YeonjangGuiApp {
                     lang,
                     self.active_tab,
                     ActiveTab::Connection,
-                    "노우비 연결",
+                    "노비 연결",
                     "Connection",
                     "Broker",
                     "Broker",
@@ -739,7 +739,7 @@ impl YeonjangGuiApp {
 
         column![
             section_title(
-                t(lang, "노우비 연결", "Connection"),
+                t(lang, "노비 연결", "Connection"),
                 t(
                     lang,
                     "브로커 주소와 인증 정보만 입력합니다.",

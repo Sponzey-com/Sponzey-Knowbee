@@ -16,6 +16,7 @@ import { updateActiveRunsMaxDelegationTurns } from "../../runs/store.js";
 import { getVectorBackendStatus, resetEmbeddingProvider } from "../../memory/embedding.js";
 import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js";
 import { chatWithContextPreflight } from "../../runs/context-preflight.js";
+import { loadPromptTemplate } from "../../memory/knowbee-md.js";
 import { applyChannelConnectionSettingsCompatPatch, buildSettingsChannelConnectionSnapshot, } from "../../channels/connections.js";
 import { getFeatureFlag } from "../../runtime/rollout-safety.js";
 function isOrchestrationMode(value) {
@@ -681,7 +682,7 @@ export function registerSettingsRoute(app) {
                 provider,
                 model,
                 messages: [{ role: "user", content: "Reply with just: OK" }],
-                system: "You are a connection test. Reply with exactly: OK",
+                system: loadPromptTemplate({ sourceId: "ai_connection_test" }),
                 tools: [],
                 signal: new AbortController().signal,
                 metadata: { operation: "settings_test_ai" },

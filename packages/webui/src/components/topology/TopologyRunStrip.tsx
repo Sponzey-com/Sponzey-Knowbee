@@ -131,12 +131,12 @@ function targetIssueText(
   text: (ko: string, en: string) => string,
 ): string {
   if (issue === "no_entry_node") {
-    return text("실행할 시작 노드가 없습니다.", "No runnable entry node exists.")
+    return text("실행할 시작 서브 에이전트가 없습니다.", "No runnable entry sub-agent exists.")
   }
   if (issue === "ambiguous_entry_node") {
-    return text("시작 노드 후보가 여러 개입니다.", "Multiple entry candidates exist.")
+    return text("시작 서브 에이전트 후보가 여러 개입니다.", "Multiple entry candidates exist.")
   }
-  return text("실행할 node를 선택합니다.", "Select a node to run.")
+  return text("실행할 서브 에이전트를 선택합니다.", "Select a sub-agent to run.")
 }
 
 export function TopologyRunStrip({
@@ -215,7 +215,7 @@ export function TopologyRunStrip({
               data-testid="topology-run-target"
             >
               <span className="max-w-48 truncate">
-                {effectiveTargetNodeId ?? text("시작 실행자 자동 선택 대기", "Waiting for start executor")}
+                {effectiveTargetNodeId ?? text("시작 서브 에이전트 자동 선택 대기", "Waiting for start sub-agent")}
               </span>
             </div>
           </div>
@@ -254,7 +254,7 @@ export function TopologyRunStrip({
               onClick={onStartNodeQuickFix}
               className="h-7 rounded-md border border-amber-300 bg-white px-2.5 text-[11px] font-semibold text-amber-900"
             >
-              {text("시작 실행자 지정", "Set start executor")}
+              {text("시작 서브 에이전트 지정", "Set start sub-agent")}
             </button>
           </div>
         ) : null}
@@ -411,7 +411,7 @@ export function TopologyRunStrip({
             onClick={onStartNodeQuickFix}
             className="h-7 rounded-md border border-amber-300 bg-white px-2.5 text-[11px] font-semibold text-amber-900"
           >
-            {text("시작 노드 지정", "Set start node")}
+            {text("시작 서브 에이전트 지정", "Set start sub-agent")}
           </button>
         </div>
       ) : null}

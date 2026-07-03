@@ -227,7 +227,7 @@ function nicknameSnapshot(entityId: string, nickname: string): NicknameSnapshot 
 describe("task002 nickname and user-facing attribution", () => {
   it("normalizes nicknames with trim, whitespace collapse, and case folding", () => {
     expect(normalizeNickname("  Research   Agent  ")).toBe("research agent")
-    expect(normalizeNickname("  노우비   리서치  ")).toBe("노우비 리서치")
+    expect(normalizeNickname("  노비   리서치  ")).toBe("노비 리서치")
     expect(normalizeNicknameSnapshot("  Research   Agent  ")).toBe("Research Agent")
     const invalidAgent = validateAgentConfig({
       ...subAgent({ agentId: "agent:missing-nickname", nickname: "Researcher" }),
@@ -268,7 +268,7 @@ describe("task002 nickname and user-facing attribution", () => {
 
   it("validates user-visible message, handoff, and delivery attribution snapshots", () => {
     const speaker = nicknameSnapshot("agent:researcher", "Researcher")
-    const recipient = { entityType: "knowbee" as const, entityId: "agent:knowbee", nicknameSnapshot: "노우비" }
+    const recipient = { entityType: "knowbee" as const, entityId: "agent:knowbee", nicknameSnapshot: "노비" }
 
     expect(validateUserVisibleAgentMessage({
       identity: identity("sub_session", "message:1"),
@@ -358,7 +358,7 @@ describe("task002 nickname and user-facing attribution", () => {
       parentRunId: result.parentRunId,
       deliveryKind: "result_report",
       sender: source,
-      recipient: { entityType: "knowbee", entityId: "agent:knowbee", nicknameSnapshot: "노우비" },
+      recipient: { entityType: "knowbee", entityId: "agent:knowbee", nicknameSnapshot: "노비" },
       summary: "sub-agent result returned",
       resultReportId: result.resultReportId,
       createdAt: now,

@@ -15,6 +15,8 @@ import { describeCron } from "../scheduler/cron.js"
 import type { ChannelSource } from "../channels/contracts.js"
 import { parseTelegramSessionKey } from "../channels/telegram/session.js"
 import { chatWithContextPreflight } from "../runs/context-preflight.js"
+import { loadPromptTemplate } from "../memory/knowbee-md.js"
+import { answerMainAgentSelfNameQuestion } from "./main-agent-identity.js"
 
 const log = createLogger("agent:intake")
 
@@ -694,10 +696,49 @@ export async function analyzeTaskIntake(params: {
   workDir?: string
   source?: ChannelSource
 }): Promise<TaskIntakeResult | null> {
-  const maxDelegationTurns = getConfig().orchestration.maxDelegationTurns
+  const config = getConfig()
+  const maxDelegationTurns = config.orchestration.maxDelegationTurns
   const environment = buildStructuredRequestEnvironment(params.sessionId, params.source)
   const normalized = normalizeRequestForIntake(params.userMessage)
   const intakeMessage = normalized.normalizedEnglish || params.userMessage
+  const directSelfNameAnswer = answerMainAgentSelfNameQuestion(config, params.userMessage)
+  if (directSelfNameAnswer) {
+    return withStructuredRequest(params.userMessage, {
+      intent: {
+        category: "direct_answer",
+        summary: "메인 에이전트 이름 질문 직접 응답",
+        confidence: 1,
+      },
+      user_message: {
+        mode: "direct_answer",
+        text: directSelfNameAnswer,
+      },
+      action_items: [{
+        id: "reply-main-agent-self-name",
+        type: "reply",
+        title: "메인 에이전트 이름 응답",
+        priority: "normal",
+        reason: "메인 에이전트 이름 질문은 intake 모델 호출 없이 설정된 이름으로 직접 응답합니다.",
+        payload: { content: directSelfNameAnswer },
+      }],
+      scheduling: {
+        detected: false,
+        kind: "none",
+        status: "not_applicable",
+        schedule_text: "",
+      },
+      execution: {
+        requires_run: false,
+        requires_delegation: false,
+        suggested_target: "agent:knowbee",
+        max_delegation_turns: maxDelegationTurns,
+        needs_tools: false,
+        needs_web: false,
+        execution_semantics: defaultTaskExecutionSemantics(),
+      },
+      notes: ["deterministic-main-agent-self-name"],
+    }, environment, normalized)
+  }
   const deterministicIntakeAllowed = looksLikeSlashCommand(params.userMessage)
 
   if (deterministicIntakeAllowed) {
@@ -762,12 +803,11 @@ export async function analyzeTaskIntake(params: {
   const messages: Message[] = [
     {
       role: "user",
-      content: [
-        "Analyze the following conversation and latest user request.",
-        "Return valid JSON only.",
-        "",
-        context,
-      ].join("\n"),
+      content: loadPromptTemplate({
+        sourceId: "task_intake_user",
+        workDir: params.workDir ?? process.cwd(),
+        variables: { conversationContext: context },
+      }),
     },
   ]
 
@@ -778,7 +818,7 @@ export async function analyzeTaskIntake(params: {
     model,
     messages,
     system: [
-      buildTaskIntakeSystemPrompt({ maxDelegationTurns }),
+      buildTaskIntakeSystemPrompt({ maxDelegationTurns, workDir: params.workDir ?? process.cwd() }),
       instructions.mergedText ? `\n[Instruction Chain]\n${instructions.mergedText}` : "",
       profileContext ? `\n${profileContext}` : "",
     ].join("\n"),

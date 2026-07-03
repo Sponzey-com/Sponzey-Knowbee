@@ -49,10 +49,10 @@ const SOURCE_LABELS: Record<TopologyWorkspaceIssueSource, { ko: string; en: stri
 }
 
 const QUICK_FIX_LABELS: Record<EnterpriseTopologyQuickFixId, string> = {
-  set_start_node: "시작 노드 지정",
+  set_start_node: "시작 서브 에이전트 지정",
   add_child_task: "하위 업무 추가",
   add_approval_step: "승인 단계 추가",
-  connect_selected_nodes: "선택 노드 연결",
+  connect_selected_nodes: "선택 서브 에이전트 연결",
   add_tool_permission: "도구 권한 추가",
   add_fallback_path: "fallback path 추가",
   set_output_preset: "output preset 설정",
@@ -279,7 +279,7 @@ export function buildTopologyQuickFixPlans(
       operationId: "quickfix:start-node:create",
       op: "createNode",
       at,
-      label: "시작 노드 지정",
+      label: "시작 서브 에이전트 지정",
       nodeId: "node:start",
       name: "시작 업무",
       nodeType: "function",
@@ -291,7 +291,7 @@ export function buildTopologyQuickFixPlans(
       ...createGuiDraftOperationBase("createRelation", {
         operationId: `quickfix:connect:${issue.sourceEntityId}:${issue.targetEntityId}`,
         at,
-        label: "선택 노드 연결",
+        label: "선택 서브 에이전트 연결",
       }),
       relationId: relationId("delegates_to", issue.sourceEntityId, issue.targetEntityId),
       relationType: "delegates_to",
@@ -325,9 +325,9 @@ export function buildTopologyQuickFixPlans(
       operationId: `quickfix:approval-review-node:${issue.entityId}`,
       op: "createNode",
       at,
-      label: "승인 검토 노드 추가",
+      label: "승인 검토 서브 에이전트 추가",
       nodeId: nodeId("approval-review", issue.entityId),
-      name: "승인 검토 노드",
+      name: "승인 검토 서브 에이전트",
       nodeType: "approval_node",
     }])]
   }
@@ -357,7 +357,7 @@ export function buildTopologyQuickFixPlans(
         relationType: "belongs_to",
         label: "소속",
       },
-    }], "선택 노드 연결")]
+    }], "선택 서브 에이전트 연결")]
   }
 
   if ((issue.reasonCode === "fallback_path_missing" || issue.reasonCode === "runtime_failure_report") && issue.entityId) {

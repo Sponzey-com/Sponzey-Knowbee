@@ -6,6 +6,8 @@ export type TaskApprovalToolName = "screen_capture" | "yeonjang_camera_capture" 
 export type TaskIntakeTaskProfile = "general_chat" | "planning" | "coding" | "review" | "research" | "private_local" | "summarization" | "operations";
 export interface TaskIntakePromptOptions {
     maxDelegationTurns?: number;
+    workDir?: string;
+    locale?: "ko" | "en";
 }
 export declare function buildTaskIntakeSystemPrompt(options?: TaskIntakePromptOptions): string;
 //# sourceMappingURL=intake-prompt.d.ts.map

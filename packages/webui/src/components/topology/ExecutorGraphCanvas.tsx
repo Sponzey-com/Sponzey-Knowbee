@@ -115,6 +115,7 @@ export function ExecutorGraphCanvas({
   executorStatuses = {},
   edgeStatuses = {},
   subAgentSummaries,
+  rootAgentLabel,
   onSelectExecutor,
   onConnectExecutors,
   onMoveExecutor,
@@ -128,6 +129,7 @@ export function ExecutorGraphCanvas({
   executorStatuses?: Record<string, ExecutorCardExecutionStatus>
   edgeStatuses?: Record<string, ExecutorFlowEdgeStatus>
   subAgentSummaries?: ReadonlyMap<string, TopologySubAgentSummary>
+  rootAgentLabel?: string | undefined
   onSelectExecutor?: (executorId: string) => void
   onConnectExecutors?: (sourceExecutorId: string, targetExecutorId: string) => void
   onMoveExecutor?: (executorId: string, position: { x: number; y: number }) => void
@@ -137,8 +139,8 @@ export function ExecutorGraphCanvas({
   const activeExecutorIdSet = React.useMemo(() => new Set(activeExecutorIds), [activeExecutorIds])
   const activeEdgeIdSet = React.useMemo(() => new Set(activeEdgeIds), [activeEdgeIds])
   const flowNodes = React.useMemo(
-    () => model ? executorFlowNodes(model, selectedExecutorId, activeExecutorIdSet, executorStatuses, subAgentSummaries) : [],
-    [activeExecutorIdSet, executorStatuses, model, selectedExecutorId, subAgentSummaries],
+    () => model ? executorFlowNodes(model, selectedExecutorId, activeExecutorIdSet, executorStatuses, subAgentSummaries, rootAgentLabel) : [],
+    [activeExecutorIdSet, executorStatuses, model, rootAgentLabel, selectedExecutorId, subAgentSummaries],
   )
   const [interactiveNodes, setInteractiveNodes] = React.useState<Array<Node<ExecutorFlowNodeData>>>(flowNodes)
   const sourcePositionsRef = React.useRef(executorFlowPositionMap(flowNodes))
@@ -179,7 +181,7 @@ export function ExecutorGraphCanvas({
           className="rounded-lg border border-dashed border-stone-300 bg-white px-4 py-8 text-sm text-stone-500"
           data-testid="executor-graph-empty-canvas"
         >
-          {text("실행자를 추가하면 여기에 업무 흐름이 표시됩니다.", "Add executors to see the workflow here.")}
+          {text("서브 에이전트를 추가하면 여기에 업무 흐름이 표시됩니다.", "Add sub-agents to see the workflow here.")}
         </div>
       </section>
     )
@@ -202,14 +204,14 @@ export function ExecutorGraphCanvas({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="text-xs font-semibold text-stone-950">
-            {text("실행자 흐름", "Executor flow")}
+            {text("서브 에이전트 흐름", "Sub-agent flow")}
           </div>
           <div className="mt-1 text-[11px] text-stone-500">
-            {text("실행 카드만 기본 흐름에 표시하고, 도구와 시스템은 카드 안에 정리합니다.", "Only executor cards appear in the flow; tools and systems stay inside cards.")}
+            {text("서브 에이전트 카드만 기본 흐름에 표시하고, 도구와 시스템은 카드 안에 정리합니다.", "Only sub-agent cards appear in the flow; tools and systems stay inside cards.")}
           </div>
         </div>
         <div className="flex flex-wrap gap-1.5 text-[11px] font-semibold text-stone-600">
-          <span className="rounded-full bg-white px-2 py-0.5">{model.graph.executors.length} {text("실행자", "executors")}</span>
+          <span className="rounded-full bg-white px-2 py-0.5">{model.graph.executors.length} {text("서브 에이전트", "sub-agents")}</span>
           <span className="rounded-full bg-white px-2 py-0.5">{model.connections.length} {text("연결", "connections")}</span>
         </div>
       </div>
@@ -246,6 +248,7 @@ export function ExecutorGraphCanvas({
 }
 
 function ExecutorFlowNodeView(props: NodeProps) {
+  const { text } = useUiI18n()
   const data = props.data as ExecutorFlowNodeData
   const working = Boolean(data.working)
   return (
@@ -267,8 +270,8 @@ function ExecutorFlowNodeView(props: NodeProps) {
         selected={Boolean(props.selected)}
         working={working}
         executionStatus={data.executionStatus}
-        relationLabel={data.relation?.relationLabelKo}
-        relationDescription={data.relation?.relationDetailKo}
+        relationLabel={data.relation ? text(data.relation.relationLabelKo, data.relation.relationLabelEn) : undefined}
+        relationDescription={data.relation ? text(data.relation.relationDetailKo, data.relation.relationDetailEn) : undefined}
         roleLabel={data.relation?.roleLabel}
         shortId={data.relation?.shortId}
         duplicateName={data.relation?.duplicateName}
@@ -291,9 +294,10 @@ function executorFlowNodes(
   activeExecutorIds: Set<string> = new Set(),
   executorStatuses: Record<string, ExecutorCardExecutionStatus> = {},
   subAgentSummaries?: ReadonlyMap<string, TopologySubAgentSummary>,
+  rootAgentLabel?: string | undefined,
 ): Array<Node<ExecutorFlowNodeData>> {
   const cardsById = new Map<string, ExecutorGraphCanvasCard>()
-  const relationInfoById = buildExecutorGraphRelationInfoMap(model.graph)
+  const relationInfoById = buildExecutorGraphRelationInfoMap(model.graph, { rootAgentLabel })
   for (const card of model.unsectionedCards) cardsById.set(card.executor.id, card)
   for (const section of model.sections) {
     for (const card of section.cards) cardsById.set(card.executor.id, card)

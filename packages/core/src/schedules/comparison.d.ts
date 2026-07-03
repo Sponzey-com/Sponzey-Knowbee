@@ -17,7 +17,10 @@ export interface ScheduleContractComparisonResult {
     reasonCode: ScheduleContractComparisonReasonCode;
     userMessage: string;
 }
-export declare function buildScheduleContractComparisonSystemPrompt(): string;
+export declare function buildScheduleContractComparisonSystemPrompt(options?: {
+    workDir?: string | undefined;
+    locale?: "ko" | "en" | undefined;
+}): string;
 export declare function parseScheduleContractComparisonResult(raw: string, allowedCandidateIds: ReadonlySet<string>): ScheduleContractComparisonResult;
 export declare function compareScheduleContractsWithAI(params: {
     incoming: ScheduleContract;

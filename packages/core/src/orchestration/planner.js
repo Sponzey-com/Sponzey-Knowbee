@@ -340,7 +340,7 @@ function directFallbackPlan(input) {
         requiredCapabilities: [],
         resourceLockIds: [],
         reasonCodes: input.reasonCodes,
-        explanation: input.userMessage ?? "노우비가 직접 후속 처리를 맡는 계획입니다.",
+        explanation: input.userMessage ?? "노비가 직접 후속 처리를 맡는 계획입니다.",
     });
     const plan = {
         identity: buildIdentity(planId, input.parentRunId, input.parentRequestId),

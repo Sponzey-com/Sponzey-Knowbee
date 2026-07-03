@@ -21,7 +21,7 @@ function baseCapsule(overrides: Partial<MemoryCapsule> = {}): MemoryCapsule {
       channelKey: "webui",
       threadKey: "thread-1",
     },
-    nicknameSnapshot: "노우비",
+    nicknameSnapshot: "노비",
     capsuleKind: "session_compaction",
     summary: " 최근 진행 상황 요약 ",
     activeObjectives: [" 현재 작업 유지 ", "현재 작업 유지"],

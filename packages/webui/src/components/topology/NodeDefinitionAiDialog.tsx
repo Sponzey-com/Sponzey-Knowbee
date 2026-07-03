@@ -224,7 +224,7 @@ export function NodeDefinitionAiDialog({
                 {dialogTitle(effectiveTriggerField)}
               </h2>
               <p className="mt-1 text-xs leading-5 text-stone-500">
-                역할과 스타일을 고르면 3가지 대안을 만듭니다. 선택 전에는 노드가 바뀌지 않습니다.
+                역할과 스타일을 고르면 3가지 대안을 만듭니다. 선택 전에는 서브 에이전트가 바뀌지 않습니다.
               </p>
             </div>
             <button
@@ -243,9 +243,9 @@ export function NodeDefinitionAiDialog({
           <ChipGroup title="스타일" chips={NODE_DEFINITION_STYLE_CHIPS} selected={quickChips} onToggle={toggleChip} />
 
           <section className="grid gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3" data-testid="node-definition-overview-section">
-            <div className="text-xs font-semibold text-stone-700">노드 개요</div>
+            <div className="text-xs font-semibold text-stone-700">서브 에이전트 개요</div>
             <p className="text-xs leading-5 text-stone-500">
-              이 노드가 어떤 사람처럼 일해야 하는지 짧게 적어 주세요. AI는 이 개요를 바탕으로 역할, 판단 기준, 처리 방식, 연결된 실행자에게 넘길 내용을 상세한 성격과 하는 일로 확장합니다.
+              이 서브 에이전트가 어떤 사람처럼 일해야 하는지 짧게 적어 주세요. AI는 이 개요를 바탕으로 역할, 판단 기준, 처리 방식, 연결된 서브 에이전트에게 넘길 내용을 상세한 성격과 하는 일로 확장합니다.
             </p>
             <textarea
               value={nodeOverview}
@@ -411,7 +411,7 @@ function ChipGroup({
 }
 
 function dialogTitle(triggerField: NodeDefinitionTriggerField): string {
-  if (triggerField === "whole_node") return "실행자 전체를 AI로 다듬기"
+  if (triggerField === "whole_node") return "서브 에이전트 전체를 AI로 다듬기"
   return `${NODE_DEFINITION_FIELD_LABELS[triggerField]} AI 제안`
 }
 

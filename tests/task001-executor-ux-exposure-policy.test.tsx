@@ -55,7 +55,7 @@ afterEach(() => {
 describe("task001 executor-first UX exposure policy", () => {
   it("defines simple concepts and keeps advanced surfaces out of the simple layer list", () => {
     expect(TOPOLOGY_WORKSPACE_SIMPLE_CONCEPTS).toEqual([
-      "실행자",
+      "서브 에이전트",
       "연결",
       "입력",
       "실행",
@@ -193,7 +193,7 @@ describe("task001 executor-first UX exposure policy", () => {
     const html = renderToStaticMarkup(
       createElement(
         FeatureGate,
-        { capabilityKey: "enterprise_topology_builder_ui", title: "서브에이전트 설정" },
+        { capabilityKey: "enterprise_topology_builder_ui", title: "서브 에이전트 설정" },
         createElement("div", null, "simple workspace content"),
       ),
     )
@@ -202,7 +202,7 @@ describe("task001 executor-first UX exposure policy", () => {
       enabled: false,
       status: "disabled",
     }))
-    expect(html).toContain("서브에이전트 설정")
+    expect(html).toContain("서브 에이전트 설정")
     expect(html).toContain("기능 플래그")
     expect(html).not.toContain("simple workspace content")
   })

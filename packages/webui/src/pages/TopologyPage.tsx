@@ -1404,7 +1404,7 @@ function TopologyPageInner() {
       if (blockedNodes.length > 0) {
         setActionError(
           text(
-            "메인 노우비 노드는 삭제할 수 없습니다.",
+            "메인 노비 노드는 삭제할 수 없습니다.",
             "The main Knowbee node cannot be deleted.",
           ),
         )

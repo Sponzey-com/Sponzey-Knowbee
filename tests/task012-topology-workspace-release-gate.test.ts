@@ -304,7 +304,7 @@ describe("task012 Topology Workspace release gate", () => {
     const featureGateHtml = renderToStaticMarkup(
       createElement(
         FeatureGate,
-        { capabilityKey: "enterprise_topology_builder_ui", title: "서브에이전트 설정" },
+        { capabilityKey: "enterprise_topology_builder_ui", title: "서브 에이전트 설정" },
         createElement("div", null, "workspace route content"),
       ),
     )
@@ -332,8 +332,8 @@ describe("task012 Topology Workspace release gate", () => {
     expect(apiCapability).toEqual(expect.objectContaining({ enabled: false, status: "disabled" }))
     expect(featureGateHtml).toContain("기능 플래그")
     expect(featureGateHtml).not.toContain("workspace route content")
-    expect(getUiNavigation("advanced", false).filter((item) => item.path.includes("topology"))).toEqual([
-      expect.objectContaining({ path: "/advanced/topology" }),
+    expect(getUiNavigation("advanced", false).filter((item) => item.path === "/sub-agents")).toEqual([
+      expect.objectContaining({ path: "/sub-agents" }),
     ])
     expect(inventory.find((item) => item.path === "/advanced/enterprise-topology")).toEqual(
       expect.objectContaining({
@@ -341,11 +341,12 @@ describe("task012 Topology Workspace release gate", () => {
         replacementPath: "/advanced/topology?mode=build",
       }),
     )
-    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/advanced/topology")
+    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/sub-agents")
     expect(resolveTopologyWorkspaceInitialLayer("?mode=resources")).toBe("build")
     expect(resolveTopologyWorkspaceInitialLayer("?mode=improve")).toBe("improve")
     expect(appSource).toContain('path="/advanced/enterprise-topology"')
-    expect(appSource).toContain('to="/advanced/topology?mode=build"')
+    expect(appSource).toContain("UnifiedRouteRedirect")
+    expect(appSource).not.toContain('to="/advanced/topology?mode=build"')
     expect(decision).toEqual(expect.objectContaining({
       mode: "fallback",
       reasonCode: "feature_flag_off",

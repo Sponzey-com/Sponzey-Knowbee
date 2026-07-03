@@ -10,6 +10,7 @@ import {
   buildSubAgentTopologyProjection,
   buildTopologySubAgentSummaryMap,
 } from "../packages/webui/src/lib/topology-sub-agent-sync.ts"
+import { buildExecutorGraphRelationInfoMap } from "../packages/webui/src/lib/executor-graph-relations.ts"
 
 function draft(): SetupDraft {
   return {
@@ -59,21 +60,20 @@ function visibleText(markup: string): string {
 }
 
 describe("task004 topology sub-agent sync", () => {
-  it("projects setup sub-agents into a Knowbee-rooted topology without exposing internal ids", () => {
+  it("projects setup sub-agents with an implicit main agent instead of a visible root node", () => {
     const projection = buildSubAgentTopologyProjection({
       draft: draft(),
       now: 1_780_000_001_000,
     })
 
-    expect(projection.topology.nodes.map((node) => node.id)).toEqual(["agent:knowbee", "agent:research"])
-    expect(projection.topology.edges).toEqual([
-      expect.objectContaining({
-        sourceNodeId: "agent:knowbee",
-        targetNodeId: "agent:research",
-        type: "delegates_to",
-      }),
-    ])
-    expect(projection.graph.executors.map((executor) => executor.name)).toEqual(["Knowbee", "Res"])
+    expect(projection.topology.nodes.map((node) => node.id)).toEqual(["agent:research"])
+    expect(projection.topology.edges).toEqual([])
+    expect(projection.graph.executors.map((executor) => executor.name)).toEqual(["Res"])
+    expect(projection.graph.executors.some((executor) => executor.id === "agent:knowbee")).toBe(false)
+    expect(projection.summaries.get("agent:knowbee")).toEqual(expect.objectContaining({
+      role: "메인 에이전트",
+      childCount: 1,
+    }))
     expect(projection.summaries.get("agent:research")).toEqual(expect.objectContaining({
       displayName: "Researcher",
       nickname: "Res",
@@ -113,25 +113,20 @@ describe("task004 topology sub-agent sync", () => {
     expect(visibleText(`${nodeHtml}\n${inspectorHtml}`)).not.toMatch(/agent:research|nickname_duplicate|reserved_knowbee_name/)
   })
 
-  it("renders root Knowbee as a main agent instead of a configurable sub-agent", () => {
+  it("does not render the implicit main agent as a canvas card", () => {
     const projection = buildSubAgentTopologyProjection({
       draft: draft(),
       now: 1_780_000_001_000,
     })
-    const executor = projection.graph.executors.find((item) => item.id === "agent:knowbee")!
-    const summary = projection.summaries.get("agent:knowbee")!
-    const html = renderToStaticMarkup(createElement(ExecutorInspector, {
-      executor,
-      graph: projection.graph,
-      subAgentSummary: summary,
-      readOnly: true,
-    }))
+    const relationInfo = buildExecutorGraphRelationInfoMap(projection.graph, { rootAgentLabel: "마당쇠" })
 
-    expect(html).toContain("메인 에이전트")
-    expect(html).toContain("직접 하위")
-    expect(html).toContain("Researcher")
-    expect(html).toContain("disabled")
-    expect(visibleText(html)).not.toMatch(/모델 자유 설정|agent:knowbee/)
+    expect(projection.graph.executors.map((executor) => executor.id)).toEqual(["agent:research"])
+    expect(projection.graph.connections).toEqual([])
+    expect(relationInfo.get("agent:research")).toEqual(expect.objectContaining({
+      relationKind: "root_direct",
+      relationLabelKo: "마당쇠 직속",
+    }))
+    expect(JSON.stringify(projection.graph)).not.toContain("agent:knowbee")
   })
 
   it("round-trips topology executor edits back into setup sub-agent draft", () => {
@@ -170,7 +165,7 @@ describe("task004 topology sub-agent sync", () => {
           lastRuntimeSeenAtByAgentId: { "agent:research": 1_780_000_003_000 },
         },
       },
-      graphExecutorIds: ["agent:knowbee", "agent:research"],
+      graphExecutorIds: ["agent:research"],
       now: 1_780_000_004_000,
     }).get("agent:research")!
 

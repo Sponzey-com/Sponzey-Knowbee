@@ -158,7 +158,7 @@ function runInput(id: string, overrides: Partial<RunSubSessionInput> = {}): RunS
     parentAgent: {
       agentId: "agent:knowbee",
       displayName: "Knowbee",
-      nickname: "노우비",
+      nickname: "노비",
     },
     parentSessionId: "session-parent",
     promptBundle: promptBundle(),

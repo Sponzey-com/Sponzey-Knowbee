@@ -44,7 +44,7 @@ export function createSetupSteps(
       status: "ready",
       required: true,
       highlights: [
-        t("이름과 표시 이름을 입력합니다.", "Enter the profile name and display name."),
+        t("사용자 이름과 메인 에이전트 이름을 입력합니다.", "Enter the user name and main agent name."),
         t("기본 언어와 시간대를 고릅니다.", "Choose the default language and timezone."),
         t("기본 작업 폴더를 지정해 이후 파일 작업 기준값으로 사용합니다.", "Set the default workspace for later file tasks."),
       ],

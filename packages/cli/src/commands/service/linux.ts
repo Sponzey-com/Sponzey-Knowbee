@@ -11,7 +11,7 @@ const UNIT_PATH = join(SYSTEMD_DIR, `${SERVICE_NAME}.service`)
 
 function buildUnit(nodePath: string, knowbeePath: string): string {
   return `[Unit]
-Description=스폰지 노우비 · Sponzey Knowbee AI Agent
+Description=스폰지 노비 · Sponzey Knowbee AI Agent
 After=network.target
 
 [Service]

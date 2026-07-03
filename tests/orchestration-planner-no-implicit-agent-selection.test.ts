@@ -200,7 +200,7 @@ function decision(selectedExecutorId: string): AgentExecutionDecision {
     selected_connection_path: [rootExecutorId, selectedExecutorId],
     task_profile: {
       title: "검증된 위임",
-      summary: "노우비가 프롬프트 판단으로 선택한 실행자를 planner가 그대로 계획으로 변환한다.",
+      summary: "노비가 프롬프트 판단으로 선택한 실행자를 planner가 그대로 계획으로 변환한다.",
       goals: ["선택된 실행자에게만 위임한다."],
       task_units: [
         {

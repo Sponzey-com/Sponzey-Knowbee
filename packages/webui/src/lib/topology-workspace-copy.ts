@@ -47,22 +47,22 @@ export const TOPOLOGY_WORKSPACE_LAYER_COPY: TopologyWorkspaceLayerCopy[] = [
     layer: "build",
     labelKo: "만들기",
     labelEn: "Build",
-    tooltipKo: "실행자를 만들고 실행자끼리 연결한다.",
-    tooltipEn: "Create executors and connect them.",
+    tooltipKo: "서브 에이전트를 만들고 서브 에이전트끼리 연결한다.",
+    tooltipEn: "Create sub-agents and connect them.",
   },
   {
     layer: "run",
     labelKo: "실행",
     labelEn: "Run",
-    tooltipKo: "입력을 넣고 실행자 흐름을 실행한다.",
-    tooltipEn: "Run the executor flow with an input.",
+    tooltipKo: "입력을 넣고 서브 에이전트 흐름을 실행한다.",
+    tooltipEn: "Run the sub-agent flow with an input.",
   },
   {
     layer: "trace",
     labelKo: "기록",
     labelEn: "Trace",
-    tooltipKo: "실행자가 어떤 순서로 처리했는지 본다.",
-    tooltipEn: "Review how executors handled the run.",
+    tooltipKo: "서브 에이전트가 어떤 순서로 처리했는지 본다.",
+    tooltipEn: "Review how sub-agents handled the run.",
   },
   {
     layer: "improve",
@@ -75,7 +75,7 @@ export const TOPOLOGY_WORKSPACE_LAYER_COPY: TopologyWorkspaceLayerCopy[] = [
     layer: "resources",
     labelKo: "리소스",
     labelEn: "Resources",
-    tooltipKo: "내부 projection 전용 레이어입니다. 기본 서브에이전트 설정 화면에는 노출하지 않습니다.",
+    tooltipKo: "내부 projection 전용 레이어입니다. 기본 서브 에이전트 설정 화면에는 노출하지 않습니다.",
     tooltipEn: "Internal projection-only layer. It is not exposed in the default sub-agent settings screen.",
   },
 ]
@@ -83,8 +83,8 @@ export const TOPOLOGY_WORKSPACE_LAYER_COPY: TopologyWorkspaceLayerCopy[] = [
 export const TOPOLOGY_WORKSPACE_USER_TERMS: TopologyWorkspaceUserTermCopy[] = [
   {
     key: "executor",
-    labelKo: "실행자",
-    labelEn: "Executor",
+    labelKo: "서브 에이전트",
+    labelEn: "Sub-agent",
     descriptionKo: "일을 맡아 처리하거나 확인하는 대상.",
     descriptionEn: "The person or automation responsible for doing or checking work.",
   },
@@ -92,29 +92,29 @@ export const TOPOLOGY_WORKSPACE_USER_TERMS: TopologyWorkspaceUserTermCopy[] = [
     key: "connection",
     labelKo: "연결",
     labelEn: "Connection",
-    descriptionKo: "한 실행자에서 다음 실행자로 일을 넘기는 선.",
-    descriptionEn: "A line that passes work from one executor to the next.",
+    descriptionKo: "한 서브 에이전트에서 다음 서브 에이전트로 일을 넘기는 선.",
+    descriptionEn: "A line that passes work from one sub-agent to the next.",
   },
   {
     key: "input",
     labelKo: "입력",
     labelEn: "Input",
-    descriptionKo: "실행할 때 실행자 흐름에 전달하는 요청.",
-    descriptionEn: "The request passed into the executor flow when it runs.",
+    descriptionKo: "실행할 때 서브 에이전트 흐름에 전달하는 요청.",
+    descriptionEn: "The request passed into the sub-agent flow when it runs.",
   },
   {
     key: "run",
     labelKo: "실행",
     labelEn: "Run",
-    descriptionKo: "실행자 흐름을 한 번 시작하는 일.",
-    descriptionEn: "One started execution of an executor flow.",
+    descriptionKo: "서브 에이전트 흐름을 한 번 시작하는 일.",
+    descriptionEn: "One started execution of a sub-agent flow.",
   },
   {
     key: "runRecord",
     labelKo: "기록",
     labelEn: "History",
-    descriptionKo: "실행자가 어떤 순서로 처리했는지 남은 기록.",
-    descriptionEn: "A record of how executors handled the run.",
+    descriptionKo: "서브 에이전트가 어떤 순서로 처리했는지 남은 기록.",
+    descriptionEn: "A record of how sub-agents handled the run.",
   },
   {
     key: "issue",
@@ -147,7 +147,7 @@ export const TOPOLOGY_WORKSPACE_INTERNAL_TERMS = [
 ] as const
 
 export const TOPOLOGY_WORKSPACE_SIMPLE_CONCEPTS = [
-  "실행자",
+  "서브 에이전트",
   "연결",
   "입력",
   "실행",
@@ -176,11 +176,11 @@ export const TOPOLOGY_WORKSPACE_ADVANCED_ONLY_LABELS = [
 export const TOPOLOGY_WORKSPACE_SECTION_POLICIES: TopologyWorkspaceSectionPolicy[] = [
   {
     section: "simpleCreatePanel",
-    labelKo: "실행자 만들기",
-    labelEn: "Create executors",
+    labelKo: "서브 에이전트 만들기",
+    labelEn: "Create sub-agents",
     visibleIn: ["simple"],
-    descriptionKo: "기본 화면의 실행자/영역 추가 동작.",
-    descriptionEn: "Primary executor and section creation in the simple view.",
+    descriptionKo: "기본 화면의 서브 에이전트 추가 동작.",
+    descriptionEn: "Primary sub-agent creation in the simple view.",
   },
   {
     section: "advancedPalette",
@@ -195,7 +195,7 @@ export const TOPOLOGY_WORKSPACE_SECTION_POLICIES: TopologyWorkspaceSectionPolicy
     labelKo: "업무 유형 preset",
     labelEn: "Work type presets",
     visibleIn: ["advanced", "developer"],
-    descriptionKo: "업무 유형 직접 선택. 기본 화면에서는 노우비가 추론한다.",
+    descriptionKo: "업무 유형 직접 선택. 기본 화면에서는 노비가 추론한다.",
     descriptionEn: "Direct work-type selection. Knowbee infers this in the simple view.",
   },
   {
@@ -211,8 +211,8 @@ export const TOPOLOGY_WORKSPACE_SECTION_POLICIES: TopologyWorkspaceSectionPolicy
     labelKo: "입력",
     labelEn: "Input",
     visibleIn: ["simple", "advanced", "developer"],
-    descriptionKo: "실행자 흐름을 실행할 때 전달하는 요청.",
-    descriptionEn: "Request passed into the executor flow.",
+    descriptionKo: "서브 에이전트 흐름을 실행할 때 전달하는 요청.",
+    descriptionEn: "Request passed into the sub-agent flow.",
   },
   {
     section: "runTemplatePicker",
@@ -243,8 +243,8 @@ export const TOPOLOGY_WORKSPACE_SECTION_POLICIES: TopologyWorkspaceSectionPolicy
     labelKo: "Run Target",
     labelEn: "Run Target",
     visibleIn: ["advanced", "developer"],
-    descriptionKo: "실행 시작 노드 직접 지정.",
-    descriptionEn: "Direct run entry node selection.",
+    descriptionKo: "실행을 시작할 서브 에이전트 직접 지정.",
+    descriptionEn: "Direct run entry sub-agent selection.",
   },
   {
     section: "compilePreview",
@@ -290,9 +290,9 @@ export const TOPOLOGY_WORKSPACE_SECTION_POLICIES: TopologyWorkspaceSectionPolicy
 
 export const TOPOLOGY_WORKSPACE_FEATURE_FALLBACK_COPY = {
   disabledReasonKo:
-    "서브에이전트 설정은 관리자 설정(기능 플래그)이 꺼져 있어 사용할 수 없습니다. 관리자에게 실행자 그래프 작업공간을 켜 달라고 요청하세요.",
+    "서브 에이전트 설정은 관리자 설정(기능 플래그)이 꺼져 있어 사용할 수 없습니다. 관리자에게 서브 에이전트 작업공간을 켜 달라고 요청하세요.",
   disabledReasonEn:
-    "Sub-agent settings are unavailable because the administrator setting (feature flag) is off. Ask an administrator to enable the Executor Graph workspace.",
+    "Sub-agent settings are unavailable because the administrator setting (feature flag) is off. Ask an administrator to enable the sub-agent workspace.",
 } as const
 
 export function topologyWorkspaceVisibleLayers(
@@ -343,12 +343,12 @@ export function resolveTopologyWorkspaceExposureModeForRoute(input: {
 }
 
 export const TOPOLOGY_WORKSPACE_FIRST_START_COPY = {
-  titleKo: "첫 서브에이전트 구성 만들기",
+  titleKo: "첫 서브 에이전트 구성 만들기",
   titleEn: "Create your first sub-agent setup",
-  descriptionKo: "실행자 예시를 고르면 연결까지 자동으로 채워진다.",
-  descriptionEn: "Choose an executor example to start with connections already filled in.",
-  primaryActionKo: "첫 실행자 추가",
-  primaryActionEn: "Add first executor",
+  descriptionKo: "서브 에이전트 예시를 고르면 연결까지 자동으로 채워진다.",
+  descriptionEn: "Choose a sub-agent example to start with connections already filled in.",
+  primaryActionKo: "첫 서브 에이전트 추가",
+  primaryActionEn: "Add first sub-agent",
   templateSectionKo: "바로 시작",
   templateSectionEn: "Start quickly",
   blankTemplateKo: "빈 그래프",

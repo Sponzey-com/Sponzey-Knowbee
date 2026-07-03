@@ -195,7 +195,7 @@ function runInput(id: string, parentRunId = "run:task014"): RunSubSessionInput {
     parentAgent: {
       agentId: "agent:knowbee",
       displayName: "Knowbee",
-      nickname: "노우비",
+      nickname: "노비",
     },
     agent: {
       agentId: "agent:researcher",
@@ -290,7 +290,7 @@ describe("task014 sub-session control API", () => {
       expect(info.json().info).toEqual(
         expect.objectContaining({
           subSessionId: "sub:logs",
-          parentAgentNickname: "노우비",
+          parentAgentNickname: "노비",
           agentNickname: "Res",
           promptBundle: expect.objectContaining({ promptChecksum: "sha256:task014" }),
         }),

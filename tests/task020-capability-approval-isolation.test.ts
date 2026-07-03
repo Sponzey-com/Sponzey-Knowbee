@@ -169,7 +169,7 @@ function subSession(): SubSessionContract {
     parentRunId: "run:task020",
     parentAgentId: "agent:knowbee",
     parentAgentDisplayName: "Knowbee",
-    parentAgentNickname: "노우비",
+    parentAgentNickname: "노비",
     agentId: "agent:a",
     agentDisplayName: "Agent A",
     agentNickname: "A",

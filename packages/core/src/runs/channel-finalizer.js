@@ -8,7 +8,7 @@ import { hashLedgerValue, recordMessageLedgerEvent } from "./message-ledger.js";
 const KNOWBEE_SPEAKER = {
     entityType: "knowbee",
     entityId: "agent:knowbee",
-    nicknameSnapshot: "노우비",
+    nicknameSnapshot: "노비",
 };
 function finalDeliveryTargetKey(input) {
     return `${input.parentRunId}:${input.source}:${hashLedgerValue(input.sessionId).slice(0, 16)}`;

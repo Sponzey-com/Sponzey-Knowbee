@@ -569,12 +569,12 @@ cleanup_stale_pid "Gateway" "$GATEWAY_PID_FILE"
 cleanup_stale_pid "WebUI" "$WEBUI_PID_FILE"
 
 if [[ "$RESTART_LOCAL" == "1" ]]; then
-  echo "스폰지 노우비 · Sponzey Knowbee 로컬 서비스를 재시작합니다."
+  echo "스폰지 노비 · Sponzey Knowbee 로컬 서비스를 재시작합니다."
   bash "$ROOT_DIR/scripts/stop-local.sh"
   wait_port_release "Gateway" "$GATEWAY_PORT"
   wait_port_release "WebUI" "$WEBUI_PORT"
 elif is_running "Gateway" "$GATEWAY_PID_FILE" || is_running "WebUI" "$WEBUI_PID_FILE"; then
-  echo "기존 스폰지 노우비 · Sponzey Knowbee 프로세스를 정리하고 다시 시작합니다..."
+  echo "기존 스폰지 노비 · Sponzey Knowbee 프로세스를 정리하고 다시 시작합니다..."
   bash "$ROOT_DIR/scripts/stop-local.sh"
   wait_port_release "Gateway" "$GATEWAY_PORT"
   wait_port_release "WebUI" "$WEBUI_PORT"
@@ -593,7 +593,7 @@ start_gateway
 start_webui
 
 echo
-echo "스폰지 노우비 · Sponzey Knowbee 로컬 실행이 완료되었습니다."
+echo "스폰지 노비 · Sponzey Knowbee 로컬 실행이 완료되었습니다."
 echo "  Gateway : http://$GATEWAY_HOST:$GATEWAY_PORT"
 echo "  WebUI   : http://$WEBUI_HOST:$WEBUI_PORT"
 echo "  Admin UI: $([[ "$ADMIN_UI" == "1" ]] && echo enabled || echo disabled)"

@@ -594,7 +594,10 @@ function formatSelfNicknameRule(agent) {
         agent.nickname
             ? `nicknameSnapshot: ${normalizeNicknameSnapshot(agent.nickname)}`
             : "nicknameSnapshot: none",
+        "defaultSelfName: Knowbee / 노비 only when no nickname snapshot is configured.",
         "rule: When identifying yourself in user-visible text, use only your own nickname snapshot.",
+        "rule: A trusted user-configured main-agent or agent nickname overrides the default product name for self-identification.",
+        "rule: User profile names identify the user, not this agent, unless explicitly configured as this agent's name.",
         "rule: Do not present yourself as another agent or remove the speaker nickname from attributed output.",
     ].join("\n");
 }

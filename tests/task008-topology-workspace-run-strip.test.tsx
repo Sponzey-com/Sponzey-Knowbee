@@ -125,7 +125,7 @@ describe("task008 topology workspace run strip", () => {
 
     expect(targetState.issue).toBe("no_entry_node")
     expect(html).toContain('data-testid="topology-run-entry-quick-fix"')
-    expect(html).toContain("시작 실행자 지정")
+    expect(html).toContain("시작 서브 에이전트 지정")
     expect(submitButtonTag(html)).toContain('disabled=""')
   })
 

@@ -1,4 +1,4 @@
-const RESERVED_ROOT_NAMES = new Set(["knowbee", "노우비"]);
+const RESERVED_ROOT_NAMES = new Set(["knowbee", "노비"]);
 function cleanText(value) {
     return value?.trim() ?? "";
 }

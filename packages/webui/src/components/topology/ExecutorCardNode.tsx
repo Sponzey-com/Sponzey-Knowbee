@@ -1,6 +1,7 @@
 import * as React from "react"
 import type { ExecutorDraft, ExecutorRuntimeMode } from "../../lib/executor-graph"
 import type { ExecutorCardResourceChip } from "../../lib/executor-graph-viewmodel"
+import { normalizeLegacyExecutorDefaultText } from "../../lib/executor-graph-relations"
 import type { TopologySubAgentSummary } from "../../lib/topology-sub-agent-sync"
 import { useUiI18n } from "../../lib/ui-i18n"
 
@@ -111,9 +112,10 @@ export function ExecutorCardNode({
   onSelect?: (executorId: string) => void
 }) {
   const { text } = useUiI18n()
-  const summary = executor.description.trim() || text("하는 일이 아직 정리되지 않았습니다.", "Work is not described yet.")
+  const executorName = normalizeLegacyExecutorDefaultText(executor.name)
+  const summary = normalizeLegacyExecutorDefaultText(executor.description) || text("하는 일이 아직 정리되지 않았습니다.", "Work is not described yet.")
   const capabilities = selectExecutorCardCapabilities(summary, executor.inferredCapabilities)
-  const roleName = executor.executorProfile?.roleName?.trim()
+  const roleName = normalizeLegacyExecutorDefaultText(executor.executorProfile?.roleName?.trim() ?? "")
 
   return (
     <article
@@ -137,7 +139,7 @@ export function ExecutorCardNode({
     >
       <div className="min-w-0">
         <h3 className="truncate text-sm font-semibold text-stone-950">
-          {executor.name}
+          {executorName}
         </h3>
         {(roleName || relationLabel || duplicateName) ? (
           <div className="mt-1 flex flex-wrap gap-1" data-testid="executor-card-relation-badges">
@@ -218,7 +220,7 @@ export function ExecutorCardNode({
       ) : null}
 
       {capabilities.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1" aria-label={text("노우비가 이해한 내용", "What Knowbee understood")}>
+        <div className="mt-2 flex flex-wrap gap-1" aria-label={text("노비가 이해한 내용", "What Knowbee understood")}>
           {capabilities.map((capability) => (
             <span
               key={capability}

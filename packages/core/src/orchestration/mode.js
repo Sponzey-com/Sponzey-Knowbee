@@ -132,7 +132,7 @@ function timeoutSnapshot(config, generatedAt) {
         status: "degraded",
         config,
         reasonCode: "registry_load_timeout",
-        reason: "토폴로지 실행자 조회가 시간 내 완료되지 않아 단일 노우비 모드로 fallback했습니다.",
+        reason: "토폴로지 실행자 조회가 시간 내 완료되지 않아 단일 노비 모드로 fallback했습니다.",
         generatedAt,
     });
 }
@@ -143,7 +143,7 @@ function registryErrorSnapshot(config, generatedAt, error) {
         status: "degraded",
         config,
         reasonCode: "registry_load_failed",
-        reason: `토폴로지 실행자 조회에 실패해 단일 노우비 모드로 fallback했습니다: ${detail}`,
+        reason: `토폴로지 실행자 조회에 실패해 단일 노비 모드로 fallback했습니다: ${detail}`,
         generatedAt,
     });
 }
@@ -158,8 +158,8 @@ function snapshotFromRegistry(config, generatedAt, registry) {
             disabledSubAgentCount: registry.disabledSubAgentCount,
             reasonCode: "no_active_sub_agents",
             reason: registry.totalSubAgentCount > 0
-                ? "활성화된 토폴로지 실행자 노드가 없어 단일 노우비 모드로 동작합니다."
-                : "저장된 토폴로지 실행자 노드가 없어 단일 노우비 모드로 동작합니다.",
+                ? "활성화된 토폴로지 실행자 노드가 없어 단일 노비 모드로 동작합니다."
+                : "저장된 토폴로지 실행자 노드가 없어 단일 노비 모드로 동작합니다.",
             generatedAt,
         });
     }
@@ -183,7 +183,7 @@ function snapshotBeforeRegistry(config, generatedAt) {
             status: "ready",
             config,
             reasonCode: "mode_single_knowbee",
-            reason: "설정 모드가 single_knowbee이므로 기존 단일 노우비 경로로 동작합니다.",
+            reason: "설정 모드가 single_knowbee이므로 기존 단일 노비 경로로 동작합니다.",
             generatedAt,
         });
     }
@@ -193,7 +193,7 @@ function snapshotBeforeRegistry(config, generatedAt) {
             status: "ready",
             config,
             reasonCode: "feature_flag_off",
-            reason: "orchestration feature flag가 꺼져 있어 기존 단일 노우비 경로로 동작합니다.",
+            reason: "orchestration feature flag가 꺼져 있어 기존 단일 노비 경로로 동작합니다.",
             generatedAt,
         });
     }

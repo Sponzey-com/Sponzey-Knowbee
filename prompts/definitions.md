@@ -43,7 +43,7 @@ This file keeps prompt and runtime documents aligned on the same terminology. Na
 
 ## Sub-Agents And Delegation
 
-- Knowbee: the top-level coordinator for user requests. Its default user-facing nickname is `노우비`.
+- Knowbee: the top-level coordinator for user requests. Its default user-facing nickname is `노비`.
 - SubAgent: an execution actor registered as a direct child of Knowbee or another SubAgent, with independent memory, capability, and model policy.
 - ParentAgent: the parent agent that delegates a task to one of its direct child agents.
 - ChildAgent: the direct child agent that receives a `CommandRequest` from a ParentAgent.

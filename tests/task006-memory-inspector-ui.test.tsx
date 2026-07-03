@@ -38,7 +38,7 @@ function snapshot(): MemoryInspectorSnapshot {
         ownerId: "agent:knowbee",
         sessionId: "session:task006",
         requestGroupId: "group:task006",
-        nicknameSnapshot: "노우비",
+        nicknameSnapshot: "노비",
         latestCapsuleId: "capsule:task006",
         currentRawTokenEstimate: 180000,
         currentRawMessageCount: 41,

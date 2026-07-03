@@ -96,7 +96,7 @@ describe("task005 executor card canvas", () => {
 	    expect(html).not.toContain('data-executor-id="team:front-office"')
 	  })
 
-  it("shows Knowbee direct, child, and indirect executor relations with duplicate-name disambiguation", () => {
+  it("shows root-agent direct, child, and indirect sub-agent relations with duplicate-name disambiguation", () => {
     const topology = resourceTopologyFixture()
     topology.nodes = [
       node("node:lead", "검토자", "function", {
@@ -118,11 +118,12 @@ describe("task005 executor card canvas", () => {
     ]
 
     const model = buildExecutorGraphCanvasModel({ topology })
-    const relationInfo = buildExecutorGraphRelationInfoMap(model?.graph)
+    const relationInfo = buildExecutorGraphRelationInfoMap(model?.graph, { rootAgentLabel: "마당쇠" })
 
     expect(relationInfo.get("node:lead")).toEqual(expect.objectContaining({
       relationKind: "root_direct",
-      relationLabelKo: "노우비 직속",
+      relationLabelKo: "마당쇠 직속",
+      relationLabelEn: "Direct child of 마당쇠",
       selectableWithoutPath: true,
       duplicateName: true,
       roleLabel: "리드",
@@ -138,7 +139,7 @@ describe("task005 executor card canvas", () => {
     }))
     expect(relationInfo.get("node:review-b")).toEqual(expect.objectContaining({
       relationKind: "indirect",
-      relationLabelKo: "간접 실행자",
+      relationLabelKo: "간접 서브 에이전트",
       selectableWithoutPath: false,
       duplicateName: true,
       roleLabel: "요약 검토",
@@ -147,7 +148,19 @@ describe("task005 executor card canvas", () => {
 
     const review = model?.graph.executors.find((executor) => executor.id === "node:review-a")
     const reviewRelation = relationInfo.get("node:review-a")
+    const lead = model?.graph.executors.find((executor) => executor.id === "node:lead")
+    const leadRelation = relationInfo.get("node:lead")
     if (!review || !reviewRelation) throw new Error("review fixture missing")
+    if (!lead || !leadRelation) throw new Error("lead fixture missing")
+    const leadCardHtml = renderToStaticMarkup(createElement(ExecutorCardNode, {
+      executor: lead,
+      relationLabel: leadRelation.relationLabelKo,
+      relationDescription: leadRelation.relationDetailKo,
+      roleLabel: leadRelation.roleLabel,
+      shortId: leadRelation.shortId,
+      duplicateName: leadRelation.duplicateName,
+      selectableWithoutPath: leadRelation.selectableWithoutPath,
+    }))
     const cardHtml = renderToStaticMarkup(createElement(ExecutorCardNode, {
       executor: review,
       relationLabel: reviewRelation.relationLabelKo,
@@ -158,12 +171,77 @@ describe("task005 executor card canvas", () => {
       selectableWithoutPath: reviewRelation.selectableWithoutPath,
     }))
 
+    expect(leadCardHtml).toContain("마당쇠 직속")
+    expect(leadCardHtml).not.toContain("노비 직속")
     expect(cardHtml).toContain("검토자의 하위")
     expect(cardHtml).not.toContain("경로 필요")
     expect(cardHtml).toContain("품질 검토")
     expect(cardHtml).toContain("review-a")
     expect(cardHtml).toContain('data-testid="executor-card-relation"')
     expect(cardHtml).toContain('data-selectable-without-path="false"')
+  })
+
+  it("uses a neutral main-agent relation label when the current name is still the default alias", () => {
+    const topology = resourceTopologyFixture()
+    topology.nodes = [
+      node("node:intake", "접수", "function", {
+        description: "요청을 먼저 정리한다.",
+        metadata: { roleName: "서브 에이전트" },
+      }),
+    ]
+    topology.relations = []
+
+    const model = buildExecutorGraphCanvasModel({ topology })
+    const koDefault = buildExecutorGraphRelationInfoMap(model?.graph, { rootAgentLabel: "노비" }).get("node:intake")
+    const enDefault = buildExecutorGraphRelationInfoMap(model?.graph, { rootAgentLabel: "Knowbee" }).get("node:intake")
+
+    expect(koDefault).toEqual(expect.objectContaining({
+      relationKind: "root_direct",
+      relationLabelKo: "메인 에이전트 직속",
+      relationLabelEn: "Direct child of main agent",
+    }))
+    expect(enDefault).toEqual(expect.objectContaining({
+      relationKind: "root_direct",
+      relationLabelKo: "메인 에이전트 직속",
+      relationLabelEn: "Direct child of main agent",
+    }))
+    expect(koDefault?.relationDetailKo).not.toContain("노비")
+    expect(enDefault?.relationDetailEn).not.toContain("Knowbee")
+  })
+
+  it("normalizes legacy default executor labels on compact cards", () => {
+    const html = renderToStaticMarkup(createElement(ExecutorCardNode, {
+      executor: {
+        id: "node:legacy-default",
+        name: "새 실행자 1",
+        description: "이 실행자가 맡을 일을 적어주세요.",
+        inferredRuntimeMode: "auto",
+        inferredCapabilities: [],
+        inferredTools: [],
+        inferredOutputs: [],
+        inferredSuccessCriteria: [],
+        confidence: 0.7,
+        executorProfile: {
+          schemaVersion: 1,
+          executorId: "node:legacy-default",
+          displayName: "새 실행자 1",
+          roleName: "실행자",
+          definition: "이 실행자가 맡을 일을 적어주세요.",
+          does: [],
+          delegationScope: [],
+          expectedOutputs: [],
+          handoffStyle: "structured_handoff",
+          declineCriteria: [],
+          riskBoundary: [],
+        },
+      },
+    }))
+
+    expect(html).toContain("새 서브 에이전트 1")
+    expect(html).toContain("이 서브 에이전트가 맡을 일을 적어주세요.")
+    expect(html).toContain("서브 에이전트")
+    expect(html).not.toContain("새 실행자 1")
+    expect(html).not.toContain("이 실행자가 맡을 일을 적어주세요.")
   })
 
   it("hides duplicated long capability text from compact executor cards", () => {

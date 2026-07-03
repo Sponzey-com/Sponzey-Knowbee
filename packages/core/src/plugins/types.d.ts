@@ -1,5 +1,5 @@
 /**
- * 스폰지 노우비 · Sponzey Knowbee Plugin System — type definitions.
+ * 스폰지 노비 · Sponzey Knowbee Plugin System — type definitions.
  */
 import type { AnyTool } from "../tools/types.js";
 /** Context passed to plugins during initialization */

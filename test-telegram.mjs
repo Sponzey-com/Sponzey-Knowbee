@@ -52,7 +52,7 @@ if (existsSync(configPath)) {
 }
 
 // 3. 부트스트랩 + 채널 시작
-console.log("🚀  스폰지 노우비 · Sponzey Knowbee 시작 중...")
+console.log("🚀  스폰지 노비 · Sponzey Knowbee 시작 중...")
 bootstrap()
 await startChannels()
 console.log("✅  Telegram 봇이 실행되었습니다. 텔레그램에서 메시지를 보내보세요.")

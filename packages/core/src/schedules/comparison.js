@@ -1,6 +1,7 @@
 import { detectAvailableProvider, getDefaultModel, getProvider } from "../ai/index.js";
 import { buildDeliveryProjection, buildScheduleIdentityProjection, buildSchedulePayloadProjection, toCanonicalJson, } from "../contracts/index.js";
 import { chatWithContextPreflight } from "../runs/context-preflight.js";
+import { loadPromptTemplate } from "../memory/knowbee-md.js";
 const DEFAULT_TIMEOUT_MS = 2_000;
 function comparisonProjection(contract) {
     // knowbee-critical-decision-audit: schedules.comparison.contract_projection_only
@@ -28,25 +29,12 @@ function buildComparisonPrompt(params) {
             ].join("\n"),
         }];
 }
-export function buildScheduleContractComparisonSystemPrompt() {
-    return [
-        "You are Knowbee's isolated schedule-contract comparator.",
-        "You are memoryless. Use only the provided JSON contracts.",
-        "Do not compare natural-language prompt meaning. Compare structured time, payload, and delivery fields.",
-        "Return valid JSON only.",
-        "JSON shape:",
-        "{",
-        '  "decision": "same | different | clarify",',
-        '  "candidateId": "required only when decision is same",',
-        '  "reasonCode": "same_schedule_identity | different_payload | different_time | different_destination | target_ambiguous",',
-        '  "userMessage": "short explanation"',
-        "}",
-        "Rules:",
-        "- Choose same only when one candidate has the same schedule identity.",
-        "- Choose different when all candidates clearly differ by time, payload, or delivery destination.",
-        "- Choose clarify when more than one candidate is plausible or the structure is insufficient.",
-        "- Never invent candidateId. Use only ids from the candidate list.",
-    ].join("\n");
+export function buildScheduleContractComparisonSystemPrompt(options = {}) {
+    return loadPromptTemplate({
+        sourceId: "schedule_comparison",
+        workDir: options.workDir,
+        locale: options.locale ?? "en",
+    });
 }
 function extractJsonObject(text) {
     const withoutFence = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");

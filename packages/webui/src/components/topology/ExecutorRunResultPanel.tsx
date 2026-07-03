@@ -147,7 +147,7 @@ export function ExecutorRunResultPanel({
           </div>
           <div className="mt-1 text-xs text-stone-500">
             {model.hasRun
-              ? text("실행자별 상태와 고칠 점을 확인합니다.", "Review each executor state and what to fix.")
+              ? text("서브 에이전트별 상태와 고칠 점을 확인합니다.", "Review each sub-agent state and what to fix.")
               : text("실행 후 결과가 여기에 표시됩니다.", "Results appear here after a run.")}
           </div>
         </div>
@@ -176,7 +176,7 @@ export function ExecutorRunResultPanel({
           </div>
         )) : (
           <div className="rounded-md border border-dashed border-stone-200 bg-stone-50 px-3 py-3 text-xs text-stone-500">
-            {text("아직 실행자가 없습니다.", "No executors yet.")}
+            {text("아직 서브 에이전트가 없습니다.", "No sub-agents yet.")}
           </div>
         )}
       </div>
@@ -200,7 +200,7 @@ export function ExecutorRunResultPanel({
                   testId="executor-result-failure-reason"
                 />
                 <div className="rounded-md bg-white/80 px-2.5 py-2" data-testid="executor-result-tried-list">
-                  <div className="text-[11px] font-semibold text-red-900">{text("노우비가 시도한 것", "What Knowbee tried")}</div>
+                  <div className="text-[11px] font-semibold text-red-900">{text("노비가 시도한 것", "What Knowbee tried")}</div>
                   <div className="mt-1 flex flex-wrap gap-1">
                     {failure.triedKo.map((item, index) => (
                       <span key={`${item}:${index}`} className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-900">
@@ -368,8 +368,8 @@ function nodeResult(executor: ExecutorDraft, status: ExecutorRunNodeStatus): Exe
       status,
       statusLabelKo: "실패",
       statusLabelEn: "Failed",
-      detailKo: "이 실행자에서 처리가 멈췄습니다.",
-      detailEn: "Processing stopped at this executor.",
+      detailKo: "이 서브 에이전트에서 처리가 멈췄습니다.",
+      detailEn: "Processing stopped at this sub-agent.",
     }
   }
   if (status === "partial_success") {
@@ -390,8 +390,8 @@ function nodeResult(executor: ExecutorDraft, status: ExecutorRunNodeStatus): Exe
       status,
       statusLabelKo: "성공",
       statusLabelEn: "Success",
-      detailKo: "이 실행자는 처리를 완료했습니다.",
-      detailEn: "This executor completed its work.",
+      detailKo: "이 서브 에이전트는 처리를 완료했습니다.",
+      detailEn: "This sub-agent completed its work.",
     }
   }
   return {
@@ -461,7 +461,7 @@ function triedActions(
     en.push(enValue)
   }
   if (summary.selfExecutionAttempted) add("직접 처리", "Self execution")
-  if (summary.childDelegationAttempted) add("다음 실행자에게 넘기기", "Child delegation")
+  if (summary.childDelegationAttempted) add("다음 서브 에이전트에게 넘기기", "Child delegation")
   if (summary.toolExecutionAttempted) add("도구 실행", "Tool execution")
   if (summary.retryAttempted) add("재시도", "Retry")
   if (summary.fallbackAttempted) add("예외 처리 경로 확인", "Fallback path")
@@ -533,7 +533,7 @@ function buildQuickActions(input: {
       ...createGuiDraftOperationBase("updateNode", {
         operationId: `executor-result:revise-description:${failure.nodeId}`,
         at: Date.now(),
-        label: "실행자 설명 보강",
+        label: "서브 에이전트 설명 보강",
       }),
       nodeId: failure.nodeId,
       patch: {
@@ -553,7 +553,7 @@ function fallbackOperations(nodeId: string): EnterpriseTopologyGuiOperation[] {
       operationId: `executor-result:fallback-node:${nodeId}`,
       op: "createNode",
       at: Date.now(),
-      label: "예외 처리 실행자 추가",
+      label: "예외 처리 서브 에이전트 추가",
       nodeId: fallbackNodeId,
       name: "예외 처리 담당자",
       nodeType: "review_node",
@@ -714,7 +714,7 @@ function failureNextActionText(
       }
     case "pass_partial":
       return {
-        ko: "부분 결과를 다음 실행자에게 넘길지 결정하세요.",
+        ko: "부분 결과를 다음 서브 에이전트에게 넘길지 결정하세요.",
         en: "Decide whether to pass the partial result to the next executor.",
       }
     case "add_fallback":
@@ -724,8 +724,8 @@ function failureNextActionText(
       }
     case "revise_description":
       return {
-        ko: "실행자 설명을 더 구체적으로 고친 뒤 다시 실행하세요.",
-        en: "Revise the executor description, then run it again.",
+        ko: "서브 에이전트 설명을 더 구체적으로 고친 뒤 다시 실행하세요.",
+        en: "Revise the sub-agent description, then run it again.",
       }
     case "user_review":
       return {
@@ -735,8 +735,8 @@ function failureNextActionText(
     case "review_trace":
     case undefined:
       return {
-        ko: "실행 기록에서 선택된 실행자, 시도한 작업, 남은 조건을 확인하세요.",
-        en: "Review the trace for the selected executor, attempted work, and remaining conditions.",
+        ko: "실행 기록에서 선택된 서브 에이전트, 시도한 작업, 남은 조건을 확인하세요.",
+        en: "Review the trace for the selected sub-agent, attempted work, and remaining conditions.",
       }
   }
 }

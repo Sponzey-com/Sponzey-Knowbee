@@ -19,6 +19,9 @@ export declare function reviewTaskCompletion(params: {
     provider?: AIProvider;
     workDir?: string;
 }): Promise<CompletionReviewResult | null>;
-export declare function buildCompletionReviewSystemPrompt(): string;
+export declare function buildCompletionReviewSystemPrompt(options?: {
+    workDir?: string | undefined;
+    locale?: "ko" | "en" | undefined;
+}): string;
 export declare function parseCompletionReviewResult(raw: string): CompletionReviewResult | null;
 //# sourceMappingURL=completion-review.d.ts.map

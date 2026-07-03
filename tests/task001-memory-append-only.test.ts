@@ -46,7 +46,7 @@ function baseCapsule(capsuleId: string, createdAt: number): MemoryCapsule {
       channelKey: "webui",
       threadKey: "thread-append",
     },
-    nicknameSnapshot: "노우비",
+    nicknameSnapshot: "노비",
     capsuleKind: "session_compaction",
     summary: `캡슐 ${capsuleId} 요약`,
     activeObjectives: ["현재 작업 유지"],

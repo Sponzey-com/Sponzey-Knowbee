@@ -162,6 +162,9 @@ function createInitialSetupDraft(): SetupDraft {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       workspace: "",
     },
+    mainAgent: {
+      name: "노비",
+    },
     aiBackends: [],
     routingProfiles: [],
     mcp: {

@@ -447,10 +447,10 @@ export function LegacyEnterpriseTopologyPage({
   const handleAddExecutorNode = () => {
     const nextIndex = (draftTopology?.nodes.length ?? 0) + 1
     addExecutorToDraft({
-      name: text(`새 노드 ${nextIndex}`, `New node ${nextIndex}`),
+      name: text(`새 서브 에이전트 ${nextIndex}`, `New sub-agent ${nextIndex}`),
       description: text(
-        "오른쪽 카드에서 이 노드의 성격과 하는 일을 정합니다.",
-        "Define this node's character and work in the card on the right.",
+        "오른쪽 카드에서 이 서브 에이전트의 성격과 하는 일을 정합니다.",
+        "Define this sub-agent's character and work in the card on the right.",
       ),
       userConfirmed: false,
     })
@@ -819,10 +819,10 @@ export function LegacyEnterpriseTopologyPage({
   const simpleEmptyStart = workspaceLayer === "build" && (!draftTopology || model.nodes.length === 0)
   const simpleCreatePanel = (simpleEmptyStart || executorCreateOpen) ? (
     <ExecutorCreatePanel
-      titleKo="실행자 이름과 성격 정하기"
-      titleEn="Define the executor"
-      helperKo="첫 화면에서는 이것만 정합니다. 어떤 이름의 실행자가 어떤 성격으로 일할지만 적어 주세요."
-      helperEn="Start with this only. Enter the executor name and the character of how it works."
+      titleKo="서브 에이전트 이름과 성격 정하기"
+      titleEn="Define the sub-agent"
+      helperKo="첫 화면에서는 이것만 정합니다. 어떤 이름의 서브 에이전트가 어떤 성격으로 일할지만 적어 주세요."
+      helperEn="Start with this only. Enter the sub-agent name and the character of how it works."
       descriptionLabelKo="성격과 하는 일"
       descriptionLabelEn="Character and work"
       descriptionPlaceholderKo="예: 고객 문의를 차분하게 정리하고 CRM을 확인하는 담당자"

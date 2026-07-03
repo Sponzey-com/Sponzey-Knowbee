@@ -1,4 +1,5 @@
-export type PromptSourceUsageScope = "runtime" | "first_run" | "planner" | "diagnostic";
+export type PromptSourceUsageScope = "runtime" | "first_run" | "planner" | "diagnostic" | "internal";
+export type PromptTemplateVariables = Record<string, string | number | boolean | null | undefined>;
 export interface PromptSourceMetadata {
     sourceId: string;
     locale: "ko" | "en";
@@ -128,7 +129,14 @@ export declare function detectPromptSourceSecretMarkers(content: string): string
 export declare function isPromptSourceContentSafe(content: string): boolean;
 export declare function ensurePromptSourceFiles(workDir: string): PromptSourceSeedResult;
 export declare function loadPromptSourceRegistry(workDir: string): LoadedPromptSource[];
-export declare function loadSystemPromptSourceAssembly(workDir: string, locale?: "ko" | "en", states?: PromptSourceState[]): PromptSourceAssembly | null;
+export declare function renderPromptTemplate(content: string, variables?: PromptTemplateVariables): string;
+export declare function loadPromptTemplate(input: {
+    sourceId: string;
+    workDir?: string | undefined;
+    locale?: "ko" | "en" | undefined;
+    variables?: PromptTemplateVariables | undefined;
+}): string;
+export declare function loadSystemPromptSourceAssembly(workDir: string, locale?: "ko" | "en", states?: PromptSourceState[], variables?: PromptTemplateVariables): PromptSourceAssembly | null;
 export declare function loadFirstRunPromptSourceAssembly(workDir: string, locale?: "ko" | "en", states?: PromptSourceState[]): PromptSourceAssembly | null;
 /**
  * Load canonical runtime prompt sources from prompts/.

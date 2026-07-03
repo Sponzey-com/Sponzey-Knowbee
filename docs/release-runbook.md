@@ -241,7 +241,7 @@ Required regression gates:
 - WebUI build gate must pass because the builder is GUI-first and should limit ordinary setup typing to executor name, executor work, and run input.
 - Topology Workspace route gate must prove `/advanced/topology` is the only visible topology menu entry, `/advanced/enterprise-topology` redirects to `/advanced/topology?mode=build`, and the old Runtime Topology menu is removed.
 - Topology Workspace layer gate must cover the visible Build, Run, Trace, and Improve layers. Runtime resource projection is internal evidence and must not be exposed as `/advanced/topology?mode=resources`.
-- Executor-first usability gate must pass the happy path: `+ 실행자 추가`, executor name, executor work, `노우비가 이해한 내용`, second executor, Smart Connect recommendation chip, run input, 실행, and 기록/고칠 점 review.
+- Executor-first usability gate must pass the happy path: `+ 실행자 추가`, executor name, executor work, `노비가 이해한 내용`, second executor, Smart Connect recommendation chip, run input, 실행, and 기록/고칠 점 review.
 - Default UX leak gate must prove Task/Decision/Approval/Tool/Data/Group palette labels, WorkOrder Template, Context, AgentConfig, SubSession, CompiledSnapshot, Node Contract, Runtime Resource Topology, and JSON/YAML are hidden from the default surface.
 - Internal stability gate must prove ExecutorGraph compiles to EnterpriseTopology, ExecutorGraph metadata remains projection-only, rule-based inference works without AI-assisted inference, feature flag off keeps single Knowbee fallback, and the old Advanced/Developer topology surfaces are no longer exposed.
 - Executor observability gate must prove confirmed understanding version, inference evidence id, runtime profile snapshot id, inferred WorkOrder template/context, trace event ids, and FailureReport evidence links can reconstruct `user description -> inference -> NodeContract -> WorkOrder -> FailureReport`.
@@ -258,14 +258,14 @@ Workspace flag matrix meaning:
 
 Topology rollback checks:
 
-- Simple mode rollback check: open the Executor Graph surface, confirm Build/Run/Trace/Improve remain visible, confirm `+ 실행자 추가`, 이름, 하는 일, `노우비가 이해한 내용`, 입력, 실행, 기록, and 고칠 점 are available, and confirm Resources, Compile Preview, JSON/YAML, raw trace IDs, feature flag status, WorkOrder Template, Context, and direct relation/schema controls are not in the default surface.
+- Simple mode rollback check: open the Executor Graph surface, confirm Build/Run/Trace/Improve remain visible, confirm `+ 실행자 추가`, 이름, 하는 일, `노비가 이해한 내용`, 입력, 실행, 기록, and 고칠 점 are available, and confirm Resources, Compile Preview, JSON/YAML, raw trace IDs, feature flag status, WorkOrder Template, Context, and direct relation/schema controls are not in the default surface.
 - Removed surface rollback check: open `/advanced/topology?mode=resources`, `/advanced/topology?ux=advanced`, and `/advanced/topology?ux=developer&mode=build`; each must stay on the simple Executor Graph surface without Resources, Compile Preview, JSON/YAML, Developer tools, relation toolbar, Run Target, or advanced inspector settings.
 - Rollback evidence must record which area failed: Simple UX regression, removed advanced surface regression, or runtime routing regression.
 - Rollback evidence must also include `knowbee.executor_graph.rollback_projection`: restored topology id/version, ExecutorGraph metadata presence, executor ids, connection ids, confirmed understanding ids, and `sourceOfTruth=executor_topology_v2`.
 
 Executor evidence audit checks:
 
-- In Simple mode, raw evidence ids stay hidden in the default result screen. Users see 실패 위치, 노우비가 시도한 것, 다음 조치 first.
+- In Simple mode, raw evidence ids stay hidden in the default result screen. Users see 실패 위치, 노비가 시도한 것, 다음 조치 first.
 - Internal evidence audit may inspect sanitized developer logs outside the default topology surface, but the topology UI must not expose WorkOrder id, NodeContract id, raw trace ids, or JSON/YAML controls by default.
 - If an inference was confirmed by the user, `confirmedUnderstandingVersion` must be present in topology metadata and node-level `executorGraph.inferenceEvidence`.
 - Failure investigations must be able to follow: userDescription, normalizedUnderstanding, inferenceRuleIds, NodeContract id, WorkOrder id, traceEventIds, and FailureReport id.

@@ -10,12 +10,14 @@ import { buildMcpSetupDraft, buildSkillsSetupDraft, persistMcpSetupDraft, persis
 import { getActiveTelegramChannel, getTelegramRuntimeError } from "../channels/telegram/runtime.js";
 import { getActiveSlackChannel, getSlackRuntimeError } from "../channels/slack/runtime.js";
 import { resetEmbeddingProvider } from "../memory/embedding.js";
+import { loadPromptTemplate } from "../memory/knowbee-md.js";
 import { mcpRegistry } from "../mcp/registry.js";
 import { getMqttBrokerSnapshot } from "../mqtt/broker.js";
 import { orchestrationCapabilityStatus, resolveOrchestrationModeSnapshotSync, } from "../orchestration/mode.js";
 import { updateActiveRunsMaxDelegationTurns } from "../runs/store.js";
 import { OPENAI_CODEX_KNOWN_MODELS, OPENAI_CODEX_RESPONSES_PATH, OPENAI_CODEX_USER_AGENT, readOpenAICodexAccessToken, resolveOpenAICodexAuthFilePath, resolveOpenAICodexBaseUrl, } from "../auth/openai-codex-oauth.js";
 import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
+import { normalizeNickname } from "../contracts/sub-agent-orchestration.js";
 const KNOWN_BACKENDS = [
     "provider:openai",
     "provider:anthropic",
@@ -37,6 +39,9 @@ const GENERIC_BACKEND_SUMMARIES = new Set([
     "로컬 대체 추론 서버",
     "사용자 추가 backend",
 ]);
+const DEFAULT_MAIN_AGENT_ID = "agent:knowbee";
+const DEFAULT_MAIN_AGENT_NAME = "Knowbee";
+const DEFAULT_MAIN_AGENT_NAME_KO = "노비";
 function countCapabilities(items) {
     return items.reduce((acc, item) => {
         acc[item.status] += 1;
@@ -543,6 +548,100 @@ function capabilityIdsRequiringApproval(profile) {
 function osSensitiveCapabilityIdsFromPermissionProfile(profile) {
     return profile.allowScreenControl ? ["capability:screen_capture", "capability:keyboard_control", "capability:mouse_control"] : ["capability:screen_capture"];
 }
+function resolveMainAgentName(config) {
+    const configured = config.orchestration.knowbee?.nickname?.trim()
+        || config.orchestration.knowbee?.displayName?.trim()
+        || "";
+    return configured && !isDefaultMainAgentAlias(configured) && !isProfileNameAlias(config.profile, configured)
+        ? configured
+        : defaultMainAgentNameForLanguage(config.profile.language);
+}
+function defaultMainAgentNameForLanguage(language) {
+    return language?.trim().toLowerCase().startsWith("ko") ? DEFAULT_MAIN_AGENT_NAME_KO : DEFAULT_MAIN_AGENT_NAME;
+}
+function isDefaultMainAgentAlias(value) {
+    const normalized = value.trim().normalize("NFKC").toLowerCase();
+    return normalized === DEFAULT_MAIN_AGENT_NAME.toLowerCase()
+        || normalized === DEFAULT_MAIN_AGENT_NAME_KO;
+}
+function isProfileNameAlias(profile, value) {
+    const normalized = value.trim().normalize("NFKC").toLowerCase();
+    if (!normalized)
+        return false;
+    return [profile.displayName, profile.profileName]
+        .map((alias) => alias?.trim() ?? "")
+        .filter((alias) => alias.length > 0)
+        .map((alias) => alias.normalize("NFKC").toLowerCase())
+        .includes(normalized);
+}
+function defaultKnowbeeMemoryPolicy(agentId) {
+    const owner = { ownerType: "knowbee", ownerId: agentId };
+    return {
+        owner,
+        visibility: "private",
+        readScopes: [owner],
+        writeScope: owner,
+        retentionPolicy: "long_term",
+        writebackReviewRequired: false,
+        rawWindowSize: 48_000,
+        compactThreshold: 64_000,
+        capsuleMode: "session_compaction",
+        archiveReferenceMode: "summary_reference",
+        handoffCapsuleAllowed: true,
+        capsuleCount: 0,
+    };
+}
+function defaultKnowbeeCapabilityPolicy(agentId) {
+    return {
+        permissionProfile: {
+            profileId: "profile:knowbee-main",
+            riskCeiling: "moderate",
+            approvalRequiredFrom: "moderate",
+            allowExternalNetwork: true,
+            allowFilesystemWrite: false,
+            allowShellExecution: false,
+            allowScreenControl: false,
+            allowedPaths: [],
+        },
+        skillMcpAllowlist: {
+            enabledSkillIds: [],
+            enabledMcpServerIds: [],
+            enabledToolNames: [],
+            disabledToolNames: [],
+            secretScopeId: agentId,
+        },
+        rateLimit: { maxConcurrentCalls: 2 },
+    };
+}
+function buildKnowbeeAgentConfig(input) {
+    const agentId = input.existing?.agentId?.trim() || DEFAULT_MAIN_AGENT_ID;
+    const name = input.name.trim() || DEFAULT_MAIN_AGENT_NAME;
+    return {
+        schemaVersion: input.existing?.schemaVersion ?? CONTRACT_SCHEMA_VERSION,
+        agentType: "knowbee",
+        agentId,
+        displayName: name,
+        nickname: name,
+        normalizedNickname: normalizeNickname(name),
+        status: input.existing?.status ?? "enabled",
+        role: input.existing?.role?.trim() || "Main personal assistant coordinator",
+        personality: input.existing?.personality?.trim() || "Pragmatic, concise, and careful.",
+        specialtyTags: input.existing?.specialtyTags ?? ["coordination"],
+        avoidTasks: input.existing?.avoidTasks ?? [],
+        ...(input.existing?.modelProfile ? { modelProfile: input.existing.modelProfile } : {}),
+        memoryPolicy: input.existing?.memoryPolicy ?? defaultKnowbeeMemoryPolicy(agentId),
+        capabilityPolicy: input.existing?.capabilityPolicy ?? defaultKnowbeeCapabilityPolicy(agentId),
+        ...(input.existing?.delegationPolicy ? { delegationPolicy: input.existing.delegationPolicy } : {}),
+        profileVersion: Math.max(1, Math.floor(Number.isFinite(input.existing?.profileVersion) ? input.existing.profileVersion : 1)),
+        createdAt: Number.isFinite(input.existing?.createdAt) ? input.existing.createdAt : input.now,
+        updatedAt: input.now,
+        coordinator: input.existing?.coordinator ?? {
+            defaultMode: "single_knowbee",
+            fallbackMode: "single_knowbee",
+            maxDelegatedSubSessions: Math.max(1, Math.floor(Number.isFinite(input.maxDelegationTurns) ? input.maxDelegationTurns : 1)),
+        },
+    };
+}
 export function buildSetupDraft() {
     const config = getConfig();
     const raw = readRawConfig();
@@ -578,6 +677,9 @@ export function buildSetupDraft() {
             language: config.profile.language ?? "ko",
             timezone: config.profile.timezone ?? config.scheduler.timezone,
             workspace: config.profile.workspace ?? "",
+        },
+        mainAgent: {
+            name: resolveMainAgentName(config),
         },
         aiBackends: [...defaults, ...customBackends],
         routingProfiles: createSingleConnectionRoutingProfiles(activeTarget),
@@ -814,14 +916,16 @@ function persistSubAgentSetupDraft(raw, draft) {
 }
 export function saveSetupDraft(draft, state) {
     const raw = readRawConfig();
+    const currentConfig = getConfig();
+    const userName = draft.personal.displayName.trim() || draft.personal.profileName.trim();
     const rawWebuiAuth = {
         ...toObject(toObject(raw.webui).auth),
     };
     delete rawWebuiAuth.oauth;
     raw.profile = {
         ...toObject(raw.profile),
-        profileName: draft.personal.profileName,
-        displayName: draft.personal.displayName,
+        profileName: userName,
+        displayName: userName,
         language: draft.personal.language,
         timezone: draft.personal.timezone,
         workspace: draft.personal.workspace,
@@ -840,6 +944,22 @@ export function saveSetupDraft(draft, state) {
         ...toObject(raw.orchestration),
         maxDelegationTurns: Math.max(0, Math.floor(Number.isFinite(draft.security.maxDelegationTurns) ? draft.security.maxDelegationTurns : 0)),
     };
+    const draftMainAgentName = draft.mainAgent?.name.trim() ?? "";
+    const mainAgentName = draft.mainAgent
+        ? draftMainAgentName && !isDefaultMainAgentAlias(draftMainAgentName) && !isProfileNameAlias(raw.profile, draftMainAgentName)
+            ? draftMainAgentName
+            : defaultMainAgentNameForLanguage(draft.personal.language)
+        : "";
+    if (draft.mainAgent) {
+        const rawOrchestration = toObject(raw.orchestration);
+        rawOrchestration.knowbee = buildKnowbeeAgentConfig({
+            existing: currentConfig.orchestration.knowbee,
+            name: mainAgentName,
+            maxDelegationTurns: draft.security.maxDelegationTurns,
+            now: Date.now(),
+        });
+        raw.orchestration = rawOrchestration;
+    }
     raw.telegram = {
         ...toObject(raw.telegram),
         enabled: draft.channels.telegramEnabled,
@@ -1407,7 +1527,7 @@ export async function discoverModelsFromEndpoint(endpoint, providerType = "custo
             body: JSON.stringify({
                 model: OPENAI_CODEX_KNOWN_MODELS[0],
                 input: [{ role: "user", content: [{ type: "input_text", text: "ping" }] }],
-                instructions: "You are Codex.",
+                instructions: loadPromptTemplate({ sourceId: "ai_connection_test" }),
                 store: false,
                 stream: true,
             }),

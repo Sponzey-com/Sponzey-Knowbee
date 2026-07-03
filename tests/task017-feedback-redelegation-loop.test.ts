@@ -212,7 +212,7 @@ function runInput(id = "feedback"): RunSubSessionInput {
     parentAgent: {
       agentId: "agent:knowbee",
       displayName: "Knowbee",
-      nickname: "노우비",
+      nickname: "노비",
     },
     agent: {
       agentId: "agent:researcher",

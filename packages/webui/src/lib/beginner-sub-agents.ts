@@ -222,7 +222,7 @@ function validationMessage(issue: SubAgentSettingsValidationIssue, language: UiL
     case "nickname_duplicate":
       return pickUiText(language, "이미 사용 중인 별명입니다.", "That nickname is already in use.")
     case "reserved_knowbee_name":
-      return pickUiText(language, "노우비 이름은 메인 에이전트만 사용할 수 있습니다.", "Only the main agent can use the Knowbee name.")
+      return pickUiText(language, "노비 이름은 메인 에이전트만 사용할 수 있습니다.", "Only the main agent can use the Knowbee name.")
     case "parent_missing":
       return pickUiText(language, "상위 에이전트를 찾을 수 없습니다.", "The parent agent is missing.")
     default:
@@ -314,6 +314,42 @@ export function createBeginnerSubAgent(
   }
 }
 
+export function createDefaultBeginnerSubAgent(
+  draft: SetupDraft,
+  now = Date.now(),
+  language: UiLanguage = "ko",
+): BeginnerSubAgentCreateResult {
+  const displayName = nextDefaultSubAgentDisplayName(draft)
+  return createBeginnerSubAgent(draft, {
+    displayName,
+    nickname: displayName,
+    role: pickUiText(language, "서브 에이전트", "Sub-agent"),
+    description: pickUiText(
+      language,
+      "이 서브 에이전트가 맡을 일을 적어주세요.",
+      "Describe the work this sub-agent should handle.",
+    ),
+  }, now, language)
+}
+
+export function nextDefaultSubAgentDisplayName(draft: SetupDraft): string {
+  const subAgents = ensureSubAgentSetupDraft(draft)
+  const usedNames = new Set(
+    subAgents.items
+      .filter((item) => item.status !== "archived")
+      .flatMap((item) => [item.displayName, item.nickname])
+      .map((name) => normalizeDefaultName(name))
+      .filter((name) => name.length > 0),
+  )
+  let index = subAgents.items.filter((item) => item.status !== "archived").length + 1
+  while (usedNames.has(normalizeDefaultName(`새 서브 에이전트 ${index}`))) index += 1
+  return `새 서브 에이전트 ${index}`
+}
+
+function normalizeDefaultName(value: string): string {
+  return value.replace(/\s+/g, " ").trim().normalize("NFKC").toLocaleLowerCase()
+}
+
 export function buildBeginnerSubAgentReadinessPanel(input: {
   draft: SetupDraft
   language: UiLanguage
@@ -360,7 +396,7 @@ export function buildBeginnerSubAgentReadinessPanel(input: {
   const title = pickUiText(input.language, "서브 에이전트 팀", "Sub-agent team")
   const summary =
     status === "empty"
-      ? pickUiText(input.language, "지금은 노우비 혼자 처리합니다. 필요할 때 서브 에이전트를 추가하세요.", "Knowbee works alone for now. Add sub-agents when needed.")
+      ? pickUiText(input.language, "지금은 노비 혼자 처리합니다. 필요할 때 서브 에이전트를 추가하세요.", "Knowbee works alone for now. Add sub-agents when needed.")
       : status === "needs_attention" && subAgents.items.length === 0
         ? pickUiText(input.language, "오케스트레이션을 쓰려면 서브 에이전트를 먼저 추가해야 합니다.", "Add a sub-agent before using orchestration.")
         : status === "pending_runtime"
@@ -401,7 +437,7 @@ export function buildBeginnerSubAgentReadinessPanel(input: {
     })),
     actions: [
       { id: "create", label: pickUiText(input.language, "서브 에이전트 추가", "Add sub-agent") },
-      { id: "sub-agents", label: pickUiText(input.language, "서브에이전트 설정에서 보기", "View sub-agent settings"), href: "/sub-agents" },
+      { id: "sub-agents", label: pickUiText(input.language, "서브 에이전트 설정에서 보기", "View sub-agent settings"), href: "/sub-agents" },
       { id: "advanced", label: pickUiText(input.language, "고급 설정에서 보기", "Open advanced settings"), href: "/advanced/orchestration" },
     ],
   }

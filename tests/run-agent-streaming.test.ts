@@ -31,6 +31,7 @@ vi.mock("../packages/core/src/memory/store.js", () => ({
 vi.mock("../packages/core/src/memory/knowbee-md.js", () => ({
   loadKnowbeeMd: vi.fn(() => ""),
   loadPromptSourceRegistry: vi.fn(() => []),
+  loadPromptTemplate: vi.fn(() => "# Test System Prompt\n\nYou are {{mainAgentName}}."),
   loadSystemPromptSourceAssembly: vi.fn(() => null),
 }))
 
@@ -49,6 +50,34 @@ vi.mock("../packages/core/src/tools/dispatcher.js", () => ({
 const { runAgent } = await import("../packages/core/src/agent/index.ts")
 
 describe("runAgent streaming policy", () => {
+  it("answers Korean self-name questions without asking the model", async () => {
+    const provider = {
+      chat: vi.fn(async function* () {
+        yield { type: "text_delta", delta: "제 이름은 Knowbee예요." } as const
+      }),
+    }
+
+    const chunks = []
+    for await (const chunk of runAgent({
+      userMessage: "니 이름이 뭐니?",
+      sessionId: "session-agent-self-name-ko",
+      runId: "run-agent-self-name-ko",
+      model: "gpt-5",
+      provider: provider as never,
+      source: "telegram",
+      toolsEnabled: false,
+    })) {
+      chunks.push(chunk)
+    }
+
+    expect(provider.chat).not.toHaveBeenCalled()
+    expect(chunks).toHaveLength(2)
+    expect(chunks[0]).toMatchObject({ type: "text" })
+    expect(chunks[0]).toHaveProperty("delta", expect.stringMatching(/^제 이름은 .+입니다\.$/))
+    expect(JSON.stringify(chunks)).not.toContain("Knowbee")
+    expect(chunks.at(-1)).toEqual({ type: "done", totalTokens: 0 })
+  })
+
   it("does not leak partial assistant text when the AI round fails", async () => {
     const provider = {
       chat: vi.fn(async function* () {
@@ -107,6 +136,9 @@ describe("runAgent streaming policy", () => {
       { type: "text", delta: "작업을 완료했습니다." },
       { type: "done", totalTokens: 2 },
     ])
+    expect(provider.chat.mock.calls[0]?.[0].system).toContain("[Trusted Main Agent Identity]")
+    expect(provider.chat.mock.calls[0]?.[0].system).toContain("Current main-agent self name:")
+    expect(provider.chat.mock.calls[0]?.[0].system).not.toContain("You are Knowbee.")
   })
 
   it("stops after a successful isolated Yeonjang camera list tool round", async () => {

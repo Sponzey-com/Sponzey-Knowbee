@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 import { PATHS, getConfig } from "@knowbee/core"
 
-const SAMPLE_CONFIG = `// 스폰지 노우비 · Sponzey Knowbee configuration
+const SAMPLE_CONFIG = `// 스폰지 노비 · Sponzey Knowbee configuration
 // Docs: see design/plan.md
 {
   ai: {

@@ -8,6 +8,7 @@ import { buildFollowupPrompt, createDefaultScheduleActionDependencies, executeSc
 import { decideExecutionRoute, } from "../orchestration/decide-execution-route.js";
 import { buildExecutionGraphSnapshot, EXECUTION_GRAPH_ROOT_AGENT_ID, } from "../orchestration/execution-graph-snapshot.js";
 import { formatAgentExecutionDecisionTraceRunEvent, runAgentExecutionHarness, } from "../orchestration/execution-harness.js";
+import { loadPromptTemplate } from "../memory/knowbee-md.js";
 const defaultModuleDependencies = {
     analyzeTaskIntake,
     resolveRunRoute,
@@ -39,7 +40,15 @@ function buildExecutionDecisionModelCaller(input) {
         let output = "";
         for await (const chunk of provider.chat({
             model,
-            system: "You are Knowbee's execution-decision harness. Return only the requested JSON decision object.",
+            system: loadPromptTemplate({
+                sourceId: "execution_decision_harness",
+                workDir: input.workDir,
+                variables: {
+                    policyBlock: "[Execution Harness Runtime Policy Sources]\nstatus: provided in the user prompt",
+                    allowedActions: "provided in the user prompt",
+                    contextJson: "The requested JSON decision context is provided in the user prompt.",
+                },
+            }),
             messages: [{ role: "user", content: params.prompt }],
             maxTokens: 4000,
             signal: params.signal,
@@ -268,6 +277,7 @@ export async function runIntakeBridgePass(params, dependencies, moduleDependenci
                 providerId: params.providerId,
                 provider: params.provider,
                 model: params.model,
+                workDir: params.workDir,
             });
             const decisionRoute = await decideExecutionRoute({
                 originalRequest: params.originalRequest,

@@ -102,12 +102,12 @@ describe("task015 UI route migration and rollback", () => {
   })
 
   it("redirects legacy and deprecated URLs without leaving blank screens", () => {
-    expect(resolveLegacyAdvancedRoute("/settings")).toBe("/advanced/ai")
-    expect(resolveLegacyAdvancedRoute("/settings/ai")).toBe("/advanced/ai")
-    expect(resolveLegacyAdvancedRoute("/runs")).toBe("/advanced/runs")
-    expect(resolveLegacyAdvancedRoute("/ai")).toBe("/advanced/ai")
-    expect(resolveLegacyAdvancedRoute("/channels/slack")).toBe("/advanced/channels/slack")
-    expect(resolveLegacyAdvancedRoute("/memory")).toBe("/advanced/memory")
+    expect(resolveLegacyAdvancedRoute("/settings")).toBe("/setup")
+    expect(resolveLegacyAdvancedRoute("/settings/ai")).toBe("/setup")
+    expect(resolveLegacyAdvancedRoute("/runs")).toBe("/tasks")
+    expect(resolveLegacyAdvancedRoute("/ai")).toBe("/setup")
+    expect(resolveLegacyAdvancedRoute("/channels/slack")).toBe("/setup")
+    expect(resolveLegacyAdvancedRoute("/memory")).toBe("/setup")
     expect(resolveLegacyAdvancedRoute("/chat")).toBeNull()
 
     expect(resolveRouteMigration("/release")).toEqual(expect.objectContaining({
@@ -119,12 +119,12 @@ describe("task015 UI route migration and rollback", () => {
   })
 
   it("provides a rollback route policy for the mode shell", () => {
-    expect(resolveRollbackRoute("/")).toBe("/advanced/dashboard")
-    expect(resolveRollbackRoute("/chat")).toBe("/advanced/dashboard")
-    expect(resolveRollbackRoute("/setup")).toBe("/advanced/ai")
-    expect(resolveRollbackRoute("/settings/mqtt")).toBe("/advanced/ai")
-    expect(resolveRollbackRoute("/advanced/runs")).toBe("/advanced/runs")
-    expect(resolveModeSwitchRoute("/setup", "advanced")).toBe("/advanced/ai")
+    expect(resolveRollbackRoute("/")).toBe("/chat")
+    expect(resolveRollbackRoute("/chat")).toBe("/chat")
+    expect(resolveRollbackRoute("/setup")).toBe("/setup")
+    expect(resolveRollbackRoute("/settings/mqtt")).toBe("/setup")
+    expect(resolveRollbackRoute("/advanced/runs")).toBe("/tasks")
+    expect(resolveModeSwitchRoute("/setup", "advanced")).toBe("/setup")
     expect(resolveModeSwitchRoute("/advanced/ai", "beginner")).toBe("/setup")
   })
 

@@ -20,11 +20,25 @@ export interface ExecutorGraphRelationInfo {
   duplicateName: boolean
 }
 
+export interface ExecutorGraphRelationInfoOptions {
+  rootAgentLabel?: string | undefined
+}
+
+interface RootAgentRelationText {
+  koLabel: string
+  koSubject: string
+  enLabel: string
+  enSubject: string
+  enPossessive: string
+}
+
 export function buildExecutorGraphRelationInfoMap(
   graph: ExecutorGraphWorkspace | null | undefined,
+  options: ExecutorGraphRelationInfoOptions = {},
 ): Map<string, ExecutorGraphRelationInfo> {
   const result = new Map<string, ExecutorGraphRelationInfo>()
   if (!graph) return result
+  const rootAgent = rootAgentRelationText(options.rootAgentLabel)
 
   const executorById = new Map(graph.executors.map((executor) => [executor.id, executor]))
   const incoming = new Map<string, string[]>()
@@ -74,10 +88,10 @@ export function buildExecutorGraphRelationInfoMap(
     result.set(executor.id, {
       executorId: executor.id,
       relationKind,
-      relationLabelKo: relationLabelKo(relationKind, parentLabel),
-      relationLabelEn: relationLabelEn(relationKind, parentLabel),
-      relationDetailKo: relationDetailKo(relationKind, parentLabel),
-      relationDetailEn: relationDetailEn(relationKind, parentLabel),
+      relationLabelKo: relationLabelKo(relationKind, parentLabel, rootAgent),
+      relationLabelEn: relationLabelEn(relationKind, parentLabel, rootAgent),
+      relationDetailKo: relationDetailKo(relationKind, parentLabel, rootAgent),
+      relationDetailEn: relationDetailEn(relationKind, parentLabel, rootAgent),
       selectableWithoutPath: relationKind === "root_direct",
       parentExecutorIds,
       ...(parentLabel ? { parentLabel } : {}),
@@ -91,11 +105,11 @@ export function buildExecutorGraphRelationInfoMap(
 }
 
 export function executorNameForDisplay(executor: ExecutorDraft): string {
-  return executor.name.trim() || executor.id
+  return normalizeLegacyExecutorDefaultText(executor.name.trim()) || executor.id
 }
 
 export function executorRoleLabel(executor: ExecutorDraft): string {
-  return (
+  return normalizeLegacyExecutorDefaultText(
     executor.executorProfile?.roleName?.trim() ||
     executor.advancedMapping?.nodeType ||
     runtimeModeLabel(executor.inferredRuntimeMode)
@@ -111,36 +125,81 @@ function normalizedName(name: string): string {
   return name.trim().toLocaleLowerCase() || "(blank)"
 }
 
-function relationLabelKo(kind: ExecutorGraphRelationKind, parentLabel: string | undefined): string {
-  if (kind === "root_direct") return "노우비 직속"
-  if (kind === "child") return `${parentLabel ?? "상위 실행자"}의 하위`
-  return "간접 실행자"
+export function normalizeLegacyExecutorDefaultText(value: string): string {
+  const trimmed = value.trim()
+  if (/^새 실행자\s+\d+$/.test(trimmed)) return trimmed.replace(/^새 실행자/, "새 서브 에이전트")
+  if (trimmed === "실행자") return "서브 에이전트"
+  if (trimmed === "이 실행자가 맡을 일을 적어주세요.") return "이 서브 에이전트가 맡을 일을 적어주세요."
+  return trimmed
 }
 
-function relationLabelEn(kind: ExecutorGraphRelationKind, parentLabel: string | undefined): string {
-  if (kind === "root_direct") return "Direct child of Knowbee"
-  if (kind === "child") return `Child of ${parentLabel ?? "parent executor"}`
-  return "Indirect executor"
+function rootAgentRelationText(value: string | undefined): RootAgentRelationText {
+  const trimmed = value?.trim() ?? ""
+  if (!trimmed || isDefaultMainAgentAlias(trimmed)) {
+    return {
+      koLabel: "메인 에이전트",
+      koSubject: "메인 에이전트가",
+      enLabel: "main agent",
+      enSubject: "The main agent",
+      enPossessive: "the main agent's",
+    }
+  }
+  return {
+    koLabel: trimmed,
+    koSubject: withKoreanSubjectParticle(trimmed),
+    enLabel: trimmed,
+    enSubject: trimmed,
+    enPossessive: `${trimmed}'s`,
+  }
 }
 
-function relationDetailKo(kind: ExecutorGraphRelationKind, parentLabel: string | undefined): string {
+function isDefaultMainAgentAlias(value: string): boolean {
+  const normalized = value.trim().normalize("NFKC").toLocaleLowerCase()
+  return normalized === "knowbee" || normalized === "노비"
+}
+
+function withKoreanSubjectParticle(value: string): string {
+  return `${value}${hasKoreanFinalConsonant(value) ? "이" : "가"}`
+}
+
+function hasKoreanFinalConsonant(value: string): boolean {
+  const lastHangul = [...value.trim()].reverse().find((char) => /[가-힣]/u.test(char))
+  if (!lastHangul) return false
+  const code = lastHangul.charCodeAt(0) - 0xac00
+  if (code < 0 || code > 11171) return false
+  return code % 28 !== 0
+}
+
+function relationLabelKo(kind: ExecutorGraphRelationKind, parentLabel: string | undefined, rootAgent: RootAgentRelationText): string {
+  if (kind === "root_direct") return `${rootAgent.koLabel} 직속`
+  if (kind === "child") return `${parentLabel ?? "상위 서브 에이전트"}의 하위`
+  return "간접 서브 에이전트"
+}
+
+function relationLabelEn(kind: ExecutorGraphRelationKind, parentLabel: string | undefined, rootAgent: RootAgentRelationText): string {
+  if (kind === "root_direct") return `Direct child of ${rootAgent.enLabel}`
+  if (kind === "child") return `Child of ${parentLabel ?? "parent sub-agent"}`
+  return "Indirect sub-agent"
+}
+
+function relationDetailKo(kind: ExecutorGraphRelationKind, parentLabel: string | undefined, rootAgent: RootAgentRelationText): string {
   if (kind === "root_direct") {
-    return "채널이나 사용자 요청이 들어오면 노우비가 바로 후보로 검토할 수 있는 실행자입니다."
+    return `채널이나 사용자 요청이 들어오면 ${rootAgent.koSubject} 바로 후보로 검토할 수 있는 서브 에이전트입니다.`
   }
   if (kind === "child") {
-    return `${parentLabel ?? "상위 실행자"}를 통해 위임 흐름에 들어갑니다. 실행 때는 연결 경로가 필요합니다.`
+    return `${parentLabel ?? "상위 서브 에이전트"}를 통해 위임 흐름에 들어갑니다. 실행 때는 연결 경로가 필요합니다.`
   }
-  return "노우비가 바로 고르는 후보가 아니라 연결된 위임 흐름을 거쳐 도달하는 실행자입니다."
+  return `${rootAgent.koSubject} 바로 고르는 후보가 아니라 연결된 위임 흐름을 거쳐 도달하는 서브 에이전트입니다.`
 }
 
-function relationDetailEn(kind: ExecutorGraphRelationKind, parentLabel: string | undefined): string {
+function relationDetailEn(kind: ExecutorGraphRelationKind, parentLabel: string | undefined, rootAgent: RootAgentRelationText): string {
   if (kind === "root_direct") {
-    return "Knowbee can consider this executor directly when a channel or user request arrives."
+    return `${rootAgent.enSubject} can consider this sub-agent directly when a channel or user request arrives.`
   }
   if (kind === "child") {
-    return `Execution reaches this node through ${parentLabel ?? "its parent executor"}; a connection path is required at runtime.`
+    return `Execution reaches this sub-agent through ${parentLabel ?? "its parent sub-agent"}; a connection path is required at runtime.`
   }
-  return "This executor is reached through the delegation flow, not selected directly from Knowbee's root decision."
+  return `This sub-agent is reached through the delegation flow, not selected directly from ${rootAgent.enPossessive} root decision.`
 }
 
 function runtimeModeLabel(mode: ExecutorDraft["inferredRuntimeMode"]): string {

@@ -301,15 +301,21 @@ function buildReviewTile(
       : "draft"
 
   switch (stepId) {
-    case "personal":
+    case "personal": {
+      const userName = draft.personal.displayName || draft.personal.profileName
       return {
         stepId,
         title: step?.label ?? t("개인 정보", "Personal"),
         tone: defaultTone,
-        summary: `${draft.personal.profileName || t("이름 없음", "No profile")} · ${draft.personal.language || "-"}`,
-        details: [draft.personal.timezone || "-", draft.personal.workspace || t("작업 폴더 미입력", "Workspace missing")],
+        summary: `${userName || t("사용자 이름 없음", "No user name")} · ${draft.personal.language || "-"}`,
+        details: [
+          `${t("메인 에이전트", "Main agent")}: ${draft.mainAgent?.name || t("노비", "Knowbee")}`,
+          draft.personal.timezone || "-",
+          draft.personal.workspace || t("작업 폴더 미입력", "Workspace missing"),
+        ],
         badges: ["profile", draft.personal.workspace.trim() ? "workspace" : "workspace:missing"],
       }
+    }
     case "ai_backends": {
       const activeBackend = draft.aiBackends.find((backend) => backend.enabled)
       return {

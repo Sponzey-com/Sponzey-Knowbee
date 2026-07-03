@@ -19,7 +19,7 @@ export const EXECUTOR_WORKSPACE_RECOMMENDED_EXECUTORS: ExecutorWorkspaceRecommen
   {
     id: "customer-intake",
     labelKo: "고객 접수 담당자",
-    labelEn: "Customer intake executor",
+    labelEn: "Customer intake sub-agent",
     descriptionKo: "요청을 접수하고 필요한 정보를 확인한다.",
     descriptionEn: "Receives the request and checks required information.",
   },
@@ -33,7 +33,7 @@ export const EXECUTOR_WORKSPACE_RECOMMENDED_EXECUTORS: ExecutorWorkspaceRecommen
   {
     id: "operator",
     labelKo: "운영 담당자",
-    labelEn: "Operations executor",
+    labelEn: "Operations sub-agent",
     descriptionKo: "정해진 절차에 따라 업무를 처리한다.",
     descriptionEn: "Handles work according to the agreed process.",
   },
@@ -105,8 +105,8 @@ export function ExecutorWorkspaceShell({
   const hasWorkflow = executorCount > 0 || connectionCount > 0
   const isDeleteDisabled = deleteDisabled ?? (!hasWorkflow || !onDeleteExecutor)
   const guideSteps = [
-    text("1. 서브에이전트 추가", "1. Add sub-agent"),
-    text("2. 서브에이전트끼리 연결", "2. Connect sub-agents"),
+    text("1. 서브 에이전트 추가", "1. Add sub-agent"),
+    text("2. 서브 에이전트끼리 연결", "2. Connect sub-agents"),
     text("3. 요청이 오면 자동 실행", "3. Auto-run on request"),
   ]
 
@@ -122,14 +122,14 @@ export function ExecutorWorkspaceShell({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-stone-400">
-              {text("서브에이전트 설정", "Sub-agent settings")}
+              {text("서브 에이전트 설정", "Sub-agent settings")}
             </div>
             <h1 className="mt-0.5 text-lg font-semibold leading-6">
-              {text("서브에이전트 구성하기", "Configure sub-agents")}
+              {text("서브 에이전트 구성하기", "Configure sub-agents")}
             </h1>
             <p className="mt-1 text-xs leading-5 text-stone-500">
               {text(
-                "서브에이전트를 추가하고 서로 선으로 연결하세요. 채널이나 사용자 요청이 오면 노우비가 이 구성으로 일을 위임합니다.",
+                "서브 에이전트를 추가하고 서로 선으로 연결하세요. 채널이나 사용자 요청이 오면 노비가 이 구성으로 일을 위임합니다.",
                 "Add sub-agents and connect them with lines. Knowbee delegates work through this setup when a channel or user request arrives.",
               )}
             </p>
@@ -158,7 +158,7 @@ export function ExecutorWorkspaceShell({
               className="min-h-8 min-w-0 whitespace-normal rounded-md bg-stone-900 px-3 py-1.5 text-xs font-semibold leading-4 text-white disabled:cursor-not-allowed disabled:opacity-50"
               data-testid="executor-workspace-top-add-executor"
             >
-              {text("노드 추가", "Add node")}
+              {text("서브 에이전트 추가", "Add sub-agent")}
             </button>
             <button
               type="button"
@@ -227,7 +227,7 @@ export function ExecutorWorkspaceShell({
                 className="min-h-10 min-w-0 whitespace-normal rounded-md bg-stone-900 px-3 py-2 text-left text-sm font-semibold leading-5 text-white"
                 data-testid="executor-workspace-add-executor"
               >
-                {text("+ 실행자 추가", "+ Add executor")}
+                {text("+ 서브 에이전트 추가", "+ Add sub-agent")}
               </button>
               <button
                 type="button"
@@ -241,21 +241,21 @@ export function ExecutorWorkspaceShell({
 
             <section className="mt-4" data-testid="executor-workspace-executor-list">
               <div className="text-xs font-semibold text-stone-950">
-                {text("실행자 목록", "Executors")}
+                {text("서브 에이전트 목록", "Sub-agents")}
               </div>
               <div className="mt-1 rounded-md border border-stone-200 bg-stone-50 px-2.5 py-2 text-[11px] leading-4 text-stone-600">
                 {executorCount === 0
-                  ? text("아직 실행자가 없습니다.", "No executors yet.")
+                  ? text("아직 서브 에이전트가 없습니다.", "No sub-agents yet.")
                   : text(
-                      `${executorCount}명 실행자 / ${connectionCount}개 연결`,
-                      `${executorCount} executors / ${connectionCount} connections`,
+                      `${executorCount}개 서브 에이전트 / ${connectionCount}개 연결`,
+                      `${executorCount} sub-agents / ${connectionCount} connections`,
                     )}
               </div>
             </section>
 
             <section className="mt-4" data-testid="executor-workspace-recommended-executors">
               <div className="text-xs font-semibold text-stone-950">
-                {text("추천 실행자", "Recommended executors")}
+                {text("추천 서브 에이전트", "Recommended sub-agents")}
               </div>
               <div className="mt-2 grid gap-1.5">
                 {recommendedExecutors.map((executor) => (
@@ -314,7 +314,7 @@ function ExecutorWorkspaceEmptyStart({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h2 className="text-base font-semibold text-stone-950">
-            {text("첫 서브에이전트 구성 만들기", "Create your first sub-agent setup")}
+            {text("첫 서브 에이전트 구성 만들기", "Create your first sub-agent setup")}
           </h2>
           <div className="mt-1 flex flex-wrap gap-1.5">
             {recommendedExecutors.slice(0, 4).map((executor) => (
@@ -334,7 +334,7 @@ function ExecutorWorkspaceEmptyStart({
             className="min-h-9 min-w-0 whitespace-normal rounded-md bg-stone-900 px-3 py-2 text-xs font-semibold leading-4 text-white"
             data-testid="executor-workspace-first-add-executor"
           >
-            {text("+ 실행자 추가", "+ Add executor")}
+            {text("+ 서브 에이전트 추가", "+ Add sub-agent")}
           </button>
           <button
             type="button"

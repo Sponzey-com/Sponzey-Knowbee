@@ -1,4 +1,4 @@
-# 스폰지 노우비 · Sponzey Knowbee
+# 스폰지 노비 · Sponzey Knowbee
 
 [English](./README.md) | [한국어](./README.ko.md)
 

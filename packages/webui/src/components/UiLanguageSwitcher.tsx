@@ -1,3 +1,4 @@
+import * as React from "react"
 import { pickUiText, useUiLanguageStore } from "../stores/uiLanguage"
 
 export function UiLanguageSwitcher({ className = "" }: { className?: string }) {

@@ -120,8 +120,8 @@ function decision(input: {
     selected_connection_path: input.selectedConnectionPath,
     task_profile: {
       title: "토폴로지 entry 선택",
-      summary: "선택된 실행자가 노우비 직속 하위인지 또는 연결 경로로 접근 가능한지 검증한다.",
-      goals: ["노우비 직속 하위는 바로 entry로 실행한다."],
+      summary: "선택된 실행자가 노비 직속 하위인지 또는 연결 경로로 접근 가능한지 검증한다.",
+      goals: ["노비 직속 하위는 바로 entry로 실행한다."],
       task_units: [{
         id: "unit:entry",
         title: "entry 검증",

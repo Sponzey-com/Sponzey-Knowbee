@@ -1,3 +1,4 @@
+import * as React from "react"
 import type { SetupPersonalDraft } from "../../contracts/setup"
 import { useUiI18n } from "../../lib/ui-i18n"
 
@@ -27,37 +28,45 @@ function getTimezoneOptions(current: string): string[] {
 export function PersonalSettingsForm({
   value,
   onChange,
+  mainAgentName,
+  onMainAgentNameChange,
   errors,
 }: {
   value: SetupPersonalDraft
   onChange: (patch: Partial<SetupPersonalDraft>) => void
+  mainAgentName?: string
+  onMainAgentNameChange?: (name: string) => void
   errors?: Partial<Record<keyof SetupPersonalDraft, string>>
 }) {
   const timezoneOptions = getTimezoneOptions(value.timezone)
   const { text } = useUiI18n()
+  const userName = value.displayName || value.profileName
+  const userNameError = errors?.displayName ?? errors?.profileName
 
   return (
     <div className="space-y-5 rounded-2xl border border-stone-200 bg-white p-5">
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <label className="mb-1 block text-sm font-medium text-stone-700">{text("이름 (Profile Name) *", "Name (Profile Name) *")}</label>
+          <label className="mb-1 block text-sm font-medium text-stone-700">{text("사용자 이름 *", "User name *")}</label>
           <input
             className="input"
-            value={value.profileName}
-            onChange={(event) => onChange({ profileName: event.target.value })}
-            placeholder={text("사용할 이름을 적어주세요", "Enter the name to use")}
+            value={userName}
+            onChange={(event) => onChange({ profileName: event.target.value, displayName: event.target.value })}
+            placeholder={text("사용자를 부를 이름을 적어주세요", "Enter the name used for you")}
           />
-          {errors?.profileName ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.profileName}</p> : null}
+          {userNameError ? <p className="mt-2 text-xs leading-5 text-red-600">{userNameError}</p> : null}
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium text-stone-700">{text("표시 이름 (Display Name) *", "Display Name *")}</label>
+          <label className="mb-1 block text-sm font-medium text-stone-700">{text("메인 에이전트 이름", "Main agent name")}</label>
           <input
             className="input"
-            value={value.displayName}
-            onChange={(event) => onChange({ displayName: event.target.value })}
-            placeholder={text("화면에 보여줄 이름을 적어주세요", "Enter the name shown on screen")}
+            value={mainAgentName ?? ""}
+            onChange={(event) => onMainAgentNameChange?.(event.target.value)}
+            placeholder={text("예: 노비", "Example: Knowbee")}
           />
-          {errors?.displayName ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.displayName}</p> : null}
+          <p className="mt-2 text-xs leading-5 text-stone-500">
+            {text("에이전트가 자기 자신을 지칭할 때 쓰는 이름입니다.", "This is the name the agent uses for itself.")}
+          </p>
         </div>
       </div>
 
@@ -109,7 +118,8 @@ export function PersonalSettingsForm({
 
       <div className="rounded-2xl bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-600">
         <div className="font-medium text-stone-800">{text("이 값은 어디에 쓰이나요?", "Where is this used?")}</div>
-        <div className="mt-2">{text("이름과 표시 이름은 Knowbee가 사용자를 구분하고 화면에 보여줄 때 사용합니다.", "Name and display name are used when Knowbee identifies you and shows your profile on screen.")}</div>
+        <div className="mt-2">{text("사용자 이름은 대화와 화면에서 사용자를 지칭할 때 사용합니다.", "The user name is used to refer to you in conversations and on screen.")}</div>
+        <div>{text("메인 에이전트 이름은 에이전트가 자기 자신을 소개하고 응답할 때 사용하는 이름입니다.", "The main agent name is used when the agent introduces or refers to itself.")}</div>
         <div>{text("기본 언어와 시간대는 이후 응답 언어, 일정 처리, 알림 시간 계산의 기준값이 됩니다.", "Default language and timezone are used for response language, scheduling, and notification timing.")}</div>
         <div>{text("기본 작업 폴더는 이후 파일 작업이나 자동화가 시작될 때 기본 위치로 재사용됩니다.", "The default workspace is reused as the starting location for later file work and automation.")}</div>
       </div>

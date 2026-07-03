@@ -998,8 +998,8 @@ export function SettingsPage() {
         return (
           <div className="space-y-4">
             <CompactSection
-              title={text("토폴로지 실행 모드", "Topology execution mode")}
-              description={text("저장된 토폴로지 노드를 실행자로 보고 채널 요청을 노드 흐름으로 위임할지 정합니다.", "Use saved topology nodes as executors and decide whether channel requests are delegated through the node flow.")}
+              title={text("서브 에이전트 실행 모드", "Sub-agent execution mode")}
+              description={text("저장된 서브 에이전트 구성을 사용해 채널 요청을 위임할지 정합니다.", "Use saved sub-agent settings to decide whether channel requests are delegated through the sub-agent flow.")}
             >
               <OrchestrationSettingsPanel
                 value={orchestrationDraft}
@@ -2042,7 +2042,7 @@ function OrchestrationSettingsPanel({
           <div className="mt-2 text-sm font-semibold text-stone-900">{runtime?.requestedMode ?? draft.mode}</div>
         </div>
         <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("실행자 노드", "Executor nodes")}</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("서브 에이전트", "Sub-agents")}</div>
           <div className="mt-2 text-sm font-semibold text-stone-900">{runtime?.activeSubAgentCount ?? 0}</div>
         </div>
         <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3">
@@ -2058,7 +2058,7 @@ function OrchestrationSettingsPanel({
       ) : null}
       {requestedButBlocked ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
-          {text("오케스트레이션 모드를 선택했지만 feature flag가 꺼져 있으면 단일 노우비로 동작합니다.", "Orchestration mode falls back to single Knowbee while the feature flag is off.")}
+          {text("오케스트레이션 모드를 선택했지만 feature flag가 꺼져 있으면 단일 노비로 동작합니다.", "Orchestration mode falls back to single Knowbee while the feature flag is off.")}
         </div>
       ) : null}
       {error ? (
@@ -2072,7 +2072,7 @@ function OrchestrationSettingsPanel({
         </div>
       ) : null}
       <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-600">
-        {text("위임 작업 수와 대상 실행자는 요청 내용, 저장된 토폴로지 연결, 각 노드의 이름과 성격을 기준으로 자동 결정됩니다.", "Delegated task count and target executors are decided automatically from the request, saved topology connections, and each node's name and definition.")}
+        {text("위임 작업 수와 대상 서브 에이전트는 요청 내용, 저장된 연결, 각 서브 에이전트의 이름과 성격을 기준으로 자동 결정됩니다.", "Delegated task count and target sub-agents are decided automatically from the request, saved connections, and each sub-agent's name and definition.")}
       </div>
       {runtime?.reasonCode === "no_active_sub_agents" ? (
         <div
@@ -2080,8 +2080,8 @@ function OrchestrationSettingsPanel({
           data-testid="orchestration-topology-guidance"
         >
           {text(
-            "토폴로지 화면에서 노드를 추가한 뒤 저장하면 이 화면의 활성 에이전트에 바로 반영됩니다. 저장하지 않은 캔버스 변경은 런타임 실행자 목록에 포함되지 않습니다.",
-            "Add nodes in the topology screen and save; they will be reflected here as active agents. Unsaved canvas changes are not included in the runtime executor list.",
+            "서브 에이전트 설정 화면에서 서브 에이전트를 추가한 뒤 저장하면 이 화면의 활성 에이전트에 바로 반영됩니다. 저장하지 않은 캔버스 변경은 런타임 서브 에이전트 목록에 포함되지 않습니다.",
+            "Add sub-agents in the sub-agent settings screen and save; they will be reflected here as active agents. Unsaved canvas changes are not included in the runtime sub-agent list.",
           )}
         </div>
       ) : null}
@@ -2095,8 +2095,8 @@ function OrchestrationSettingsPanel({
             disabled={loading || saving}
             onChange={(event) => onChange({ mode: event.target.value as OrchestrationMode })}
           >
-            <option value="single_knowbee">{text("단일 노우비", "Single Knowbee")}</option>
-            <option value="orchestration">{text("토폴로지 노드 사용", "Use topology nodes")}</option>
+            <option value="single_knowbee">{text("단일 노비", "Single Knowbee")}</option>
+            <option value="orchestration">{text("서브 에이전트 사용", "Use sub-agents")}</option>
           </select>
         </div>
         <div>

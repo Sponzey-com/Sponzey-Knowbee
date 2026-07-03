@@ -219,9 +219,9 @@ function selectedNodeEvent(input: {
   return {
     id: `${input.topologyRunId}:selected:${input.executorId}`,
     kind: "selected_node",
-    labelKo: "선택된 노드",
-    labelEn: "Selected node",
-    summaryKo: `${executorName} 노드가 실행 후보로 선택되었습니다.`,
+    labelKo: "선택된 서브 에이전트",
+    labelEn: "Selected sub-agent",
+    summaryKo: `${executorName} 서브 에이전트가 실행 후보로 선택되었습니다.`,
     summaryEn: `${executorName} was selected as the execution candidate.`,
     tone: "blue",
     at: input.at,
@@ -360,7 +360,7 @@ function traceEventCopy(kind: TopologyExecutionTraceEventKind): {
 } {
   switch (kind) {
     case "selected_node":
-      return { labelKo: "선택된 노드", labelEn: "Selected node", tone: "blue" }
+      return { labelKo: "선택된 서브 에이전트", labelEn: "Selected sub-agent", tone: "blue" }
     case "execution_started":
       return { labelKo: "실행 시작", labelEn: "Execution started", tone: "blue" }
     case "sub_agent_dispatch":
@@ -368,7 +368,7 @@ function traceEventCopy(kind: TopologyExecutionTraceEventKind): {
     case "prompt_preflight_blocked":
       return { labelKo: "안전 경계 차단", labelEn: "Safety boundary blocked", tone: "amber" }
     case "redelegation":
-      return { labelKo: "다른 실행자 검토", labelEn: "Redelegation", tone: "violet" }
+      return { labelKo: "다른 서브 에이전트 검토", labelEn: "Redelegation", tone: "violet" }
     case "self_solve":
       return { labelKo: "처음부터 직접 처리", labelEn: "Self solve", tone: "stone" }
     case "self_solve_after_delegation_failure":
@@ -389,7 +389,7 @@ function traceSummaryKo(
   traceEvent: EnterpriseTopologyTraceEventRecord,
   executorName: string | undefined,
 ): string {
-  const target = executorName ?? "노우비"
+  const target = executorName ?? "노비"
   if (kind === "prompt_preflight_blocked") {
     return `${target} 실행이 안전 경계에서 멈췄습니다. 코드: ${traceEvent.reasonCode}`
   }

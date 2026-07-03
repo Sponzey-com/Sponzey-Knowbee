@@ -345,7 +345,7 @@ export class OpenAIProvider {
         };
         const baseBody = {
             model: params.model,
-            instructions: params.system?.trim() || "You are Codex.",
+            instructions: params.system?.trim() || "",
             store: false,
             stream: true,
         };

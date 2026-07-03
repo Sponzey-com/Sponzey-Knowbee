@@ -12,6 +12,7 @@ import type { TaskModel } from "../contracts/tasks"
 import { ExecutorGraphCanvas } from "../components/topology/ExecutorGraphCanvas"
 import { ExecutorInspector } from "../components/topology/ExecutorInspector"
 import { ExecutorWorkspaceShell } from "../components/topology/ExecutorWorkspaceShell"
+import { UnifiedSettingsSummaryPanel } from "../components/setup/UnifiedSettingsSummaryPanel"
 import {
   EXECUTOR_GRAPH_SCHEMA_VERSION,
   EXECUTOR_GRAPH_SOURCE_OF_TRUTH,
@@ -49,17 +50,21 @@ import {
   type TopologyExecutionTraceEventViewModel,
   type TopologyExecutionTraceViewModel,
 } from "../lib/topology-execution-trace"
+import { normalizeLegacyExecutorDefaultText } from "../lib/executor-graph-relations"
 import {
   applyTopologyExecutorToSetupDraft,
   buildSubAgentTopologyProjection,
   hasSetupSubAgentTopology,
 } from "../lib/topology-sub-agent-sync"
 import { useUiI18n } from "../lib/ui-i18n"
+import { buildUnifiedSettingsViewForSetupDraft } from "../lib/unified-settings-view"
+import { createDefaultBeginnerSubAgent } from "../lib/beginner-sub-agents"
 import type { EnterpriseTopologyRunTraceProjection } from "../lib/enterprise-topology-operations"
 import { useSetupStore } from "../stores/setup"
+import type { UiLanguage } from "../stores/uiLanguage"
 
 const DEFAULT_TOPOLOGY_ID = "workspace:draft"
-const DEFAULT_TOPOLOGY_NAME = "서브에이전트 구성"
+const DEFAULT_TOPOLOGY_NAME = "서브 에이전트 구성"
 
 const TOPOLOGY_WORKSPACE_LAYER_SET = new Set<TopologyWorkspaceLayer>([
   "build",
@@ -145,15 +150,15 @@ export function TopologyWorkspaceRouteShell({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">
-              {text("서브에이전트 설정", "Sub-agent settings")}
+              {text("서브 에이전트 설정", "Sub-agent settings")}
             </div>
             <h1 className="mt-1 text-2xl font-semibold">
               {effectiveExposureMode === "simple"
-                ? text("서브에이전트 구성하기", "Configure sub-agents")
-                : text("서브에이전트 설정", "Sub-agent settings")}
+                ? text("서브 에이전트 구성하기", "Configure sub-agents")
+                : text("서브 에이전트 설정", "Sub-agent settings")}
             </h1>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label={text("서브에이전트 설정 모드", "Sub-agent settings modes")}>
+          <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label={text("서브 에이전트 설정 모드", "Sub-agent settings modes")}>
             {visibleLayers.map((layer) => (
               <button
                 key={layer.layer}
@@ -275,15 +280,15 @@ export function addExecutorNodeV2(
   const node: ExecutorNodeV2 = {
     id,
     name: nodeName,
-    roleName: "실행자",
-    description: "이 실행자가 맡을 일을 적어주세요.",
+    roleName: "서브 에이전트",
+    description: "이 서브 에이전트가 맡을 일을 적어주세요.",
     position: nextExecutorPosition(topology.nodes.length),
     status: "active",
     profile: defaultExecutorProfile({
       id,
       name: nodeName,
-      roleName: "실행자",
-      description: "이 실행자가 맡을 일을 적어주세요.",
+      roleName: "서브 에이전트",
+      description: "이 서브 에이전트가 맡을 일을 적어주세요.",
     }) as unknown as ExecutorNodeV2["profile"],
   }
   return {
@@ -415,7 +420,7 @@ export function autoLayoutExecutorTopologyV2(
 
 export function TopologyWorkspacePage() {
   const location = useLocation()
-  const { text } = useUiI18n()
+  const { text, language } = useUiI18n()
   const exposureMode = React.useMemo(
     () => resolveTopologyWorkspaceExposureModeForRoute({
       search: location.search,
@@ -433,6 +438,7 @@ export function TopologyWorkspacePage() {
         <ExecutorTopologyV2Workspace
           selectedLayer={model.selectedLayer}
           text={text}
+          language={language}
         />
       )}
     </TopologyWorkspaceRouteShell>
@@ -442,9 +448,11 @@ export function TopologyWorkspacePage() {
 function ExecutorTopologyV2Workspace({
   selectedLayer,
   text,
+  language,
 }: {
   selectedLayer: TopologyWorkspaceLayer
   text: ReturnType<typeof useUiI18n>["text"]
+  language: UiLanguage
 }) {
   const [topology, setTopology] = React.useState(() => createEmptyExecutorTopologyV2())
   const [selectedExecutorId, setSelectedExecutorId] = React.useState<string | null>(null)
@@ -499,7 +507,19 @@ function ExecutorTopologyV2Workspace({
       : null,
     [setupDraft],
   )
+  const mainAgentDisplayName = React.useMemo(
+    () => setupDraft.mainAgent?.name.trim() || text("노비", "Knowbee"),
+    [setupDraft.mainAgent?.name, text],
+  )
   const effectiveTopology = subAgentProjection?.topology ?? topology
+  const unifiedSettingsView = React.useMemo(
+    () => buildUnifiedSettingsViewForSetupDraft({
+      draft: setupDraft,
+      language,
+      selectedAgentId: selectedExecutorId,
+    }),
+    [language, selectedExecutorId, setupDraft],
+  )
 
   React.useEffect(() => {
     if (!subAgentProjection) return
@@ -641,15 +661,19 @@ function ExecutorTopologyV2Workspace({
   }, [])
 
   const handleAddExecutor = React.useCallback(() => {
-    setTopology((current) => {
-      const result = addExecutorNodeV2(current)
-      topologyRef.current = result.topology
-      setSelectedExecutorId(result.node.id)
-      return result.topology
-    })
+    const result = createDefaultBeginnerSubAgent(setupDraft, Date.now(), language)
+    if (!result.ok || !result.draft) {
+      setSaveStatus("failed")
+      setErrorMessage(result.message)
+      return
+    }
+
+    const created = result.draft.subAgents?.items.at(-1)
+    useSetupStore.setState({ draft: result.draft })
+    setSelectedExecutorId(created?.agentId ?? null)
     setSaveStatus("idle")
     setErrorMessage(null)
-  }, [])
+  }, [language, setupDraft])
 
   const handleDeleteExecutor = React.useCallback(() => {
     if (!selectedExecutorId) return
@@ -707,7 +731,7 @@ function ExecutorTopologyV2Workspace({
       showLeftRail={false}
       saveDisabled={saveStatus === "loading" || !validation.ok}
       deleteDisabled={!selectedExecutorId || Boolean(subAgentProjection && selectedExecutorId === "agent:knowbee")}
-      onAddExecutor={subAgentProjection ? undefined : handleAddExecutor}
+      onAddExecutor={handleAddExecutor}
       onDeleteExecutor={handleDeleteExecutor}
       onSaveDraft={() => {
         if (subAgentProjection) {
@@ -736,6 +760,7 @@ function ExecutorTopologyV2Workspace({
             executorStatuses={traceView.executorStatuses}
             edgeStatuses={traceView.edgeStatuses}
             subAgentSummaries={subAgentProjection?.summaries}
+            rootAgentLabel={mainAgentDisplayName}
             onSelectExecutor={setSelectedExecutorId}
             onConnectExecutors={subAgentProjection ? undefined : handleConnectExecutors}
             onMoveExecutor={handleMoveExecutor}
@@ -758,6 +783,9 @@ function ExecutorTopologyV2Workspace({
             traceErrorMessage={traceErrorMessage}
             text={text}
           />
+          <div className="mt-3">
+            <UnifiedSettingsSummaryPanel view={unifiedSettingsView} variant="compact" />
+          </div>
           <div className="mt-3">
             <ExecutorInspector
               executor={selectedExecutor}
@@ -819,7 +847,7 @@ export function TopologyV2FlowStatusCard({
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] font-semibold text-stone-700">
         <div className="rounded-md bg-white px-2 py-1.5">
-          {executorCount} {text("노드", "nodes")}
+          {executorCount} {text("서브 에이전트", "sub-agents")}
         </div>
         <div className="rounded-md bg-white px-2 py-1.5">
           {connectionCount} {text("연결", "connections")}
@@ -830,8 +858,8 @@ export function TopologyV2FlowStatusCard({
       </div>
       <p className="mt-2 text-[11px] leading-5 text-stone-500">
         {selectedExecutor
-          ? text(`${selectedExecutor.name} 노드를 편집 중입니다.`, `Editing ${selectedExecutor.name}.`)
-          : text("노드를 선택하면 이름과 성격을 바로 수정할 수 있습니다.", "Select a node to edit its name and character.")}
+          ? text(`${selectedExecutor.name} 서브 에이전트를 편집 중입니다.`, `Editing ${selectedExecutor.name}.`)
+          : text("서브 에이전트를 선택하면 이름과 성격을 바로 수정할 수 있습니다.", "Select a sub-agent to edit its name and character.")}
       </p>
       <div className="mt-3 space-y-2" data-testid="topology-v2-trace-events">
         {visibleTraceEvents.length > 0 ? visibleTraceEvents.map((event) => (
@@ -926,8 +954,8 @@ function validationIssueMessage(
 ): string {
   if (issues.some((issue) => issue.code === "duplicate_node_name")) {
     return text(
-      "같은 이름의 실행자가 있습니다. 실행자 이름은 서로 달라야 저장할 수 있습니다.",
-      "Executor names must be unique before saving.",
+      "같은 이름의 서브 에이전트가 있습니다. 서브 에이전트 이름은 서로 달라야 저장할 수 있습니다.",
+      "Sub-agent names must be unique before saving.",
     )
   }
   return text("이름과 성격과 하는 일을 입력한 뒤 저장하세요.", "Enter name and work description before saving.")
@@ -941,8 +969,8 @@ function nextExecutorNodeName(topology: ExecutorTopologyV2): string {
       .filter((name) => name.length > 0),
   )
   let index = topology.nodes.length + 1
-  while (usedNames.has(normalizeExecutorNodeNameForUi(`새 실행자 ${index}`))) index += 1
-  return `새 실행자 ${index}`
+  while (usedNames.has(normalizeExecutorNodeNameForUi(`새 서브 에이전트 ${index}`))) index += 1
+  return `새 서브 에이전트 ${index}`
 }
 
 function normalizeExecutorNodeNameForUi(value: string): string {
@@ -1052,22 +1080,28 @@ function activeExecutorNodes(topology: ExecutorTopologyV2): ExecutorNodeV2[] {
 }
 
 function executorDraftFromExecutorNodeV2(node: ExecutorNodeV2, now: number | string): ExecutorDraft {
-  const profile = executorProfileFromExecutorNodeV2(node)
+  const normalizedNode: ExecutorNodeV2 = {
+    ...node,
+    name: normalizeLegacyExecutorDefaultText(node.name),
+    description: normalizeLegacyExecutorDefaultText(node.description),
+    roleName: node.roleName ? normalizeLegacyExecutorDefaultText(node.roleName) : node.roleName,
+  }
+  const profile = executorProfileFromExecutorNodeV2(normalizedNode)
   const inferred = createExecutorDraftFromInference({
-    id: node.id,
-    sourceNodeId: node.id,
-    name: node.name,
-    description: node.description,
+    id: normalizedNode.id,
+    sourceNodeId: normalizedNode.id,
+    name: normalizedNode.name,
+    description: normalizedNode.description,
     executorProfile: profile,
     now,
   })
   const confirmed = executorUnderstandingConfirmed(node.metadata)
   return {
     ...inferred,
-    name: node.name,
-    description: node.description,
-    ...(node.definitionQuickChips?.length ? { definitionQuickChips: [...node.definitionQuickChips] } : {}),
-    position: node.position,
+    name: normalizedNode.name,
+    description: normalizedNode.description,
+    ...(normalizedNode.definitionQuickChips?.length ? { definitionQuickChips: [...normalizedNode.definitionQuickChips] } : {}),
+    position: normalizedNode.position,
     executorProfile: profile,
     ...(confirmed ? {
       userConfirmed: true,
@@ -1078,11 +1112,23 @@ function executorDraftFromExecutorNodeV2(node: ExecutorNodeV2, now: number | str
 
 function executorProfileFromExecutorNodeV2(node: ExecutorNodeV2): ExecutorProfileDraft {
   const profile = node.profile as unknown
-  if (isExecutorProfile(profile)) return profile
+  if (isExecutorProfile(profile)) {
+    const displayName = normalizeLegacyExecutorDefaultText(profile.displayName)
+    const roleName = normalizeLegacyExecutorDefaultText(profile.roleName)
+    const definition = normalizeLegacyExecutorDefaultText(profile.definition)
+    return {
+      ...profile,
+      displayName,
+      roleName,
+      definition,
+      does: profile.does.map((item) => normalizeLegacyExecutorDefaultText(String(item))),
+      delegationScope: profile.delegationScope.map((item) => normalizeLegacyExecutorDefaultText(String(item))),
+    }
+  }
   return defaultExecutorProfile({
     id: node.id,
     name: node.name,
-    roleName: node.roleName ?? "실행자",
+    roleName: node.roleName ?? "서브 에이전트",
     description: node.description,
   })
 }

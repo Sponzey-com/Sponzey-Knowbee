@@ -160,7 +160,7 @@ export function describeRuntimeTopologyRouting(
       routing.topologyId ??
       "-"
     return text(
-      `${target} 실행자로 토폴로지를 실행합니다.`,
+      `${target} 서브 에이전트로 토폴로지를 실행합니다.`,
       `Topology execution uses ${target}.`,
     )
   }
@@ -184,8 +184,8 @@ export function describeRuntimeTopologyRouting(
   }
   if (routing.reasonCode === "entry_node_missing") {
     return text(
-      "실행을 시작할 노드가 없어 직접 실행으로 전환되었습니다.",
-      "No entry node was available, so the run fell back.",
+      "실행을 시작할 서브 에이전트가 없어 직접 실행으로 전환되었습니다.",
+      "No entry sub-agent was available, so the run fell back.",
     )
   }
   if (routing.reasonCode === "non_root_request") {
@@ -217,11 +217,11 @@ export function runtimeTopologyReasonLabel(
     case "topology_validation_blocked":
       return text("토폴로지 검증 차단", "Topology validation blocked execution")
     case "entry_node_missing":
-      return text("시작 실행자 없음", "No entry executor")
+      return text("시작 서브 에이전트 없음", "No entry sub-agent")
     case "selected_executor_missing":
-      return text("선택된 실행자 없음", "No selected executor")
+      return text("선택된 서브 에이전트 없음", "No selected sub-agent")
     case "execution_decision_selected_executor":
-      return text("검증된 실행자 선택", "Validated executor selection")
+      return text("검증된 서브 에이전트 선택", "Validated sub-agent selection")
     case "explicit_topology_target":
       return text("명시된 토폴로지 대상", "Explicit topology target")
     case "non_root_request":
@@ -271,7 +271,7 @@ export function runtimeDecisionSourceLabel(
   text: (ko: string, en: string) => string,
 ): string {
   if (!source) return text("판단 정보 없음", "No decision source")
-  if (source === "knowbee_harness") return text("노우비 실행 판단", "Knowbee execution decision")
+  if (source === "knowbee_harness") return text("노비 실행 판단", "Knowbee execution decision")
   return text("실행 판단", "Execution decision")
 }
 
@@ -281,17 +281,17 @@ export function runtimeExecutionRouteLabel(
 ): string {
   switch (route) {
     case "delegate_to_child":
-      return text("하위 실행자에게 위임", "Delegate to child executor")
+      return text("하위 서브 에이전트에게 위임", "Delegate to child sub-agent")
     case "self_solve":
     case "direct_current_agent":
-      return text("현재 실행자가 직접 처리", "Current executor handles it")
+      return text("현재 서브 에이전트가 직접 처리", "Current sub-agent handles it")
     case "root_knowbee_direct":
     case "knowbee_direct":
-      return text("노우비가 직접 처리", "Knowbee handles it")
+      return text("노비가 직접 처리", "Knowbee handles it")
     case "return_to_parent":
-      return text("상위 실행자에게 반환", "Return to parent executor")
+      return text("상위 서브 에이전트에게 반환", "Return to parent sub-agent")
     case "ask_parent":
-      return text("상위 실행자 확인", "Ask parent executor")
+      return text("상위 서브 에이전트 확인", "Ask parent sub-agent")
     case "ask_user":
       return text("사용자 확인", "Ask user")
     case "explicit_provider":
@@ -314,18 +314,18 @@ export function runtimeFallbackReasonLabel(
   switch (reason) {
     case "self_solve":
     case "direct_current_agent":
-      return text("현재 실행자가 처리", "Current executor handles it")
+      return text("현재 서브 에이전트가 처리", "Current sub-agent handles it")
     case "delegate_to_child":
-      return text("가능한 하위 실행자에게 위임", "Delegate to an available child")
+      return text("가능한 하위 서브 에이전트에게 위임", "Delegate to an available child sub-agent")
     case "return_to_parent":
-      return text("상위 실행자에게 반환", "Return to parent executor")
+      return text("상위 서브 에이전트에게 반환", "Return to parent sub-agent")
     case "ask_parent":
-      return text("상위 실행자 확인", "Ask parent executor")
+      return text("상위 서브 에이전트 확인", "Ask parent sub-agent")
     case "ask_user":
       return text("사용자 확인", "Ask user")
     case "root_knowbee_direct":
     case "knowbee_direct":
-      return text("노우비가 처리", "Knowbee handles it")
+      return text("노비가 처리", "Knowbee handles it")
     case "explicit_provider":
       return text("명시적 직접 실행", "Explicit direct execution")
     case undefined:
@@ -343,14 +343,14 @@ export function runtimeValidationStatusLabel(
     case "valid":
       return text("검증 통과", "Validation passed")
     case "selected_executor_not_direct_child":
-      return text("선택된 실행자가 현재 실행자의 직접 하위가 아님", "Selected executor is not a direct child")
+      return text("선택된 서브 에이전트가 현재 서브 에이전트의 직접 하위가 아님", "Selected sub-agent is not a direct child")
     case "selected_executor_not_in_graph":
-      return text("선택된 실행자가 그래프에 없음", "Selected executor is not in the graph")
+      return text("선택된 서브 에이전트가 그래프에 없음", "Selected sub-agent is not in the graph")
     case "selected_connection_path_invalid":
     case "inaccessible_connection_path":
       return text("선택된 연결 경로를 사용할 수 없음", "Selected connection path is not usable")
     case "executor_unavailable":
-      return text("선택된 실행자를 사용할 수 없음", "Selected executor is unavailable")
+      return text("선택된 서브 에이전트를 사용할 수 없음", "Selected sub-agent is unavailable")
     case "risk_boundary_requires_approval":
       return text("최종 검토가 필요한 위험 경계", "Risk boundary needs final review")
     case "fallback_not_allowed":
@@ -449,7 +449,7 @@ export function buildRuntimeInspectorViewModels(
       ? runtimeTopologyReasonLabel(routing.providerFallbackBlockedReasonCode, text)
       : undefined,
     routing.selectedExecutorIds.length > 0
-      ? `${text("노드", "Nodes")} ${routing.selectedExecutorIds.length}`
+      ? `${text("서브 에이전트", "Sub-agents")} ${routing.selectedExecutorIds.length}`
       : undefined,
     routing.selectedEdgeIds.length > 0
       ? `${text("연결선", "Edges")} ${routing.selectedEdgeIds.length}`
@@ -468,7 +468,7 @@ export function buildRuntimeInspectorViewModels(
       routingTone: routing.mode === "route" || routing.mode === "fallback" ? routing.mode : "unknown",
       routingSummary: describeRuntimeTopologyRouting(routing, text),
       routingPills,
-      currentExecutorName: runtimeExecutorDisplayName(routing, routing.executionDecisionCurrentExecutorId) || text("노우비", "Knowbee"),
+      currentExecutorName: runtimeExecutorDisplayName(routing, routing.executionDecisionCurrentExecutorId) || text("노비", "Knowbee"),
       selectedExecutorName:
         runtimeExecutorDisplayName(routing, selectedExecutorId) ||
         routing.entryNodeName ||
@@ -507,7 +507,7 @@ export function buildRuntimeInspectorViewModels(
       executorIds: [
         {
           id: "current",
-          label: text("현재 실행자 ID", "Current executor ID"),
+          label: text("현재 서브 에이전트 ID", "Current sub-agent ID"),
           values: routing.executionDecisionCurrentExecutorId ? [routing.executionDecisionCurrentExecutorId] : [],
         },
         {
@@ -517,12 +517,12 @@ export function buildRuntimeInspectorViewModels(
         },
         {
           id: "registered",
-          label: text("전체 등록 실행자 ID", "All registered executor IDs"),
+          label: text("전체 등록 서브 에이전트 ID", "All registered sub-agent IDs"),
           values: routing.executionDecisionAllRegisteredExecutorIds ?? routing.executionDecisionAllExecutorIds ?? [],
         },
         {
           id: "selected",
-          label: text("선택 실행자 ID", "Selected executor ID"),
+          label: text("선택 서브 에이전트 ID", "Selected sub-agent ID"),
           values: routing.executionDecisionSelectedExecutorId ? [routing.executionDecisionSelectedExecutorId] : [],
         },
         {

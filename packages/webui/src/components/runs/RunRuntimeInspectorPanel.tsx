@@ -198,7 +198,7 @@ export function RunRuntimeInspectorPanel({
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               <div className="rounded-lg bg-white px-3 py-2">
                 <div className="text-[10px] font-semibold uppercase tracking-[0.04em] text-stone-400">
-                  {text("현재 실행자", "Current executor")}
+                  {text("현재 서브 에이전트", "Current sub-agent")}
                 </div>
                 <div className="mt-1 text-sm font-semibold text-stone-950">
                   {displayText(viewModels.basic.currentExecutorName)}
@@ -206,7 +206,7 @@ export function RunRuntimeInspectorPanel({
               </div>
               <div className="rounded-lg bg-white px-3 py-2">
                 <div className="text-[10px] font-semibold uppercase tracking-[0.04em] text-stone-400">
-                  {text("선택된 실행자", "Selected executor")}
+                  {text("선택된 서브 에이전트", "Selected sub-agent")}
                 </div>
                 <div className="mt-1 text-sm font-semibold text-stone-950">
                   {displayText(viewModels.basic.selectedExecutorName)}
@@ -333,7 +333,7 @@ export function RunRuntimeInspectorPanel({
                           (task.assignedAgentId
                             ? projection.topologyRouting.executionDecisionExecutorNameById?.[task.assignedAgentId]
                             : undefined) ??
-                          text("실행자", "Executor"),
+                          text("서브 에이전트", "Sub-agent"),
                         )}`
                         : ""}
                       {task.assignmentSource ? ` · ${task.assignmentSource}` : ""}
@@ -697,7 +697,7 @@ export function RunRuntimeInspectorPanel({
                       ) : null}
                     </div>
                     <div className="mt-1 text-[11px] text-stone-500">
-                      {text("노드", "nodes")} {topologyRun.nodeRunCount} ·{" "}
+                      {text("서브 에이전트", "sub-agents")} {topologyRun.nodeRunCount} ·{" "}
                       {text("연결", "edges")} {topologyRun.observedEdgeCount} ·{" "}
                       {text("실패", "failures")} {topologyRun.failureCount}
                     </div>
@@ -743,7 +743,7 @@ export function RunRuntimeInspectorPanel({
                 data-testid="runtime-inspector-executor-scope"
               >
                 <div className="font-semibold text-stone-900">
-                  {text("실행자 ID", "Executor IDs")}
+                  {text("서브 에이전트 ID", "Sub-agent IDs")}
                 </div>
                 <div className="mt-2 grid gap-2 md:grid-cols-2">
                   {viewModels.diagnostic.executorIds.map((item) => (

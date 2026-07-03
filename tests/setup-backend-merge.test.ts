@@ -169,6 +169,91 @@ describe("setup backend merge", () => {
     expect(raw.llm).toBeUndefined()
   })
 
+  it("persists one user name and a separate main agent self-name", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-setup-backend-"))
+    tempDirs.push(stateDir)
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
+    reloadConfig()
+
+    const draft = buildSetupDraft()
+    saveSetupDraft({
+      ...draft,
+      personal: {
+        ...draft.personal,
+        profileName: "legacy-profile",
+        displayName: "마당쇠",
+      },
+      mainAgent: {
+        name: "노비대장",
+      },
+    })
+
+    const raw = parseJsonLike(readFileSync(join(stateDir, "config.json5"), "utf-8"))
+    const nextDraft = buildSetupDraft()
+
+    expect(raw.profile?.profileName).toBe("마당쇠")
+    expect(raw.profile?.displayName).toBe("마당쇠")
+    expect(raw.orchestration?.knowbee?.displayName).toBe("노비대장")
+    expect(raw.orchestration?.knowbee?.nickname).toBe("노비대장")
+    expect(nextDraft.mainAgent?.name).toBe("노비대장")
+  })
+
+  it("normalizes default main agent aliases to the selected language", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-setup-backend-"))
+    tempDirs.push(stateDir)
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
+    reloadConfig()
+
+    const draft = buildSetupDraft()
+    saveSetupDraft({
+      ...draft,
+      personal: {
+        ...draft.personal,
+        language: "ko",
+      },
+      mainAgent: {
+        name: "Knowbee",
+      },
+    })
+
+    const raw = parseJsonLike(readFileSync(join(stateDir, "config.json5"), "utf-8"))
+    const nextDraft = buildSetupDraft()
+
+    expect(raw.orchestration?.knowbee?.displayName).toBe("노비")
+    expect(raw.orchestration?.knowbee?.nickname).toBe("노비")
+    expect(nextDraft.mainAgent?.name).toBe("노비")
+  })
+
+  it("does not persist the user's profile name as the main agent self-name", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-setup-backend-"))
+    tempDirs.push(stateDir)
+    process.env["KNOWBEE_STATE_DIR"] = stateDir
+    reloadConfig()
+
+    const draft = buildSetupDraft()
+    saveSetupDraft({
+      ...draft,
+      personal: {
+        ...draft.personal,
+        profileName: "마당쇠",
+        displayName: "마당쇠",
+        language: "ko",
+      },
+      mainAgent: {
+        name: "마당쇠",
+      },
+    })
+
+    const raw = parseJsonLike(readFileSync(join(stateDir, "config.json5"), "utf-8"))
+    const nextDraft = buildSetupDraft()
+
+    expect(raw.profile?.profileName).toBe("마당쇠")
+    expect(raw.profile?.displayName).toBe("마당쇠")
+    expect(raw.orchestration?.knowbee?.displayName).toBe("노비")
+    expect(raw.orchestration?.knowbee?.nickname).toBe("노비")
+    expect(nextDraft.mainAgent?.name).toBe("노비")
+  })
+
   it("rebuilds builtin cards from the active single ai connection", () => {
     const stateDir = mkdtempSync(join(tmpdir(), "knowbee-setup-backend-"))
     tempDirs.push(stateDir)

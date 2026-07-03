@@ -10,12 +10,12 @@ import { useUiI18n } from "../../lib/ui-i18n"
 import type { EnterpriseTopologyCanvasNodeData } from "./EnterpriseTopologyCanvas"
 
 const TOPOLOGY_WORKSPACE_KIND_LABELS: Record<EnterpriseTopologyCanvasNodeData["kind"], { ko: string; en: string }> = {
-  task: { ko: "실행자", en: "Executor" },
-  decision: { ko: "판단 실행자", en: "Decision executor" },
+  task: { ko: "서브 에이전트", en: "Sub-agent" },
+  decision: { ko: "판단 서브 에이전트", en: "Decision sub-agent" },
   approval: { ko: "최종 검토", en: "Final review" },
   data: { ko: "데이터", en: "Data" },
   group: { ko: "그룹", en: "Group" },
-  work_node: { ko: "실행자", en: "Executor" },
+  work_node: { ko: "서브 에이전트", en: "Sub-agent" },
   team: { ko: "팀", en: "Team" },
   org_unit: { ko: "조직", en: "Org unit" },
   position: { ko: "직책", en: "Position" },
@@ -67,24 +67,24 @@ export const TOPOLOGY_WORKSPACE_EXECUTOR_OPTIONS: TopologyWorkspaceExecutorOptio
     kind: "knowbee",
     labelKo: "자동 처리",
     labelEn: "Auto processing",
-    descriptionKo: "노우비가 기본 실행자로 업무를 처리합니다.",
-    descriptionEn: "Knowbee handles this step with the default executor.",
+    descriptionKo: "노비가 기본 서브 에이전트로 업무를 처리합니다.",
+    descriptionEn: "Knowbee handles this step with the default sub-agent.",
     defaultExecutorId: "knowbee:default",
   },
   {
     kind: "agent",
-    labelKo: "기존 실행자 사용",
-    labelEn: "Use existing executor",
-    descriptionKo: "이미 등록된 실행자를 이 업무에만 연결합니다.",
-    descriptionEn: "Link an existing executor only to this step.",
+    labelKo: "기존 서브 에이전트 사용",
+    labelEn: "Use existing sub-agent",
+    descriptionKo: "이미 등록된 서브 에이전트를 이 업무에만 연결합니다.",
+    descriptionEn: "Link an existing sub-agent only to this step.",
     defaultExecutorId: "agent:select-existing",
   },
   {
     kind: "team",
-    labelKo: "기존 실행자 사용",
-    labelEn: "Use existing executor",
-    descriptionKo: "이미 등록된 실행자 그룹이 이 업무를 처리합니다.",
-    descriptionEn: "An existing executor group handles this step.",
+    labelKo: "기존 서브 에이전트 사용",
+    labelEn: "Use existing sub-agent",
+    descriptionKo: "이미 등록된 서브 에이전트 그룹이 이 업무를 처리합니다.",
+    descriptionEn: "An existing sub-agent group handles this step.",
     defaultExecutorId: "team:select-existing",
   },
   {
@@ -363,7 +363,7 @@ export function TopologyWorkspaceExecutorPicker({
   )
 
   return (
-    <SectionShell title={text("실행자 선택", "Executor")} testId="topology-workspace-executor-picker">
+    <SectionShell title={text("서브 에이전트 선택", "Sub-agent")} testId="topology-workspace-executor-picker">
       <div className="grid gap-1.5">
         {TOPOLOGY_WORKSPACE_EXECUTOR_OPTIONS.map((option) => {
           const active = option.kind === selectedKind && (!mapping || mapping.executorId === option.defaultExecutorId)
@@ -449,8 +449,8 @@ export function TopologyWorkspaceExecutorPicker({
             "The choice is stored only as a NodeContract runtime profile reference. AgentConfig or Team is not created as source of truth.",
           )
           : text(
-            "Tool/Data/Group은 실행자가 아니라 업무에서 참조하는 리소스입니다.",
-            "Tool/Data/Group is a referenced resource, not an executor source.",
+            "Tool/Data/Group은 서브 에이전트가 아니라 업무에서 참조하는 리소스입니다.",
+            "Tool/Data/Group is a referenced resource, not a sub-agent source.",
           )}
       </div>
     </SectionShell>

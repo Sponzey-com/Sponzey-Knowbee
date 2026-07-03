@@ -15,7 +15,7 @@ import { Layout } from "./components/Layout"
 import { buildAdminShellView } from "./lib/admin-shell"
 import { uiCatalogText } from "./lib/message-catalog"
 import { useUiI18n } from "./lib/ui-i18n"
-import { resolveLegacyAdvancedRoute } from "./lib/ui-mode"
+import { resolveLegacyAdvancedRoute, resolveUnifiedRoute } from "./lib/ui-mode"
 import { ChatPage } from "./pages/ChatPage"
 import { LoginPage } from "./pages/LoginPage"
 import { SetupPage } from "./pages/SetupPage"
@@ -50,6 +50,12 @@ function LegacyAdvancedRedirect({ from }: { from: string }) {
   const location = useLocation()
   const to = resolveLegacyAdvancedRoute(location.pathname) ?? from
   return <Navigate to={`${to}${location.search}${location.hash}`} replace />
+}
+
+function UnifiedRouteRedirect({ fallback = "/sub-agents" }: { fallback?: string }) {
+  const location = useLocation()
+  const to = resolveUnifiedRoute(location.pathname)?.to ?? fallback
+  return <Navigate to={`${to}${location.hash}`} replace />
 }
 
 function AdvancedModeNotice() {
@@ -1384,7 +1390,7 @@ export default function App() {
               setupCompleted ? (
                 <FeatureGate
                   capabilityKey="enterprise_topology_builder_ui"
-                  title="서브에이전트 설정"
+                  title="서브 에이전트 설정"
                 >
                   <LazyPage>
                     <TopologyWorkspacePage />
@@ -1401,7 +1407,7 @@ export default function App() {
               setupCompleted ? (
                 <FeatureGate
                   capabilityKey="enterprise_topology_builder_ui"
-                  title="서브에이전트 설정"
+                  title="서브 에이전트 설정"
                 >
                   <LazyPage>
                     <TopologyWorkspacePage />
@@ -1625,69 +1631,27 @@ export default function App() {
           />
           <Route
             path="/advanced/topology"
-            element={
-              setupCompleted ? (
-                <AdvancedOnly>
-                  <FeatureGate
-                    capabilityKey="enterprise_topology_builder_ui"
-                    title="서브에이전트 설정"
-                  >
-                    <LazyPage>
-                      <TopologyWorkspacePage />
-                    </LazyPage>
-                  </FeatureGate>
-                </AdvancedOnly>
-              ) : (
-                <Navigate to="/setup" replace />
-              )
-            }
+            element={setupCompleted ? <UnifiedRouteRedirect fallback="/sub-agents" /> : <Navigate to="/setup" replace />}
           />
           <Route
             path="/advanced/topology/*"
-            element={
-              setupCompleted ? (
-                <AdvancedOnly>
-                  <FeatureGate
-                    capabilityKey="enterprise_topology_builder_ui"
-                    title="서브에이전트 설정"
-                  >
-                    <LazyPage>
-                      <TopologyWorkspacePage />
-                    </LazyPage>
-                  </FeatureGate>
-                </AdvancedOnly>
-              ) : (
-                <Navigate to="/setup" replace />
-              )
-            }
+            element={setupCompleted ? <UnifiedRouteRedirect fallback="/sub-agents" /> : <Navigate to="/setup" replace />}
           />
           <Route
             path="/advanced/enterprise-topology"
-            element={<Navigate to="/advanced/topology?mode=build" replace />}
+            element={<UnifiedRouteRedirect fallback="/sub-agents" />}
           />
           <Route
             path="/advanced/enterprise-topology/*"
-            element={<Navigate to="/advanced/topology?mode=build" replace />}
+            element={<UnifiedRouteRedirect fallback="/sub-agents" />}
           />
           <Route
             path="/advanced/orchestration"
-            element={
-              <AdvancedOnly>
-                <LazyPage>
-                  <SettingsPage />
-                </LazyPage>
-              </AdvancedOnly>
-            }
+            element={<UnifiedRouteRedirect fallback="/sub-agents" />}
           />
           <Route
             path="/advanced/orchestration/*"
-            element={
-              <AdvancedOnly>
-                <LazyPage>
-                  <SettingsPage />
-                </LazyPage>
-              </AdvancedOnly>
-            }
+            element={<UnifiedRouteRedirect fallback="/sub-agents" />}
           />
           <Route
             path="/advanced/memory"
@@ -1777,8 +1741,8 @@ export default function App() {
               )
             }
           />
-          <Route path="/advanced/settings" element={<Navigate to="/advanced/ai" replace />} />
-          <Route path="/advanced/settings/*" element={<Navigate to="/advanced/ai" replace />} />
+          <Route path="/advanced/settings" element={<UnifiedRouteRedirect fallback="/setup" />} />
+          <Route path="/advanced/settings/*" element={<UnifiedRouteRedirect fallback="/setup" />} />
           <Route
             path="/admin/*"
             element={

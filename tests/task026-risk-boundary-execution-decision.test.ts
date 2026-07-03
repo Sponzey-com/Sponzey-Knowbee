@@ -40,7 +40,7 @@ function contextFor(overrides: Partial<AgentExecutionContext> = {}): AgentExecut
     },
     parent_executor: {
       executor_id: "agent:knowbee",
-      display_name: "노우비",
+      display_name: "노비",
       role_name: "Parent orchestrator",
       can_delegate: true,
       available: true,
@@ -119,7 +119,7 @@ describe("task026 risk boundary execution decision", () => {
     const rootContext = contextFor({
       current_executor: {
         executor_id: "agent:knowbee",
-        display_name: "노우비",
+        display_name: "노비",
         role_name: "Root agent",
         can_delegate: true,
         available: true,

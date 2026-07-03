@@ -19,6 +19,19 @@ export interface UiRouteMigrationResult {
   component: string
 }
 
+export type UnifiedRouteReason =
+  | "legacy_sub_agent_settings_route"
+  | "legacy_sub_agent_orchestration_route"
+  | "legacy_connection_settings_route"
+  | "legacy_run_history_route"
+  | "legacy_management_route"
+
+export interface UnifiedRouteResolution {
+  from: string
+  to: string
+  reason: UnifiedRouteReason
+}
+
 const UI_ROUTE_INVENTORY: UiRouteInventoryItem[] = [
   {
     path: "/",
@@ -405,9 +418,55 @@ const UI_ROUTE_INVENTORY: UiRouteInventoryItem[] = [
 ]
 
 function normalizePathname(pathname: string): string {
-  const trimmed = pathname.trim() || "/"
+  const pathOnly = pathname.split(/[?#]/, 1)[0] ?? "/"
+  const trimmed = pathOnly.trim() || "/"
   if (trimmed === "/") return "/"
   return trimmed.replace(/\/+$/, "")
+}
+
+const UNIFIED_ROUTE_RULES: Array<{ base: string; to: string; reason: UnifiedRouteReason }> = [
+  { base: "/runs", to: "/tasks", reason: "legacy_run_history_route" },
+  { base: "/dashboard", to: "/status", reason: "legacy_management_route" },
+  { base: "/audit", to: "/status", reason: "legacy_management_route" },
+  { base: "/schedules", to: "/status", reason: "legacy_management_route" },
+  { base: "/plugins", to: "/status", reason: "legacy_management_route" },
+  { base: "/settings", to: "/setup", reason: "legacy_connection_settings_route" },
+  { base: "/ai", to: "/setup", reason: "legacy_connection_settings_route" },
+  { base: "/channels", to: "/setup", reason: "legacy_connection_settings_route" },
+  { base: "/extensions", to: "/setup", reason: "legacy_connection_settings_route" },
+  { base: "/memory", to: "/setup", reason: "legacy_connection_settings_route" },
+  { base: "/tools", to: "/setup", reason: "legacy_connection_settings_route" },
+  { base: "/release", to: "/setup", reason: "legacy_connection_settings_route" },
+  { base: "/advanced/topology", to: "/sub-agents", reason: "legacy_sub_agent_settings_route" },
+  { base: "/advanced/enterprise-topology", to: "/sub-agents", reason: "legacy_sub_agent_settings_route" },
+  { base: "/topology", to: "/sub-agents", reason: "legacy_sub_agent_settings_route" },
+  { base: "/enterprise-topology", to: "/sub-agents", reason: "legacy_sub_agent_settings_route" },
+  { base: "/advanced/orchestration", to: "/sub-agents", reason: "legacy_sub_agent_orchestration_route" },
+  { base: "/advanced/settings", to: "/setup", reason: "legacy_connection_settings_route" },
+  { base: "/advanced/ai", to: "/setup", reason: "legacy_connection_settings_route" },
+  { base: "/advanced/channels", to: "/setup", reason: "legacy_connection_settings_route" },
+  { base: "/advanced/extensions", to: "/setup", reason: "legacy_connection_settings_route" },
+  { base: "/advanced/memory", to: "/setup", reason: "legacy_connection_settings_route" },
+  { base: "/advanced/tools", to: "/setup", reason: "legacy_connection_settings_route" },
+  { base: "/advanced/release", to: "/setup", reason: "legacy_connection_settings_route" },
+  { base: "/advanced/runs", to: "/tasks", reason: "legacy_run_history_route" },
+  { base: "/advanced/dashboard", to: "/status", reason: "legacy_management_route" },
+  { base: "/advanced/audit", to: "/status", reason: "legacy_management_route" },
+  { base: "/advanced/plugins", to: "/status", reason: "legacy_management_route" },
+  { base: "/advanced/schedules", to: "/status", reason: "legacy_management_route" },
+]
+
+function matchesRouteBase(pathname: string, base: string): boolean {
+  return pathname === base || pathname.startsWith(`${base}/`)
+}
+
+export function resolveUnifiedRoute(pathname: string): UnifiedRouteResolution | null {
+  const normalized = normalizePathname(pathname)
+  for (const rule of UNIFIED_ROUTE_RULES) {
+    if (!matchesRouteBase(normalized, rule.base)) continue
+    return { from: normalized, to: rule.to, reason: rule.reason }
+  }
+  return null
 }
 
 function appendPathSuffix(target: string, source: string, base: string): string {
@@ -443,72 +502,22 @@ export function resolveRouteMigration(pathname: string): UiRouteMigrationResult 
 }
 
 export function resolveLegacyAdvancedRoute(pathname: string): string | null {
-  return resolveRouteMigration(pathname)?.to ?? null
+  return resolveUnifiedRoute(pathname)?.to ?? resolveRouteMigration(pathname)?.to ?? null
 }
 
 export function resolveRollbackRoute(pathname: string): string {
   const normalized = normalizePathname(pathname)
-  const migrated = resolveRouteMigration(normalized)
-  if (migrated) return migrated.to
-  if (
-    normalized === "/" ||
-    normalized === "/chat" ||
-    normalized === "/tasks" ||
-    normalized === "/status"
-  )
-    return "/advanced/dashboard"
-  if (normalized === "/setup") return "/advanced/ai"
+  const unified = resolveUnifiedRoute(normalized)
+  if (unified) return unified.to
+  if (normalized === "/") return "/chat"
   return normalized
 }
 
 export function resolveModeSwitchRoute(pathname: string, targetMode: UiRouteMode): string {
   const normalized = normalizePathname(pathname)
-  if (targetMode === "advanced" || targetMode === "admin") {
-    if (normalized === "/" || normalized === "/setup") return "/advanced/ai"
-    if (normalized === "/chat") return "/advanced/chat"
-    if (normalized === "/tasks") return "/advanced/runs"
-    if (normalized === "/status") return "/advanced/dashboard"
-    if (normalized === "/sub-agents" || normalized.startsWith("/sub-agents/")) return "/advanced/topology"
-    return resolveLegacyAdvancedRoute(normalized) ?? resolveRollbackRoute(normalized)
-  }
-
+  const unified = resolveUnifiedRoute(normalized)
+  if (unified) return unified.to
   if (normalized === "/") return "/chat"
-  if (
-    normalized === "/chat" ||
-    normalized === "/tasks" ||
-    normalized === "/status" ||
-    normalized === "/sub-agents" ||
-    normalized === "/setup"
-  )
-    return normalized
-  if (normalized.startsWith("/advanced/chat")) return "/chat"
-  if (normalized.startsWith("/advanced/runs")) return "/tasks"
-  if (
-    normalized.startsWith("/advanced/ai") ||
-    normalized.startsWith("/advanced/channels") ||
-    normalized.startsWith("/advanced/extensions") ||
-    normalized.startsWith("/advanced/orchestration") ||
-    normalized.startsWith("/advanced/memory") ||
-    normalized.startsWith("/advanced/tools") ||
-    normalized.startsWith("/advanced/release") ||
-    normalized.startsWith("/advanced/settings")
-  ) {
-    return "/setup"
-  }
-  if (
-    normalized.startsWith("/advanced/dashboard") ||
-    normalized.startsWith("/advanced/audit") ||
-    normalized.startsWith("/advanced/plugins") ||
-    normalized.startsWith("/advanced/schedules") ||
-    normalized.startsWith("/admin")
-  ) {
-    return "/status"
-  }
-  if (
-    normalized.startsWith("/advanced/enterprise-topology") ||
-    normalized.startsWith("/advanced/topology")
-  ) {
-    return "/sub-agents"
-  }
+  if (targetMode !== "admin" && normalized.startsWith("/admin")) return "/status"
   return normalized
 }

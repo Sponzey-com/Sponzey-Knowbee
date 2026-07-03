@@ -195,7 +195,7 @@ function v2Decision(context: AgentExecutionContext, selectedExecutorId: string):
       reason: "테스트 요청이다.",
     },
     confidence: 0.9,
-    reason: "선택된 실행자가 현재 노우비의 direct child이다.",
+    reason: "선택된 실행자가 현재 노비의 direct child이다.",
   }
 }
 
