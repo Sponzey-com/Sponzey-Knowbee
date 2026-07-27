@@ -1,5 +1,5 @@
 import { listMemoryCompactionRuns } from "../db/index.js"
-import { buildMemoryInspectorSnapshot } from "../memory/inspector.js"
+import { buildMemoryInspectorSnapshot, type MemoryInspectorConfigSnapshot } from "../memory/inspector.js"
 import { buildMemoryQualitySnapshot } from "../memory/quality.js"
 
 export type MemoryCompactionReleaseGateStatus = "passed" | "warning" | "failed"
@@ -129,10 +129,11 @@ function checkHeuristicFallback(runs: ReturnType<typeof listMemoryCompactionRuns
 
 export function buildMemoryCompactionReleaseGateSummary(input: {
   now?: Date
-} = {}): MemoryCompactionReleaseGateSummary {
+  config: MemoryInspectorConfigSnapshot
+}): MemoryCompactionReleaseGateSummary {
   const now = input.now ?? new Date()
   const quality = buildMemoryQualitySnapshot({ now: now.getTime() })
-  const inspector = buildMemoryInspectorSnapshot({ now: now.getTime(), limit: 12 })
+  const inspector = buildMemoryInspectorSnapshot({ now: now.getTime(), limit: 12, config: input.config })
   const runs = listMemoryCompactionRuns({ limit: 200 })
   const checks = [
     checkQualitySnapshot(quality),

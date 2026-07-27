@@ -7,6 +7,7 @@ export function decideSyntheticApprovalContinuation(params) {
             reviewSummary: params.request.summary,
             executingSummary: "승인된 작업을 계속 진행합니다.",
             continuationPrompt: params.request.continuationPrompt,
+            toolName: params.request.toolName,
             grantMode: "reuse_scope",
             clearWorkerRuntime: true,
             clearProvider: true,
@@ -23,6 +24,7 @@ export function decideSyntheticApprovalContinuation(params) {
         reviewSummary: params.request.summary,
         executingSummary: "승인된 작업을 계속 진행합니다.",
         continuationPrompt: params.request.continuationPrompt,
+        toolName: params.request.toolName,
         grantMode: params.decision === "allow_run" ? "run" : "single",
         clearWorkerRuntime: true,
         clearProvider: true,
@@ -33,11 +35,11 @@ export function applySyntheticApprovalContinuation(params, dependencies) {
         return { kind: "stop" };
     }
     if (params.continuation.grantMode === "run") {
-        dependencies.rememberRunApprovalScope(params.runId);
-        dependencies.grantRunApprovalScope(params.runId);
+        dependencies.rememberRunApprovalScope(params.runId, params.continuation.toolName);
+        dependencies.grantRunApprovalScope(params.runId, params.continuation.toolName);
     }
     else if (params.continuation.grantMode === "single") {
-        dependencies.grantRunSingleApproval(params.runId);
+        dependencies.grantRunSingleApproval(params.runId, params.continuation.toolName);
     }
     const runningContinuation = applyRunningContinuationState({
         runId: params.runId,

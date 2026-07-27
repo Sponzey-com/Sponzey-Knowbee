@@ -1,9 +1,12 @@
 import { createServer } from "node:net";
 import aedesPackage from "aedes";
-import { getConfig } from "../config/index.js";
-import { createLogger } from "../logger/index.js";
+import { createLogger, redactLogText } from "../logger/index.js";
 import { eventBus } from "../events/index.js";
 import { upsertYeonjangRegistryObservation } from "../yeonjang/registry.js";
+function mqttBrokerErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 const log = createLogger("mqtt:broker");
 const MQTT_DISABLED_REASON = "MQTT 브로커가 비활성화되어 있습니다.";
 const MQTT_STOPPED_REASON = "MQTT 브로커가 중지되었습니다.";
@@ -420,7 +423,7 @@ function persistYeonjangRegistrySnapshot(snapshot) {
         });
     }
     catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = mqttBrokerErrorMessage(error);
         log.warn(`failed to persist yeonjang registry snapshot (${snapshot.extensionId}): ${message}`);
     }
 }
@@ -556,8 +559,7 @@ function createAedesBroker(config) {
     }
     throw new Error("Unsupported aedes export shape");
 }
-export async function startMqttBroker() {
-    const config = getConfig().mqtt;
+export async function startMqttBroker(config) {
     const authEnabled = hasConfiguredCredentials(config);
     const allowAnonymous = allowsAnonymousConnections(config);
     const validationError = validateMqttBrokerConfig(config);
@@ -600,12 +602,12 @@ export async function startMqttBroker() {
     });
     brokerInstance.on("clientError", (client, error) => {
         const clientId = client?.id ?? "unknown";
-        const message = error instanceof Error ? error.message : String(error);
+        const message = mqttBrokerErrorMessage(error);
         log.warn(`MQTT client error (${clientId}): ${message}`);
     });
     brokerInstance.on("connectionError", (client, error) => {
         const clientId = client?.id ?? "unknown";
-        const message = error instanceof Error ? error.message : String(error);
+        const message = mqttBrokerErrorMessage(error);
         log.warn(`MQTT connection error (${clientId}): ${message}`);
     });
     brokerInstance.on("closed", () => {
@@ -617,11 +619,12 @@ export async function startMqttBroker() {
         });
     });
     tcpServer.on("error", (error) => {
+        const message = mqttBrokerErrorMessage(error);
         setSnapshot({
             running: false,
-            reason: error.message,
+            reason: message,
         });
-        log.error(`MQTT server error: ${error.message}`);
+        log.error(`MQTT server error: ${message}`);
     });
     try {
         await new Promise((resolve, reject) => {
@@ -641,10 +644,11 @@ export async function startMqttBroker() {
     catch (error) {
         tcpServer.removeAllListeners();
         brokerInstance.close();
+        const message = mqttBrokerErrorMessage(error);
         setSnapshot({
             running: false,
             clientCount: 0,
-            reason: error instanceof Error ? error.message : String(error),
+            reason: message,
         });
         throw error;
     }
@@ -712,16 +716,16 @@ export async function disconnectMqttExtension(extensionId) {
     disconnectClient(client);
     return { ok: true, message: `연장 "${normalized}" 연결 해지를 요청했습니다.` };
 }
-export async function restartMqttBrokerFromConfig() {
+export async function restartMqttBrokerFromConfig(config) {
     if (server || broker) {
         try {
             await stopMqttBroker();
         }
         catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = mqttBrokerErrorMessage(error);
             log.warn(`Failed to stop MQTT broker before restart: ${message}`);
         }
     }
-    await startMqttBroker();
+    await startMqttBroker(config.mqtt);
 }
 //# sourceMappingURL=broker.js.map

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "finance-nasdaq-browser-timeout-fallback",
   "title": "NASDAQ browser timeout falls back to known source adapter",
   "freshnessPolicy": "latest_approximate",
@@ -45,9 +45,12 @@
     }
   ],
   "expected": {
-    "canAnswer": true,
-    "acceptedValue": "24102.5",
-    "evidenceSufficiency": "sufficient_approximate",
-    "minAttempts": 2
+    "minimumAttempts": 2,
+    "llmDiagnosisExpectation": {
+      "status": "complete",
+      "requiredEvidenceSourceIds": ["nasdaq-known-adapter"],
+      "requiredConditionVerdicts": ["existence:satisfied", "freshness:satisfied", "target_match:satisfied"],
+      "changedStrategyRequired": false
+    }
   }
 }

@@ -171,10 +171,18 @@ function validationIssue(): EnterpriseTopologyValidationIssue {
 
 describe("task011 topology workspace trace and improve layer", () => {
   it("shows run trace path and observed summary from the workspace overlay", () => {
-    const html = renderToStaticMarkup(createElement(TopologyRunTraceOverlay, { overlay: overlay() }))
+    const intakeLabel = topology.nodes.find((node) => node.id === "node:customer-request-intake")?.displayName
+      ?? topology.nodes.find((node) => node.id === "node:customer-request-intake")?.name
+      ?? "서브 에이전트"
+    const reviewLabel = topology.nodes.find((node) => node.id === "node:customer-request-review")?.displayName
+      ?? topology.nodes.find((node) => node.id === "node:customer-request-review")?.name
+      ?? "서브 에이전트"
+    const html = renderToStaticMarkup(createElement(TopologyRunTraceOverlay, { overlay: overlay(), topology }))
 
     expect(html).toContain('data-testid="topology-trace-delegation-path"')
-    expect(html).toContain("node:customer-request-intake -&gt; node:customer-request-review")
+    expect(html).toContain(`${intakeLabel} -&gt; ${reviewLabel}`)
+    expect(html).not.toContain("node:customer-request-intake")
+    expect(html).not.toContain("node:customer-request-review")
     expect(html).toContain('data-testid="topology-trace-observed-summary"')
     expect(html).toContain("Review retry and fallback candidates")
   })

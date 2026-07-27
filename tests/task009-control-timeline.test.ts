@@ -1,8 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, getDb, insertSession, listControlEvents } from "../packages/core/src/db/index.js"
 import { eventBus } from "../packages/core/src/events/index.js"
 import {
@@ -15,27 +14,28 @@ import {
 import { runDoctor } from "../packages/core/src/diagnostics/doctor.js"
 import { recordMessageLedgerEvent } from "../packages/core/src/runs/message-ledger.js"
 import { createRootRun } from "../packages/core/src/runs/store.js"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let runtimeFixture: ReturnType<typeof createTestRuntimeConfigFixture>
 
 function useTempConfig(): void {
   closeDb()
   resetControlEventProjectionForTest()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task009-control-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task009-control-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: `{
     ai: { connection: { provider: "ollama", endpoint: "http://127.0.0.1:11434", model: "llama3.2" } },
     webui: { enabled: true, host: "127.0.0.1", port: 18181, auth: { enabled: false } },
     security: { approvalMode: "off" },
     memory: { searchMode: "fts", sessionRetentionDays: 30 },
     scheduler: { enabled: false, timezone: "Asia/Seoul" }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  }`,
+  })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function createTestRun(id = "run-control-1") {
@@ -63,11 +63,6 @@ beforeEach(() => {
 afterEach(() => {
   resetControlEventProjectionForTest()
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -116,7 +111,7 @@ describe("task009 control-plane timeline", () => {
     eventBus.emit("tool.after", { sessionId: run.sessionId, runId: run.id, toolName: "web_search", success: true, durationMs: 42 })
     eventBus.emit("approval.request", { approvalId: "approval-1", runId: run.id, toolName: "screen_capture", params: {}, resolve: () => undefined })
     eventBus.emit("yeonjang.heartbeat", { extensionId: "yeonjang-main", state: "offline", message: "mqtt disconnected", lastSeenAt: Date.now(), methodCount: 12 })
-    const doctor = runDoctor({ mode: "quick", includeEnvironment: false, includeReleasePackage: false })
+    const doctor = runDoctor({ config: runtimeFixture.config, paths: runtimeFixture.paths, mode: "quick", includeEnvironment: false, includeReleasePackage: false })
 
     const rows = listControlEvents({ limit: 100 }).map((row) => row.event_type)
 
@@ -191,6 +186,8 @@ describe("task009 control-plane timeline", () => {
       summary: "provider returned <html><body>403</body></html>",
       detail: {
         recoveryKey: "ai:openai:chatgpt-oauth:403",
+        yeonjangFailure:
+          "yeonjang-goal-validation:mouse_click:candidate_not_validated:result_diagnosis_not_sufficient operationId=operation:control-export receipt payload raw observed state",
         localPath: "/Users/dongwooshin/.knowbee/secrets/report.json",
         accessToken: "Bearer sk-secret-token-value",
         providerRawResponse: "<html><body>403 forbidden</body></html>",
@@ -209,7 +206,14 @@ describe("task009 control-plane timeline", () => {
     expect(userSerialized).not.toContain("/Users/dongwooshin")
     expect(userSerialized).not.toContain("sk-secret-token-value")
     expect(userSerialized).not.toContain("<html>")
+    expect(userSerialized).not.toContain("yeonjang-goal-validation")
+    expect(userSerialized).not.toContain("operationId")
+    expect(userSerialized).not.toContain("operation:control-export")
+    expect(userSerialized).not.toContain("receipt payload")
+    expect(userSerialized).not.toContain("raw observed state")
+    expect(userSerialized).toContain("[internal-evidence-redacted]")
     expect(developerSerialized).toContain("ai:openai:chatgpt-oauth:403")
+    expect(developerSerialized).toContain("yeonjang-goal-validation:mouse_click")
     expect(developerSerialized).not.toContain("sk-secret-token-value")
     expect(auditRows).toEqual(expect.arrayContaining(["control_timeline_user_export", "control_timeline_developer_export"]))
   })

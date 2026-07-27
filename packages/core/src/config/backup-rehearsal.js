@@ -2,10 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
-import { loadPromptSourceRegistry } from "../memory/knowbee-md.js";
 import { MIGRATIONS } from "../db/migrations.js";
+import { redactLogText } from "../logger/index.js";
+import { loadPromptSourceRegistry } from "../memory/knowbee-md.js";
 import { getDatabaseMigrationStatus } from "./operations.js";
-import { PATHS } from "./paths.js";
+function backupRehearsalErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 const LOGICAL_SQLITE_TABLES = ["audit_logs", "artifacts", "schedule_entries", "schedule_runs", "memory_documents", "memory_chunks"];
 const SECRET_REENTRY_REQUIRED = [
     { scope: "config.ai.connection.auth", reason: "API keys and OAuth tokens are not copied into portable snapshot files." },
@@ -35,12 +39,12 @@ export const MIGRATION_ROLLBACK_RUNBOOK = {
     ],
     restoreTargets: ["state/data.db", "state/memory.db3", "prompts/*.md"],
 };
-export function buildBackupTargetInventory(options = {}) {
-    const stateDir = resolve(options.stateDir ?? PATHS.stateDir);
-    const workDir = resolve(options.workDir ?? process.cwd());
-    const configPath = resolve(options.configPath ?? PATHS.configFile);
-    const dbPath = resolve(options.dbPath ?? join(stateDir, "data.db"));
-    const memoryDbPath = resolve(options.memoryDbPath ?? join(stateDir, "memory.db3"));
+export function buildBackupTargetInventory(options) {
+    const stateDir = resolve(options.paths.stateDir);
+    const workDir = resolve(options.workDir);
+    const configPath = resolve(options.paths.configFile);
+    const dbPath = resolve(options.paths.dbFile);
+    const memoryDbPath = resolve(options.paths.memoryDbFile);
     const promptSources = loadPromptSourceRegistry(workDir).map(({ content: _content, ...metadata }) => metadata);
     const targets = [];
     targets.push(buildFileTarget({ id: "config", kind: "config", sourcePath: configPath, relativePath: "config/config.json5", include: false, required: false, reason: "secret_reentry_required" }));
@@ -50,7 +54,7 @@ export function buildBackupTargetInventory(options = {}) {
         targets.push(buildFileTarget({ id: `sqlite:main${suffix}`, kind: "sqlite_sidecar", sourcePath: sidecar, relativePath: `state/data.db${suffix}`, include: existsSync(sidecar), required: false, reason: existsSync(sidecar) ? "required" : "optional_missing" }));
     }
     targets.push(buildFileTarget({ id: "sqlite:memory", kind: "vector_db", sourcePath: memoryDbPath, relativePath: "state/memory.db3", include: existsSync(memoryDbPath), required: false, reason: existsSync(memoryDbPath) ? "required" : "optional_missing" }));
-    targets.push(buildFileTarget({ id: "setup-state", kind: "setup_state", sourcePath: join(stateDir, "setup-state.json"), relativePath: "state/setup-state.json", include: existsSync(join(stateDir, "setup-state.json")), required: false, reason: existsSync(join(stateDir, "setup-state.json")) ? "required" : "optional_missing" }));
+    targets.push(buildFileTarget({ id: "setup-state", kind: "setup_state", sourcePath: options.paths.setupStateFile, relativePath: "state/setup-state.json", include: existsSync(options.paths.setupStateFile), required: false, reason: existsSync(options.paths.setupStateFile) ? "required" : "optional_missing" }));
     for (const source of promptSources) {
         const fileName = basename(source.path);
         targets.push(buildFileTarget({ id: `prompt:${source.sourceId}:${source.locale}`, kind: "prompt_source", sourcePath: source.path, relativePath: `prompts/${fileName}`, include: true, required: source.required, reason: "required" }));
@@ -72,7 +76,7 @@ export function buildBackupTargetInventory(options = {}) {
         promptSources,
     };
 }
-export function createBackupSnapshot(options = {}) {
+export function createBackupSnapshot(options) {
     const inventory = buildBackupTargetInventory(options);
     const now = options.now ?? Date.now();
     const id = `snapshot-${new Date(now).toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
@@ -119,7 +123,7 @@ export function createBackupSnapshot(options = {}) {
     };
     const checksum = checksumJson(manifestWithoutChecksum);
     const manifest = { ...manifestWithoutChecksum, checksum };
-    writeFileSync(join(snapshotDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", "utf-8");
+    writeFileSync(join(snapshotDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
     return manifest;
 }
 export function verifyBackupSnapshotManifest(manifest) {
@@ -162,14 +166,16 @@ export function runRestoreRehearsal(options) {
     checks.push({ name: "prompt_source_registry", ok: promptSources.length > 0, message: promptSources.length > 0 ? `${promptSources.length} prompt sources loaded without sys_prop dependency.` : "No prompt sources could be loaded from rehearsal directory." });
     return buildRestoreReport(options, restoredDir, checks, restoredFiles, migrationStatus, promptSources.length);
 }
-export function buildMigrationPreflightReport(options = {}) {
-    const dbPath = resolve(options.dbPath ?? PATHS.dbFile);
+export function buildMigrationPreflightReport(options) {
+    const dbPath = resolve(options.dbPath);
     const status = getDatabaseMigrationStatus(dbPath);
     const pending = new Set(status.pendingVersions);
     const checks = [];
     checks.push(options.manifest
         ? { name: "backup_available", ok: true, risk: "low", message: `Backup snapshot ${options.manifest.id} is available.` }
-        : { name: "backup_available", ok: false, risk: "blocking", message: "A verified backup snapshot is required before migration." });
+        : status.pendingVersions.length === 0
+            ? { name: "backup_available", ok: true, risk: "low", message: "No migration is pending; a migration backup is not required." }
+            : { name: "backup_available", ok: false, risk: "blocking", message: "A verified backup snapshot is required before migration." });
     if (options.manifest) {
         const verification = verifyBackupSnapshotManifest(options.manifest);
         checks.push({ name: "snapshot_checksum", ok: verification.ok, risk: verification.ok ? "low" : "blocking", message: verification.ok ? "Backup snapshot checksum is valid." : "Backup snapshot checksum verification failed." });
@@ -246,7 +252,7 @@ function checkSqliteIntegrity(dbPath) {
         return { ok, message: ok ? "SQLite integrity_check passed." : `SQLite integrity_check failed: ${rows.map((row) => row.integrity_check).join(", ")}` };
     }
     catch (error) {
-        return { ok: false, message: error instanceof Error ? error.message : String(error) };
+        return { ok: false, message: backupRehearsalErrorMessage(error) };
     }
     finally {
         db?.close();
@@ -264,7 +270,7 @@ function buildRestoreReport(options, restoredDir, checks, restoredFiles, migrati
     };
     if (options.writeReport) {
         const reportPath = join(restoredDir, "restore-rehearsal-report.json");
-        writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n", "utf-8");
+        writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf-8");
         report.reportPath = reportPath;
     }
     return report;

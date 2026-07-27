@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { AIProvider, ChatParams } from "../packages/core/src/ai/types.ts"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 import {
   CONTRACT_SCHEMA_VERSION,
   type IntentContract,
@@ -85,6 +86,9 @@ function providerReturning(text: string, capture?: (params: ChatParams) => void)
 describe("task006 active run contract continuation", () => {
   it("builds active run projections without raw prompt identity fields", () => {
     const projection = buildActiveRunProjection(rootRun({
+      agentName: "Canonical Agent Name",
+      agentDisplayName: "Legacy Agent Display",
+      agentNameSnapshot: "Snapshot Agent Name",
       promptSourceSnapshot: {
         intentContract: intentContract({ targetId: "display:2" }),
         approvalId: "approval-1",
@@ -96,9 +100,26 @@ describe("task006 active run contract continuation", () => {
     expect(projection.approvalId).toBe("approval-1")
     expect(projection.legacy).toBe(false)
     expect(projection.displayName).toBe("표시명")
+    expect(projection.agentName).toBe("Canonical Agent Name")
+    expect(projection.agentNameSnapshot).toBe("Snapshot Agent Name")
+    expect(projection).not.toHaveProperty("agentDisplayName")
     expect(JSON.stringify(projection.comparisonProjection)).not.toContain("SECRET RAW PROMPT")
     expect(JSON.stringify(projection.comparisonProjection)).not.toContain("SECRET SUMMARY")
     expect(JSON.stringify(projection.comparisonProjection)).not.toContain("표시명")
+    expect(JSON.stringify(projection.comparisonProjection)).not.toContain("Canonical Agent Name")
+    expect(JSON.stringify(projection.comparisonProjection)).not.toContain("Snapshot Agent Name")
+  })
+
+  it("does not expose or infer active run agentName from legacy displayName", () => {
+    const projection = buildActiveRunProjection(rootRun({
+      agentDisplayName: "Legacy Agent Display",
+      promptSourceSnapshot: {
+        intentContract: intentContract({ targetId: "display:2" }),
+      },
+    }))
+
+    expect(projection.agentName).toBeUndefined()
+    expect(projection).not.toHaveProperty("agentDisplayName")
   })
 
   it("marks runs without persisted contracts as legacy active items", () => {
@@ -178,9 +199,11 @@ describe("task006 active run contract continuation", () => {
       provider: providerReturning('{"decision":"new_run","reason":"different target"}', (params) => {
         captured = params
       }),
+      config: DEFAULT_CONFIG,
     })
 
     expect(result.kind).toBe("new_run")
+    expect(captured).toBeDefined()
     const serializedMessages = JSON.stringify(captured?.messages)
     expect(serializedMessages).not.toContain("NEVER_SEND_THIS_PROMPT")
     expect(serializedMessages).not.toContain("NEVER_SEND_THIS_SUMMARY")
@@ -200,16 +223,19 @@ describe("task006 active run contract continuation", () => {
       })),
     ]
 
+    let called = false
     const result = await compareRequestContinuationWithAI({
       incomingContract: buildIncomingIntentContract({ sessionId: "session-1", source: "webui", targetId: "display:c" }),
       candidates,
       model: "fake-model",
       providerId: "fake-provider",
-      provider: providerReturning("not json"),
+      provider: providerReturning("not json", () => { called = true }),
+      config: DEFAULT_CONFIG,
     })
 
     expect(result.kind).toBe("clarify")
     expect(result.decisionSource).toBe("safe_fallback")
+    expect(called).toBe(true)
   })
 
   it("allows structured cancel/update target decisions only from contract comparator output", async () => {
@@ -230,6 +256,7 @@ describe("task006 active run contract continuation", () => {
       model: "fake-model",
       providerId: "fake-provider",
       provider: providerReturning('{"decision":"cancel_target","request_group_id":"group-cancel-target","reason":"structured cancel target"}'),
+      config: DEFAULT_CONFIG,
     })
 
     expect(result.kind).toBe("cancel_target")

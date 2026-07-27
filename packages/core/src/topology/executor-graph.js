@@ -214,7 +214,7 @@ function sectionForTeam(team) {
     return {
         id: team.id,
         name: team.displayName?.trim() || team.name,
-        description: team.purpose ?? "실행자 영역",
+        description: team.purpose ?? "서브 에이전트 영역",
         executorIds: [...team.nodeIds],
         sourceTeamId: team.id,
         collapsed: Boolean(team.metadata?.collapsed),

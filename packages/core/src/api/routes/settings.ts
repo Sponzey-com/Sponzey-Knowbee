@@ -1,40 +1,74 @@
 import type { FastifyInstance } from "fastify"
+import { createArtifactStorageContext } from "../../artifacts/lifecycle.js"
 import { readFileSync, writeFileSync, existsSync } from "node:fs"
 import JSON5 from "json5"
-import { getConfig, reloadConfig } from "../../config/index.js"
-import { getProvider, getDefaultModel, resetAIProviderCache, resolveProviderResolutionSnapshot } from "../../ai/index.js"
+import type { KnowbeeConfig } from "../../config/index.js"
+import { getProvider, getDefaultModel, resolveProviderResolutionSnapshot } from "../../ai/index.js"
 import { attachCapabilityProfileToTrace, getProviderCapabilityMatrix } from "../../ai/capabilities.js"
-import { PATHS } from "../../config/paths.js"
 import { authMiddleware } from "../middleware/auth.js"
 import { getActiveSlackChannel, getSlackRuntimeStatus, setSlackRuntimeError, stopActiveSlackChannel } from "../../channels/slack/runtime.js"
 import {
   CHANNEL_REGISTRY_RUNTIME_FEATURE_KEY,
   buildChannelRegistryRuntimeDiagnostics,
+  createStartedChannelRecoveryRuntime,
   resolveChannelRegistryRuntimeMode,
-  startChannels,
 } from "../../channels/index.js"
 import { getActiveTelegramChannel, getTelegramRuntimeStatus, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel } from "../../channels/telegram/runtime.js"
 import { getDiscordRuntimeStatus, setDiscordRuntimeError, stopDiscordRuntime } from "../../channels/discord/runtime.js"
 import { getGoogleChatRuntimeStatus, setGoogleChatRuntimeError, stopGoogleChatRuntime } from "../../channels/google-chat/runtime.js"
-import { buildSetupDraft, createSetupChecks, readSetupState, resetSetupEnvironment, saveSetupDraft } from "../../control-plane/index.js"
-import { disconnectMqttExtension, getMqttExchangeLogs, getMqttExtensionSnapshots, restartMqttBrokerFromConfig } from "../../mqtt/broker.js"
-import { updateActiveRunsMaxDelegationTurns } from "../../runs/store.js"
-import { getVectorBackendStatus, resetEmbeddingProvider } from "../../memory/embedding.js"
-import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js"
+import {
+  SETUP_INTERNAL_PATH_MASK,
+  buildSetupDraft,
+  createSetupChecks,
+  readSetupState,
+  redactSetupChecksForApi,
+  redactSetupDraftSecrets,
+  resetSetupEnvironment,
+  saveSetupDraft,
+  type SetupPersistencePaths,
+} from "../../control-plane/index.js"
+import { disconnectMqttExtension, getMqttExchangeLogs, getMqttExtensionSnapshots } from "../../mqtt/broker.js"
+import { getVectorBackendStatus } from "../../memory/embedding.js"
+import { sanitizeUserFacingError, type SanitizedErrorSummary } from "../../runs/error-sanitizer.js"
+import { redactLogText } from "../../logger/index.js"
 import { chatWithContextPreflight } from "../../runs/context-preflight.js"
 import { loadPromptTemplate } from "../../memory/knowbee-md.js"
+import { loadPromptValue } from "../../memory/prompt-fragments.js"
 import {
   applyChannelConnectionSettingsCompatPatch,
   buildSettingsChannelConnectionSnapshot,
 } from "../../channels/connections.js"
 import { getFeatureFlag } from "../../runtime/rollout-safety.js"
+import {
+  buildPersistedConfigurationCommand,
+  buildRejectedConfigurationCommand,
+  buildRuntimeAppliedConfigurationCommand,
+  buildRuntimeFailedConfigurationCommand,
+} from "../../config/command-state.js"
+import { getApiRuntimeConfig, getApiRuntimePaths } from "../runtime-context.js"
+import {
+  activateChannelsAndRecoverPendingResponses,
+  recoverPendingResponsesForChannelRuntime,
+} from "../../runtime/channel-activation-recovery.js"
+import {
+  buildSettingsAiConnectionTestConfig,
+  type SettingsAiConnectionTestInput,
+} from "../settings-ai-connection-test-config.js"
 
-function isOrchestrationMode(value: unknown): value is "single_knowbee" | "orchestration" {
-  return value === "single_knowbee" || value === "orchestration"
+type PersistedOrchestrationMode = "single_knowbee" | "orchestration"
+
+function normalizeSettingsApiOrchestrationMode(value: unknown): PersistedOrchestrationMode | undefined {
+  if (value === "orchestration") return "orchestration"
+  if (value === "direct_main_agent" || value === "single_knowbee") return "single_knowbee"
+  return undefined
 }
 
-function buildLegacySettingsSnapshot() {
-  const cfg = getConfig()
+function settingsRouteErrorSummary(error: unknown): SanitizedErrorSummary {
+  const rawMessage = error instanceof Error ? error.message : String(error)
+  return sanitizeUserFacingError(redactLogText(rawMessage))
+}
+
+function buildLegacySettingsSnapshot(cfg: KnowbeeConfig, paths: SetupPersistencePaths) {
   const telegramChannel = getActiveTelegramChannel()
   const slackChannel = getActiveSlackChannel()
   const telegramRuntime = getTelegramRuntimeStatus()
@@ -60,7 +94,8 @@ function buildLegacySettingsSnapshot() {
       authMode: connection.auth?.mode ?? "api_key",
       endpoint: connection.endpoint ?? "",
       hasApiKey: Boolean(connection.auth?.apiKey),
-      oauthAuthFilePath: connection.auth?.oauthAuthFilePath ?? "",
+      oauthAuthFilePath: connection.auth?.oauthAuthFilePath ? SETUP_INTERNAL_PATH_MASK : "",
+      hasOAuthAuthFilePath: Boolean(connection.auth?.oauthAuthFilePath),
       providerCapability,
     },
     security: {
@@ -76,13 +111,10 @@ function buildLegacySettingsSnapshot() {
       featureFlagEnabled: cfg.orchestration.featureFlagEnabled === true,
       maxDelegationTurns: cfg.orchestration.maxDelegationTurns,
     },
-    search: {
-      webProvider: cfg.search.web?.provider ?? "duckduckgo",
-      webMaxResults: cfg.search.web?.maxResults ?? 5,
-    },
+    search: {},
     memory: {
       searchMode: cfg.memory.searchMode ?? "fts",
-      vectorBackend: getVectorBackendStatus(),
+      vectorBackend: getVectorBackendStatus(cfg.memory),
     },
     webui: {
       port: cfg.webui.port,
@@ -123,7 +155,8 @@ function buildLegacySettingsSnapshot() {
       projectId: cfg.googleChat?.projectId ?? "",
       hasAppCredentialJson: Boolean(cfg.googleChat?.appCredentialJson),
       serviceAccountEmail: cfg.googleChat?.serviceAccountEmail ?? "",
-      webhookUrl: cfg.googleChat?.webhookUrl ?? "",
+      webhookUrl: cfg.googleChat?.webhookUrl ? "***" : "",
+      hasWebhookUrl: Boolean(cfg.googleChat?.webhookUrl),
       hasVerificationToken: Boolean(cfg.googleChat?.verificationToken),
       allowedUserIds: cfg.googleChat?.allowedUserIds ?? [],
       allowedSpaceIds: cfg.googleChat?.allowedSpaceIds ?? [],
@@ -188,7 +221,10 @@ function buildLegacySettingsSnapshot() {
           mode: channelRuntimeFeatureFlag.mode,
           compatibilityMode: channelRuntimeFeatureFlag.compatibilityMode,
         },
-        diagnostics: buildChannelRegistryRuntimeDiagnostics(cfg),
+        diagnostics: buildChannelRegistryRuntimeDiagnostics(
+          cfg,
+          createArtifactStorageContext(paths),
+        ),
       },
     },
     channelConnections,
@@ -203,20 +239,21 @@ function buildLegacySettingsSnapshot() {
   }
 }
 
-function buildSettingsResponse() {
-  const legacy = buildLegacySettingsSnapshot()
+function buildSettingsResponse(config: KnowbeeConfig, paths: SetupPersistencePaths) {
+  const legacy = buildLegacySettingsSnapshot(config, paths)
   return {
     ...legacy,
-    draft: buildSetupDraft(),
-    state: readSetupState(),
-    checks: createSetupChecks(),
+    draft: redactSetupDraftSecrets(buildSetupDraft(config, paths)),
+    state: readSetupState(paths),
+    checks: redactSetupChecksForApi(createSetupChecks(config, paths)),
     legacy,
   }
 }
 
 export function registerSettingsRoute(app: FastifyInstance): void {
-  app.get("/api/settings", { preHandler: authMiddleware }, async () => {
-    return buildSettingsResponse()
+  app.get("/api/settings", { preHandler: authMiddleware }, async (req) => {
+    const config = getApiRuntimeConfig(req)
+    return buildSettingsResponse(config, getApiRuntimePaths(req))
   })
 
   app.get("/api/settings/mqtt/runtime", { preHandler: authMiddleware }, async () => {
@@ -265,6 +302,7 @@ export function registerSettingsRoute(app: FastifyInstance): void {
     { preHandler: authMiddleware },
     async (req, reply) => {
       const body = req.body
+      const paths = getApiRuntimePaths(req)
       if (
         body &&
         typeof body === "object" &&
@@ -273,29 +311,30 @@ export function registerSettingsRoute(app: FastifyInstance): void {
         typeof body.draft === "object"
       ) {
         const payload = body as { draft: ReturnType<typeof buildSetupDraft>; state?: ReturnType<typeof readSetupState> }
-        const saved = saveSetupDraft(payload.draft, payload.state)
-        try {
-          await restartMqttBrokerFromConfig()
-        } catch {
-          // The config save itself succeeded. Runtime issues are exposed through MQTT status/capabilities.
-        }
+        const currentConfig = getApiRuntimeConfig(req)
+        const saved = saveSetupDraft(payload.draft, payload.state, currentConfig, paths)
         return reply.status(200).send({
           ok: true,
-          draft: saved.draft,
+          draft: redactSetupDraftSecrets(saved.draft),
           state: saved.state,
-          checks: createSetupChecks(),
-          legacy: buildLegacySettingsSnapshot(),
+          checks: redactSetupChecksForApi(createSetupChecks(currentConfig, paths)),
+          legacy: buildLegacySettingsSnapshot(currentConfig, paths),
+          restartRequired: true,
+          appliesOn: "next_start",
+          runtimeConfigApplied: false,
+          configCommand: buildPersistedConfigurationCommand("settings.draft.save"),
         })
       }
 
       let raw: Record<string, unknown> = {}
-      if (existsSync(PATHS.configFile)) {
+      if (existsSync(paths.configFile)) {
         try {
-          raw = JSON5.parse(readFileSync(PATHS.configFile, "utf-8")) as Record<string, unknown>
+          raw = JSON5.parse(readFileSync(paths.configFile, "utf-8")) as Record<string, unknown>
         } catch {
           // start from an empty object when the file is unreadable
         }
       }
+      const currentConfig = getApiRuntimeConfig(req)
 
       const aiBody = body.ai && typeof body.ai === "object"
         ? body.ai as Record<string, unknown>
@@ -346,23 +385,14 @@ export function registerSettingsRoute(app: FastifyInstance): void {
         const orchestration = body.orchestration as Record<string, unknown>
         if (!raw.orchestration) raw.orchestration = {}
         const rawOrchestration = raw.orchestration as Record<string, unknown>
-        if (isOrchestrationMode(orchestration.mode)) rawOrchestration.mode = orchestration.mode
+        const mode = normalizeSettingsApiOrchestrationMode(orchestration.mode)
+        if (mode) rawOrchestration.mode = mode
         if (typeof orchestration.featureFlagEnabled === "boolean") {
           rawOrchestration.featureFlagEnabled = orchestration.featureFlagEnabled
         }
         if (typeof orchestration.maxDelegationTurns === "number") {
           rawOrchestration.maxDelegationTurns = Math.max(0, Math.floor(orchestration.maxDelegationTurns))
         }
-      }
-
-      if (body.search && typeof body.search === "object") {
-        const s = body.search as Record<string, unknown>
-        if (!raw.search) raw.search = {}
-        const rawSearch = raw.search as Record<string, unknown>
-        if (!rawSearch.web) rawSearch.web = {}
-        const web = rawSearch.web as Record<string, unknown>
-        if (typeof s.webProvider === "string") web.provider = s.webProvider
-        if (typeof s.webMaxResults === "number") web.maxResults = s.webMaxResults
       }
 
       if (body.telegram && typeof body.telegram === "object") {
@@ -375,7 +405,7 @@ export function registerSettingsRoute(app: FastifyInstance): void {
           rawTg.botToken = tg.botToken
         } else if (!rawTg.botToken) {
           // Not in file either — pull from current in-memory config as last resort
-          const inMemToken = getConfig().telegram?.botToken
+          const inMemToken = currentConfig.telegram?.botToken
           if (inMemToken) rawTg.botToken = inMemToken
         }
         if (Array.isArray(tg.allowedUserIds)) rawTg.allowedUserIds = tg.allowedUserIds
@@ -390,13 +420,13 @@ export function registerSettingsRoute(app: FastifyInstance): void {
         if (typeof slack.botToken === "string" && slack.botToken && slack.botToken !== "***") {
           rawSlack.botToken = slack.botToken
         } else if (!rawSlack.botToken) {
-          const inMemToken = getConfig().slack?.botToken
+          const inMemToken = currentConfig.slack?.botToken
           if (inMemToken) rawSlack.botToken = inMemToken
         }
         if (typeof slack.appToken === "string" && slack.appToken && slack.appToken !== "***") {
           rawSlack.appToken = slack.appToken
         } else if (!rawSlack.appToken) {
-          const inMemToken = getConfig().slack?.appToken
+          const inMemToken = currentConfig.slack?.appToken
           if (inMemToken) rawSlack.appToken = inMemToken
         }
         if (Array.isArray(slack.allowedUserIds)) rawSlack.allowedUserIds = slack.allowedUserIds
@@ -411,14 +441,14 @@ export function registerSettingsRoute(app: FastifyInstance): void {
         if (typeof discord.botToken === "string" && discord.botToken && discord.botToken !== "***") {
           rawDiscord.botToken = discord.botToken
         } else if (!rawDiscord.botToken) {
-          const inMemToken = getConfig().discord?.botToken
+          const inMemToken = currentConfig.discord?.botToken
           if (inMemToken) rawDiscord.botToken = inMemToken
         }
         if (typeof discord.applicationId === "string") rawDiscord.applicationId = discord.applicationId.trim()
         if (typeof discord.publicKey === "string" && discord.publicKey && discord.publicKey !== "***") {
           rawDiscord.publicKey = discord.publicKey.trim()
         } else if (!rawDiscord.publicKey) {
-          const inMemPublicKey = getConfig().discord?.publicKey
+          const inMemPublicKey = currentConfig.discord?.publicKey
           if (inMemPublicKey) rawDiscord.publicKey = inMemPublicKey
         }
         if (Array.isArray(discord.allowedUserIds)) rawDiscord.allowedUserIds = discord.allowedUserIds
@@ -439,7 +469,7 @@ export function registerSettingsRoute(app: FastifyInstance): void {
         if (typeof googleChat.appCredentialJson === "string" && googleChat.appCredentialJson && googleChat.appCredentialJson !== "***") {
           rawGoogleChat.appCredentialJson = googleChat.appCredentialJson
         } else if (!rawGoogleChat.appCredentialJson) {
-          const inMemCredential = getConfig().googleChat?.appCredentialJson
+          const inMemCredential = currentConfig.googleChat?.appCredentialJson
           if (inMemCredential) rawGoogleChat.appCredentialJson = inMemCredential
         }
         if (typeof googleChat.serviceAccountEmail === "string") rawGoogleChat.serviceAccountEmail = googleChat.serviceAccountEmail.trim()
@@ -447,7 +477,7 @@ export function registerSettingsRoute(app: FastifyInstance): void {
         if (typeof googleChat.verificationToken === "string" && googleChat.verificationToken && googleChat.verificationToken !== "***") {
           rawGoogleChat.verificationToken = googleChat.verificationToken
         } else if (!rawGoogleChat.verificationToken) {
-          const inMemToken = getConfig().googleChat?.verificationToken
+          const inMemToken = currentConfig.googleChat?.verificationToken
           if (inMemToken) rawGoogleChat.verificationToken = inMemToken
         }
         if (Array.isArray(googleChat.allowedUserIds)) rawGoogleChat.allowedUserIds = googleChat.allowedUserIds
@@ -512,57 +542,60 @@ export function registerSettingsRoute(app: FastifyInstance): void {
         rawMqtt.allowAnonymous = false
       }
 
-      writeFileSync(PATHS.configFile, JSON5.stringify(raw, null, 2), "utf-8")
-      const reloaded = reloadConfig()
-      resetAIProviderCache()
-      resetEmbeddingProvider()
-      updateActiveRunsMaxDelegationTurns(reloaded.orchestration.maxDelegationTurns)
-      try {
-        await restartMqttBrokerFromConfig()
-      } catch {
-        // The config save succeeded; runtime failure is surfaced by MQTT status/capabilities.
-      }
-
-      return reply.status(200).send({ ok: true, ...buildSettingsResponse() })
+      writeFileSync(paths.configFile, JSON5.stringify(raw, null, 2), "utf-8")
+      return reply.status(200).send({
+        ok: true,
+        ...buildSettingsResponse(currentConfig, paths),
+        restartRequired: true,
+        appliesOn: "next_start",
+        runtimeConfigApplied: false,
+        configCommand: buildPersistedConfigurationCommand("settings.compat.save"),
+      })
     },
   )
 
-  app.post("/api/settings/reset", { preHandler: authMiddleware }, async () => {
-    stopActiveSlackChannel()
-    stopActiveTelegramChannel()
-    stopDiscordRuntime()
-    stopGoogleChatRuntime()
-    const snapshot = resetSetupEnvironment()
-    try {
-      await restartMqttBrokerFromConfig()
-    } catch {
-      // Keep returning the reset snapshot even when MQTT runtime restart fails.
-    }
+  app.post("/api/settings/reset", { preHandler: authMiddleware }, async (req) => {
+    const runningConfig = getApiRuntimeConfig(req)
+    const snapshot = resetSetupEnvironment(getApiRuntimePaths(req))
     return {
       ok: true,
       ...snapshot,
-      legacy: buildLegacySettingsSnapshot(),
+      draft: redactSetupDraftSecrets(snapshot.draft),
+      checks: redactSetupChecksForApi(snapshot.checks),
+      legacy: buildLegacySettingsSnapshot(runningConfig, getApiRuntimePaths(req)),
+      restartRequired: true,
+      appliesOn: "next_start",
+      runtimeConfigApplied: false,
+      configCommand: buildPersistedConfigurationCommand("settings.reset"),
     }
   })
 
-  app.post("/api/settings/reload", { preHandler: authMiddleware }, async () => {
-    reloadConfig()
-    resetAIProviderCache()
-    resetEmbeddingProvider()
-    try {
-      await restartMqttBrokerFromConfig()
-    } catch {
-      // Keep returning the reloaded snapshot even when MQTT runtime restart fails.
-    }
-    return { ok: true, ...buildSettingsResponse() }
+  app.post("/api/settings/reload", { preHandler: authMiddleware }, async (_req, reply) => {
+    return reply.status(409).send({
+      ok: false,
+      error: "runtime_config_reload_not_supported",
+      restartRequired: true,
+      appliesOn: "next_start",
+      configCommand: buildRejectedConfigurationCommand(
+        "settings.reload",
+        "runtime_config_reload_not_supported",
+      ),
+    })
   })
 
-  app.post("/api/settings/telegram/restart", { preHandler: authMiddleware }, async (_req, reply) => {
-    const cfg = reloadConfig()
+  app.post("/api/settings/telegram/restart", { preHandler: authMiddleware }, async (req, reply) => {
+    const cfg = getApiRuntimeConfig(req)
 
     if (!cfg.telegram?.botToken) {
       setTelegramRuntimeError("봇 토큰이 설정되지 않았습니다.")
-      return reply.status(400).send({ ok: false, error: "봇 토큰이 설정되지 않았습니다. 토큰을 입력하고 저장해 주세요." })
+      return reply.status(400).send({
+        ok: false,
+        error: "봇 토큰이 설정되지 않았습니다. 토큰을 입력하고 저장해 주세요.",
+        configCommand: buildRejectedConfigurationCommand(
+          "settings.telegram.restart",
+          "telegram_token_missing",
+        ),
+      })
     }
 
     try {
@@ -570,23 +603,48 @@ export function registerSettingsRoute(app: FastifyInstance): void {
       setTelegramRuntimeError(null)
 
       if (!cfg.telegram.enabled) {
-        return { ok: true, status: "disabled" }
+        return {
+          ok: true,
+          status: "disabled",
+          configCommand: buildRuntimeAppliedConfigurationCommand("settings.telegram.restart"),
+        }
       }
 
       const { TelegramChannel } = await import("../../channels/telegram/bot.js")
-      const ch = new TelegramChannel(cfg.telegram)
+      const ch = new TelegramChannel(
+        cfg.telegram,
+        createArtifactStorageContext(getApiRuntimePaths(req)),
+      )
       await ch.start()
       setActiveTelegramChannel(ch)
-      return { ok: true, status: "started" }
+      const recovery = await recoverPendingResponsesForChannelRuntime(
+        createStartedChannelRecoveryRuntime({ telegram: ch }),
+      )
+      return {
+        ok: true,
+        status: "started",
+        recovery,
+        configCommand: buildRuntimeAppliedConfigurationCommand("settings.telegram.restart"),
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const sanitized = settingsRouteErrorSummary(err)
+      const message = sanitized.userMessage
       setTelegramRuntimeError(message)
-      return reply.status(500).send({ ok: false, error: message })
+      return reply.status(500).send({
+        ok: false,
+        error: message,
+        kind: sanitized.kind,
+        actionHint: sanitized.actionHint,
+        configCommand: buildRuntimeFailedConfigurationCommand(
+          "settings.telegram.restart",
+          "telegram_restart_failed",
+        ),
+      })
     }
   })
 
-  app.post("/api/settings/channels/restart", { preHandler: authMiddleware }, async (_req, reply) => {
-    const cfg = reloadConfig()
+  app.post("/api/settings/channels/restart", { preHandler: authMiddleware }, async (req, reply) => {
+    const cfg = getApiRuntimeConfig(req)
 
     try {
       stopActiveSlackChannel()
@@ -612,50 +670,123 @@ export function registerSettingsRoute(app: FastifyInstance): void {
         return reply.status(400).send({
           ok: false,
           error: "활성화된 채널의 필수 토큰이 비어 있습니다.",
+          configCommand: buildRejectedConfigurationCommand(
+            "settings.channels.restart",
+            "enabled_channel_configuration_missing",
+          ),
         })
       }
 
-      await startChannels()
-      return { ok: true, status: "started" }
+      const activation = await activateChannelsAndRecoverPendingResponses(
+        cfg,
+        getApiRuntimePaths(req),
+      )
+      return {
+        ok: true,
+        status: "started",
+        recovery: activation.recovery,
+        configCommand: buildRuntimeAppliedConfigurationCommand("settings.channels.restart"),
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const sanitized = settingsRouteErrorSummary(err)
+      const message = sanitized.userMessage
       setSlackRuntimeError(message)
       setTelegramRuntimeError(message)
       setDiscordRuntimeError(message)
       setGoogleChatRuntimeError(message)
-      return reply.status(500).send({ ok: false, error: message })
+      return reply.status(500).send({
+        ok: false,
+        error: message,
+        kind: sanitized.kind,
+        actionHint: sanitized.actionHint,
+        configCommand: buildRuntimeFailedConfigurationCommand(
+          "settings.channels.restart",
+          "channels_restart_failed",
+        ),
+      })
     }
   })
 
   // POST /api/settings/test-ai
-  app.post("/api/settings/test-ai", { preHandler: authMiddleware }, async (_req, reply) => {
-    try {
-      const model = getDefaultModel()
-      const provider = getProvider()
-      const providerCapability = getProviderCapabilityMatrix({ connection: getConfig().ai.connection, memory: getConfig().memory })
-      const providerResolution = attachCapabilityProfileToTrace(resolveProviderResolutionSnapshot().auditTrace, providerCapability)
-      const chunks: string[] = []
-      for await (const chunk of chatWithContextPreflight({
-        provider,
-        model,
-        messages: [{ role: "user", content: "Reply with just: OK" }],
-        system: loadPromptTemplate({ sourceId: "ai_connection_test" }),
-        tools: [],
-        signal: new AbortController().signal,
-        metadata: { operation: "settings_test_ai" },
-      })) {
-        if (chunk.type === "text_delta") chunks.push(chunk.delta)
-        if (chunk.type === "message_stop") break
+  app.post<{ Body: SettingsAiConnectionTestInput }>(
+    "/api/settings/test-ai",
+    { preHandler: authMiddleware },
+    async (req, reply) => {
+      const runtimeConfig = getApiRuntimeConfig(req)
+      let config = runtimeConfig
+      try {
+        const hasCandidate = Boolean(
+          req.body &&
+            (req.body.providerType !== undefined ||
+              req.body.defaultModel !== undefined ||
+              req.body.endpoint !== undefined),
+        )
+        config = hasCandidate
+          ? buildSettingsAiConnectionTestConfig(runtimeConfig, req.body)
+          : runtimeConfig
+        const model = getDefaultModel(config)
+        const provider = getProvider(undefined, config)
+        const chunks: string[] = []
+        for await (const chunk of chatWithContextPreflight({
+          provider,
+          model,
+          messages: [{
+            role: "user",
+            content: loadPromptValue("ai_connection_test", {}, { required: true }),
+          }],
+          system: loadPromptTemplate({ sourceId: "ai_connection_test" }),
+          tools: [],
+          signal: new AbortController().signal,
+          memoryConfig: config.memory,
+          metadata: { operation: "settings_test_ai" },
+        })) {
+          if (chunk.type === "text_delta") chunks.push(chunk.delta)
+          if (chunk.type === "message_stop") break
+        }
+        const providerCapability = getProviderCapabilityMatrix({
+          connection: config.ai.connection,
+          memory: config.memory,
+          forceRefresh: true,
+          checkResult: {
+            status: "ok",
+            checkedAt: new Date().toISOString(),
+            message: "실제 AI 응답 연결을 확인했습니다.",
+            sourceUrl: null,
+          },
+        })
+        const providerResolution = attachCapabilityProfileToTrace(
+          resolveProviderResolutionSnapshot(undefined, config).auditTrace,
+          providerCapability,
+        )
+        return {
+          ok: true,
+          response: chunks.join("").trim(),
+          model,
+          providerResolution,
+          providerCapability,
+        }
+      } catch (err) {
+        const sanitized = settingsRouteErrorSummary(err)
+        getProviderCapabilityMatrix({
+          connection: config.ai.connection,
+          memory: config.memory,
+          forceRefresh: true,
+          checkResult: {
+            status: "failed",
+            checkedAt: new Date().toISOString(),
+            message: sanitized.userMessage,
+            sourceUrl: null,
+          },
+        })
+        return reply.status(503).send({
+          ok: false,
+          error: sanitized.userMessage,
+          kind: sanitized.kind,
+          safeMessage: sanitized.userMessage,
+          reasonCode: sanitized.kind,
+          actionHint: sanitized.actionHint,
+        })
       }
-      return { ok: true, response: chunks.join("").trim(), model, providerResolution, providerCapability }
-    } catch (err) {
-      const sanitized = sanitizeUserFacingError(err instanceof Error ? err.message : String(err))
-      return reply.status(503).send({
-        ok: false,
-        error: sanitized.userMessage,
-        kind: sanitized.kind,
-        actionHint: sanitized.actionHint,
-      })
-    }
-  })
+    },
+  )
 }

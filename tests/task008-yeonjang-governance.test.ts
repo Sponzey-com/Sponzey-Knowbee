@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import {
   approveYeonjangInstancePairing,
@@ -17,39 +17,16 @@ import {
   buildYeonjangFleetProjection,
   resolveYeonjangDefaultTargetSelection,
 } from "../packages/core/src/yeonjang/topology.ts"
+import { getYeonjangGatewayHostFingerprint } from "../packages/core/src/yeonjang/runtime-identity.ts"
 import { resolveYeonjangTargetSelection } from "../packages/core/src/tools/builtin/yeonjang-target.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
-
-function stableHexHash(value: string): string {
-  let hash = 0xcbf29ce484222325n
-  for (const byte of Buffer.from(value, "utf-8")) {
-    hash ^= BigInt(byte)
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n)
-  }
-  return hash.toString(16).padStart(16, "0")
-}
-
-function gatewayHostFingerprintRaw(): string {
-  const hostname =
-    process.env["KNOWBEE_HOSTNAME"]?.trim()
-    || process.env["COMPUTERNAME"]?.trim()
-    || process.env["HOSTNAME"]?.trim()
-    || "localhost"
-  const os = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : process.platform
-  const arch = process.arch === "x64" ? "x86_64" : process.arch === "arm64" ? "aarch64" : process.arch === "ia32" ? "x86" : process.arch
-  return stableHexHash(`${hostname}|${os}|${arch}`)
-}
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task008-yeonjang-governance-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 function seedObservation(overrides: Partial<Parameters<typeof upsertYeonjangRegistryObservation>[0]> = {}) {
@@ -62,7 +39,7 @@ function seedObservation(overrides: Partial<Parameters<typeof upsertYeonjangRegi
     supportProfile: overrides.supportProfile ?? "desktop_interactive",
     platform: overrides.platform ?? "macos",
     arch: overrides.arch ?? "arm64",
-    hostFingerprint: overrides.hostFingerprint ?? gatewayHostFingerprintRaw(),
+    hostFingerprint: overrides.hostFingerprint ?? getYeonjangGatewayHostFingerprint(),
     installFingerprint: overrides.installFingerprint ?? "install-local-001",
     sessionId: overrides.sessionId ?? "sess-local-1",
     clientId: overrides.clientId ?? "client-local-1",
@@ -94,11 +71,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -106,6 +78,29 @@ afterEach(() => {
 })
 
 describe("task008 yeonjang governance", () => {
+  it("allows a locally auto-trusted instance to verify a newly configured pairing secret", () => {
+    expect(seedObservation({
+      pairingFingerprint: hashYeonjangPairingSecret("local-browser-focus-secret"),
+    })).toEqual(expect.objectContaining({ ok: true }))
+
+    const before = listYeonjangRegistryInstances().find((item) => item.instanceId === "inst-local-1")
+    expect(before).toEqual(expect.objectContaining({
+      trustState: "trusted",
+      trustReason: "auto_local_identity",
+    }))
+
+    expect(approveYeonjangInstancePairing({
+      instanceId: "inst-local-1",
+      pairingSecret: "local-browser-focus-secret",
+      actor: "webui:operator",
+      reason: "browser_focus_signer_provisioning",
+    })).toEqual(expect.objectContaining({
+      ok: true,
+      extensionId: "yeonjang-main",
+      trustState: "trusted",
+    }))
+  })
+
   it("keeps remote instances pending until pairing secret approval succeeds", () => {
     expect(seedObservation()).toEqual(expect.objectContaining({ ok: true }))
     expect(seedObservation({

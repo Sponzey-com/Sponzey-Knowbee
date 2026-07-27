@@ -1,4 +1,5 @@
-import { recordQueueBackpressureEvent } from "./queue-backpressure.js";
+import { redactLogText } from "../logger/index.js";
+import { DEFAULT_QUEUE_BUDGETS, QueueBackpressureError, recordQueueBackpressureEvent, } from "./queue-backpressure.js";
 const requestGroupExecutionQueues = new Map();
 function appendExecutionQueueEvent(dependencies, runId, message) {
     try {
@@ -8,12 +9,39 @@ function appendExecutionQueueEvent(dependencies, runId, message) {
         // Queue tracing must never block execution.
     }
 }
+function safeQueueErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 export function hasRequestGroupExecutionQueue(requestGroupId) {
     return requestGroupExecutionQueues.has(requestGroupId);
 }
 export function enqueueRequestGroupExecution(params, dependencies) {
-    const previous = requestGroupExecutionQueues.get(params.requestGroupId);
-    if (previous) {
+    const existing = requestGroupExecutionQueues.get(params.requestGroupId);
+    const maxPending = Math.max(0, Math.floor(params.maxPending ?? DEFAULT_QUEUE_BUDGETS.interactive_run.maxPending));
+    const pendingCount = existing ? Math.max(0, existing.outstanding - 1) : 0;
+    if (existing && pendingCount >= maxPending) {
+        dependencies.logWarn(`request-group execution admission rejected: queue full; runId=${params.runId}; requestGroupId=${params.requestGroupId}; pending=${pendingCount}`);
+        appendExecutionQueueEvent(dependencies, params.runId, "execution_queue_rejected:queue_full");
+        recordQueueBackpressureEvent({
+            queueName: "interactive_run",
+            eventKind: "rejected",
+            actionTaken: "queue_full",
+            runId: params.runId,
+            requestGroupId: params.requestGroupId,
+            pendingCount,
+        });
+        const error = new QueueBackpressureError("queue_full", "interactive_run", "interactive_run queue is full");
+        return dependencies.onAdmissionRejected
+            ? dependencies.onAdmissionRejected({
+                error,
+                runId: params.runId,
+                requestGroupId: params.requestGroupId,
+                pendingCount,
+            })
+            : Promise.reject(error);
+    }
+    if (existing) {
         dependencies.logInfo("request-group execution queued behind active execution task", {
             runId: params.runId,
             requestGroupId: params.requestGroupId,
@@ -25,12 +53,18 @@ export function enqueueRequestGroupExecution(params, dependencies) {
             actionTaken: "wait_request_group_execution",
             runId: params.runId,
             requestGroupId: params.requestGroupId,
-            pendingCount: 1,
+            pendingCount: pendingCount + 1,
         });
     }
-    const next = (previous ?? Promise.resolve(undefined))
+    const state = existing ?? {
+        tail: Promise.resolve(undefined),
+        outstanding: 0,
+    };
+    state.outstanding += 1;
+    const next = state.tail
         .catch((error) => {
-        dependencies.logWarn(`previous request-group execution queue recovered: ${error instanceof Error ? error.message : String(error)}`);
+        const message = safeQueueErrorMessage(error);
+        dependencies.logWarn(`previous request-group execution queue recovered: ${message}`);
         return undefined;
     })
         .then(() => {
@@ -45,10 +79,11 @@ export function enqueueRequestGroupExecution(params, dependencies) {
         return params.task();
     })
         .catch((error) => {
+        const message = safeQueueErrorMessage(error);
         dependencies.logError("request-group execution queue task failed", {
             runId: params.runId,
             requestGroupId: params.requestGroupId,
-            error: error instanceof Error ? error.message : String(error),
+            error: message,
         });
         recordQueueBackpressureEvent({
             queueName: "interactive_run",
@@ -56,12 +91,14 @@ export function enqueueRequestGroupExecution(params, dependencies) {
             actionTaken: "request_group_execution_failed",
             runId: params.runId,
             requestGroupId: params.requestGroupId,
-            detail: { error: error instanceof Error ? error.message : String(error) },
+            detail: { error: message },
         });
         return dependencies.getRootRun(params.runId);
     })
         .finally(() => {
-        if (requestGroupExecutionQueues.get(params.requestGroupId) === next) {
+        state.outstanding = Math.max(0, state.outstanding - 1);
+        if (requestGroupExecutionQueues.get(params.requestGroupId) === state &&
+            state.outstanding === 0) {
             requestGroupExecutionQueues.delete(params.requestGroupId);
         }
         appendExecutionQueueEvent(dependencies, params.runId, "execution_queue_released");
@@ -73,7 +110,8 @@ export function enqueueRequestGroupExecution(params, dependencies) {
             requestGroupId: params.requestGroupId,
         });
     });
-    requestGroupExecutionQueues.set(params.requestGroupId, next);
+    state.tail = next;
+    requestGroupExecutionQueues.set(params.requestGroupId, state);
     return next;
 }
 //# sourceMappingURL=execution-queue.js.map

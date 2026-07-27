@@ -1,8 +1,16 @@
-import { buildArtifactAccessDescriptor } from "../../artifacts/lifecycle.js";
+import { buildArtifactAccessDescriptor, } from "../../artifacts/lifecycle.js";
 import { deliverArtifactOnce, } from "../../runs/delivery.js";
+import { sanitizeCompletionAwaitingUserText } from "../../runs/completion-application.js";
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js";
 import { buildTextDeliveryKey, recordMessageLedgerEvent, } from "../../runs/message-ledger.js";
+import { buildChannelChunkErrorNotice } from "../chunk-error-notice.js";
+import { renderChannelNoticeText } from "../notice-rendering.js";
+import { redactLogText } from "../../logger/index.js";
 import { buildSlackFailedDeliveryReceipt, buildSlackSentDeliveryReceipt, } from "./message-delivery.js";
+function slackChunkDeliveryErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 function isArtifactDeliveryDetails(value) {
     if (!value || typeof value !== "object")
         return false;
@@ -12,12 +20,27 @@ function isArtifactDeliveryDetails(value) {
         typeof candidate.filePath === "string" &&
         typeof candidate.size === "number");
 }
-function buildSlackArtifactFallbackMessage(fileName, downloadUrl, caption) {
-    const title = caption?.trim() || fileName;
-    if (!downloadUrl) {
-        return `파일 업로드가 실패했습니다. 안전한 다운로드 링크도 만들 수 없어 같은 Slack 스레드에서 완료할 수 없습니다.\n- 파일: ${title}`;
-    }
-    return `파일 업로드가 실패해 같은 Slack 스레드에 다운로드 링크로 대신 전달합니다.\n- 파일: ${title}\n- 다운로드: ${downloadUrl}`;
+export function buildSlackArtifactFallbackNotice(input) {
+    const language = input.language ?? "ko";
+    const title = input.caption?.trim() || input.fileName;
+    const text = input.downloadUrl
+        ? language === "en"
+            ? `File upload failed, so a download link is provided in this Slack thread instead.\n- File: ${title}\n- Download: ${input.downloadUrl}`
+            : `파일 업로드가 실패해 같은 Slack 스레드에 다운로드 링크로 대신 전달합니다.\n- 파일: ${title}\n- 다운로드: ${input.downloadUrl}`
+        : language === "en"
+            ? `File upload failed. No safe download link could be created in this Slack thread.\n- File: ${title}`
+            : `파일 업로드가 실패했습니다. 안전한 다운로드 링크도 만들 수 없어 같은 Slack 스레드에서 완료할 수 없습니다.\n- 파일: ${title}`;
+    return {
+        kind: "slack_chunk_fallback",
+        reason: "artifact_upload_failed",
+        language,
+        text,
+        deliveryMode: "diagnostic",
+        textSource: "slack_chunk_fallback_notice",
+        renderingRequired: "llm_final_response",
+        finalAnswer: false,
+        assistantIdentityClaim: false,
+    };
 }
 function shouldSendToolStartStatus(toolName) {
     return toolName !== "shell_exec";
@@ -99,7 +122,7 @@ export function createSlackChunkDeliveryHandler(context) {
         }
         catch (error) {
             recordSlackTextDeliveryFailure(error, text, kind);
-            context.logError(`Failed to send Slack text delivery: ${error instanceof Error ? error.message : String(error)}`);
+            context.logError(`Failed to send Slack text delivery: ${slackChunkDeliveryErrorMessage(error)}`);
             return undefined;
         }
     };
@@ -120,6 +143,8 @@ export function createSlackChunkDeliveryHandler(context) {
     return async (chunk) => {
         if (chunk.type === "text") {
             if (toolOwnedResponseActive)
+                return;
+            if (chunk.textSource !== "llm_reviewed")
                 return;
             bufferedText += chunk.delta;
             return;
@@ -151,7 +176,11 @@ export function createSlackChunkDeliveryHandler(context) {
             const isolatedToolResponse = decideIsolatedToolResponse(chunk);
             if (isolatedToolResponse.kind === "artifact" && isArtifactDeliveryDetails(chunk.details)) {
                 const details = chunk.details;
+                const caption = details.caption
+                    ? sanitizeCompletionAwaitingUserText(details.caption)
+                    : undefined;
                 const receipt = await deliverArtifactOnce({
+                    artifactStorage: context.artifactStorage,
                     runId: context.getRunId(),
                     channel: "slack",
                     filePath: details.filePath,
@@ -160,7 +189,7 @@ export function createSlackChunkDeliveryHandler(context) {
                     ...(details.mimeType ? { mimeType: details.mimeType } : {}),
                     task: async () => {
                         try {
-                            const sent = await sendFileWithReceipt(details.filePath, `slack:file:${context.getRunId() ?? "pending"}:${details.filePath}`, details.caption);
+                            const sent = await sendFileWithReceipt(details.filePath, `slack:file:${context.getRunId() ?? "pending"}:${details.filePath}`, caption);
                             recordIfRunPresent(sent.messageId, "assistant");
                             return {
                                 artifactDeliveries: [
@@ -169,7 +198,7 @@ export function createSlackChunkDeliveryHandler(context) {
                                         channel: "slack",
                                         filePath: details.filePath,
                                         ...(sent.permalink ? { url: sent.permalink } : {}),
-                                        ...(details.caption ? { caption: details.caption } : {}),
+                                        ...(caption ? { caption } : {}),
                                         messageId: sent.messageId,
                                         deliveryReceipts: [sent.receipt],
                                     },
@@ -177,15 +206,20 @@ export function createSlackChunkDeliveryHandler(context) {
                             };
                         }
                         catch (error) {
-                            const message = error instanceof Error ? error.message : String(error);
+                            const message = slackChunkDeliveryErrorMessage(error);
                             context.logError(`Failed to send Slack file: ${message}`);
                             const artifact = buildArtifactAccessDescriptor({
                                 filePath: details.filePath,
                                 sizeBytes: details.size,
                                 ...(details.mimeType ? { mimeType: details.mimeType } : {}),
+                            }, context.artifactStorage);
+                            const fallbackNotice = buildSlackArtifactFallbackNotice({
+                                fileName: artifact.fileName,
+                                downloadUrl: artifact.ok ? artifact.downloadUrl : undefined,
+                                caption,
+                                language: context.language,
                             });
-                            const fallbackText = buildSlackArtifactFallbackMessage(artifact.fileName, artifact.ok ? artifact.downloadUrl : undefined, details.caption);
-                            const sent = await sendFinalText(fallbackText, "artifact-fallback");
+                            const sent = await sendFinalText(fallbackNotice.text, "artifact-fallback");
                             if (!sent)
                                 throw error;
                             for (const fallbackMessageId of sent.messageIds) {
@@ -213,7 +247,7 @@ export function createSlackChunkDeliveryHandler(context) {
                                                 previewable: artifact.previewable,
                                                 mimeType: artifact.mimeType,
                                                 sizeBytes: details.size,
-                                                ...(details.caption ? { caption: details.caption } : {}),
+                                                ...(caption ? { caption } : {}),
                                                 ...(sent.messageIds[0] !== undefined ? { messageId: sent.messageIds[0] } : {}),
                                                 deliveryReceipts: sent.deliveryReceipts,
                                             },
@@ -232,7 +266,7 @@ export function createSlackChunkDeliveryHandler(context) {
             }
             if (isolatedToolResponse.kind === "text" && isolatedToolResponse.text) {
                 toolOwnedResponseActive = true;
-                bufferedText = isolatedToolResponse.text;
+                bufferedText = sanitizeCompletionAwaitingUserText(isolatedToolResponse.text);
             }
             return;
         }
@@ -267,7 +301,22 @@ export function createSlackChunkDeliveryHandler(context) {
         if (chunk.type === "error") {
             if (toolOwnedResponseActive)
                 return;
-            const messageId = await context.responder.sendError(chunk.message);
+            const notice = buildChannelChunkErrorNotice({
+                provider: "slack",
+                reason: redactLogText(chunk.message),
+                language: context.language,
+            });
+            const renderedNotice = await renderChannelNoticeText({
+                originalRequest: context.language === "ko" ? "Slack 채널 오류" : "Slack channel error",
+                rawText: notice.text,
+                ...(context.noticeRendering ? { dependencies: context.noticeRendering } : {}),
+            });
+            if (renderedNotice.status === "blocked") {
+                context.logError(`Skipped Slack chunk error notice delivery: ${renderedNotice.reason}`);
+                bufferedText = "";
+                return;
+            }
+            const messageId = await context.responder.sendError(renderedNotice.text);
             recordIfRunPresent(messageId, "assistant");
             bufferedText = "";
         }

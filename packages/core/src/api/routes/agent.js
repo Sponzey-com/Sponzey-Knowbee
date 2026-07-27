@@ -1,13 +1,33 @@
+import { canonicalizeLegacyTeamIdentity } from "../../adapters/legacy-team-identity.js";
 import { listAgentLearningEvents, listHistoryVersions, listLearningReviewQueue, listRestoreEvents, restoreHistoryVersion, } from "../../agent/learning.js";
+import { resolveMainAgentSelfName } from "../../agent/main-agent-identity.js";
+import { executeAgentCapabilityBindingCommand } from "../../agents/agent-capability-binding-command.js";
+import { buildAgentCapabilityBindingProjection } from "../../agents/agent-capability-binding-projection.js";
+import { capabilityPublicRef, createSqliteAgentCapabilityBindingCommandPorts, listAgentCapabilityBindingSources, listAgentCapabilityCatalogSources, resolveInternalAgentId, } from "../../agents/agent-capability-binding-repository.js";
+import { createSqliteAgentIdentityCommandRepository } from "../../agents/agent-identity-command-repository.js";
+import { executeAgentIdentityCommand } from "../../agents/agent-identity-command.js";
+import { executeAgentOperationalSettingsCommand } from "../../agents/agent-operational-settings-command.js";
+import { buildAgentOperationalSettingsProjection } from "../../agents/agent-operational-settings-projection.js";
+import { createSqliteAgentOperationalSettingsCommandPorts } from "../../agents/agent-operational-settings-repository.js";
+import { createAgentPublicRef } from "../../agents/agent-public-reference.js";
+import { executeAgentRelationshipCommand } from "../../agents/agent-relationship-command.js";
+import { buildSqliteAgentRelationshipProjection, createSqliteAgentRelationshipCommandPorts, } from "../../agents/agent-relationship-repository.js";
+import { buildAgentWorkspaceProjection } from "../../agents/agent-workspace-projection.js";
+import { createArtifactStorageContext } from "../../artifacts/lifecycle.js";
 import { validateAgentConfig, validateTeamConfig, } from "../../contracts/sub-agent-orchestration.js";
-import { NicknameNamespaceError, getDb, listAgentTeamMemberships, } from "../../db/index.js";
-import { createAgentHierarchyService } from "../../orchestration/hierarchy.js";
+import { AgentNameNamespaceError, getDb, listAgentCapabilityBindings, listAgentRelationships, listAgentTeamMemberships, listMcpServerCatalogEntries, listSkillCatalogEntries, } from "../../db/index.js";
+import { createLogger, redactLogText } from "../../logger/index.js";
+import { createAgentHierarchyService, createAgentHierarchyStorage, } from "../../orchestration/hierarchy.js";
 import { createAgentRegistryService, createTeamRegistryService, } from "../../orchestration/registry.js";
 import { createTeamCompositionService } from "../../orchestration/team-composition.js";
 import { createTeamExecutionPlanService } from "../../orchestration/team-execution-plan.js";
 import { createAgentTopologyService } from "../../orchestration/topology-projection.js";
+import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js";
+import { listYeonjangRegistryInstances } from "../../yeonjang/registry.js";
 import { authMiddleware } from "../middleware/auth.js";
-import { startLocalRun } from "./runs.js";
+import { getApiRuntimeConfig, getApiRuntimePaths } from "../runtime-context.js";
+import { registerAgentWorkspaceRoute } from "./agent-workspace.js";
+import { resolveWebUiClientRequestId, startLocalRun } from "./runs.js";
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -85,8 +105,12 @@ function teamValidationReasonCode(issues) {
     }
     return "invalid_team_config";
 }
+function agentRoutePersistenceErrorSummary(error) {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    return sanitizeUserFacingError(redactLogText(rawMessage));
+}
 function sendPersistenceError(reply, error) {
-    if (error instanceof NicknameNamespaceError) {
+    if (error instanceof AgentNameNamespaceError) {
         return reply.status(409).send({
             ok: false,
             error: error.details.reasonCode,
@@ -94,11 +118,14 @@ function sendPersistenceError(reply, error) {
             details: error.details,
         });
     }
+    const sanitized = agentRoutePersistenceErrorSummary(error);
     return reply.status(500).send({
         ok: false,
         error: "agent_team_api_write_failed",
         reasonCode: "agent_team_api_write_failed",
-        message: error instanceof Error ? error.message : String(error),
+        message: sanitized.userMessage,
+        kind: sanitized.kind,
+        actionHint: sanitized.actionHint,
     });
 }
 function agentPayload(body) {
@@ -134,19 +161,27 @@ function sendTeamCompositionFailure(reply, diagnostics) {
         diagnostics,
     });
 }
-function hierarchyService(body) {
+function hierarchyService(config, storage, body) {
     const envelope = requestEnvelope(body);
     const maxDepth = asPositiveInteger(envelope.maxDepth);
     const maxChildCount = asPositiveInteger(envelope.maxChildCount);
     return createAgentHierarchyService({
+        config,
+        storage,
         ...(maxDepth !== undefined ? { maxDepth } : {}),
         ...(maxChildCount !== undefined ? { maxChildCount } : {}),
     });
 }
+function agentRegistryService(config) {
+    return createAgentRegistryService({ config });
+}
+function teamRegistryService(config) {
+    return createTeamRegistryService({ config });
+}
 function mergeAgentPatch(current, patch, agentId) {
     const now = Date.now();
     const patchRecord = isRecord(patch) ? patch : {};
-    return {
+    const merged = {
         ...current,
         ...patchRecord,
         agentId,
@@ -157,6 +192,15 @@ function mergeAgentPatch(current, patch, agentId) {
             ? patchRecord.profileVersion
             : current.profileVersion + 1,
     };
+    if ("agentName" in patchRecord) {
+        Reflect.deleteProperty(merged, "displayName");
+        Reflect.deleteProperty(merged, "nickname");
+        Reflect.deleteProperty(merged, "normalizedNickname");
+        if (!("normalizedAgentName" in patchRecord)) {
+            Reflect.deleteProperty(merged, "normalizedAgentName");
+        }
+    }
+    return merged;
 }
 function mergeTeamPatch(current, patch, teamId) {
     const now = Date.now();
@@ -233,46 +277,141 @@ function teamMembersResponse(team) {
         diagnostics: buildTeamDiagnostics(team),
     };
 }
-function validateAndStoreAgent(reply, input, body) {
+function validateAndStoreAgent(config, reply, input, body) {
     const validation = validateAgentConfig(input);
     if (!validation.ok)
         return sendValidationError(reply, "invalid_agent_config", validation.issues);
     try {
-        createAgentRegistryService().createOrUpdate(validation.value, persistenceOptions(body));
-        const stored = createAgentRegistryService().get(validation.value.agentId);
+        agentRegistryService(config).createOrUpdate(validation.value, persistenceOptions(body));
+        const stored = agentRegistryService(config).get(validation.value.agentId);
         return stored ?? validation.value;
     }
     catch (error) {
         return sendPersistenceError(reply, error);
     }
 }
-function validateAndStoreTeam(reply, input, body) {
-    const validation = validateTeamConfig(input);
+function validateAndStoreTeam(config, reply, input, body) {
+    const canonicalInput = isRecord(body) && body.imported === true && isRecord(input)
+        ? canonicalizeLegacyTeamIdentity(input)
+        : input;
+    const validation = validateTeamConfig(canonicalInput);
     if (!validation.ok)
         return sendValidationError(reply, teamValidationReasonCode(validation.issues), validation.issues);
     try {
-        createTeamRegistryService().createOrUpdate(validation.value, persistenceOptions(body));
-        const stored = createTeamRegistryService().get(validation.value.teamId);
+        teamRegistryService(config).createOrUpdate(validation.value, persistenceOptions(body));
+        const stored = teamRegistryService(config).get(validation.value.teamId);
         return stored ?? validation.value;
     }
     catch (error) {
         return sendPersistenceError(reply, error);
     }
 }
-export function registerAgentRoutes(app) {
-    app.get("/api/agents", { preHandler: authMiddleware }, async () => ({
+export function registerAgentRoutes(app, memoryJournal) {
+    const hierarchyStorage = createAgentHierarchyStorage(app.knowbeeRuntimeContext.paths);
+    const workspaceLogger = createLogger("api:agent-workspace");
+    registerAgentWorkspaceRoute(app, {
+        logger: {
+            product: (fields) => workspaceLogger.product("Agent workspace queried", fields),
+            fieldDebug: (fields) => workspaceLogger.fieldDebug("Agent workspace query detail", fields),
+            development: (fields) => workspaceLogger.development("Agent workspace query transition", fields),
+        },
+        executeIdentityCommand: (request, command) => executeAgentIdentityCommand(command, createSqliteAgentIdentityCommandRepository({ config: getApiRuntimeConfig(request) })),
+        capabilityProjection: (_request, agentRef) => {
+            const agentId = resolveInternalAgentId(agentRef);
+            if (!agentId)
+                return null;
+            return buildAgentCapabilityBindingProjection({
+                agentId,
+                agentRef,
+                catalog: listAgentCapabilityCatalogSources(),
+                bindings: listAgentCapabilityBindingSources(),
+                observedAt: Date.now(),
+                publicRefForCapability: capabilityPublicRef,
+            });
+        },
+        executeCapabilityBindingCommand: (_request, command) => executeAgentCapabilityBindingCommand(command, createSqliteAgentCapabilityBindingCommandPorts()),
+        relationshipProjection: (request) => buildSqliteAgentRelationshipProjection({ config: getApiRuntimeConfig(request) }),
+        executeRelationshipCommand: (request, command) => executeAgentRelationshipCommand(command, createSqliteAgentRelationshipCommandPorts({
+            config: getApiRuntimeConfig(request),
+            storage: hierarchyStorage,
+        })),
+        settingsProjection: (request, agentRef) => {
+            const agentId = resolveInternalAgentId(agentRef);
+            if (!agentId)
+                return null;
+            const agent = agentRegistryService(getApiRuntimeConfig(request)).get(agentId);
+            if (!agent)
+                return null;
+            return buildAgentOperationalSettingsProjection({
+                agentRef,
+                status: agent.status,
+                profileVersion: agent.profileVersion,
+                modelProfile: agent.modelProfile,
+                memoryPolicy: agent.memoryPolicy,
+                permissionProfile: agent.capabilityPolicy.permissionProfile,
+                observedAt: Date.now(),
+            });
+        },
+        executeOperationalSettingsCommand: (request, command) => executeAgentOperationalSettingsCommand(command, createSqliteAgentOperationalSettingsCommandPorts({ config: getApiRuntimeConfig(request) })),
+        projection: (request) => {
+            const config = getApiRuntimeConfig(request);
+            const agents = agentRegistryService(config).list();
+            const displayNames = new Map();
+            for (const skill of listSkillCatalogEntries({ includeArchived: true }))
+                displayNames.set(`skill:${skill.skill_id}`, skill.display_name);
+            for (const server of listMcpServerCatalogEntries({ includeArchived: true }))
+                displayNames.set(`mcp_server:${server.mcp_server_id}`, server.display_name);
+            for (const yeonjang of listYeonjangRegistryInstances({ now: Date.now() }))
+                displayNames.set(`yeonjang:${yeonjang.instanceId}`, yeonjang.displayName);
+            return buildAgentWorkspaceProjection({
+                agents: agents.map((agent) => ({
+                    agentId: agent.agentId,
+                    agentType: agent.agentType,
+                    status: agent.status,
+                    agentName: agent.agentName,
+                    role: agent.role,
+                    profileVersion: agent.profileVersion,
+                    updatedAt: agent.updatedAt,
+                    model: {
+                        configured: Boolean(agent.modelProfile),
+                        availability: agent.modelProfile ? "unknown" : "unavailable",
+                        ...(agent.modelProfile?.modelId ? { modelName: agent.modelProfile.modelId } : {}),
+                    },
+                })),
+                bindings: listAgentCapabilityBindings({ includeArchived: true }).map((binding) => ({
+                    agentId: binding.agent_id,
+                    kind: binding.capability_kind,
+                    status: binding.status,
+                    ...(displayNames.get(`${binding.capability_kind}:${binding.catalog_id}`)
+                        ? {
+                            displayName: displayNames.get(`${binding.capability_kind}:${binding.catalog_id}`),
+                        }
+                        : {}),
+                })),
+                relationships: listAgentRelationships().map((relationship) => ({
+                    parentAgentId: relationship.parent_agent_id,
+                    childAgentId: relationship.child_agent_id,
+                    status: relationship.status,
+                })),
+                mainAgentName: resolveMainAgentSelfName(config),
+                observedAt: Date.now(),
+                publicRefForAgentId: createAgentPublicRef,
+            });
+        },
+    });
+    app.get("/api/agents", { preHandler: authMiddleware }, async (req) => ({
         ok: true,
         generatedAt: Date.now(),
-        agents: createAgentRegistryService().list(),
+        agents: agentRegistryService(getApiRuntimeConfig(req)).list(),
     }));
     app.post("/api/agents", { preHandler: authMiddleware }, async (req, reply) => {
-        const stored = validateAndStoreAgent(reply, agentPayload(req.body), req.body);
+        const stored = validateAndStoreAgent(getApiRuntimeConfig(req), reply, agentPayload(req.body), req.body);
         if (isFastifyReply(stored))
             return stored;
         return { ok: true, agent: stored };
     });
     app.get("/api/agents/:agentId", { preHandler: authMiddleware }, async (req, reply) => {
-        const agent = createAgentRegistryService().get(req.params.agentId);
+        const agent = agentRegistryService(getApiRuntimeConfig(req)).get(req.params.agentId);
         if (!agent)
             return reply
                 .status(404)
@@ -280,31 +419,37 @@ export function registerAgentRoutes(app) {
         return { ok: true, agent };
     });
     app.patch("/api/agents/:agentId", { preHandler: authMiddleware }, async (req, reply) => {
-        const current = createAgentRegistryService().get(req.params.agentId);
+        const current = agentRegistryService(getApiRuntimeConfig(req)).get(req.params.agentId);
         if (!current)
             return reply
                 .status(404)
                 .send({ ok: false, error: "agent_not_found", reasonCode: "agent_not_found" });
-        const stored = validateAndStoreAgent(reply, mergeAgentPatch(current, agentPayload(req.body), req.params.agentId), req.body);
+        const stored = validateAndStoreAgent(getApiRuntimeConfig(req), reply, mergeAgentPatch(current, agentPayload(req.body), req.params.agentId), req.body);
         if (isFastifyReply(stored))
             return stored;
         return { ok: true, agent: stored };
     });
     app.post("/api/agents/:agentId/disable", { preHandler: authMiddleware }, async (req, reply) => {
-        if (!createAgentRegistryService().disable(req.params.agentId)) {
+        if (!agentRegistryService(getApiRuntimeConfig(req)).disable(req.params.agentId)) {
             return reply
                 .status(404)
                 .send({ ok: false, error: "agent_not_found", reasonCode: "agent_not_found" });
         }
-        return { ok: true, agent: createAgentRegistryService().get(req.params.agentId) };
+        return {
+            ok: true,
+            agent: agentRegistryService(getApiRuntimeConfig(req)).get(req.params.agentId),
+        };
     });
     app.post("/api/agents/:agentId/archive", { preHandler: authMiddleware }, async (req, reply) => {
-        if (!createAgentRegistryService().archive(req.params.agentId)) {
+        if (!agentRegistryService(getApiRuntimeConfig(req)).archive(req.params.agentId)) {
             return reply
                 .status(404)
                 .send({ ok: false, error: "agent_not_found", reasonCode: "agent_not_found" });
         }
-        return { ok: true, agent: createAgentRegistryService().get(req.params.agentId) };
+        return {
+            ok: true,
+            agent: agentRegistryService(getApiRuntimeConfig(req)).get(req.params.agentId),
+        };
     });
     app.get("/api/agents/:agentId/history", { preHandler: authMiddleware }, async (req) => ({
         ok: true,
@@ -347,10 +492,10 @@ export function registerAgentRoutes(app) {
         });
         return reply.status(result.ok ? 200 : 404).send({ ok: result.ok, result });
     });
-    app.get("/api/teams", { preHandler: authMiddleware }, async () => ({
+    app.get("/api/teams", { preHandler: authMiddleware }, async (req) => ({
         ok: true,
         generatedAt: Date.now(),
-        teams: createTeamRegistryService()
+        teams: teamRegistryService(getApiRuntimeConfig(req))
             .list()
             .map((team) => ({
             ...team,
@@ -358,13 +503,13 @@ export function registerAgentRoutes(app) {
         })),
     }));
     app.post("/api/teams", { preHandler: authMiddleware }, async (req, reply) => {
-        const stored = validateAndStoreTeam(reply, teamPayload(req.body), req.body);
+        const stored = validateAndStoreTeam(getApiRuntimeConfig(req), reply, teamPayload(req.body), req.body);
         if (isFastifyReply(stored))
             return stored;
         return { ok: true, team: stored, ...teamMembersResponse(stored) };
     });
     app.get("/api/teams/:teamId", { preHandler: authMiddleware }, async (req, reply) => {
-        const team = createTeamRegistryService().get(req.params.teamId);
+        const team = teamRegistryService(getApiRuntimeConfig(req)).get(req.params.teamId);
         if (!team)
             return reply
                 .status(404)
@@ -372,36 +517,36 @@ export function registerAgentRoutes(app) {
         return { ok: true, team, ...teamMembersResponse(team) };
     });
     app.patch("/api/teams/:teamId", { preHandler: authMiddleware }, async (req, reply) => {
-        const current = createTeamRegistryService().get(req.params.teamId);
+        const current = teamRegistryService(getApiRuntimeConfig(req)).get(req.params.teamId);
         if (!current)
             return reply
                 .status(404)
                 .send({ ok: false, error: "team_not_found", reasonCode: "team_not_found" });
-        const stored = validateAndStoreTeam(reply, mergeTeamPatch(current, teamPayload(req.body), req.params.teamId), req.body);
+        const stored = validateAndStoreTeam(getApiRuntimeConfig(req), reply, mergeTeamPatch(current, teamPayload(req.body), req.params.teamId), req.body);
         if (isFastifyReply(stored))
             return stored;
         return { ok: true, team: stored, ...teamMembersResponse(stored) };
     });
     app.post("/api/teams/:teamId/disable", { preHandler: authMiddleware }, async (req, reply) => {
-        if (!createTeamRegistryService().disable(req.params.teamId)) {
+        if (!teamRegistryService(getApiRuntimeConfig(req)).disable(req.params.teamId)) {
             return reply
                 .status(404)
                 .send({ ok: false, error: "team_not_found", reasonCode: "team_not_found" });
         }
-        const team = createTeamRegistryService().get(req.params.teamId);
+        const team = teamRegistryService(getApiRuntimeConfig(req)).get(req.params.teamId);
         return { ok: true, team, ...(team ? teamMembersResponse(team) : {}) };
     });
     app.post("/api/teams/:teamId/archive", { preHandler: authMiddleware }, async (req, reply) => {
-        if (!createTeamRegistryService().archive(req.params.teamId)) {
+        if (!teamRegistryService(getApiRuntimeConfig(req)).archive(req.params.teamId)) {
             return reply
                 .status(404)
                 .send({ ok: false, error: "team_not_found", reasonCode: "team_not_found" });
         }
-        const team = createTeamRegistryService().get(req.params.teamId);
+        const team = teamRegistryService(getApiRuntimeConfig(req)).get(req.params.teamId);
         return { ok: true, team, ...(team ? teamMembersResponse(team) : {}) };
     });
     app.delete("/api/teams/:teamId", { preHandler: authMiddleware }, async (req, reply) => {
-        if (!createTeamRegistryService().delete(req.params.teamId)) {
+        if (!teamRegistryService(getApiRuntimeConfig(req)).delete(req.params.teamId)) {
             return reply
                 .status(404)
                 .send({ ok: false, error: "team_not_found", reasonCode: "team_not_found" });
@@ -409,7 +554,7 @@ export function registerAgentRoutes(app) {
         return { ok: true, teamId: req.params.teamId, deleted: true };
     });
     app.get("/api/teams/:teamId/members", { preHandler: authMiddleware }, async (req, reply) => {
-        const team = createTeamRegistryService().get(req.params.teamId);
+        const team = teamRegistryService(getApiRuntimeConfig(req)).get(req.params.teamId);
         if (!team)
             return reply
                 .status(404)
@@ -417,7 +562,7 @@ export function registerAgentRoutes(app) {
         return { ok: true, ...teamMembersResponse(team) };
     });
     app.put("/api/teams/:teamId/members", { preHandler: authMiddleware }, async (req, reply) => {
-        const current = createTeamRegistryService().get(req.params.teamId);
+        const current = teamRegistryService(getApiRuntimeConfig(req)).get(req.params.teamId);
         if (!current)
             return reply
                 .status(404)
@@ -457,7 +602,10 @@ export function registerAgentRoutes(app) {
             roleHints: nextRoleHints ?? current.roleHints,
             ...(Array.isArray(body.memberships) ? { memberships: body.memberships } : {}),
         }, req.params.teamId);
-        const topologyValidation = createAgentTopologyService().validateActiveTeamMembers(next);
+        const topologyValidation = createAgentTopologyService({
+            config: getApiRuntimeConfig(req),
+            storage: hierarchyStorage,
+        }).validateActiveTeamMembers(next);
         if (!topologyValidation.valid) {
             return reply.status(400).send({
                 ok: false,
@@ -466,13 +614,16 @@ export function registerAgentRoutes(app) {
                 diagnostics: topologyValidation.diagnostics,
             });
         }
-        const stored = validateAndStoreTeam(reply, next, req.body);
+        const stored = validateAndStoreTeam(getApiRuntimeConfig(req), reply, next, req.body);
         if (isFastifyReply(stored))
             return stored;
         return { ok: true, team: stored, ...teamMembersResponse(stored) };
     });
     app.post("/api/teams/:teamId/validate", { preHandler: authMiddleware }, async (req, reply) => {
-        const result = createTeamCompositionService().evaluate(teamCompositionInput(req.params.teamId, req.body));
+        const result = createTeamCompositionService({
+            config: getApiRuntimeConfig(req),
+            storage: hierarchyStorage,
+        }).evaluate(teamCompositionInput(req.params.teamId, req.body));
         if (!result.ok)
             return sendTeamCompositionFailure(reply, result.diagnostics);
         return {
@@ -485,7 +636,10 @@ export function registerAgentRoutes(app) {
         };
     });
     app.get("/api/teams/:teamId/coverage", { preHandler: authMiddleware }, async (req, reply) => {
-        const result = createTeamCompositionService().evaluate(req.params.teamId);
+        const result = createTeamCompositionService({
+            config: getApiRuntimeConfig(req),
+            storage: hierarchyStorage,
+        }).evaluate(req.params.teamId);
         if (!result.ok)
             return sendTeamCompositionFailure(reply, result.diagnostics);
         return {
@@ -496,7 +650,10 @@ export function registerAgentRoutes(app) {
         };
     });
     app.get("/api/teams/:teamId/health", { preHandler: authMiddleware }, async (req, reply) => {
-        const result = createTeamCompositionService().evaluate(req.params.teamId);
+        const result = createTeamCompositionService({
+            config: getApiRuntimeConfig(req),
+            storage: hierarchyStorage,
+        }).evaluate(req.params.teamId);
         if (!result.ok)
             return sendTeamCompositionFailure(reply, result.diagnostics);
         return {
@@ -512,7 +669,10 @@ export function registerAgentRoutes(app) {
         const parentRunId = asString(body.parentRunId);
         const parentRequestId = asString(body.parentRequestId);
         const userRequest = asString(body.userRequest);
-        const result = createTeamExecutionPlanService().build({
+        const result = createTeamExecutionPlanService({
+            config: getApiRuntimeConfig(req),
+            storage: hierarchyStorage,
+        }).build({
             teamId: req.params.teamId,
             ...(teamExecutionPlanId ? { teamExecutionPlanId } : {}),
             ...(parentRunId ? { parentRunId } : {}),
@@ -540,7 +700,7 @@ export function registerAgentRoutes(app) {
     });
     app.post("/api/agent-relationships", { preHandler: authMiddleware }, async (req, reply) => {
         const body = requestEnvelope(req.body);
-        const result = hierarchyService(req.body).create(relationshipPayload(req.body), {
+        const result = hierarchyService(getApiRuntimeConfig(req), hierarchyStorage, req.body).create(relationshipPayload(req.body), {
             auditId: asString(body.auditId) ?? null,
         });
         if (!result.ok) {
@@ -554,7 +714,7 @@ export function registerAgentRoutes(app) {
         return { ok: true, relationship: result.relationship, diagnostics: result.diagnostics };
     });
     app.delete("/api/agent-relationships/:edgeId", { preHandler: authMiddleware }, async (req, reply) => {
-        const disabled = hierarchyService(req.body).disable(req.params.edgeId, {
+        const disabled = hierarchyService(getApiRuntimeConfig(req), hierarchyStorage, req.body).disable(req.params.edgeId, {
             auditId: asString(requestEnvelope(req.body).auditId) ?? null,
         });
         if (!disabled) {
@@ -567,7 +727,7 @@ export function registerAgentRoutes(app) {
         return { ok: true, relationship: disabled };
     });
     app.post("/api/agent-relationships/validate", { preHandler: authMiddleware }, async (req) => {
-        const result = hierarchyService(req.body).validate(relationshipPayload(req.body));
+        const result = hierarchyService(getApiRuntimeConfig(req), hierarchyStorage, req.body).validate(relationshipPayload(req.body));
         return {
             ok: true,
             valid: result.ok,
@@ -575,12 +735,18 @@ export function registerAgentRoutes(app) {
             diagnostics: result.diagnostics,
         };
     });
-    app.get("/api/agent-topology", { preHandler: authMiddleware }, async () => ({
+    app.get("/api/agent-topology", { preHandler: authMiddleware }, async (req) => ({
         ok: true,
-        ...createAgentTopologyService().buildProjection(),
+        ...createAgentTopologyService({
+            config: getApiRuntimeConfig(req),
+            storage: hierarchyStorage,
+        }).buildProjection(),
     }));
     app.post("/api/agent-topology/edges/validate", { preHandler: authMiddleware }, async (req) => {
-        const result = createAgentTopologyService().validateEdge(topologyEdgePayload(req.body));
+        const result = createAgentTopologyService({
+            config: getApiRuntimeConfig(req),
+            storage: hierarchyStorage,
+        }).validateEdge(topologyEdgePayload(req.body));
         return {
             ok: result.ok,
             valid: result.valid,
@@ -589,12 +755,12 @@ export function registerAgentRoutes(app) {
             diagnostics: result.diagnostics,
         };
     });
-    app.get("/api/agent-tree", { preHandler: authMiddleware }, async () => ({
+    app.get("/api/agent-tree", { preHandler: authMiddleware }, async (req) => ({
         ok: true,
-        ...hierarchyService().buildProjection(),
+        ...hierarchyService(getApiRuntimeConfig(req), hierarchyStorage).buildProjection(),
     }));
     app.get("/api/agents/:agentId/children", { preHandler: authMiddleware }, async (req) => {
-        const service = hierarchyService();
+        const service = hierarchyService(getApiRuntimeConfig(req), hierarchyStorage);
         const children = service.directChildren(req.params.agentId);
         return {
             ok: true,
@@ -608,9 +774,9 @@ export function registerAgentRoutes(app) {
             descendants: service.descendants(req.params.agentId),
         };
     });
-    app.get("/api/agent-tree/layout", { preHandler: authMiddleware }, async () => ({
+    app.get("/api/agent-tree/layout", { preHandler: authMiddleware }, async (req) => ({
         ok: true,
-        layout: hierarchyService().readLayout(),
+        layout: hierarchyService(getApiRuntimeConfig(req), hierarchyStorage).readLayout(),
     }));
     app.put("/api/agent-tree/layout", { preHandler: authMiddleware }, async (req, reply) => {
         const body = requestEnvelope(req.body);
@@ -622,7 +788,10 @@ export function registerAgentRoutes(app) {
                 reasonCode: "invalid_agent_tree_layout",
             });
         }
-        return { ok: true, layout: hierarchyService().writeLayout(payload) };
+        return {
+            ok: true,
+            layout: hierarchyService(getApiRuntimeConfig(req), hierarchyStorage).writeLayout(payload),
+        };
     });
     // POST /api/agent/run — start agent run (streams via WebSocket)
     app.post("/api/agent/run", { preHandler: authMiddleware }, async (req, reply) => {
@@ -630,11 +799,25 @@ export function registerAgentRoutes(app) {
         if (!message?.trim()) {
             return reply.status(400).send({ error: "message is required" });
         }
+        const clientRequestId = resolveWebUiClientRequestId(req.body.clientRequestId);
+        if (!clientRequestId.ok) {
+            return reply.status(400).send({
+                error: clientRequestId.reasonCode,
+                reasonCode: clientRequestId.reasonCode,
+            });
+        }
         return startLocalRun({
+            artifactStorage: createArtifactStorageContext(getApiRuntimePaths(req)),
+            memoryJournal,
+            hierarchyStorage,
+            config: getApiRuntimeConfig(req),
             message,
             sessionId,
             model,
             source: "webui",
+            ...(clientRequestId.clientRequestId
+                ? { clientRequestId: clientRequestId.clientRequestId }
+                : {}),
         });
     });
     // GET /api/agent/sessions

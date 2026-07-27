@@ -1,38 +1,11 @@
-export type CapabilityStatus = "ready" | "disabled" | "planned" | "error"
+import type { CapabilityCounts, FeatureCapability } from "@knowbee/core"
 
-export type CapabilityArea =
-  | "setup"
-  | "gateway"
-  | "runs"
-  | "chat"
-  | "ai"
-  | "security"
-  | "telegram"
-  | "slack"
-  | "scheduler"
-  | "plugins"
-  | "memory"
-  | "mcp"
-  | "mqtt"
-
-export interface FeatureCapability {
-  key: string
-  label: string
-  area: CapabilityArea
-  status: CapabilityStatus
-  implemented: boolean
-  enabled: boolean
-  reason?: string
-  dependsOn?: string[]
-  metadata?: Record<string, unknown>
-}
-
-export interface CapabilityCounts {
-  ready: number
-  disabled: number
-  planned: number
-  error: number
-}
+export type {
+  CapabilityArea,
+  CapabilityCounts,
+  CapabilityStatus,
+  FeatureCapability,
+} from "@knowbee/core"
 
 export function countCapabilities(items: FeatureCapability[]): CapabilityCounts {
   return items.reduce<CapabilityCounts>(

@@ -35,6 +35,11 @@ describe("intake retry application", () => {
         reason: "run_at이 비어 있습니다.",
         message: "retry prompt",
         eventLabel: "일정 해석 실패로 재분석",
+        recoveryAdmission: {
+          previousStrategyFingerprint: `sha256:${"a".repeat(64)}`,
+          nextStrategyFingerprint: `sha256:${"b".repeat(64)}`,
+          changedDimensions: ["strategy"],
+        },
       },
       usedTurns: 0,
       maxTurns: 3,
@@ -71,6 +76,11 @@ describe("intake retry application", () => {
         reason: "cron을 만들 수 없습니다.",
         message: "retry prompt",
         remainingItems: ["유효한 run_at 또는 cron 필요"],
+        recoveryAdmission: {
+          previousStrategyFingerprint: `sha256:${"a".repeat(64)}`,
+          nextStrategyFingerprint: `sha256:${"b".repeat(64)}`,
+          changedDimensions: ["input"],
+        },
       },
       usedTurns: 2,
       maxTurns: 2,
@@ -92,5 +102,37 @@ describe("intake retry application", () => {
     expect(applyTerminalApplication).not.toHaveBeenCalled()
     expect(deps.incrementDelegationTurnCount).toHaveBeenCalledWith("run-2", "일정 요청을 다시 분석합니다.")
     expect(deps.appendRunEvent).toHaveBeenCalledWith("run-2", "일정 해석 복구 신호 1")
+  })
+
+  it("terminates a retry without changed-strategy admission", async () => {
+    const deps = createDependencies()
+    const applyTerminalApplication = vi.fn().mockResolvedValue("cancelled")
+
+    const result = await applyIntakeRetryDirective({
+      runId: "run-3",
+      sessionId: "session-3",
+      source: "webui",
+      onChunk: undefined,
+      directive: {
+        summary: "같은 요청을 다시 분석합니다.",
+        reason: "unchanged",
+        message: "same prompt",
+      },
+      usedTurns: 0,
+      maxTurns: 3,
+      recoveryBudgetUsage: {
+        interpretation: 0,
+        execution: 0,
+        delivery: 0,
+        external: 0,
+      },
+      finalizationDependencies: createFinalizationDependencies(),
+    }, deps, {
+      applyTerminalApplication,
+    })
+
+    expect(result).toEqual({ kind: "break" })
+    expect(applyTerminalApplication).toHaveBeenCalledOnce()
+    expect(deps.incrementDelegationTurnCount).not.toHaveBeenCalled()
   })
 })

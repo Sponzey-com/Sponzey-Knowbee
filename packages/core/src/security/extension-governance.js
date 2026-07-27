@@ -1,12 +1,29 @@
 import crypto from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { PATHS, getConfig } from "../config/index.js";
+import { NODE_PERSISTED_FILE_SYSTEM, writeAtomicTextFile, } from "../config/persisted-file.js";
 import { insertAuditLog, insertDiagnosticEvent } from "../db/index.js";
+import { redactLogText } from "../logger/index.js";
 import { sanitizeUserFacingError } from "../runs/error-sanitizer.js";
+export function createExtensionGovernanceStorage(paths, fileSystem = NODE_PERSISTED_FILE_SYSTEM) {
+    return Object.freeze({
+        rollbackDir: resolve(paths.stateDir, "extensions", "rollback"),
+        fileSystem,
+    });
+}
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_FAILURE_DEGRADE_THRESHOLD = 2;
 const failureStates = new Map();
+function extensionFailureSummary(error) {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const sanitized = sanitizeUserFacingError(rawMessage);
+    return {
+        ...sanitized,
+        userMessage: redactLogText(sanitized.userMessage),
+        reason: redactLogText(sanitized.reason),
+        ...(sanitized.actionHint ? { actionHint: redactLogText(sanitized.actionHint) } : {}),
+    };
+}
 function stableStringify(value) {
     if (value === null || typeof value !== "object")
         return JSON.stringify(value);
@@ -61,12 +78,12 @@ function trustPolicyFor(input) {
             : "현재 신뢰 정책에서 자동 사용 가능한 확장입니다.",
     };
 }
-function rollbackPath(extensionId) {
+function rollbackPath(extensionId, storage) {
     const safeId = extensionId.replace(/[^a-zA-Z0-9_.-]+/g, "_");
-    return join(PATHS.stateDir, "extensions", "rollback", `${safeId}.json`);
+    return join(storage.rollbackDir, `${safeId}.json`);
 }
-function hasRollbackPoint(extensionId) {
-    return existsSync(rollbackPath(extensionId));
+function hasRollbackPoint(extensionId, storage) {
+    return storage.fileSystem.exists(rollbackPath(extensionId, storage));
 }
 function statusFor(enabled, ready, error, extensionId) {
     const failure = failureStates.get(extensionId);
@@ -114,7 +131,7 @@ function makeEntry(input) {
         failureCount: 0,
         degradedReason: null,
         sourcePath: input.sourcePath,
-        rollbackAvailable: hasRollbackPoint(input.id),
+        rollbackAvailable: false,
         metadata: input.metadata,
     });
 }
@@ -228,8 +245,8 @@ function skillEntry(skill) {
         metadata: { description: skill.description, source: skill.source, required: Boolean(skill.required), fileChecksum },
     });
 }
-export function buildExtensionRegistrySnapshot(input = {}) {
-    const config = input.config ?? getConfig();
+export function buildExtensionRegistrySnapshot(input) {
+    const config = input.config;
     const mcpStatuses = new Map((input.mcpStatuses ?? []).map((status) => [status.name, status]));
     const entries = new Map();
     for (const [name, serverConfig] of Object.entries(config.mcp?.servers ?? {})) {
@@ -271,7 +288,12 @@ export function buildExtensionRegistrySnapshot(input = {}) {
             metadata: { synthetic: true, lastFailureAt: state.lastFailureAt, lastError: state.lastError },
         }));
     }
-    const ordered = [...entries.values()].sort((left, right) => {
+    const ordered = [...entries.values()]
+        .map((entry) => ({
+        ...entry,
+        rollbackAvailable: hasRollbackPoint(entry.id, input.storage),
+    }))
+        .sort((left, right) => {
         if (left.priority !== right.priority)
             return (right.priority ?? -Infinity) - (left.priority ?? -Infinity);
         return left.id.localeCompare(right.id);
@@ -346,7 +368,7 @@ export function recordExtensionRegistryChange(input) {
     }
 }
 export function recordExtensionFailure(input) {
-    const sanitized = sanitizeUserFacingError(input.error instanceof Error ? input.error.message : String(input.error));
+    const sanitized = extensionFailureSummary(input.error);
     const current = failureStates.get(input.extensionId);
     const failureCount = (current?.failureCount ?? 0) + 1;
     const degraded = failureCount >= (input.degradeAfter ?? DEFAULT_FAILURE_DEGRADE_THRESHOLD);
@@ -433,13 +455,12 @@ export function createExtensionRollbackPoint(input) {
         contentBase64: content.toString("base64"),
         createdAt: Date.now(),
     };
-    mkdirSync(join(PATHS.stateDir, "extensions", "rollback"), { recursive: true });
-    writeFileSync(rollbackPath(input.extensionId), JSON.stringify(point, null, 2), "utf-8");
+    writeAtomicTextFile(rollbackPath(input.extensionId, input.storage), JSON.stringify(point, null, 2), input.storage.fileSystem);
     recordExtensionRegistryChange({ action: "rollback_point_created", extensionId: input.extensionId, result: "success", detail: { source: basename(sourcePath), checksum: point.checksum } });
     return point;
 }
-export function rollbackExtensionToPoint(extensionId) {
-    const point = JSON.parse(readFileSync(rollbackPath(extensionId), "utf-8"));
+export function rollbackExtensionToPoint(extensionId, storage) {
+    const point = JSON.parse(storage.fileSystem.readText(rollbackPath(extensionId, storage)));
     writeFileSync(point.sourcePath, Buffer.from(point.contentBase64, "base64"));
     const checksum = safeFileChecksum(point.sourcePath);
     recordExtensionRegistryChange({ action: "rollback_applied", extensionId, result: checksum === point.checksum ? "success" : "failure", detail: { checksum, expectedChecksum: point.checksum } });

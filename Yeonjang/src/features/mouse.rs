@@ -37,6 +37,10 @@ pub fn move_cursor(params: MoveParams) -> Result<Value> {
     )?)
 }
 
+pub fn current_position() -> Result<Value> {
+    Ok(serde_json::to_value(current_backend().mouse_position()?)?)
+}
+
 pub fn click(params: ClickParams) -> Result<Value> {
     let request = MouseClickRequest {
         x: params.x,

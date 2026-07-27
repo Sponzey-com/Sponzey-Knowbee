@@ -1,5 +1,5 @@
 import type { AIProvider } from "../ai/types.js"
-import { getConfig } from "../config/index.js"
+import type { MemoryConfig } from "../config/types.js"
 
 export type MemoryCompactionModelSource = "explicit_override" | "fallback_override" | "execution_model"
 export type MemoryCompactionModelAttemptStatus =
@@ -62,13 +62,13 @@ function normalizeModelId(value: string | undefined): string | undefined {
 export function resolveMemoryCompactionPolicy(input: {
   provider: AIProvider
   executionModelId: string
+  memoryConfig?: MemoryConfig
 }): ResolvedMemoryCompactionPolicy {
-  const config = getConfig()
-  const explicitModelId = normalizeModelId(config.memory.compaction?.modelId)
-  const fallbackModelId = normalizeModelId(config.memory.compaction?.fallbackModelId)
+  const explicitModelId = normalizeModelId(input.memoryConfig?.compaction?.modelId)
+  const fallbackModelId = normalizeModelId(input.memoryConfig?.compaction?.fallbackModelId)
   const minContextTokens = Math.max(
     512,
-    Math.floor(config.memory.compaction?.minContextTokens ?? 3000),
+    Math.floor(input.memoryConfig?.compaction?.minContextTokens ?? 3000),
   )
   const selectedModelId = explicitModelId ?? input.executionModelId
   const selectionSource: MemoryCompactionModelSource = explicitModelId

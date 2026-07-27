@@ -1,6 +1,13 @@
 import { getDb, insertAuditLog, insertControlEvent, insertDiagnosticEvent, listControlEvents, } from "../db/index.js";
 import { eventBus } from "../events/index.js";
 import { sanitizeUserFacingError } from "../runs/error-sanitizer.js";
+import { redactLogText } from "../logger/index.js";
+import { containsInternalLlmStructuredDataText, INTERNAL_LLM_DATA_MASK, isInternalLlmStructuredDataKey, } from "../security/internal-llm-data.js";
+import { redactInternalEvidenceText } from "../security/internal-evidence-redaction.js";
+function controlTimelineProjectionErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 const SECRET_KEY_PATTERN = /api[_-]?key|authorization|bearer|cookie|credential|password|refresh[_-]?token|secret|token|raw[_-]?(?:body|response)|provider[_-]?raw/i;
 const TEXT_SECRET_PATTERNS = [
     [/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer ***"],
@@ -29,6 +36,9 @@ function parseJson(raw) {
     }
 }
 function sanitizeText(raw, audience) {
+    if (audience === "user" && containsInternalLlmStructuredDataText(raw)) {
+        return INTERNAL_LLM_DATA_MASK;
+    }
     let value = raw;
     for (const [pattern, replacement] of TEXT_SECRET_PATTERNS) {
         value = value.replace(pattern, replacement);
@@ -37,6 +47,7 @@ function sanitizeText(raw, audience) {
         value = sanitizeUserFacingError(value).userMessage;
     }
     if (audience === "user") {
+        value = redactInternalEvidenceText(value);
         value = value.replace(LOCAL_PATH_PATTERN, "[local path hidden]");
     }
     return value.length > 4_000 ? `${value.slice(0, 3_990)}...` : value;
@@ -54,7 +65,11 @@ function sanitizeDetail(value, audience, depth = 0) {
         return value.slice(0, 100).map((item) => sanitizeDetail(item, audience, depth + 1));
     const result = {};
     for (const [key, nested] of Object.entries(value)) {
-        result[key] = SECRET_KEY_PATTERN.test(key) ? "***" : sanitizeDetail(nested, audience, depth + 1);
+        result[key] = SECRET_KEY_PATTERN.test(key)
+            ? "***"
+            : audience === "user" && isInternalLlmStructuredDataKey(key)
+                ? INTERNAL_LLM_DATA_MASK
+                : sanitizeDetail(nested, audience, depth + 1);
     }
     return result;
 }
@@ -112,9 +127,10 @@ export function recordControlEvent(input) {
     }
     catch (error) {
         try {
+            const message = controlTimelineProjectionErrorMessage(error);
             insertDiagnosticEvent({
                 kind: "control_event_projection_degraded",
-                summary: `control event projection failed: ${error instanceof Error ? error.message : String(error)}`,
+                summary: `control event projection failed: ${message}`,
                 ...(input.runId ? { runId: input.runId } : {}),
                 ...(input.requestGroupId ? { requestGroupId: input.requestGroupId } : {}),
                 detail: {
@@ -150,12 +166,6 @@ function detailString(event, key) {
     const value = event.detail[key];
     return typeof value === "string" && value.trim() ? value.trim() : null;
 }
-function detailBoolean(event, key) {
-    if (!event.detail || typeof event.detail !== "object" || Array.isArray(event.detail))
-        return null;
-    const value = event.detail[key];
-    return typeof value === "boolean" ? value : null;
-}
 function detailRecord(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
@@ -166,16 +176,6 @@ function nestedRecord(event, key) {
 function recordString(record, key) {
     const value = record?.[key];
     return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-function recordBoolean(record, key) {
-    const value = record?.[key];
-    return typeof value === "boolean" ? value : null;
-}
-function recordStringArray(record, key) {
-    const value = record?.[key];
-    if (!Array.isArray(value))
-        return [];
-    return value.filter((item) => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
 }
 function duplicateKeyFor(event) {
     if (event.eventType === "tool.dispatched") {
@@ -244,7 +244,7 @@ function annotateTimeline(events) {
         },
     };
 }
-export function getControlTimeline(query = {}, audience = "developer") {
+export function getControlTimeline(query = {}, audience = "user") {
     const events = listControlEvents(query).map((row) => mapRow(row, audience));
     return annotateTimeline(events);
 }
@@ -277,10 +277,8 @@ function classifyRetrievalKind(event) {
     const lowered = `${type} ${event.summary}`.toLocaleLowerCase("en-US");
     if (type === "web_retrieval.attempt.skipped" || lowered.includes("dedupe") || lowered.includes("duplicate attempt"))
         return "dedupe";
-    if (type.includes("candidate"))
-        return "candidate";
-    if (type.includes("verdict") || type.includes("verification") || nestedRecord(event, "verdict"))
-        return "verdict";
+    if (type.includes("result_diagnosis") || type.includes("completion_review"))
+        return "diagnosis";
     if (type.includes("planner"))
         return "planner";
     if (type.startsWith("delivery.") || type === "completion.generated")
@@ -308,16 +306,6 @@ function sourceInfo(event) {
         domain: detailString(event, "sourceDomain") ?? recordString(sourceEvidence, "sourceDomain"),
     };
 }
-function verdictInfo(event) {
-    const verdict = nestedRecord(event, "verdict") ?? detailRecord(event.detail);
-    return {
-        canAnswer: recordBoolean(verdict, "canAnswer") ?? detailBoolean(event, "canAnswer"),
-        acceptedValue: recordString(verdict, "acceptedValue") ?? detailString(event, "acceptedValue"),
-        sufficiency: recordString(verdict, "evidenceSufficiency") ?? detailString(event, "evidenceSufficiency") ?? detailString(event, "sufficiency"),
-        rejectionReason: recordString(verdict, "rejectionReason") ?? detailString(event, "rejectionReason"),
-        conflicts: recordStringArray(verdict, "conflicts"),
-    };
-}
 function mapRetrievalEvent(event) {
     const kind = classifyRetrievalKind(event);
     return {
@@ -330,7 +318,6 @@ function mapRetrievalEvent(event) {
         summary: event.summary,
         detail: event.detail,
         source: sourceInfo(event),
-        verdict: verdictInfo(event),
         diagnosticRef: {
             controlEventId: event.id,
             eventType: event.eventType,
@@ -355,14 +342,11 @@ function summarizeRetrievalTimeline(events) {
     const finalDelivery = [...deliveryEvents].reverse().find((event) => event.eventType.startsWith("delivery.")) ?? null;
     const stopReason = firstNonEmpty(stopEvents.reverse().flatMap((event) => {
         const detail = detailRecord(event.detail);
-        const verdict = detailRecord(detail?.["verdict"]);
         return [
             recordString(detail, "reason"),
             recordString(detail, "stopReason"),
             recordString(detail, "errorKind"),
             recordString(detail, "status"),
-            recordString(verdict, "rejectionReason"),
-            recordString(verdict, "evidenceSufficiency"),
         ];
     }));
     return {
@@ -370,13 +354,11 @@ function summarizeRetrievalTimeline(events) {
         sessionEvents: events.filter((event) => event.kind === "session").length,
         attempts: events.filter((event) => event.kind === "attempt").length,
         sources: events.filter((event) => event.kind === "source" || event.source.url || event.source.domain).length,
-        candidates: events.filter((event) => event.kind === "candidate").length,
-        verdicts: events.filter((event) => event.kind === "verdict").length,
+        diagnoses: events.filter((event) => event.kind === "diagnosis").length,
         plannerActions: events.filter((event) => event.kind === "planner").length,
         deliveryEvents: deliveryEvents.length,
         dedupeSuppressed: events.filter((event) => event.kind === "dedupe").length,
         stops: stopEvents.length,
-        conflicts: events.reduce((sum, event) => sum + event.verdict.conflicts.length, 0),
         finalDeliveryStatus: finalDelivery ? finalDelivery.eventType.replace("delivery.", "") : null,
         stopReason,
         severityCounts,
@@ -422,8 +404,7 @@ function renderRetrievalMarkdown(timeline, audience) {
         `- total: ${timeline.summary.total}`,
         `- attempts: ${timeline.summary.attempts}`,
         `- sources: ${timeline.summary.sources}`,
-        `- candidates: ${timeline.summary.candidates}`,
-        `- verdicts: ${timeline.summary.verdicts}`,
+        `- LLM diagnoses: ${timeline.summary.diagnoses}`,
         `- delivery events: ${timeline.summary.deliveryEvents}`,
         `- dedupe suppressed: ${timeline.summary.dedupeSuppressed}`,
         `- final delivery: ${timeline.summary.finalDeliveryStatus ?? "unknown"}`,
@@ -433,12 +414,7 @@ function renderRetrievalMarkdown(timeline, audience) {
     for (const event of timeline.events) {
         const duplicate = event.duplicate ? ` duplicate:${event.duplicate.kind}#${event.duplicate.occurrence}` : "";
         const source = [event.source.toolName, event.source.method, event.source.domain].filter(Boolean).join("/");
-        const verdict = event.verdict.acceptedValue
-            ? ` value=${event.verdict.acceptedValue}`
-            : event.verdict.sufficiency
-                ? ` verdict=${event.verdict.sufficiency}`
-                : "";
-        lines.push(`- ${new Date(event.at).toISOString()} [${event.severity}/${event.kind}/${event.eventType}${duplicate}] ${event.summary}${source ? ` (${source})` : ""}${verdict}`);
+        lines.push(`- ${new Date(event.at).toISOString()} [${event.severity}/${event.kind}/${event.eventType}${duplicate}] ${event.summary}${source ? ` (${source})` : ""}`);
         if (audience === "developer")
             lines.push(`  - ref=${event.diagnosticRef.controlEventId}`);
     }

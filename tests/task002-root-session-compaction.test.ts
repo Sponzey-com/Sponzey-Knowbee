@@ -3,19 +3,18 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import type { AIChunk, AIProvider, ChatParams, Message } from "../packages/core/src/ai/types.js"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, getDb, getMemoryCapsule, getTaskContinuity, insertMessage, insertSession } from "../packages/core/src/db/index.js"
-import { closeMemoryJournalDb } from "../packages/core/src/memory/journal.js"
 import {
   buildRootSessionPinnedWorkingSet,
   executeRootSessionCompaction,
   extractRootSessionDeterministicState,
 } from "../packages/core/src/memory/compaction.ts"
 import { prepareChatContext, runContextPreflight } from "../packages/core/src/runs/context-preflight.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let runtimeFixture: ReturnType<typeof createTestRuntimeConfigFixture>
 
 class CompactionProvider implements AIProvider {
   readonly id = "fake"
@@ -50,18 +49,17 @@ class CompactionProvider implements AIProvider {
 
 function useTempState(): void {
   closeDb()
-  closeMemoryJournalDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task002-compaction-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task002-compaction-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: `{
     ai: { connection: { provider: "ollama", model: "llama3.2", endpoint: "http://127.0.0.1:11434" } },
     webui: { enabled: true, host: "127.0.0.1", port: 0, auth: { enabled: false } },
     security: { approvalMode: "off" }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  }`,
+  })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 beforeEach(() => {
@@ -70,12 +68,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -101,6 +93,8 @@ describe("task002 root session compaction", () => {
           "objective:현재 승인 완료 후 전달",
           "active_task:child-task-1",
           "decision:기존 산출물 먼저 재확인",
+          "source_ref:message:db-msg-1",
+          "original_ref:artifact:screen-1",
         ].join("\n"),
       },
     ]
@@ -112,6 +106,7 @@ describe("task002 root session compaction", () => {
     const pinned = buildRootSessionPinnedWorkingSet({ deterministicState })
 
     expect(deterministicState.activeTaskIds).toEqual(["group-root", "child-task-1"])
+    expect(deterministicState.sourceRefs).toEqual(["message:db-msg-1", "artifact:screen-1"])
     expect(deterministicState.pendingApprovals).toEqual(["approval-1"])
     expect(deterministicState.pendingDelivery).toEqual(["slack:file-1"])
     expect(deterministicState.explicitTargetSelectors).toEqual(["yeonjang/local"])
@@ -129,6 +124,13 @@ describe("task002 root session compaction", () => {
   })
 
   it("persists a root session capsule and keeps deterministic pending items", async () => {
+    writeFileSync(runtimeFixture.paths.configFile, `{
+      ai: { connection: { provider: "ollama", model: "llama3.2", endpoint: "http://127.0.0.1:11434" } },
+      orchestration: { knowbee: { agentName: "마당쇠" } },
+      webui: { enabled: true, host: "127.0.0.1", port: 0, auth: { enabled: false } },
+      security: { approvalMode: "off" }
+    }`, "utf-8")
+    runtimeFixture.load()
     insertSession({
       id: "session-root",
       source: "webui",
@@ -139,7 +141,7 @@ describe("task002 root session compaction", () => {
     })
     const provider = new CompactionProvider()
     const messages: Message[] = [
-      { role: "user", content: "pending_approval:approval-1\npending_delivery:slack:file-1\nuser_correction:한국어 유지" },
+      { role: "user", content: "pending_approval:approval-1\npending_delivery:slack:file-1\nuser_correction:한국어 유지\nsource_ref:message:db-msg-1" },
       { role: "assistant", content: "artifact_receipt:artifact://screen-1\nconstraint:민감정보 금지" },
       ...Array.from({ length: 42 }, (_, index) => ({ role: "user" as const, content: `filler-${index}` })),
     ]
@@ -148,6 +150,7 @@ describe("task002 root session compaction", () => {
       provider,
       model: "fake-model",
       sessionId: "session-root",
+      agentNameSnapshot: "마당쇠",
       requestGroupId: "group-root",
       runId: "run-root",
       messages,
@@ -156,10 +159,15 @@ describe("task002 root session compaction", () => {
     })
 
     expect(provider.called).toBe(1)
+    expect(result.capsule.agentNameSnapshot).toBe("마당쇠")
     expect(result.capsule.pendingItems).toContain("pending_approval:approval-1")
     expect(result.capsule.pendingItems).toContain("pending_delivery:slack:file-1")
     expect(result.capsule.constraints).toContain("user_correction:한국어 유지")
-    expect(getMemoryCapsule(result.capsuleId)?.pendingItems).toContain("pending_approval:approval-1")
+    expect(result.capsule.sourceRefs).toContain("message:db-msg-1")
+    const storedCapsule = getMemoryCapsule(result.capsuleId)
+    expect(storedCapsule?.agentNameSnapshot).toBe("마당쇠")
+    expect(storedCapsule?.pendingItems).toContain("pending_approval:approval-1")
+    expect(storedCapsule?.sourceRefs).toContain("message:db-msg-1")
 
     const snapshot = getDb()
       .prepare<[], { summary: string; preserved_facts: string }>(
@@ -234,6 +242,7 @@ describe("task002 root session compaction", () => {
         runId: "run-preflight",
         sessionId: "session-preflight",
         requestGroupId: "group-preflight",
+        mainAgentNameSnapshot: "마당쇠",
         operation: "test_compaction",
       },
     })
@@ -255,6 +264,8 @@ describe("task002 root session compaction", () => {
       )
       .get()
     expect(capsuleCount).toBe(1)
+    const compactedCapsule = getMemoryCapsule(prepared.compaction!.capsuleId!)
+    expect(compactedCapsule?.agentNameSnapshot).toBe("마당쇠")
     expect(originalRows?.count).toBe(2)
     expect(originalRows?.compressedCount ?? 0).toBe(0)
   })

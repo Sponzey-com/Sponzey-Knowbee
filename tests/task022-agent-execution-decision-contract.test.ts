@@ -110,21 +110,21 @@ describe("task022 agent execution decision contract", () => {
       },
       current_executor: {
         executor_id: "node:intake",
-        display_name: "접수",
+        agent_name: "접수",
         role_name: "요청 정리",
         can_delegate: true,
         available: true,
       },
       parent_executor: {
         executor_id: "node:lead",
-        display_name: "상위 실행자",
+        agent_name: "상위 실행자",
         can_delegate: true,
         available: true,
       },
       accessible_executors: [
         {
           executor_id: "node:planner",
-          display_name: "계획",
+          agent_name: "계획",
           can_delegate: true,
           available: true,
         },
@@ -226,13 +226,13 @@ describe("task022 agent execution decision contract", () => {
       },
       current_executor: {
         executor_id: "node:worker",
-        display_name: "작업자",
+        agent_name: "작업자",
         can_delegate: true,
         available: true,
       },
       parent_executor: {
         executor_id: "node:lead",
-        display_name: "상위 실행자",
+        agent_name: "상위 실행자",
         can_delegate: true,
         available: true,
       },

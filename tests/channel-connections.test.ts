@@ -8,19 +8,17 @@ import {
   buildSettingsChannelConnectionSnapshot,
   namespaceChannelIdentity,
 } from "../packages/core/src/channels/connections.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { DEFAULT_CONFIG, type KnowbeeConfig } from "../packages/core/src/config/types.ts"
 import {
   closeDb,
-  getDb,
   listChannelCapabilities,
   listChannelConnections,
   listChannelIdentityMappings,
 } from "../packages/core/src/db/index.js"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let db: ReturnType<typeof initializeTestDbRuntime>
 
 function configWithLegacyChannels(): KnowbeeConfig {
   const config = structuredClone(DEFAULT_CONFIG)
@@ -44,9 +42,7 @@ function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-channel-connections-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  db = initializeTestDbRuntime(stateDir)
 }
 
 beforeEach(() => {
@@ -55,11 +51,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -169,7 +160,7 @@ describe("channel connection compat model", () => {
     const config = configWithLegacyChannels()
     buildSettingsChannelConnectionSnapshot({ config, persist: true, now: 20 })
 
-    const latestMigration = getDb()
+    const latestMigration = db
       .prepare<[], { version: number | null }>("SELECT MAX(version) AS version FROM schema_migrations")
       .get()?.version ?? 0
     expect(latestMigration).toBeGreaterThanOrEqual(40)

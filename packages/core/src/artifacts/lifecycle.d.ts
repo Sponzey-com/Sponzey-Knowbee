@@ -1,6 +1,24 @@
 import type { ChannelSource } from "../channels/contracts.js";
+import type { RuntimePaths } from "../config/paths.js";
 import { type ArtifactMetadataInput, type DbArtifactMetadata } from "../db/index.js";
+import { type CleanupCandidateEvidence, type CleanupDecision } from "../maintenance/cleanup-decision.js";
 export type ArtifactRetentionPolicy = "ephemeral" | "standard" | "permanent";
+export type ArtifactDataClassification = "user" | "internal" | "audit";
+export interface ArtifactStorageContext {
+    readonly rootDir: string;
+    readonly fileSystem: ArtifactStorageFileSystem;
+}
+export interface ArtifactStorageFileSystem {
+    exists(path: string): boolean;
+    realpath(path: string): string;
+    remove(path: string): void;
+    stat(path: string): {
+        isFile(): boolean;
+        size: number;
+    };
+}
+export declare function createArtifactStorageContext(paths: Pick<RuntimePaths, "stateDir">, fileSystem?: ArtifactStorageFileSystem): ArtifactStorageContext;
+export declare function createArtifactStorageContextFromRoot(rootDir: string, fileSystem?: ArtifactStorageFileSystem): ArtifactStorageContext;
 export interface ArtifactAccessDescriptor {
     ok: boolean;
     filePath: string;
@@ -15,6 +33,17 @@ export interface ArtifactAccessDescriptor {
     reason?: string;
     userMessage?: string;
 }
+export type ArtifactReferenceResolution = {
+    ok: true;
+    artifactRef: string;
+    filePath: string;
+    mimeType: string;
+    sizeBytes: number;
+} | {
+    ok: false;
+    artifactRef: string;
+    reason: "invalid_ref" | "not_found" | "deleted" | "expired" | "scope_mismatch" | "outside_state_artifacts";
+};
 export type ArtifactQuotaCleanupReason = "max_bytes" | "max_count";
 export interface ArtifactQuotaCleanupCandidate {
     artifact: DbArtifactMetadata;
@@ -39,7 +68,14 @@ export interface ArtifactQuotaCleanupResult {
     plan: ArtifactQuotaCleanupPlan;
     deleted: DbArtifactMetadata[];
     failures: ArtifactQuotaCleanupFailure[];
+    retained: Array<{
+        artifact: DbArtifactMetadata;
+        decision: Extract<CleanupDecision, {
+            decision: "retain";
+        }>;
+    }>;
 }
+export type ArtifactCleanupEvidenceResolver = (artifact: DbArtifactMetadata) => Omit<CleanupCandidateEvidence, "candidateId" | "dataKind" | "retentionClass">;
 export interface ExternalArtifactImportPolicy {
     filePath: string;
     allowedRoots: string[];
@@ -70,13 +106,13 @@ export declare const ARTIFACT_THUMBNAIL_POLICY: Partial<Record<ChannelSource, "n
 export declare const DEFAULT_ARTIFACT_CLEANUP_INTERVAL_MS: number;
 export declare const DEFAULT_ARTIFACT_STORAGE_QUOTA_BYTES: number;
 export declare const DEFAULT_ARTIFACT_STORAGE_QUOTA_COUNT = 50000;
-export declare function getArtifactsRoot(): string;
+export declare function getArtifactsRoot(storage: ArtifactStorageContext): string;
 export declare function isPathInside(parent: string, child: string): boolean;
-export declare function isStateArtifactPath(filePath: string): boolean;
+export declare function isStateArtifactPath(filePath: string, storage: ArtifactStorageContext): boolean;
 export declare function guessArtifactMimeType(filePath: string): string;
 export declare function isPreviewableMimeType(mimeType: string | undefined): boolean;
 export declare function computeArtifactExpiresAt(policy?: ArtifactRetentionPolicy, createdAt?: number): number | null;
-export declare function buildArtifactApiUrls(filePath: string): {
+export declare function buildArtifactApiUrls(filePath: string, storage: ArtifactStorageContext): {
     previewUrl: string;
     downloadUrl: string;
 } | undefined;
@@ -86,12 +122,21 @@ export declare function buildArtifactAccessDescriptor(input: {
     sizeBytes?: number;
     now?: number;
     expiresAt?: number | null;
-}): ArtifactAccessDescriptor;
-export declare function recordArtifactMetadata(input: ArtifactMetadataInput): string;
-export declare function cleanupExpiredArtifacts(input?: {
+    dataClassification?: ArtifactDataClassification;
+}, storage: ArtifactStorageContext): ArtifactAccessDescriptor;
+export declare function resolveArtifactReference(input: {
+    artifactRef: string;
+    runId?: string;
+    requestGroupId?: string;
+    now?: number;
+}, storage: ArtifactStorageContext): ArtifactReferenceResolution;
+export declare function recordArtifactMetadata(input: ArtifactMetadataInput, storage: ArtifactStorageContext): string;
+export declare function resolveArtifactDataClassification(metadataJson: string | null | undefined): ArtifactDataClassification;
+export declare function cleanupExpiredArtifacts(input: {
     now?: number;
     deleteFiles?: boolean;
-}): DbArtifactMetadata[];
+    cleanupEvidence?: ArtifactCleanupEvidenceResolver;
+}, storage: ArtifactStorageContext): DbArtifactMetadata[];
 export declare function planArtifactQuotaCleanup(input: {
     maxBytes?: number;
     maxCount?: number;
@@ -103,24 +148,27 @@ export declare function cleanupArtifactStorageQuota(input: {
     includePermanent?: boolean;
     now?: number;
     deleteFiles?: boolean;
-}): ArtifactQuotaCleanupResult;
-export declare function runArtifactCleanupCycle(input?: {
+    cleanupEvidence?: ArtifactCleanupEvidenceResolver;
+}, storage: ArtifactStorageContext): ArtifactQuotaCleanupResult;
+export declare function runArtifactCleanupCycle(input: {
     maxBytes?: number;
     maxCount?: number;
     includePermanent?: boolean;
     now?: number;
     deleteFiles?: boolean;
-}): {
+    cleanupEvidence?: ArtifactCleanupEvidenceResolver;
+}, storage: ArtifactStorageContext): {
     expired: DbArtifactMetadata[];
     quota: ArtifactQuotaCleanupResult;
 };
-export declare function startArtifactCleanupScheduler(input?: {
+export declare function startArtifactCleanupScheduler(input: {
     intervalMs?: number;
     maxBytes?: number;
     maxCount?: number;
     includePermanent?: boolean;
     deleteFiles?: boolean;
-}): void;
+    cleanupEvidence?: ArtifactCleanupEvidenceResolver;
+}, storage: ArtifactStorageContext): void;
 export declare function stopArtifactCleanupScheduler(): void;
 export declare function validateExternalArtifactImport(input: ExternalArtifactImportPolicy): ExternalArtifactImportValidation;
 //# sourceMappingURL=lifecycle.d.ts.map

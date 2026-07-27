@@ -2,14 +2,19 @@
  * FileIndexer: indexes local files into SQLite for semantic search.
  * Chunks files, stores in file_chunks table, optionally embeds vectors.
  */
+import type { MemoryConfig } from "../config/types.js";
+type MemoryEmbeddingConfig = Pick<MemoryConfig, "embedding">;
 export declare class FileIndexer {
-    indexFile(filePath: string): Promise<{
+    indexFile(filePath: string, options?: {
+        memoryConfig?: MemoryEmbeddingConfig;
+    }): Promise<{
         chunks: number;
         embedded: boolean;
     }>;
     indexDirectory(dir: string, opts?: {
         exclude?: string[];
         recursive?: boolean;
+        memoryConfig?: MemoryEmbeddingConfig;
         onProgress?: (file: string, chunks: number) => void;
     }): Promise<{
         files: number;
@@ -28,7 +33,9 @@ export declare class FileIndexer {
         content: string;
         score: number;
     }>;
-    searchByVector(query: string, limit?: number): Promise<Array<{
+    searchByVector(query: string, limit?: number, options?: {
+        memoryConfig?: MemoryEmbeddingConfig;
+    }): Promise<Array<{
         file_path: string;
         chunk_index: number;
         content: string;
@@ -36,4 +43,5 @@ export declare class FileIndexer {
     }>>;
 }
 export declare const fileIndexer: FileIndexer;
+export {};
 //# sourceMappingURL=file-indexer.d.ts.map

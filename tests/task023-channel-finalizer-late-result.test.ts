@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type {
   AgentPromptBundle,
@@ -12,9 +11,9 @@ import type {
   StructuredTaskScope,
   SubSessionContract,
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
+import type { EvidencePreservingResultAggregate } from "../packages/core/src/contracts/result-review-decision.ts"
 import {
   closeDb,
-  getDb,
   insertSession,
   listMessageLedgerEvents,
 } from "../packages/core/src/db/index.js"
@@ -27,17 +26,38 @@ import {
 } from "../packages/core/src/orchestration/sub-session-runner.ts"
 import {
   buildKnowbeeFinalAnswer,
-  commitFinalDelivery,
+  buildNamedResultDeliveryEvent,
+  commitFinalDelivery as commitFinalDeliveryWithGate,
   listPendingFinalizers,
   recordApprovalAggregation,
 } from "../packages/core/src/runs/channel-finalizer.ts"
 import { emitAssistantTextDelivery } from "../packages/core/src/runs/delivery.ts"
+import { buildLlmResponseReviewReceipt } from "../packages/core/src/runs/user-facing-response-gate.ts"
 import { createRootRun } from "../packages/core/src/runs/store.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeDb: ReturnType<typeof initializeTestDbRuntime>
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
+
+function commitFinalDelivery(input: Parameters<typeof commitFinalDeliveryWithGate>[0]) {
+  const rawText = `review-input:${input.text}`
+  return commitFinalDeliveryWithGate({
+    ...input,
+    responseReview: {
+      rawText,
+      rawTextSource: "llm_generated",
+      contentKind: "final_report",
+      expectedLanguage: "unknown",
+      receipt: buildLlmResponseReviewReceipt({
+        rawText,
+        responseText: input.text,
+        rawTextSource: "llm_generated",
+        contentKind: "final_report",
+      }),
+    },
+  })
+}
 
 const expectedOutput: ExpectedOutputContract = {
   outputId: "answer",
@@ -58,6 +78,23 @@ const taskScope: StructuredTaskScope = {
   constraints: ["Sub-session results are parent synthesis only."],
   expectedOutputs: [expectedOutput],
   reasonCodes: ["task023"],
+}
+
+function deliverableReviewAggregate(resultReportId: string): EvidencePreservingResultAggregate {
+  return {
+    schemaVersion: 1,
+    claims: [],
+    sourceRefs: [`report:${resultReportId}`],
+    evidenceRefs: [],
+    conflicts: [],
+    uncertainties: [],
+    missingItems: [],
+    risks: [],
+    failureReasons: [],
+    finalizationEligible: true,
+    nextAction: "accept",
+    reasonCodes: ["parent_action:accept"],
+  }
 }
 
 function identity(
@@ -85,7 +122,7 @@ function command(id = "researcher"): CommandRequest {
     parentRunId: "run:task023",
     subSessionId: `sub:${id}`,
     targetAgentId: "agent:researcher",
-    targetNicknameSnapshot: "Researcher",
+    targetAgentNameSnapshot: "Researcher",
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
@@ -99,8 +136,6 @@ function promptBundle(): AgentPromptBundle {
     agentId: "agent:researcher",
     agentType: "sub_agent",
     role: "researcher",
-    displayNameSnapshot: "Researcher",
-    nicknameSnapshot: "Researcher",
     personalitySnapshot: "precise",
     teamContext: [],
     memoryPolicy: {
@@ -227,20 +262,12 @@ beforeEach(() => {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task023-state-"))
   tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
-  getDb()
+  runtimeDb = initializeTestDbRuntime(stateDir)
   setupRun()
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_STATE_DIR")
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_CONFIG")
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -255,12 +282,26 @@ describe("task023 channel delivery finalizer and late result policy", () => {
       text: "evidence from child",
     })
     const firstChunks: string[] = []
+    const missingAggregate = await commitFinalDelivery({
+      parentRunId: "run:task023:review-blocked",
+      sessionId: "session:task023:review-blocked",
+      source: "webui",
+      text: "must be reviewed",
+      resultReports: [resultReport],
+      deliveryDependencies: { writeReplyLog: () => undefined },
+      onChunk: vi.fn(),
+    })
+    expect(missingAggregate).toMatchObject({
+      status: "blocked",
+      reasonCodes: ["result_review_aggregate_required"],
+    })
     const first = await commitFinalDelivery({
       parentRunId: "run:task023",
       sessionId: "session:task023",
       source: "webui",
       text: "final answer",
       resultReports: [resultReport],
+      resultReviewAggregate: deliverableReviewAggregate(resultReport.resultReportId),
       deliveryDependencies: { writeReplyLog: () => undefined },
       onChunk: async (chunk) => {
         if (chunk.type === "text") firstChunks.push(chunk.delta)
@@ -273,6 +314,7 @@ describe("task023 channel delivery finalizer and late result policy", () => {
       source: "webui",
       text: "different final answer after restart",
       resultReports: [resultReport],
+      resultReviewAggregate: deliverableReviewAggregate(resultReport.resultReportId),
       deliveryDependencies: { writeReplyLog: () => undefined },
       onChunk: secondOnChunk,
     })
@@ -292,6 +334,112 @@ describe("task023 channel delivery finalizer and late result policy", () => {
         expect.objectContaining({ eventKind: "named_delivery_attributed" }),
       ]),
     )
+  })
+
+  it("preserves agent_name speaker snapshots in final delivery ledger details", async () => {
+    const delivered = await commitFinalDelivery({
+      parentRunId: "run:task023",
+      sessionId: "session:task023",
+      source: "webui",
+      text: "final answer from named main agent",
+      speaker: {
+        entityType: "knowbee",
+        entityId: "agent:knowbee",
+        agentNameSnapshot: "마당쇠",
+      },
+      deliveryDependencies: { writeReplyLog: () => undefined },
+      onChunk: async () => undefined,
+    })
+
+    expect(delivered.status).toBe("delivered")
+    const deliveredEvent = listMessageLedgerEvents({ runId: "run:task023", limit: 100 }).find(
+      (event) => event.event_kind === "final_answer_delivered",
+    )
+    const detail = JSON.parse(deliveredEvent?.detail_json ?? "{}") as {
+      speaker?: Record<string, unknown>
+    }
+    expect(detail.speaker).toMatchObject({
+      entityType: "knowbee",
+      entityId: "agent:knowbee",
+      agentNameSnapshot: "마당쇠",
+    })
+    expect(detail.speaker).not.toHaveProperty("nicknameSnapshot")
+  })
+
+  it("uses the explicit root agent name snapshot when final delivery has no explicit speaker", async () => {
+    const resultReport = createTextResultReport({
+      command: command(),
+      idProvider: () => "result:configured-speaker",
+      text: "source-backed detail",
+    })
+    const delivered = await commitFinalDelivery({
+      parentRunId: "run:task023",
+      sessionId: "session:task023",
+      source: "webui",
+      text: "final answer from configured main agent",
+      rootAgentNameSnapshot: "마당쇠",
+      resultReports: [resultReport],
+      resultReviewAggregate: deliverableReviewAggregate(resultReport.resultReportId),
+      deliveryDependencies: { writeReplyLog: () => undefined },
+      onChunk: async () => undefined,
+    })
+
+    expect(delivered.status).toBe("delivered")
+    const deliveredEvent = listMessageLedgerEvents({ runId: "run:task023", limit: 100 }).find(
+      (event) => event.event_kind === "final_answer_delivered",
+    )
+    const deliveryDetail = JSON.parse(deliveredEvent?.detail_json ?? "{}") as {
+      speaker?: Record<string, unknown>
+    }
+    expect(deliveryDetail.speaker).toMatchObject({
+      entityType: "knowbee",
+      entityId: "agent:knowbee",
+      agentNameSnapshot: "마당쇠",
+    })
+
+    const namedDelivery = listOrchestrationEventLedger({ runId: "run:task023" }).find(
+      (event) => event.eventKind === "named_delivery_attributed",
+    )
+    expect(namedDelivery?.payload).toMatchObject({
+      namedDelivery: {
+        recipient: {
+          entityType: "knowbee",
+          entityId: "agent:knowbee",
+          agentNameSnapshot: "마당쇠",
+        },
+      },
+    })
+  })
+
+  it("preserves agent_name sender and recipient snapshots in named result delivery events", () => {
+    const event = buildNamedResultDeliveryEvent({
+      parentRunId: "run:task023",
+      sender: {
+        entityType: "sub_agent",
+        entityId: "agent:researcher",
+        agentNameSnapshot: "Researcher",
+      },
+      recipient: {
+        entityType: "knowbee",
+        entityId: "agent:knowbee",
+        agentNameSnapshot: "마당쇠",
+      },
+      resultReportId: "result:task023:named",
+      summary: "named delivery summary",
+    })
+
+    expect(event.sender).toMatchObject({
+      entityType: "sub_agent",
+      entityId: "agent:researcher",
+      agentNameSnapshot: "Researcher",
+    })
+    expect(event.recipient).toMatchObject({
+      entityType: "knowbee",
+      entityId: "agent:knowbee",
+      agentNameSnapshot: "마당쇠",
+    })
+    expect(event.sender).not.toHaveProperty("nicknameSnapshot")
+    expect(event.recipient).not.toHaveProperty("nicknameSnapshot")
   })
 
   it("blocks child direct final delivery and stores it as a suppressed delivery ledger event", async () => {
@@ -325,11 +473,17 @@ describe("task023 channel delivery finalizer and late result policy", () => {
       parentRunId: "run:task023",
       sessionId: "session:task023",
       source: "webui",
+      speaker: {
+        entityType: "knowbee",
+        entityId: "agent:knowbee",
+        agentNameSnapshot: "마당쇠",
+      },
       approvals: [
         { approvalId: "approval:one", status: "requested", summary: "Need filesystem access" },
         { approvalId: "approval:two", status: "denied", reasonCode: "permission_denied" },
       ],
     })
+    expect(aggregate.text).toContain("마당쇠 승인 요청 요약")
     expect(aggregate.text).toContain("approval:one")
     expect(aggregate.pendingApprovalIds).toEqual(["approval:one"])
     expect(aggregate.blockedApprovalIds).toEqual(["approval:two"])
@@ -381,7 +535,7 @@ describe("task023 channel delivery finalizer and late result policy", () => {
   })
 
   it("keeps generated but undelivered finalizers pending after restart without auto-delivery", () => {
-    getDb()
+    runtimeDb
       .prepare(
         `INSERT INTO message_ledger
          (id, run_id, request_group_id, session_key, thread_key, channel, event_kind,
@@ -448,7 +602,7 @@ describe("task023 channel delivery finalizer and late result policy", () => {
     })
   })
 
-  it("preserves source nicknames when Knowbee synthesizes a final answer from sub-agent reports", () => {
+  it("preserves source agent names when Knowbee synthesizes a final answer from sub-agent reports", () => {
     const resultReport = createTextResultReport({
       command: command(),
       idProvider: () => "result:nickname",
@@ -463,7 +617,10 @@ describe("task023 channel delivery finalizer and late result policy", () => {
     expect(answer.attributions).toEqual([
       expect.objectContaining({
         resultReportId: "result:nickname",
-        source: expect.objectContaining({ nicknameSnapshot: "Researcher" }),
+        source: expect.objectContaining({
+          agentName: "Researcher",
+          agentNameSnapshot: "Researcher",
+        }),
       }),
     ])
   })

@@ -1,5 +1,12 @@
 import type { RootRun, RunStep } from "../runs/types.js"
 import type { ChannelSource } from "../channels/contracts.js"
+import { createLogger } from "../logger/index.js"
+
+const log = createLogger("events")
+
+function logListenerError(event: string, error: unknown): void {
+  log.error("Unhandled event listener error", { event, error })
+}
 
 export type ApprovalDecision = "allow_once" | "allow_run" | "deny"
 export type ApprovalKind = "approval" | "screen_confirmation"
@@ -73,7 +80,6 @@ export interface KnowbeeEvents {
     previewUrl?: string
     downloadUrl?: string
     previewable?: boolean
-    filePath: string
     fileName: string
     mimeType?: string
     caption?: string
@@ -212,9 +218,13 @@ class TypedEventBus {
     const set = this.listeners.get(key)
     if (!set) return
     for (const listener of set) {
-      void Promise.resolve(listener(payload)).catch((err: unknown) => {
-        console.error(`[events] Unhandled error in listener for "${key}":`, err)
-      })
+      try {
+        void Promise.resolve(listener(payload)).catch((err: unknown) => {
+          logListenerError(key, err)
+        })
+      } catch (err) {
+        logListenerError(key, err)
+      }
     }
   }
 

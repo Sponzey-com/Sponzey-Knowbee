@@ -1,3 +1,4 @@
 import type { FastifyInstance } from "fastify";
-export declare function registerSchedulesRoute(app: FastifyInstance): void;
+import type { MemoryJournalRepository } from "../../memory/journal.js";
+export declare function registerSchedulesRoute(app: FastifyInstance, memoryJournal: MemoryJournalRepository): void;
 //# sourceMappingURL=schedules.d.ts.map

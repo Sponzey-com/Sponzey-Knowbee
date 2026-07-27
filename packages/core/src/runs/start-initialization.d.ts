@@ -1,6 +1,8 @@
 import type { FinalizationSource } from "./finalization.js";
+import type { MemoryJournalRepository } from "../memory/journal.js";
 interface StartInitializationDependencies {
     rememberRunInstruction: (params: {
+        memoryJournal: MemoryJournalRepository;
         runId: string;
         sessionId: string;
         requestGroupId: string;
@@ -20,6 +22,7 @@ interface StartInitializationDependencies {
     updateRunStatus: (runId: string, status: "queued" | "running" | "awaiting_approval" | "awaiting_user" | "completed" | "failed" | "cancelled" | "interrupted", summary: string, canCancel: boolean) => void;
 }
 export declare function applyStartInitialization(params: {
+    memoryJournal: MemoryJournalRepository;
     runId: string;
     sessionId: string;
     requestGroupId: string;

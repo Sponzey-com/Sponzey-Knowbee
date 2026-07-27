@@ -1,4 +1,4 @@
-import type { AIProvider } from "../ai/index.js";
+import { type AIProvider, type AIProviderConfigSnapshot } from "../ai/index.js";
 import type { TaskExecutionSemantics } from "../agent/intake.js";
 import type { AgentContextMode } from "../agent/index.js";
 import type { RunChunkDeliveryHandler } from "./delivery.js";
@@ -21,7 +21,7 @@ export interface StartContextPlan {
     preflightFailure: StartPreflightFailure | null;
 }
 export interface StartPreflightFailure {
-    code: "ai_connection_unavailable" | "ai_model_unavailable" | "channel_unavailable" | "yeonjang_unavailable";
+    code: "ai_connection_unavailable" | "ai_model_unavailable" | "channel_unavailable" | "yeonjang_unavailable" | "execution_queue_full";
     summary: string;
     userMessage: string;
     eventLabel: string;
@@ -41,6 +41,7 @@ export interface StartPreflightInput {
     contextMode?: AgentContextMode | undefined;
     runScope?: "root" | "child" | "analysis" | undefined;
     skipIntake?: boolean | undefined;
+    config?: AIProviderConfigSnapshot | undefined;
 }
 export declare function resolveStartPreflightFailure(input: StartPreflightInput): StartPreflightFailure | null;
 export declare function resolveStartContextPlan(input: StartPreflightInput): StartContextPlan;

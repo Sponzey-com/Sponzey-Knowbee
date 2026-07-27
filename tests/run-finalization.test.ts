@@ -1,11 +1,32 @@
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   buildAwaitingUserMessage,
   completeRunWithAssistantMessage,
   markRunCompleted,
   moveRunToAwaitingUser,
   moveRunToCancelledAfterStop,
+  recordFirstResponseFromFinalDelivery,
 } from "../packages/core/src/runs/finalization.ts"
+import {
+  createTestDbRuntimeFixture,
+  type TestDbRuntimeFixture,
+} from "./fixtures/runtime-db.ts"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
+import { buildReviewedFinalResponse } from "./fixtures/final-response-review.ts"
+import {
+  buildDirectLlmResponseReviewReceipt,
+  buildLlmResponseReviewReceipt,
+} from "../packages/core/src/runs/user-facing-response-gate.ts"
+
+let dbRuntime: TestDbRuntimeFixture
+
+beforeEach(() => {
+  dbRuntime = createTestDbRuntimeFixture("knowbee-run-finalization-")
+})
+
+afterEach(() => {
+  dbRuntime.dispose()
+})
 
 function createDeps() {
   return {
@@ -51,7 +72,7 @@ describe("run finalization helpers", () => {
     expect(message).not.toContain("/tmp/worker.js")
   })
 
-  it("moves a run to awaiting_user and emits a standalone message", async () => {
+  it("moves a run to awaiting_user and blocks standalone delivery without final response context", async () => {
     const deps = createDeps()
     const onChunk = vi.fn().mockResolvedValue(undefined)
     const runId = `run-finalization-awaiting-user-${Date.now()}`
@@ -70,7 +91,11 @@ describe("run finalization helpers", () => {
       dependencies: deps,
     })
 
-    expect(onChunk).toHaveBeenCalled()
+    expect(onChunk).not.toHaveBeenCalled()
+    expect(deps.appendRunEvent).toHaveBeenCalledWith(
+      runId,
+      "user_facing_standalone_delivery_blocked:missing_context",
+    )
     expect(deps.setRunStepStatus).toHaveBeenCalledWith(runId, "awaiting_user", "running", "추가 입력 필요")
     expect(deps.updateRunStatus).toHaveBeenCalledWith(runId, "awaiting_user", "추가 입력 필요", true)
     expect(deps.rememberRunAwaitingUser).toHaveBeenCalledWith({
@@ -108,21 +133,90 @@ describe("run finalization helpers", () => {
     expect(deps.appendRunEvent).toHaveBeenCalledWith(runId, "자동 진행 중단 후 요청 취소")
   })
 
-  it("completes a run and records success", async () => {
+  it("blocks cancelled stop standalone delivery without final response context", async () => {
     const deps = createDeps()
     const onChunk = vi.fn().mockResolvedValue(undefined)
+    const runId = `run-finalization-stop-missing-context-${Date.now()}`
+    const sessionId = `session-finalization-stop-missing-context-${Date.now()}`
+
+    await moveRunToCancelledAfterStop({
+      runId,
+      sessionId,
+      source: "telegram",
+      onChunk,
+      cancellation: {
+        preview: "",
+        summary: "자동 진행 중단",
+        userMessage: "현재 정보로는 요청을 처리할 수 없습니다.",
+      },
+      dependencies: deps,
+    })
+
+    expect(onChunk).not.toHaveBeenCalled()
+    expect(deps.appendRunEvent).toHaveBeenCalledWith(
+      runId,
+      "user_facing_standalone_delivery_blocked:missing_context",
+    )
+    expect(deps.rememberRunFailure).toHaveBeenCalledWith(expect.objectContaining({
+      runId,
+      sessionId,
+      source: "telegram",
+      summary: "자동 진행 중단",
+      title: "cancelled_after_stop",
+    }))
+    expect(deps.updateRunStatus).toHaveBeenCalledWith(runId, "cancelled", "자동 진행 중단", false)
+  })
+
+  it("completes a run and records success", async () => {
+    const deps = createDeps()
+    const onChunk = vi.fn(async (chunk: { type: string }) =>
+      chunk.type === "done"
+        ? {
+            textDeliveries: [
+              {
+                channel: "telegram" as const,
+                text: "완료했습니다.",
+                messageIds: [1],
+                deliveryReceipts: [
+                  {
+                    channelId: "telegram:primary",
+                    provider: "telegram",
+                    connectionId: "telegram:primary",
+                    target: { roomId: "chat:finalization" },
+                    status: "sent" as const,
+                    timestamp: 1,
+                    idempotencyKey: "telegram:finalization:success",
+                    messageId: "1",
+                  },
+                ],
+              },
+            ],
+          }
+        : undefined,
+    )
     const runId = `run-finalization-complete-${Date.now()}`
     const sessionId = `session-finalization-complete-${Date.now()}`
 
-    await completeRunWithAssistantMessage({
+    const outcome = await completeRunWithAssistantMessage({
       runId,
       sessionId,
       text: "완료했습니다.",
+      textSource: "llm_reviewed",
+      responseContext: {
+        originalRequest: "요청을 완료해줘",
+        model: "gpt-test",
+        providerId: "openai",
+        config: DEFAULT_CONFIG,
+        workDir: "/tmp/project",
+      },
+      renderFinalResponseText: vi.fn(async (input) =>
+        buildReviewedFinalResponse(input, "완료했습니다.")),
       source: "telegram",
       onChunk,
       dependencies: deps,
     })
 
+    expect(outcome.status).toBe("completed")
     expect(deps.rememberRunSuccess).toHaveBeenCalledWith({
       runId,
       sessionId,
@@ -132,6 +226,95 @@ describe("run finalization helpers", () => {
     })
     expect(deps.updateRunStatus).toHaveBeenCalledWith(runId, "completed", "완료했습니다.", false)
     expect(deps.appendRunEvent).toHaveBeenCalledWith(runId, "실행 완료")
+  })
+
+  it("records a delivered final receipt without accepting a provider completion alone", () => {
+    const recordFirstResponseReceipt = vi.fn()
+    recordFirstResponseFromFinalDelivery(
+      {
+        status: "delivered",
+        deliveryReceipt: {
+          persisted: true,
+          textDelivered: true,
+          doneDelivered: true,
+          runId: "run-direct",
+          receiptRef: "message-ledger:direct",
+          deliveredAtMs: 30_000,
+        },
+      },
+      recordFirstResponseReceipt,
+    )
+    recordFirstResponseFromFinalDelivery({ status: "delivered" }, recordFirstResponseReceipt)
+
+    expect(recordFirstResponseReceipt).toHaveBeenCalledOnce()
+    expect(recordFirstResponseReceipt).toHaveBeenCalledWith({
+      runId: "run-direct",
+      receiptRef: "message-ledger:direct",
+      deliveredAtMs: 30_000,
+    })
+  })
+
+  it("delivers a typed intake direct answer without a second renderer call", async () => {
+    const deps = createDeps()
+    const text = "바로 답할 수 있는 최종 답변입니다."
+    const renderFinalResponseText = vi.fn()
+    const outcome = await completeRunWithAssistantMessage({
+      runId: `run-direct-single-${Date.now()}`,
+      sessionId: `session-direct-single-${Date.now()}`,
+      text,
+      textSource: "llm_generated",
+      preauthorizedResponseReview: {
+        rawText: text,
+        rawTextSource: "llm_generated",
+        contentKind: "direct_answer",
+        expectedLanguage: "ko",
+        receipt: buildDirectLlmResponseReviewReceipt({
+          rawText: text,
+          responseText: text,
+          taskIntakePromptSha256: "a".repeat(64),
+          finalResponsePromptSha256: "b".repeat(64),
+          providerInvocationRef: "provider-invocation:test",
+        }),
+      },
+      source: "webui",
+      onChunk: undefined,
+      renderFinalResponseText,
+      dependencies: deps,
+    })
+
+    expect(outcome.status).toBe("completed")
+    expect(renderFinalResponseText).not.toHaveBeenCalled()
+  })
+
+  it("blocks a mismatched direct-answer receipt without an inline renderer retry", async () => {
+    const deps = createDeps()
+    const text = "변조된 답변"
+    const renderFinalResponseText = vi.fn()
+    const outcome = await completeRunWithAssistantMessage({
+      runId: `run-direct-mismatch-${Date.now()}`,
+      sessionId: `session-direct-mismatch-${Date.now()}`,
+      text,
+      textSource: "llm_generated",
+      preauthorizedResponseReview: {
+        rawText: "원래 답변",
+        rawTextSource: "llm_generated",
+        contentKind: "direct_answer",
+        expectedLanguage: "ko",
+        receipt: buildLlmResponseReviewReceipt({
+          rawText: "원래 답변",
+          responseText: "원래 답변",
+          rawTextSource: "llm_generated",
+          contentKind: "direct_answer",
+        }),
+      },
+      source: "webui",
+      onChunk: undefined,
+      renderFinalResponseText,
+      dependencies: deps,
+    })
+
+    expect(outcome.status).toBe("blocked_by_final_response_rendering")
+    expect(renderFinalResponseText).not.toHaveBeenCalled()
   })
 
   it("marks a run completed without emitting assistant delivery", () => {

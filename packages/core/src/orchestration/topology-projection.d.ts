@@ -1,6 +1,6 @@
 import type { JsonObject } from "../contracts/index.js";
 import type { AgentRelationship, MemoryPolicy, TeamConfig, TeamMembership } from "../contracts/sub-agent-orchestration.js";
-import { type AgentTreeLayoutPreference } from "./hierarchy.js";
+import { type AgentHierarchyConfigSnapshot, type AgentTreeLayoutPreference, type AgentHierarchyStorage } from "./hierarchy.js";
 import { type RegistryCoverageDimensionSnapshot, type RegistryServiceDependencies, type RegistryTeamHealthSnapshot } from "./registry.js";
 export type AgentTopologyNodeKind = "knowbee" | "sub_agent" | "team" | "team_lead" | "team_role";
 export type AgentTopologyEdgeKind = "parent_child" | "team_membership";
@@ -48,8 +48,8 @@ export interface AgentTopologyAgentInspector {
     agentId: string;
     nodeId: string;
     kind: "knowbee" | "sub_agent";
+    agentName: string;
     displayName: string;
-    nickname?: string;
     status: string;
     role: string;
     specialtyTags: string[];
@@ -104,6 +104,7 @@ export interface AgentTopologyAgentInspector {
 export interface AgentTopologyTeamBuilderCandidate {
     agentId: string;
     label: string;
+    agentName?: string;
     directChild: boolean;
     configuredMember: boolean;
     active: boolean;
@@ -116,6 +117,7 @@ export interface AgentTopologyTeamBuilderCandidate {
 export interface AgentTopologyTeamMemberInspector {
     agentId: string;
     label: string;
+    agentName?: string;
     membershipId?: string;
     primaryRole: string;
     teamRoles: string[];
@@ -133,7 +135,6 @@ export interface AgentTopologyTeamInspector {
     teamId: string;
     nodeId: string;
     displayName: string;
-    nickname?: string;
     status: string;
     purpose: string;
     ownerAgentId: string;
@@ -199,11 +200,12 @@ export interface AgentTopologyEdgeValidationResult {
     diagnostics: AgentTopologyDiagnostic[];
 }
 export interface AgentTopologyServiceDependencies extends RegistryServiceDependencies {
-    layoutPath?: string;
+    storage: AgentHierarchyStorage;
+    config: AgentHierarchyConfigSnapshot;
     maxDepth?: number;
     maxChildCount?: number;
 }
-export declare function createAgentTopologyService(dependencies?: AgentTopologyServiceDependencies): {
+export declare function createAgentTopologyService(dependencies: AgentTopologyServiceDependencies): {
     buildProjection: () => AgentTopologyProjection;
     validateEdge: (input: AgentTopologyEdgeValidationInput) => AgentTopologyEdgeValidationResult;
     validateActiveTeamMembers: (team: TeamConfig) => AgentTopologyEdgeValidationResult;

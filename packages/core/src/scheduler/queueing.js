@@ -1,4 +1,9 @@
+import { redactLogText } from "../logger/index.js";
 const scheduleExecutionQueues = new Map();
+function scheduleQueueErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 export function hasScheduleExecutionQueue(scheduleId) {
     return scheduleExecutionQueues.has(scheduleId);
 }
@@ -16,15 +21,17 @@ export function enqueueScheduleExecution(params, dependencies) {
     }
     const next = (previous ?? Promise.resolve())
         .catch((error) => {
-        dependencies.logWarn(`previous schedule queue recovered: ${error instanceof Error ? error.message : String(error)}`);
+        const message = scheduleQueueErrorMessage(error);
+        dependencies.logWarn(`previous schedule queue recovered: ${message}`);
     })
         .then(() => params.task())
         .catch((error) => {
+        const message = scheduleQueueErrorMessage(error);
         dependencies.logError("schedule queue task failed", {
             scheduleId: params.scheduleId,
             scheduleName: params.scheduleName ?? null,
             trigger: params.trigger ?? null,
-            error: error instanceof Error ? error.message : String(error),
+            error: message,
         });
         throw error;
     })

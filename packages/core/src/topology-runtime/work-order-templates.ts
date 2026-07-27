@@ -2,6 +2,9 @@ import type {
   EnterpriseMetadata,
   WorkOrderSuccessCriterion,
 } from "../contracts/enterprise-topology.js"
+import { loadPromptValue } from "../memory/prompt-fragments.js"
+
+const WORK_ORDER_TEMPLATE_PROMPT_TEXT_SOURCE_ID = "work_order_template_prompt_text_user"
 
 export type WorkOrderTemplateSimulationMode = "success" | "failure"
 
@@ -32,6 +35,21 @@ export interface WorkOrderTemplateCatalog {
   templates: WorkOrderTemplatePreset[]
 }
 
+function workOrderTemplatePromptText(key: string): string {
+  const entries = loadPromptValue(WORK_ORDER_TEMPLATE_PROMPT_TEXT_SOURCE_ID, {}, { required: true })
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line): [string, string] => {
+      const separator = line.indexOf("=")
+      if (separator < 0) return [line, ""]
+      return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()]
+    })
+  const value = new Map(entries).get(key)
+  if (!value) throw new Error(`work-order template prompt text missing: ${key}`)
+  return value
+}
+
 export const WORK_ORDER_TEMPLATE_CATALOG: WorkOrderTemplateCatalog = {
   schemaVersion: 1,
   templates: [
@@ -40,8 +58,8 @@ export const WORK_ORDER_TEMPLATE_CATALOG: WorkOrderTemplateCatalog = {
       labelKo: "고객 요청 분류",
       labelEn: "Customer request triage",
       descriptionKo: "선택한 entry node에서 고객 요청을 분류하고 다음 조치를 정리합니다.",
-      descriptionEn: "Classify a customer request from the selected entry node and summarize next action.",
-      objective: "Triage the selected customer request and return a concise next-action summary.",
+      descriptionEn: workOrderTemplatePromptText("triage.description"),
+      objective: workOrderTemplatePromptText("triage.objective"),
       scopeIncluded: ["customer request", "available topology context", "declared tools"],
       scopeExcluded: ["external write action", "billing mutation"],
       expectedOutputSchema: {
@@ -51,13 +69,13 @@ export const WORK_ORDER_TEMPLATE_CATALOG: WorkOrderTemplateCatalog = {
       successCriteria: [
         {
           criterionId: "criterion:summary",
-          description: "Return a concise summary of the request.",
+          description: workOrderTemplatePromptText("triage.criterion.summary"),
           required: true,
           validationKind: "manual",
         },
         {
           criterionId: "criterion:next-action",
-          description: "Return one clear next action.",
+          description: workOrderTemplatePromptText("triage.criterion.next_action"),
           required: true,
           validationKind: "manual",
         },
@@ -89,8 +107,8 @@ export const WORK_ORDER_TEMPLATE_CATALOG: WorkOrderTemplateCatalog = {
       labelKo: "실패 경로 점검",
       labelEn: "Failure drill",
       descriptionKo: "FailureReport와 retry/fallback 후보가 overlay에 보이는지 점검합니다.",
-      descriptionEn: "Exercise FailureReport, retry, and fallback overlay behavior.",
-      objective: "Run a controlled failure drill for the selected entry node.",
+      descriptionEn: workOrderTemplatePromptText("failure.description"),
+      objective: workOrderTemplatePromptText("failure.objective"),
       scopeIncluded: ["selected node", "failure policy", "recovery policy"],
       scopeExcluded: ["real external delivery"],
       expectedOutputSchema: {
@@ -100,7 +118,7 @@ export const WORK_ORDER_TEMPLATE_CATALOG: WorkOrderTemplateCatalog = {
       successCriteria: [
         {
           criterionId: "criterion:failure-summary",
-          description: "A failure summary is produced after exhaustion review.",
+          description: workOrderTemplatePromptText("failure.criterion.summary"),
           required: true,
           validationKind: "manual",
         },

@@ -26,7 +26,7 @@ export function planExternalRecovery(params) {
         workerRuntime: params.current.workerRuntime,
     };
     const sameAiRecovery = params.current.targetLabel ?? params.current.targetId ?? params.current.providerId ?? params.current.model ?? "현재 AI 연결";
-    const sameTargetDirective = `같은 AI 연결(${sameAiRecovery})과 같은 대상에서 접근 방식만 바꿔 복구합니다.`;
+    const sameTargetDirective = `Recover on the same AI connection (${sameAiRecovery}) and target. Change only the approach.`;
     const fallbackToEmbeddedAi = Boolean(params.current.workerRuntime);
     let routeEventLabel;
     if (fallbackToEmbeddedAi) {

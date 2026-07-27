@@ -1,3 +1,4 @@
 import type { FastifyInstance } from "fastify";
-export declare function registerAgentRoutes(app: FastifyInstance): void;
+import type { MemoryJournalRepository } from "../../memory/journal.js";
+export declare function registerAgentRoutes(app: FastifyInstance, memoryJournal: MemoryJournalRepository): void;
 //# sourceMappingURL=agent.d.ts.map

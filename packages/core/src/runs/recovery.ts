@@ -1,5 +1,11 @@
+import { createHash } from "node:crypto"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { type PromptTemplateVariables, loadPromptTemplate } from "../memory/knowbee-md.js"
+import { loadPromptValue } from "../memory/prompt-fragments.js"
+import { UNTRUSTED_EVIDENCE_SOURCE_KINDS } from "../security/trust-boundary.js"
+import type { ToolEvidenceSourceReceipt } from "../tools/types.js"
+import { admitYeonjangEvidenceForReview } from "../yeonjang/evidence-admission.js"
 import { displayHomePath } from "./delivery.js"
 import type { AssistantTextDeliveryOutcome, DeliverySource } from "./delivery.js"
 import { sanitizeUserFacingError } from "./error-sanitizer.js"
@@ -14,6 +20,41 @@ export interface FailedCommandTool {
 export interface SuccessfulToolEvidence {
   toolName: string
   output: string
+  details?: unknown
+  evidenceSource?: Readonly<ToolEvidenceSourceReceipt>
+}
+
+export type ToolEvidenceTrustReasonCode =
+  | "tool_evidence_data_only"
+  | "tool_evidence_source_missing"
+  | "tool_evidence_source_ref_invalid"
+  | "tool_evidence_isolation_invalid"
+
+export function evaluateSuccessfulToolEvidenceTrust(
+  evidence: SuccessfulToolEvidence,
+): { allowed: boolean; reasonCode: ToolEvidenceTrustReasonCode; sourceRef: string } {
+  const source = evidence.evidenceSource
+  if (!source) {
+    return { allowed: false, reasonCode: "tool_evidence_source_missing", sourceRef: "unavailable" }
+  }
+  const sourceRefMatch = /^tool-result:([a-z_]+):([a-f0-9]{64})$/u.exec(source.sourceRef)
+  if (
+    !sourceRefMatch
+    || sourceRefMatch[1] !== source.sourceKind
+    || !UNTRUSTED_EVIDENCE_SOURCE_KINDS.includes(source.sourceKind)
+  ) {
+    return { allowed: false, reasonCode: "tool_evidence_source_ref_invalid", sourceRef: "unavailable" }
+  }
+  if (source.trustClass !== "untrusted_external" || source.instructionIsolation !== "data_only") {
+    return { allowed: false, reasonCode: "tool_evidence_isolation_invalid", sourceRef: source.sourceRef }
+  }
+  return { allowed: true, reasonCode: "tool_evidence_data_only", sourceRef: source.sourceRef }
+}
+
+function trustEligibleSuccessfulTools(
+  evidence: SuccessfulToolEvidence[],
+): SuccessfulToolEvidence[] {
+  return evidence.filter((item) => evaluateSuccessfulToolEvidenceTrust(item).allowed)
 }
 
 export type RecoveryAlternativeKind =
@@ -43,12 +84,35 @@ export interface CommandFailureRecoveryCandidate extends RecoveryCandidateBase {
 
 export interface GenericExecutionRecoveryCandidate extends RecoveryCandidateBase {}
 
+export interface YeonjangFailureEvidenceRecoveryPayload {
+  summary: string
+  reason: string
+  toolNames: string[]
+}
+
 export interface RecoveryKeyParts {
   action: string
   error: string
   toolName?: string | undefined
   targetId?: string | undefined
   channel?: DeliverySource | string | undefined
+}
+
+const RECOVERY_PROMPT_SECTION_TEXT_SOURCE_ID = "recovery_prompt_section_text_user"
+
+function recoveryPromptSectionText(key: string, variables: PromptTemplateVariables = {}): string {
+  const entries = loadPromptValue(RECOVERY_PROMPT_SECTION_TEXT_SOURCE_ID, variables, { required: true })
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line): [string, string] => {
+      const separator = line.indexOf("=")
+      if (separator < 0) return [line, ""]
+      return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()]
+    })
+  const value = new Map(entries).get(key)
+  if (!value) throw new Error(`recovery prompt section text missing: ${key}`)
+  return value
 }
 
 export function buildRecoveryKey(parts: RecoveryKeyParts): string {
@@ -167,6 +231,76 @@ export function selectGenericExecutionRecovery(params: {
   }
 }
 
+export function buildYeonjangFailureEvidenceRecoveryPayload(
+  evidence: SuccessfulToolEvidence,
+): YeonjangFailureEvidenceRecoveryPayload | null {
+  if (!evidence.toolName.startsWith("yeonjang_")) return null
+
+  const admission = admitYeonjangEvidenceForReview({
+    result: {
+      success: true,
+      output: evidence.output,
+      details: evidence.details,
+      ...(evidence.evidenceSource ? { evidenceSource: evidence.evidenceSource } : {}),
+    },
+    expectedToolName: evidence.toolName,
+  })
+
+  if (admission.status === "admitted") return null
+
+  if (admission.reasonCode !== "YEONJANG_POST_CHECK_UNVERIFIED") {
+    return {
+      summary: `${evidence.toolName} Yeonjang evidence was not admissible.`,
+      reason: `Yeonjang recovery required: reason=${admission.reasonCode}`,
+      toolNames: [evidence.toolName],
+    }
+  }
+
+  const normalizedEvidence = recordValue(recordValue(evidence.details)?.evidence)
+  const targetRef = stringField(normalizedEvidence, "targetRef") ?? "unknown"
+  const targetEvidenceRef = targetRef === "unknown"
+    ? "unavailable"
+    : `sha256:${createHash("sha256").update(targetRef).digest("hex")}`
+  const postCheck = recordValue(normalizedEvidence?.postCheck)
+  const postCheckKind = stringField(postCheck, "kind") ?? "unknown"
+  const postCheckReason = stringField(postCheck, "reason")
+  const boundedPostCheckReason =
+    postCheckReason && /^[a-z0-9_:-]{1,96}$/u.test(postCheckReason)
+      ? postCheckReason
+      : postCheckReason
+        ? "post_check_failed"
+        : null
+  const methodIds = Array.isArray(normalizedEvidence?.methodIds)
+    ? normalizedEvidence.methodIds.filter((method): method is string => typeof method === "string" && method.trim().length > 0)
+    : []
+  const method = methodIds[0] ?? "unknown"
+
+  return {
+    summary: `${evidence.toolName} Yeonjang evidence failed verification.`,
+    reason: [
+      "Yeonjang recovery required",
+      `target_ref=${targetEvidenceRef}`,
+      `method=${method}`,
+      `post_check=${postCheckKind}`,
+      ...(boundedPostCheckReason ? [`reason=${boundedPostCheckReason}`] : []),
+    ].join("; "),
+    toolNames: [evidence.toolName],
+  }
+}
+
+function stringField(record: Record<string, unknown> | null | undefined, key: string): string | null {
+  const value = record?.[key]
+  if (typeof value !== "string") return null
+  const trimmed = value.trim()
+  return trimmed || null
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
 export function describeRecoveryAlternatives(alternatives: RecoveryAlternative[]): string | null {
   if (alternatives.length === 0) return null
   return `대안 후보: ${alternatives.map((alternative) => alternative.label).join(", ")}`
@@ -179,7 +313,7 @@ export function buildDirectArtifactDeliveryRecoveryPrompt(params: {
   successfulFileDeliveries: Array<{ channel: string; filePath: string }>
   alternatives?: RecoveryAlternative[]
 }): string {
-  const toolLines = params.successfulTools
+  const toolLines = trustEligibleSuccessfulTools(params.successfulTools)
     .slice(-5)
     .map((tool, index) => `${index + 1}. ${tool.toolName}`)
   const deliveryLines = params.successfulFileDeliveries
@@ -187,21 +321,24 @@ export function buildDirectArtifactDeliveryRecoveryPrompt(params: {
     .map((delivery, index) => `${index + 1}. ${delivery.channel}: ${displayHomePath(delivery.filePath)}`)
   const alternativeLines = params.alternatives?.map((alternative) => `- ${alternative.label}`) ?? []
 
-  return [
-    "[Direct Artifact Delivery Recovery]",
-    "사용자는 결과물 자체를 보여주거나 보내달라고 요청했습니다.",
-    `원래 사용자 요청: ${params.originalRequest}`,
-    params.previousResult.trim() ? `이전 결과: ${params.previousResult.trim()}` : "",
-    toolLines.length > 0 ? ["성공한 도구 실행:", ...toolLines].join("\n") : "",
-    deliveryLines.length > 0 ? ["이미 전달된 파일:", ...deliveryLines].join("\n") : "",
-    alternativeLines.length > 0 ? ["우선 검토할 대안:", ...alternativeLines].join("\n") : "",
-    "설명, 권한 안내, 수동 해결 방법 제시만으로 완료 처리하지 마세요.",
-    "결과물 자체를 실제로 전달하거나, 전달이 불가능하면 다른 실행 경로를 찾아 계속 진행하세요.",
-    "전달 채널은 현재 사용자 요청이 들어온 채널로 고정하세요. 사용자가 Slack에서 요청했다면 Telegram 전달 도구를 쓰지 말고, Telegram 요청도 Slack 전달 경로로 바꾸지 마세요.",
-    "도구 목록을 다시 확인하고, 적절한 Yeonjang 도구나 전달 도구를 우선 사용하세요.",
-    "사용자가 요청한 결과물 자체가 실제로 전달되기 전에는 완료라고 말하지 마세요.",
-    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
-  ].filter(Boolean).join("\n\n")
+  return loadPromptTemplate({
+    sourceId: "direct_artifact_delivery_recovery_user",
+    variables: {
+      originalRequest: params.originalRequest,
+      previousResult: params.previousResult.trim()
+        ? `${recoveryPromptSectionText("previous_result")}\n${params.previousResult.trim()}`
+        : "",
+      successfulTools: toolLines.length > 0
+        ? [recoveryPromptSectionText("successful_tool_executions"), ...toolLines].join("\n")
+        : "",
+      successfulFileDeliveries: deliveryLines.length > 0
+        ? [recoveryPromptSectionText("already_delivered_files"), ...deliveryLines].join("\n")
+        : "",
+      alternatives: alternativeLines.length > 0
+        ? [recoveryPromptSectionText("preferred_alternatives"), ...alternativeLines].join("\n")
+        : "",
+    },
+  })
 }
 
 export function selectDirectArtifactDeliveryRecovery(params: {
@@ -269,26 +406,31 @@ export function buildCommandFailureRecoveryPrompt(params: {
 }): string {
   const failedLines = params.failedTools.slice(-3).map((tool, index) => {
     const preview = tool.output.trim().replace(/\s+/g, " ").slice(0, 280)
-    return `${index + 1}. ${tool.toolName} 실패: ${preview}`
+    return `${index + 1}. ${tool.toolName} failed: ${preview}`
   })
   const alternativeLines = params.alternatives?.map((alternative) => `- ${alternative.label}`) ?? []
   const pathAliasLines = buildPathAliasRecoveryHintLines(params.originalRequest, params.failedTools)
 
-  return [
-    "[Command Failure Recovery]",
-    "이전 시도에서 로컬 명령 실행이 실패했습니다.",
-    `원래 사용자 요청: ${params.originalRequest}`,
-    `복구 요약: ${params.summary}`,
-    `실패 분석: ${params.reason}`,
-    failedLines.length > 0 ? ["실패한 명령 기록:", ...failedLines].join("\n") : "",
-    alternativeLines.length > 0 ? ["우선 검토할 대안:", ...alternativeLines].join("\n") : "",
-    pathAliasLines.length > 0 ? ["경로 별칭 후보:", ...pathAliasLines].join("\n") : "",
-    params.previousResult.trim() ? `이전 결과: ${params.previousResult.trim()}` : "",
-    "실패 원인을 먼저 확인하고, 같은 실패 명령을 그대로 반복하지 마세요.",
-    "경로, 권한, 명령 형식, 대상 프로그램 상태를 점검한 뒤 다른 연장 메서드, 다른 연장 대상, 파일 도구 같은 비명령 대안을 검토하세요.",
-    "로컬 명령 fallback은 허용되지 않습니다.",
-    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
-  ].filter(Boolean).join("\n\n")
+  return loadPromptTemplate({
+    sourceId: "command_failure_recovery_user",
+    variables: {
+      originalRequest: params.originalRequest,
+      summary: params.summary,
+      reason: params.reason,
+      failedTools: failedLines.length > 0
+        ? [recoveryPromptSectionText("failed_command_records"), ...failedLines].join("\n")
+        : "",
+      alternatives: alternativeLines.length > 0
+        ? [recoveryPromptSectionText("preferred_alternatives"), ...alternativeLines].join("\n")
+        : "",
+      pathAliasHints: pathAliasLines.length > 0
+        ? [recoveryPromptSectionText("path_alias_candidates"), ...pathAliasLines].join("\n")
+        : "",
+      previousResult: params.previousResult.trim()
+        ? `${recoveryPromptSectionText("previous_result")}\n${params.previousResult.trim()}`
+        : "",
+    },
+  })
 }
 
 function buildPathAliasRecoveryHintLines(originalRequest: string, failedTools: FailedCommandTool[]): string[] {
@@ -302,9 +444,11 @@ function buildPathAliasRecoveryHintLines(originalRequest: string, failedTools: F
 
   const hints: string[] = []
   if (mentionsDownloadLocation(combined)) {
-    hints.push(`- 다운로드 위치 표현 후보: ${displayHomePath(join(homedir(), "Downloads"))}`)
-    hints.push("- `다운도르`, `다운로드`, `Downloads`, `Download folder`처럼 위치를 뜻하는 표현은 먼저 OS 표준 다운로드 폴더 후보로 확인하세요.")
-    hints.push("- 단, 따옴표로 감싼 폴더명이나 명시적 절대 경로는 사용자가 지정한 정확한 이름으로 보존하세요.")
+    hints.push(`- ${recoveryPromptSectionText("download_location_candidate", {
+      downloadPath: displayHomePath(join(homedir(), "Downloads")),
+    })}`)
+    hints.push(`- ${recoveryPromptSectionText("download_location_phrase_hint")}`)
+    hints.push(`- ${recoveryPromptSectionText("preserve_explicit_paths")}`)
   }
   return hints
 }
@@ -331,24 +475,25 @@ export function buildExecutionRecoveryPrompt(params: {
   alternatives?: RecoveryAlternative[]
 }): string {
   const toolLine = params.toolNames.length > 0
-    ? `실패한 도구: ${[...new Set(params.toolNames)].join(", ")}`
+    ? `${recoveryPromptSectionText("failed_tools")} ${[...new Set(params.toolNames)].join(", ")}`
     : ""
   const alternativeLines = params.alternatives?.map((alternative) => `- ${alternative.label}`) ?? []
 
-  return [
-    "[Execution Recovery]",
-    "이전 시도에서 실행 도구가 실패했습니다.",
-    `원래 사용자 요청: ${params.originalRequest}`,
-    `복구 요약: ${params.summary}`,
-    `실패 분석: ${params.reason}`,
-    toolLine,
-    alternativeLines.length > 0 ? ["우선 검토할 대안:", ...alternativeLines].join("\n") : "",
-    params.previousResult.trim() ? `현재까지 결과: ${params.previousResult.trim()}` : "",
-    "도구 목록을 다시 확인하고, 같은 실패 경로를 그대로 반복하지 마세요.",
-    "Yeonjang 도구 또는 다른 연장 대상만 사용하고, 코어 로컬 fallback은 선택하지 마세요.",
-    "도구의 가능 여부를 다시 확인한 뒤 남은 작업을 이어서 처리하세요.",
-    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
-  ].filter(Boolean).join("\n\n")
+  return loadPromptTemplate({
+    sourceId: "execution_recovery_user",
+    variables: {
+      originalRequest: params.originalRequest,
+      summary: params.summary,
+      reason: params.reason,
+      failedTools: toolLine,
+      alternatives: alternativeLines.length > 0
+        ? [recoveryPromptSectionText("preferred_alternatives"), ...alternativeLines].join("\n")
+        : "",
+      previousResult: params.previousResult.trim()
+        ? `${recoveryPromptSectionText("previous_result")}\n${params.previousResult.trim()}`
+        : "",
+    },
+  })
 }
 
 export function summarizeRawErrorForUser(message: string | undefined): string {
@@ -370,22 +515,29 @@ export function buildAiErrorRecoveryPrompt(params: {
   nextRouteHint?: string | undefined
 }): string {
   const avoidTargetLines = dedupeNonEmptyStrings(params.avoidTargets).map((target) => `- ${target}`)
-  return [
-    "[AI Error Recovery]",
-    "이전 시도에서 모델 호출 중 오류가 발생했습니다.",
-    `원래 사용자 요청: ${params.originalRequest}`,
-    `복구 요약: ${params.summary}`,
-    `오류 분석: ${params.reason}`,
-    summarizeRawErrorForUser(params.message) ? `오류 세부: ${summarizeRawErrorForUser(params.message)}` : "",
-    params.failedRoute?.trim() ? `실패한 접근 방식: ${params.failedRoute.trim()}` : "",
-    avoidTargetLines.length > 0 ? ["다시 사용 금지 대상:", ...avoidTargetLines].join("\n") : "",
-    params.nextRouteHint?.trim() ? `우선 검토할 다른 경로: ${params.nextRouteHint.trim()}` : "",
-    params.previousResult.trim() ? `현재까지 결과: ${params.previousResult.trim()}` : "",
-    "방금 실패한 접근을 그대로 반복하지 말고, 위에 적힌 금지 대상과 같은 방법은 다시 선택하지 마세요.",
-    "같은 AI 연결과 같은 대상은 유지하고, provider/model 전환 없이 더 짧은 응답, 더 단순한 단계 분해, 다른 도구 조합 같은 전략만 바꾸세요.",
-    "이미 성공한 작업은 유지하고, 남은 작업만 이어서 처리하세요.",
-    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
-  ].filter(Boolean).join("\n\n")
+  return loadPromptTemplate({
+    sourceId: "ai_error_recovery_user",
+    variables: {
+      originalRequest: params.originalRequest,
+      summary: params.summary,
+      reason: params.reason,
+      errorDetail: summarizeRawErrorForUser(params.message)
+        ? `${recoveryPromptSectionText("error_detail")}\n${summarizeRawErrorForUser(params.message)}`
+        : "",
+      failedRoute: params.failedRoute?.trim()
+        ? `${recoveryPromptSectionText("failed_approach")} ${params.failedRoute.trim()}`
+        : "",
+      avoidTargets: avoidTargetLines.length > 0
+        ? [recoveryPromptSectionText("avoid_targets"), ...avoidTargetLines].join("\n")
+        : "",
+      nextRouteHint: params.nextRouteHint?.trim()
+        ? `${recoveryPromptSectionText("preferred_recovery_route")} ${params.nextRouteHint.trim()}`
+        : "",
+      previousResult: params.previousResult.trim()
+        ? `${recoveryPromptSectionText("previous_result")}\n${params.previousResult.trim()}`
+        : "",
+    },
+  })
 }
 
 export function describeWorkerRuntimeErrorReason(message: string): string {
@@ -415,21 +567,29 @@ export function buildWorkerRuntimeErrorRecoveryPrompt(params: {
   nextRouteHint?: string | undefined
 }): string {
   const avoidTargetLines = dedupeNonEmptyStrings(params.avoidTargets).map((target) => `- ${target}`)
-  return [
-    "[Worker Runtime Error Recovery]",
-    "이전 시도에서 외부 작업 세션 실행이 실패했습니다.",
-    `원래 사용자 요청: ${params.originalRequest}`,
-    `복구 요약: ${params.summary}`,
-    `오류 분석: ${params.reason}`,
-    summarizeRawErrorForUser(params.message) ? `오류 세부: ${summarizeRawErrorForUser(params.message)}` : "",
-    params.failedRoute?.trim() ? `실패한 접근 방식: ${params.failedRoute.trim()}` : "",
-    avoidTargetLines.length > 0 ? ["다시 사용 금지 대상:", ...avoidTargetLines].join("\n") : "",
-    params.nextRouteHint?.trim() ? `우선 검토할 다른 경로: ${params.nextRouteHint.trim()}` : "",
-    params.previousResult.trim() ? `현재까지 결과: ${params.previousResult.trim()}` : "",
-    "같은 AI 연결과 같은 대상은 유지하고, 같은 작업 세션 경로를 그대로 반복하지 말고 위에 적힌 금지 대상과 같은 방법은 다시 선택하지 마세요.",
-    "이미 성공한 작업은 유지하고, 남은 작업만 이어서 처리하세요.",
-    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
-  ].filter(Boolean).join("\n\n")
+  return loadPromptTemplate({
+    sourceId: "worker_runtime_error_recovery_user",
+    variables: {
+      originalRequest: params.originalRequest,
+      summary: params.summary,
+      reason: params.reason,
+      errorDetail: summarizeRawErrorForUser(params.message)
+        ? `${recoveryPromptSectionText("error_detail")}\n${summarizeRawErrorForUser(params.message)}`
+        : "",
+      failedRoute: params.failedRoute?.trim()
+        ? `${recoveryPromptSectionText("failed_approach")} ${params.failedRoute.trim()}`
+        : "",
+      avoidTargets: avoidTargetLines.length > 0
+        ? [recoveryPromptSectionText("avoid_targets"), ...avoidTargetLines].join("\n")
+        : "",
+      nextRouteHint: params.nextRouteHint?.trim()
+        ? `${recoveryPromptSectionText("preferred_recovery_route")} ${params.nextRouteHint.trim()}`
+        : "",
+      previousResult: params.previousResult.trim()
+        ? `${recoveryPromptSectionText("previous_result")}\n${params.previousResult.trim()}`
+        : "",
+    },
+  })
 }
 
 export function buildAiRecoveryAvoidTargets(
@@ -575,16 +735,15 @@ export function buildFilesystemMutationFollowupPrompt(params: {
   originalRequest: string
   previousResult: string
 }): string {
-  return [
-    "[Filesystem Execution Required]",
-    "원래 사용자 요청은 실제 로컬 파일 또는 폴더 변경이 필요합니다.",
-    `원래 사용자 요청: ${params.originalRequest}`,
-    params.previousResult.trim() ? `이전 불완전 결과: ${params.previousResult.trim()}` : "",
-    "요청한 파일이나 폴더가 로컬 환경에서 실제로 생성되거나 수정되어야만 완료입니다.",
-    "이제 사용 가능한 파일 또는 쉘 도구로 실제 로컬 작업을 수행하세요.",
-    "수동 안내, 예시 코드만 제시하거나 실제 파일 변경 없이 완료했다고 말하지 마세요.",
-    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
-  ].filter(Boolean).join("\n\n")
+  return loadPromptTemplate({
+    sourceId: "filesystem_execution_required_user",
+    variables: {
+      originalRequest: params.originalRequest,
+      previousResult: params.previousResult.trim()
+        ? `${recoveryPromptSectionText("previous_incomplete_result")}\n${params.previousResult.trim()}`
+        : "",
+    },
+  })
 }
 
 export function buildFilesystemVerificationRecoveryPrompt(params: {
@@ -598,21 +757,25 @@ export function buildFilesystemVerificationRecoveryPrompt(params: {
   const missing = params.missingItems?.filter((item) => item.trim()).map((item) => `- ${item}`) ?? []
   const targets = params.mutationPaths?.filter((item) => item.trim()).map((item) => `- ${displayHomePath(item)}`) ?? []
 
-  return [
-    "[Filesystem Verification Recovery]",
-    "이전 시도에서 실제 파일 또는 폴더 결과를 자동 검증하지 못했습니다.",
-    `원래 사용자 요청: ${params.originalRequest}`,
-    `검증 요약: ${params.verificationSummary}`,
-    params.verificationReason?.trim() ? `검증 사유: ${params.verificationReason.trim()}` : "",
-    targets.length > 0 ? ["현재 확인 대상 경로:", ...targets].join("\n") : "",
-    missing.length > 0 ? ["누락되었거나 다시 확인할 항목:", ...missing].join("\n") : "",
-    params.previousResult.trim() ? `현재까지 결과: ${params.previousResult.trim()}` : "",
-    "실제 파일 도구나 로컬 명령으로 경로 존재 여부를 직접 확인하세요.",
-    "대상이 없으면 다른 방법으로 직접 생성하거나 수정하세요.",
-    "이미 생성되었다면 실제 경로를 다시 찾아 검증 근거를 확보하세요.",
-    "실제 존재 여부를 다시 확인하기 전에는 완료라고 말하지 마세요.",
-    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
-  ].filter(Boolean).join("\n\n")
+  return loadPromptTemplate({
+    sourceId: "filesystem_verification_recovery_user",
+    variables: {
+      originalRequest: params.originalRequest,
+      verificationSummary: params.verificationSummary,
+      verificationReason: params.verificationReason?.trim()
+        ? `${recoveryPromptSectionText("verification_reason")}\n${params.verificationReason.trim()}`
+        : "",
+      targetPaths: targets.length > 0
+        ? [recoveryPromptSectionText("current_target_paths"), ...targets].join("\n")
+        : "",
+      missingItems: missing.length > 0
+        ? [recoveryPromptSectionText("missing_or_unchecked_items"), ...missing].join("\n")
+        : "",
+      previousResult: params.previousResult.trim()
+        ? `${recoveryPromptSectionText("previous_result")}\n${params.previousResult.trim()}`
+        : "",
+    },
+  })
 }
 
 export function buildEmptyResultRecoveryPrompt(params: {
@@ -621,23 +784,25 @@ export function buildEmptyResultRecoveryPrompt(params: {
   successfulTools: SuccessfulToolEvidence[]
   sawRealFilesystemMutation: boolean
 }): string {
-  const successfulToolLines = params.successfulTools
+  const successfulToolLines = trustEligibleSuccessfulTools(params.successfulTools)
     .slice(-3)
     .map((tool, index) => `${index + 1}. ${tool.toolName}`)
 
-  return [
-    "[Empty Result Recovery]",
-    "이전 시도는 실행이 끝났지만 완료로 볼 수 있는 명확한 결과가 남지 않았습니다.",
-    `원래 사용자 요청: ${params.originalRequest}`,
-    params.previousResult.trim() ? `현재까지 텍스트 결과: ${params.previousResult.trim()}` : "",
-    successfulToolLines.length > 0 ? ["성공한 도구 실행:", ...successfulToolLines].join("\n") : "",
-    params.sawRealFilesystemMutation ? "실제 파일 또는 폴더 변경은 감지되었지만 사용자에게 전달할 명확한 결과 정리가 없습니다." : "",
-    "이전 시도를 그대로 완료 처리하지 말고, 무엇이 실제로 완료되었는지 확인하세요.",
-    "결과가 있다면 그 결과를 명확하게 정리해 전달하세요.",
-    "결과가 부족하다면 남은 작업을 이어서 실제로 완료하세요.",
-    "아무 일도 하지 않았는데 완료라고 말하지 마세요.",
-    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
-  ].filter(Boolean).join("\n\n")
+  return loadPromptTemplate({
+    sourceId: "empty_result_recovery_user",
+    variables: {
+      originalRequest: params.originalRequest,
+      previousResult: params.previousResult.trim()
+        ? `${recoveryPromptSectionText("current_text_result")}\n${params.previousResult.trim()}`
+        : "",
+      successfulTools: successfulToolLines.length > 0
+        ? [recoveryPromptSectionText("successful_tool_executions"), ...successfulToolLines].join("\n")
+        : "",
+      filesystemMutationNote: params.sawRealFilesystemMutation
+        ? recoveryPromptSectionText("filesystem_mutation_note")
+        : "",
+    },
+  })
 }
 
 export function shouldRetryTruncatedOutput(params: {
@@ -675,18 +840,22 @@ export function buildTruncatedOutputRecoveryPrompt(params: {
   remainingItems?: string[]
 }): string {
   const remaining = params.remainingItems?.filter((item) => item.trim()).map((item) => `- ${item}`) ?? []
-  return [
-    "[Truncated Output Recovery]",
-    "이전 시도에서 코드 또는 결과가 중간에 끊기거나 미완성으로 끝났습니다.",
-    `원래 사용자 요청: ${params.originalRequest}`,
-    params.summary?.trim() ? `검토 요약: ${params.summary.trim()}` : "",
-    params.reason?.trim() ? `검토 사유: ${params.reason.trim()}` : "",
-    remaining.length > 0 ? ["남은 항목:", ...remaining].join("\n") : "",
-    params.previousResult.trim() ? `이전 불완전 결과:\n${params.previousResult.trim()}` : "",
-    "지금 작업을 다시 시도하고 완전하게 끝내세요.",
-    "파일을 써야 한다면 로컬 파일 또는 쉘 도구를 이용해 최종 파일을 실제로 생성하세요.",
-    "부분 코드만 반복하지 말고, 파일 중간에서 끊기지 말고, 닫히지 않은 태그·함수·블록·문장으로 끝내지 마세요.",
-    "사용자가 지정한 이름, 폴더명, 경로, 언어를 그대로 유지하고 번역하지 마세요.",
-    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
-  ].filter(Boolean).join("\n\n")
+  return loadPromptTemplate({
+    sourceId: "truncated_output_recovery_user",
+    variables: {
+      originalRequest: params.originalRequest,
+      summary: params.summary?.trim()
+        ? `${recoveryPromptSectionText("review_summary")}\n${params.summary.trim()}`
+        : "",
+      reason: params.reason?.trim()
+        ? `${recoveryPromptSectionText("review_reason")}\n${params.reason.trim()}`
+        : "",
+      remainingItems: remaining.length > 0
+        ? [recoveryPromptSectionText("remaining_items"), ...remaining].join("\n")
+        : "",
+      previousResult: params.previousResult.trim()
+        ? `${recoveryPromptSectionText("previous_incomplete_result")}\n${params.previousResult.trim()}`
+        : "",
+    },
+  })
 }

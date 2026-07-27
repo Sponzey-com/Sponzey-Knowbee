@@ -1,9 +1,9 @@
-export declare const WEB_RETRIEVAL_POLICY_VERSION = "2026.04.18-task009";
-export type WebRetrievalMethod = "official_api" | "direct_fetch" | "fast_text_search" | "browser_search";
-export type SourceKind = "official" | "first_party" | "search_index" | "third_party" | "browser_evidence" | "unknown";
-export type SourceReliability = "high" | "medium" | "low" | "unknown";
-export type SourceFreshnessPolicy = "normal" | "latest_approximate" | "strict_timestamp";
-export type SourceCompletionStatus = "ready" | "approximate_latest" | "limited_success" | "insufficient_source";
+import { type ArtifactStorageContext } from "../artifacts/lifecycle.js";
+import type { SourceFreshnessAssessment, SourceFreshnessPolicy, SourceKind, SourceReliability, WebRetrievalMethod, WebRetrievalTransitionAdmission, WebRetrievalTransitionReceipt } from "../contracts/web-retrieval.js";
+export declare const WEB_RETRIEVAL_POLICY_VERSION = "web-provenance-v2";
+export declare const SOURCE_FRESHNESS_POLICY_VERSION = "strict-source-age-v1";
+export declare const STRICT_SOURCE_MAX_AGE_MS: number;
+export type { SourceEvidence, SourceFreshnessAssessment, SourceFreshnessPolicy, SourceFreshnessReasonCode, SourceFreshnessVerdict, SourceKind, SourceReliability, WebRetrievalMethod, WebRetrievalTransitionAdmission, WebRetrievalTransitionReceipt, } from "../contracts/web-retrieval.js";
 export interface WebRetrievalPolicyInput {
     toolName: string;
     params: Record<string, unknown>;
@@ -20,30 +20,9 @@ export interface WebRetrievalPolicyDecision {
     sourceKind: SourceKind;
     reliability: SourceReliability;
     fetchTimestamp: string;
-    answerDirective: string;
-}
-export interface SourceEvidence {
-    method: WebRetrievalMethod;
-    sourceKind: SourceKind;
-    reliability: SourceReliability;
-    sourceUrl?: string | null;
-    sourceDomain?: string | null;
-    sourceLabel?: string | null;
-    sourceTimestamp?: string | null;
-    fetchTimestamp: string;
-    freshnessPolicy?: SourceFreshnessPolicy;
-    adapterId?: string | null;
-    adapterVersion?: string | null;
-    parserVersion?: string | null;
-    adapterStatus?: "active" | "degraded" | null;
-}
-export interface SourceReliabilityGuardResult {
-    status: SourceCompletionStatus;
-    userMessage: string;
-    mustAvoidGuessing: boolean;
-    evidence: SourceEvidence;
 }
 export interface BrowserSearchEvidenceInput {
+    artifactStorage: ArtifactStorageContext;
     query: string;
     url?: string | null;
     extractedText?: string | null;
@@ -61,9 +40,25 @@ export interface BrowserSearchEvidenceArtifact {
     diagnosticEventId: string | null;
     userMessage: string;
 }
+export declare function normalizeSourceTimestamp(sourceTimestamp: string | null | undefined, fetchTimestamp: string): string | null;
+export declare function assessSourceFreshness(input: {
+    sourceTimestamp: string | null | undefined;
+    fetchTimestamp: string;
+    freshnessPolicy: SourceFreshnessPolicy;
+}): SourceFreshnessAssessment;
+export declare function buildWebRetrievalTransitionReceipt(input: {
+    toolName: string;
+    result: {
+        success: boolean;
+        details?: unknown;
+    };
+    policy: WebRetrievalPolicyDecision;
+}): WebRetrievalTransitionReceipt | null;
+export declare function evaluateWebRetrievalTransitionAdmission(input: {
+    nextToolName: string;
+    receipts: WebRetrievalTransitionReceipt[];
+}): WebRetrievalTransitionAdmission;
 export declare function buildWebRetrievalPolicyDecision(input: WebRetrievalPolicyInput): WebRetrievalPolicyDecision | null;
-export declare function buildAnswerDirective(freshnessPolicy: SourceFreshnessPolicy, sourceKind: SourceKind, sourceDomain: string | null, fetchTimestamp: string): string;
-export declare function evaluateSourceReliabilityGuard(input: SourceEvidence): SourceReliabilityGuardResult;
 export declare function extractSourceTimestampFromHtml(html: string): string | null;
 export declare function recordBrowserSearchEvidence(input: BrowserSearchEvidenceInput): BrowserSearchEvidenceArtifact;
 //# sourceMappingURL=web-retrieval-policy.d.ts.map

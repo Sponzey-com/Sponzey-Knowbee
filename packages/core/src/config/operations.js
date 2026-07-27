@@ -1,16 +1,20 @@
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import JSON5 from "json5";
 import BetterSqlite3 from "better-sqlite3";
-import { PATHS } from "./paths.js";
 import { MIGRATIONS } from "../db/migrations.js";
 import { closeDb, getDb } from "../db/index.js";
+import { redactLogText } from "../logger/index.js";
 import { sanitizeUserFacingError } from "../runs/error-sanitizer.js";
 import { ensurePromptSourceFiles, exportPromptSourcesToFile, importPromptSourcesFromFile, loadPromptSourceRegistry, } from "../memory/knowbee-md.js";
 import { redactUiValue } from "../ui/redaction.js";
-function backupRoot() {
-    return join(PATHS.stateDir, "backups");
+function configOperationRollbackErrorSummary(error) {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    return sanitizeUserFacingError(redactLogText(rawMessage));
+}
+function backupRoot(paths) {
+    return join(paths.stateDir, "backups");
 }
 function timestampId(prefix) {
     return `${prefix}-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
@@ -45,7 +49,7 @@ function readMigrationStatusFromDb(db, dbPath, exists) {
         upToDate: pendingVersions.length === 0 && unknownAppliedVersions.length === 0,
     };
 }
-export function getDatabaseMigrationStatus(dbPath = PATHS.dbFile) {
+export function getDatabaseMigrationStatus(dbPath) {
     const resolvedPath = resolve(dbPath);
     if (!existsSync(resolvedPath)) {
         const latestVersion = MIGRATIONS.reduce((max, migration) => Math.max(max, migration.version), 0);
@@ -68,7 +72,7 @@ export function getDatabaseMigrationStatus(dbPath = PATHS.dbFile) {
         db.close();
     }
 }
-export function dryRunDatabaseMigrations(dbPath = PATHS.dbFile) {
+export function dryRunDatabaseMigrations(dbPath) {
     const status = getDatabaseMigrationStatus(dbPath);
     const pending = new Set(status.pendingVersions);
     const willApply = MIGRATIONS
@@ -97,14 +101,28 @@ function copyOptionalSqliteSidecar(sourceDbPath, backupDbPath, suffix) {
     copyFileSync(sourcePath, targetPath);
     return targetPath;
 }
-export function createDatabaseBackup(kind = "backup", dbPath = PATHS.dbFile) {
+function restoreOptionalSqliteSidecar(sourceDbPath, targetDbPath, suffix) {
+    const sourcePath = `${sourceDbPath}${suffix}`;
+    const targetPath = `${targetDbPath}${suffix}`;
+    if (existsSync(sourcePath)) {
+        replaceFileAtomically(sourcePath, targetPath);
+        return;
+    }
+    rmSync(targetPath, { force: true });
+}
+function restoreSqliteDatabaseFromBackup(sourceDbPath, targetDbPath) {
+    replaceFileAtomically(sourceDbPath, targetDbPath);
+    restoreOptionalSqliteSidecar(sourceDbPath, targetDbPath, "-wal");
+    restoreOptionalSqliteSidecar(sourceDbPath, targetDbPath, "-shm");
+}
+export function createDatabaseBackup(kind, paths, dbPath = paths.dbFile) {
     const resolvedPath = resolve(dbPath);
     if (!existsSync(resolvedPath))
         throw new Error("DB 파일이 없어 backup을 만들 수 없습니다.");
-    mkdirSync(join(backupRoot(), "db"), { recursive: true });
+    mkdirSync(join(backupRoot(paths), "db"), { recursive: true });
     try {
-        if (resolvedPath === resolve(PATHS.dbFile)) {
-            getDb().pragma("wal_checkpoint(TRUNCATE)");
+        if (resolvedPath === resolve(paths.dbFile)) {
+            getDb({ paths }).pragma("wal_checkpoint(TRUNCATE)");
         }
     }
     catch {
@@ -112,7 +130,7 @@ export function createDatabaseBackup(kind = "backup", dbPath = PATHS.dbFile) {
     }
     const createdAt = Date.now();
     const id = timestampId(kind === "export" ? "db-export" : kind === "rollback" ? "db-rollback" : "db-backup");
-    const backupPath = join(backupRoot(), "db", `${id}.sqlite3`);
+    const backupPath = join(backupRoot(paths), "db", `${id}.sqlite3`);
     copyFileSync(resolvedPath, backupPath);
     const walPath = copyOptionalSqliteSidecar(resolvedPath, backupPath, "-wal");
     const shmPath = copyOptionalSqliteSidecar(resolvedPath, backupPath, "-shm");
@@ -127,17 +145,17 @@ export function createDatabaseBackup(kind = "backup", dbPath = PATHS.dbFile) {
         createdAt,
     };
 }
-export function importDatabaseFromBackup(input) {
-    const targetPath = resolve(input.dbPath ?? PATHS.dbFile);
+export function importDatabaseFromBackup(input, paths, observer) {
+    const targetPath = resolve(input.dbPath ?? paths.dbFile);
     const importPath = resolve(input.backupPath);
     if (!existsSync(importPath))
         throw new Error("가져올 DB backup 파일을 찾을 수 없습니다.");
     const rollbackBackup = existsSync(targetPath)
-        ? createDatabaseBackup("rollback", targetPath)
+        ? createDatabaseBackup("rollback", paths, targetPath)
         : (() => {
             mkdirSync(dirname(targetPath), { recursive: true });
             const id = timestampId("db-empty-rollback");
-            const placeholder = join(backupRoot(), "db", `${id}.sqlite3`);
+            const placeholder = join(backupRoot(paths), "db", `${id}.sqlite3`);
             mkdirSync(dirname(placeholder), { recursive: true });
             writeFileSync(placeholder, "");
             return {
@@ -149,11 +167,14 @@ export function importDatabaseFromBackup(input) {
                 createdAt: Date.now(),
             };
         })();
+    observer?.onBackedUp();
     closeDb();
     mkdirSync(dirname(targetPath), { recursive: true });
-    copyFileSync(importPath, targetPath);
     try {
-        getDb();
+        observer?.onReplacing();
+        restoreSqliteDatabaseFromBackup(importPath, targetPath);
+        observer?.onVerifying();
+        getDb({ paths });
         return {
             ok: true,
             importedPath: importPath,
@@ -163,25 +184,50 @@ export function importDatabaseFromBackup(input) {
     }
     catch (error) {
         closeDb();
-        copyFileSync(rollbackBackup.backupPath, targetPath);
-        getDb();
-        const sanitized = sanitizeUserFacingError(error instanceof Error ? error.message : String(error));
+        observer?.onRollingBack();
+        restoreSqliteDatabaseFromBackup(rollbackBackup.backupPath, targetPath);
+        getDb({ paths });
+        observer?.onRollbackCompleted();
+        const sanitized = configOperationRollbackErrorSummary(error);
         throw new Error(`DB import가 실패해 rollback했습니다: ${sanitized.userMessage}`);
     }
+}
+function resolveSafeBackupEntry(root, fileName) {
+    const resolvedRoot = resolve(root);
+    const candidate = resolve(resolvedRoot, fileName);
+    const candidateRelative = relative(resolvedRoot, candidate);
+    if (candidateRelative === ".." || candidateRelative.startsWith(`..${sep}`) || candidateRelative.includes(sep)) {
+        throw new Error("invalid backup entry path");
+    }
+    if (existsSync(candidate)) {
+        const realCandidate = realpathSync(candidate);
+        const realRelative = relative(realpathSync(resolvedRoot), realCandidate);
+        if (realRelative === ".." || realRelative.startsWith(`..${sep}`) || realRelative.includes(sep)) {
+            throw new Error("backup entry resolves outside backup root");
+        }
+    }
+    return candidate;
+}
+export function resolveDatabaseBackupPath(backupId, paths) {
+    const trimmed = backupId.trim();
+    if (!/^(?:db-backup|db-export)-[A-Za-z0-9._-]+$/u.test(trimmed) || basename(trimmed) !== trimmed) {
+        throw new Error("invalid database backup id");
+    }
+    return resolveSafeBackupEntry(join(backupRoot(paths), "db"), `${trimmed}.sqlite3`);
 }
 export function maskSecretsDeep(value) {
     const redacted = redactUiValue(value, { audience: "export" });
     return { value: redacted.value, maskedCount: redacted.maskedCount };
 }
-export function exportMaskedConfig() {
-    const configPath = resolve(PATHS.configFile);
+export function exportMaskedConfig(paths) {
+    const configPath = resolve(paths.configFile);
     if (!existsSync(configPath))
         throw new Error("설정 파일이 없어 export할 수 없습니다.");
     const parsed = JSON5.parse(readFileSync(configPath, "utf-8"));
     const masked = maskSecretsDeep(parsed);
     const createdAt = Date.now();
     const id = timestampId("config-export");
-    const exportPath = join(backupRoot(), "config", `${id}.json`);
+    const exportPath = join(backupRoot(paths), "config", `${id}.json`);
     mkdirSync(dirname(exportPath), { recursive: true });
     const payload = {
         kind: "knowbee.config.export",
@@ -204,45 +250,58 @@ export function exportMaskedConfig() {
         masking: payload.masking,
     };
 }
-export function recoverPromptSources(workDir = process.cwd()) {
+export function recoverPromptSources(workDir) {
     return ensurePromptSourceFiles(workDir);
 }
-export function exportPromptSources(workDir = process.cwd()) {
+export function exportPromptSources(workDir, paths) {
     return exportPromptSourcesToFile({
         workDir,
-        outputPath: join(backupRoot(), "prompts", `${timestampId("prompt-sources-export")}.json`),
+        outputPath: join(backupRoot(paths), "prompts", `${timestampId("prompt-sources-export")}.json`),
     });
+}
+export function resolvePromptSourcesExportPath(exportId, paths) {
+    const trimmed = exportId.trim();
+    if (!/^prompt-sources-export-[A-Za-z0-9._-]+\.json$/u.test(trimmed) || basename(trimmed) !== trimmed) {
+        throw new Error("invalid prompt source export id");
+    }
+    return resolveSafeBackupEntry(join(backupRoot(paths), "prompts"), trimmed);
 }
 export function importPromptSources(input) {
     return importPromptSourcesFromFile({
-        workDir: input.workDir ?? process.cwd(),
+        workDir: input.workDir,
         exportPath: input.exportPath,
         overwrite: input.overwrite ?? false,
     });
 }
-export function buildConfigurationOperationsSnapshot(workDir = process.cwd()) {
-    const maskedConfig = existsSync(PATHS.configFile)
-        ? maskSecretsDeep(JSON5.parse(readFileSync(PATHS.configFile, "utf-8")))
+export function buildConfigurationOperationsSnapshot(paths, workDir) {
+    const maskedConfig = existsSync(paths.configFile)
+        ? maskSecretsDeep(JSON5.parse(readFileSync(paths.configFile, "utf-8")))
         : { value: {}, maskedCount: 0 };
     const promptSources = loadPromptSourceRegistry(workDir);
     return {
-        database: getDatabaseMigrationStatus(),
+        database: getDatabaseMigrationStatus(paths.dbFile),
         promptSources: {
             workDir,
             count: promptSources.length,
             versions: promptSources.map(({ content: _content, ...metadata }) => metadata),
         },
         config: {
-            configPath: resolve(PATHS.configFile),
-            exists: existsSync(PATHS.configFile),
+            configPath: resolve(paths.configFile),
+            exists: existsSync(paths.configFile),
             masked: maskedConfig.value,
             maskingPolicy: "Secrets are masked. Channel IDs and user IDs are retained because they are routing identifiers, not authentication secrets.",
         },
     };
 }
 export function replaceFileAtomically(sourcePath, targetPath) {
+    mkdirSync(dirname(targetPath), { recursive: true });
     const tempPath = `${targetPath}.tmp-${randomUUID()}`;
-    copyFileSync(sourcePath, tempPath);
-    renameSync(tempPath, targetPath);
+    try {
+        copyFileSync(sourcePath, tempPath);
+        renameSync(tempPath, targetPath);
+    }
+    finally {
+        rmSync(tempPath, { force: true });
+    }
 }
 //# sourceMappingURL=operations.js.map

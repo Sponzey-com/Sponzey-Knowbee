@@ -4,6 +4,7 @@ import { type FinalizationDependencies, type FinalizationSource } from "./finali
 import { type RecoveryRetryApplicationDependencies } from "./retry-application.js";
 import type { DirectArtifactDeliveryApplication } from "./delivery-application.js";
 import type { RecoveryBudgetUsage } from "./recovery-budget.js";
+import type { UserFacingTextSource } from "./loop-directive.js";
 interface ReviewEntryPassDependencies extends RecoveryRetryApplicationDependencies {
     getFinalizationDependencies: () => FinalizationDependencies;
     insertMessage: typeof insertMessage;
@@ -26,6 +27,7 @@ export declare function runReviewEntryPass(params: {
     source: FinalizationSource;
     onChunk: RunChunkDeliveryHandler | undefined;
     preview: string;
+    previewSource?: UserFacingTextSource;
     workerSessionId?: string;
     persistRuntimePreview: boolean;
     directDeliveryApplication: DirectArtifactDeliveryApplication;

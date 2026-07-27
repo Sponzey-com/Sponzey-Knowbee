@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { closeDb, getDb } from "../packages/core/src/db/index.js"
+import type { Database } from "better-sqlite3"
+import { closeDb } from "../packages/core/src/db/index.js"
 import {
   approveLearningEvent,
   buildHistoryVersion,
@@ -20,28 +20,21 @@ import {
   type OwnerScope,
 } from "../packages/core/src/index.ts"
 import { buildMemoryQualitySnapshot } from "../packages/core/src/memory/quality.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
+let db: Database
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task010-learning-history-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  db = initializeTestDbRuntime(stateDir)
 }
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -88,7 +81,7 @@ describe("task010 learning history restore", () => {
     expect(events[0]?.policyReasonCode).toBe("auto_apply_self_memory_high_confidence")
     expect(listHistoryVersions("memory", "agent:researcher")).toHaveLength(1)
 
-    const document = getDb()
+    const document = db
       .prepare<[string], { source_type: string; source_ref: string | null }>(
         "SELECT source_type, source_ref FROM memory_documents WHERE id = ?",
       )

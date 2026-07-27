@@ -12,6 +12,7 @@ export declare function shouldRetryCodexOAuthWithSimplePayload(input: {
     status: number;
     detail: string;
     hasTools: boolean;
+    requiredToolChoice: boolean;
     hasMaxOutputTokens: boolean;
     messageCount: number;
     hasStructuredConversation: boolean;

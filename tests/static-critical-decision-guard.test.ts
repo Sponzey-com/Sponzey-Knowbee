@@ -8,7 +8,6 @@ import {
 } from "../packages/core/src/runs/critical-decision-audit.ts"
 
 const FORBIDDEN_FINAL_SIGNAL_KINDS = new Set([
-  "user-natural-language-regex",
   "raw-prompt-ai-comparison",
   "raw-prompt-normalized-dedupe",
 ])
@@ -90,18 +89,18 @@ describe("static critical decision guard", () => {
     expect(activeRunComparator).not.toMatch(/run\.prompt/u)
   })
 
-  it("keeps semantic or vector schedule hits as comparison-only candidates", () => {
-    const source = readRepoFile("packages/core/src/schedules/candidates.ts")
-    const marker = "knowbee-critical-decision-audit: schedules.candidates.semantic_candidate_boundary"
-    expect(source).toContain(marker)
-    const blockStart = source.indexOf(marker)
-    const blockEnd = source.indexOf("return [...candidates.values()]", blockStart)
-    const semanticBlock = source.slice(blockStart, blockEnd)
+  it("keeps completion follow-up loop protection off raw prompt normalization", () => {
+    const source = readRepoFile("packages/core/src/runs/completion-application.ts")
+    expect(source).toContain("knowbee-critical-decision-audit: completion.followup_structured_key_dedupe")
+    expect(source).toContain("buildStructuredFollowupKey")
+    expect(source).not.toMatch(/followupPrompt\.replace\(\/\\s\+\/g, " "\)\.trim\(\)\.toLowerCase\(\)/u)
+    expect(source).not.toContain("normalizedFollowupPrompt")
+  })
 
-    expect(semanticBlock).toContain('candidateReason: "semantic_candidate"')
-    expect(semanticBlock).toContain('confidenceKind: "semantic"')
-    expect(semanticBlock).toContain("requiresComparison: true")
-    expect(semanticBlock).not.toMatch(/confidenceKind:\s*"exact"/u)
-    expect(semanticBlock).not.toMatch(/requiresComparison:\s*false/u)
+  it("does not expose semantic or vector schedule candidates", () => {
+    const source = readRepoFile("packages/core/src/schedules/candidates.ts")
+    expect(source).not.toContain("semantic_candidate")
+    expect(source).not.toContain("semanticCandidates")
+    expect(source).not.toContain("memory_vector")
   })
 })

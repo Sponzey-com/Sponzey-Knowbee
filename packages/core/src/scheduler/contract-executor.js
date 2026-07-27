@@ -1,13 +1,17 @@
 import { getActiveTelegramChannel } from "../channels/telegram/runtime.js";
 import { SlackResponder } from "../channels/slack/responder.js";
-import { getConfig } from "../config/index.js";
 import { recordLatencyMetric } from "../observability/latency.js";
 import { buildDeliveryDedupeKey, buildPayloadHash, formatContractValidationFailureForUser, toCanonicalJson, validateScheduleContract, } from "../contracts/index.js";
 import { getArtifactMetadata, getScheduleDeliveryReceipt, getSession, insertScheduleDeliveryReceipt, } from "../db/index.js";
-import { runAgent } from "../agent/index.js";
 import { parseScheduleContractJson } from "../schedules/candidates.js";
-import { toolDispatcher } from "../tools/dispatcher.js";
 import { enqueueScheduledDelivery } from "./delivery-queue.js";
+import { redactLogText } from "../logger/index.js";
+import { startIngressRun } from "../runs/ingress.js";
+import { loadPromptValue } from "../memory/prompt-fragments.js";
+function scheduleContractErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 function logInfo(dependencies, message, payload) {
     dependencies?.logInfo?.(message, payload);
 }
@@ -52,24 +56,14 @@ export function resolveScheduleDueAt(params) {
 }
 export function buildScheduledAgentExecutionBrief(params) {
     const contractJson = toCanonicalJson(params.contract, { omitKeys: new Set(["rawText"]) });
-    return [
-        "[scheduled-execution]",
-        "Execute the scheduled work described by this contract now.",
-        "Do not create, update, cancel, deduplicate, or re-register schedules.",
-        "Do not treat this as a new user request. This is an execution tick for an existing schedule.",
-        "",
-        `[schedule] id=${params.schedule.id}`,
-        `[schedule] name=${params.schedule.name}`,
-        `[schedule] dueAt=${params.dueAt}`,
-        `[schedule] targetChannel=${params.schedule.target_channel}`,
-        `[schedule] targetSessionId=${params.schedule.target_session_id ?? "none"}`,
-        "",
-        "[contract-json]",
+    return loadPromptValue("scheduled_contract_execution_user", {
+        scheduleId: params.schedule.id,
+        scheduleName: params.schedule.name,
+        dueAt: params.dueAt,
+        targetChannel: params.schedule.target_channel,
+        targetSessionId: params.schedule.target_session_id ?? "none",
         contractJson,
-        "",
-        "[output]",
-        "Return only the result that should be delivered for this scheduled execution.",
-    ].join("\n");
+    }, { required: true });
 }
 function buildDeliveryPlan(params) {
     const delivery = resolveEffectiveDelivery(params.contract, params.schedule);
@@ -114,6 +108,12 @@ async function defaultTelegramTextDelivery(sessionId, text) {
         throw new Error("telegram channel is not running");
     return telegram.sendTextToSession(sessionId, text);
 }
+async function defaultTelegramFileDelivery(sessionId, filePath, caption) {
+    const telegram = getActiveTelegramChannel();
+    if (!telegram)
+        throw new Error("telegram channel is not running");
+    return telegram.sendFileToSession(sessionId, filePath, caption);
+}
 function resolveSlackTarget(sessionId) {
     const session = getSession(sessionId);
     if (!session || session.source !== "slack" || !session.source_id) {
@@ -128,16 +128,14 @@ function resolveSlackTarget(sessionId) {
         throw new Error(`Slack session ${sessionId} has invalid source_id`);
     return { channelId, threadTs };
 }
-async function defaultSlackTextDelivery(sessionId, text) {
-    const config = getConfig();
+async function defaultSlackTextDelivery(sessionId, text, config) {
     if (!config.slack?.enabled || !config.slack.botToken) {
         throw new Error("slack channel is not configured");
     }
     const target = resolveSlackTarget(sessionId);
     return new SlackResponder(config.slack, target.channelId, target.threadTs).sendFinalResponse(text);
 }
-async function defaultSlackFileDelivery(sessionId, filePath, caption) {
-    const config = getConfig();
+async function defaultSlackFileDelivery(sessionId, filePath, config, caption) {
     if (!config.slack?.enabled || !config.slack.botToken) {
         throw new Error("slack channel is not configured");
     }
@@ -181,7 +179,8 @@ async function deliverText(params) {
                 const sessionId = params.plan.delivery.sessionId;
                 if (!sessionId)
                     throw new Error("slack target session is not configured for this schedule");
-                const deliver = params.dependencies?.deliverSlackText ?? defaultSlackTextDelivery;
+                const deliver = params.dependencies?.deliverSlackText
+                    ?? ((sessionId, text) => defaultSlackTextDelivery(sessionId, text, params.config));
                 await enqueueScheduledDelivery({
                     targetChannel: "slack",
                     targetSessionId: sessionId,
@@ -222,7 +221,7 @@ async function deliverText(params) {
         };
     }
     catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = scheduleContractErrorMessage(error);
         recordDeliveryReceipt({
             plan: params.plan,
             schedule: params.schedule,
@@ -242,95 +241,70 @@ async function deliverText(params) {
         };
     }
 }
-function buildToolContext(params) {
-    const config = getConfig();
-    const source = params.schedule.target_channel === "telegram" || params.schedule.target_channel === "slack" || params.schedule.target_channel === "webui"
-        ? params.schedule.target_channel
-        : "cli";
-    const controller = new AbortController();
-    return {
-        sessionId: params.schedule.target_session_id ?? `schedule:${params.schedule.id}`,
-        runId: params.scheduleRunId,
-        requestGroupId: params.schedule.origin_request_group_id ?? params.scheduleRunId,
-        workDir: config.profile.workspace,
-        userMessage: `Scheduled tool task: ${params.contract.payload.toolName ?? "unknown"}`,
-        source,
-        allowWebAccess: true,
-        onProgress: () => undefined,
-        signal: controller.signal,
-    };
-}
-async function executeToolTask(params) {
-    const toolName = params.contract.payload.toolName?.trim();
-    if (!toolName) {
-        return { success: false, summary: null, error: "scheduled tool task is missing toolName", executionSuccess: false, deliverySuccess: null };
-    }
-    const tool = toolDispatcher.get(toolName);
-    if (!tool) {
-        return { success: false, summary: null, error: `scheduled tool task references unknown tool: ${toolName}`, executionSuccess: false, deliverySuccess: null };
-    }
-    if (tool.requiresApproval) {
-        return { success: false, summary: null, error: `scheduled tool task requires approval and was not executed automatically: ${toolName}`, executionSuccess: false, deliverySuccess: null };
-    }
-    const dispatch = params.dependencies?.dispatchTool ?? ((name, toolParams, ctx) => toolDispatcher.dispatch(name, toolParams, ctx));
-    const result = await dispatch(toolName, params.contract.payload.toolParams ?? {}, buildToolContext(params));
-    if (!result.success) {
-        return { success: false, summary: result.output || null, error: result.error ?? result.output, executionSuccess: false, deliverySuccess: null };
-    }
-    return deliverText({
-        schedule: params.schedule,
-        scheduleRunId: params.scheduleRunId,
-        plan: params.plan,
-        text: result.output,
-        dependencies: params.dependencies,
-    });
-}
-async function executeAgentTask(params) {
+async function executeCanonicalTask(params) {
     const brief = buildScheduledAgentExecutionBrief({
         schedule: params.schedule,
         contract: params.contract,
         dueAt: params.plan.dueAt,
     });
-    const run = params.dependencies?.runAgentImpl ?? runAgent;
     const chunks = [];
-    let success = false;
     let errorMsg = null;
     try {
-        for await (const chunk of run({
-            userMessage: brief,
+        const start = params.dependencies?.startIngressRunImpl ?? startIngressRun;
+        const { started } = start({
+            artifactStorage: params.artifactStorage,
+            memoryJournal: params.memoryJournal,
+            hierarchyStorage: params.hierarchyStorage,
+            runId: params.scheduleRunId,
+            message: brief,
             sessionId: `schedule:${params.schedule.id}:${params.scheduleRunId}`,
             requestGroupId: params.scheduleRunId,
+            originRunId: params.schedule.origin_run_id ?? undefined,
+            originRequestGroupId: params.schedule.origin_request_group_id ?? undefined,
             scheduleId: params.schedule.id,
             includeScheduleMemory: true,
             memorySearchQuery: params.schedule.name,
             contextMode: "isolated",
             model: params.schedule.model ?? undefined,
-        })) {
-            if (chunk.type === "text")
-                chunks.push(chunk.delta);
-            if (chunk.type === "done")
-                success = true;
-            if (chunk.type === "error") {
-                errorMsg = chunk.message;
-                break;
-            }
+            config: params.config,
+            source: "scheduler",
+            responseLanguageMode: params.contract.responseLanguageMode ?? "same_as_request",
+            onChunk: (chunk) => {
+                if (chunk.type === "text")
+                    chunks.push(chunk.delta);
+                if (chunk.type === "error")
+                    errorMsg = chunk.message;
+                return undefined;
+            },
+        });
+        const completedRun = await started.finished;
+        if (completedRun?.status !== "completed") {
+            return {
+                success: false,
+                summary: null,
+                error: errorMsg ?? completedRun?.summary ?? "canonical scheduled agent run did not complete successfully",
+                executionSuccess: false,
+                deliverySuccess: null,
+                retryable: false,
+            };
         }
     }
     catch (error) {
-        errorMsg = error instanceof Error ? error.message : String(error);
+        errorMsg = scheduleContractErrorMessage(error);
     }
-    const text = chunks.join("").trim();
-    if (!success) {
-        return { success: false, summary: text || null, error: errorMsg, executionSuccess: false, deliverySuccess: null };
+    const rawText = chunks.join("").trim();
+    if (errorMsg) {
+        return { success: false, summary: null, error: errorMsg, executionSuccess: false, deliverySuccess: null, retryable: false };
     }
-    if (!text) {
-        return { success: false, summary: null, error: "scheduled agent task produced no deliverable text", executionSuccess: true, deliverySuccess: false };
+    if (!rawText) {
+        return { success: false, summary: null, error: "scheduled agent task produced no deliverable text", executionSuccess: true, deliverySuccess: false, retryable: false };
     }
     return deliverText({
         schedule: params.schedule,
         scheduleRunId: params.scheduleRunId,
         plan: params.plan,
-        text,
+        text: rawText,
+        config: params.config,
         dependencies: params.dependencies,
     });
 }
@@ -360,7 +334,8 @@ async function executeArtifactDelivery(params) {
                 const sessionId = params.plan.delivery.sessionId;
                 if (!sessionId)
                     throw new Error("slack target session is not configured for this schedule");
-                const deliver = params.dependencies?.deliverSlackFile ?? defaultSlackFileDelivery;
+                const deliver = params.dependencies?.deliverSlackFile
+                    ?? ((sessionId, filePath, caption) => defaultSlackFileDelivery(sessionId, filePath, params.config, caption));
                 await enqueueScheduledDelivery({
                     targetChannel: "slack",
                     targetSessionId: sessionId,
@@ -378,12 +353,18 @@ async function executeArtifactDelivery(params) {
                 const sessionId = params.plan.delivery.sessionId;
                 if (!sessionId)
                     throw new Error("telegram target session is not configured for this schedule");
-                const ctx = buildToolContext({ schedule: params.schedule, scheduleRunId: params.scheduleRunId, contract: params.contract });
-                ctx.source = "telegram";
-                ctx.userMessage = "Scheduled artifact file delivery";
-                const result = await (params.dependencies?.dispatchTool ?? ((name, toolParams, ctx) => toolDispatcher.dispatch(name, toolParams, ctx)))("telegram_send_file", { filePath: artifact.artifact_path, caption: params.contract.summary ?? params.contract.displayName ?? undefined }, ctx);
-                if (!result.success)
-                    throw new Error(result.error ?? result.output);
+                const deliver = params.dependencies?.deliverTelegramFile ?? defaultTelegramFileDelivery;
+                await enqueueScheduledDelivery({
+                    targetChannel: "telegram",
+                    targetSessionId: sessionId,
+                    scheduleId: params.schedule.id,
+                    scheduleRunId: params.scheduleRunId,
+                    task: () => deliver(sessionId, artifact.artifact_path, params.contract.summary ?? params.contract.displayName ?? undefined),
+                }, {
+                    logInfo: (message, payload) => logInfo(params.dependencies, message, payload),
+                    logWarn: (message) => logWarn(params.dependencies, message),
+                    logError: (message, payload) => logError(params.dependencies, message, payload),
+                });
                 break;
             }
             default:
@@ -408,7 +389,7 @@ async function executeArtifactDelivery(params) {
         };
     }
     catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = scheduleContractErrorMessage(error);
         recordDeliveryReceipt({
             plan: params.plan,
             schedule: params.schedule,
@@ -467,6 +448,7 @@ export async function executeScheduleContract(input) {
             },
         };
     }
+    const config = input.config;
     switch (contract.payload.kind) {
         case "literal_message": {
             const directStartedAt = Date.now();
@@ -482,6 +464,7 @@ export async function executeScheduleContract(input) {
                 scheduleRunId: input.scheduleRunId,
                 plan,
                 text,
+                config,
                 dependencies: input.dependencies,
             });
             recordLatencyMetric({
@@ -503,19 +486,32 @@ export async function executeScheduleContract(input) {
             };
         }
         case "tool_task":
+            if (!contract.payload.toolName?.trim()) {
+                return {
+                    handled: true,
+                    result: {
+                        success: false,
+                        summary: null,
+                        error: "scheduled tool task is missing toolName",
+                        executionSuccess: false,
+                        deliverySuccess: null,
+                        retryable: false,
+                    },
+                };
+            }
             return {
                 handled: true,
-                result: await executeToolTask({ schedule: input.schedule, scheduleRunId: input.scheduleRunId, contract, plan, dependencies: input.dependencies }),
+                result: await executeCanonicalTask({ artifactStorage: input.artifactStorage, memoryJournal: input.memoryJournal, hierarchyStorage: input.hierarchyStorage, schedule: input.schedule, scheduleRunId: input.scheduleRunId, contract, plan, config, dependencies: input.dependencies }),
             };
         case "agent_task":
             return {
                 handled: true,
-                result: await executeAgentTask({ schedule: input.schedule, scheduleRunId: input.scheduleRunId, contract, plan, dependencies: input.dependencies }),
+                result: await executeCanonicalTask({ artifactStorage: input.artifactStorage, memoryJournal: input.memoryJournal, hierarchyStorage: input.hierarchyStorage, schedule: input.schedule, scheduleRunId: input.scheduleRunId, contract, plan, config, dependencies: input.dependencies }),
             };
         case "artifact_delivery":
             return {
                 handled: true,
-                result: await executeArtifactDelivery({ schedule: input.schedule, scheduleRunId: input.scheduleRunId, contract, plan, dependencies: input.dependencies }),
+                result: await executeArtifactDelivery({ artifactStorage: input.artifactStorage, schedule: input.schedule, scheduleRunId: input.scheduleRunId, contract, plan, config, dependencies: input.dependencies }),
             };
         default:
             return {

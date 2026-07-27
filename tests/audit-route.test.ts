@@ -3,21 +3,18 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { listAuditEvents, promoteAuditEventToErrorCorpusCandidate } from "../packages/core/src/api/routes/audit.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { closeDb, getDb, insertAuditLog, insertDecisionTrace, insertDiagnosticEvent, insertSession } from "../packages/core/src/db/index.js"
+import { closeDb, insertAuditLog, insertDecisionTrace, insertDiagnosticEvent, insertSession } from "../packages/core/src/db/index.js"
 import { appendRunEvent, createRootRun } from "../packages/core/src/runs/store.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let db: ReturnType<typeof initializeTestDbRuntime>
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-audit-route-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  db = initializeTestDbRuntime(stateDir)
 }
 
 beforeEach(() => {
@@ -26,11 +23,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -115,7 +107,12 @@ describe("audit route", () => {
 
     const promoted = promoteAuditEventToErrorCorpusCandidate(decisionTraceId, "raw chatId 42120565 should be masked")
     expect(promoted?.diagnosticEventId).toBeTruthy()
-    const row = getDb()
+    const replayedPromotion = promoteAuditEventToErrorCorpusCandidate(decisionTraceId, "duplicate promotion")
+    expect(replayedPromotion?.diagnosticEventId).toBe(promoted?.diagnosticEventId)
+    expect((db.prepare(
+      "SELECT COUNT(*) AS count FROM diagnostic_events WHERE recovery_key = ?",
+    ).get(`error-corpus:decision_trace:${decisionTraceId}`) as { count: number }).count).toBe(1)
+    const row = db
       .prepare<[string], { kind: string; summary: string; detail_json: string }>("SELECT kind, summary, detail_json FROM diagnostic_events WHERE id = ?")
       .get(promoted?.diagnosticEventId ?? "")
     expect(row?.kind).toBe("error_corpus_candidate")

@@ -4,7 +4,9 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerAdminRoute } from "../packages/core/src/api/routes/admin.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import { closeDb, getDb } from "../packages/core/src/db/index.js"
 import { runDoctor } from "../packages/core/src/diagnostics/doctor.js"
 import { buildAdminShellView } from "../packages/webui/src/lib/admin-shell.ts"
@@ -17,25 +19,33 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousAdminUi = process.env["KNOWBEE_ADMIN_UI"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
-const previousNodeEnv = process.env["NODE_ENV"]
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-admin-shell-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  delete process.env["KNOWBEE_ADMIN_UI"]
-  delete process.env["NODE_ENV"]
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-admin-shell-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
-function enableAdminUi(): void {
-  process.env["KNOWBEE_ADMIN_UI"] = "1"
-  reloadConfig()
+function adminRuntimeOptions() {
+  return {
+    uiModeRuntime: {
+      adminActivation: {
+        env: { KNOWBEE_ADMIN_UI: "1" },
+        nodeEnv: undefined,
+      },
+      rollbackActivation: { env: {} },
+    },
+  }
+}
+
+function adminActivationInput() {
+  return {
+    env: { KNOWBEE_ADMIN_UI: "1" },
+    nodeEnv: undefined,
+  }
 }
 
 beforeEach(() => {
@@ -44,15 +54,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousAdminUi === undefined) delete process.env["KNOWBEE_ADMIN_UI"]
-  else process.env["KNOWBEE_ADMIN_UI"] = previousAdminUi
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  if (previousNodeEnv === undefined) delete process.env["NODE_ENV"]
-  else process.env["NODE_ENV"] = previousNodeEnv
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -79,6 +80,7 @@ describe("task010 admin shell, dangerous actions, and audit", () => {
 
   it("blocks admin shell by default and writes guard diagnostic plus audit", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAdminRoute(app)
     await app.ready()
     try {
@@ -101,9 +103,9 @@ describe("task010 admin shell, dangerous actions, and audit", () => {
   })
 
   it("exposes admin shell state and subscription count through API and doctor", async () => {
-    enableAdminUi()
     const app = Fastify({ logger: false })
-    registerAdminRoute(app)
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerAdminRoute(app, adminRuntimeOptions())
     await app.ready()
     try {
       const response = await app.inject({ method: "GET", url: "/api/admin/shell" })
@@ -121,7 +123,12 @@ describe("task010 admin shell, dangerous actions, and audit", () => {
         manifest: expect.objectContaining({ adminUi: expect.objectContaining({ enabled: true, subscriptionCount: 0 }) }),
       }))
 
-      const report = runDoctor({ mode: "quick", includeEnvironment: false, includeReleasePackage: false })
+      const report = runDoctor({ config: runtimeFixture.config, paths: runtimeFixture.paths,
+        mode: "quick",
+        includeEnvironment: false,
+        includeReleasePackage: false,
+        adminActivation: adminActivationInput(),
+      })
       const adminCheck = report.checks.find((check) => check.name === "admin.ui")
       expect(adminCheck?.detail).toEqual(expect.objectContaining({ enabled: true, subscriptionCount: 0 }))
     } finally {
@@ -130,9 +137,9 @@ describe("task010 admin shell, dangerous actions, and audit", () => {
   })
 
   it("requires explicit confirmation before dangerous admin actions and redacts audit params", async () => {
-    enableAdminUi()
     const app = Fastify({ logger: false })
-    registerAdminRoute(app)
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerAdminRoute(app, adminRuntimeOptions())
     await app.ready()
     try {
       const blocked = await app.inject({

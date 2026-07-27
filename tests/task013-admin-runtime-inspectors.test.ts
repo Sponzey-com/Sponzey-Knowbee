@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerAdminRoute } from "../packages/core/src/api/routes/admin.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { recordControlEvent } from "../packages/core/src/control-plane/timeline.ts"
 import {
   CONTRACT_SCHEMA_VERSION,
@@ -30,6 +30,8 @@ import {
 import type { SubSessionContract } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 import { recordMessageLedgerEvent } from "../packages/core/src/runs/message-ledger.ts"
 import { createRootRun } from "../packages/core/src/runs/store.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: { logger: boolean }) => {
@@ -39,36 +41,34 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousAdminUi = process.env["KNOWBEE_ADMIN_UI"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
-const previousNodeEnv = process.env["NODE_ENV"]
+let runtimeFixture: ReturnType<typeof createTestRuntimeConfigFixture>
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task013-admin-inspectors-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_ADMIN_UI"] = "1"
-  delete process.env["KNOWBEE_CONFIG"]
-  delete process.env["NODE_ENV"]
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task013-admin-inspectors-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function restoreEnv(): void {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousAdminUi === undefined) delete process.env["KNOWBEE_ADMIN_UI"]
-  else process.env["KNOWBEE_ADMIN_UI"] = previousAdminUi
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  if (previousNodeEnv === undefined) delete process.env["NODE_ENV"]
-  else process.env["NODE_ENV"] = previousNodeEnv
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+function adminUiRuntime() {
+  return {
+    uiModeRuntime: {
+      adminActivation: {
+        env: { KNOWBEE_ADMIN_UI: "1" },
+        argv: [],
+        nodeEnv: "development",
+      },
+      rollbackActivation: { env: {} },
+    },
   }
 }
 
@@ -295,7 +295,7 @@ describe("task013 admin memory scheduler channel inspectors", () => {
       parentSessionId: sessionKey,
       parentRunId: runId,
       agentId: "agent-task013",
-      agentDisplayName: "Task013 Agent",
+      agentName: "Task013 Agent",
       commandRequestId: "command-task013",
       status: "running",
       promptBundleId: "bundle-task013",
@@ -312,7 +312,6 @@ describe("task013 admin memory scheduler channel inspectors", () => {
         agentId: "agent-task013",
         agentType: "sub_agent",
         role: "diagnostic fixture",
-        displayNameSnapshot: "Task013 Agent",
         teamContext: [],
         memoryPolicy: {} as any,
         capabilityPolicy: {} as any,
@@ -339,7 +338,8 @@ describe("task013 admin memory scheduler channel inspectors", () => {
     })
 
     const app = Fastify({ logger: false })
-    registerAdminRoute(app)
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerAdminRoute(app, adminUiRuntime())
     await app.ready()
     try {
       const response = await app.inject({ method: "GET", url: `/api/admin/runtime-inspectors?requestGroupId=${encodeURIComponent(requestGroupId)}&limit=100` })

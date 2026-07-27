@@ -6,11 +6,14 @@ import {
 import type { FinalizationDependencies, FinalizationSource } from "./finalization.js"
 import { applyTerminalApplication } from "./terminal-application.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
+import type { IntakeRecoveryAdmission } from "./loop-directive.js"
+import { evaluateCanonicalRecoveryStrategyAdmission } from "./canonical-recovery-strategy-admission.js"
 
 export interface IntakeRetryDirective {
   summary: string
   reason: string
   message: string
+  recoveryAdmission?: IntakeRecoveryAdmission
   remainingItems?: string[]
   eventLabel?: string
 }
@@ -70,6 +73,42 @@ export async function applyIntakeRetryDirective(
   dependencies: IntakeRetryApplicationDependencies,
   moduleDependencies: IntakeRetryApplicationModuleDependencies = defaultModuleDependencies,
 ): Promise<IntakeRetryApplicationResult> {
+  const admission = params.directive.recoveryAdmission
+  const strategyAdmission =
+    admission &&
+    /^sha256:[a-f0-9]{64}$/u.test(admission.previousStrategyFingerprint) &&
+    /^sha256:[a-f0-9]{64}$/u.test(admission.nextStrategyFingerprint) &&
+    admission.changedDimensions.length > 0 &&
+    new Set(admission.changedDimensions).size === admission.changedDimensions.length
+      ? evaluateCanonicalRecoveryStrategyAdmission({
+          attemptedStrategyFingerprints: new Set([
+            admission.previousStrategyFingerprint,
+          ]),
+          nextStrategyFingerprint: admission.nextStrategyFingerprint,
+        })
+      : { ok: false as const, reasonCode: "recovery_strategy_unchanged" as const }
+
+  if (!strategyAdmission.ok) {
+    dependencies.appendRunEvent(params.runId, strategyAdmission.reasonCode)
+    await moduleDependencies.applyTerminalApplication({
+      runId: params.runId,
+      sessionId: params.sessionId,
+      source: params.source,
+      onChunk: params.onChunk,
+      application: {
+        kind: "stop",
+        preview: "",
+        summary: params.directive.summary,
+        reason: "No materially changed intake strategy was admitted.",
+        ...(params.directive.remainingItems
+          ? { remainingItems: params.directive.remainingItems }
+          : {}),
+      },
+      dependencies: params.finalizationDependencies,
+    })
+    return { kind: "break" }
+  }
+
   if (params.directive.eventLabel) {
     dependencies.appendRunEvent(params.runId, params.directive.eventLabel)
   }

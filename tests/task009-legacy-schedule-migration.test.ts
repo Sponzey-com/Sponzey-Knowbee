@@ -4,10 +4,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerSchedulesRoute } from "../packages/core/src/api/routes/schedules.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
+import { createMemoryJournalRepository } from "../packages/core/src/memory/journal.ts"
 import {
   closeDb,
-  getDb,
   getSchedule,
   insertSchedule,
   isLegacySchedule,
@@ -17,6 +17,11 @@ import {
   dryRunLegacyScheduleMigration,
   listLegacyScheduleMigrationItems,
 } from "../packages/core/src/schedules/legacy-migration.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: { logger: boolean }) => {
@@ -26,16 +31,15 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
+let runtimeFixture: TestRuntimeConfigFixture
+let runtimeDb: ReturnType<typeof initializeTestDbRuntime>
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task009-legacy-schedule-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task009-legacy-schedule-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  runtimeDb = initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function insertLegacySchedule(id: string, overrides: Partial<Parameters<typeof insertSchedule>[0]> = {}): void {
@@ -67,11 +71,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -81,14 +80,15 @@ afterEach(() => {
 describe("task009 legacy schedule migration", () => {
   it("lists legacy schedules with conversion risk without mutating rows", () => {
     insertLegacySchedule("schedule-task009-list")
+    const config = runtimeFixture.config
 
-    const items = listLegacyScheduleMigrationItems()
+    const items = listLegacyScheduleMigrationItems(config)
     expect(items).toEqual(expect.arrayContaining([
       expect.objectContaining({
         scheduleId: "schedule-task009-list",
         legacy: true,
         convertible: true,
-        risk: "low",
+        risk: "medium",
       }),
     ]))
 
@@ -99,10 +99,11 @@ describe("task009 legacy schedule migration", () => {
 
   it("returns dry-run contract and stable keys before opt-in conversion", () => {
     insertLegacySchedule("schedule-task009-dry-run")
+    const config = runtimeFixture.config
 
-    const report = dryRunLegacyScheduleMigration("schedule-task009-dry-run")
+    const report = dryRunLegacyScheduleMigration("schedule-task009-dry-run", { config })
     expect(report?.convertible).toBe(true)
-    expect(report?.contract?.payload.kind).toBe("literal_message")
+    expect(report?.contract?.payload.kind).toBe("agent_task")
     expect(report?.persistence?.identityKey).toMatch(/^schedule:v1:/)
     expect(report?.persistence?.payloadHash).toMatch(/^payload:v1:/)
     expect(report?.persistence?.deliveryKey).toMatch(/^delivery:v1:/)
@@ -114,13 +115,14 @@ describe("task009 legacy schedule migration", () => {
   it("converts only the selected legacy schedule and records audit", () => {
     insertLegacySchedule("schedule-task009-convert")
     insertLegacySchedule("schedule-task009-other")
+    const config = runtimeFixture.config
 
-    const result = applyLegacyScheduleMigration("schedule-task009-convert")
+    const result = applyLegacyScheduleMigration("schedule-task009-convert", { config })
     expect(result.ok).toBe(true)
 
     const converted = getSchedule("schedule-task009-convert")
     expect(converted && isLegacySchedule(converted)).toBe(false)
-    expect(converted?.contract_json).toContain("literal_message")
+    expect(converted?.contract_json).toContain("agent_task")
     expect(converted?.identity_key).toMatch(/^schedule:v1:/)
     expect(converted?.payload_hash).toMatch(/^payload:v1:/)
     expect(converted?.delivery_key).toMatch(/^delivery:v1:/)
@@ -128,7 +130,7 @@ describe("task009 legacy schedule migration", () => {
     const untouched = getSchedule("schedule-task009-other")
     expect(untouched && isLegacySchedule(untouched)).toBe(true)
 
-    const auditCount = getDb()
+    const auditCount = runtimeDb
       .prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM audit_logs WHERE tool_name = 'legacy_schedule_contract_migration' AND result = 'success'")
       .get()?.n ?? 0
     expect(auditCount).toBe(1)
@@ -137,7 +139,11 @@ describe("task009 legacy schedule migration", () => {
   it("keeps blocked conversion as legacy and exposes API list/dry-run/convert routes", async () => {
     insertLegacySchedule("schedule-task009-invalid", { cron_expression: "bad cron" })
     const app = Fastify({ logger: false })
-    registerSchedulesRoute(app)
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    const routeMemoryJournal = createMemoryJournalRepository({
+      memoryDbFile: join(runtimeFixture.paths.stateDir, "memory-route.db3"),
+    })
+    registerSchedulesRoute(app, routeMemoryJournal)
     await app.ready()
     try {
       const list = await app.inject({ method: "GET", url: "/api/schedules/legacy" })
@@ -155,6 +161,7 @@ describe("task009 legacy schedule migration", () => {
       expect(convert.json()).toEqual(expect.objectContaining({ ok: false }))
     } finally {
       await app.close()
+      routeMemoryJournal.close()
     }
 
     const row = getSchedule("schedule-task009-invalid")

@@ -178,7 +178,8 @@ function commandRequest(): CommandRequest {
     parentRunId: "run-parent",
     subSessionId: "sub:research",
     targetAgentId: "agent:researcher",
-    targetNicknameSnapshot: "Researcher",
+    targetAgentName: "Researcher",
+    targetAgentNameSnapshot: "Researcher",
     taskScope: {
       goal: "Collect evidence",
       intentType: "research",
@@ -198,8 +199,10 @@ function dataExchange(): DataExchangePackage {
     exchangeId: "exchange:ctx-1",
     sourceOwner: owner("knowbee", "agent:knowbee"),
     recipientOwner: owner("sub_agent", "agent:researcher"),
-    sourceNicknameSnapshot: "Knowbee",
-    recipientNicknameSnapshot: "Researcher",
+    sourceAgentName: "Knowbee",
+    sourceAgentNameSnapshot: "Knowbee",
+    recipientAgentName: "Researcher",
+    recipientAgentNameSnapshot: "Researcher",
     purpose: "Provide synthesized task context.",
     allowedUse: "temporary_context",
     retentionPolicy: "session_only",
@@ -219,7 +222,7 @@ function resultReport(overrides: Partial<ResultReport> = {}): ResultReport {
     source: {
       entityType: "sub_agent",
       entityId: "agent:researcher",
-      nicknameSnapshot: "Researcher",
+      agentNameSnapshot: "Researcher",
     },
     status: "completed",
     outputs: [{ outputId: "answer", status: "satisfied", value: "42" }],
@@ -298,7 +301,11 @@ describe("task003 contract normalization and validators", () => {
     const validation = validateAgentConfig(legacy)
 
     expect(validation.ok).toBe(true)
-    expect(legacy.normalizedNickname).toBe("researcher")
+    expect(legacy.agentName).toBe("Researcher")
+    expect(legacy.normalizedAgentName).toBe("researcher")
+    expect(legacy).not.toHaveProperty("displayName")
+    expect(legacy).not.toHaveProperty("nickname")
+    expect(legacy).not.toHaveProperty("normalizedNickname")
     expect(legacy.modelProfile.providerId).toBe("provider:unknown")
     expect(legacy.delegationPolicy).toEqual({ enabled: true, maxParallelSessions: 2 })
   })
@@ -357,8 +364,6 @@ describe("task003 contract normalization and validators", () => {
             ],
           },
         ],
-        "nickname": "Research",
-        "normalizedNickname": "research",
         "ownerAgentId": "agent:knowbee",
         "profileVersion": 1,
         "purpose": "Collect evidence and synthesize draft findings.",
@@ -379,6 +384,31 @@ describe("task003 contract normalization and validators", () => {
       }
     `)
     expect(validateTeamConfig(JSON.parse(JSON.stringify(normalized))).ok).toBe(true)
+  })
+
+  it("normalizes display-name-only team rows without reintroducing nickname", () => {
+    const normalized = normalizeLegacyTeamConfigRow({
+      schemaVersion: CONTRACT_SCHEMA_VERSION,
+      teamId: "team:display-only",
+      displayName: "Display Only Team",
+      status: "enabled",
+      purpose: "Coordinate display-name-only teams.",
+      memberAgentIds: ["agent:researcher"],
+      roleHints: ["research"],
+      profileVersion: 1,
+      createdAt: now,
+      updatedAt: now,
+    }) as TeamConfig
+
+    expect(validateTeamConfig(normalized).ok).toBe(true)
+    expect(normalized).not.toHaveProperty("nickname")
+    expect(normalized).not.toHaveProperty("normalizedNickname")
+    expect(normalized.memberAgentIds).toEqual(["agent:researcher"])
+    expect(normalized.memberships?.[0]).toMatchObject({
+      agentId: "agent:researcher",
+      primaryRole: "research",
+      status: "active",
+    })
   })
 
   it("rejects new-shape team configs without owner scope", () => {
@@ -422,6 +452,27 @@ describe("task003 contract normalization and validators", () => {
     expect(validateCommandRequest(commandRequest()).ok).toBe(true)
     expect(validateSubAgentDataExchangePackage(dataExchange()).ok).toBe(true)
 
+    const invalidExchange = validateSubAgentDataExchangePackage({
+      ...dataExchange(),
+      sourceAgentName: "Different Source",
+      recipientAgentName: "Different Recipient",
+    })
+    expect(invalidExchange.ok).toBe(false)
+    if (!invalidExchange.ok) {
+      expect(invalidExchange.issues.map((issue) => issue.path)).toEqual(
+        expect.arrayContaining(["$.sourceAgentName", "$.recipientAgentName"]),
+      )
+    }
+
+    const invalidCommandName = validateCommandRequest({
+      ...commandRequest(),
+      targetAgentName: "Different Researcher",
+    })
+    expect(invalidCommandName.ok).toBe(false)
+    if (!invalidCommandName.ok) {
+      expect(invalidCommandName.issues.map((issue) => issue.path)).toContain("$.targetAgentName")
+    }
+
     const invalid = validateCommandRequest({
       ...commandRequest(),
       identity: {
@@ -464,6 +515,20 @@ describe("task003 contract normalization and validators", () => {
       { outputId: "draft", status: "partial", value: "needs one more citation" },
     ])
     expect(feedback.sourceResultReportIds).toEqual(["result:research"])
+
+    const invalidAgentNames = validateFeedbackRequest({
+      ...feedback,
+      targetAgentName: "Different Researcher",
+      targetAgentNameSnapshot: "Researcher",
+      requestingAgentName: "Different Parent",
+      requestingAgentNameSnapshot: "Knowbee",
+    })
+    expect(invalidAgentNames.ok).toBe(false)
+    if (!invalidAgentNames.ok) {
+      expect(invalidAgentNames.issues.map((issue) => issue.path)).toEqual(
+        expect.arrayContaining(["$.targetAgentName", "$.requestingAgentName"]),
+      )
+    }
 
     const invalid = validateFeedbackRequest({
       ...feedback,

@@ -1,12 +1,19 @@
+import type { ArtifactStorageContext } from "../artifacts/lifecycle.js";
 import type { ChannelSource } from "../channels/contracts.js";
+import type { KnowbeeConfig } from "../config/types.js";
+import { type ResponseLanguageMode } from "../contracts/index.js";
 import type { TaskExecutionSemantics, TaskIntakeActionItem, TaskIntakeResult, TaskIntentEnvelope, TaskStructuredRequest } from "../agent/intake.js";
 import { type ScheduleExecutionDriver } from "../scheduler/system-cron.js";
 import type { AgentContextMode } from "../agent/index.js";
 import type { RunChunkDeliveryHandler } from "./delivery.js";
 import type { TaskProfile } from "./types.js";
+import { type ScheduleActionResultNotice } from "./schedule-action-notice.js";
 export interface ScheduleActionExecutionResult {
     ok: boolean;
     message: string;
+    messageTextSource: "runtime_deterministic";
+    requiresFinalResponseRendering: true;
+    notice: ScheduleActionResultNotice;
     detail: string;
     successCount: number;
     failureCount: number;
@@ -87,6 +94,7 @@ export interface ScheduleActionDependencies {
         originRequestGroupId: string;
         model: string | undefined;
         literalText?: string;
+        responseLanguageMode: ResponseLanguageMode;
     }) => {
         scheduleId: string;
         targetSessionId?: string;
@@ -100,7 +108,10 @@ export interface ScheduleActionDependencies {
     };
     cancelSchedules: (scheduleIds: string[]) => string[];
 }
-export declare function createDefaultScheduleActionDependencies(overrides: Pick<ScheduleActionDependencies, "scheduleDelayedRun">): ScheduleActionDependencies;
+export declare function createDefaultScheduleActionDependencies(overrides: Pick<ScheduleActionDependencies, "scheduleDelayedRun"> & {
+    artifactStorage: ArtifactStorageContext;
+    config: KnowbeeConfig;
+}): ScheduleActionDependencies;
 export declare function inferDelegatedTaskProfile(params: {
     intake: TaskIntakeResult;
     action: TaskIntakeActionItem;

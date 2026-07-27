@@ -255,6 +255,8 @@ export interface FailureReport {
     attempts: AttemptRecord[];
     untriedOptions: string[];
     partialResult?: EnterpriseMetadata;
+    partialResultRefs?: string[];
+    workaroundGuidance?: string[];
     organizationalCause?: string;
     processCause?: string;
     authorityCause?: string;

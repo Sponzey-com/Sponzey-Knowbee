@@ -15,7 +15,7 @@ export function RoutingPriorityEditor({
 
   function getTargetLabel(target: string): string {
     const backend = backends.find((item) => item.id === target)
-    return getBackendDisplayLabel(backend?.id ?? target, backend?.label ?? target, language)
+    return getBackendDisplayLabel(backend?.id ?? target, backend?.label, language)
   }
 
   return (

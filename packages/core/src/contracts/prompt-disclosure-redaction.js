@@ -1,0 +1,82 @@
+export const BEHAVIOR_POLICY_SUMMARY_CATEGORIES = [
+    "identity",
+    "response_language",
+    "memory_isolation",
+    "delegation",
+    "tool_and_yeonjang_boundary",
+    "prompt_improvement",
+    "final_response",
+];
+export const PROMPT_DISCLOSURE_SENSITIVE_CATEGORIES = [
+    "secret",
+    "token",
+    "credential",
+    "private_memory",
+    "internal_path",
+    "personal_data",
+    "security_configuration",
+    "channel_identifier",
+];
+function required(value, field) {
+    const normalized = value.trim();
+    if (!normalized)
+        throw new Error(`${field} is required.`);
+    return normalized;
+}
+function timestamp(value, field) {
+    if (!Number.isSafeInteger(value) || value < 0)
+        throw new Error(`${field} must be a non-negative integer.`);
+    return value;
+}
+export function createBehaviorPolicySummaryProjection(input) {
+    if (!Number.isSafeInteger(input.maxCategories) || input.maxCategories <= 0)
+        throw new Error("maxCategories must be a positive integer.");
+    if (!Number.isSafeInteger(input.maxRenderedCharacters) || input.maxRenderedCharacters < 80 || input.maxRenderedCharacters > 1_000) {
+        throw new Error("maxRenderedCharacters must be between 80 and 1000.");
+    }
+    if (input.categories.length === 0 || input.categories.length > input.maxCategories)
+        throw new Error("Behavior summary category count is invalid.");
+    if (new Set(input.categories).size !== input.categories.length)
+        throw new Error("Behavior summary categories must be unique.");
+    if (input.categories.some((category) => !BEHAVIOR_POLICY_SUMMARY_CATEGORIES.includes(category))) {
+        throw new Error("Behavior summary category is not allowed.");
+    }
+    return { schemaVersion: 1, projection: "behavior_policy_summary", categories: [...input.categories], maxRenderedCharacters: input.maxRenderedCharacters };
+}
+export function authorizeRedactedPromptDisclosure(input) {
+    const sourceFingerprint = required(input.expectedSourceFingerprint, "Expected source fingerprint");
+    const outputFingerprint = required(input.expectedRedactedOutputFingerprint, "Expected redacted output fingerprint");
+    const policyVersion = required(input.expectedPolicyVersion, "Expected redaction policy version");
+    const now = timestamp(input.now, "Current time");
+    const receipt = input.receipt;
+    if (!receipt)
+        return { status: "blocked", reasonCode: "redaction_receipt_missing" };
+    if (receipt.schemaVersion !== 1)
+        throw new Error("Unsupported prompt disclosure redaction receipt schema version.");
+    required(receipt.receiptId, "Redaction receipt ID");
+    required(receipt.verifierRef, "Redaction verifier reference");
+    timestamp(receipt.verifiedAt, "Redaction verification time");
+    timestamp(receipt.expiresAt, "Redaction receipt expiry");
+    if (receipt.verifiedAt > now || receipt.expiresAt <= now)
+        return { status: "blocked", reasonCode: "redaction_receipt_expired" };
+    if (receipt.sourceFingerprint !== sourceFingerprint || receipt.redactedOutputFingerprint !== outputFingerprint || receipt.policyVersion !== policyVersion) {
+        return { status: "blocked", reasonCode: "redaction_scope_mismatch" };
+    }
+    if (!receipt.scannerSucceeded)
+        return { status: "blocked", reasonCode: "scanner_failed" };
+    const scanned = new Set(receipt.scannedCategories);
+    if (scanned.size !== receipt.scannedCategories.length || PROMPT_DISCLOSURE_SENSITIVE_CATEGORIES.some((category) => !scanned.has(category))) {
+        return { status: "blocked", reasonCode: "sensitive_scan_incomplete" };
+    }
+    if (receipt.residualCategories.length > 0)
+        return { status: "blocked", reasonCode: "sensitive_content_residual" };
+    if (!Number.isSafeInteger(receipt.replacementCount) || receipt.replacementCount < 0)
+        throw new Error("replacementCount must be a non-negative integer.");
+    return { status: "deliverable", receiptId: receipt.receiptId, redactedOutputFingerprint: outputFingerprint };
+}
+export async function deliverVerifiedRedactedPrompt(input) {
+    if (input.decision.status !== "deliverable")
+        return input.decision;
+    return { status: "delivered", result: await input.deliver(input.decision) };
+}
+//# sourceMappingURL=prompt-disclosure-redaction.js.map

@@ -1,4 +1,5 @@
 import type { ApprovalDecision, ApprovalKind, ApprovalResolutionReason } from "../events/index.js";
+import type { InteractiveControlText } from "./interactive-control.js";
 export interface ApprovalAggregateItem {
     approvalId?: string;
     runId: string;
@@ -20,6 +21,7 @@ export interface ApprovalAggregateContext {
     openedAt: number;
     lastUpdatedAt: number;
 }
+export type ApprovalAggregateTextLanguage = "ko" | "en";
 export declare function appendApprovalAggregateItem(context: ApprovalAggregateContext | undefined, item: ApprovalAggregateItem, requesterId: string | number, observedAt?: number): {
     context: ApprovalAggregateContext;
     appended: boolean;
@@ -28,6 +30,7 @@ export declare function appendApprovalAggregateItem(context: ApprovalAggregateCo
 export declare function buildApprovalAggregateText(params: {
     context: ApprovalAggregateContext;
     channel: "slack" | "telegram";
-}): string;
+    language?: ApprovalAggregateTextLanguage | undefined;
+}): InteractiveControlText;
 export declare function resolveApprovalAggregate(context: ApprovalAggregateContext, decision: ApprovalDecision, reason?: ApprovalResolutionReason): ApprovalAggregateItem[];
 //# sourceMappingURL=approval-aggregation.d.ts.map

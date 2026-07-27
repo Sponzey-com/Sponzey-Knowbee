@@ -1,3 +1,21 @@
+import { loadPromptValue } from "../memory/prompt-fragments.js";
+const TOPOLOGY_RECOVERY_REVIEW_SUMMARIES_SOURCE_ID = "topology_recovery_review_summaries_user";
+function recoveryReviewSummary(key) {
+    const entries = loadPromptValue(TOPOLOGY_RECOVERY_REVIEW_SUMMARIES_SOURCE_ID, {}, { required: true })
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map((line) => {
+        const separator = line.indexOf("=");
+        if (separator < 0)
+            return [line, ""];
+        return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()];
+    });
+    const value = new Map(entries).get(key);
+    if (!value)
+        throw new Error(`topology recovery review summary missing: ${key}`);
+    return value;
+}
 export class RecoveryController {
     input;
     constructor(input) {
@@ -17,9 +35,7 @@ export class RecoveryController {
             attemptedReasonCode: "self_execution_attempted",
             unreviewedReasonCode: "self_execution_untried",
             notAvailableReasonCode: "self_execution_untried",
-            summary: reviewed
-                ? "Self execution was attempted before final failure review."
-                : "Self execution has not been attempted.",
+            summary: recoveryReviewSummary(reviewed ? "self_execution_attempted" : "self_execution_untried"),
         });
     }
     reviewRetry() {
@@ -35,11 +51,11 @@ export class RecoveryController {
             attemptedReasonCode: "retry_attempted",
             unreviewedReasonCode: "retry_untried",
             notAvailableReasonCode: "retry_not_available",
-            summary: reviewed
-                ? "Retry path was reviewed or attempted."
+            summary: recoveryReviewSummary(reviewed
+                ? "retry_attempted"
                 : possible
-                    ? "Retry path remains unreviewed."
-                    : "Retry is unavailable by node recovery policy.",
+                    ? "retry_untried"
+                    : "retry_not_available"),
         });
     }
     reviewPartialSuccess() {
@@ -57,11 +73,11 @@ export class RecoveryController {
             attemptedReasonCode: "partial_success_checked",
             unreviewedReasonCode: "partial_success_unchecked",
             notAvailableReasonCode: "partial_success_not_available",
-            summary: reviewed
-                ? "Partial success was evaluated."
+            summary: recoveryReviewSummary(reviewed
+                ? "partial_success_checked"
                 : possible
-                    ? "Partial success has not been evaluated."
-                    : "Partial success is unavailable by node policy.",
+                    ? "partial_success_unchecked"
+                    : "partial_success_not_available"),
         });
     }
     reviewParentRecovery() {
@@ -76,9 +92,7 @@ export class RecoveryController {
             attemptedReasonCode: "parent_recovery_checked",
             unreviewedReasonCode: "parent_recovery_unchecked",
             notAvailableReasonCode: "parent_recovery_unchecked",
-            summary: reviewed
-                ? "Parent recovery propagation was reviewed."
-                : "Parent recovery propagation has not been reviewed.",
+            summary: recoveryReviewSummary(reviewed ? "parent_recovery_checked" : "parent_recovery_unchecked"),
         });
     }
     hasState(state) {
@@ -106,11 +120,11 @@ export class RedelegationController {
             attemptedReasonCode: "child_delegation_attempted",
             unreviewedReasonCode: "child_delegation_untried",
             notAvailableReasonCode: "child_delegation_not_available",
-            summary: reviewed
-                ? "Child delegation or redelegation was reviewed."
+            summary: recoveryReviewSummary(reviewed
+                ? "child_delegation_attempted"
                 : possible
-                    ? "Child delegation or redelegation remains unreviewed."
-                    : "Child delegation is unavailable for this node.",
+                    ? "child_delegation_untried"
+                    : "child_delegation_not_available"),
         });
     }
     statusForChildDelegation() {
@@ -146,11 +160,11 @@ export class FallbackController {
             attemptedReasonCode: "fallback_attempted",
             unreviewedReasonCode: "fallback_untried",
             notAvailableReasonCode: "fallback_not_available",
-            summary: reviewed
-                ? "Fallback path was reviewed or attempted."
+            summary: recoveryReviewSummary(reviewed
+                ? "fallback_attempted"
                 : possible
-                    ? "Fallback path remains unreviewed."
-                    : "Fallback is unavailable by node policy.",
+                    ? "fallback_untried"
+                    : "fallback_not_available"),
         });
     }
 }
@@ -177,11 +191,11 @@ export class ToolRecoveryController {
             attemptedReasonCode: "tool_execution_attempted",
             unreviewedReasonCode: "tool_execution_untried",
             notAvailableReasonCode: "tool_execution_not_available",
-            summary: reviewed
-                ? "Tool execution possibilities were reviewed."
+            summary: recoveryReviewSummary(reviewed
+                ? "tool_execution_attempted"
                 : possible
-                    ? "Tool execution possibilities remain unreviewed."
-                    : "No executable tool is available for this work order.",
+                    ? "tool_execution_untried"
+                    : "tool_execution_not_available"),
         });
     }
     statusForToolExecution() {

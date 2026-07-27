@@ -1,4 +1,5 @@
 import type { AgentChunk } from "../agent/index.js"
+import type { UserFacingTextSource } from "./loop-directive.js"
 import {
   applyToolEndChunk,
   applyToolStartChunk,
@@ -18,12 +19,14 @@ import {
 import type { FinalizationSource } from "./finalization.js"
 import type { RecoveryBudgetUsage } from "./recovery-budget.js"
 import type { FailedCommandTool, SuccessfulToolEvidence } from "./recovery.js"
+import type { YeonjangSideEffectGoalValidationCandidate } from "../yeonjang/side-effect-goal-validation-review.js"
 
 type ChunkPassChunk = Exclude<AgentChunk, { type: "error" } | { type: "done" }>
 
 export interface ExecutionChunkPassResult {
   handled: boolean
   preview?: string
+  previewSource?: UserFacingTextSource
   executionRecovery?: ExecutionRecoveryPayload
   executionRecoveryLimitStop?: {
     summary: string
@@ -80,6 +83,7 @@ export function applyExecutionChunkPass(
     filesystemMutationPaths: Set<string>
     failedCommandTools: FailedCommandTool[]
     commandFailureSeen: boolean
+    yeonjangSideEffectGoalValidationCandidates?: YeonjangSideEffectGoalValidationCandidate[]
     recoveryBudgetUsage: RecoveryBudgetUsage
     usedTurns: number
     maxDelegationTurns: number
@@ -95,10 +99,19 @@ export function applyExecutionChunkPass(
     return {
       handled: true,
       preview,
+      previewSource: params.chunk.textSource ?? "llm_generated",
     }
   }
 
   if (params.chunk.type === "execution_recovery") {
+    dependencies.appendRunEvent(
+      params.runId,
+      "internal_recovery_execution_payload_source:runtime_deterministic",
+    )
+    dependencies.appendRunEvent(
+      params.runId,
+      "internal_recovery_execution_payload_delivery:control_flow_only",
+    )
     const executionRecoveryAttempt: ExecutionRecoveryAttemptResult = moduleDependencies.applyExecutionRecoveryAttempt({
       runId: params.runId,
       sessionId: params.sessionId,
@@ -140,12 +153,16 @@ export function applyExecutionChunkPass(
       success: params.chunk.success,
       output: params.chunk.output,
       toolDetails: params.chunk.details,
+      ...(params.chunk.evidenceSource ? { evidenceSource: params.chunk.evidenceSource } : {}),
       workDir: params.workDir,
       pendingToolParams: params.pendingToolParams,
       successfulTools: params.successfulTools,
       filesystemMutationPaths: params.filesystemMutationPaths,
       failedCommandTools: params.failedCommandTools,
       commandFailureSeen: params.commandFailureSeen,
+      ...(params.yeonjangSideEffectGoalValidationCandidates
+        ? { yeonjangSideEffectGoalValidationCandidates: params.yeonjangSideEffectGoalValidationCandidates }
+        : {}),
     }, dependencies)
 
     return {

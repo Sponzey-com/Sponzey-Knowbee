@@ -1,8 +1,18 @@
 import { createHash } from "node:crypto"
 import { basename } from "node:path"
+import {
+  containsInternalLlmStructuredDataText,
+  INTERNAL_LLM_DATA_MASK,
+  isInternalLlmStructuredDataKey,
+} from "../security/internal-llm-data.js"
+import {
+  INTERNAL_EVIDENCE_REDACTION_MASK,
+  isInternalEvidenceKey,
+  redactInternalEvidenceText,
+} from "../security/internal-evidence-redaction.js"
 
 export type UiRedactionAudience = "beginner" | "advanced" | "admin" | "export"
-export type UiRedactionReason = "secret" | "raw_payload" | "raw_html" | "local_path"
+export type UiRedactionReason = "secret" | "raw_payload" | "raw_html" | "local_path" | "internal_llm_data"
 
 export interface UiRedactionRecord {
   path: string
@@ -23,7 +33,6 @@ const SECRET_KEY_PATTERN = /(api[_-]?key|token|secret|password|credential|author
 const RAW_PAYLOAD_KEY_PATTERN = /raw[_-]?(body|response|html|payload)|provider[_-]?raw|htmlBody|apiBody/iu
 const RAW_HTML_PATTERN = /<!doctype\s+html|<html[\s>]|<body[\s>]|<script[\s>]/iu
 const LOCAL_PATH_PATTERN = /(?:\/Users\/[\w .@+-]+(?:\/[^\s"'<>]*)+|\/private\/[\w .@+-]+(?:\/[^\s"'<>]*)+|\/tmp\/[\w .@+-]+(?:\/[^\s"'<>]*)+|[A-Za-z]:\\[^\s"'<>]+(?:\\[^\s"'<>]+)*)/gu
-
 const SECRET_VALUE_PATTERNS: RegExp[] = [
   /\bsk-[A-Za-z0-9_-]{16,}\b/gu,
   /\bxox[baprs]-[A-Za-z0-9-]{16,}\b/gu,
@@ -52,6 +61,10 @@ function record(redactions: UiRedactionRecord[], path: string, reason: UiRedacti
 
 function redactText(input: string, key: string, path: string, options: UiRedactionOptions, redactions: UiRedactionRecord[]): string {
   if (!input) return input
+  if (containsInternalLlmStructuredDataText(input)) {
+    record(redactions, path, "internal_llm_data")
+    return INTERNAL_LLM_DATA_MASK
+  }
   if (RAW_PAYLOAD_KEY_PATTERN.test(key) || RAW_HTML_PATTERN.test(input)) {
     record(redactions, path, RAW_HTML_PATTERN.test(input) ? "raw_html" : "raw_payload")
     return redactedRawPayload()
@@ -68,6 +81,11 @@ function redactText(input: string, key: string, path: string, options: UiRedacti
       return match.startsWith("Bearer ") ? "Bearer ***" : "***MASKED***"
     })
   }
+  output = redactInternalEvidenceText(output, {
+    onRedaction: () => {
+      record(redactions, path, "internal_llm_data")
+    },
+  })
   output = output.replace(LOCAL_PATH_PATTERN, (match) => {
     record(redactions, path, "local_path")
     return safePathReplacement(match, options.audience)
@@ -80,6 +98,14 @@ function pathFor(parent: string, key: string): string {
 }
 
 function redactRecursive(value: unknown, key: string, path: string, options: UiRedactionOptions, redactions: UiRedactionRecord[]): unknown {
+  if (isInternalLlmStructuredDataKey(key)) {
+    record(redactions, path, "internal_llm_data")
+    return INTERNAL_LLM_DATA_MASK
+  }
+  if (isInternalEvidenceKey(key)) {
+    record(redactions, path, "internal_llm_data")
+    return INTERNAL_EVIDENCE_REDACTION_MASK
+  }
   if (RAW_PAYLOAD_KEY_PATTERN.test(key)) {
     record(redactions, path, "raw_payload")
     return redactedRawPayload()
@@ -89,7 +115,8 @@ function redactRecursive(value: unknown, key: string, path: string, options: UiR
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([entryKey, entryValue]) => {
       const childPath = pathFor(path, entryKey)
-      return [entryKey, redactRecursive(entryValue, entryKey, childPath, options, redactions)]
+      const outputKey = isInternalEvidenceKey(entryKey) ? "internalEvidence" : entryKey
+      return [outputKey, redactRecursive(entryValue, entryKey, childPath, options, redactions)]
     }))
   }
   return value

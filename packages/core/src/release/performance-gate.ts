@@ -1,15 +1,24 @@
 import {
-  LATENCY_BUDGET_MS,
-  getFastResponseHealthSnapshot,
-  listLatencyMetrics,
   type FastResponseHealthSnapshot,
+  LATENCY_BUDGET_MS,
   type LatencyMetricName,
   type LatencyMetricRecord,
   type LatencyMetricStatus,
+  getFastResponseHealthSnapshot,
+  listLatencyMetrics,
 } from "../observability/latency.js"
 
 export type ReleasePerformanceGateStatus = "passed" | "warning" | "failed"
 export type ReleasePerformanceTargetKind = "latency" | "counter"
+
+export interface ReleasePerformanceAcceptanceEvidence {
+  status: "baseline_only" | "accepted" | "rejected"
+  matrixId: string | null
+  matrixVersion: number | null
+  baselineVersion: string | null
+  authorizationId: string | null
+  reasonCodes: string[]
+}
 
 export interface ReleasePerformanceTarget {
   id: string
@@ -18,6 +27,7 @@ export interface ReleasePerformanceTarget {
   requiredForPublicRelease: boolean
   metricName?: LatencyMetricName
   budgetMs?: number
+  budgetPurpose?: "operational_health"
   targetDescription: string
 }
 
@@ -46,6 +56,7 @@ export interface ReleasePerformanceSummary {
   generatedAt: string
   windowMs: number
   gateStatus: ReleasePerformanceGateStatus
+  operationalStatus: ReleasePerformanceGateStatus
   fastResponseHealth: FastResponseHealthSnapshot
   targets: ReleasePerformanceTarget[]
   metrics: ReleasePerformanceMetricResult[]
@@ -53,37 +64,100 @@ export interface ReleasePerformanceSummary {
   missingRequiredMetrics: string[]
   warnings: string[]
   blockingFailures: string[]
+  acceptance: ReleasePerformanceAcceptanceEvidence
 }
 
 export const RELEASE_PERFORMANCE_TARGETS: ReleasePerformanceTarget[] = [
-  latencyTarget("intake_latency", "Request intake latency", "ingress_ack_latency_ms", "The user-facing request receipt path should start within 1 second."),
-  latencyTarget("registry_lookup_latency", "Registry lookup latency", "registry_lookup_latency_ms", "Mode decision and registry snapshot lookup should finish within 500ms."),
-  latencyTarget("orchestration_mode_latency", "Orchestration mode decision latency", "orchestration_mode_latency_ms", "The orchestration mode resolver should stay within the local 500ms budget."),
-  latencyTarget("orchestration_planning_latency", "Orchestration planning latency", "orchestration_planning_latency_ms", "Normal orchestration plans should be built within 2 seconds."),
-  latencyTarget("sub_session_queue_wait", "Sub-session queue wait", "sub_session_queue_wait_ms", "Sub-session queueing should record immediate wait reasons and remain under 500ms in normal local runs."),
-  latencyTarget("first_progress_latency", "First progress latency", "first_progress_latency_ms", "Long work should emit the first progress signal within 3 seconds."),
-  latencyTarget("approval_aggregation_latency", "Approval aggregation latency", "approval_aggregation_latency_ms", "Parallel approval items should be aggregated within 1 second."),
-  latencyTarget("finalization_latency", "Finalization latency", "finalization_latency_ms", "Parent finalization should complete within 1.5 seconds after verified completion."),
-  latencyTarget("delivery_latency", "Delivery latency", "delivery_latency_ms", "Channel delivery should complete within 1.5 seconds for local dry-run paths."),
-  latencyTarget("webui_live_update_latency", "WebUI live update latency", "webui_live_update_latency_ms", "WebUI live updates should reflect backend events within 1 second."),
-  latencyTarget("resource_lock_wait", "Resource lock wait", "resource_lock_wait_ms", "Resource lock wait must be measured and normally stay under 500ms."),
+  latencyTarget(
+    "intake_latency",
+    "Request intake latency",
+    "ingress_ack_latency_ms",
+    "The user-facing request receipt path should start within 1 second.",
+  ),
+  latencyTarget(
+    "registry_lookup_latency",
+    "Registry lookup latency",
+    "registry_lookup_latency_ms",
+    "Mode decision and registry snapshot lookup should finish within 500ms.",
+  ),
+  latencyTarget(
+    "orchestration_mode_latency",
+    "Orchestration mode decision latency",
+    "orchestration_mode_latency_ms",
+    "The orchestration mode resolver should stay within the local 500ms budget.",
+  ),
+  latencyTarget(
+    "orchestration_planning_latency",
+    "Orchestration planning latency",
+    "orchestration_planning_latency_ms",
+    "Normal orchestration plans should be built within 2 seconds.",
+  ),
+  latencyTarget(
+    "sub_session_queue_wait",
+    "Sub-session queue wait",
+    "sub_session_queue_wait_ms",
+    "Sub-session queueing should record immediate wait reasons and remain under 500ms in normal local runs.",
+  ),
+  latencyTarget(
+    "first_progress_latency",
+    "First progress latency",
+    "first_progress_latency_ms",
+    "Long work should emit the first progress signal within 3 seconds.",
+  ),
+  latencyTarget(
+    "approval_aggregation_latency",
+    "Approval aggregation latency",
+    "approval_aggregation_latency_ms",
+    "Parallel approval items should be aggregated within 1 second.",
+  ),
+  latencyTarget(
+    "finalization_latency",
+    "Finalization latency",
+    "finalization_latency_ms",
+    "Parent finalization should complete within 1.5 seconds after verified completion.",
+  ),
+  latencyTarget(
+    "delivery_latency",
+    "Delivery latency",
+    "delivery_latency_ms",
+    "Channel delivery should complete within 1.5 seconds for local dry-run paths.",
+  ),
+  latencyTarget(
+    "webui_live_update_latency",
+    "WebUI live update latency",
+    "webui_live_update_latency_ms",
+    "WebUI live updates should reflect backend events within 1 second.",
+  ),
+  latencyTarget(
+    "resource_lock_wait",
+    "Resource lock wait",
+    "resource_lock_wait_ms",
+    "Resource lock wait must be measured and normally stay under 500ms.",
+  ),
   {
     id: "delivery_dedupe_count",
     kind: "counter",
     title: "Delivery dedupe count",
     requiredForPublicRelease: true,
-    targetDescription: "Release summary must expose how many final/progress deliveries were suppressed as duplicates.",
+    targetDescription:
+      "Release summary must expose how many final/progress deliveries were suppressed as duplicates.",
   },
   {
     id: "concurrency_blocked_count",
     kind: "counter",
     title: "Concurrency blocked count",
     requiredForPublicRelease: true,
-    targetDescription: "Release summary must expose how many sub-sessions were blocked by concurrency or resource limits.",
+    targetDescription:
+      "Release summary must expose how many sub-sessions were blocked by concurrency or resource limits.",
   },
 ]
 
-function latencyTarget(id: string, title: string, metricName: LatencyMetricName, targetDescription: string): ReleasePerformanceTarget {
+function latencyTarget(
+  id: string,
+  title: string,
+  metricName: LatencyMetricName,
+  targetDescription: string,
+): ReleasePerformanceTarget {
   return {
     id,
     kind: "latency",
@@ -91,8 +165,60 @@ function latencyTarget(id: string, title: string, metricName: LatencyMetricName,
     requiredForPublicRelease: true,
     metricName,
     budgetMs: LATENCY_BUDGET_MS[metricName],
+    budgetPurpose: "operational_health",
     targetDescription,
   }
+}
+
+function normalizeAcceptanceEvidence(
+  evidence: ReleasePerformanceAcceptanceEvidence | undefined,
+): ReleasePerformanceAcceptanceEvidence {
+  if (!evidence) {
+    return {
+      status: "baseline_only",
+      matrixId: null,
+      matrixVersion: null,
+      baselineVersion: null,
+      authorizationId: null,
+      reasonCodes: ["performance_acceptance_evidence_missing"],
+    }
+  }
+  if (evidence.status === "rejected") {
+    return {
+      ...evidence,
+      reasonCodes:
+        evidence.reasonCodes.length > 0
+          ? [...evidence.reasonCodes]
+          : ["performance_acceptance_rejected"],
+    }
+  }
+  if (evidence.status === "baseline_only") {
+    return {
+      ...evidence,
+      reasonCodes:
+        evidence.reasonCodes.length > 0
+          ? [...evidence.reasonCodes]
+          : ["performance_acceptance_baseline_only"],
+    }
+  }
+  if (
+    !evidence.matrixId?.trim() ||
+    !Number.isSafeInteger(evidence.matrixVersion) ||
+    (evidence.matrixVersion ?? 0) < 1 ||
+    !evidence.baselineVersion?.trim() ||
+    !evidence.authorizationId?.trim() ||
+    evidence.reasonCodes.length > 0
+  ) {
+    return {
+      status: "baseline_only",
+      matrixId: evidence.matrixId,
+      matrixVersion: evidence.matrixVersion,
+      baselineVersion: evidence.baselineVersion,
+      authorizationId: evidence.authorizationId,
+      reasonCodes: ["performance_acceptance_evidence_invalid"],
+    }
+  }
+  return { ...evidence, reasonCodes: [] }
 }
 
 function percentile95(values: number[]): number | null {
@@ -114,7 +240,8 @@ function metricWarning(input: {
   status: ReleasePerformanceMetricResult["status"]
   p95Ms: number | null
 }): string | null {
-  if (input.status === "missing") return `${input.target.id}: metric was not collected in the release window.`
+  if (input.status === "missing")
+    return `${input.target.id}: metric was not collected in the release window.`
   if (input.status === "timeout") return `${input.target.id}: at least one timeout occurred.`
   if (input.status === "slow") return `${input.target.id}: latency budget was exceeded.`
   if (input.target.budgetMs != null && input.p95Ms != null && input.p95Ms > input.target.budgetMs) {
@@ -123,37 +250,42 @@ function metricWarning(input: {
   return null
 }
 
-export function buildReleasePerformanceSummary(input: {
-  now?: Date
-  windowMs?: number
-  metrics?: LatencyMetricRecord[]
-  deliveryDedupeCount?: number
-  concurrencyBlockedCount?: number
-} = {}): ReleasePerformanceSummary {
+export function buildReleasePerformanceSummary(
+  input: {
+    now?: Date
+    windowMs?: number
+    metrics?: LatencyMetricRecord[]
+    deliveryDedupeCount?: number
+    concurrencyBlockedCount?: number
+    acceptanceEvidence?: ReleasePerformanceAcceptanceEvidence
+  } = {},
+): ReleasePerformanceSummary {
   const now = input.now ?? new Date()
   const windowMs = Math.max(1, input.windowMs ?? 15 * 60 * 1000)
   const nowMs = now.getTime()
-  const metrics = (input.metrics ?? listLatencyMetrics()).filter((record) => nowMs - record.createdAt <= windowMs)
-  const metricResults = RELEASE_PERFORMANCE_TARGETS
-    .filter((target) => target.kind === "latency" && target.metricName)
-    .map((target): ReleasePerformanceMetricResult => {
-      const records = metrics.filter((record) => record.name === target.metricName)
-      const p95Ms = percentile95(records.map((record) => record.durationMs))
-      const last = records[records.length - 1]
-      const status = worstLatencyStatus(records)
-      return {
-        targetId: target.id,
-        title: target.title,
-        kind: target.kind,
-        budgetMs: target.budgetMs ?? null,
-        count: records.length,
-        p95Ms,
-        lastMs: last?.durationMs ?? null,
-        status,
-        warning: metricWarning({ target, status, p95Ms }),
-        ...(target.metricName ? { metricName: target.metricName } : {}),
-      }
-    })
+  const metrics = (input.metrics ?? listLatencyMetrics()).filter(
+    (record) => nowMs - record.createdAt <= windowMs,
+  )
+  const metricResults = RELEASE_PERFORMANCE_TARGETS.filter(
+    (target) => target.kind === "latency" && target.metricName,
+  ).map((target): ReleasePerformanceMetricResult => {
+    const records = metrics.filter((record) => record.name === target.metricName)
+    const p95Ms = percentile95(records.map((record) => record.durationMs))
+    const last = records[records.length - 1]
+    const status = worstLatencyStatus(records)
+    return {
+      targetId: target.id,
+      title: target.title,
+      kind: target.kind,
+      budgetMs: target.budgetMs ?? null,
+      count: records.length,
+      p95Ms,
+      lastMs: last?.durationMs ?? null,
+      status,
+      warning: metricWarning({ target, status, p95Ms }),
+      ...(target.metricName ? { metricName: target.metricName } : {}),
+    }
+  })
   const counters: ReleasePerformanceCounterResult[] = [
     {
       id: "delivery_dedupe_count",
@@ -169,26 +301,41 @@ export function buildReleasePerformanceSummary(input: {
     },
   ]
   const missingRequiredMetrics = metricResults
-    .filter((metric) => metric.status === "missing" && RELEASE_PERFORMANCE_TARGETS.find((target) => target.id === metric.targetId)?.requiredForPublicRelease)
+    .filter(
+      (metric) =>
+        metric.status === "missing" &&
+        RELEASE_PERFORMANCE_TARGETS.find((target) => target.id === metric.targetId)
+          ?.requiredForPublicRelease,
+    )
     .map((metric) => metric.targetId)
   const warnings = [
-    ...metricResults.map((metric) => metric.warning).filter((warning): warning is string => Boolean(warning)),
-    ...counters.map((counter) => counter.warning).filter((warning): warning is string => Boolean(warning)),
+    ...metricResults
+      .map((metric) => metric.warning)
+      .filter((warning): warning is string => Boolean(warning)),
+    ...counters
+      .map((counter) => counter.warning)
+      .filter((warning): warning is string => Boolean(warning)),
   ]
   const blockingFailures = metricResults
     .filter((metric) => metric.status === "timeout")
     .map((metric) => `${metric.targetId}: timeout recorded`)
-  const gateStatus: ReleasePerformanceGateStatus = blockingFailures.length > 0
-    ? "failed"
-    : warnings.length > 0
-      ? "warning"
-      : "passed"
+  const operationalStatus: ReleasePerformanceGateStatus =
+    blockingFailures.length > 0 ? "failed" : warnings.length > 0 ? "warning" : "passed"
+  const acceptance = normalizeAcceptanceEvidence(input.acceptanceEvidence)
+  if (acceptance.status === "baseline_only") {
+    blockingFailures.push(...acceptance.reasonCodes)
+  } else if (acceptance.status === "rejected") {
+    blockingFailures.push("performance_acceptance_rejected")
+  }
+  const gateStatus: ReleasePerformanceGateStatus =
+    blockingFailures.length > 0 ? "failed" : operationalStatus
 
   return {
     kind: "knowbee.release.performance",
     generatedAt: now.toISOString(),
     windowMs,
     gateStatus,
+    operationalStatus,
     fastResponseHealth: getFastResponseHealthSnapshot({ now: nowMs, windowMs }),
     targets: RELEASE_PERFORMANCE_TARGETS,
     metrics: metricResults,
@@ -196,5 +343,6 @@ export function buildReleasePerformanceSummary(input: {
     missingRequiredMetrics,
     warnings,
     blockingFailures,
+    acceptance,
   }
 }

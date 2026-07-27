@@ -169,6 +169,28 @@ export function getAIProviderDefaultEndpoint(providerType: AIProviderType): stri
   }
 }
 
+export function getAIProviderSuggestedModels(
+  providerType: AIProviderType,
+  authMode: AIAuthMode = "api_key",
+): string[] {
+  switch (providerType) {
+    case "openai":
+      return authMode === "chatgpt_oauth"
+        ? ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
+        : ["gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4", "gpt-4.1"]
+    case "anthropic":
+      return ["claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5"]
+    case "gemini":
+      return ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+    case "ollama":
+      return ["llama3.2", "qwen2.5", "deepseek-r1"]
+    case "llama":
+      return ["llama3.2"]
+    case "custom":
+      return []
+  }
+}
+
 export function getAIProviderCredentialFields(providerType: AIProviderType, authMode: AIAuthMode = "api_key"): AIProviderCredentialField[] {
   switch (providerType) {
     case "openai":

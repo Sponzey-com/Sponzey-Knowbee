@@ -2,6 +2,7 @@ import type { TaskExecutionSemantics } from "../agent/intake.js"
 import { homedir } from "node:os"
 import { extname, join, resolve } from "node:path"
 import type { FailedCommandTool, SuccessfulToolEvidence } from "./recovery.js"
+import type { ToolEvidenceSourceReceipt } from "../tools/types.js"
 
 export type ToolExecutionExecutor = "yeonjang" | "local" | "file_tool" | "core"
 
@@ -42,7 +43,6 @@ export function hasMeaningfulCompletionEvidence(params: {
   sawRealFilesystemMutation: boolean
 }): boolean {
   if (params.deliverySatisfied) return true
-  if (params.successfulTools.length > 0) return true
   if (params.sawRealFilesystemMutation) return true
   if (!params.preview.trim()) return false
   return allowsTextOnlyCompletion({ executionSemantics: params.executionSemantics })
@@ -187,6 +187,7 @@ export function buildToolExecutionReceipt(params: {
   output: string
   toolParams: unknown
   toolDetails?: unknown
+  evidenceSource?: Readonly<ToolEvidenceSourceReceipt>
   workDir: string
   commandFailureSeen: boolean
 }): ToolExecutionReceipt {
@@ -205,7 +206,16 @@ export function buildToolExecutionReceipt(params: {
     output: params.output,
     summary: params.success ? `${params.toolName} 실행 완료` : `${params.toolName} 실행 실패`,
     executor,
-    ...(params.success ? { successfulTool: { toolName: params.toolName, output: params.output } } : {}),
+    ...(params.success
+      ? {
+          successfulTool: {
+            toolName: params.toolName,
+            output: params.output,
+            ...(params.toolDetails !== undefined ? { details: params.toolDetails } : {}),
+            ...(params.evidenceSource ? { evidenceSource: params.evidenceSource } : {}),
+          },
+        }
+      : {}),
     filesystemMutation,
     mutationPaths,
     commandFailure,

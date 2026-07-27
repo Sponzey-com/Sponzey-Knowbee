@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import { closeDb, getDb, insertSchedule, insertSession, listControlEvents } from "../packages/core/src/db/index.js"
 import { beginMigrationLock, checkMigrationWriteGuard, failMigrationLock, verifyMigrationState } from "../packages/core/src/db/migration-safety.js"
 import { runDoctor } from "../packages/core/src/diagnostics/doctor.js"
@@ -15,25 +16,24 @@ import {
 } from "../packages/core/src/runtime/rollout-safety.js"
 import { createRootRun } from "../packages/core/src/runs/store.js"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempConfig(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task012-rollout-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task012-rollout-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: `{
     ai: { connection: { provider: "ollama", endpoint: "http://127.0.0.1:11434", model: "llama3.2" } },
     webui: { enabled: true, host: "127.0.0.1", port: 18181, auth: { enabled: false } },
     security: { approvalMode: "off" },
     memory: { searchMode: "fts", sessionRetentionDays: 30 },
     scheduler: { enabled: false, timezone: "Asia/Seoul" }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  }`,
+  })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 beforeEach(() => {
@@ -42,11 +42,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -96,7 +91,7 @@ describe("task012 migration, feature flag, rollout safety", () => {
     const verify = verifyMigrationState(db)
     beginMigrationLock(db, { id: "lock-doctor-test", pendingVersions: [998], backupSnapshotId: "snapshot-doctor", lockedBy: "test" })
 
-    const report = runDoctor({ mode: "quick", includeEnvironment: false, includeReleasePackage: false })
+    const report = runDoctor({ config: runtimeFixture.config, paths: runtimeFixture.paths, mode: "quick", includeEnvironment: false, includeReleasePackage: false })
     const lockCheck = report.checks.find((check) => check.name === "db.migration.lock")
 
     expect(verify.ok).toBe(true)
@@ -105,7 +100,7 @@ describe("task012 migration, feature flag, rollout safety", () => {
     expect(JSON.stringify(lockCheck?.detail)).toContain("snapshot-doctor")
 
     failMigrationLock(db, { lockId: "lock-doctor-test", error: "verify failed for test", verifyReport: verify })
-    const failedReport = runDoctor({ mode: "quick", includeEnvironment: false, includeReleasePackage: false })
+    const failedReport = runDoctor({ config: runtimeFixture.config, paths: runtimeFixture.paths, mode: "quick", includeEnvironment: false, includeReleasePackage: false })
     const failedLockCheck = failedReport.checks.find((check) => check.name === "db.migration.lock")
     expect(failedLockCheck?.status).toBe("blocked")
     expect(JSON.stringify(failedLockCheck?.detail)).toContain("verify failed for test")
@@ -125,7 +120,7 @@ describe("task012 migration, feature flag, rollout safety", () => {
       `SELECT tool_name, result FROM audit_logs WHERE source = 'rollout-safety' ORDER BY timestamp DESC LIMIT 1`,
     ).get()
     const control = listControlEvents({ eventType: "feature_flag.changed", limit: 5 })
-    const report = runDoctor({ mode: "quick", includeEnvironment: false, includeReleasePackage: false })
+    const report = runDoctor({ config: runtimeFixture.config, paths: runtimeFixture.paths, mode: "quick", includeEnvironment: false, includeReleasePackage: false })
 
     expect(change.featureFlag.mode).toBe("rollback")
     expect(flag.compatibilityMode).toBe(true)
@@ -151,8 +146,8 @@ describe("task012 migration, feature flag, rollout safety", () => {
     const diagnostic = getDb().prepare<[], { kind: string; summary: string }>(
       `SELECT kind, summary FROM diagnostic_events ORDER BY created_at DESC LIMIT 1`,
     ).get()
-    const snapshot = buildRolloutSafetySnapshot()
-    const report = runDoctor({ mode: "quick", includeEnvironment: false, includeReleasePackage: false })
+    const snapshot = buildRolloutSafetySnapshot(runtimeFixture.paths.dbFile)
+    const report = runDoctor({ config: runtimeFixture.config, paths: runtimeFixture.paths, mode: "quick", includeEnvironment: false, includeReleasePackage: false })
 
     expect(compare.matched).toBe(false)
     expect(compare.diagnosticEventId).toEqual(expect.any(String))
@@ -171,8 +166,8 @@ describe("task012 migration, feature flag, rollout safety", () => {
       summary: "schedule identity matched",
     })
 
-    const snapshot = buildRolloutSafetySnapshot()
-    const release = buildReleaseManifest({ targetPlatforms: [] })
+    const snapshot = buildRolloutSafetySnapshot(runtimeFixture.paths.dbFile)
+    const release = buildReleaseManifest({ targetPlatforms: [], config: runtimeFixture.config, runtimePaths: runtimeFixture.paths })
 
     expect(snapshot.featureFlags.some((flag) => flag.featureKey === "approval_registry" && flag.mode === "dual_write")).toBe(true)
     expect(release.featureFlags.map((flag) => flag.featureKey)).toEqual(expect.arrayContaining(["message_ledger", "approval_registry", "runtime_manifest"]))

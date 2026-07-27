@@ -1,7 +1,6 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
-import JSON5 from "json5"
-import { getConfig, reloadConfig } from "../config/index.js"
-import { PATHS } from "../config/paths.js"
+import type { PersistedConfigPaths } from "../config/persisted-file.js"
+import { readPersistedRawConfig, writePersistedRawConfig } from "../config/persisted-file.js"
+import type { KnowbeeConfig } from "../config/types.js"
 
 export type UiMode = "beginner" | "advanced" | "admin"
 export type PreferredUiMode = "beginner" | "advanced"
@@ -44,6 +43,23 @@ export interface UiModeRollbackActivation {
   reason: "disabled" | "enabled_by_ui_mode_rollback" | "enabled_by_legacy_ui_alias"
 }
 
+export interface UiModeRuntimeInput {
+  adminActivation?: AdminUiActivationInput
+  rollbackActivation?: UiModeRollbackActivationInput
+  config?: KnowbeeConfig
+}
+
+export type UiModeRuntimeConfigInput = UiModeRuntimeInput & { config: KnowbeeConfig }
+
+export interface ResolveUiModeInput extends UiModeRuntimeInput {
+  preferredUiMode?: unknown
+  requestedMode?: unknown
+  adminEnabled?: boolean
+}
+
+const EMPTY_ENV: Record<string, string | undefined> = Object.freeze({})
+const EMPTY_ARGV: readonly string[] = Object.freeze([])
+
 function normalizeUiMode(value: unknown): UiMode | null {
   if (typeof value !== "string") return null
   const normalized = value.trim().toLowerCase()
@@ -70,7 +86,7 @@ function parseBooleanEnv(value: string | undefined): boolean {
 }
 
 export function resolveUiModeRollbackActivation(input: UiModeRollbackActivationInput = {}): UiModeRollbackActivation {
-  const env = input.env ?? process.env
+  const env = input.env ?? EMPTY_ENV
   const envEnabled = parseBooleanEnv(env["KNOWBEE_UI_MODE_ROLLBACK"])
   const legacyAliasEnabled = parseBooleanEnv(env["KNOWBEE_LEGACY_UI"])
   return {
@@ -98,9 +114,9 @@ function isProductionMode(value: string | undefined): boolean {
 }
 
 export function resolveAdminUiActivation(input: AdminUiActivationInput = {}): AdminUiActivation {
-  const env = input.env ?? process.env
-  const argv = input.argv ?? process.argv
-  const configEnabled = input.configEnabled ?? (getConfig().webui.admin?.enabled ?? false)
+  const env = input.env ?? EMPTY_ENV
+  const argv = input.argv ?? EMPTY_ARGV
+  const configEnabled = input.configEnabled ?? false
   const envEnabled = parseBooleanEnv(env["KNOWBEE_ADMIN_UI"])
   const cliEnabled = hasAdminCliFlag(argv)
   const localDevScriptEnabled = parseBooleanEnv(env["KNOWBEE_LOCAL_DEV_ADMIN_UI"]) || (env["KNOWBEE_ADMIN_UI_SOURCE"] === "local-script" && envEnabled)
@@ -139,13 +155,13 @@ export function resolveAdminUiActivation(input: AdminUiActivationInput = {}): Ad
   }
 }
 
-export function isAdminUiEnabled(): boolean {
-  return resolveAdminUiActivation().enabled
+export function isAdminUiEnabled(input: AdminUiActivationInput = {}): boolean {
+  return resolveAdminUiActivation(input).enabled
 }
 
-export function resolveUiMode(input: { preferredUiMode?: unknown; requestedMode?: unknown; adminEnabled?: boolean } = {}): UiModeState {
-  const adminEnabled = input.adminEnabled ?? isAdminUiEnabled()
-  const rollback = resolveUiModeRollbackActivation()
+export function resolveUiMode(input: ResolveUiModeInput = {}): UiModeState {
+  const adminEnabled = input.adminEnabled ?? isAdminUiEnabled(input.adminActivation)
+  const rollback = resolveUiModeRollbackActivation(input.rollbackActivation)
   if (rollback.enabled) {
     return {
       mode: "advanced",
@@ -157,7 +173,7 @@ export function resolveUiMode(input: { preferredUiMode?: unknown; requestedMode?
     }
   }
 
-  const preferredUiMode = normalizePreferredUiMode(input.preferredUiMode ?? getConfig().webui.preferredUiMode)
+  const preferredUiMode = normalizePreferredUiMode(input.preferredUiMode ?? "beginner")
   const requestedMode = normalizeUiMode(input.requestedMode)
   const mode: UiMode = requestedMode === "admin"
     ? (adminEnabled ? "admin" : preferredUiMode)
@@ -173,24 +189,28 @@ export function resolveUiMode(input: { preferredUiMode?: unknown; requestedMode?
   }
 }
 
-export function getUiModeState(): UiModeState {
-  return resolveUiMode({ preferredUiMode: getConfig().webui.preferredUiMode })
-}
-
-function readRawConfig(): Record<string, unknown> {
-  if (!existsSync(PATHS.configFile)) return {}
-  try {
-    const parsed = JSON5.parse(readFileSync(PATHS.configFile, "utf-8"))
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
-  } catch {
-    return {}
+export function getUiModeState(input: UiModeRuntimeConfigInput): UiModeState {
+  const config = input.config
+  const adminActivation = {
+    ...(input.adminActivation ?? {}),
+    configEnabled: input.adminActivation?.configEnabled ?? (config.webui.admin?.enabled ?? false),
   }
+  return resolveUiMode({
+    ...input,
+    preferredUiMode: config.webui.preferredUiMode,
+    adminActivation,
+    adminEnabled: isAdminUiEnabled(adminActivation),
+  })
 }
 
-export function savePreferredUiMode(mode: PreferredUiMode): UiModeState {
-  if (isUiModeRollbackEnabled()) return getUiModeState()
+export function savePreferredUiMode(
+  mode: PreferredUiMode,
+  input: UiModeRuntimeConfigInput,
+  paths: PersistedConfigPaths,
+): UiModeState {
+  if (resolveUiModeRollbackActivation(input.rollbackActivation).enabled) return getUiModeState(input)
 
-  const raw = readRawConfig()
+  const raw = readPersistedRawConfig(paths)
   const webui = raw.webui && typeof raw.webui === "object" && !Array.isArray(raw.webui)
     ? raw.webui as Record<string, unknown>
     : {}
@@ -198,7 +218,13 @@ export function savePreferredUiMode(mode: PreferredUiMode): UiModeState {
     ...webui,
     preferredUiMode: mode,
   }
-  writeFileSync(PATHS.configFile, JSON5.stringify(raw, null, 2), "utf-8")
-  reloadConfig()
-  return getUiModeState()
+  writePersistedRawConfig(raw, paths)
+  const config: KnowbeeConfig = {
+    ...input.config,
+    webui: {
+      ...input.config.webui,
+      preferredUiMode: mode,
+    },
+  }
+  return getUiModeState({ ...input, config })
 }

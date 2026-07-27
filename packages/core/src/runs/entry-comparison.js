@@ -3,6 +3,16 @@ import { buildIntentComparisonProjection, hasPersistedComparableContract, serial
 import { stableContractHash } from "../contracts/index.js";
 import { chatWithContextPreflight } from "./context-preflight.js";
 import { loadPromptTemplate } from "../memory/knowbee-md.js";
+import { loadPromptValue } from "../memory/prompt-fragments.js";
+const COMPARISON_PROMPT_CONTEXT_LABELS_SOURCE_ID = "comparison_prompt_context_labels_user";
+function comparisonPromptContextLabel(key) {
+    const value = loadPromptValue(COMPARISON_PROMPT_CONTEXT_LABELS_SOURCE_ID, {}, { required: true })
+        .split(/\r?\n/u)
+        .find((line) => line.startsWith(`${key}=`))
+        ?.slice(key.length + 1)
+        .trim();
+    return value ?? key;
+}
 function safeFallbackDecision(candidateCount, reason) {
     return {
         kind: candidateCount > 1 ? "clarify" : "new_run",
@@ -53,22 +63,25 @@ export async function compareRequestContinuationWithAI(params) {
             reason: "incoming contract matched active run projection hash",
         };
     }
-    const model = params.model?.trim() || getDefaultModel();
-    const providerId = params.providerId?.trim() || detectAvailableProvider();
+    if (!params.config) {
+        return safeFallbackDecision(params.candidates.length, "AI config missing");
+    }
+    const model = params.model?.trim() || getDefaultModel(params.config);
+    const providerId = params.providerId?.trim() || detectAvailableProvider(params.config);
     if (!model || !providerId) {
         return safeFallbackDecision(params.candidates.length, "no configured provider");
     }
-    const provider = params.provider ?? getProvider(providerId);
+    const provider = params.provider ?? getProvider(providerId, params.config);
     // knowbee-critical-decision-audit: entry-comparison.contract_projection_comparison
     // Comparator inputs are canonical contract projections and stable ids only.
     const messages = [
         {
             role: "user",
             content: [
-                "Incoming intent contract projection:",
+                comparisonPromptContextLabel("incoming_intent_contract_projection_label"),
                 JSON.stringify(incomingProjection),
                 "",
-                "Active run contract candidates:",
+                comparisonPromptContextLabel("active_run_contract_candidates_label"),
                 JSON.stringify(comparableCandidates.map(serializeActiveRunCandidateForComparison)),
             ].join("\n"),
         },

@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import {
   ENTERPRISE_TOPOLOGY_SCHEMA_VERSION,
   type EnterpriseRelation,
@@ -16,19 +15,22 @@ import {
 } from "../packages/core/src/orchestration/execution-graph-snapshot.ts"
 import { EXECUTOR_PROFILE_METADATA_KEY } from "../packages/core/src/topology/executor-profile.ts"
 import { createEnterpriseTopologyRegistry } from "../packages/core/src/topology/registry.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const now = Date.UTC(2026, 4, 7, 3, 0, 0)
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 const tempDirs: string[] = []
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-topology-graph-source-isolation-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-topology-graph-source-isolation-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 beforeEach(() => {
@@ -37,11 +39,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -144,6 +141,7 @@ describe("topology graph source isolation and persistence repair", () => {
     })
 
     const snapshot = buildExecutionGraphSnapshot({
+      config: runtimeFixture.config,
       mode: "workspace",
       topologyRegistry: registry,
       now: () => now,
@@ -174,6 +172,7 @@ describe("topology graph source isolation and persistence repair", () => {
     })
 
     const snapshot = buildExecutionGraphSnapshot({
+      config: runtimeFixture.config,
       mode: "active_deployment",
       topologyRegistry: registry,
       now: () => now,
@@ -209,6 +208,7 @@ describe("topology graph source isolation and persistence repair", () => {
     })
 
     const snapshot = buildExecutionGraphSnapshot({
+      config: runtimeFixture.config,
       mode: "workspace",
       topologyRegistry: registry,
       now: () => now,

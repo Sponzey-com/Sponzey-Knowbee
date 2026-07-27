@@ -1,9 +1,9 @@
-import { getConfig } from "../config/index.js";
 import { createExecutionChunkStream } from "./execution-runtime.js";
 import { applyExecutionChunkPass } from "./execution-chunk-pass.js";
 import { applyErrorChunkPass } from "./error-chunk-pass.js";
 import { deliverTrackedChunk, } from "./delivery.js";
 import { getRootRun } from "./store.js";
+import { combineUserFacingTextSources, userFacingTextSourceRequiresFinalResponseReview, } from "./loop-directive.js";
 const defaultModuleDependencies = {
     createExecutionChunkStream,
     applyExecutionChunkPass,
@@ -13,6 +13,8 @@ const defaultModuleDependencies = {
 };
 export async function runExecutionAttemptPass(params, dependencies, moduleDependencies = defaultModuleDependencies) {
     let preview = params.preview;
+    const previewTextSources = [];
+    let deferredRuntimeTextDelivery = false;
     let failed = false;
     let aiRecovery = null;
     let workerRuntimeRecovery = null;
@@ -46,8 +48,21 @@ export async function runExecutionAttemptPass(params, dependencies, moduleDepend
     };
     try {
         const chunkStream = moduleDependencies.createExecutionChunkStream({
+            artifactStorage: params.artifactStorage,
+            memoryJournal: params.memoryJournal,
+            config: params.config,
             userMessage: params.currentMessage,
+            requiredToolNames: params.requiredToolNames,
+            ...(params.completionConditions
+                ? { completionConditions: params.completionConditions }
+                : {}),
+            ...(params.admittedCapabilityExecutionScope
+                ? { admittedCapabilityExecutionScope: params.admittedCapabilityExecutionScope }
+                : {}),
+            webExecutionState: params.webExecutionState,
             memorySearchQuery: params.memorySearchQuery,
+            ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
+            ...(params.includeScheduleMemory ? { includeScheduleMemory: true } : {}),
             sessionId: params.sessionId,
             runId: params.runId,
             ...(params.model ? { model: params.model } : {}),
@@ -55,6 +70,8 @@ export async function runExecutionAttemptPass(params, dependencies, moduleDepend
             ...(params.provider ? { provider: params.provider } : {}),
             workDir: params.workDir,
             source: params.source,
+            ...(params.agentId ? { agentId: params.agentId } : {}),
+            ...(params.agentType ? { agentType: params.agentType } : {}),
             signal: executionStreamController.signal,
             ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
             isRootRequest: params.isRootRequest,
@@ -65,7 +82,7 @@ export async function runExecutionAttemptPass(params, dependencies, moduleDepend
             if (chunk.type !== "error" && chunk.type !== "done") {
                 const currentRun = moduleDependencies.getRootRun(params.runId);
                 const usedTurns = currentRun?.delegationTurnCount ?? 0;
-                const maxTurns = currentRun?.maxDelegationTurns ?? getConfig().orchestration.maxDelegationTurns;
+                const maxTurns = currentRun?.maxDelegationTurns ?? params.defaultMaxDelegationTurns;
                 const executionChunkPass = moduleDependencies.applyExecutionChunkPass({
                     chunk,
                     runId: params.runId,
@@ -78,12 +95,18 @@ export async function runExecutionAttemptPass(params, dependencies, moduleDepend
                     filesystemMutationPaths: params.filesystemMutationPaths,
                     failedCommandTools: params.failedCommandTools,
                     commandFailureSeen,
+                    ...(params.yeonjangSideEffectGoalValidationCandidates
+                        ? { yeonjangSideEffectGoalValidationCandidates: params.yeonjangSideEffectGoalValidationCandidates }
+                        : {}),
                     recoveryBudgetUsage: params.recoveryBudgetUsage,
                     usedTurns,
                     maxDelegationTurns: maxTurns,
                 }, dependencies);
                 if (executionChunkPass.preview !== undefined) {
                     preview = executionChunkPass.preview;
+                }
+                if (executionChunkPass.previewSource) {
+                    previewTextSources.push(executionChunkPass.previewSource);
                 }
                 if (executionChunkPass.executionRecoveryLimitStop) {
                     executionRecoveryLimitStop = executionChunkPass.executionRecoveryLimitStop;
@@ -113,7 +136,7 @@ export async function runExecutionAttemptPass(params, dependencies, moduleDepend
             else if (chunk.type === "error") {
                 const currentRun = moduleDependencies.getRootRun(params.runId);
                 const usedTurns = currentRun?.delegationTurnCount ?? 0;
-                const maxTurns = currentRun?.maxDelegationTurns ?? getConfig().orchestration.maxDelegationTurns;
+                const maxTurns = currentRun?.maxDelegationTurns ?? params.defaultMaxDelegationTurns;
                 const errorChunkPass = await moduleDependencies.applyErrorChunkPass({
                     runId: params.runId,
                     sessionId: params.sessionId,
@@ -142,6 +165,20 @@ export async function runExecutionAttemptPass(params, dependencies, moduleDepend
                 }
                 continue;
             }
+            const chunkTextSource = chunk.type === "text" ? (chunk.textSource ?? "llm_generated") : undefined;
+            const shouldDeferChunkDelivery = (chunkTextSource !== undefined && (params.isRootRequest
+                || userFacingTextSourceRequiresFinalResponseReview(chunkTextSource)))
+                || (chunk.type === "done" && deferredRuntimeTextDelivery);
+            if (shouldDeferChunkDelivery) {
+                if (chunk.type === "text") {
+                    deferredRuntimeTextDelivery = true;
+                    dependencies.appendRunEvent(params.runId, `user_facing_stream_text_delivery_deferred:${chunkTextSource}`);
+                }
+                if (chunk.type === "done") {
+                    dependencies.appendRunEvent(params.runId, "user_facing_stream_done_delivery_deferred");
+                }
+                continue;
+            }
             const receipt = await moduleDependencies.deliverTrackedChunk({
                 onChunk: params.onChunk,
                 chunk,
@@ -164,6 +201,8 @@ export async function runExecutionAttemptPass(params, dependencies, moduleDepend
     }
     return {
         preview,
+        ...(previewTextSources.length > 0 ? { previewSource: combineUserFacingTextSources(previewTextSources) } : {}),
+        ...(deferredRuntimeTextDelivery ? { deferredPreviewDelivery: true } : {}),
         failed,
         executionRecoveryLimitStop,
         aiRecoveryLimitStop,

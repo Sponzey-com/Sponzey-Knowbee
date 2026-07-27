@@ -1,3 +1,4 @@
+import { DEFAULT_KNOWBEE_AGENT_NAME } from "../contracts/sub-agent-orchestration.js"
 import {
   AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
   type AgentExecutionConnection,
@@ -11,15 +12,20 @@ import {
   type AgentExecutionToolBinding,
 } from "./execution-decision-contract.js"
 import {
-  type ExecutorRuntimeProjection,
+  EXECUTION_GRAPH_ROOT_AGENT_ID,
   type ExecutionGraphEdgeProjection,
   type ExecutionGraphSnapshot,
-  EXECUTION_GRAPH_ROOT_AGENT_ID,
+  type ExecutorRuntimeProjection,
 } from "./execution-graph-snapshot.js"
 import {
+  buildDefaultAgentExecutionPermissionPolicy,
+  buildDefaultAgentExecutionRiskPolicy,
+} from "./product-parameter-policy.js"
+import {
   type ExecutorProfilePromptConnection,
-  type ExecutorProfilePromptProjection,
   type ExecutorProfilePromptItem,
+  type ExecutorProfilePromptProjection,
+  executorProfilePromptItem,
 } from "./prompt-bundle.js"
 import type { ExecutorProfile } from "./registry.js"
 
@@ -36,24 +42,10 @@ export interface BuildAgentExecutionContextFromGraphInput {
   explicitProviderTargetId?: string
 }
 
-const DEFAULT_PERMISSION_POLICY: AgentExecutionPermissionPolicy = {
-  allowed_tool_ids: [],
-}
-
-const DEFAULT_RISK_POLICY: AgentExecutionRiskPolicy = {
-  approval_required_for: [
-    "privacy",
-    "permission",
-    "delete",
-    "payment",
-    "external_transfer",
-    "local_system_control",
-  ],
-}
-
 function uniqueStrings(values: Array<string | undefined>): string[] {
-  return [...new Set(values.filter((value): value is string => Boolean(value?.trim())))]
-    .sort((left, right) => left.localeCompare(right))
+  return [...new Set(values.filter((value): value is string => Boolean(value?.trim())))].sort(
+    (left, right) => left.localeCompare(right),
+  )
 }
 
 function fallbackExecutorProfile(input: {
@@ -80,36 +72,60 @@ function fallbackExecutorProfile(input: {
   }
 }
 
+function requireUserFacingAgentName(
+  projection: ExecutorRuntimeProjection | undefined,
+  executorId: string,
+): { projection: ExecutorRuntimeProjection; agentName: string } {
+  if (!projection) {
+    throw new Error(`agent_name_projection_missing:${executorId}`)
+  }
+  const agentName = projection.agentName.trim()
+  if (!agentName) {
+    throw new Error(`agent_name_required:${executorId}`)
+  }
+  return { projection, agentName }
+}
+
 function runtimeProjectionToExecutorProfile(
   projection: ExecutorRuntimeProjection | undefined,
   executorId: string,
 ): AgentExecutionExecutorProfile {
-  if (!projection) {
+  if (!projection && executorId === EXECUTION_GRAPH_ROOT_AGENT_ID) {
     return {
       executor_id: executorId,
-      display_name: executorId === EXECUTION_GRAPH_ROOT_AGENT_ID ? "Knowbee" : executorId,
+      agent_name: DEFAULT_KNOWBEE_AGENT_NAME,
+      role_name: "coordinator",
+      definition: "Knowbee main agent coordinator",
       can_delegate: true,
-      available: executorId === EXECUTION_GRAPH_ROOT_AGENT_ID,
+      available: true,
     }
   }
-  const profile = projection.executorProfile ?? fallbackExecutorProfile({
-    executorId: projection.agentId,
-    displayName: projection.displayName,
-    roleName: projection.role,
-    definition: projection.role,
-    specialtyTags: projection.specialtyTags,
-  })
+  const validated = requireUserFacingAgentName(projection, executorId)
+  const runtimeProjection = validated.projection
+  const agentName = validated.agentName
+  const profile =
+    runtimeProjection.executorProfile ??
+    fallbackExecutorProfile({
+      executorId: runtimeProjection.agentId,
+      displayName: agentName,
+      roleName: runtimeProjection.role,
+      definition: runtimeProjection.role,
+      specialtyTags: runtimeProjection.specialtyTags,
+    })
   return {
-    executor_id: projection.agentId,
-    display_name: projection.displayName,
-    role_name: profile.roleName || projection.role,
+    executor_id: runtimeProjection.agentId,
+    agent_name: agentName,
+    role_name: profile.roleName || runtimeProjection.role,
     definition: profile.definition,
-    can_delegate: projection.delegationEnabled,
-    available: projection.executionCandidate,
+    can_delegate: runtimeProjection.delegationEnabled,
+    available: runtimeProjection.executionCandidate,
   }
 }
 
-function parentExecutorIdFor(graph: ExecutionGraphSnapshot, executorId: string): string | undefined {
+function parentExecutorIdFor(
+  graph: ExecutionGraphSnapshot,
+  executorId: string,
+): string | undefined {
   const parents = graph.edges
     .filter((edge) => edge.childAgentId === executorId && edge.executionCandidate)
     .map((edge) => edge.parentAgentId)
@@ -146,7 +162,8 @@ export function buildAgentExecutionContextFromGraphSnapshot(
 ): AgentExecutionContext {
   const graph = input.graph
   const currentExecutorId = graph.currentExecutorId
-  const currentExecutor = input.currentExecutor ??
+  const currentExecutor =
+    input.currentExecutor ??
     runtimeProjectionToExecutorProfile(graph.agentsById[currentExecutorId], currentExecutorId)
   const availableChildIds = new Set(graph.availableExecutorIds)
   const parentId = parentExecutorIdFor(graph, currentExecutorId)
@@ -176,6 +193,21 @@ export function buildAgentExecutionContextFromGraphSnapshot(
   const accessibleConnections = graph.edges
     .filter((edge) => edge.executionCandidate)
     .map(graphConnection)
+  const availableTools = input.availableTools ?? []
+  const defaultPermissionPolicy = buildDefaultAgentExecutionPermissionPolicy()
+  const approvalRequiredToolIds = availableTools
+    .filter((tool) => tool.permission_scope === "approval_required")
+    .map((tool) => tool.tool_id)
+    .sort((left, right) => left.localeCompare(right))
+  const permissionPolicy = input.permissionPolicy ?? {
+    ...defaultPermissionPolicy,
+    allowed_tool_ids: availableTools
+      .map((tool) => tool.tool_id)
+      .sort((left, right) => left.localeCompare(right)),
+    ...(approvalRequiredToolIds.length > 0
+      ? { approval_required_tool_ids: approvalRequiredToolIds }
+      : {}),
+  }
   return {
     contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
     request: input.request,
@@ -185,9 +217,9 @@ export function buildAgentExecutionContextFromGraphSnapshot(
     accessible_executors: accessibleExecutors,
     diagnostic_executors: diagnosticExecutors,
     accessible_connections: accessibleConnections,
-    available_tools: input.availableTools ?? [],
-    permission_policy: input.permissionPolicy ?? DEFAULT_PERMISSION_POLICY,
-    risk_policy: input.riskPolicy ?? DEFAULT_RISK_POLICY,
+    available_tools: availableTools,
+    permission_policy: permissionPolicy,
+    risk_policy: input.riskPolicy ?? buildDefaultAgentExecutionRiskPolicy(),
     execution_graph: {
       graph_id: graph.graphId,
       graph_source: graph.graphSource,
@@ -205,7 +237,9 @@ export function buildAgentExecutionContextFromGraphSnapshot(
     ...(input.directExecutionRequested !== undefined
       ? { direct_execution_requested: input.directExecutionRequested }
       : {}),
-    ...(input.explicitTargetExecutorId ? { explicit_target_executor_id: input.explicitTargetExecutorId } : {}),
+    ...(input.explicitTargetExecutorId
+      ? { explicit_target_executor_id: input.explicitTargetExecutorId }
+      : {}),
     ...(input.explicitProviderTargetId
       ? { explicit_provider_target_id: input.explicitProviderTargetId }
       : {}),
@@ -218,23 +252,28 @@ function promptItemForGraphExecutor(
 ): ExecutorProfilePromptItem | undefined {
   const projection = graph.agentsById[executorId]
   if (!projection) return undefined
-  const profile = projection.executorProfile ?? fallbackExecutorProfile({
-    executorId,
-    displayName: projection.displayName,
-    roleName: projection.role,
-    definition: projection.role,
-    specialtyTags: projection.specialtyTags,
-  })
-  return {
-    ...profile,
-    executorId,
-    displayName: projection.displayName,
+  const agentName = requireUserFacingAgentName(projection, executorId).agentName
+  const profile =
+    projection.executorProfile ??
+    fallbackExecutorProfile({
+      executorId,
+      displayName: agentName,
+      roleName: projection.role,
+      definition: projection.role,
+      specialtyTags: projection.specialtyTags,
+    })
+  return executorProfilePromptItem({
+    profile: {
+      ...profile,
+      executorId,
+    },
+    agentName,
     connectedNextExecutorIds: uniqueStrings(
       graph.edges
         .filter((edge) => edge.parentAgentId === executorId && edge.executionCandidate)
         .map((edge) => edge.childAgentId),
     ),
-  }
+  })
 }
 
 export function buildExecutorProfilePromptProjectionFromGraphSnapshot(
@@ -247,7 +286,9 @@ export function buildExecutorProfilePromptProjectionFromGraphSnapshot(
   const selectableIds = new Set(selectableExecutors.map((executor) => executor.executorId))
   const registeredExecutorIds = graph.allRegisteredExecutorIds ?? graph.allActiveExecutorIds
   const diagnosticExecutors = registeredExecutorIds
-    .filter((executorId) => executorId !== graph.currentExecutorId && !selectableIds.has(executorId))
+    .filter(
+      (executorId) => executorId !== graph.currentExecutorId && !selectableIds.has(executorId),
+    )
     .flatMap((executorId) => {
       const item = promptItemForGraphExecutor(graph, executorId)
       return item ? [item] : []

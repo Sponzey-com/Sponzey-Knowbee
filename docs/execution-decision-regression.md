@@ -8,9 +8,9 @@ Phase 022 removes natural-language keyword matching from core execution decision
 2. The current agent produces an `AgentExecutionDecision` from its prompt, available executor profiles, visible connections, tools, and risk policy.
 3. The harness validates only structured facts: executor id, connection path, availability, explicit target permission, and risk boundary.
 4. If no delegated executor is valid, the current agent tries `self_solve` inside its own role and permissions.
-5. If that is impossible, the work returns to the delegating agent or requester with an unresolved reason. Root Knowbee may use `knowbee_direct` or ask the user.
+5. If that is impossible, the work returns to the delegating agent or requester with an unresolved reason. The root main agent may use `knowbee_direct` or ask the user.
 
-There is no separate router agent in the user model. Knowbee and every delegated executor use the same execution decision capability from their own position in the graph.
+There is no separate router agent in the user model. The main agent and every delegated executor use the same execution decision capability from their own position in the graph.
 
 ## Regression Commands
 

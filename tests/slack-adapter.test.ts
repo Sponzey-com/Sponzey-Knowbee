@@ -292,6 +292,30 @@ describe("Slack adapter facade policies", () => {
     })
   })
 
+  it("redacts Slack delivery receipt errors", async () => {
+    const secret = "sk-task0620-slack-secret-value"
+    const localPath = "/Users/dongwooshin/.knowbee/slack/raw.json"
+    const adapter = createSlackChannelAdapter({
+      config: slackConfig,
+      now: () => 1_710_000_200_000,
+      transport: {
+        async sendMessage() {
+          throw new Error(`slack failed token=${secret} path=${localPath}`)
+        },
+      },
+    })
+
+    const receipt = await adapter.sendMessage({
+      ...buildSlackOutboundMessage(),
+      idempotencyKey: "slack:redacted-error",
+    })
+    expect(receipt.status).toBe("failed")
+    expect(receipt.errorMessage).toContain("***")
+    expect(receipt.errorMessage).toContain("[internal-path-redacted]")
+    expect(receipt.errorMessage).not.toContain(secret)
+    expect(receipt.errorMessage).not.toContain(localPath)
+  })
+
   it("normalizes Slack approval action aliases", async () => {
     const basePayload = {
       type: "block_actions",

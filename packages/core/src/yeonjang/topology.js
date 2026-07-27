@@ -1,50 +1,9 @@
 import { getMqttExtensionSnapshots } from "../mqtt/broker.js";
 import { getYeonjangRegistrySummary, listYeonjangRegistryInstances, normalizeYeonjangCallName, } from "./registry.js";
+import { getYeonjangGatewayHostFingerprintPreview, previewYeonjangFingerprint, } from "./runtime-identity.js";
 const DEFAULT_LOCAL_NODE_ID = "yeonjang-main";
 function normalizeString(value) {
     return value?.trim() ?? "";
-}
-function previewFingerprint(value) {
-    return value.length <= 12 ? value : `${value.slice(0, 6)}...${value.slice(-4)}`;
-}
-function hostnameCandidate() {
-    return normalizeString(process.env["KNOWBEE_HOSTNAME"])
-        || normalizeString(process.env["COMPUTERNAME"])
-        || normalizeString(process.env["HOSTNAME"])
-        || "localhost";
-}
-function normalizeGatewayOs() {
-    switch (process.platform) {
-        case "darwin":
-            return "macos";
-        case "win32":
-            return "windows";
-        default:
-            return process.platform;
-    }
-}
-function normalizeGatewayArch() {
-    switch (process.arch) {
-        case "x64":
-            return "x86_64";
-        case "arm64":
-            return "aarch64";
-        case "ia32":
-            return "x86";
-        default:
-            return process.arch;
-    }
-}
-function stableHexHash(value) {
-    let hash = 0xcbf29ce484222325n;
-    for (const byte of Buffer.from(value, "utf-8")) {
-        hash ^= BigInt(byte);
-        hash = BigInt.asUintN(64, hash * 0x100000001b3n);
-    }
-    return hash.toString(16).padStart(16, "0");
-}
-function gatewayHostFingerprintPreview() {
-    return previewFingerprint(stableHexHash(`${hostnameCandidate()}|${normalizeGatewayOs()}|${normalizeGatewayArch()}`));
 }
 export function normalizeYeonjangSupportProfile(value) {
     switch (normalizeString(value).toLowerCase()) {
@@ -154,7 +113,7 @@ export function projectYeonjangInstances(input = {}) {
     const snapshots = input.snapshots ?? getMqttExtensionSnapshots();
     const snapshotIndex = buildSnapshotIndex(snapshots);
     const now = input.now ?? Date.now();
-    const gatewayHostPreview = gatewayHostFingerprintPreview();
+    const gatewayHostPreview = getYeonjangGatewayHostFingerprintPreview();
     for (const snapshot of snapshots) {
         if (instances.some((instance) => instance.nodeId === snapshot.extensionId))
             continue;
@@ -185,12 +144,12 @@ export function projectYeonjangInstances(input = {}) {
             trustState: isSyntheticLocal ? "trusted" : "pending",
             trustReason: isSyntheticLocal ? "snapshot_only_auto_local" : "snapshot_only_pairing_required",
             pairingFingerprintPreview: snapshot.pairingFingerprint
-                ? previewFingerprint(snapshot.pairingFingerprint)
+                ? previewYeonjangFingerprint(snapshot.pairingFingerprint)
                 : null,
             runnableTarget: isSyntheticLocal,
             runnableReasonCodes: isSyntheticLocal ? [] : ["target_trust_pending", "workspace_scope_unassigned"],
-            hostFingerprintPreview: snapshot.hostFingerprint ? previewFingerprint(snapshot.hostFingerprint) : null,
-            installFingerprintPreview: snapshot.installFingerprint ? previewFingerprint(snapshot.installFingerprint) : null,
+            hostFingerprintPreview: snapshot.hostFingerprint ? previewYeonjangFingerprint(snapshot.hostFingerprint) : null,
+            installFingerprintPreview: snapshot.installFingerprint ? previewYeonjangFingerprint(snapshot.installFingerprint) : null,
             transport: snapshot.transport ?? [],
             session: snapshot.sessionId
                 ? {

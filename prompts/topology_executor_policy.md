@@ -1,6 +1,10 @@
 # Topology Executor Policy
 
-This policy defines how the current agent interprets and executes the visible executor graph. Root Knowbee and delegated agents use the same graph boundary rules from their own hierarchy position.
+## Purpose
+
+Own visible executor graph interpretation, edge delegation meaning, child return rules, node task analysis, graph fallback boundaries, and graph cancellation behavior.
+
+This policy defines how the current agent interprets and executes the visible executor graph. The root main agent and delegated agents use the same graph boundary rules from their own hierarchy position.
 
 ---
 
@@ -32,7 +36,7 @@ This policy defines how the current agent interprets and executes the visible ex
 - Nodes that appear only in diagnostic or full graph context are not selectable from the current agent.
 - A grandchild or indirect node must not be selected without a concrete connection path that starts from the current agent and follows visible edges.
 - `selected_connection_path` may include the current executor as the first item, or may start with the current executor's direct child. In both forms, the first hop must be a direct child and every next hop must be a visible graph edge.
-- If no visible path exists, do not invent a handoff. Use the current-agent fallback contract instead of provider direct execution.
+- If no visible path exists, do not invent a handoff. Follow the fallback route boundary owned by `knowbee-execution.md`.
 
 ---
 
@@ -40,10 +44,10 @@ This policy defines how the current agent interprets and executes the visible ex
 
 - When an executor node has a matching accessible direct child sub-agent, connected next executor, or team member, prefer that route.
 - If no suitable sub-agent exists, evaluate Yeonjang.
-- If Yeonjang is not suitable, the current agent may self-solve within its own role, tools, and permission boundary. Root Knowbee uses direct handling when there is no parent/requesting agent.
-- Missing topology runtime opt-in, an inactive topology, or an unavailable topology route is not permission to jump to a provider. It is a graph/runtime fallback signal for the current agent.
+- If Yeonjang is not suitable, the current agent may self-solve within its own role, tools, and permission boundary. The root main agent uses direct handling when there is no parent/requesting agent.
+- Missing topology runtime opt-in, an inactive topology, or an unavailable topology route is a graph/runtime fallback signal for the current agent. It does not create a route exception.
 - Simple, clearly scoped changes can be handled directly when direct handling is faster and lower risk.
-- Phrases such as "deeply", "thoroughly", "carefully", or "깊게 봐줘" increase reasoning and verification depth. They are not by themselves delegation triggers.
+- Follow the depth-wording intake rule owned by `task_intake.md`; do not redefine its examples or behavior here.
 
 ## Child Return Rule
 
@@ -69,18 +73,13 @@ This policy defines how the current agent interprets and executes the visible ex
 
 ## Count Signal Alternative Search Rule
 
-- Retry count, attempt count, delegation turn count, repeated failure count, and queue retry count are not failure conditions.
-- Counts are signals that the current strategy is not working.
-- When a count signal is observed, search for another method.
-- Another method must change at least one of target, tool, input shape, path, permission request, execution order, task split, verification method, or fallback route.
-- Terminal failure is allowed only when no safe alternative remains.
-- If the user explicitly sets a time, count, or cost limit, reaching that limit is a user-defined boundary, not an internal retry failure.
+- Follow the count-signal recovery rule owned by `recovery_policy.md`; do not redefine its telemetry examples or alternative-search criteria here.
 
 ---
 
 ## Boundary Rule
 
-- Permission, privacy, destructive action, external system boundary, and out-of-scope conditions are not retry counters.
+- Permission, privacy, destructive action, external system boundary, and out-of-scope conditions are boundary states, not recovery telemetry.
 - Pause for user confirmation when the next safe step requires permission, sensitive information, or a user decision.
 - Stop as impossible only when the work cannot be completed safely and no user decision can unblock it.
 
@@ -91,3 +90,7 @@ This policy defines how the current agent interprets and executes the visible ex
 - User cancellation from a channel or WebUI overrides recovery.
 - Cancelled work is not failed work.
 - After cancellation, recovery controllers must not restart the cancelled graph, node, sub-session, or strategy.
+
+## Out Of Scope
+
+- This module does not own identity, user profile values, shared vocabulary, request intake, non-graph executor selection details, work-record schema, memory write policy, tool permission, channel delivery, UI behavior, logging, or final response wording.

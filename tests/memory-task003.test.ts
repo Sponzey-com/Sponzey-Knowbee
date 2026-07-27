@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -11,27 +11,58 @@ import {
   rebuildMemorySearchIndexes,
   upsertScheduleMemoryEntry,
 } from "../packages/core/src/db/index.js"
-import { buildMemoryJournalContext, closeMemoryJournalDb, insertMemoryJournalRecord } from "../packages/core/src/memory/journal.js"
-import { buildMemoryContext, storeMemoryDocument } from "../packages/core/src/memory/store.ts"
+import {
+  buildMemoryJournalContext,
+  createMemoryJournalRepository,
+  insertMemoryJournalRecord,
+  type MemoryJournalRepository,
+} from "../packages/core/src/memory/journal.js"
+import { buildMemoryContext as buildMemoryContextWithJournal, storeMemoryDocument } from "../packages/core/src/memory/store.ts"
 import { runMemoryRetrievalEvaluation } from "../packages/core/src/memory/evaluation.ts"
 import { diagnoseVectorEmbeddingRows, searchMemoryChunks } from "../packages/core/src/memory/search.ts"
 import { selectRequestGroupContextMessages } from "../packages/core/src/agent/request-group-context.ts"
 import { rememberRunFailure, rememberRunSuccess } from "../packages/core/src/runs/start-support.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import type { DbRequestGroupMessage } from "../packages/core/src/db/index.js"
+import type { OwnerScope } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
+let memoryJournal: MemoryJournalRepository | undefined
+
+function getMemoryJournal(): MemoryJournalRepository {
+  if (!memoryJournal) throw new Error("memory journal fixture is not initialized")
+  return memoryJournal
+}
+
+function buildMemoryContext(
+  params: Omit<Parameters<typeof buildMemoryContextWithJournal>[0], "journalRepository">,
+) {
+  return buildMemoryContextWithJournal({ ...params, journalRepository: getMemoryJournal() })
+}
+
+function owner(ownerType: OwnerScope["ownerType"], ownerId: string): OwnerScope {
+  return { ownerType, ownerId }
+}
+
+function longTermGate(targetOwner: OwnerScope = owner("knowbee", "global"), evidence = "test:memory-task003") {
+  return {
+    targetOwner,
+    category: "approved_work_context" as const,
+    storageNeed: "durable_user_fact" as const,
+    sensitivity: "not_sensitive" as const,
+    userIntent: "trusted_setting" as const,
+    sourceEvidenceRefs: [evidence],
+    retentionPurpose: "memory task003 fixture",
+  }
+}
 
 function useTempState(): void {
   closeDb()
-  closeMemoryJournalDb()
+  memoryJournal?.close()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-memory-task003-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
+  memoryJournal = createMemoryJournalRepository({ memoryDbFile: join(stateDir, "memory.db3") })
 }
 
 beforeEach(() => {
@@ -40,12 +71,8 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
+  memoryJournal?.close()
+  memoryJournal = undefined
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -53,6 +80,15 @@ afterEach(() => {
 })
 
 describe("task003 memory scope guard and prompt injection", () => {
+  it("keeps memory search mode as an explicit store input", () => {
+    const source = readFileSync("packages/core/src/memory/store.ts", "utf-8")
+
+    expect(source).not.toContain("../config/index.js")
+    expect(source).not.toContain("getConfig(")
+    expect(source).toContain("searchMode?: MemorySearchMode")
+    expect(source).toContain("options.searchMode ?? \"fts\"")
+  })
+
   it("runs deterministic retrieval evaluation across FTS, vector, and hybrid modes", async () => {
     const report = await runMemoryRetrievalEvaluation({
       fixture: {
@@ -124,6 +160,7 @@ describe("task003 memory scope guard and prompt injection", () => {
       rawText: "VECTOR_DISABLED_FALLBACK_DOC survives when vector backend is disabled",
       scope: "long-term",
       sourceType: "test",
+      longTermWriteGate: longTermGate(owner("knowbee", "global"), "test:memory-task003:vector-disabled"),
       metadata: { requiresReview: false },
     })
 
@@ -283,6 +320,7 @@ describe("task003 memory scope guard and prompt injection", () => {
       rawText: "LONG_TERM_VISIBLE_GLOBAL",
       scope: "long-term",
       sourceType: "preference",
+      longTermWriteGate: longTermGate(owner("knowbee", "global"), "test:memory-task003:global"),
     })
     await storeMemoryDocument({
       rawText: "SHORT_TERM_VISIBLE_SESSION_A",
@@ -340,17 +378,47 @@ describe("task003 memory scope guard and prompt injection", () => {
     expect(visibleArtifact).toContain("ARTIFACT_METADATA_HIDDEN_BY_DEFAULT")
   })
 
+  it("filters long-term memory context by explicit agent owner scope", async () => {
+    await storeMemoryDocument({
+      rawText: "OWNER_SCOPE_RESEARCHER private long-term note",
+      scope: "long-term",
+      ownerId: "agent:researcher",
+      sourceType: "user_fact",
+      longTermWriteGate: longTermGate(owner("sub_agent", "agent:researcher"), "test:memory-task003:researcher"),
+    })
+    await storeMemoryDocument({
+      rawText: "OWNER_SCOPE_WRITER private long-term note",
+      scope: "long-term",
+      ownerId: "agent:writer",
+      sourceType: "user_fact",
+      longTermWriteGate: longTermGate(owner("sub_agent", "agent:writer"), "test:memory-task003:writer"),
+    })
+    rebuildMemorySearchIndexes()
+
+    const ownerScope = { ownerType: "sub_agent" as const, ownerId: "agent:researcher" }
+    const context = await buildMemoryContext({
+      query: "OWNER_SCOPE",
+      ownerScope,
+      recipientScope: ownerScope,
+    })
+
+    expect(context).toContain("OWNER_SCOPE_RESEARCHER")
+    expect(context).not.toContain("OWNER_SCOPE_WRITER")
+  })
+
   it("excludes unapproved long-term candidates and expired flash-feedback from retrieval", async () => {
     await storeMemoryDocument({
       rawText: "LONG_TERM_REVIEW_APPROVED should be injected",
       scope: "long-term",
       sourceType: "durable_fact_candidate",
+      longTermWriteGate: longTermGate(owner("knowbee", "global"), "test:memory-task003:approved-review"),
       metadata: { requiresReview: false, approved: true },
     })
     await storeMemoryDocument({
       rawText: "LONG_TERM_REVIEW_UNAPPROVED should stay hidden",
       scope: "long-term",
       sourceType: "flash_feedback_promotion_candidate",
+      longTermWriteGate: longTermGate(owner("knowbee", "global"), "test:memory-task003:unapproved-review"),
       metadata: { requiresReview: true, approved: false },
     })
     await storeMemoryDocument({
@@ -428,7 +496,7 @@ describe("task003 memory scope guard and prompt injection", () => {
       runId: "child-a",
       requestGroupId: "group-a",
       source: "webui",
-    })
+    }, getMemoryJournal())
     insertMemoryJournalRecord({
       kind: "failure",
       scope: "task",
@@ -438,18 +506,18 @@ describe("task003 memory scope guard and prompt injection", () => {
       runId: "child-other",
       requestGroupId: "group-other",
       source: "webui",
-    })
+    }, getMemoryJournal())
 
     const context = buildMemoryJournalContext("handoff-visible", {
       sessionId: "session-a",
       requestGroupId: "group-a",
       runId: "child-b",
-    })
+    }, getMemoryJournal())
     const hidden = buildMemoryJournalContext("hidden-child", {
       sessionId: "session-a",
       requestGroupId: "group-a",
       runId: "child-b",
-    })
+    }, getMemoryJournal())
 
     expect(context).toContain("handoff-visible")
     expect(hidden).not.toContain("hidden-child")
@@ -470,6 +538,7 @@ describe("task003 memory scope guard and prompt injection", () => {
 
   it("writes run completion candidates silently without promoting diagnostics to global memory", () => {
     rememberRunSuccess({
+      memoryJournal: getMemoryJournal(),
       runId: "run-success",
       sessionId: "session-a",
       source: "webui",
@@ -477,6 +546,7 @@ describe("task003 memory scope guard and prompt injection", () => {
       summary: "성공 요약",
     })
     rememberRunFailure({
+      memoryJournal: getMemoryJournal(),
       runId: "run-failure",
       sessionId: "session-a",
       source: "webui",

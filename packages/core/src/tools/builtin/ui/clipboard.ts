@@ -5,6 +5,7 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import type { AgentTool, ToolResult } from "../../types.js"
+import { toolUserFacingErrorMessage } from "../error-redaction.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -67,7 +68,7 @@ export const clipboardReadTool: AgentTool<Record<string, never>> = {
       if (!text.trim()) return { success: true, output: "(클립보드가 비어 있습니다)" }
       return { success: true, output: text }
     } catch (err) {
-      return { success: false, output: `클립보드 읽기 실패: ${err instanceof Error ? err.message : String(err)}` }
+      return { success: false, output: `클립보드 읽기 실패: ${toolUserFacingErrorMessage(err)}` }
     }
   },
 }
@@ -95,7 +96,7 @@ export const clipboardWriteTool: AgentTool<ClipboardWriteParams> = {
       await writeClipboard(params.text)
       return { success: true, output: `클립보드에 복사됨 (${params.text.length}자)` }
     } catch (err) {
-      return { success: false, output: `클립보드 쓰기 실패: ${err instanceof Error ? err.message : String(err)}` }
+      return { success: false, output: `클립보드 쓰기 실패: ${toolUserFacingErrorMessage(err)}` }
     }
   },
 }

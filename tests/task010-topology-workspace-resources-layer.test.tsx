@@ -236,9 +236,10 @@ describe("task010 topology workspace resources layer", () => {
     expect(html).toContain("Intake Agent")
     expect(html).toContain("Support Team")
     expect(html).toContain('data-source="runtime_resource"')
-    expect(html).toContain("Health:")
-    expect(html).toContain("Capability:")
-    expect(html).toContain("openai/gpt-5.4")
+    expect(html).toContain("상태:")
+    expect(html).toContain("기능:")
+    expect(html).toContain("AI 모델 설정됨 (사용 가능)")
+    expect(html).not.toContain("openai/gpt-5.4")
   })
 
   it("keeps runtime resource nodes visually distinct from declared topology nodes", () => {
@@ -258,7 +259,7 @@ describe("task010 topology workspace resources layer", () => {
     expect(layerModel.resourceNodes.every((node) => node.data.strokePattern === "dashed")).toBe(true)
     expect(topologyWorkspaceResourceNodeClassName("team")).toContain("border-dashed")
     expect(topologyWorkspaceResourceNodeClassName("team")).not.toBe(topologyWorkspaceResourceNodeClassName("agent"))
-    expect(layerModel.resourceNodes[0]?.data.tooltip).toContain("Capability:")
+    expect(layerModel.resourceNodes[0]?.data.tooltip).toContain("기능:")
   })
 
   it("uses resources layer data as executor picker choices without making AgentConfig the source of truth", () => {
@@ -313,7 +314,7 @@ describe("task010 topology workspace resources layer", () => {
     expect(topologyPage).toContain("api.agentTopology")
     expect(topologyPage).not.toContain("/advanced/topology?mode=resources")
     expect(topologyPage).not.toContain("runtime-topology-workspace-resources-link")
-    expect(topologyPage).toContain("Runtime Resource Topology")
+    expect(topologyPage).not.toContain("Runtime Resource Topology")
     expect(topologyPage).not.toContain("EnterpriseTopologyCanvas")
   })
 })

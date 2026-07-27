@@ -1,15 +1,82 @@
-import { getConfig } from "../config/index.js";
+import { createHash } from "node:crypto";
 import { insertAuditLog, upsertTaskContinuity } from "../db/index.js";
 import { eventBus } from "../events/index.js";
-import { createLogger } from "../logger/index.js";
-import { consumeApprovalRegistryDecision, createApprovalRegistryRequest, expireApprovalRegistryRequest, resolveApprovalRegistryDecision, } from "../runs/approval-registry.js";
-import { buildToolCallIdempotencyKey, findDuplicateToolCall, getAllowRepeatReason, isDedupeTargetTool, recordMessageLedgerEvent, } from "../runs/message-ledger.js";
+import { createLogger, redactLogText } from "../logger/index.js";
+import { requiresDefaultYeonjangToolApproval } from "../orchestration/product-parameter-policy.js";
+import { consumeApprovalRegistryDecision, createApprovalRegistryRequest, expireApprovalRegistryRequest, hashApprovalParams, resolveApprovalRegistryDecision, } from "../runs/approval-registry.js";
+import { buildToolCallIdempotencyKey, findDuplicateToolCall, getAllowRepeatReason, isDedupeTargetTool, rejectsDuplicateAsUnchangedRecovery, recordMessageLedgerEvent, } from "../runs/message-ledger.js";
 import { appendRunEvent, cancelRootRun, getRootRun, hasActiveRequestGroupRuns, setRunStepStatus, updateRunStatus, } from "../runs/store.js";
-import { buildWebRetrievalPolicyDecision } from "../runs/web-retrieval-policy.js";
+import { buildWebRetrievalPolicyDecision, buildWebRetrievalTransitionReceipt, } from "../runs/web-retrieval-policy.js";
 import { acquireAgentCapabilityRateLimit, evaluateAgentToolCapabilityPolicy, } from "../security/capability-isolation.js";
 import { isToolExtensionSelectable } from "../security/extension-governance.js";
 import { evaluateAndRecordToolPolicy, sanitizePolicyDenialForUser, } from "../security/tool-policy.js";
+import { UNTRUSTED_EVIDENCE_SOURCE_KINDS } from "../security/trust-boundary.js";
+import { executeToolWithSideEffectLedger } from "./side-effect-runtime.js";
 const log = createLogger("tools:dispatcher");
+export function requiresApprovalAtExecutionBoundary(input) {
+    if (requiresDefaultYeonjangToolApproval(input.tool.name, input.productParameters))
+        return true;
+    if (input.approvalMode === "off")
+        return false;
+    return (input.tool.requiresApproval ||
+        APPROVAL_REQUIRED_TOOL_NAMES.has(input.tool.name) ||
+        input.capabilityApprovalRequired);
+}
+function safeDispatcherErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
+function isRemovedWebSearchToolName(toolName) {
+    const normalized = toolName.trim().toLowerCase().replaceAll("-", "_");
+    return normalized === "web.search"
+        || normalized === "search_web"
+        || normalized === "search.web"
+        || normalized === "browser_search"
+        || normalized === "browser.search"
+        || normalized === "browser.web_search"
+        || normalized === "browser.internet_search"
+        || normalized === "browser.browse_web"
+        || normalized === "browser.web_browse"
+        || normalized === "browser.google_search"
+        || normalized === "web_browse"
+        || normalized === "web.browse"
+        || normalized === "internet_browse"
+        || normalized === "internet.browse";
+}
+function summarizeAuditParams(params) {
+    const fields = Object.entries(params)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([name, value]) => ({
+        name,
+        type: Array.isArray(value) ? "array" : value === null ? "null" : typeof value,
+    }));
+    return JSON.stringify({ fields });
+}
+function buildRuntimeToolContext(input) {
+    const { ctx, config } = input;
+    const securityConfig = ctx.securityConfig ?? config.security;
+    const mqttConfig = ctx.mqttConfig ?? config.mqtt;
+    const searchConfig = ctx.searchConfig ?? config.search;
+    const memoryConfig = ctx.memoryConfig ?? config.memory;
+    if (!securityConfig || !mqttConfig || !searchConfig || !memoryConfig) {
+        throw new Error("tool runtime config snapshot is incomplete");
+    }
+    return {
+        securityConfig,
+        runtimeToolContext: {
+            ...ctx,
+            mqttConfig,
+            securityConfig,
+            searchConfig,
+            memoryConfig,
+            ...(input.yeonjangBrowserFocusExecutionAdmissionIssuer
+                ? {
+                    yeonjangBrowserFocusExecutionAdmissionIssuer: input.yeonjangBrowserFocusExecutionAdmissionIssuer,
+                }
+                : {}),
+        },
+    };
+}
 function rememberApprovalContinuity(runId, params) {
     try {
         const run = getRootRun(runId);
@@ -26,7 +93,8 @@ function rememberApprovalContinuity(runId, params) {
         });
     }
     catch (error) {
-        log.warn(`approval continuity update failed: ${error instanceof Error ? error.message : String(error)}`);
+        const message = safeDispatcherErrorMessage(error);
+        log.warn(`approval continuity update failed: ${message}`);
     }
 }
 function describeApprovalDenial(toolName, kind, reason) {
@@ -70,10 +138,20 @@ function describeApprovalDenial(toolName, kind, reason) {
 }
 export class ToolDispatcher {
     tools = new Map();
+    toolEvidenceSourceKinds = new Map();
+    toolEvidenceSourceResolvers = new Map();
     runApprovalScopes = new Map();
-    runSingleApprovalScopes = new Set();
+    runSingleApprovalScopes = new Map();
+    pendingInteractionGrants = new Map();
+    config;
+    productParameters;
+    yeonjangBrowserFocusExecutionAdmissionIssuer;
     pendingInteractionKinds = new Map();
-    constructor() {
+    constructor(dependencies) {
+        this.config = dependencies.config;
+        this.productParameters = dependencies.productParameters;
+        this.yeonjangBrowserFocusExecutionAdmissionIssuer =
+            dependencies.yeonjangBrowserFocusExecutionAdmissionIssuer;
         eventBus.on("run.completed", ({ run }) => {
             this.clearApprovalScopesForCompletedRun(run.id);
         });
@@ -90,6 +168,7 @@ export class ToolDispatcher {
     clearApprovalScopesForCompletedRun(runId) {
         const ownerKey = this.getApprovalOwnerKey(runId);
         this.pendingInteractionKinds.delete(runId);
+        this.pendingInteractionGrants.delete(runId);
         if (hasActiveRequestGroupRuns(ownerKey))
             return;
         this.runApprovalScopes.delete(ownerKey);
@@ -97,18 +176,41 @@ export class ToolDispatcher {
     }
     register(tool) {
         this.tools.set(tool.name, tool);
+        this.toolEvidenceSourceKinds.set(tool.name, tool.evidenceSourceKind ?? "tool");
+        if (tool.resolveEvidenceSourceKind) {
+            this.toolEvidenceSourceResolvers.set(tool.name, tool.resolveEvidenceSourceKind);
+        }
+        else {
+            this.toolEvidenceSourceResolvers.delete(tool.name);
+        }
         log.debug(`Registered tool: ${tool.name} (${tool.riskLevel})`);
     }
-    grantRunApprovalScope(runId) {
+    grantRunApprovalScope(runId, toolName, params) {
         const ownerKey = this.getApprovalOwnerKey(runId);
-        this.runSingleApprovalScopes.delete(ownerKey);
-        this.runApprovalScopes.set(ownerKey, "allow_run");
-    }
-    grantRunSingleApproval(runId) {
-        const ownerKey = this.getApprovalOwnerKey(runId);
-        if (this.runApprovalScopes.get(ownerKey) === "allow_run")
+        const normalizedToolName = toolName.trim();
+        if (!normalizedToolName || !params)
             return;
-        this.runSingleApprovalScopes.add(ownerKey);
+        const paramsHash = hashApprovalParams(params);
+        this.runSingleApprovalScopes.get(ownerKey)?.get(normalizedToolName)?.delete(paramsHash);
+        const approvedTools = this.runApprovalScopes.get(ownerKey) ?? new Map();
+        const approvedParams = approvedTools.get(normalizedToolName) ?? new Set();
+        approvedParams.add(paramsHash);
+        approvedTools.set(normalizedToolName, approvedParams);
+        this.runApprovalScopes.set(ownerKey, approvedTools);
+    }
+    grantRunSingleApproval(runId, toolName, params) {
+        const ownerKey = this.getApprovalOwnerKey(runId);
+        const normalizedToolName = toolName.trim();
+        if (!normalizedToolName || !params)
+            return;
+        const paramsHash = hashApprovalParams(params);
+        if (this.runApprovalScopes.get(ownerKey)?.get(normalizedToolName)?.has(paramsHash))
+            return;
+        const approvedTools = this.runSingleApprovalScopes.get(ownerKey) ?? new Map();
+        const approvedParams = approvedTools.get(normalizedToolName) ?? new Set();
+        approvedParams.add(paramsHash);
+        approvedTools.set(normalizedToolName, approvedParams);
+        this.runSingleApprovalScopes.set(ownerKey, approvedTools);
     }
     registerAll(tools) {
         for (const tool of tools)
@@ -116,6 +218,8 @@ export class ToolDispatcher {
     }
     unregister(name) {
         this.tools.delete(name);
+        this.toolEvidenceSourceKinds.delete(name);
+        this.toolEvidenceSourceResolvers.delete(name);
     }
     getAll(options = {}) {
         const tools = [...this.tools.values()];
@@ -163,21 +267,87 @@ export class ToolDispatcher {
         return tool.availableSources == null || tool.availableSources.includes(source);
     }
     async dispatch(name, params, ctx) {
+        if (isRemovedWebSearchToolName(name)) {
+            const startedAt = Date.now();
+            const requestGroupId = ctx.requestGroupId ?? getRootRun(ctx.runId)?.requestGroupId ?? ctx.runId;
+            const result = {
+                success: false,
+                output: "검색 기반 웹서치는 제거되었습니다. 정확한 URL, 허용된 외부 API, MCP, Skill 또는 연장을 통해 근거를 확보해야 합니다.",
+                error: "WEB_SEARCH_REMOVED",
+                details: {
+                    kind: "removed_capability",
+                    reasonCode: "web_search_removed",
+                    toolName: name,
+                    allowedAlternatives: ["web_fetch_direct_url", "external_api", "mcp", "skill", "yeonjang"],
+                },
+            };
+            this.writeAudit(ctx, name, params, result, Date.now() - startedAt, false);
+            recordMessageLedgerEvent({
+                runId: ctx.runId,
+                requestGroupId,
+                sessionKey: ctx.sessionId,
+                channel: ctx.source,
+                eventKind: "tool_failed",
+                idempotencyKey: `removed-web-search:${ctx.runId}:${createHash("sha256").update(name).digest("hex").slice(0, 24)}`,
+                status: "failed",
+                summary: "Search-based web discovery is removed",
+                detail: {
+                    toolName: name,
+                    reasonCode: "web_search_removed",
+                    capabilityStatus: "removed_capability",
+                },
+            });
+            return result;
+        }
         if ((name === "web_search" || name === "web_fetch") && !ctx.allowWebAccess) {
             return {
                 success: false,
-                output: "웹 검색은 사용자가 명시적으로 요청했거나 최신/외부 정보 확인이 필요한 경우에만 허용됩니다.",
+                output: "웹 문서 조회는 사용자가 명시적으로 요청했거나 최신/외부 정보 확인이 필요한 경우에만 허용됩니다.",
                 error: "WEB_ACCESS_DISABLED_BY_POLICY",
             };
         }
         const tool = this.tools.get(name);
         if (!tool) {
-            return {
+            const startedAt = Date.now();
+            const requestGroupId = ctx.requestGroupId ?? getRootRun(ctx.runId)?.requestGroupId ?? ctx.runId;
+            const result = {
                 success: false,
-                output: `Unknown tool: "${name}"`,
-                error: `Tool "${name}" is not registered`,
+                output: "The requested tool capability is not registered.",
+                error: "tool_not_registered",
+                details: {
+                    kind: "unsupported_capability",
+                    reasonCode: "tool_not_registered",
+                    toolName: name,
+                },
             };
+            this.writeAudit(ctx, name, params, result, Date.now() - startedAt, false);
+            const toolFingerprint = createHash("sha256").update(name).digest("hex").slice(0, 24);
+            recordMessageLedgerEvent({
+                runId: ctx.runId,
+                requestGroupId,
+                sessionKey: ctx.sessionId,
+                channel: ctx.source,
+                eventKind: "tool_failed",
+                idempotencyKey: `unsupported-tool:${ctx.runId}:${toolFingerprint}`,
+                status: "failed",
+                summary: "Requested tool capability is not registered",
+                detail: {
+                    toolName: name,
+                    reasonCode: "tool_not_registered",
+                    capabilityStatus: "unsupported_capability",
+                },
+            });
+            return result;
         }
+        const { runtimeToolContext, securityConfig } = buildRuntimeToolContext({
+            ctx,
+            config: this.config,
+            ...(this.yeonjangBrowserFocusExecutionAdmissionIssuer
+                ? {
+                    yeonjangBrowserFocusExecutionAdmissionIssuer: this.yeonjangBrowserFocusExecutionAdmissionIssuer,
+                }
+                : {}),
+        });
         if (!this.isToolAvailableForSource(tool, ctx.source)) {
             return {
                 success: false,
@@ -218,17 +388,27 @@ export class ToolDispatcher {
                 params: idempotencyParams,
             });
             if (duplicate) {
+                const rejectUnchangedRecovery = rejectsDuplicateAsUnchangedRecovery(name);
                 const result = {
-                    success: true,
-                    output: webRetrievalPolicy
-                        ? `${name} 중복 호출을 생략했습니다. 같은 요청에서 동일한 웹 검색/수집 근거가 이미 실행됐습니다. dedupeKey=${webRetrievalPolicy.dedupeKey}`
-                        : `${name} 중복 호출을 생략했습니다. 같은 요청에서 동일 파라미터로 이미 실행된 도구입니다.`,
+                    success: !rejectUnchangedRecovery,
+                    output: rejectUnchangedRecovery
+                        ? `${name}의 동일 target/method/params 재시도를 실행 전에 거부했습니다. LLM recovery에서 다른 허용 전략을 선택해야 합니다.`
+                        : webRetrievalPolicy
+                            ? `${name} 중복 호출을 생략했습니다. 같은 요청에서 동일한 외부 페이지 수집 근거가 이미 실행됐습니다. dedupeKey=${webRetrievalPolicy.dedupeKey}`
+                            : `${name} 중복 호출을 생략했습니다. 같은 요청에서 동일 파라미터로 이미 실행된 도구입니다.`,
+                    ...(rejectUnchangedRecovery ? { error: "recovery_strategy_unchanged" } : {}),
                     details: {
-                        kind: "duplicate_tool_suppressed",
+                        kind: rejectUnchangedRecovery
+                            ? "duplicate_tool_rejected"
+                            : "duplicate_tool_suppressed",
+                        ...(rejectUnchangedRecovery
+                            ? { reasonCode: "recovery_strategy_unchanged" }
+                            : {}),
                         previousEventId: duplicate.id,
                         previousStatus: duplicate.status,
                         ...(webRetrievalPolicy ? { webRetrievalPolicy } : {}),
                     },
+                    evidenceSource: this.buildEvidenceSourceReceipt(name, idempotencyParams, ctx),
                 };
                 recordMessageLedgerEvent({
                     runId: ctx.runId,
@@ -310,7 +490,7 @@ export class ToolDispatcher {
             this.writeAudit(ctx, name, params, result, Date.now() - startMs, false, "policy:capability");
             return result;
         }
-        const approvalRequired = this.shouldRequireApproval(tool, ctx);
+        const approvalRequired = this.shouldRequireApproval(tool, securityConfig.approvalMode, capabilityDecision.approvalRequired);
         let approvedBy;
         let approvalGrant;
         if (approvalRequired) {
@@ -342,6 +522,7 @@ export class ToolDispatcher {
             riskLevel: tool.riskLevel,
             params,
             ctx,
+            security: securityConfig,
             ...(approvalGrant?.approvalId ? { approvalId: approvalGrant.approvalId } : {}),
             ...(approvalGrant?.decision && approvalGrant.decision !== "deny"
                 ? { approvalDecision: approvalGrant.decision }
@@ -381,7 +562,7 @@ export class ToolDispatcher {
             rateLimitLease = acquireAgentCapabilityRateLimit({ decision: capabilityDecision });
         }
         catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = safeDispatcherErrorMessage(error);
             result = {
                 success: false,
                 output: "에이전트 capability rate limit 때문에 도구 실행을 시작하지 않았습니다.",
@@ -407,7 +588,27 @@ export class ToolDispatcher {
             return result;
         }
         try {
-            result = await tool.execute(params, ctx);
+            const authorizedContext = {
+                ...runtimeToolContext,
+                authorizationReceipt: Object.freeze({
+                    policyDecisionId: policyDecision.id,
+                    toolName: name,
+                    paramsHash: policyDecision.paramsHash,
+                    policyDecision: "allow",
+                    permissionScope: policyDecision.permissionScope,
+                    runId: ctx.runId,
+                    requestGroupId,
+                    ...(approvalGrant?.decision && approvalGrant.decision !== "deny"
+                        ? { approvalDecision: approvalGrant.decision }
+                        : {}),
+                    ...(approvalGrant?.approvalId ? { approvalId: approvalGrant.approvalId } : {}),
+                }),
+            };
+            result = await executeToolWithSideEffectLedger({
+                tool,
+                params,
+                ctx: authorizedContext,
+            });
             if (webRetrievalPolicy) {
                 result = {
                     ...result,
@@ -423,14 +624,29 @@ export class ToolDispatcher {
             }
         }
         catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = safeDispatcherErrorMessage(err);
             log.error(`Tool "${name}" threw an error: ${msg}`);
             result = { success: false, output: `Tool error: ${msg}`, error: msg };
         }
         finally {
             rateLimitLease?.release();
         }
+        const evidenceSourceResolution = this.resolveEvidenceSourceKind(name, result);
+        if (!evidenceSourceResolution.valid) {
+            result = {
+                success: false,
+                output: "Tool evidence provenance could not be verified.",
+                error: "tool_evidence_source_kind_invalid",
+            };
+        }
+        result = {
+            ...result,
+            evidenceSource: this.buildEvidenceSourceReceipt(name, idempotencyParams, ctx, evidenceSourceResolution.sourceKind),
+        };
         const durationMs = Date.now() - startMs;
+        const webRetrievalTransition = webRetrievalPolicy
+            ? buildWebRetrievalTransitionReceipt({ toolName: name, result, policy: webRetrievalPolicy })
+            : null;
         eventBus.emit("tool.after", {
             sessionId: ctx.sessionId,
             runId: ctx.runId,
@@ -454,9 +670,45 @@ export class ToolDispatcher {
                 durationMs,
                 ...(result.error ? { error: result.error } : {}),
                 ...(webRetrievalPolicy ? { webRetrievalPolicy } : {}),
+                ...(webRetrievalTransition ? { webRetrievalTransition } : {}),
             },
         });
         return result;
+    }
+    buildEvidenceSourceReceipt(toolName, params, ctx, resolvedSourceKind) {
+        const sourceKind = resolvedSourceKind ?? this.toolEvidenceSourceKinds.get(toolName) ?? "tool";
+        const fingerprint = createHash("sha256")
+            .update([
+            sourceKind,
+            toolName,
+            ctx.runId,
+            ctx.requestGroupId ?? ctx.runId,
+            hashApprovalParams(params),
+        ].join("\n"))
+            .digest("hex");
+        return Object.freeze({
+            sourceKind,
+            sourceRef: `tool-result:${sourceKind}:${fingerprint}`,
+            trustClass: "untrusted_external",
+            instructionIsolation: "data_only",
+        });
+    }
+    resolveEvidenceSourceKind(toolName, result) {
+        const declared = this.toolEvidenceSourceKinds.get(toolName) ?? "tool";
+        const resolver = this.toolEvidenceSourceResolvers.get(toolName);
+        if (!resolver)
+            return { valid: true, sourceKind: declared };
+        try {
+            const resolved = resolver(result);
+            if (UNTRUSTED_EVIDENCE_SOURCE_KINDS.includes(resolved)) {
+                return { valid: true, sourceKind: resolved };
+            }
+        }
+        catch {
+            // A trusted adapter resolver still fails closed when its provenance cannot be verified.
+        }
+        log.debug(`Tool evidence source resolver rejected: ${toolName}`);
+        return { valid: false, sourceKind: declared };
     }
     getInteractionGuidance(kind, toolName, params) {
         const action = describeApprovalAction(toolName, params);
@@ -470,22 +722,18 @@ export class ToolDispatcher {
         }
         return "실행 내용을 확인한 뒤 승인하거나 취소해 주세요.";
     }
-    shouldRequireApproval(tool, ctx) {
-        const approvalMode = getConfig().security.approvalMode;
-        if (approvalMode === "off")
-            return false;
-        const capabilityDecision = evaluateAgentToolCapabilityPolicy({
-            toolName: tool.name,
-            riskLevel: tool.riskLevel,
-            ctx,
+    shouldRequireApproval(tool, approvalMode, capabilityApprovalRequired) {
+        return requiresApprovalAtExecutionBoundary({
+            tool,
+            approvalMode,
+            capabilityApprovalRequired,
+            ...(this.productParameters ? { productParameters: this.productParameters } : {}),
         });
-        return (tool.requiresApproval ||
-            APPROVAL_REQUIRED_TOOL_NAMES.has(tool.name) ||
-            capabilityDecision.approvalRequired);
     }
     async requestApproval(toolName, params, ctx, riskLevel) {
         const ownerKey = this.getApprovalOwnerKey(ctx.runId);
-        if (this.runApprovalScopes.get(ownerKey) === "allow_run") {
+        const paramsHash = hashApprovalParams(params);
+        if (this.runApprovalScopes.get(ownerKey)?.get(toolName)?.has(paramsHash)) {
             recordMessageLedgerEvent({
                 runId: ctx.runId,
                 requestGroupId: ctx.requestGroupId ?? ownerKey,
@@ -498,8 +746,8 @@ export class ToolDispatcher {
             });
             return Promise.resolve({ decision: "allow_run" });
         }
-        if (this.runSingleApprovalScopes.has(ownerKey)) {
-            this.runSingleApprovalScopes.delete(ownerKey);
+        if (this.runSingleApprovalScopes.get(ownerKey)?.get(toolName)?.has(paramsHash)) {
+            this.runSingleApprovalScopes.get(ownerKey)?.get(toolName)?.delete(paramsHash);
             recordMessageLedgerEvent({
                 runId: ctx.runId,
                 requestGroupId: ctx.requestGroupId ?? ownerKey,
@@ -569,6 +817,9 @@ export class ToolDispatcher {
             toolName,
             kind,
             stepKey,
+            params,
+            requestGroupId: ctx.requestGroupId ?? ownerKey,
+            ...(ctx.agentId ? { agentId: ctx.agentId } : {}),
         });
         appendRunEvent(ctx.runId, kind === "screen_confirmation" ? `${toolName} 화면 준비 확인 요청` : `${toolName} 승인 요청`);
         setRunStepStatus(ctx.runId, stepKey, "running", summary);
@@ -579,6 +830,7 @@ export class ToolDispatcher {
             lastGoodState: summary,
         });
         return new Promise((resolve) => {
+            this.pendingInteractionGrants.set(ctx.runId, resolve);
             let resolved = false;
             const timeout = kind === "screen_confirmation"
                 ? null
@@ -587,6 +839,7 @@ export class ToolDispatcher {
                         resolved = true;
                         log.warn(`Approval timeout for approvalId=${approval.id} tool="${toolName}"`);
                         expireApprovalRegistryRequest(approval.id);
+                        this.pendingInteractionGrants.delete(ctx.runId);
                         this.finishApproval(ctx.runId, toolName, "deny", "timeout");
                         eventBus.emit("approval.resolved", {
                             approvalId: approval.id,
@@ -612,6 +865,7 @@ export class ToolDispatcher {
                     decisionSource: "abort",
                 });
                 this.pendingInteractionKinds.delete(ctx.runId);
+                this.pendingInteractionGrants.delete(ctx.runId);
                 resolve({ decision: "deny", approvalId: approval.id });
             }, { once: true });
             eventBus.emit("approval.request", {
@@ -637,7 +891,13 @@ export class ToolDispatcher {
                             return;
                         }
                         if (decision !== "deny") {
-                            const consumed = consumeApprovalRegistryDecision(approval.id);
+                            const consumed = consumeApprovalRegistryDecision(approval.id, Date.now(), {
+                                runId: ctx.runId,
+                                requestGroupId: ctx.requestGroupId ?? ownerKey,
+                                toolName,
+                                params,
+                                agentId: ctx.agentId ?? null,
+                            });
                             if (!consumed.accepted) {
                                 log.warn(`Approved decision was not consumable approvalId=${approval.id} status=${consumed.status}`);
                                 return;
@@ -646,6 +906,7 @@ export class ToolDispatcher {
                         resolved = true;
                         if (timeout)
                             clearTimeout(timeout);
+                        this.pendingInteractionGrants.delete(ctx.runId);
                         this.finishApproval(ctx.runId, toolName, decision, reason);
                         resolve({ decision, approvalId: approval.id });
                     }
@@ -655,7 +916,8 @@ export class ToolDispatcher {
     }
     resolvePendingInteraction(runId, decision) {
         const interaction = this.pendingInteractionKinds.get(runId);
-        if (!interaction)
+        const resolveGrant = this.pendingInteractionGrants.get(runId);
+        if (!interaction || !resolveGrant)
             return false;
         if (interaction.approvalId) {
             const decisionResult = resolveApprovalRegistryDecision({
@@ -667,12 +929,23 @@ export class ToolDispatcher {
             if (!decisionResult.accepted)
                 return false;
             if (decision !== "deny") {
-                const consumed = consumeApprovalRegistryDecision(interaction.approvalId);
+                const consumed = consumeApprovalRegistryDecision(interaction.approvalId, Date.now(), {
+                    runId,
+                    requestGroupId: interaction.requestGroupId,
+                    toolName: interaction.toolName,
+                    params: interaction.params,
+                    agentId: interaction.agentId ?? null,
+                });
                 if (!consumed.accepted)
                     return false;
             }
         }
+        this.pendingInteractionGrants.delete(runId);
         this.finishApproval(runId, interaction.toolName, decision);
+        resolveGrant({
+            decision,
+            ...(interaction.approvalId ? { approvalId: interaction.approvalId } : {}),
+        });
         return true;
     }
     listPendingInteractions() {
@@ -712,7 +985,9 @@ export class ToolDispatcher {
             detail: { toolName, kind, decision, reason },
         });
         if (decision === "allow_run") {
-            this.runApprovalScopes.set(ownerKey, "allow_run");
+            if (interaction) {
+                this.grantRunApprovalScope(runId, toolName, interaction.params);
+            }
             const summary = kind === "screen_confirmation"
                 ? `${toolName} 실행 전 준비 확인을 이 요청 전체에 대해 마쳤습니다.`
                 : `${toolName} 실행을 이 요청 전체에 대해 허용했습니다.`;
@@ -764,10 +1039,12 @@ export class ToolDispatcher {
                 channel: ctx.source,
                 source: "agent",
                 tool_name: toolName,
-                params: JSON.stringify(params),
-                output: result.output.length > 4000
-                    ? `${result.output.slice(0, 4000)}\n…(truncated)`
-                    : result.output,
+                params: summarizeAuditParams(params),
+                output: JSON.stringify({
+                    success: result.success,
+                    hasOutput: result.output.length > 0,
+                    hasError: Boolean(result.error),
+                }),
                 result: result.error === "denied" ? "denied" : result.success ? "success" : "failed",
                 duration_ms: durationMs,
                 approval_required: approvalRequired ? 1 : 0,
@@ -781,19 +1058,6 @@ export class ToolDispatcher {
             // best-effort
         }
     }
-}
-export const toolDispatcher = new ToolDispatcher();
-export function grantRunApprovalScope(runId) {
-    toolDispatcher.grantRunApprovalScope(runId);
-}
-export function grantRunSingleApproval(runId) {
-    toolDispatcher.grantRunSingleApproval(runId);
-}
-export function resolvePendingInteraction(runId, decision) {
-    return toolDispatcher.resolvePendingInteraction(runId, decision);
-}
-export function listPendingInteractions() {
-    return toolDispatcher.listPendingInteractions();
 }
 function describeApprovalAction(toolName, params) {
     switch (toolName) {

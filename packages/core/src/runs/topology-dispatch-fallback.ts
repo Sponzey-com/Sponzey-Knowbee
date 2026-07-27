@@ -8,6 +8,7 @@ import type {
   DelegatedTaskDispatchOutcome,
   DelegatedTaskDispatchResult,
 } from "./orchestration-dispatch.js"
+import type { LoopDirective } from "./loop-directive.js"
 
 export const TOPOLOGY_DISPATCH_FOLLOWUP_ACTIONS = [
   "redelegate",
@@ -79,6 +80,10 @@ function uniqueStrings(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value?.trim())))]
 }
 
+function outcomeAgentName(outcome: DelegatedTaskDispatchOutcome): string | undefined {
+  return outcome.agentName?.trim() || undefined
+}
+
 function isTopologyOutcome(outcome: DelegatedTaskDispatchOutcome): boolean {
   return outcome.agentSource === "topology" || Boolean(outcome.topologyId?.trim() || outcome.topologyExecutorId?.trim())
 }
@@ -105,14 +110,14 @@ export function resolveTopologyDispatchFollowupDecision(
     .filter((executorId) => !attemptedExecutorIds.has(executorId))
   const failedReasonCodes = uniqueStrings(failedOrSkipped.map((outcome) => outcome.reasonCode))
   const failedExecutorIds = uniqueStrings(failedOrSkipped.map((outcome) => outcome.agentId))
-  const failedExecutorNames = uniqueStrings(failedOrSkipped.map((outcome) => outcome.agentDisplayName))
+  const failedExecutorNames = uniqueStrings(failedOrSkipped.map(outcomeAgentName))
   const blockedByPreflight = failedReasonCodes.some(isPromptPreflightReason)
 
   if (alternativeExecutorIds.length > 0) {
     return {
       action: "redelegate",
       reasonCode: "redelegate_after_delegation_failure",
-      summary: "토폴로지 위임 실패 후 대체 가능한 direct child 실행자 후보가 있어 재위임 판단이 필요합니다.",
+      summary: "서브 에이전트 위임 실패 후 대체 가능한 직속 하위 서브 에이전트 후보가 있어 재위임 판단이 필요합니다.",
       failedExecutorIds,
       failedExecutorNames,
       failedReasonCodes,
@@ -127,7 +132,7 @@ export function resolveTopologyDispatchFollowupDecision(
     return {
       action: "self_solve",
       reasonCode: "self_solve_after_delegation_failure",
-      summary: "토폴로지 위임이 실패했고 대체 direct child 후보가 없어 현재 실행자가 자체 처리합니다.",
+      summary: "서브 에이전트 위임이 실패했고 대체 직속 하위 후보가 없어 현재 에이전트가 자체 처리합니다.",
       failedExecutorIds,
       failedExecutorNames,
       failedReasonCodes,
@@ -140,13 +145,43 @@ export function resolveTopologyDispatchFollowupDecision(
   return {
     action: "fail_with_reason",
     reasonCode: "final_failure_after_exhaustion",
-    summary: "토폴로지 위임이 실패했고 대체 위임이나 자체 처리 경로가 없습니다.",
+    summary: "서브 에이전트 위임이 실패했고 대체 위임이나 자체 처리 경로가 없습니다.",
     failedExecutorIds,
     failedExecutorNames,
     failedReasonCodes,
     blockedByPreflight,
     alternativeExecutorIds,
     rootLoopContinuation: "blocked",
+  }
+}
+
+export function buildTopologyDispatchFollowupDirective(
+  decision: TopologyDispatchFollowupDecision,
+): LoopDirective | null {
+  if (decision.action === "self_solve") return null
+
+  const common = {
+    preview: "",
+    summary: decision.summary,
+    userMessage: decision.summary,
+    userMessageSource: "runtime_deterministic" as const,
+    eventLabel: `topology dispatch follow-up terminal directive:${decision.action}`,
+  }
+
+  if (decision.action === "fail_with_reason") {
+    return {
+      kind: "stop",
+      ...common,
+      reason: "서브 에이전트 위임 실패 후 대체 위임이나 자체 처리 경로가 없습니다.",
+    }
+  }
+
+  return {
+    kind: "awaiting_user",
+    ...common,
+    reason: decision.action === "redelegate"
+      ? "서브 에이전트 위임 실패 후 대체 직속 하위 서브 에이전트 후보 검토가 필요합니다."
+      : "서브 에이전트 위임 실패 후 사용자 확인이 필요합니다.",
   }
 }
 
@@ -258,7 +293,7 @@ export function recordTopologyDispatchFollowupTrace(
         taskId: outcome.taskId,
         nodeId,
         executorId: outcome.agentId,
-        executorName: outcome.agentDisplayName,
+        executorName: outcomeAgentName(outcome),
       },
       at: now + sequence,
       sequence: sequence++,
@@ -275,7 +310,7 @@ export function recordTopologyDispatchFollowupTrace(
         taskId: outcome.taskId,
         nodeId,
         executorId: outcome.agentId,
-        executorName: outcome.agentDisplayName,
+        executorName: outcomeAgentName(outcome),
         failureCode: outcome.reasonCode,
         status: outcome.status,
         summary: outcome.summary,
@@ -376,7 +411,7 @@ export function recordTopologyDispatchFollowupTrace(
         JSON.stringify({
           reasonCode: outcome.reasonCode ?? null,
           executorId: outcome.agentId ?? null,
-          executorName: outcome.agentDisplayName ?? null,
+          executorName: outcomeAgentName(outcome) ?? null,
         }),
       )
       db.prepare(
@@ -424,7 +459,7 @@ export function recordTopologyDispatchFollowupTrace(
           JSON.stringify({
             nodeId,
             executorId: outcome.agentId,
-            executorName: outcome.agentDisplayName,
+            executorName: outcomeAgentName(outcome),
             reasonCode: outcome.reasonCode,
             recommendedAction: input.decision.summary,
           }),

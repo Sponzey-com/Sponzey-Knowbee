@@ -1,5 +1,6 @@
 import { type SetupDraft } from "../control-plane/index.js";
 import { type AIProvider, type ProviderAuditTrace } from "../ai/index.js";
+import type { KnowbeeConfig } from "../config/types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 export interface RouteActionInput {
     preferredTarget?: string | undefined;
@@ -19,7 +20,7 @@ export interface ResolvedRunRoute {
 }
 export interface RouteResolutionOptions {
 }
-export declare function resolveRunRoute(input: RouteActionInput): ResolvedRunRoute;
+export declare function resolveRunRoute(input: RouteActionInput, config: KnowbeeConfig): ResolvedRunRoute;
 export declare function isExplicitProviderRouteTarget(value: string | undefined): boolean;
 export declare function resolveRunRouteFromDraft(draft: SetupDraft, input: RouteActionInput, options?: RouteResolutionOptions): ResolvedRunRoute;
 //# sourceMappingURL=routing.d.ts.map

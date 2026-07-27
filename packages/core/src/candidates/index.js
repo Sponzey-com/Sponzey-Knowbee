@@ -1,4 +1,5 @@
 import { recordLatencyMetric } from "../observability/latency.js";
+import { redactLogText } from "../logger/index.js";
 const STAGE_ORDER = {
     fast: 0,
     store: 1,
@@ -16,6 +17,12 @@ function timeoutSignal(timeoutMs) {
 function isFastPathCandidate(candidate) {
     return (candidate.source === "explicit_id" || candidate.source === "structured_key")
         && candidate.requiresFinalDecision === false;
+}
+function candidateProviderErrorTrace(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    if (raw === "candidate provider timeout")
+        return { timedOut: true };
+    return { error: redactLogText(raw) };
 }
 async function runProviderWithTimeout(provider, input, params) {
     const started = params.now();
@@ -44,9 +51,7 @@ async function runProviderWithTimeout(provider, input, params) {
             durationMs: params.now() - started,
             candidateCount: 0,
             candidates: [],
-            ...(error instanceof Error && error.message === "candidate provider timeout"
-                ? { timedOut: true }
-                : { error: error instanceof Error ? error.message : String(error) }),
+            ...candidateProviderErrorTrace(error),
         };
     }
     finally {
@@ -182,49 +187,12 @@ export function createStoreCandidateProvider(params) {
         },
     };
 }
-export function createMemoryVectorProvider(params) {
-    return {
-        id: params.id ?? "memory-vector-provider",
-        source: "memory_vector",
-        stage: "slow",
-        async find(input, context) {
-            if (params.enabled === false)
-                return [];
-            const query = input.semanticQuery?.trim();
-            if (!query)
-                return [];
-            const results = await params.search(input, context.signal);
-            return results.map((result) => ({
-                candidateId: result.id,
-                candidateKind: "memory",
-                candidateReason: "semantic_candidate",
-                source: "memory_vector",
-                payload: result.payload,
-                matchedKeys: ["semantic_candidate"],
-                requiresFinalDecision: true,
-                score: {
-                    kind: "candidate_score",
-                    metric: "vector",
-                    value: result.score ?? 0,
-                },
-            }));
-        },
-    };
-}
 export function decideCandidateFinal(params) {
     if (!params.candidate) {
         return {
             kind: "new",
             finalDecisionSource: "safe_fallback",
             reasonCode: "no_candidate",
-        };
-    }
-    if (params.candidate.candidateReason === "semantic_candidate" && params.finalDecisionSource !== "contract_ai" && params.finalDecisionSource !== "user_choice") {
-        return {
-            kind: "clarify",
-            finalDecisionSource: "safe_fallback",
-            selectedCandidate: params.candidate,
-            reasonCode: "semantic_candidate_requires_contract_or_user_choice",
         };
     }
     return {

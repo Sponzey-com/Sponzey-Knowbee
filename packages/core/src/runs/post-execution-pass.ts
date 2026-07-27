@@ -23,6 +23,7 @@ import type { RecoveryBudgetUsage } from "./recovery-budget.js"
 import type { FailedCommandTool, SuccessfulToolEvidence } from "./recovery.js"
 import type { RecoveryRetryApplicationDependencies } from "./retry-application.js"
 import type { FinalizationDependencies, FinalizationSource } from "./finalization.js"
+import { combineUserFacingTextSources, type UserFacingTextSource } from "./loop-directive.js"
 
 export type PostExecutionPassResult =
   | { kind: "break" }
@@ -38,6 +39,8 @@ export type PostExecutionPassResult =
   | {
       kind: "continue"
       preview: string
+      previewSource?: UserFacingTextSource
+      deferredPreviewDelivery?: boolean
       deliveryOutcome: DeliveryOutcome
     }
 
@@ -85,6 +88,8 @@ export async function runPostExecutionPass(
     source: FinalizationSource
     onChunk: RunChunkDeliveryHandler | undefined
     preview: string
+    previewSource?: UserFacingTextSource
+    deferredPreviewDelivery?: boolean
     originalRequest: string
     verificationRequest: string
     wantsDirectArtifactDelivery: boolean
@@ -181,6 +186,13 @@ export async function runPostExecutionPass(
   })
 
   let nextPreview = deliveryPass.preview
+  let nextPreviewSource = params.previewSource
+  if (deliveryPass.preview !== params.preview) {
+    nextPreviewSource = combineUserFacingTextSources([
+      ...(nextPreviewSource ? [nextPreviewSource] : []),
+      "runtime_deterministic",
+    ])
+  }
   if (deliveryPass.summaryToLog) {
     mergedDependencies.updateRunSummary(params.runId, deliveryPass.summaryToLog)
   }
@@ -235,6 +247,10 @@ export async function runPostExecutionPass(
 
   if (filesystemPostPassApplication.preview) {
     nextPreview = filesystemPostPassApplication.preview
+    nextPreviewSource = combineUserFacingTextSources([
+      ...(nextPreviewSource ? [nextPreviewSource] : []),
+      "runtime_deterministic",
+    ])
   }
 
   const reviewEntryPass = await moduleDependencies.runReviewEntryPass({
@@ -243,6 +259,7 @@ export async function runPostExecutionPass(
     source: params.source,
     onChunk: params.onChunk,
     preview: nextPreview,
+    ...(nextPreviewSource ? { previewSource: nextPreviewSource } : {}),
     ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
     persistRuntimePreview: params.activeWorkerRuntime,
     directDeliveryApplication: deliveryPass.directDeliveryApplication,
@@ -280,6 +297,8 @@ export async function runPostExecutionPass(
   return {
     kind: "continue",
     preview: nextPreview,
+    ...(nextPreviewSource ? { previewSource: nextPreviewSource } : {}),
+    ...(params.deferredPreviewDelivery ? { deferredPreviewDelivery: true } : {}),
     deliveryOutcome: deliveryPass.deliveryOutcome,
   }
 }

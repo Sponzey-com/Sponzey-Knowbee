@@ -43,6 +43,7 @@ export interface ConfigExportResult {
 }
 
 export interface PromptSourceExportResult {
+  exportId?: string
   exportPath: string
   checksum: string
   createdAt: number
@@ -61,6 +62,7 @@ export interface PromptSourceExportResult {
 }
 
 export interface PromptSourceImportResult {
+  exportId?: string
   exportPath: string
   imported: string[]
   skipped: string[]

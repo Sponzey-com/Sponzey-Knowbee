@@ -1,19 +1,28 @@
 import type { AgentContextMode } from "../agent/index.js";
-import type { TaskExecutionSemantics } from "../agent/intake.js";
-import { insertMessage } from "../db/index.js";
+import type { ResponseLanguageMode, TaskExecutionSemantics } from "../agent/intake.js";
+import type { insertMessage } from "../db/index.js";
 import type { AIProvider } from "../ai/index.js";
+import type { KnowbeeConfig } from "../config/types.js";
+import type { ArtifactStorageContext } from "../artifacts/lifecycle.js";
+import type { MemoryJournalRepository } from "../memory/journal.js";
 import { applyPostExecutionPassResult, applyRecoveryEntryPassResult, applyReviewCyclePassResult } from "./loop-pass-application.js";
-import { runExecutionAttemptPass } from "./execution-attempt-pass.js";
+import { runExecutionAttemptPass, type ExecutionAttemptPassResult } from "./execution-attempt-pass.js";
 import { runRecoveryEntryPass } from "./recovery-entry-pass.js";
 import { runPostExecutionPass } from "./post-execution-pass.js";
 import { runReviewCyclePass } from "./review-cycle-pass.js";
-import { logAssistantReply, type RunChunkDeliveryHandler } from "./delivery.js";
-import type { FinalizationDependencies, FinalizationSource } from "./finalization.js";
+import type { logAssistantReply, RunChunkDeliveryHandler } from "./delivery.js";
+import type { CanonicalPendingResponseConsumer, CanonicalPendingResponseStager, FinalizationDependencies, FinalizationSource } from "./finalization.js";
 import type { RecoveryBudgetUsage } from "./recovery-budget.js";
 import type { SuccessfulToolEvidence } from "./recovery.js";
 import type { TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js";
+import type { CanonicalCompletionOutcomeRecorder } from "./review-outcome-pass.js";
+import type { CanonicalDeliveryRecorder } from "./finalization.js";
+import type { FinalResponseIdentityContext } from "./final-response-renderer.js";
+import type { AdmittedCapabilityExecutionScope } from "./run-scoped-tool-admission.js";
+import type { WebExecutionState } from "../contracts/web-execution-state.js";
+import type { NextAttemptToolPolicy } from "./next-attempt-tool-policy.js";
 type RecoveryLimitStop = {
     summary: string;
     reason: string;
@@ -21,6 +30,8 @@ type RecoveryLimitStop = {
 } | null;
 export interface ExecutionCycleState {
     currentMessage: string;
+    requiredToolNames: string[];
+    nextAttemptToolPolicy?: NextAttemptToolPolicy;
     currentModel: string | undefined;
     currentProviderId: string | undefined;
     currentProvider: AIProvider | undefined;
@@ -32,6 +43,8 @@ export interface ExecutionCycleState {
     sawRealFilesystemMutation: boolean;
     filesystemMutationRecoveryAttempted: boolean;
     truncatedOutputRecoveryAttempted: boolean;
+    successfulTools: SuccessfulToolEvidence[];
+    webExecutionState: WebExecutionState;
 }
 export type ExecutionCyclePassResult = {
     kind: "break";
@@ -39,6 +52,24 @@ export type ExecutionCyclePassResult = {
     kind: "retry";
     state: ExecutionCycleState;
 };
+export interface CanonicalRecoveryReentryInput {
+    runId: string;
+    previousResult: string;
+    strategy: {
+        message: string;
+        model?: string | undefined;
+        providerId?: string | undefined;
+        targetId?: string | undefined;
+        targetLabel?: string | undefined;
+        workerRuntimeKind?: string | undefined;
+    };
+}
+export type CanonicalRecoveryReentryRecorder = (input: CanonicalRecoveryReentryInput) => Promise<{
+    ok: true;
+} | {
+    ok: false;
+    reasonCode: string;
+}>;
 interface ExecutionCyclePassDependencies {
     rememberRunFailure: (params: {
         runId: string;
@@ -69,10 +100,26 @@ interface ExecutionCyclePassDependencies {
         reason?: string;
         remainingItems?: string[];
     }>;
-    rememberRunApprovalScope: (runId: string) => void;
-    grantRunApprovalScope: (runId: string) => void;
-    grantRunSingleApproval: (runId: string) => void;
+    rememberRunApprovalScope: (runId: string, toolName: string) => void;
+    grantRunApprovalScope: (runId: string, toolName: string) => void;
+    grantRunSingleApproval: (runId: string, toolName: string) => void;
     onReviewError?: (message: string) => void;
+    recordCanonicalAttempt: (input: {
+        runId: string;
+        attempt: ExecutionAttemptPassResult;
+        successfulToolNames: string[];
+    }) => Promise<{
+        ok: true;
+        evidenceRefs?: string[];
+    } | {
+        ok: false;
+        reasonCode: string;
+    }>;
+    recordCanonicalRecoveryReentry: CanonicalRecoveryReentryRecorder;
+    recordCanonicalCompletionOutcome: CanonicalCompletionOutcomeRecorder;
+    recordCanonicalDelivery: CanonicalDeliveryRecorder;
+    stageCanonicalPendingResponse: CanonicalPendingResponseStager;
+    consumeCanonicalPendingResponse: CanonicalPendingResponseConsumer;
 }
 interface ExecutionCyclePassModuleDependencies {
     runExecutionAttemptPass: typeof runExecutionAttemptPass;
@@ -84,6 +131,8 @@ interface ExecutionCyclePassModuleDependencies {
     applyReviewCyclePassResult: typeof applyReviewCyclePassResult;
 }
 export declare function runExecutionCyclePass(params: {
+    artifactStorage: ArtifactStorageContext;
+    memoryJournal: MemoryJournalRepository;
     runId: string;
     sessionId: string;
     requestGroupId: string;
@@ -93,9 +142,15 @@ export declare function runExecutionCyclePass(params: {
     state: ExecutionCycleState;
     executionSemantics: TaskExecutionSemantics;
     originalRequest: string;
+    responseLanguageMode?: ResponseLanguageMode | undefined;
     memorySearchQuery: string;
+    admittedCapabilityExecutionScope?: AdmittedCapabilityExecutionScope | undefined;
+    scheduleId?: string;
+    includeScheduleMemory?: boolean;
+    config: KnowbeeConfig;
     verificationRequest: string;
     workDir: string;
+    finalResponseIdentityContext?: FinalResponseIdentityContext | undefined;
     toolsEnabled?: boolean;
     onDeliveryError?: (message: string) => void;
     abortExecutionStream: () => void;
@@ -109,6 +164,7 @@ export declare function runExecutionCyclePass(params: {
     pendingToolParams: Map<string, unknown>;
     filesystemMutationPaths: Set<string>;
     successfulTools: SuccessfulToolEvidence[];
+    completionConditions: string[];
     seenFollowupPrompts: Set<string>;
     seenCommandFailureRecoveryKeys: Set<string>;
     seenExecutionRecoveryKeys: Set<string>;

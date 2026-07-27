@@ -180,6 +180,13 @@ pub struct MouseMoveResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MousePositionResult {
+    pub x: i32,
+    pub y: i32,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseClickRequest {
     pub x: i32,
     pub y: i32,
@@ -317,6 +324,19 @@ pub struct KeyboardActionResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FocusedTargetResult {
+    pub available: bool,
+    #[serde(default)]
+    pub app_name: Option<String>,
+    #[serde(default)]
+    pub process_id: Option<u32>,
+    #[serde(default)]
+    pub title_hash: Option<String>,
+    pub title_length: usize,
+    pub message: String,
+}
+
 pub trait AutomationBackend {
     fn platform_kind(&self) -> PlatformKind;
     fn capabilities(&self) -> AutomationCapabilities;
@@ -333,6 +353,7 @@ pub trait AutomationBackend {
     fn list_cameras(&self) -> anyhow::Result<Vec<CameraDevice>>;
     fn capture_camera(&self, request: CameraCaptureRequest) -> anyhow::Result<CameraCaptureResult>;
     fn capture_screen(&self, request: ScreenCaptureRequest) -> anyhow::Result<ScreenCaptureResult>;
+    fn mouse_position(&self) -> anyhow::Result<MousePositionResult>;
     fn move_mouse(&self, request: MouseMoveRequest) -> anyhow::Result<MouseMoveResult>;
     fn click_mouse(&self, request: MouseClickRequest) -> anyhow::Result<MouseClickResult>;
     fn perform_mouse_action(
@@ -389,6 +410,7 @@ pub trait AutomationBackend {
         }
     }
     fn type_text(&self, request: KeyboardTypeRequest) -> anyhow::Result<KeyboardTypeResult>;
+    fn focused_target(&self) -> anyhow::Result<FocusedTargetResult>;
     fn perform_keyboard_action(
         &self,
         request: KeyboardActionRequest,

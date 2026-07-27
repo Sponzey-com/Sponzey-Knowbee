@@ -2,10 +2,12 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { createTestArtifactStorage } from "./fixtures/artifact-storage.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import { closeDb, getDb } from "../packages/core/src/db/index.js"
 import { upsertYeonjangRegistryObservation } from "../packages/core/src/yeonjang/registry.ts"
 import type { ToolContext } from "../packages/core/src/tools/types.ts"
+import { withToolAuthorization } from "./fixtures/tool-authorization.ts"
 
 const canYeonjangHandleMethod = vi.fn()
 const getYeonjangCapabilities = vi.fn()
@@ -31,17 +33,22 @@ vi.mock("../packages/core/src/mqtt/broker.js", () => ({
 const { shellExecTool } = await import("../packages/core/src/tools/builtin/shell.ts")
 const { yeonjangBroadcastRunTool } = await import("../packages/core/src/tools/builtin/yeonjang-broadcast.ts")
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
+function executeAuthorizedBroadcast(params: Record<string, unknown>, ctx: ToolContext) {
+  return yeonjangBroadcastRunTool.execute(
+    params as Parameters<typeof yeonjangBroadcastRunTool.execute>[0],
+    withToolAuthorization(ctx, yeonjangBroadcastRunTool.name, params),
+  )
+}
+
 const tempDirs: string[] = []
+let artifactStorage: ReturnType<typeof createTestArtifactStorage>
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task008-yeonjang-audit-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
+  artifactStorage = createTestArtifactStorage(stateDir)
 }
 
 function createContext(userMessage = "원격 연장을 실행해줘"): ToolContext {
@@ -55,6 +62,7 @@ function createContext(userMessage = "원격 연장을 실행해줘"): ToolConte
     allowWebAccess: false,
     onProgress: vi.fn(),
     signal: new AbortController().signal,
+    artifactStorage,
   }
 }
 
@@ -148,11 +156,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -203,7 +206,7 @@ describe("task008 yeonjang execution audit", () => {
         message: "remote ok",
       })
 
-    const result = await yeonjangBroadcastRunTool.execute({
+    const result = await executeAuthorizedBroadcast({
       toolName: "screen_capture",
       targetSelector: { type: "all_online" },
       broadcastIntent: { confirm: true },

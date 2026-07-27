@@ -6,10 +6,14 @@ import { readFileSync, statSync, readdirSync } from "node:fs";
 import { join, extname } from "node:path";
 import { getDb } from "../db/index.js";
 import { getEmbeddingProvider, encodeEmbedding } from "./embedding.js";
-import { logger } from "../logger/index.js";
+import { logger, redactLogText } from "../logger/index.js";
 const CHUNK_SIZE = 1500; // chars per chunk
 const CHUNK_OVERLAP = 200; // overlap between chunks
 const MAX_FILE_SIZE = 512 * 1024; // 512 KB max file size
+function fileIndexerErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 const SUPPORTED_EXTENSIONS = new Set([
     ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
     ".py", ".rb", ".go", ".rs", ".java", ".cs", ".cpp", ".c", ".h",
@@ -30,7 +34,7 @@ function chunkText(text) {
     return chunks;
 }
 export class FileIndexer {
-    async indexFile(filePath) {
+    async indexFile(filePath, options = {}) {
         const ext = extname(filePath).toLowerCase();
         if (!SUPPORTED_EXTENSIONS.has(ext)) {
             return { chunks: 0, embedded: false };
@@ -63,7 +67,7 @@ export class FileIndexer {
         // Remove old chunks for this file
         db.prepare("DELETE FROM file_chunks WHERE file_path = ?").run(filePath);
         const chunks = chunkText(content);
-        const provider = getEmbeddingProvider();
+        const provider = getEmbeddingProvider(options.memoryConfig);
         const canEmbed = provider.dimensions > 0;
         let embeddings = [];
         if (canEmbed) {
@@ -71,7 +75,7 @@ export class FileIndexer {
                 embeddings = await provider.batchEmbed(chunks);
             }
             catch (err) {
-                logger.warn(`embedding failed for ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+                logger.warn(redactLogText(`embedding failed for ${filePath}: ${fileIndexerErrorMessage(err)}`));
             }
         }
         const insert = db.prepare(`INSERT INTO file_chunks (id, file_path, chunk_index, content, embedding, mtime, indexed_at)
@@ -109,7 +113,7 @@ export class FileIndexer {
                     await walk(full);
                 }
                 else if (entry.isFile()) {
-                    const { chunks } = await this.indexFile(full);
+                    const { chunks } = await this.indexFile(full, opts.memoryConfig ? { memoryConfig: opts.memoryConfig } : undefined);
                     if (chunks > 0) {
                         totalFiles++;
                         totalChunks += chunks;
@@ -153,8 +157,8 @@ export class FileIndexer {
             return [];
         }
     }
-    async searchByVector(query, limit = 5) {
-        const provider = getEmbeddingProvider();
+    async searchByVector(query, limit = 5, options = {}) {
+        const provider = getEmbeddingProvider(options.memoryConfig);
         if (provider.dimensions === 0)
             return [];
         let queryVec;

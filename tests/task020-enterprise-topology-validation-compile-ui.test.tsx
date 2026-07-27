@@ -38,6 +38,13 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 
 const now = Date.UTC(2026, 3, 30, 10, 0, 0)
 
+function visibleText(markup: string): string {
+  return markup
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
 function topologyFixture(): EnterpriseTopology {
   return structuredClone(buildExampleEnterpriseTopology(now))
 }
@@ -78,7 +85,9 @@ function topologyWithReportsToRelation(): EnterpriseTopology {
   return topology
 }
 
-function issue(input: Partial<EnterpriseTopologyValidationIssue>): EnterpriseTopologyValidationIssue {
+function issue(
+  input: Partial<EnterpriseTopologyValidationIssue>,
+): EnterpriseTopologyValidationIssue {
   return {
     path: input.path ?? "$.nodes[0]",
     code: input.code ?? input.reasonCode ?? "tool_permission_missing",
@@ -97,18 +106,24 @@ describe("task020 enterprise topology validation and compile UI", () => {
   it("groups and renders validation issues by severity", () => {
     const issues = [
       issue({ severity: "blocked", reasonCode: "tool_permission_missing" }),
-      issue({ severity: "warning", reasonCode: "responsibility_matrix_missing", message: "Responsibility is missing." }),
+      issue({
+        severity: "warning",
+        reasonCode: "responsibility_matrix_missing",
+        message: "Responsibility is missing.",
+      }),
     ]
     const grouped = groupTopologyIssuesBySeverity(issues)
-    const html = renderToStaticMarkup(
-      createElement(TopologyValidationAssistant, { issues }),
-    )
+    const html = renderToStaticMarkup(createElement(TopologyValidationAssistant, { issues }))
+    const visible = visibleText(html)
 
     expect(grouped.blocked).toHaveLength(1)
     expect(grouped.warning).toHaveLength(1)
     expect(html).toContain('data-testid="enterprise-topology-validation-assistant"')
     expect(html).toContain('data-testid="topology-validation-issue-tool_permission_missing"')
     expect(html).toContain('data-testid="topology-validation-issue-responsibility_matrix_missing"')
+    expect(visible).toContain("도구 권한 필요")
+    expect(visible).not.toContain("tool_permission_missing")
+    expect(visible).not.toContain("Node is missing")
   })
 
   it("loads GUI draft issues through the API and displays them in the assistant", async () => {
@@ -133,9 +148,13 @@ describe("task020 enterprise topology validation and compile UI", () => {
 
       expect(response.statusCode).toBe(200)
       expect(body.ok).toBe(true)
-      expect(body.issues.map((item: { reasonCode: string }) => item.reasonCode)).toContain("tool_permission_missing")
+      expect(body.issues.map((item: { reasonCode: string }) => item.reasonCode)).toContain(
+        "tool_permission_missing",
+      )
       expect(html).toContain('data-testid="topology-validation-issue-tool_permission_missing"')
-      expect(html).not.toContain('data-testid="topology-validation-quickfix-tool_permission_missing"')
+      expect(html).not.toContain(
+        'data-testid="topology-validation-quickfix-tool_permission_missing"',
+      )
     } finally {
       await app.close()
     }
@@ -153,7 +172,10 @@ describe("task020 enterprise topology validation and compile UI", () => {
       entityType: "node",
     })
     const canvasSource = readFileSync(
-      new URL("../packages/webui/src/components/topology/EnterpriseTopologyCanvas.tsx", import.meta.url),
+      new URL(
+        "../packages/webui/src/components/topology/EnterpriseTopologyCanvas.tsx",
+        import.meta.url,
+      ),
       "utf-8",
     )
 
@@ -165,46 +187,88 @@ describe("task020 enterprise topology validation and compile UI", () => {
 
   it("generates quick fix operations for delegation target, approver, and team/org while excluding permissions", () => {
     const topology = topologyWithMissingToolPermission()
-    const permissionFix = buildTopologyQuickFixOperations(issue({
-      reasonCode: "tool_permission_missing",
-      entityId: "node:intake",
-      entityType: "node",
-      relationId: "relation:intake-crm-search",
-      refId: "tool:crm-search",
-      refType: "enterprise_tool",
-    }), topology)
-    const approverFix = buildTopologyQuickFixOperations(issue({
-      reasonCode: "approval_authority_missing",
-      entityId: "node:intake",
-      entityType: "node",
-      relationId: "relation:intake-crm-search",
-    }), topology)
-    const teamOrgFix = buildTopologyQuickFixOperations(issue({
-      reasonCode: "invalid_relation_endpoint",
-      relationId: "relation:bad-team-org",
-      entityId: "relation:bad-team-org",
-      entityType: "relation",
-    }), topology)
-    const delegationTargetFix = buildTopologyQuickFixOperations(issue({
-      reasonCode: "empty_process_steps",
-      entityId: "process:refund",
-      entityType: "process_definition",
-    }), topology)
+    const permissionFix = buildTopologyQuickFixOperations(
+      issue({
+        reasonCode: "tool_permission_missing",
+        entityId: "node:intake",
+        entityType: "node",
+        relationId: "relation:intake-crm-search",
+        refId: "tool:crm-search",
+        refType: "enterprise_tool",
+      }),
+      topology,
+    )
+    const approverFix = buildTopologyQuickFixOperations(
+      issue({
+        reasonCode: "approval_authority_missing",
+        entityId: "node:intake",
+        entityType: "node",
+        relationId: "relation:intake-crm-search",
+      }),
+      topology,
+    )
+    const teamOrgFix = buildTopologyQuickFixOperations(
+      issue({
+        reasonCode: "invalid_relation_endpoint",
+        relationId: "relation:bad-team-org",
+        entityId: "relation:bad-team-org",
+        entityType: "relation",
+      }),
+      topology,
+    )
+    const delegationTargetFix = buildTopologyQuickFixOperations(
+      issue({
+        reasonCode: "empty_process_steps",
+        entityId: "process:refund",
+        entityType: "process_definition",
+      }),
+      topology,
+    )
 
     expect(permissionFix).toEqual([])
-    expect(approverFix[0]).toEqual(expect.objectContaining({
-      op: "createRelation",
-      relationType: "approves",
-      from: { entityType: "position", id: "position:cs-lead" },
-    }))
-    expect(teamOrgFix[0]).toEqual(expect.objectContaining({
-      op: "updateRelation",
-      patch: expect.objectContaining({ relationType: "belongs_to" }),
-    }))
-    expect(delegationTargetFix[0]).toEqual(expect.objectContaining({
-      op: "createNode",
-      nodeType: "process_step",
-    }))
+    expect(approverFix[0]).toEqual(
+      expect.objectContaining({
+        op: "createRelation",
+        relationType: "approves",
+        from: { entityType: "position", id: "position:cs-lead" },
+      }),
+    )
+    expect(teamOrgFix[0]).toEqual(
+      expect.objectContaining({
+        op: "updateRelation",
+        patch: expect.objectContaining({ relationType: "belongs_to" }),
+      }),
+    )
+    expect(delegationTargetFix[0]).toEqual(
+      expect.objectContaining({
+        op: "createNode",
+        nodeType: "process_step",
+      }),
+    )
+  })
+
+  it("renders quick fix previews with user-facing sub-agent terms instead of node ids", () => {
+    const topology = topologyFixture()
+    const html = renderToStaticMarkup(
+      createElement(TopologyValidationAssistant, {
+        issues: [
+          issue({
+            reasonCode: "fallback_path_missing",
+            entityId: "node:intake",
+            entityType: "node",
+            message: "fallback node is missing.",
+          }),
+        ],
+        topology,
+      }),
+    )
+    const visible = visibleText(html)
+
+    expect(visible).toContain("예외 처리 경로 필요")
+    expect(visible).toContain("예외 처리 경로 추가")
+    expect(visible).toContain("서브 에이전트 추가: 예외 처리")
+    expect(visible).not.toContain("fallback node")
+    expect(visible).not.toContain("node:intake")
   })
 
   it("shows compile failure as GUI issues before source payloads", async () => {
@@ -223,15 +287,16 @@ describe("task020 enterprise topology validation and compile UI", () => {
         url: `/api/topologies/${encodeURIComponent(topology.id)}/gui-draft/compile`,
       })
       const body = response.json()
-      const html = renderToStaticMarkup(
-        createElement(TopologyCompilePreview, { preview: body }),
-      )
+      const html = renderToStaticMarkup(createElement(TopologyCompilePreview, { preview: body }))
 
       expect(response.statusCode).toBe(200)
       expect(body.ok).toBe(false)
-      expect(body.issues.map((item: { reasonCode: string }) => item.reasonCode)).toContain("tool_permission_missing")
+      expect(body.issues.map((item: { reasonCode: string }) => item.reasonCode)).toContain(
+        "tool_permission_missing",
+      )
       expect(html).toContain('data-testid="enterprise-topology-compile-blocked"')
-      expect(html).toContain("Node uses or accesses a tool")
+      expect(visibleText(html)).toContain("서브 에이전트가 필요한 도구 권한을 갖고 있지 않습니다.")
+      expect(visibleText(html)).not.toContain("Node uses or accesses a tool")
       expect(html).not.toMatch(/schemaVersion|relations|YAML|JSON/i)
     } finally {
       await app.close()
@@ -254,19 +319,33 @@ describe("task020 enterprise topology validation and compile UI", () => {
         url: `/api/topologies/${encodeURIComponent(topology.id)}/gui-draft/compiled-preview`,
       })
       const body = response.json()
-      const html = renderToStaticMarkup(
-        createElement(TopologyCompilePreview, { preview: body }),
-      )
+      const html = renderToStaticMarkup(createElement(TopologyCompilePreview, { preview: body }))
       const nodeIds = compiledDelegationNodeIds(body)
-      const clientSource = readFileSync(new URL("../packages/webui/src/api/client.ts", import.meta.url), "utf-8")
+      const clientSource = readFileSync(
+        new URL("../packages/webui/src/api/client.ts", import.meta.url),
+        "utf-8",
+      )
 
       expect(response.statusCode).toBe(200)
       expect(body.ok).toBe(true)
       expect(nodeIds).toEqual(["node:intake", "node:triage"])
       expect(html).toContain('data-testid="enterprise-topology-compile-preview"')
       expect(html).toContain('data-testid="compiled-delegation-edge"')
-      expect(html).toContain("WorkOrder Preview")
-      expect(html).toContain("Runtime profile snapshot")
+      expect(visibleText(html)).toContain("실행 프로필 스냅샷")
+      expect(visibleText(html)).toContain("서브 에이전트 전달 구조")
+      expect(visibleText(html)).toContain("Customer Request Intake")
+      expect(visibleText(html)).toContain("Customer Request Triage")
+      expect(visibleText(html)).toContain("시작")
+      expect(visibleText(html)).toContain("최상위")
+      expect(visibleText(html)).toContain("종료")
+      expect(visibleText(html)).not.toContain("node:intake")
+      expect(visibleText(html)).not.toContain("node:triage")
+      expect(visibleText(html)).not.toContain("WorkOrder Preview")
+      expect(visibleText(html)).not.toContain("Runtime profile snapshot")
+      expect(visibleText(html)).not.toContain("컴파일된 위임 구조")
+      expect(visibleText(html)).not.toContain("Entry:")
+      expect(visibleText(html)).not.toContain("Roots:")
+      expect(visibleText(html)).not.toContain("Exits:")
       expect(html).not.toContain("reports_to")
       expect(clientSource).toContain("validateEnterpriseTopologyGuiDraft")
       expect(clientSource).toContain("compileEnterpriseTopologyGuiDraft")

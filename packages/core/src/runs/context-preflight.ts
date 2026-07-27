@@ -1,16 +1,31 @@
-import type { AIChunk, AIProvider, ChatParams, Message, MessageContent, ToolDefinition } from "../ai/types.js"
-import type { AgentPromptBundle, DataExchangePackage, OwnerScope } from "../contracts/sub-agent-orchestration.js"
+import type {
+  AIChunk,
+  AIProvider,
+  ChatParams,
+  Message,
+  MessageContent,
+  ToolDefinition,
+} from "../ai/types.js"
+import type { MemoryConfig } from "../config/types.js"
+import type {
+  AgentPromptBundle,
+  DataExchangePackage,
+  OwnerScope,
+} from "../contracts/sub-agent-orchestration.js"
 import { insertDiagnosticEvent } from "../db/index.js"
+import { redactLogText } from "../logger/index.js"
 import {
+  type RootSessionCompactionReasonCode,
   buildRootSessionCompactionReasonCodes,
   executeRootSessionCompaction,
   extractRootSessionDeterministicState,
   hasBalancedToolUsePairs,
   needsSessionCompaction,
+  resolveShortTermCompactionPolicy,
   rewriteRootSessionActiveWindow,
   rewriteRootSessionRetrievalOnlyWindow,
-  type RootSessionCompactionReasonCode,
 } from "../memory/compaction.js"
+import { loadPromptValue } from "../memory/prompt-fragments.js"
 import {
   buildMaintenanceRestoreContext,
   buildPromptTimeRecallContext,
@@ -20,7 +35,17 @@ import {
 } from "../memory/retrieval-restore.js"
 import { appendRunEvent } from "./store.js"
 
-export type ContextPreflightStatus = "ok" | "needs_pruning" | "needs_compaction" | "blocked_context_overflow"
+export type ContextPreflightStatus =
+  | "ok"
+  | "needs_pruning"
+  | "needs_compaction"
+  | "blocked_context_overflow"
+const CONTEXT_PREFLIGHT_PRUNING_LABELS_SOURCE_ID = "context_preflight_pruning_labels_user"
+
+function contextPreflightErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 
 export interface ContextPreflightBreakdown {
   systemTokens: number
@@ -70,10 +95,13 @@ export interface ContextPreflightResult {
 }
 
 export interface ContextPreflightMetadata {
+  invocationId?: string
   runId?: string
   sessionId?: string
   requestGroupId?: string
   operation?: string
+  llmStage?: import("../observability/llm-invocation-receipt.js").LlmInvocationStage
+  mainAgentNameSnapshot?: string
 }
 
 export interface ContextPreflightPreparedChat extends ContextPreflightResult {
@@ -123,8 +151,10 @@ export class ContextPreflightBlockedError extends Error {
 export function estimateContextTokens(value: unknown): number {
   if (value == null) return 0
   if (typeof value === "string") return estimateTextTokens(value)
-  if (typeof value === "number" || typeof value === "boolean") return estimateTextTokens(String(value))
-  if (Array.isArray(value)) return estimateTextTokens(value.map((item) => renderUnknownValue(item)).join("\n"))
+  if (typeof value === "number" || typeof value === "boolean")
+    return estimateTextTokens(String(value))
+  if (Array.isArray(value))
+    return estimateTextTokens(value.map((item) => renderUnknownValue(item)).join("\n"))
   return estimateTextTokens(renderUnknownValue(value))
 }
 
@@ -145,7 +175,12 @@ export function runContextPreflight(input: {
   const providerContextTokens = resolveProviderContextTokens(input.provider, input.model)
   const hardBudgetTokens = Math.max(
     1,
-    Math.floor(Math.min(providerContextTokens * HARD_BUDGET_RATIO, providerContextTokens - DEFAULT_OUTPUT_RESERVE_TOKENS - SAFETY_HEADROOM_TOKENS)),
+    Math.floor(
+      Math.min(
+        providerContextTokens * HARD_BUDGET_RATIO,
+        providerContextTokens - DEFAULT_OUTPUT_RESERVE_TOKENS - SAFETY_HEADROOM_TOKENS,
+      ),
+    ),
   )
   const softBudgetTokens = Math.max(1, Math.floor(hardBudgetTokens * SOFT_BUDGET_RATIO))
   const systemTokens = estimateContextTokens(input.system ?? "")
@@ -176,7 +211,10 @@ export function runContextPreflight(input: {
     durationMs: Date.now() - startedAt,
     pruningDecisions: input.pruningDecisions ?? [],
     ...(status === "blocked_context_overflow"
-      ? { userMessage: "모델에 보낼 문맥이 너무 커서 호출을 시작하지 않았습니다. 오래된 도구 결과를 줄이거나 대화를 새로 시작한 뒤 다시 시도해 주세요." }
+      ? {
+          userMessage:
+            "모델에 보낼 문맥이 너무 커서 호출을 시작하지 않았습니다. 오래된 도구 결과를 줄이거나 대화를 새로 시작한 뒤 다시 시도해 주세요.",
+        }
       : {}),
   }
   recordContextPreflightResult(result, input.metadata)
@@ -196,12 +234,14 @@ export function pruneMessagesForContext(input: { messages: Message[] }): {
     const content = message.content.map((block, blockIndex) => {
       const typed = block as MessageContent & UnknownContentBlock
       if (typed.type !== "tool_result") return cloneBlock(typed) as unknown as MessageContent
-      const original = typeof typed.content === "string" ? typed.content : renderUnknownValue(typed.content)
+      const original =
+        typeof typed.content === "string" ? typed.content : renderUnknownValue(typed.content)
       const isRecent = messageIndex >= recentStartIndex
       const maxChars = isRecent ? RECENT_TOOL_RESULT_MAX_CHARS : OLD_TOOL_RESULT_MAX_CHARS
       const pruned = condenseToolResult(original, maxChars)
       if (pruned === original) return cloneBlock(typed) as unknown as MessageContent
-      const strategy: ContextPruningDecision["strategy"] = maxChars < 300 ? "placeholder_hard_clear" : "head_tail_soft_trim"
+      const strategy: ContextPruningDecision["strategy"] =
+        maxChars < 300 ? "placeholder_hard_clear" : "head_tail_soft_trim"
       decisions.push({
         messageIndex,
         blockIndex,
@@ -217,10 +257,14 @@ export function pruneMessagesForContext(input: { messages: Message[] }): {
   return { messages, decisions }
 }
 
-export async function prepareChatContext(input: ChatParams & {
-  provider: AIProvider
-  metadata?: ContextPreflightMetadata
-}): Promise<ContextPreflightPreparedChat> {
+export async function prepareChatContext(
+  input: ChatParams & {
+    provider: AIProvider
+    metadata?: ContextPreflightMetadata
+    memoryConfig?: MemoryConfig
+  },
+): Promise<ContextPreflightPreparedChat> {
+  const compactionPolicy = resolveShortTermCompactionPolicy(input.memoryConfig)
   const initial = runContextPreflight({
     provider: input.provider,
     model: input.model,
@@ -229,7 +273,10 @@ export async function prepareChatContext(input: ChatParams & {
     ...(input.tools !== undefined ? { tools: input.tools } : {}),
     ...(input.metadata ? { metadata: input.metadata } : {}),
   })
-  if (initial.status === "ok" && !needsSessionCompaction(input.messages, initial.breakdown.totalTokens)) {
+  if (
+    initial.status === "ok" &&
+    !needsSessionCompaction(input.messages, initial.breakdown.totalTokens, compactionPolicy)
+  ) {
     return { ...initial, initialStatus: initial.status, messages: input.messages }
   }
 
@@ -253,14 +300,14 @@ export async function prepareChatContext(input: ChatParams & {
     totalTokens: afterPruning.breakdown.totalTokens,
     pruningDecisionCount: pruned.decisions.length,
     deterministicState,
+    policy: compactionPolicy,
   })
   const blockedReasonCodes = collectBlockedCompactionReasons(pruned.messages, deterministicState)
-  const shouldAttemptCompaction = Boolean(input.metadata?.sessionId)
-    && (
-      afterPruning.status === "needs_compaction"
-      || afterPruning.breakdown.totalTokens > afterPruning.breakdown.hardBudgetTokens
-      || needsSessionCompaction(pruned.messages, afterPruning.breakdown.totalTokens)
-    )
+  const shouldAttemptCompaction =
+    Boolean(input.metadata?.sessionId) &&
+    (afterPruning.status === "needs_compaction" ||
+      afterPruning.breakdown.totalTokens > afterPruning.breakdown.hardBudgetTokens ||
+      needsSessionCompaction(pruned.messages, afterPruning.breakdown.totalTokens, compactionPolicy))
 
   if (shouldAttemptCompaction && blockedReasonCodes.length === 0 && input.metadata?.sessionId) {
     try {
@@ -268,13 +315,14 @@ export async function prepareChatContext(input: ChatParams & {
         provider: input.provider,
         model: input.model,
         sessionId: input.metadata.sessionId,
+        agentNameSnapshot: input.metadata.mainAgentNameSnapshot ?? "Knowbee",
         messages: pruned.messages,
         sourceTokenEstimate: afterPruning.breakdown.totalTokens,
-        triggerReasonCodes: compactionReasonCodes.length > 0
-          ? compactionReasonCodes
-          : ["token_threshold_exceeded"],
+        triggerReasonCodes:
+          compactionReasonCodes.length > 0 ? compactionReasonCodes : ["token_threshold_exceeded"],
         ...(input.metadata.runId ? { runId: input.metadata.runId } : {}),
         ...(input.metadata.requestGroupId ? { requestGroupId: input.metadata.requestGroupId } : {}),
+        ...(input.memoryConfig ? { memoryConfig: input.memoryConfig } : {}),
       })
       const compacted = await selectCompactedWindow({
         provider: input.provider,
@@ -287,11 +335,12 @@ export async function prepareChatContext(input: ChatParams & {
         sourceMessages: pruned.messages,
         capsule: executed.capsule,
       })
-      const finalStatus = compacted.preflight.breakdown.totalTokens > compacted.preflight.breakdown.hardBudgetTokens
-        ? "blocked_context_overflow"
-        : compacted.preflight.status === "blocked_context_overflow"
+      const finalStatus =
+        compacted.preflight.breakdown.totalTokens > compacted.preflight.breakdown.hardBudgetTokens
           ? "blocked_context_overflow"
-          : "ok"
+          : compacted.preflight.status === "blocked_context_overflow"
+            ? "blocked_context_overflow"
+            : "ok"
       return {
         ...compacted.preflight,
         status: finalStatus,
@@ -317,19 +366,23 @@ export async function prepareChatContext(input: ChatParams & {
             : {}),
         },
         ...(finalStatus === "blocked_context_overflow"
-          ? { userMessage: "문맥 compact 후에도 모델 한도를 초과해 호출을 중단했습니다. 더 짧은 최신 대화만 남기거나 새 세션으로 이어서 시도해 주세요." }
+          ? {
+              userMessage:
+                "문맥 compact 후에도 모델 한도를 초과해 호출을 중단했습니다. 더 짧은 최신 대화만 남기거나 새 세션으로 이어서 시도해 주세요.",
+            }
           : {}),
       }
     } catch (error) {
-      blockedReasonCodes.push(error instanceof Error ? error.message : String(error))
+      blockedReasonCodes.push(contextPreflightErrorMessage(error))
     }
   }
 
-  const finalStatus = afterPruning.breakdown.totalTokens > afterPruning.breakdown.hardBudgetTokens
-    ? "blocked_context_overflow"
-    : afterPruning.status === "blocked_context_overflow"
+  const finalStatus =
+    afterPruning.breakdown.totalTokens > afterPruning.breakdown.hardBudgetTokens
       ? "blocked_context_overflow"
-      : afterPruning.status
+      : afterPruning.status === "blocked_context_overflow"
+        ? "blocked_context_overflow"
+        : afterPruning.status
 
   return {
     ...afterPruning,
@@ -347,15 +400,21 @@ export async function prepareChatContext(input: ChatParams & {
         }
       : {}),
     ...(finalStatus === "blocked_context_overflow"
-      ? { userMessage: "문맥 정리 후에도 모델 한도를 초과해 호출을 중단했습니다. 오래된 도구 결과나 긴 파일 내용을 줄인 뒤 다시 시도해 주세요." }
+      ? {
+          userMessage:
+            "문맥 정리 후에도 모델 한도를 초과해 호출을 중단했습니다. 오래된 도구 결과나 긴 파일 내용을 줄인 뒤 다시 시도해 주세요.",
+        }
       : {}),
   }
 }
 
-export async function* chatWithContextPreflight(input: ChatParams & {
-  provider: AIProvider
-  metadata?: ContextPreflightMetadata
-}): AsyncGenerator<AIChunk> {
+export async function* chatWithContextPreflight(
+  input: ChatParams & {
+    provider: AIProvider
+    metadata?: ContextPreflightMetadata
+    memoryConfig?: MemoryConfig
+  },
+): AsyncGenerator<AIChunk> {
   const prepared = await prepareChatContext(input)
   if (prepared.status === "blocked_context_overflow") {
     recordContextPreflightResult(prepared, input.metadata)
@@ -366,8 +425,27 @@ export async function* chatWithContextPreflight(input: ChatParams & {
     messages: prepared.messages,
     ...(input.system !== undefined ? { system: input.system } : {}),
     ...(input.tools !== undefined ? { tools: input.tools } : {}),
+    ...(input.toolChoice !== undefined ? { toolChoice: input.toolChoice } : {}),
     ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}),
     ...(input.signal !== undefined ? { signal: input.signal } : {}),
+    ...(input.observability
+      ? { observability: input.observability }
+      : input.metadata?.llmStage && (input.metadata.runId || input.metadata.requestGroupId)
+        ? {
+            observability: {
+              ...(input.metadata.invocationId
+                ? { invocationId: input.metadata.invocationId }
+                : {}),
+              ...(input.metadata.runId ? { runId: input.metadata.runId } : {}),
+              ...(input.metadata.requestGroupId
+                ? { requestGroupId: input.metadata.requestGroupId }
+                : {}),
+              ...(input.metadata.sessionId ? { sessionId: input.metadata.sessionId } : {}),
+              stage: input.metadata.llmStage,
+              operationCode: input.metadata.operation ?? "context_preflight",
+            },
+          }
+        : {}),
   })
 }
 
@@ -380,13 +458,17 @@ export function validateAgentPromptBundleContextScope(input: {
   const issueCodes = new Set<string>()
   const blockedSourceRefs = new Set<string>()
   const now = input.now?.() ?? Date.now()
-  const bundleOwnerIds = new Set([
-    input.bundle.agentId,
-    input.bundle.memoryPolicy.owner.ownerId,
-    input.bundle.memoryPolicy.writeScope.ownerId,
-    ...input.bundle.memoryPolicy.readScopes.map((scope) => scope.ownerId),
-  ].filter(Boolean))
-  const exchangesById = new Map((input.dataExchangePackages ?? []).map((pkg) => [pkg.exchangeId, pkg]))
+  const bundleOwnerIds = new Set(
+    [
+      input.bundle.agentId,
+      input.bundle.memoryPolicy.owner.ownerId,
+      input.bundle.memoryPolicy.writeScope.ownerId,
+      ...input.bundle.memoryPolicy.readScopes.map((scope) => scope.ownerId),
+    ].filter(Boolean),
+  )
+  const exchangesById = new Map(
+    (input.dataExchangePackages ?? []).map((pkg) => [pkg.exchangeId, pkg]),
+  )
 
   for (const ref of input.memoryRefs ?? []) {
     const exchange = ref.dataExchangeId ? exchangesById.get(ref.dataExchangeId) : undefined
@@ -401,7 +483,12 @@ export function validateAgentPromptBundleContextScope(input: {
       blockedSourceRefs.add(ref.sourceRef)
       continue
     }
-    if (exchange && exchange.expiresAt !== undefined && exchange.expiresAt !== null && exchange.expiresAt <= now) {
+    if (
+      exchange &&
+      exchange.expiresAt !== undefined &&
+      exchange.expiresAt !== null &&
+      exchange.expiresAt <= now
+    ) {
       issueCodes.add("data_exchange_expired")
       blockedSourceRefs.add(ref.sourceRef)
       continue
@@ -416,12 +503,20 @@ export function validateAgentPromptBundleContextScope(input: {
       blockedSourceRefs.add(ref.sourceRef)
       continue
     }
-    if (exchange && exchange.recipientOwner.ownerId !== input.bundle.agentId && exchange.recipientOwner.ownerId !== input.bundle.memoryPolicy.owner.ownerId) {
+    if (
+      exchange &&
+      exchange.recipientOwner.ownerId !== input.bundle.agentId &&
+      exchange.recipientOwner.ownerId !== input.bundle.memoryPolicy.owner.ownerId
+    ) {
       issueCodes.add("data_exchange_wrong_recipient")
       blockedSourceRefs.add(ref.sourceRef)
       continue
     }
-    if (exchange && exchange.allowedUse !== "temporary_context" && exchange.allowedUse !== "verification_only") {
+    if (
+      exchange &&
+      exchange.allowedUse !== "temporary_context" &&
+      exchange.allowedUse !== "verification_only"
+    ) {
       issueCodes.add("data_exchange_not_context_allowed")
       blockedSourceRefs.add(ref.sourceRef)
     }
@@ -443,16 +538,18 @@ function classifyContextPreflight(input: {
 }): ContextPreflightStatus {
   if (input.totalTokens > input.providerContextTokens) return "blocked_context_overflow"
   if (input.totalTokens > input.hardBudgetTokens) return "needs_compaction"
-  if (input.totalTokens > input.softBudgetTokens || hasLargeOldToolResult(input.messages)) return "needs_pruning"
+  if (input.totalTokens > input.softBudgetTokens || hasLargeOldToolResult(input.messages))
+    return "needs_pruning"
   return "ok"
 }
 
 function resolveProviderContextTokens(provider: AIProvider, model: string): number {
   try {
     const resolver = (provider as Partial<AIProvider>).maxContextTokens
-    const value = typeof resolver === "function"
-      ? resolver.call(provider, model)
-      : DEFAULT_PROVIDER_CONTEXT_TOKENS
+    const value =
+      typeof resolver === "function"
+        ? resolver.call(provider, model)
+        : DEFAULT_PROVIDER_CONTEXT_TOKENS
     if (!Number.isFinite(value) || value <= 0) return DEFAULT_PROVIDER_CONTEXT_TOKENS
     return Math.max(1, Math.floor(value))
   } catch {
@@ -466,20 +563,32 @@ function hasLargeOldToolResult(messages: Message[]): boolean {
     if (messageIndex >= recentStartIndex || !Array.isArray(message.content)) return false
     return message.content.some((block) => {
       const typed = block as MessageContent & UnknownContentBlock
-      return typed.type === "tool_result" && typeof typed.content === "string" && typed.content.length > OLD_TOOL_RESULT_MAX_CHARS
+      return (
+        typed.type === "tool_result" &&
+        typeof typed.content === "string" &&
+        typed.content.length > OLD_TOOL_RESULT_MAX_CHARS
+      )
     })
   })
 }
 
 function estimateMessageTokens(message: Message): number {
   if (typeof message.content === "string") return estimateTextTokens(message.content)
-  return message.content.reduce((sum, block) => sum + estimateBlockTokens(block as unknown as UnknownContentBlock), 0)
+  return message.content.reduce(
+    (sum, block) => sum + estimateBlockTokens(block as unknown as UnknownContentBlock),
+    0,
+  )
 }
 
 function estimateBlockTokens(block: UnknownContentBlock): number {
-  if (block.type === "text") return estimateTextTokens(typeof block.text === "string" ? block.text : "")
-  if (block.type === "tool_result") return estimateTextTokens(typeof block.content === "string" ? block.content : renderUnknownValue(block.content))
-  if (block.type === "tool_use") return estimateTextTokens(`${block.name ?? ""}\n${renderUnknownValue(block.input)}`)
+  if (block.type === "text")
+    return estimateTextTokens(typeof block.text === "string" ? block.text : "")
+  if (block.type === "tool_result")
+    return estimateTextTokens(
+      typeof block.content === "string" ? block.content : renderUnknownValue(block.content),
+    )
+  if (block.type === "tool_use")
+    return estimateTextTokens(`${block.name ?? ""}\n${renderUnknownValue(block.input)}`)
   if (block.type === "image" || block.type === "image_url" || block.type === "file") return 1_000
   return estimateTextTokens(renderUnknownValue(block))
 }
@@ -490,19 +599,35 @@ function estimateTextTokens(value: string): number {
   return Math.max(1, Math.ceil(normalized.length / TOKEN_CHAR_RATIO))
 }
 
+function contextPreflightPruningLabel(
+  key: string,
+  variables: Record<string, string | number> = {},
+): string {
+  const value = loadPromptValue(CONTEXT_PREFLIGHT_PRUNING_LABELS_SOURCE_ID, variables, {
+    required: true,
+  })
+    .split(/\r?\n/u)
+    .find((line) => line.startsWith(`${key}=`))
+    ?.slice(key.length + 1)
+    .trim()
+  if (!value) {
+    throw new Error(`context preflight pruning label missing: ${key}`)
+  }
+  return value
+}
+
 function condenseToolResult(value: string, maxChars: number): string {
   const normalized = value.replace(/\r/g, "").trim()
   if (normalized.length <= maxChars) return normalized
-  if (maxChars < 300) return `[tool_result_pruned: original_chars=${normalized.length}]`
+  const marker = contextPreflightPruningLabel("tool_result_pruned_marker", {
+    originalChars: normalized.length,
+  })
+  if (maxChars < 300) return marker
   const headLength = Math.max(120, Math.floor(maxChars * 0.62))
   const tailLength = Math.max(80, maxChars - headLength - 120)
   const head = normalized.slice(0, headLength).trimEnd()
   const tail = normalized.slice(Math.max(headLength, normalized.length - tailLength)).trimStart()
-  return [
-    head,
-    `[tool_result_pruned: original_chars=${normalized.length}]`,
-    tail,
-  ].filter(Boolean).join("\n")
+  return [head, marker, tail].filter(Boolean).join("\n")
 }
 
 function cloneBlock(block: UnknownContentBlock): UnknownContentBlock {
@@ -568,8 +693,12 @@ async function selectCompactedWindow(input: {
     ...(input.metadata?.runId ? { runId: input.metadata.runId } : {}),
     ...(input.metadata?.sessionId ? { sessionId: input.metadata.sessionId } : {}),
     ...(input.metadata?.requestGroupId ? { requestGroupId: input.metadata.requestGroupId } : {}),
-    ...(input.capsule.ownerScope.channelKey ? { channelKey: input.capsule.ownerScope.channelKey } : {}),
-    ...(input.capsule.ownerScope.threadKey ? { threadKey: input.capsule.ownerScope.threadKey } : {}),
+    ...(input.capsule.ownerScope.channelKey
+      ? { channelKey: input.capsule.ownerScope.channelKey }
+      : {}),
+    ...(input.capsule.ownerScope.threadKey
+      ? { threadKey: input.capsule.ownerScope.threadKey }
+      : {}),
   })
   recordPromptTimeRecallTrace({
     context: promptRecall,
@@ -578,7 +707,9 @@ async function selectCompactedWindow(input: {
     ...(input.metadata?.sessionId ? { sessionId: input.metadata.sessionId } : {}),
     ...(input.metadata?.requestGroupId ? { requestGroupId: input.metadata.requestGroupId } : {}),
   })
-  const restorePathCodes: Array<"maintenance_restore" | "prompt_time_recall"> = ["maintenance_restore"]
+  const restorePathCodes: Array<"maintenance_restore" | "prompt_time_recall"> = [
+    "maintenance_restore",
+  ]
   if (promptRecall.results.length > 0) restorePathCodes.push("prompt_time_recall")
   let messages = rewriteRootSessionActiveWindow({
     messages: input.sourceMessages,
@@ -611,7 +742,9 @@ async function selectCompactedWindow(input: {
       messages,
       preflight,
       restorePathCodes,
-      ...(maintenanceRestore.rollupCapsule ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId } : {}),
+      ...(maintenanceRestore.rollupCapsule
+        ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId }
+        : {}),
     }
   }
 
@@ -644,7 +777,8 @@ async function selectCompactedWindow(input: {
     messages = rewritten.messages
     preflight = candidate
     degradedTailMessageCount = rewritten.degradedTailMessageCount
-    degradeMode = rewritten.degradedTailMessageCount !== undefined ? "smaller_raw_tail" : degradeMode
+    degradeMode =
+      rewritten.degradedTailMessageCount !== undefined ? "smaller_raw_tail" : degradeMode
     if (candidate.breakdown.totalTokens <= candidate.breakdown.hardBudgetTokens) break
   }
 
@@ -661,8 +795,9 @@ async function selectCompactedWindow(input: {
         artifactRefs: input.capsule.artifactRefs,
         blockedReasonCodes: [],
       },
-      retrievalSnippets: promptRecall.results.map((result) =>
-        `[${result.chunk.scope}:${result.chunkId}] ${result.chunk.content.slice(0, 120).trim()}${result.chunk.content.length > 120 ? "…" : ""}`,
+      retrievalSnippets: promptRecall.results.map(
+        (result) =>
+          `[${result.chunk.scope}:${result.chunkId}] ${result.chunk.content.slice(0, 120).trim()}${result.chunk.content.length > 120 ? "…" : ""}`,
       ),
     })
     const retrievalCandidate = runContextPreflight({
@@ -685,7 +820,9 @@ async function selectCompactedWindow(input: {
         degradeMode,
         retrievalSnippetCount: retrievalOnly.snippetCount,
         ...(degradedTailMessageCount !== undefined ? { degradedTailMessageCount } : {}),
-        ...(maintenanceRestore.rollupCapsule ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId } : {}),
+        ...(maintenanceRestore.rollupCapsule
+          ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId }
+          : {}),
       }
     }
   }
@@ -696,15 +833,23 @@ async function selectCompactedWindow(input: {
     restorePathCodes,
     ...(degradeMode ? { degradeMode } : {}),
     ...(degradedTailMessageCount !== undefined ? { degradedTailMessageCount } : {}),
-    ...(maintenanceRestore.rollupCapsule ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId } : {}),
+    ...(maintenanceRestore.rollupCapsule
+      ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId }
+      : {}),
   }
 }
 
-function recordContextPreflightResult(result: ContextPreflightResult, metadata: ContextPreflightMetadata | undefined): void {
+function recordContextPreflightResult(
+  result: ContextPreflightResult,
+  metadata: ContextPreflightMetadata | undefined,
+): void {
   const summary = `context_preflight ${result.status}: tokens=${result.breakdown.totalTokens}/${result.breakdown.providerContextTokens}`
   if (metadata?.runId) {
     try {
-      appendRunEvent(metadata.runId, `context_preflight_status=${result.status} tokens=${result.breakdown.totalTokens} window=${result.breakdown.providerContextTokens} operation=${result.operation}`)
+      appendRunEvent(
+        metadata.runId,
+        `context_preflight_status=${result.status} tokens=${result.breakdown.totalTokens} window=${result.breakdown.providerContextTokens} operation=${result.operation}`,
+      )
     } catch {
       // Preflight tracing must not block model calls.
     }

@@ -11,6 +11,12 @@ export function generateFailureReport(input) {
         attempts: input.recoveryReview.attempts.map((attempt) => ({ ...attempt })),
         untriedOptions: [...input.exhaustion.untriedOptions],
         ...(input.partialResult !== undefined ? { partialResult: structuredClone(input.partialResult) } : {}),
+        ...(input.exhaustion.solutionPathAssessment.partialResultRefs.length > 0
+            ? { partialResultRefs: [...input.exhaustion.solutionPathAssessment.partialResultRefs] }
+            : {}),
+        ...(input.exhaustion.solutionPathAssessment.workaroundGuidance.length > 0
+            ? { workaroundGuidance: [...input.exhaustion.solutionPathAssessment.workaroundGuidance] }
+            : {}),
         issueKind: failureIssueKind(input),
         recoveryActionKind: failureRecoveryActionKind(input.recoveryReview),
         nextActionKind: failureNextActionKind(input.recoveryReview),

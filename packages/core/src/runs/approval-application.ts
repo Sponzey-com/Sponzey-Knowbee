@@ -16,6 +16,7 @@ export type SyntheticApprovalContinuation =
       reviewSummary: string
       executingSummary: string
       continuationPrompt: string
+      toolName: string
       grantMode: "reuse_scope" | "run" | "single"
       clearWorkerRuntime: true
       clearProvider: true
@@ -33,6 +34,7 @@ export function decideSyntheticApprovalContinuation(params: {
       reviewSummary: params.request.summary,
       executingSummary: "승인된 작업을 계속 진행합니다.",
       continuationPrompt: params.request.continuationPrompt,
+      toolName: params.request.toolName,
       grantMode: "reuse_scope",
       clearWorkerRuntime: true,
       clearProvider: true,
@@ -51,6 +53,7 @@ export function decideSyntheticApprovalContinuation(params: {
     reviewSummary: params.request.summary,
     executingSummary: "승인된 작업을 계속 진행합니다.",
     continuationPrompt: params.request.continuationPrompt,
+    toolName: params.request.toolName,
     grantMode: params.decision === "allow_run" ? "run" : "single",
     clearWorkerRuntime: true,
     clearProvider: true,
@@ -64,9 +67,9 @@ export type AppliedSyntheticApprovalContinuation =
     } & AppliedRunningContinuation)
 
 interface SyntheticApprovalApplicationDependencies extends RunningContinuationDependencies {
-  rememberRunApprovalScope: (runId: string) => void
-  grantRunApprovalScope: (runId: string) => void
-  grantRunSingleApproval: (runId: string) => void
+  rememberRunApprovalScope: (runId: string, toolName: string) => void
+  grantRunApprovalScope: (runId: string, toolName: string) => void
+  grantRunSingleApproval: (runId: string, toolName: string) => void
 }
 
 export function applySyntheticApprovalContinuation(params: {
@@ -79,10 +82,10 @@ export function applySyntheticApprovalContinuation(params: {
   }
 
   if (params.continuation.grantMode === "run") {
-    dependencies.rememberRunApprovalScope(params.runId)
-    dependencies.grantRunApprovalScope(params.runId)
+    dependencies.rememberRunApprovalScope(params.runId, params.continuation.toolName)
+    dependencies.grantRunApprovalScope(params.runId, params.continuation.toolName)
   } else if (params.continuation.grantMode === "single") {
-    dependencies.grantRunSingleApproval(params.runId)
+    dependencies.grantRunSingleApproval(params.runId, params.continuation.toolName)
   }
 
   const runningContinuation = applyRunningContinuationState({

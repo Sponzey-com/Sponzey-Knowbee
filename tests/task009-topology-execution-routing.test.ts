@@ -1,30 +1,24 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { registerStatusRoute } from "../packages/core/src/api/routes/status.js"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { createArtifactStorageContext } from "../packages/core/src/artifacts/lifecycle.ts"
+import { createUpdateRuntimeContext } from "../packages/core/src/update/service.ts"
+import { initializeToolDispatcher } from "../packages/core/src/tools/index.ts"
 import type { OrchestrationConfig } from "../packages/core/src/config/types.ts"
 import {
   buildExampleEnterpriseTopology,
   createEnterpriseTopologyRegistry,
 } from "../packages/core/src/index.ts"
-import {
-  resolveOrchestrationModeSnapshotSync,
-} from "../packages/core/src/orchestration/mode.ts"
-import {
-  buildOrchestrationPlan,
-} from "../packages/core/src/orchestration/planner.ts"
-import {
-  buildOrchestrationRegistrySnapshot,
-} from "../packages/core/src/orchestration/registry.ts"
+import { resolveOrchestrationModeSnapshotSync } from "../packages/core/src/orchestration/mode.ts"
+import { buildOrchestrationPlan } from "../packages/core/src/orchestration/planner.ts"
+import { buildOrchestrationRegistrySnapshot } from "../packages/core/src/orchestration/registry.ts"
 import {
   buildStartPlan,
   defaultStartPlanDependencies,
 } from "../packages/core/src/runs/start-plan.ts"
-import {
-  runIntakeBridgePass,
-} from "../packages/core/src/runs/intake-bridge-pass.ts"
+import { runIntakeBridgePass } from "../packages/core/src/runs/intake-bridge-pass.ts"
 import {
   resolveTopologyRootRunRouting,
   runTopologyRootRun,
@@ -34,38 +28,32 @@ import {
   AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
   type AgentExecutionDecision,
 } from "../packages/core/src/orchestration/execution-decision-contract.ts"
-import {
-  runAgentExecutionHarness,
-} from "../packages/core/src/orchestration/execution-harness.ts"
-import {
-  insertSession,
-  closeDb,
-} from "../packages/core/src/db/index.js"
+import { runAgentExecutionHarness } from "../packages/core/src/orchestration/execution-harness.ts"
+import { insertSession, closeDb } from "../packages/core/src/db/index.js"
 import {
   bindActiveRunController,
   cancelRootRun,
   createRootRun,
   getRootRun,
 } from "../packages/core/src/runs/store.ts"
+import { buildRunRuntimeInspectorProjection } from "../packages/core/src/runs/runtime-inspector-projection.ts"
+import { resolveStartContextPlan } from "../packages/core/src/runs/preflight.ts"
 import {
-  buildRunRuntimeInspectorProjection,
-} from "../packages/core/src/runs/runtime-inspector-projection.ts"
-import {
-  resolveStartContextPlan,
-} from "../packages/core/src/runs/preflight.ts"
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const now = Date.UTC(2026, 4, 4, 9, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task009-topology-routing-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task009-topology-routing-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir, configText: runtimeConfigText() })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function orchestrationConfig(overrides: Partial<OrchestrationConfig> = {}): OrchestrationConfig {
@@ -91,18 +79,27 @@ function runtimeConfig() {
   }
 }
 
-function writeRuntimeConfig(overrides: Partial<OrchestrationConfig> = {}): void {
-  if (!process.env.KNOWBEE_CONFIG) throw new Error("KNOWBEE_CONFIG is not set")
-  writeFileSync(process.env.KNOWBEE_CONFIG, JSON.stringify({
-    orchestration: orchestrationConfig(overrides),
-    ai: {
-      connection: {
-        provider: "openai",
-        model: "gpt-test",
+function runtimeConfigText(overrides: Partial<OrchestrationConfig> = {}): string {
+  return JSON.stringify(
+    {
+      orchestration: orchestrationConfig(overrides),
+      ai: {
+        connection: {
+          provider: "openai",
+          model: "gpt-test",
+        },
       },
     },
-  }, null, 2))
-  reloadConfig()
+    null,
+    2,
+  )
+}
+
+function writeRuntimeConfig(overrides: Partial<OrchestrationConfig> = {}): void {
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir: runtimeFixture.rootDir,
+    configText: runtimeConfigText(overrides),
+  })
 }
 
 function executionDecisionForTopology(input: {
@@ -122,19 +119,23 @@ function executionDecisionForTopology(input: {
       title: input.title ?? "토폴로지 실행 판단 통합",
       summary: "선택된 실행자가 연결된 다음 실행자에게 작업을 위임하고 결과를 취합한다.",
       goals: ["선택 실행자에서 시작", "연결선 기반 위임", "부모 실행자 검증과 취합"],
-      task_units: [{
-        id: "unit:topology-runtime",
-        title: "연결선 기반 위임 실행",
-        goal: "선택된 실행자가 자신의 하위 실행자에게 업무를 나누고 결과를 취합한다.",
-        preferred_executor_id: input.selectedExecutorId,
-      }],
+      task_units: [
+        {
+          id: "unit:topology-runtime",
+          title: "연결선 기반 위임 실행",
+          goal: "선택된 실행자가 자신의 하위 실행자에게 업무를 나누고 결과를 취합한다.",
+          preferred_executor_id: input.selectedExecutorId,
+        },
+      ],
       success_criteria: ["선택 실행자와 연결선이 trace에 남는다."],
     },
-    required_outputs: [{
-      id: "answer",
-      label: "최종 답변",
-      acceptance_criteria: ["부모 실행자가 위임 결과를 검증하고 취합한다."],
-    }],
+    required_outputs: [
+      {
+        id: "answer",
+        label: "최종 답변",
+        acceptance_criteria: ["부모 실행자가 위임 결과를 검증하고 취합한다."],
+      },
+    ],
     risk_boundary: {
       requires_user_approval: false,
       reason: "테스트용 토폴로지 런타임 위임이며 외부 작업을 수행하지 않는다.",
@@ -155,6 +156,10 @@ function intakeBridgeDependencies() {
     scheduleDelayedRun: vi.fn(),
     startDelegatedRun: vi.fn(),
     normalizeTaskProfile: vi.fn((taskProfile: string | undefined) => taskProfile ?? "general_chat"),
+    recordCanonicalIntakeDiagnosis: vi.fn(async () => ({ ok: true as const })),
+    authorizeCanonicalIntakePlan: vi.fn(async () => ({ ok: true as const })),
+    recordCanonicalExecutionStart: vi.fn(async () => ({ ok: true as const })),
+    releaseCanonicalSimplePath: vi.fn(async () => ({ ok: true as const })),
     logInfo: vi.fn(),
   }
 }
@@ -170,17 +175,19 @@ function taskIntakeResult(actionPayload: Record<string, unknown> = {}) {
       mode: "accepted_receipt" as const,
       text: "후속 실행을 시작합니다.",
     },
-    action_items: [{
-      id: "delegate-1",
-      type: "run_task" as const,
-      title: "채널 요청 후속 실행",
-      priority: "normal" as const,
-      reason: "needs follow-up",
-      payload: {
-        goal: "Process the channel request.",
-        ...actionPayload,
+    action_items: [
+      {
+        id: "delegate-1",
+        type: "run_task" as const,
+        title: "채널 요청 후속 실행",
+        priority: "normal" as const,
+        reason: "needs follow-up",
+        payload: {
+          goal: "Process the channel request.",
+          ...actionPayload,
+        },
       },
-    }],
+    ],
     structured_request: {
       source_language: "ko" as const,
       normalized_english: "Process the channel request.",
@@ -247,11 +254,6 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
 })
 
 describe("task009 topology execution routing", () => {
@@ -265,7 +267,7 @@ describe("task009 topology execution routing", () => {
     })
     registry.activateTopologyVersion(topology.id, appended.version.version)
     const modeSnapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: runtimeConfig,
+      config: runtimeConfig(),
       now: () => now,
     })
     const dependencies = intakeBridgeDependencies()
@@ -277,34 +279,46 @@ describe("task009 topology execution routing", () => {
       reason: "routing:provider:openai",
     })
 
-    const result = await runIntakeBridgePass({
-      message: "코스피 관련 질문을 처리해줘",
-      originalRequest: "코스피 관련 질문을 처리해줘",
-      sessionId: "session:task009-intake-topology",
-      requestGroupId: "run:task009-intake-topology",
-      model: "gpt-test",
-      workDir: "/tmp",
-      source: "telegram",
-      runId: "run:task009-intake-topology",
-      onChunk: undefined,
-      reuseConversationContext: false,
-    }, dependencies, {
-      analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
-      resolveRunRoute,
-      resolveOrchestrationModeSnapshotSync: vi.fn(() => modeSnapshot),
-      resolveTopologyRootRunRouting,
-      executeScheduleActions: vi.fn(),
-      createDefaultScheduleActionDependencies: vi.fn(),
-      inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
-      buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\n코스피 관련 질문을 처리해줘"),
-      runAgentExecutionHarness: (input) => runAgentExecutionHarness({
-        ...input,
-        callModel: async () => JSON.stringify(executionDecisionForTopology({
-          selectedExecutorId: `${topology.id}:node:intake`,
-          selectedConnectionPath: [`${topology.id}:node:intake`],
-        })),
-      }),
-    })
+    const result = await runIntakeBridgePass(
+      {
+        artifactStorage: createArtifactStorageContext(runtimeFixture.paths),
+        config: runtimeFixture.config,
+        message: "코스피 관련 질문을 처리해줘",
+        originalRequest: "코스피 관련 질문을 처리해줘",
+        sessionId: "session:task009-intake-topology",
+        requestGroupId: "run:task009-intake-topology",
+        model: "gpt-test",
+        workDir: "/tmp",
+        source: "telegram",
+        runId: "run:task009-intake-topology",
+        onChunk: undefined,
+        reuseConversationContext: false,
+      },
+      dependencies,
+      {
+        analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
+        resolveRunRoute,
+        resolveOrchestrationModeSnapshotSync: vi.fn(() => modeSnapshot),
+        resolveTopologyRootRunRouting,
+        executeScheduleActions: vi.fn(),
+        createDefaultScheduleActionDependencies: vi.fn(),
+        inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
+        buildFollowupPrompt: vi
+          .fn()
+          .mockReturnValue("[Task Intake Bridge]\n코스피 관련 질문을 처리해줘"),
+        runAgentExecutionHarness: (input) =>
+          runAgentExecutionHarness({
+            ...input,
+            callModel: async () =>
+              JSON.stringify(
+                executionDecisionForTopology({
+                  selectedExecutorId: `${topology.id}:node:intake`,
+                  selectedConnectionPath: [`${topology.id}:node:intake`],
+                }),
+              ),
+          }),
+      },
+    )
 
     expect(result).toEqual({
       kind: "complete_silent",
@@ -312,18 +326,20 @@ describe("task009 topology execution routing", () => {
       eventLabel: "intake 후속 실행 생성 완료",
     })
     expect(resolveRunRoute).not.toHaveBeenCalled()
-    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(expect.objectContaining({
-      source: "telegram",
-      targetId: `${topology.id}:node:intake`,
-      targetLabel: "Customer Request Intake",
-      agentExecutionDecision: expect.objectContaining({
-        current_executor_id: "agent:knowbee",
-        execution_route: "delegate_to_child",
-        selected_executor_id: `${topology.id}:node:intake`,
-        selected_connection_path: [`${topology.id}:node:intake`],
-        fallback_if_unavailable: "self_solve",
+    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "telegram",
+        targetId: `${topology.id}:node:intake`,
+        targetLabel: "Customer Request Intake",
+        agentExecutionDecision: expect.objectContaining({
+          current_executor_id: "agent:knowbee",
+          execution_route: "delegate_to_child",
+          selected_executor_id: `${topology.id}:node:intake`,
+          selected_connection_path: [`${topology.id}:node:intake`],
+          fallback_if_unavailable: "self_solve",
+        }),
       }),
-    }))
+    )
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith(
       "run:task009-intake-topology",
       expect.stringContaining("execution_decision_source:knowbee_harness"),
@@ -338,7 +354,7 @@ describe("task009 topology execution routing", () => {
       createdBy: "task009-intake-provider",
     })
     const modeSnapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: runtimeConfig,
+      config: runtimeConfig(),
       now: () => now,
     })
     const dependencies = intakeBridgeDependencies()
@@ -350,38 +366,53 @@ describe("task009 topology execution routing", () => {
       reason: "routing:provider:openai",
     })
 
-    await runIntakeBridgePass({
-      message: "provider openai로 직접 처리해줘",
-      originalRequest: "provider openai로 직접 처리해줘",
-      sessionId: "session:task009-intake-provider",
-      requestGroupId: "run:task009-intake-provider",
-      model: "gpt-test",
-      workDir: "/tmp",
-      source: "telegram",
-      runId: "run:task009-intake-provider",
-      onChunk: undefined,
-      reuseConversationContext: false,
-    }, dependencies, {
-      analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult({
-        preferred_target: "provider:openai",
-      })),
-      resolveRunRoute,
-      resolveOrchestrationModeSnapshotSync: vi.fn(() => modeSnapshot),
-      resolveTopologyRootRunRouting,
-      executeScheduleActions: vi.fn(),
-      createDefaultScheduleActionDependencies: vi.fn(),
-      inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
-      buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\nprovider direct"),
-    })
+    await runIntakeBridgePass(
+      {
+        artifactStorage: createArtifactStorageContext(runtimeFixture.paths),
+        config: runtimeFixture.config,
+        message: "provider openai로 직접 처리해줘",
+        originalRequest: "provider openai로 직접 처리해줘",
+        sessionId: "session:task009-intake-provider",
+        requestGroupId: "run:task009-intake-provider",
+        model: "gpt-test",
+        workDir: "/tmp",
+        source: "telegram",
+        runId: "run:task009-intake-provider",
+        onChunk: undefined,
+        reuseConversationContext: false,
+      },
+      dependencies,
+      {
+        analyzeTaskIntake: vi.fn().mockResolvedValue(
+          taskIntakeResult({
+            preferred_target: "provider:openai",
+          }),
+        ),
+        resolveRunRoute,
+        resolveOrchestrationModeSnapshotSync: vi.fn(() => modeSnapshot),
+        resolveTopologyRootRunRouting,
+        executeScheduleActions: vi.fn(),
+        createDefaultScheduleActionDependencies: vi.fn(),
+        inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
+        buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\nprovider direct"),
+      },
+    )
 
-    expect(resolveRunRoute).toHaveBeenCalledWith(expect.objectContaining({
-      preferredTarget: "provider:openai",
-    }))
-    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(expect.objectContaining({
-      targetId: "provider:openai",
-      providerId: "openai",
-    }))
-    expect(dependencies.startDelegatedRun.mock.calls[0]?.[0]).not.toHaveProperty("agentExecutionDecision")
+    expect(resolveRunRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preferredTarget: "provider:openai",
+      }),
+      expect.objectContaining({ orchestration: expect.any(Object) }),
+    )
+    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetId: "provider:openai",
+        providerId: "openai",
+      }),
+    )
+    expect(dependencies.startDelegatedRun.mock.calls[0]?.[0]).not.toHaveProperty(
+      "agentExecutionDecision",
+    )
   })
 
   it("keeps /api/status active topology agents aligned with root-run routing candidates", async () => {
@@ -392,51 +423,77 @@ describe("task009 topology execution routing", () => {
       topology,
       createdBy: "task009-test",
     })
-    const routes = new Map<string, () => unknown | Promise<unknown>>()
-    registerStatusRoute({
-      get(path: string, _options: unknown, handler: () => unknown | Promise<unknown>) {
-        routes.set(path, handler)
+    const routes = new Map<string, (request: unknown) => unknown | Promise<unknown>>()
+    const paths = runtimeFixture.paths
+    const statusConfig = runtimeFixture.config
+    initializeToolDispatcher(statusConfig)
+    registerStatusRoute(
+      {
+        get(
+          path: string,
+          _options: unknown,
+          handler: (request: unknown) => unknown | Promise<unknown>,
+        ) {
+          routes.set(path, handler)
+        },
+      } as never,
+      {
+        updateRuntime: createUpdateRuntimeContext(paths, {}),
       },
-    } as never)
+    )
 
-    const statusBody = await routes.get("/api/status")?.() as {
+    const statusBody = (await routes.get("/api/status")?.({
+      server: { knowbeeRuntimeContext: { config: statusConfig, paths } },
+    })) as {
       orchestration: ReturnType<typeof resolveOrchestrationModeSnapshotSync>
     }
 
-    const startPlan = await buildStartPlan({
-      message: "지뢰 찾기 게임 만들어줘",
-      sessionId: "session:task009-status",
-      runId: "run:task009-status",
-      source: "telegram",
-      taskProfile: "coding",
-      agentExecutionDecision: executionDecisionForTopology({
-        selectedExecutorId: `${topology.id}:node:intake`,
-        selectedConnectionPath: [`${topology.id}:node:intake`],
-        title: "status route selected executor",
-      }),
-    }, {
-      ...defaultStartPlanDependencies,
-      resolveOrchestrationMode: async () => statusBody.orchestration,
-      buildOrchestrationPlan: (input) => buildOrchestrationPlan({
-        ...input,
-        registrySnapshot: buildOrchestrationRegistrySnapshot({
-          now: () => now,
+    const startPlan = await buildStartPlan(
+      {
+        config: runtimeConfig(),
+        message: "지뢰 찾기 게임 만들어줘",
+        sessionId: "session:task009-status",
+        runId: "run:task009-status",
+        source: "telegram",
+        taskProfile: "coding",
+        agentExecutionDecision: executionDecisionForTopology({
+          selectedExecutorId: `${topology.id}:node:intake`,
+          selectedConnectionPath: [`${topology.id}:node:intake`],
+          title: "status route selected executor",
         }),
-        now: () => now,
-        idProvider: () => "plan:task009-status",
-      }),
-    })
+      },
+      {
+        ...defaultStartPlanDependencies,
+        resolveOrchestrationMode: async () => statusBody.orchestration,
+        buildOrchestrationPlan: (input) =>
+          buildOrchestrationPlan({
+            ...input,
+            registrySnapshot: buildOrchestrationRegistrySnapshot({
+              now: () => now,
+            }),
+            now: () => now,
+            idProvider: () => "plan:task009-status",
+          }),
+      },
+    )
 
     expect(statusBody.orchestration.activeSubAgentCount).toBe(
       startPlan.orchestrationRegistrySnapshot.activeSubAgentCount,
     )
-    expect(statusBody.orchestration.activeSubAgents.filter((agent) => agent.source === "topology"))
-      .toHaveLength(startPlan.orchestrationRegistrySnapshot.activeSubAgents.filter((agent) => agent.source === "topology").length)
-    expect(startPlan.topologyRouting).toEqual(expect.objectContaining({
-      mode: "route",
-      topologyId: topology.id,
-      entryNodeId: "node:intake",
-    }))
+    expect(
+      statusBody.orchestration.activeSubAgents.filter((agent) => agent.source === "topology"),
+    ).toHaveLength(
+      startPlan.orchestrationRegistrySnapshot.activeSubAgents.filter(
+        (agent) => agent.source === "topology",
+      ).length,
+    )
+    expect(startPlan.topologyRouting).toEqual(
+      expect.objectContaining({
+        mode: "route",
+        topologyId: topology.id,
+        entryNodeId: "node:intake",
+      }),
+    )
   })
 
   it("routes saved draft topology nodes without the hidden topology runtime flag", async () => {
@@ -447,53 +504,65 @@ describe("task009 topology execution routing", () => {
       createdBy: "task009-test",
     })
     const modeSnapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: runtimeConfig,
+      config: runtimeConfig(),
       now: () => now,
     })
 
-    const startPlan = await buildStartPlan({
-      message: "다운로드 밑에 지뢰라는 폴더 만들고 지뢰 찾기 게임 만들어줘",
-      sessionId: "session:task009",
-      runId: "run:task009",
-      source: "telegram",
-      taskProfile: "coding",
-      agentExecutionDecision: executionDecisionForTopology({
-        selectedExecutorId: `${topology.id}:node:intake`,
-        selectedConnectionPath: [`${topology.id}:node:intake`],
-        title: "saved draft selected executor",
-      }),
-    }, {
-      ...defaultStartPlanDependencies,
-      resolveOrchestrationMode: async () => modeSnapshot,
-      buildOrchestrationPlan: (input) => buildOrchestrationPlan({
-        ...input,
-        registrySnapshot: buildOrchestrationRegistrySnapshot({
-          getConfig: runtimeConfig,
-          now: () => now,
+    const startPlan = await buildStartPlan(
+      {
+        config: runtimeConfig(),
+        message: "다운로드 밑에 지뢰라는 폴더 만들고 지뢰 찾기 게임 만들어줘",
+        sessionId: "session:task009",
+        runId: "run:task009",
+        source: "telegram",
+        taskProfile: "coding",
+        agentExecutionDecision: executionDecisionForTopology({
+          selectedExecutorId: `${topology.id}:node:intake`,
+          selectedConnectionPath: [`${topology.id}:node:intake`],
+          title: "saved draft selected executor",
         }),
-        now: () => now,
-        idProvider: () => "plan:task009",
-      }),
-    })
+      },
+      {
+        ...defaultStartPlanDependencies,
+        resolveOrchestrationMode: async () => modeSnapshot,
+        buildOrchestrationPlan: (input) =>
+          buildOrchestrationPlan({
+            ...input,
+            registrySnapshot: buildOrchestrationRegistrySnapshot({
+              config: runtimeConfig(),
+              now: () => now,
+            }),
+            now: () => now,
+            idProvider: () => "plan:task009",
+          }),
+      },
+    )
 
-    expect(startPlan.orchestrationRegistrySnapshot.activeSubAgents).toEqual(expect.arrayContaining([
+    expect(startPlan.orchestrationRegistrySnapshot.activeSubAgents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "topology",
+          topologyId: topology.id,
+          executorId: "node:intake",
+        }),
+      ]),
+    )
+    expect(startPlan.topologyRouting).toEqual(
       expect.objectContaining({
-        source: "topology",
+        mode: "route",
         topologyId: topology.id,
-        executorId: "node:intake",
+        topologyVersion: 1,
+        entryNodeId: "node:intake",
       }),
-    ]))
-    expect(startPlan.topologyRouting).toEqual(expect.objectContaining({
-      mode: "route",
-      topologyId: topology.id,
-      topologyVersion: 1,
-      entryNodeId: "node:intake",
-    }))
-    expect(startPlan.topologyRouting).not.toEqual(expect.objectContaining({
-      reasonCode: "feature_flag_off",
-    }))
-    expect(startPlan.orchestrationPlanSnapshot.fallbackStrategy.reasonCode)
-      .not.toBe("no_eligible_agent_candidate")
+    )
+    expect(startPlan.topologyRouting).not.toEqual(
+      expect.objectContaining({
+        reasonCode: "feature_flag_off",
+      }),
+    )
+    expect(startPlan.orchestrationPlanSnapshot.fallbackStrategy.reasonCode).not.toBe(
+      "no_eligible_agent_candidate",
+    )
     expect(startPlan.orchestrationPlanSnapshot.delegatedTasks).toEqual([
       expect.objectContaining({
         assignedAgentId: `${topology.id}:node:intake`,
@@ -510,7 +579,7 @@ describe("task009 topology execution routing", () => {
       createdBy: "task009-start-plan-decision",
     })
     const modeSnapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: runtimeConfig,
+      config: runtimeConfig(),
       now: () => now,
     })
     const agentExecutionDecision = executionDecisionForTopology({
@@ -519,35 +588,42 @@ describe("task009 topology execution routing", () => {
       title: "start-plan selected executor routing",
     })
 
-    const startPlan = await buildStartPlan({
-      message: "선택된 실행자가 바로 처리하게 해줘",
-      sessionId: "session:task009-start-plan-decision",
-      runId: "run:task009-start-plan-decision",
-      source: "webui",
-      taskProfile: "operations",
-      agentExecutionDecision,
-    }, {
-      ...defaultStartPlanDependencies,
-      resolveOrchestrationMode: async () => modeSnapshot,
-      buildOrchestrationPlan: (input) => buildOrchestrationPlan({
-        ...input,
-        registrySnapshot: buildOrchestrationRegistrySnapshot({
-          getConfig: runtimeConfig,
-          now: () => now,
-        }),
-        now: () => now,
-        idProvider: () => "plan:task009-start-plan-decision",
-      }),
-    })
+    const startPlan = await buildStartPlan(
+      {
+        config: runtimeConfig(),
+        message: "선택된 실행자가 바로 처리하게 해줘",
+        sessionId: "session:task009-start-plan-decision",
+        runId: "run:task009-start-plan-decision",
+        source: "webui",
+        taskProfile: "operations",
+        agentExecutionDecision,
+      },
+      {
+        ...defaultStartPlanDependencies,
+        resolveOrchestrationMode: async () => modeSnapshot,
+        buildOrchestrationPlan: (input) =>
+          buildOrchestrationPlan({
+            ...input,
+            registrySnapshot: buildOrchestrationRegistrySnapshot({
+              config: runtimeConfig(),
+              now: () => now,
+            }),
+            now: () => now,
+            idProvider: () => "plan:task009-start-plan-decision",
+          }),
+      },
+    )
 
     expect(startPlan.agentExecutionDecision).toBe(agentExecutionDecision)
-    expect(startPlan.topologyRouting).toEqual(expect.objectContaining({
-      mode: "route",
-      reasonCode: "execution_decision_selected_executor",
-      entryNodeId: "node:intake",
-      selectedExecutorId: "node:triage",
-      selectedConnectionPath: ["node:intake", "node:triage"],
-    }))
+    expect(startPlan.topologyRouting).toEqual(
+      expect.objectContaining({
+        mode: "route",
+        reasonCode: "execution_decision_selected_executor",
+        entryNodeId: "node:intake",
+        selectedExecutorId: "node:triage",
+        selectedConnectionPath: ["node:intake", "node:triage"],
+      }),
+    )
   })
 
   it("routes the Telegram minesweeper reproduction prompt through saved topology instead of provider direct", async () => {
@@ -591,58 +667,79 @@ describe("task009 topology execution routing", () => {
       createdBy: "task009-telegram-repro",
     })
     const modeSnapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: runtimeConfig,
+      config: runtimeConfig(),
       now: () => now,
     })
 
-    const startPlan = await buildStartPlan({
-      message: "다운도르 밑에 지뢰라는 폴더 만들고, 지뢰 찾기 게임 만들어줘",
-      sessionId: "session:task009-telegram-repro",
-      runId: "run:task009-telegram-repro",
-      source: "telegram",
-      taskProfile: "coding",
-      agentExecutionDecision: executionDecisionForTopology({
-        selectedExecutorId: `${topology.id}:node:intake`,
-        selectedConnectionPath: [`${topology.id}:node:intake`],
-        title: "telegram repro selected executor",
-      }),
-    }, {
-      ...defaultStartPlanDependencies,
-      resolveOrchestrationMode: async () => modeSnapshot,
-      buildOrchestrationPlan: (input) => buildOrchestrationPlan({
-        ...input,
-        registrySnapshot: buildOrchestrationRegistrySnapshot({
-          getConfig: runtimeConfig,
-          now: () => now,
+    const startPlan = await buildStartPlan(
+      {
+        config: runtimeConfig(),
+        message: "다운도르 밑에 지뢰라는 폴더 만들고, 지뢰 찾기 게임 만들어줘",
+        sessionId: "session:task009-telegram-repro",
+        runId: "run:task009-telegram-repro",
+        source: "telegram",
+        taskProfile: "coding",
+        agentExecutionDecision: executionDecisionForTopology({
+          selectedExecutorId: `${topology.id}:node:intake`,
+          selectedConnectionPath: [`${topology.id}:node:intake`],
+          title: "telegram repro selected executor",
         }),
-        now: () => now,
-        idProvider: () => "plan:task009-telegram-repro",
-      }),
-    })
+      },
+      {
+        ...defaultStartPlanDependencies,
+        resolveOrchestrationMode: async () => modeSnapshot,
+        buildOrchestrationPlan: (input) =>
+          buildOrchestrationPlan({
+            ...input,
+            registrySnapshot: buildOrchestrationRegistrySnapshot({
+              config: runtimeConfig(),
+              now: () => now,
+            }),
+            now: () => now,
+            idProvider: () => "plan:task009-telegram-repro",
+          }),
+      },
+    )
 
     expect(startPlan.orchestrationRegistrySnapshot.activeSubAgentCount).toBe(4)
-    expect(startPlan.orchestrationRegistrySnapshot.activeSubAgents.map((agent) => ({
-      displayName: agent.displayName,
-      source: agent.source,
-    }))).toEqual(expect.arrayContaining([
-      { displayName: "CTO", source: "topology" },
-      { displayName: "삼식이", source: "topology" },
-      { displayName: "마당쇠", source: "topology" },
-      { displayName: "영수", source: "topology" },
-    ]))
-    expect(startPlan.topologyRouting).toEqual(expect.objectContaining({
-      mode: "route",
-      topologyId: topology.id,
-      entryNodeId: "node:intake",
-    }))
+    expect(
+      startPlan.orchestrationRegistrySnapshot.activeSubAgents.map((agent) => ({
+        agentName: agent.agentName,
+        source: agent.source,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        { agentName: "CTO", source: "topology" },
+        { agentName: "삼식이", source: "topology" },
+        { agentName: "마당쇠", source: "topology" },
+        { agentName: "영수", source: "topology" },
+      ]),
+    )
+    expect(startPlan.orchestrationRegistrySnapshot.activeSubAgents[0]).not.toHaveProperty(
+      "displayName",
+    )
+    expect(startPlan.orchestrationRegistrySnapshot.activeSubAgents[0]).not.toHaveProperty(
+      "nickname",
+    )
+    expect(startPlan.topologyRouting).toEqual(
+      expect.objectContaining({
+        mode: "route",
+        topologyId: topology.id,
+        entryNodeId: "node:intake",
+      }),
+    )
     expect(startPlan.orchestrationPlanSnapshot.delegatedTasks).toHaveLength(1)
-    expect(startPlan.orchestrationPlanSnapshot.delegatedTasks[0]?.assignedAgentId)
-      .toMatch(new RegExp(`^${topology.id}:node:`))
-    expect(startPlan.orchestrationPlanSnapshot.delegatedTasks.some((task) =>
-      task.assignedAgentId?.startsWith("provider:"),
-    )).toBe(false)
-    expect(startPlan.orchestrationPlanSnapshot.fallbackStrategy.reasonCode)
-      .not.toBe("no_eligible_agent_candidate")
+    expect(startPlan.orchestrationPlanSnapshot.delegatedTasks[0]?.assignedAgentId).toMatch(
+      new RegExp(`^${topology.id}:node:`),
+    )
+    expect(
+      startPlan.orchestrationPlanSnapshot.delegatedTasks.some((task) =>
+        task.assignedAgentId?.startsWith("provider:"),
+      ),
+    ).toBe(false)
+    expect(startPlan.orchestrationPlanSnapshot.fallbackStrategy.reasonCode).not.toBe(
+      "no_eligible_agent_candidate",
+    )
   })
 
   it("projects the selected topology node and fallback explanation fields into Runtime Inspector", async () => {
@@ -653,7 +750,7 @@ describe("task009 topology execution routing", () => {
       createdBy: "task009-test",
     })
     const modeSnapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: runtimeConfig,
+      config: runtimeConfig(),
       now: () => now,
     })
     const inspectorExecutionDecision = executionDecisionForTopology({
@@ -661,26 +758,31 @@ describe("task009 topology execution routing", () => {
       selectedConnectionPath: [`${topology.id}:node:intake`],
       title: "Runtime Inspector execution decision",
     })
-    const startPlan = await buildStartPlan({
-      message: "지뢰 찾기 게임 만들어줘",
-      sessionId: "session:task009-inspector",
-      runId: "run:task009-inspector",
-      source: "telegram",
-      taskProfile: "coding",
-      agentExecutionDecision: inspectorExecutionDecision,
-    }, {
-      ...defaultStartPlanDependencies,
-      resolveOrchestrationMode: async () => modeSnapshot,
-      buildOrchestrationPlan: (input) => buildOrchestrationPlan({
-        ...input,
-        registrySnapshot: buildOrchestrationRegistrySnapshot({
-          getConfig: runtimeConfig,
-          now: () => now,
-        }),
-        now: () => now,
-        idProvider: () => "plan:task009-inspector",
-      }),
-    })
+    const startPlan = await buildStartPlan(
+      {
+        config: runtimeConfig(),
+        message: "지뢰 찾기 게임 만들어줘",
+        sessionId: "session:task009-inspector",
+        runId: "run:task009-inspector",
+        source: "telegram",
+        taskProfile: "coding",
+        agentExecutionDecision: inspectorExecutionDecision,
+      },
+      {
+        ...defaultStartPlanDependencies,
+        resolveOrchestrationMode: async () => modeSnapshot,
+        buildOrchestrationPlan: (input) =>
+          buildOrchestrationPlan({
+            ...input,
+            registrySnapshot: buildOrchestrationRegistrySnapshot({
+              config: runtimeConfig(),
+              now: () => now,
+            }),
+            now: () => now,
+            idProvider: () => "plan:task009-inspector",
+          }),
+      },
+    )
 
     insertSession({
       id: "session:task009-inspector",
@@ -712,18 +814,20 @@ describe("task009 topology execution routing", () => {
     if (!run) return
     const projection = buildRunRuntimeInspectorProjection(run, { now })
 
-    expect(projection.topologyRouting).toEqual(expect.objectContaining({
-      mode: "route",
-      topologyId: topology.id,
-      entryNodeId: "node:intake",
-      providerFallback: false,
-      executionDecisionSource: "knowbee_harness",
-      executionDecisionSelectedExecutorId: `${topology.id}:node:intake`,
-      executionDecisionRoute: "delegate_to_child",
-      executionDecisionFallbackReason: "self_solve",
-      riskBoundaryRequiresUserApproval: false,
-      riskBoundaryReason: "테스트용 토폴로지 런타임 위임이며 외부 작업을 수행하지 않는다.",
-    }))
+    expect(projection.topologyRouting).toEqual(
+      expect.objectContaining({
+        mode: "route",
+        topologyId: topology.id,
+        entryNodeId: "node:intake",
+        providerFallback: false,
+        executionDecisionSource: "knowbee_harness",
+        executionDecisionSelectedExecutorId: `${topology.id}:node:intake`,
+        executionDecisionRoute: "delegate_to_child",
+        executionDecisionFallbackReason: "self_solve",
+        riskBoundaryRequiresUserApproval: false,
+        riskBoundaryReason: "테스트용 토폴로지 런타임 위임이며 외부 작업을 수행하지 않는다.",
+      }),
+    )
     expect(projection.topologyRouting.selectedExecutorIds).toContain("node:intake")
     expect(projection.plan.taskSummaries).toEqual([
       expect.objectContaining({
@@ -736,7 +840,11 @@ describe("task009 topology execution routing", () => {
     const delegatedTask = startPlan.orchestrationPlanSnapshot.delegatedTasks[0]
     expect(delegatedTask).toBeDefined()
     if (!delegatedTask) return
-    const { assignedAgentId: _assignedAgentId, assignedTeamId: _assignedTeamId, ...directTask } = delegatedTask
+    const {
+      assignedAgentId: _assignedAgentId,
+      assignedTeamId: _assignedTeamId,
+      ...directTask
+    } = delegatedTask
     insertSession({
       id: "session:task009-fallback-inspector",
       source: "telegram",
@@ -776,12 +884,14 @@ describe("task009 topology execution routing", () => {
     expect(fallbackRun).toBeDefined()
     if (!fallbackRun) return
     const fallbackProjection = buildRunRuntimeInspectorProjection(fallbackRun, { now })
-    expect(fallbackProjection.topologyRouting).toEqual(expect.objectContaining({
-      mode: "fallback",
-      reasonCode: "active_topology_not_found",
-      providerFallback: true,
-      providerFallbackReasonCode: "active_topology_not_found",
-    }))
+    expect(fallbackProjection.topologyRouting).toEqual(
+      expect.objectContaining({
+        mode: "fallback",
+        reasonCode: "active_topology_not_found",
+        providerFallback: true,
+        providerFallbackReasonCode: "active_topology_not_found",
+      }),
+    )
   })
 
   it("includes saved topology nodes in the planner registry with root direct-child hierarchy", () => {
@@ -793,29 +903,32 @@ describe("task009 topology execution routing", () => {
     })
 
     const registry = buildOrchestrationRegistrySnapshot({
-      getConfig: runtimeConfig,
+      config: runtimeConfig(),
       now: () => now,
     })
 
-    expect(registry.agents).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        agentId: `${topology.id}:node:intake`,
-        source: "topology",
-        status: "enabled",
-        delegationEnabled: true,
-      }),
-      expect.objectContaining({
-        agentId: `${topology.id}:node:triage`,
-        source: "topology",
-        status: "enabled",
-        delegationEnabled: true,
-      }),
-    ]))
+    expect(registry.agents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          agentId: `${topology.id}:node:intake`,
+          source: "topology",
+          status: "enabled",
+          delegationEnabled: true,
+        }),
+        expect.objectContaining({
+          agentId: `${topology.id}:node:triage`,
+          source: "topology",
+          status: "enabled",
+          delegationEnabled: true,
+        }),
+      ]),
+    )
     expect(registry.hierarchy?.directChildrenByParent["agent:knowbee"]).toEqual([
       `${topology.id}:node:intake`,
     ])
-    expect(registry.hierarchy?.directChildrenByParent[`${topology.id}:node:intake`])
-      .toEqual(expect.arrayContaining([`${topology.id}:node:triage`]))
+    expect(registry.hierarchy?.directChildrenByParent[`${topology.id}:node:intake`]).toEqual(
+      expect.arrayContaining([`${topology.id}:node:triage`]),
+    )
   })
 
   it("still honors an explicit administrator topology runtime disable", () => {
@@ -826,7 +939,7 @@ describe("task009 topology execution routing", () => {
       createdBy: "task009-test",
     })
     const modeSnapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: runtimeConfig,
+      config: runtimeConfig(),
       now: () => now,
     })
 
@@ -850,16 +963,18 @@ describe("task009 topology execution routing", () => {
       },
     })
 
-    expect(decision).toEqual(expect.objectContaining({
-      mode: "fallback",
-      reasonCode: "feature_flag_off",
-    }))
+    expect(decision).toEqual(
+      expect.objectContaining({
+        mode: "fallback",
+        reasonCode: "feature_flag_off",
+      }),
+    )
   })
 
   it("keeps fallback paths explicit when topology is absent or the user picked a provider target", () => {
     useTempState()
     const modeSnapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: runtimeConfig,
+      config: runtimeConfig(),
       now: () => now,
     })
     const enforcedFlag = {
@@ -873,19 +988,23 @@ describe("task009 topology execution routing", () => {
       source: "default" as const,
     }
 
-    expect(resolveTopologyRootRunRouting({
-      message: "지뢰 찾기 게임 만들어줘",
-      runId: "run:task009-no-topology",
-      sessionId: "session:task009-no-topology",
-      source: "telegram",
-      taskProfile: "coding",
-      isRootRequest: true,
-      orchestrationModeSnapshot: modeSnapshot,
-      featureFlag: enforcedFlag,
-    })).toEqual(expect.objectContaining({
-      mode: "fallback",
-      reasonCode: "active_topology_not_found",
-    }))
+    expect(
+      resolveTopologyRootRunRouting({
+        message: "지뢰 찾기 게임 만들어줘",
+        runId: "run:task009-no-topology",
+        sessionId: "session:task009-no-topology",
+        source: "telegram",
+        taskProfile: "coding",
+        isRootRequest: true,
+        orchestrationModeSnapshot: modeSnapshot,
+        featureFlag: enforcedFlag,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        mode: "fallback",
+        reasonCode: "active_topology_not_found",
+      }),
+    )
 
     const topology = buildExampleEnterpriseTopology(now)
     createEnterpriseTopologyRegistry({ now: () => now }).appendTopologyVersion({
@@ -893,22 +1012,26 @@ describe("task009 topology execution routing", () => {
       createdBy: "task009-test",
     })
     const topologyModeSnapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: runtimeConfig,
+      config: runtimeConfig(),
       now: () => now,
     })
-    expect(resolveTopologyRootRunRouting({
-      message: "지뢰 찾기 게임 만들어줘",
-      runId: "run:task009-provider-direct",
-      sessionId: "session:task009-provider-direct",
-      source: "telegram",
-      targetId: "provider:openai",
-      taskProfile: "coding",
-      isRootRequest: true,
-      orchestrationModeSnapshot: topologyModeSnapshot,
-    })).toEqual(expect.objectContaining({
-      mode: "fallback",
-      reasonCode: "topology_routing_not_opted_in",
-    }))
+    expect(
+      resolveTopologyRootRunRouting({
+        message: "지뢰 찾기 게임 만들어줘",
+        runId: "run:task009-provider-direct",
+        sessionId: "session:task009-provider-direct",
+        source: "telegram",
+        targetId: "provider:openai",
+        taskProfile: "coding",
+        isRootRequest: true,
+        orchestrationModeSnapshot: topologyModeSnapshot,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        mode: "fallback",
+        reasonCode: "topology_routing_not_opted_in",
+      }),
+    )
   })
 
   it("starts topology runtime from the execution decision and aggregates delegated child results", async () => {
@@ -947,7 +1070,7 @@ describe("task009 topology execution routing", () => {
       createdBy: "task009-execution-decision",
     })
     const modeSnapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: runtimeConfig,
+      config: runtimeConfig(),
       now: () => now,
     })
     const executionDecision = executionDecisionForTopology({
@@ -966,16 +1089,20 @@ describe("task009 topology execution routing", () => {
       executionDecision,
     })
 
-    expect(routing).toEqual(expect.objectContaining({
-      mode: "route",
-      reasonCode: "execution_decision_selected_executor",
-      entryNodeId: "node:intake",
-      selectedExecutorId: "node:triage",
-      selectedConnectionPath: ["node:intake", "node:triage"],
-    }))
-    expect(routing).toEqual(expect.objectContaining({
-      executionDecision,
-    }))
+    expect(routing).toEqual(
+      expect.objectContaining({
+        mode: "route",
+        reasonCode: "execution_decision_selected_executor",
+        entryNodeId: "node:intake",
+        selectedExecutorId: "node:triage",
+        selectedConnectionPath: ["node:intake", "node:triage"],
+      }),
+    )
+    expect(routing).toEqual(
+      expect.objectContaining({
+        executionDecision,
+      }),
+    )
 
     const result = await runTopologyRootRun({
       decision: routing as Extract<TopologyRootRunRoutingDecision, { mode: "route" }>,
@@ -990,38 +1117,46 @@ describe("task009 topology execution routing", () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.entryNodeId).toBe("node:intake")
-    expect(result.runtimeResult.childDelegation?.results.map((entry) => entry.childNodeId))
-      .toContain("node:triage")
-    expect(result.runtimeResult.aggregation).toEqual(expect.objectContaining({
-      workOrderId: `work-order:topology-run:run:task009-execution-decision:node:intake`,
-    }))
-    expect(result.runtimeResult.aggregation?.sources.map((source) => source.sourceId))
-      .toEqual(expect.arrayContaining(["node:intake", "node:triage"]))
-    expect(result.runtimeResult.validation).toEqual(expect.objectContaining({
-      status: "partial_success",
-    }))
+    expect(
+      result.runtimeResult.childDelegation?.results.map((entry) => entry.childNodeId),
+    ).toContain("node:triage")
+    expect(result.runtimeResult.aggregation).toEqual(
+      expect.objectContaining({
+        workOrderId: `work-order:topology-run:run:task009-execution-decision:node:intake`,
+      }),
+    )
+    expect(result.runtimeResult.aggregation?.sources.map((source) => source.sourceId)).toEqual(
+      expect.arrayContaining(["node:intake", "node:triage"]),
+    )
+    expect(result.runtimeResult.validation).toEqual(
+      expect.objectContaining({
+        status: "partial_success",
+      }),
+    )
     const tracePayloads = result.runtimeResult.traceEvents
       .map((event) => event.payload)
       .filter((payload): payload is NonNullable<typeof payload> => payload !== undefined)
-    expect(tracePayloads).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        parent_run_id: "run:task009-execution-decision",
-        delegating_executor_id: "node:triage",
-        target_executor_id: "node:review",
-        work_order_goal: "연결된 실행자에게 나눠서 처리해줘",
-      }),
-      expect.objectContaining({
-        parent_run_id: "run:task009-execution-decision",
-        delegating_executor_id: "node:intake",
-        target_executor_id: "node:triage",
-        validation_result: expect.objectContaining({
-          status: "partial_success",
+    expect(tracePayloads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          parent_run_id: "run:task009-execution-decision",
+          delegating_executor_id: "node:triage",
+          target_executor_id: "node:review",
+          work_order_goal: "연결된 실행자에게 나눠서 처리해줘",
         }),
-        aggregation_result: expect.objectContaining({
-          source_executor_ids: expect.arrayContaining(["node:triage", "node:review"]),
+        expect.objectContaining({
+          parent_run_id: "run:task009-execution-decision",
+          delegating_executor_id: "node:intake",
+          target_executor_id: "node:triage",
+          validation_result: expect.objectContaining({
+            status: "partial_success",
+          }),
+          aggregation_result: expect.objectContaining({
+            source_executor_ids: expect.arrayContaining(["node:triage", "node:review"]),
+          }),
         }),
-      }),
-    ]))
+      ]),
+    )
   })
 
   it("falls back when an execution decision selects a disconnected topology path", () => {
@@ -1033,28 +1168,32 @@ describe("task009 topology execution routing", () => {
       createdBy: "task009-disconnected-decision",
     })
     const modeSnapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: runtimeConfig,
+      config: runtimeConfig(),
       now: () => now,
     })
 
-    expect(resolveTopologyRootRunRouting({
-      message: "연결되지 않은 실행자에게 보내줘",
-      runId: "run:task009-disconnected-decision",
-      sessionId: "session:task009-disconnected-decision",
-      source: "webui",
-      taskProfile: "operations",
-      isRootRequest: true,
-      registry,
-      orchestrationModeSnapshot: modeSnapshot,
-      executionDecision: executionDecisionForTopology({
-        selectedExecutorId: "node:triage",
-        selectedConnectionPath: ["node:triage"],
+    expect(
+      resolveTopologyRootRunRouting({
+        message: "연결되지 않은 실행자에게 보내줘",
+        runId: "run:task009-disconnected-decision",
+        sessionId: "session:task009-disconnected-decision",
+        source: "webui",
+        taskProfile: "operations",
+        isRootRequest: true,
+        registry,
+        orchestrationModeSnapshot: modeSnapshot,
+        executionDecision: executionDecisionForTopology({
+          selectedExecutorId: "node:triage",
+          selectedConnectionPath: ["node:triage"],
+        }),
       }),
-    })).toEqual(expect.objectContaining({
-      mode: "fallback",
-      reasonCode: "selected_executor_path_invalid",
-      issues: expect.arrayContaining(["selected_path_must_start_at_root_child:node:intake"]),
-    }))
+    ).toEqual(
+      expect.objectContaining({
+        mode: "fallback",
+        reasonCode: "selected_executor_path_invalid",
+        issues: expect.arrayContaining(["selected_path_must_start_at_root_child:node:intake"]),
+      }),
+    )
   })
 
   it("cancels active child node runs when the parent topology run is cancelled", () => {
@@ -1099,8 +1238,9 @@ describe("task009 topology execution routing", () => {
     expect(getRootRun("run:task009-cancel-child")?.status).toBe("cancelled")
     expect(parentController.signal.aborted).toBe(true)
     expect(childController.signal.aborted).toBe(true)
-    expect(getRootRun("run:task009-cancel-child")?.recentEvents.map((event) => event.label))
-      .toContain("취소 요청")
+    expect(
+      getRootRun("run:task009-cancel-child")?.recentEvents.map((event) => event.label),
+    ).toContain("취소 요청")
   })
 
   it("keeps permission and local runtime preflight ahead of topology execution", () => {
@@ -1111,7 +1251,7 @@ describe("task009 topology execution routing", () => {
       createdBy: "task009-test",
     })
     const modeSnapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: runtimeConfig,
+      config: runtimeConfig(),
       now: () => now,
     })
 
@@ -1130,6 +1270,7 @@ describe("task009 topology execution routing", () => {
       }),
     })
     const contextPlan = resolveStartContextPlan({
+      config: runtimeFixture.config,
       source: "webui",
       message: "화면을 캡처해서 지금 상태를 확인해줘",
       model: "gpt-test",
@@ -1144,13 +1285,17 @@ describe("task009 topology execution routing", () => {
       },
     })
 
-    expect(routing).toEqual(expect.objectContaining({
-      mode: "route",
-      topologyId: topology.id,
-    }))
+    expect(routing).toEqual(
+      expect.objectContaining({
+        mode: "route",
+        topologyId: topology.id,
+      }),
+    )
     expect(contextPlan.toolPolicy.requiresYeonjang).toBe(true)
-    expect(contextPlan.preflightFailure).toEqual(expect.objectContaining({
-      code: "yeonjang_unavailable",
-    }))
+    expect(contextPlan.preflightFailure).toEqual(
+      expect.objectContaining({
+        code: "yeonjang_unavailable",
+      }),
+    )
   })
 })

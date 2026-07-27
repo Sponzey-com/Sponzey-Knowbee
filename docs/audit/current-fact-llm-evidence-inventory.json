@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "requirements": ["PRJ-062088d2", "PRJ-2a76e631", "PRJ-4a12e8e9"],
+  "paths": [
+    {
+      "id": "root-tool-evidence-completion",
+      "status": "active",
+      "transportOwners": [
+        "packages/core/src/tools/builtin/web-search.ts",
+        "packages/core/src/tools/builtin/web-fetch.ts"
+      ],
+      "meaningOwner": "packages/core/src/agent/completion-review.ts",
+      "bindingOwner": "packages/core/src/runs/canonical-finalization-lifecycle.ts",
+      "terminalOwner": "packages/core/src/runs/review-outcome-pass.ts",
+      "completionAuthority": "llm_result_diagnosis"
+    },
+    {
+      "id": "retrieval-fixture-diagnostics",
+      "status": "removed",
+      "removedModules": [
+        "packages/core/src/runs/current-fact-retrieval.ts",
+        "packages/core/src/runs/web-retrieval-verification.ts",
+        "packages/core/src/runs/web-conflict-resolver.ts",
+        "packages/core/src/runs/retrieval-finalizer.ts",
+        "packages/core/src/runs/web-retrieval-session.ts",
+        "packages/core/src/runs/web-retrieval-planner.ts",
+        "packages/core/src/runs/web-source-adapters/finance.ts",
+        "packages/core/src/runs/web-source-adapters/weather.ts"
+      ],
+      "removedPrompts": [
+        "web_retrieval_latest_search_directive_user",
+        "web_retrieval_latest_source_directive_user",
+        "web_retrieval_strict_timestamp_directive_user",
+        "web_retrieval_normal_directive_user",
+        "web_retrieval_limited_completion_directive_user",
+        "web_retrieval_planner"
+      ],
+      "migratedConsumers": [
+        "packages/core/src/runs/admin-tool-lab.ts",
+        "packages/core/src/runs/web-retrieval-smoke.ts",
+        "packages/core/src/release/package.ts",
+        "packages/core/src/index.ts"
+      ],
+      "replacementContract": "web-evidence-llm-diagnosis-v2",
+      "completionAuthority": "llm_result_diagnosis",
+      "removalEvidence": "tests/task028-provenance-only-retrieval-boundary.test.ts"
+    }
+  ]
+}

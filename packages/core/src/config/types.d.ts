@@ -122,11 +122,6 @@ export interface MqttConfig {
     allowAnonymous: boolean;
 }
 export interface SearchConfig {
-    web?: {
-        provider: "brave" | "tavily" | "duckduckgo";
-        apiKey?: string;
-        maxResults: number;
-    };
     files?: {
         indexedPaths: string[];
         excludePatterns: string[];
@@ -143,9 +138,13 @@ export interface MemoryConfig {
         modelId?: string;
         fallbackModelId?: string;
         minContextTokens?: number;
+        tokenThreshold?: number;
+        messageThreshold?: number;
+        protectedRecentMessageCount?: number;
     };
     searchMode?: "fts" | "vector" | "hybrid";
     sessionRetentionDays: number;
+    longTermRetentionDays?: number;
     indexedPaths?: string[];
     excludePatterns?: string[];
 }

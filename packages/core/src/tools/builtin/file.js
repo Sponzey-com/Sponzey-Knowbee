@@ -1,17 +1,17 @@
-import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from "node:fs";
-import { resolve, join, relative, dirname } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { getConfig } from "../../config/index.js";
-import { parsePatch } from "./patch-parser.js";
+import { dirname, join, relative, resolve } from "node:path";
+import { toolUserFacingErrorMessage } from "./error-redaction.js";
 import { applyPatch } from "./patch-applier.js";
+import { parsePatch } from "./patch-parser.js";
 const MAX_FILE_SIZE = 500 * 1024; // 500 KB read limit
-export function assertAllowedPath(filePath) {
+const DEFAULT_FILE_TOOL_SECURITY = Object.freeze({ allowedPaths: [] });
+export function assertAllowedPath(filePath, securityConfig = DEFAULT_FILE_TOOL_SECURITY) {
     const resolved = resolve(filePath);
-    const config = getConfig();
     const home = homedir();
     // Always allow home directory subtree by default
-    const allowed = config.security.allowedPaths.length > 0
-        ? config.security.allowedPaths.map((p) => resolve(p.replace("~", home)))
+    const allowed = securityConfig.allowedPaths.length > 0
+        ? securityConfig.allowedPaths.map((p) => resolve(p.replace("~", home)))
         : [home];
     const isAllowed = allowed.some((a) => resolved.startsWith(a + "/") || resolved === a);
     if (!isAllowed) {
@@ -26,6 +26,7 @@ export function assertAllowedPath(filePath) {
 }
 export const fileReadTool = {
     name: "file_read",
+    evidenceSourceKind: "file",
     description: "Read the contents of a file. Returns the text content. " +
         "Large files are truncated with a notice.",
     parameters: {
@@ -42,10 +43,10 @@ export const fileReadTool = {
     },
     riskLevel: "safe",
     requiresApproval: false,
-    async execute(params, _ctx) {
+    async execute(params, ctx) {
         const filePath = params.path.replace(/^~/, homedir());
         try {
-            assertAllowedPath(filePath);
+            assertAllowedPath(filePath, ctx.securityConfig);
             if (!existsSync(filePath)) {
                 return { success: false, output: `File not found: "${filePath}"`, error: "ENOENT" };
             }
@@ -72,13 +73,33 @@ export const fileReadTool = {
             };
         }
         catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = toolUserFacingErrorMessage(err);
             return { success: false, output: `Error reading file: ${msg}`, error: msg };
         }
     },
 };
+async function observeFileWriteState(params) {
+    const filePath = resolve(params.path.replace(/^~/, homedir()));
+    try {
+        return {
+            available: existsSync(filePath) && statSync(filePath).isFile(),
+            targetRef: filePath,
+            expectedState: params.content,
+            observedState: readFileSync(filePath, "utf-8"),
+        };
+    }
+    catch {
+        return {
+            available: false,
+            targetRef: filePath,
+            expectedState: params.content,
+            observedState: null,
+        };
+    }
+}
 export const fileWriteTool = {
     name: "file_write",
+    evidenceSourceKind: "file",
     description: "Write text content to a file. Creates the file if it does not exist.",
     parameters: {
         type: "object",
@@ -94,10 +115,18 @@ export const fileWriteTool = {
     },
     riskLevel: "moderate",
     requiresApproval: false,
-    async execute(params, _ctx) {
+    sideEffect: {
+        effectClass: "local_write",
+        compensationSupport: "irreversible",
+        targetRef: (params) => resolve(params.path.replace(/^~/, homedir())),
+        expectedState: (params) => params.content,
+        observe: observeFileWriteState,
+        observeCurrent: observeFileWriteState,
+    },
+    async execute(params, ctx) {
         const filePath = params.path.replace(/^~/, homedir());
         try {
-            assertAllowedPath(filePath);
+            assertAllowedPath(filePath, ctx.securityConfig);
             if (params.createDirs !== false) {
                 mkdirSync(dirname(filePath), { recursive: true });
             }
@@ -109,13 +138,14 @@ export const fileWriteTool = {
             };
         }
         catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = toolUserFacingErrorMessage(err);
             return { success: false, output: `Error writing file: ${msg}`, error: msg };
         }
     },
 };
 export const fileListTool = {
     name: "file_list",
+    evidenceSourceKind: "file",
     description: "List files and directories at a given path.",
     parameters: {
         type: "object",
@@ -131,10 +161,10 @@ export const fileListTool = {
     },
     riskLevel: "safe",
     requiresApproval: false,
-    async execute(params, _ctx) {
+    async execute(params, ctx) {
         const dirPath = params.path.replace(/^~/, homedir());
         try {
-            assertAllowedPath(dirPath);
+            assertAllowedPath(dirPath, ctx.securityConfig);
             if (!existsSync(dirPath)) {
                 return { success: false, output: `Directory not found: "${dirPath}"`, error: "ENOENT" };
             }
@@ -147,9 +177,7 @@ export const fileListTool = {
                 const rel = relative(dirPath, e.path);
                 return `${e.isDir ? "d" : "f"} ${rel}${e.isDir ? "/" : ""}`;
             });
-            const output = lines.length > 0
-                ? lines.join("\n")
-                : "(empty directory)";
+            const output = lines.length > 0 ? lines.join("\n") : "(empty directory)";
             return {
                 success: true,
                 output,
@@ -157,7 +185,7 @@ export const fileListTool = {
             };
         }
         catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = toolUserFacingErrorMessage(err);
             return { success: false, output: `Error listing directory: ${msg}`, error: msg };
         }
     },
@@ -187,6 +215,7 @@ function listDir(dir, recursive, showHidden, depth = 0) {
 }
 export const filePatchTool = {
     name: "file_patch",
+    evidenceSourceKind: "file",
     description: "구조화된 패치 형식으로 파일을 편집합니다. Update/Add/Delete 지시어를 지원합니다.",
     parameters: {
         type: "object",
@@ -203,7 +232,7 @@ export const filePatchTool = {
     async execute(params, ctx) {
         try {
             const parsed = parsePatch(params.patch);
-            const result = applyPatch(parsed, ctx.workDir);
+            const result = applyPatch(parsed, ctx.workDir, ctx.securityConfig);
             if (!result.success) {
                 return { success: false, output: result.message, error: result.message };
             }
@@ -214,13 +243,14 @@ export const filePatchTool = {
             };
         }
         catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = toolUserFacingErrorMessage(err);
             return { success: false, output: `Patch failed: ${msg}`, error: msg };
         }
     },
 };
 export const fileDeleteTool = {
     name: "file_delete",
+    evidenceSourceKind: "file",
     description: "Delete a file. Requires approval.",
     parameters: {
         type: "object",
@@ -231,10 +261,10 @@ export const fileDeleteTool = {
     },
     riskLevel: "dangerous",
     requiresApproval: true,
-    async execute(params, _ctx) {
+    async execute(params, ctx) {
         const filePath = params.path.replace(/^~/, homedir());
         try {
-            assertAllowedPath(filePath);
+            assertAllowedPath(filePath, ctx.securityConfig);
             if (!existsSync(filePath)) {
                 return { success: false, output: `File not found: "${filePath}"`, error: "ENOENT" };
             }
@@ -243,7 +273,7 @@ export const fileDeleteTool = {
             return { success: true, output: `Deleted: "${filePath}"` };
         }
         catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = toolUserFacingErrorMessage(err);
             return { success: false, output: `Error deleting file: ${msg}`, error: msg };
         }
     },

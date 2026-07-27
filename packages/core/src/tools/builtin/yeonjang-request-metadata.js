@@ -10,8 +10,10 @@ export function buildYeonjangRequestMetadata(ctx) {
     };
 }
 export function withYeonjangRequestMetadata(ctx, options = {}) {
+    const mqttConfig = options.mqttConfig ?? ctx.mqttConfig;
     return {
         ...options,
+        ...(mqttConfig ? { mqttConfig } : {}),
         metadata: {
             ...(options.metadata ?? {}),
             ...buildYeonjangRequestMetadata(ctx),

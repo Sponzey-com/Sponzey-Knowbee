@@ -1,4 +1,7 @@
+import { resolveAgentConfigAgentName } from "../contracts/sub-agent-orchestration.js";
+import { DEFAULT_MAIN_AGENT_NAME_KO } from "../agent/main-agent-identity.js";
 export function resolveNodeDelegation(input) {
+    const rootAgentName = rootAgentDisplayName(input.rootAgentNameSnapshot);
     const candidates = normalizeCandidates(input.candidates ?? [], input.taskAnalysis).sort((a, b) => {
         const availabilityRank = availabilityScore(b.availability) - availabilityScore(a.availability);
         if (availabilityRank !== 0)
@@ -14,7 +17,7 @@ export function resolveNodeDelegation(input) {
         candidates,
         selectedExecutorId: input.executionDecision?.selected_executor_id,
     }) : undefined;
-    const fallbackRoutes = buildFallbackRoutes(input.taskAnalysis.needsUserConfirmation, selected);
+    const fallbackRoutes = buildFallbackRoutes(input.taskAnalysis.needsUserConfirmation, selected, rootAgentName);
     const selectedRoute = routeForCandidate(selected, input.taskAnalysis.needsUserConfirmation);
     return {
         resolutionId: `node-delegation-resolution:${input.executorId}`,
@@ -22,12 +25,12 @@ export function resolveNodeDelegation(input) {
         nodeContractId: input.nodeContractId ?? input.executorId,
         selectedRoute,
         selectedTargetId: selected?.targetId ?? selectedRoute,
-        selectedTargetLabel: selected?.targetLabel ?? labelForRoute(selectedRoute),
+        selectedTargetLabel: selected?.targetLabel ?? labelForRoute(selectedRoute, rootAgentName),
         candidateTargets: candidates,
         selectionReason: selected && input.executionDecision?.selected_executor_id
-            ? `실행 결정 계약이 선택한 ${selected.targetLabel} 실행자를 사용한다.`
+            ? `실행 결정 계약이 선택한 ${selected.targetLabel} 서브 에이전트를 사용한다.`
             : selected
-                ? `명시적으로 제공된 ${selected.targetLabel} 실행자 후보를 사용한다.`
+                ? `명시적으로 제공된 ${selected.targetLabel} 서브 에이전트 후보를 사용한다.`
                 : !pathValidation.ok
                     ? `실행 결정 계약의 연결 경로를 사용할 수 없어 fallback 경로를 사용한다.`
                     : "사용 가능한 서브 에이전트 후보가 없어 fallback 경로를 사용한다.",
@@ -189,7 +192,10 @@ function routeForCandidate(candidate, approval) {
         return "yeonjang";
     return "knowbee_direct";
 }
-function labelForRoute(route) {
+function rootAgentDisplayName(value) {
+    return value?.trim() || DEFAULT_MAIN_AGENT_NAME_KO;
+}
+function labelForRoute(route, rootAgentName) {
     if (route === "sub_agent")
         return "서브 에이전트";
     if (route === "yeonjang")
@@ -197,22 +203,28 @@ function labelForRoute(route) {
     if (route === "manual_approval")
         return "사용자 확인";
     if (route === "external")
-        return "외부 실행자";
-    return "노비 직접 처리";
+        return "외부 실행 주체";
+    return `${rootAgentName} 직접 처리`;
 }
-function buildFallbackRoutes(approval, selected) {
+function buildFallbackRoutes(approval, selected, rootAgentName) {
     if (approval)
         return [{ route: "manual_approval", reason: "위험 경계 또는 권한 확인이 필요함" }];
     if (selected) {
         return [
             { route: "yeonjang", reason: "서브 에이전트 실행이 불가능할 때 로컬 실행 경로를 검토" },
-            { route: "knowbee_direct", reason: "다른 실행 경로가 없을 때 노비가 직접 처리" },
+            { route: "knowbee_direct", reason: `다른 실행 경로가 없을 때 ${rootAgentName}가 직접 처리` },
         ];
     }
     return [
         { route: "yeonjang", reason: "서브 에이전트 후보 없음" },
-        { route: "knowbee_direct", reason: "연장도 적합하지 않을 때 직접 처리" },
+        { route: "knowbee_direct", reason: `연장도 적합하지 않을 때 ${rootAgentName}가 직접 처리` },
     ];
+}
+function agentCandidateLabel(agent) {
+    const config = agent.config;
+    if (config)
+        return resolveAgentConfigAgentName(config);
+    return resolveAgentConfigAgentName({ agentType: "sub_agent", agentName: agent.agentName });
 }
 function candidateFromAgent(agent, taskAnalysis) {
     const missingCapabilities = [...new Set([
@@ -221,7 +233,7 @@ function candidateFromAgent(agent, taskAnalysis) {
         ])];
     return {
         targetId: agent.agentId,
-        targetLabel: agent.nickname ?? agent.displayName,
+        targetLabel: agentCandidateLabel(agent),
         targetType: "agent",
         matchedCapabilities: [],
         missingCapabilities,
@@ -232,7 +244,7 @@ function candidateFromAgent(agent, taskAnalysis) {
 function candidateFromTeam(team, taskAnalysis) {
     return {
         targetId: team.teamId,
-        targetLabel: team.nickname ?? team.displayName,
+        targetLabel: team.displayName,
         targetType: "team",
         matchedCapabilities: [],
         missingCapabilities: [...new Set([

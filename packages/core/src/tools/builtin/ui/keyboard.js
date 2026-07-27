@@ -5,17 +5,21 @@
 import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js";
 import { buildYeonjangTargetParameterProperties, buildYeonjangTargetResolutionDetails, buildYeonjangTargetSelectionFailure, recordYeonjangRemoteExecutionApproval, revalidateYeonjangTargetSelection, resolveYeonjangTargetSelection, } from "../yeonjang-target.js";
 import { withYeonjangRequestMetadata } from "../yeonjang-request-metadata.js";
+import { toolUserFacingErrorMessage } from "../error-redaction.js";
+import { buildYeonjangRequiredFailure } from "../yeonjang-required-failure.js";
+import { resolveLocalOrYeonjangEvidenceSourceKind } from "../../evidence-source.js";
+import { createYeonjangControlSideEffect, hashSideEffectText } from "../yeonjang-control-side-effect.js";
 const TYPE_DELAY_MS = 500;
-function yeonjangRequiredFailure(method) {
-    return {
-        success: false,
-        output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 현재 연결된 연장이 \`${method}\` 메서드를 지원하지 않거나 연결되어 있지 않습니다.`,
-        error: "YEONJANG_REQUIRED",
-        details: {
-            requiredExecutor: "yeonjang",
-            requiredMethod: method,
-        },
-    };
+async function observeFocusedTarget(params, ctx, result) {
+    const details = result.details && typeof result.details === "object" ? result.details : {};
+    const extensionId = typeof details.extensionId === "string" ? details.extensionId : params.extensionId ?? DEFAULT_YEONJANG_EXTENSION_ID;
+    try {
+        const observed = await invokeYeonjangMethod("input.focused_target", {}, withYeonjangRequestMetadata(ctx, { extensionId, timeoutMs: 15_000 }));
+        return observed.available === true;
+    }
+    catch {
+        return false;
+    }
 }
 const MODIFIER_KEY_ALIASES = new Map([
     ["leftcontrol", "control"],
@@ -66,8 +70,50 @@ function splitShortcutKeys(keys) {
         .filter((value) => typeof value === "string")));
     return { key: primaryKey, modifiers };
 }
+const keyboardTypeSideEffect = createYeonjangControlSideEffect({
+    method: "keyboard.type",
+    expectedState: (params) => ({
+        accepted: true,
+        action: "type_text",
+        textLength: params.text.length,
+        textHash: hashSideEffectText(params.text),
+    }),
+    observeVerifiedState: observeFocusedTarget,
+});
+const keyboardShortcutSideEffect = createYeonjangControlSideEffect({
+    method: "keyboard.action",
+    expectedState: (params) => {
+        const shortcut = splitShortcutKeys(params.keys);
+        return {
+            accepted: true,
+            action: "shortcut",
+            key: shortcut.key,
+            modifiers: shortcut.modifiers,
+        };
+    },
+    observeVerifiedState: observeFocusedTarget,
+});
+const keyboardActionSideEffect = createYeonjangControlSideEffect({
+    method: "keyboard.action",
+    expectedState: (params) => ({
+        accepted: true,
+        action: params.action,
+        ...(typeof params.key === "string" ? { key: params.key } : {}),
+        ...(params.modifiers?.length ? { modifiers: params.modifiers } : {}),
+        ...(typeof params.text === "string"
+            ? {
+                textLength: params.text.length,
+                textHash: hashSideEffectText(params.text),
+            }
+            : {}),
+    }),
+    observeVerifiedState: observeFocusedTarget,
+});
 export const keyboardTypeTool = {
     name: "keyboard_type",
+    resolveEvidenceSourceKind: resolveLocalOrYeonjangEvidenceSourceKind,
+    runtimeHealthMode: "additional",
+    runtimeMethodIds: ["keyboard.type"],
     description: "키보드로 텍스트를 입력합니다. 현재 포커스된 입력창에 텍스트가 입력됩니다.",
     parameters: {
         type: "object",
@@ -79,6 +125,7 @@ export const keyboardTypeTool = {
     },
     riskLevel: "moderate",
     requiresApproval: true,
+    sideEffect: keyboardTypeSideEffect,
     execute: async (params, ctx) => {
         const selection = resolveYeonjangTargetSelection({
             requestedExtensionId: params.extensionId,
@@ -127,7 +174,7 @@ export const keyboardTypeTool = {
         }
         catch (error) {
             if (!isYeonjangUnavailableError(error)) {
-                const message = error instanceof Error ? error.message : String(error);
+                const message = toolUserFacingErrorMessage(error);
                 return {
                     success: false,
                     output: `Yeonjang 키보드 입력 실패: ${message}`,
@@ -139,7 +186,7 @@ export const keyboardTypeTool = {
                 };
             }
         }
-        const failure = yeonjangRequiredFailure("keyboard.type");
+        const failure = buildYeonjangRequiredFailure({ method: "keyboard.type" });
         return {
             ...failure,
             details: {
@@ -151,6 +198,9 @@ export const keyboardTypeTool = {
 };
 export const keyboardShortcutTool = {
     name: "keyboard_shortcut",
+    resolveEvidenceSourceKind: resolveLocalOrYeonjangEvidenceSourceKind,
+    runtimeHealthMode: "additional",
+    runtimeMethodIds: ["keyboard.action"],
     description: "키보드 단축키를 실행합니다. 예: Ctrl+C, Cmd+Space, Alt+F4 등.",
     parameters: {
         type: "object",
@@ -166,7 +216,9 @@ export const keyboardShortcutTool = {
     },
     riskLevel: "moderate",
     requiresApproval: true,
+    sideEffect: keyboardShortcutSideEffect,
     execute: async (params, ctx) => {
+        const shortcut = splitShortcutKeys(params.keys);
         const selection = resolveYeonjangTargetSelection({
             requestedExtensionId: params.extensionId,
             targetSelector: params.targetSelector,
@@ -186,7 +238,6 @@ export const keyboardShortcutTool = {
             ...(selection.targetSessionId ? { metadata: { targetSessionId: selection.targetSessionId } } : {}),
         } : {});
         await new Promise((r) => setTimeout(r, TYPE_DELAY_MS));
-        const shortcut = splitShortcutKeys(params.keys);
         try {
             if (await canYeonjangHandleMethod("keyboard.action", yeonjangOptions)) {
                 const reboundSelection = revalidateYeonjangTargetSelection({
@@ -221,7 +272,7 @@ export const keyboardShortcutTool = {
         }
         catch (error) {
             if (!isYeonjangUnavailableError(error)) {
-                const message = error instanceof Error ? error.message : String(error);
+                const message = toolUserFacingErrorMessage(error);
                 return {
                     success: false,
                     output: `Yeonjang 단축키 실행 실패: ${message}`,
@@ -233,7 +284,7 @@ export const keyboardShortcutTool = {
                 };
             }
         }
-        const failure = yeonjangRequiredFailure("keyboard.action");
+        const failure = buildYeonjangRequiredFailure({ method: "keyboard.action" });
         return {
             ...failure,
             details: {
@@ -245,6 +296,9 @@ export const keyboardShortcutTool = {
 };
 export const keyboardActionTool = {
     name: "keyboard_action",
+    resolveEvidenceSourceKind: resolveLocalOrYeonjangEvidenceSourceKind,
+    runtimeHealthMode: "additional",
+    runtimeMethodIds: ["keyboard.action"],
     description: "키보드 액션을 실행합니다. type_text, shortcut, key_press, key_down, key_up을 지원합니다.",
     parameters: {
         type: "object",
@@ -267,6 +321,7 @@ export const keyboardActionTool = {
     },
     riskLevel: "moderate",
     requiresApproval: true,
+    sideEffect: keyboardActionSideEffect,
     execute: async (params, ctx) => {
         const selection = resolveYeonjangTargetSelection({
             requestedExtensionId: params.extensionId,
@@ -323,7 +378,7 @@ export const keyboardActionTool = {
         }
         catch (error) {
             if (!isYeonjangUnavailableError(error)) {
-                const message = error instanceof Error ? error.message : String(error);
+                const message = toolUserFacingErrorMessage(error);
                 return {
                     success: false,
                     output: `Yeonjang 키보드 액션 실패: ${message}`,
@@ -335,7 +390,7 @@ export const keyboardActionTool = {
                 };
             }
         }
-        const failure = yeonjangRequiredFailure("keyboard.action");
+        const failure = buildYeonjangRequiredFailure({ method: "keyboard.action" });
         return {
             ...failure,
             details: {

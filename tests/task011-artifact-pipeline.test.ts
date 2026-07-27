@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
+  cleanupExpiredArtifacts,
   cleanupArtifactStorageQuota,
   planArtifactQuotaCleanup,
   recordArtifactMetadata,
@@ -10,16 +11,24 @@ import {
   startArtifactCleanupScheduler,
   stopArtifactCleanupScheduler,
   validateExternalArtifactImport,
+  type ArtifactStorageContext,
 } from "../packages/core/src/artifacts/lifecycle.ts"
 import { createSlackChunkDeliveryHandler } from "../packages/core/src/channels/slack/chunk-delivery.ts"
 import { createTelegramChunkDeliveryHandler } from "../packages/core/src/channels/telegram/chunk-delivery.ts"
-import { PATHS, reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, getArtifactMetadata, getLatestArtifactMetadataByPath } from "../packages/core/src/db/index.js"
 import { resetArtifactDeliveryDedupeForTest } from "../packages/core/src/runs/delivery.js"
+import { createTestArtifactStorage } from "./fixtures/artifact-storage.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let artifactStorage: ArtifactStorageContext
+const deletableArtifactEvidence = () => ({
+  activeReferenceCount: 0,
+  referenceScanCompleted: true,
+  migrationRequired: false,
+  rollbackRequired: false,
+  deletionApproved: true,
+})
 
 function mkdtempCompat(prefix: string): string {
   const dir = join(tmpdir(), `${prefix}${Date.now()}-${Math.random().toString(16).slice(2)}`)
@@ -31,13 +40,12 @@ function useTempState(): void {
   closeDb()
   const stateDir = mkdtempCompat("knowbee-task011-artifacts-")
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  artifactStorage = createTestArtifactStorage(stateDir)
+  initializeTestDbRuntime(stateDir)
 }
 
 function writeArtifact(relativePath: string, content = "artifact"): string {
-  const filePath = join(PATHS.stateDir, "artifacts", relativePath)
+  const filePath = join(artifactStorage.rootDir, relativePath)
   mkdirSync(dirname(filePath), { recursive: true })
   writeFileSync(filePath, content)
   return filePath
@@ -52,11 +60,6 @@ afterEach(() => {
   stopArtifactCleanupScheduler()
   resetArtifactDeliveryDedupeForTest()
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -76,7 +79,7 @@ describe("task011 artifact pipeline", () => {
       sizeBytes: 3,
       retentionPolicy: "standard",
       metadata: { source: "test" },
-    })
+    }, artifactStorage)
 
     const row = getArtifactMetadata(id)
     const metadata = JSON.parse(row?.metadata_json ?? "{}") as {
@@ -117,9 +120,9 @@ describe("task011 artifact pipeline", () => {
     const secondPath = writeArtifact("quota/old-b.txt", "12345")
     const keepPath = writeArtifact("quota/keep.txt", "12345")
 
-    const firstId = recordArtifactMetadata({ ownerChannel: "webui", artifactPath: firstPath, mimeType: "text/plain", sizeBytes: 5, createdAt: now - 3000 })
-    const secondId = recordArtifactMetadata({ ownerChannel: "webui", artifactPath: secondPath, mimeType: "text/plain", sizeBytes: 5, createdAt: now - 2000 })
-    const keepId = recordArtifactMetadata({ ownerChannel: "webui", artifactPath: keepPath, mimeType: "text/plain", sizeBytes: 5, createdAt: now - 1000 })
+    const firstId = recordArtifactMetadata({ ownerChannel: "webui", artifactPath: firstPath, mimeType: "text/plain", sizeBytes: 5, createdAt: now - 3000 }, artifactStorage)
+    const secondId = recordArtifactMetadata({ ownerChannel: "webui", artifactPath: secondPath, mimeType: "text/plain", sizeBytes: 5, createdAt: now - 2000 }, artifactStorage)
+    const keepId = recordArtifactMetadata({ ownerChannel: "webui", artifactPath: keepPath, mimeType: "text/plain", sizeBytes: 5, createdAt: now - 1000 }, artifactStorage)
 
     const plan = planArtifactQuotaCleanup({ maxCount: 2, maxBytes: 10 })
     expect(plan.totalCount).toBe(3)
@@ -127,7 +130,7 @@ describe("task011 artifact pipeline", () => {
     expect(plan.candidates.map((candidate) => candidate.artifact.id)).toEqual([firstId])
     expect(plan.candidates[0]?.reasons).toEqual(["max_count", "max_bytes"])
 
-    const result = cleanupArtifactStorageQuota({ maxCount: 2, maxBytes: 10, now, deleteFiles: true })
+    const result = cleanupArtifactStorageQuota({ maxCount: 2, maxBytes: 10, now, deleteFiles: true, cleanupEvidence: deletableArtifactEvidence }, artifactStorage)
     expect(result.failures).toEqual([])
     expect(result.deleted.map((artifact) => artifact.id)).toEqual([firstId])
     expect(existsSync(firstPath)).toBe(false)
@@ -151,13 +154,13 @@ describe("task011 artifact pipeline", () => {
       sizeBytes: 5,
       expiresAt: now - 1,
       createdAt: now - 3000,
-    })
-    const quotaId = recordArtifactMetadata({ ownerChannel: "webui", artifactPath: quotaPath, mimeType: "text/plain", sizeBytes: 5, createdAt: now - 2000 })
-    const keepId = recordArtifactMetadata({ ownerChannel: "webui", artifactPath: keepPath, mimeType: "text/plain", sizeBytes: 5, createdAt: now - 1000 })
+    }, artifactStorage)
+    const quotaId = recordArtifactMetadata({ ownerChannel: "webui", artifactPath: quotaPath, mimeType: "text/plain", sizeBytes: 5, createdAt: now - 2000 }, artifactStorage)
+    const keepId = recordArtifactMetadata({ ownerChannel: "webui", artifactPath: keepPath, mimeType: "text/plain", sizeBytes: 5, createdAt: now - 1000 }, artifactStorage)
 
-    startArtifactCleanupScheduler({ intervalMs: 1_000, maxCount: 1, maxBytes: 5 })
+    startArtifactCleanupScheduler({ intervalMs: 1_000, maxCount: 1, maxBytes: 5 }, artifactStorage)
     stopArtifactCleanupScheduler()
-    const cycle = runArtifactCleanupCycle({ now, maxCount: 1, maxBytes: 5, deleteFiles: true })
+    const cycle = runArtifactCleanupCycle({ now, maxCount: 1, maxBytes: 5, deleteFiles: true, cleanupEvidence: deletableArtifactEvidence }, artifactStorage)
 
     expect(cycle.expired.map((artifact) => artifact.id)).toEqual([expiredId])
     expect(cycle.quota.deleted.map((artifact) => artifact.id)).toEqual([quotaId])
@@ -167,6 +170,85 @@ describe("task011 artifact pipeline", () => {
     expect(existsSync(expiredPath)).toBe(false)
     expect(existsSync(quotaPath)).toBe(false)
     expect(existsSync(keepPath)).toBe(true)
+  })
+
+  it("retains quota candidates when cleanup evidence is not provided", () => {
+    const now = 1_765_250_000_000
+    const filePath = writeArtifact("quota/protected.txt", "keep")
+    const artifactId = recordArtifactMetadata({
+      ownerChannel: "webui",
+      artifactPath: filePath,
+      mimeType: "text/plain",
+      sizeBytes: 4,
+      createdAt: now - 1_000,
+    }, artifactStorage)
+
+    const result = cleanupArtifactStorageQuota({ maxCount: 0, now, deleteFiles: true }, artifactStorage)
+
+    expect(result.deleted).toEqual([])
+    expect(result.retained).toEqual([
+      expect.objectContaining({
+        artifact: expect.objectContaining({ id: artifactId }),
+        decision: expect.objectContaining({
+          decision: "retain",
+          reasonCodes: expect.arrayContaining(["reference_scan_incomplete"]),
+        }),
+      }),
+    ])
+    expect(existsSync(filePath)).toBe(true)
+    expect(getArtifactMetadata(artifactId)?.deleted_at).toBeNull()
+  })
+
+  it("retains expired, active-reference, and permanent artifacts at the cleanup boundary", () => {
+    const now = 1_765_260_000_000
+    const expiredPath = writeArtifact("protected/expired.txt", "expired")
+    const activePath = writeArtifact("protected/active.txt", "active")
+    const permanentPath = writeArtifact("protected/permanent.txt", "permanent")
+    const expiredId = recordArtifactMetadata({
+      ownerChannel: "webui",
+      artifactPath: expiredPath,
+      expiresAt: now - 1,
+      createdAt: now - 3_000,
+    }, artifactStorage)
+    const activeId = recordArtifactMetadata({
+      ownerChannel: "webui",
+      artifactPath: activePath,
+      createdAt: now - 2_000,
+    }, artifactStorage)
+    const permanentId = recordArtifactMetadata({
+      ownerChannel: "webui",
+      artifactPath: permanentPath,
+      retentionPolicy: "permanent",
+      createdAt: now - 1_000,
+    }, artifactStorage)
+
+    expect(cleanupExpiredArtifacts({ now, deleteFiles: true }, artifactStorage)).toEqual([])
+    const quota = cleanupArtifactStorageQuota({
+      maxCount: 0,
+      includePermanent: true,
+      now,
+      deleteFiles: true,
+      cleanupEvidence: (artifact) => ({
+        ...deletableArtifactEvidence(),
+        activeReferenceCount: artifact.id === activeId ? 1 : 0,
+      }),
+    }, artifactStorage)
+
+    expect(quota.deleted.map((artifact) => artifact.id)).toEqual([expiredId])
+    expect(quota.retained).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        artifact: expect.objectContaining({ id: activeId }),
+        decision: expect.objectContaining({ reasonCodes: expect.arrayContaining(["active_reference_present"]) }),
+      }),
+      expect.objectContaining({
+        artifact: expect.objectContaining({ id: permanentId }),
+        decision: expect.objectContaining({ reasonCodes: expect.arrayContaining(["permanent_retention"]) }),
+      }),
+    ]))
+    expect(getArtifactMetadata(activeId)?.deleted_at).toBeNull()
+    expect(getArtifactMetadata(permanentId)?.deleted_at).toBeNull()
+    expect(existsSync(activePath)).toBe(true)
+    expect(existsSync(permanentPath)).toBe(true)
   })
 
   it("validates external artifact imports by path, size, and MIME type", () => {
@@ -221,6 +303,7 @@ describe("task011 artifact pipeline", () => {
       sendError: vi.fn(),
     }
     const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "telegram-session",
       chatId: 42120565,
@@ -267,6 +350,7 @@ describe("task011 artifact pipeline", () => {
       sendError: vi.fn(),
     }
     const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "slack-session",
       channelId: "C_SLACK",

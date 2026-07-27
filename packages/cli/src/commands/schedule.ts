@@ -1,10 +1,32 @@
 export async function scheduleRunCommand(scheduleId: string): Promise<void> {
-  const { bootstrapRuntime, startChannels, runScheduleAndWait, closeServer } = await import("@knowbee/core")
+  const {
+    bootstrapRuntime,
+    captureRuntimePaths,
+    createArtifactStorageContext,
+    createMemoryJournalRepository,
+    createAgentHierarchyStorage,
+    startChannels,
+    runScheduleAndWait,
+    closeServer,
+  } = await import("@knowbee/core")
 
   try {
-    await bootstrapRuntime()
-    await startChannels()
-    await runScheduleAndWait(scheduleId, "system crontab")
+    const config = await bootstrapRuntime()
+    const paths = captureRuntimePaths()
+    const memoryJournal = createMemoryJournalRepository(paths)
+    await startChannels(config, paths)
+    try {
+      await runScheduleAndWait(
+        scheduleId,
+        "system crontab",
+        config,
+        createArtifactStorageContext(paths),
+        memoryJournal,
+        createAgentHierarchyStorage(paths),
+      )
+    } finally {
+      memoryJournal.close()
+    }
   } finally {
     await closeServer().catch(() => undefined)
   }

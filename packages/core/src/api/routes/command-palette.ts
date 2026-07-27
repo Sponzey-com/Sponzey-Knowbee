@@ -1,8 +1,10 @@
 import type { FastifyInstance, FastifyReply } from "fastify"
+import { getApiRuntimeConfig } from "../runtime-context.js"
 import {
   AGENT_TEMPLATES,
   TEAM_TEMPLATES,
   clearFocusBinding,
+  createCommandWorkspaceStorage,
   createOneClickBackgroundTask,
   executeWorkspaceCommand,
   getFocusBinding,
@@ -74,11 +76,14 @@ function commandPaletteScope(value: unknown): CommandPaletteResultKind | "all" {
 }
 
 export function registerCommandPaletteRoutes(app: FastifyInstance): void {
+  const storage = createCommandWorkspaceStorage(app.knowbeeRuntimeContext.paths)
+
   app.get<{
     Querystring: { q?: string; scope?: string; limit?: string }
   }>("/api/command-palette/search", { preHandler: authMiddleware }, async (req) => {
     const limit = asNumber(req.query.limit)
     return searchCommandPalette({
+      config: getApiRuntimeConfig(req),
       ...(req.query.q ? { query: req.query.q } : {}),
       scope: commandPaletteScope(req.query.scope),
       ...(limit !== undefined ? { limit } : {}),
@@ -100,11 +105,12 @@ export function registerCommandPaletteRoutes(app: FastifyInstance): void {
       const threadId = asString(record.threadId)
       const parentAgentId = asString(record.parentAgentId)
       const result = executeWorkspaceCommand({
+        config: getApiRuntimeConfig(req),
         command,
         ...(threadId ? { threadId } : {}),
         ...(parentAgentId ? { parentAgentId } : {}),
         payload: record.payload,
-      })
+      }, storage)
       const statusCode = result.statusCode ?? (result.ok ? 200 : 400)
       return reply.status(statusCode).send(result)
     },
@@ -117,7 +123,7 @@ export function registerCommandPaletteRoutes(app: FastifyInstance): void {
       return {
         ok: true,
         threadId: req.params.threadId,
-        binding: getFocusBinding(req.params.threadId) ?? null,
+        binding: getFocusBinding(req.params.threadId, storage) ?? null,
       }
     },
   )
@@ -136,11 +142,12 @@ export function registerCommandPaletteRoutes(app: FastifyInstance): void {
     const record = isRecord(req.body) ? req.body : {}
     const parentAgentId = asString(record.parentAgentId)
     const result = setFocusBinding({
+      config: getApiRuntimeConfig(req),
       threadId: req.params.threadId,
       ...(parentAgentId ? { parentAgentId } : {}),
       target,
       source: "api",
-    })
+    }, storage)
     if (!result.ok) return sendCommandFailure(reply, result)
     return { ok: true, focus: result }
   })
@@ -149,7 +156,7 @@ export function registerCommandPaletteRoutes(app: FastifyInstance): void {
     "/api/focus/:threadId",
     { preHandler: authMiddleware },
     async (req) => {
-      return clearFocusBinding(req.params.threadId)
+      return clearFocusBinding(req.params.threadId, storage)
     },
   )
 
@@ -160,9 +167,10 @@ export function registerCommandPaletteRoutes(app: FastifyInstance): void {
     const record = isRecord(req.body) ? req.body : {}
     const parentAgentId = asString(record.parentAgentId)
     const result = resolveFocusBinding({
+      config: getApiRuntimeConfig(req),
       threadId: req.params.threadId,
       ...(parentAgentId ? { parentAgentId } : {}),
-    })
+    }, storage)
     if (!result.ok) return sendCommandFailure(reply, result)
     return { ok: true, focus: result }
   })
@@ -177,6 +185,7 @@ export function registerCommandPaletteRoutes(app: FastifyInstance): void {
   }>("/api/templates/agents/:templateId/instantiate", { preHandler: authMiddleware }, async (req, reply) => {
     const record = isRecord(req.body) ? req.body : {}
     const result = instantiateAgentTemplate({
+      config: getApiRuntimeConfig(req),
       templateId: req.params.templateId,
       overrides: record.overrides,
       persist: record.persist !== false,
@@ -201,6 +210,7 @@ export function registerCommandPaletteRoutes(app: FastifyInstance): void {
   }>("/api/templates/teams/:templateId/instantiate", { preHandler: authMiddleware }, async (req, reply) => {
     const record = isRecord(req.body) ? req.body : {}
     const result = instantiateTeamTemplate({
+      config: getApiRuntimeConfig(req),
       templateId: req.params.templateId,
       overrides: record.overrides,
       persist: record.persist !== false,
@@ -222,6 +232,7 @@ export function registerCommandPaletteRoutes(app: FastifyInstance): void {
       const record = isRecord(req.body) ? req.body : {}
       const source = asString(record.source)
       const result = importExternalAgentProfileDraft({
+        config: getApiRuntimeConfig(req),
         profile: record.profile ?? record,
         ...(source ? { source } : {}),
         overrides: record.overrides,

@@ -1,5 +1,33 @@
 import { buildStructuredExecutionBrief } from "./request-prompt.js"
 import type { TaskExecutionSemantics } from "../agent/intake.js"
+import { loadPromptTemplate, type PromptTemplateVariables } from "../memory/knowbee-md.js"
+import { loadPromptValue } from "../memory/prompt-fragments.js"
+
+const SCHEDULED_SOURCE_IDS = {
+  defaultDestination: "scheduled_default_destination_user",
+  structuredRequestHeader: "scheduled_structured_request_header_user",
+  contextTaskPayload: "scheduled_context_task_payload_user",
+  contextTaskProfile: "scheduled_context_task_profile_user",
+  contextTimeReached: "scheduled_context_time_reached_user",
+  completeTimeReached: "scheduled_complete_time_reached_user",
+  completeDestination: "scheduled_complete_destination_user",
+} as const
+const STRUCTURED_EXECUTION_SECTION_LABELS_SOURCE_ID = "structured_execution_section_labels_user"
+
+function structuredExecutionSectionLabel(key: string, variables: PromptTemplateVariables = {}): string {
+  const entries = loadPromptValue(STRUCTURED_EXECUTION_SECTION_LABELS_SOURCE_ID, variables, { required: true })
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line): [string, string] => {
+      const separator = line.indexOf("=")
+      if (separator < 0) return [line, ""]
+      return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()]
+    })
+  const value = new Map(entries).get(key)
+  if (!value) throw new Error(`structured execution section label missing: ${key}`)
+  return value
+}
 
 export interface ScheduledRunExecutionOptions {
   toolsEnabled: boolean
@@ -42,26 +70,27 @@ function buildScheduledStructuredRequest(params: {
   destination?: string
 }): string {
   const target = params.goal.trim()
-  const destination = params.destination?.trim() || "the scheduled delivery destination"
+  const destination = params.destination?.trim()
+    || loadPromptValue(SCHEDULED_SOURCE_IDS.defaultDestination, {}, { required: true })
   const contextLines = [
-    `Scheduled task payload: ${params.task.trim()}`,
-    `Task profile: ${params.taskProfile.trim()}`,
-    "This request is being executed because the scheduled time has been reached.",
+    loadPromptValue(SCHEDULED_SOURCE_IDS.contextTaskPayload, { task: params.task.trim() }, { required: true }),
+    loadPromptValue(SCHEDULED_SOURCE_IDS.contextTaskProfile, { taskProfile: params.taskProfile.trim() }, { required: true }),
+    loadPromptValue(SCHEDULED_SOURCE_IDS.contextTimeReached, {}, { required: true }),
   ].filter(Boolean)
   const completeConditionLines = [
-    "The scheduled task is executed at the scheduled time.",
-    `The resulting output is delivered to ${destination}.`,
+    loadPromptValue(SCHEDULED_SOURCE_IDS.completeTimeReached, {}, { required: true }),
+    loadPromptValue(SCHEDULED_SOURCE_IDS.completeDestination, { destination }, { required: true }),
   ]
 
   return buildStructuredExecutionBrief({
-    header: "[Scheduled Structured Request]",
+    header: loadPromptValue(SCHEDULED_SOURCE_IDS.structuredRequestHeader, {}, { required: true }),
     structuredRequest: {
       source_language: "unknown",
       normalized_english: [
-        `Target: ${target}`,
-        `To: ${destination}`,
-        `Context: ${contextLines.join(" | ")}`,
-        `Complete condition: ${completeConditionLines.join(" | ")}`,
+        `${structuredExecutionSectionLabel("target_label")} ${target}`,
+        `${structuredExecutionSectionLabel("to_label")} ${destination}`,
+        `${structuredExecutionSectionLabel("context_label")} ${contextLines.join(" | ")}`,
+        `${structuredExecutionSectionLabel("complete_condition_label")} ${completeConditionLines.join(" | ")}`,
       ].join("\n"),
       target,
       to: destination,
@@ -78,6 +107,26 @@ function buildScheduledStructuredRequest(params: {
   })
 }
 
+function normalizeScheduledPrompt(value: string): string {
+  return value
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+}
+
+function buildPreferredTargetBlock(preferredTarget: string | undefined): string {
+  if (!preferredTarget) return ""
+  return `${structuredExecutionSectionLabel("preferred_target_header")}\n${preferredTarget}`
+}
+
+function buildScheduledToolInstruction(toolsEnabled: boolean): string {
+  return loadPromptTemplate({
+    sourceId: toolsEnabled
+      ? "scheduled_tool_enabled_instruction_user"
+      : "scheduled_tool_disabled_instruction_user",
+  }).trim()
+}
+
 export function buildScheduledFollowupPrompt(params: {
   task: string
   goal?: string
@@ -90,23 +139,17 @@ export function buildScheduledFollowupPrompt(params: {
   const taskProfile = params.taskProfile?.trim() || "general_chat"
   const preferredTarget = params.preferredTarget?.trim()
 
-  return [
-    "[Scheduled Task]",
-    "이 작업은 이전에 접수되어 예약된 후속 실행입니다.",
-    buildScheduledStructuredRequest({
-      task: params.task,
-      goal,
-      taskProfile,
-      ...(params.destination ? { destination: params.destination } : {}),
-    }),
-    preferredTarget ? `선호 대상: ${preferredTarget}` : "",
-    "예약 시각이 되었습니다. 지금 이 예약 작업만 실행하세요.",
-    "다시 intake 접수 메시지를 만들지 마세요.",
-    params.toolsEnabled
-      ? "이 특정 작업에 실제로 필요한 경우에만 도구를 사용하세요."
-      : "요청된 결과만 바로 답하세요. 도구를 사용하지 말고, 필요하지 않다면 예약 이야기도 꺼내지 마세요.",
-    "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요.",
-  ]
-    .filter(Boolean)
-    .join("\n\n")
+  return normalizeScheduledPrompt(loadPromptTemplate({
+    sourceId: "scheduled_followup_user",
+    variables: {
+      structuredRequest: buildScheduledStructuredRequest({
+        task: params.task,
+        goal,
+        taskProfile,
+        ...(params.destination ? { destination: params.destination } : {}),
+      }),
+      preferredTargetBlock: buildPreferredTargetBlock(preferredTarget),
+      toolInstruction: buildScheduledToolInstruction(params.toolsEnabled),
+    },
+  }))
 }

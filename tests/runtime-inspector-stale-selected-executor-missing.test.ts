@@ -1,6 +1,20 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { buildRunRuntimeInspectorProjection } from "../packages/core/src/runs/runtime-inspector-projection.ts"
 import type { RootRun } from "../packages/core/src/runs/types.ts"
+import {
+  createTestDbRuntimeFixture,
+  type TestDbRuntimeFixture,
+} from "./fixtures/runtime-db.ts"
+
+let dbRuntime: TestDbRuntimeFixture
+
+beforeEach(() => {
+  dbRuntime = createTestDbRuntimeFixture("knowbee-runtime-inspector-")
+})
+
+afterEach(() => {
+  dbRuntime.dispose()
+})
 
 function runWithStaleMissingFallback(): RootRun {
   const now = Date.UTC(2026, 4, 8, 8, 0, 0)

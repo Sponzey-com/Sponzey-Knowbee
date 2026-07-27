@@ -4,6 +4,11 @@ import {
   type AppliedToolExecutionReceiptState,
 } from "./execution.js"
 import type { FailedCommandTool, SuccessfulToolEvidence } from "./recovery.js"
+import type { ToolEvidenceSourceReceipt } from "../tools/types.js"
+import {
+  collectYeonjangSideEffectGoalValidationCandidate,
+  type YeonjangSideEffectGoalValidationCandidate,
+} from "../yeonjang/side-effect-goal-validation-review.js"
 
 export interface ToolChunkApplicationDependencies {
   appendRunEvent: (runId: string, event: string) => void
@@ -32,12 +37,14 @@ export function applyToolEndChunk(
     success: boolean
     output: string
     toolDetails?: unknown
+    evidenceSource?: Readonly<ToolEvidenceSourceReceipt>
     workDir: string
     pendingToolParams: Map<string, unknown>
     successfulTools: SuccessfulToolEvidence[]
     filesystemMutationPaths: Set<string>
     failedCommandTools: FailedCommandTool[]
     commandFailureSeen: boolean
+    yeonjangSideEffectGoalValidationCandidates?: YeonjangSideEffectGoalValidationCandidate[]
   },
   dependencies: ToolChunkApplicationDependencies,
 ): AppliedToolExecutionReceiptState {
@@ -50,6 +57,7 @@ export function applyToolEndChunk(
     output: params.output,
     toolParams,
     toolDetails: params.toolDetails,
+    ...(params.evidenceSource ? { evidenceSource: params.evidenceSource } : {}),
     workDir: params.workDir,
     commandFailureSeen: params.commandFailureSeen,
   })
@@ -62,6 +70,16 @@ export function applyToolEndChunk(
     toolParams,
     previousCommandFailureSeen: params.commandFailureSeen,
   })
+
+  if (params.yeonjangSideEffectGoalValidationCandidates) {
+    collectYeonjangSideEffectGoalValidationCandidate({
+      toolName: params.toolName,
+      success: params.success,
+      output: params.output,
+      details: params.toolDetails,
+      candidates: params.yeonjangSideEffectGoalValidationCandidates,
+    })
+  }
 
   dependencies.appendRunEvent(params.runId, toolReceipt.summary)
   dependencies.updateRunSummary(params.runId, toolReceipt.summary)

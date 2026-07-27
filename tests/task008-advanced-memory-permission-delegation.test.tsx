@@ -38,6 +38,7 @@ function draft(): SetupDraft {
       items: [
         {
           agentId: "agent:lead",
+          agentName: "Lead",
           displayName: "Lead",
           nickname: "Lead",
           role: "취합 담당",
@@ -60,6 +61,7 @@ function draft(): SetupDraft {
         {
           agentId: "agent:research",
           parentAgentId: "agent:lead",
+          agentName: "Research",
           displayName: "Research",
           nickname: "Research",
           role: "조사 담당",
@@ -102,6 +104,7 @@ function draft(): SetupDraft {
         },
         {
           agentId: "agent:writer",
+          agentName: "Writer",
           displayName: "Writer",
           nickname: "Writer",
           role: "작성 담당",
@@ -160,8 +163,8 @@ describe("task008 advanced memory, permission, and delegation policy", () => {
     expect(html).toContain('data-testid="sub-agent-permission-policy-editor"')
     expect(html).toContain('data-testid="sub-agent-delegation-policy-editor"')
     expect(text).toContain("독립 메모리")
-    expect(text).toContain("handoff allowed")
-    expect(text).toContain("approval_required")
+    expect(text).toContain("전달 허용")
+    expect(text).toContain("승인 필요")
     expect(text).toContain("결과 검토")
     expect(text).not.toMatch(/raw dump|secret|token=/i)
   })

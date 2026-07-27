@@ -11,11 +11,11 @@ use anyhow::{Context, Result, bail};
 use crate::automation::{
     ApplicationLaunchRequest, ApplicationLaunchResult, AutomationBackend, AutomationCapabilities,
     CameraCaptureRequest, CameraCaptureResult, CameraDevice, CommandExecutionRequest,
-    CommandExecutionResult, KeyboardActionKind, KeyboardActionRequest, KeyboardActionResult,
-    KeyboardTypeRequest, KeyboardTypeResult, MouseActionKind, MouseActionRequest,
-    MouseActionResult, MouseClickRequest, MouseClickResult, MouseMoveRequest, MouseMoveResult,
-    PlatformKind, ScreenCaptureRequest, ScreenCaptureResult, SystemControlRequest,
-    SystemControlResult, SystemSnapshot,
+    CommandExecutionResult, FocusedTargetResult, KeyboardActionKind, KeyboardActionRequest,
+    KeyboardActionResult, KeyboardTypeRequest, KeyboardTypeResult, MouseActionKind,
+    MouseActionRequest, MouseActionResult, MouseClickRequest, MouseClickResult, MouseMoveRequest,
+    MouseMoveResult, MousePositionResult, PlatformKind, ScreenCaptureRequest, ScreenCaptureResult,
+    SystemControlRequest, SystemControlResult, SystemSnapshot,
 };
 use crate::platform::shared;
 
@@ -293,6 +293,20 @@ impl AutomationBackend for PlatformBackend {
         })
     }
 
+    fn mouse_position(&self) -> Result<MousePositionResult> {
+        let output = run_program_output(
+            "xdotool",
+            &["getmouselocation".to_string(), "--shell".to_string()],
+            "Linux mouse position",
+        )?;
+        let (x, y) = parse_xdotool_mouse_location(&output)?;
+        Ok(MousePositionResult {
+            x,
+            y,
+            message: "Mouse position observed.".to_string(),
+        })
+    }
+
     fn click_mouse(&self, request: MouseClickRequest) -> Result<MouseClickResult> {
         shared::validate_mouse_click(&request)?;
         let button = normalize_linux_mouse_button_code(&request.button)?;
@@ -438,6 +452,35 @@ impl AutomationBackend for PlatformBackend {
         })
     }
 
+    fn focused_target(&self) -> Result<FocusedTargetResult> {
+        let window_id = run_program_output(
+            "xdotool",
+            &["getactivewindow".to_string()],
+            "Linux focused window",
+        )
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+        let Some(window_id) = window_id else {
+            return Ok(shared::focused_target_result(None, None, None));
+        };
+        let title = run_program_output(
+            "xdotool",
+            &["getwindowname".to_string(), window_id.clone()],
+            "Linux focused window title",
+        )
+        .ok()
+        .map(|value| value.trim().to_string());
+        let process_id = run_program_output(
+            "xdotool",
+            &["getwindowpid".to_string(), window_id],
+            "Linux focused window pid",
+        )
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok());
+        Ok(shared::focused_target_result(None, process_id, title))
+    }
+
     fn perform_keyboard_action(
         &self,
         request: KeyboardActionRequest,
@@ -556,6 +599,57 @@ fn run_xdotool(args: &[String], context: &str) -> Result<()> {
         bail!("{context} requires xdotool in PATH");
     }
     run_program("xdotool", args, context)
+}
+
+fn run_program_output(program: &str, args: &[String], context: &str) -> Result<String> {
+    if !command_exists(program) {
+        bail!("{context} requires {program} in PATH");
+    }
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to run {context} command `{program}`"))?;
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    bail!(
+        "{context} failed: {}{}{}",
+        stderr.trim(),
+        if !stderr.trim().is_empty() && !stdout.trim().is_empty() {
+            " | "
+        } else {
+            ""
+        },
+        stdout.trim()
+    )
+}
+
+fn parse_xdotool_mouse_location(output: &str) -> Result<(i32, i32)> {
+    let mut x = None;
+    let mut y = None;
+    for line in output.lines() {
+        if let Some(value) = line.strip_prefix("X=") {
+            x = Some(
+                value
+                    .trim()
+                    .parse::<i32>()
+                    .context("invalid xdotool X value")?,
+            );
+        } else if let Some(value) = line.strip_prefix("Y=") {
+            y = Some(
+                value
+                    .trim()
+                    .parse::<i32>()
+                    .context("invalid xdotool Y value")?,
+            );
+        }
+    }
+    match (x, y) {
+        (Some(x), Some(y)) => Ok((x, y)),
+        _ => bail!("xdotool getmouselocation output did not include X and Y"),
+    }
 }
 
 fn command_exists(command: &str) -> bool {

@@ -1,0 +1,1 @@
+{"version":3,"file":"release-administrator.d.ts","sourceRoot":"","sources":["../../src/release/release-administrator.ts"],"names":[],"mappings":"AAAA,MAAM,WAAW,6BAA6B;IAC5C,aAAa,EAAE,oBAAoB,GAAG,QAAQ,CAAA;IAC9C,WAAW,EAAE,MAAM,CAAA;IACnB,gBAAgB,EAAE,MAAM,CAAA;IACxB,KAAK,EAAE,SAAS,MAAM,EAAE,CAAA;CACzB"}

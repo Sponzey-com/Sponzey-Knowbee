@@ -53,4 +53,25 @@ describe("yeonjang request metadata helper", () => {
       },
     })
   })
+
+  it("carries the explicit MQTT config snapshot from tool context", () => {
+    const mqttConfig = {
+      enabled: true,
+      host: "127.0.0.1",
+      port: 1883,
+      username: "knowbee",
+      password: "secret",
+      allowAnonymous: false,
+    }
+
+    expect(withYeonjangRequestMetadata({
+      ...createContext(),
+      mqttConfig,
+    }, {
+      extensionId: "yeonjang-main",
+    })).toEqual(expect.objectContaining({
+      extensionId: "yeonjang-main",
+      mqttConfig,
+    }))
+  })
 })

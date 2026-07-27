@@ -1,0 +1,1 @@
+{"version":3,"file":"side-effect-runtime.d.ts","sourceRoot":"","sources":["../../src/tools/side-effect-runtime.ts"],"names":[],"mappings":"AAUA,OAAO,KAAK,EAAE,OAAO,EAAE,WAAW,EAAE,UAAU,EAAE,MAAM,YAAY,CAAA;AAiBlE,wBAAsB,+BAA+B,CAAC,KAAK,EAAE;IAC3D,IAAI,EAAE,OAAO,CAAA;IACb,MAAM,EAAE,MAAM,CAAC,MAAM,EAAE,OAAO,CAAC,CAAA;IAC/B,GAAG,EAAE,WAAW,CAAA;CACjB,GAAG,OAAO,CAAC,UAAU,CAAC,CA8JtB"}

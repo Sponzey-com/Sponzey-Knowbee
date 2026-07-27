@@ -56,8 +56,16 @@ export interface ApprovalRegistryDecisionResult {
   accepted: boolean
   status: ApprovalRegistryStatus | "missing"
   decision?: ApprovalDecision
-  reason?: ApprovalResolutionReason | "late" | "already_consumed" | "superseded"
+  reason?: ApprovalResolutionReason | "late" | "already_consumed" | "superseded" | "scope_mismatch"
   row?: ApprovalRegistryRow
+}
+
+export interface ApprovalConsumptionScope {
+  runId: string
+  requestGroupId?: string | null
+  toolName: string
+  params: unknown
+  agentId?: string | null
 }
 
 const REQUESTED_STATUSES = new Set<ApprovalRegistryStatus>(["requested"])
@@ -231,16 +239,29 @@ export function resolveApprovalRegistryDecision(params: {
   return { accepted: true, status, decision: params.decision, row: getApprovalRegistryRow(params.approvalId)! }
 }
 
-export function consumeApprovalRegistryDecision(approvalId: string, now = Date.now()): ApprovalRegistryDecisionResult {
+export function consumeApprovalRegistryDecision(
+  approvalId: string,
+  now = Date.now(),
+  expected?: ApprovalConsumptionScope,
+): ApprovalRegistryDecisionResult {
   const row = getApprovalRegistryRow(approvalId)
   if (!row) return { accepted: false, status: "missing" }
-  if (row.expires_at !== null && row.expires_at <= now && row.status === "requested") {
-    expireApprovalRegistryRequest(row.id, now)
+  if (row.expires_at !== null && row.expires_at <= now && (row.status === "requested" || APPROVED_STATUSES.has(row.status))) {
+    getDb().prepare(
+      `UPDATE approval_registry
+       SET status = 'expired', decision_at = ?, decision_source = 'timeout', updated_at = ?
+       WHERE id = ?
+         AND status IN ('requested', 'approved_once', 'approved_run')`,
+    ).run(now, now, row.id)
     return { accepted: false, status: "expired", reason: "late", row: getApprovalRegistryRow(row.id)! }
   }
   if (!APPROVED_STATUSES.has(row.status)) {
     const reason = row.status === "consumed" ? "already_consumed" : row.status === "superseded" ? "superseded" : "late"
     return { accepted: false, status: row.status, reason, row }
+  }
+
+  if (expected && !approvalScopeMatches(row, expected)) {
+    return { accepted: false, status: row.status, reason: "scope_mismatch", row }
   }
 
   getDb().prepare(
@@ -258,22 +279,58 @@ export function consumeApprovalRegistryDecision(approvalId: string, now = Date.n
   }
 }
 
-export function describeLateApproval(row: ApprovalRegistryRow | undefined): string {
-  if (!row) return "처리할 승인 요청을 찾을 수 없습니다. 필요한 경우 요청을 다시 실행해 주세요."
+function approvalScopeMatches(row: ApprovalRegistryRow, expected: ApprovalConsumptionScope): boolean {
+  if (row.run_id !== expected.runId || row.tool_name !== expected.toolName) return false
+  if (row.request_group_id !== (expected.requestGroupId ?? null)) return false
+  if (row.params_hash !== hashApprovalParams(expected.params)) return false
+
+  let metadata: Record<string, unknown> = {}
+  try {
+    metadata = row.metadata_json ? JSON.parse(row.metadata_json) as Record<string, unknown> : {}
+  } catch {
+    return false
+  }
+  const approvedAgentId = typeof metadata.agentId === "string" ? metadata.agentId : null
+  return approvedAgentId === (expected.agentId?.trim() || null)
+}
+
+export type ApprovalNoticeLanguage = "ko" | "en"
+
+export function describeLateApproval(
+  row: ApprovalRegistryRow | undefined,
+  language: ApprovalNoticeLanguage = "ko",
+): string {
+  if (!row) {
+    return language === "en"
+      ? "No approval request was found. Run the request again if approval is still needed."
+      : "처리할 승인 요청을 찾을 수 없습니다. 필요한 경우 요청을 다시 실행해 주세요."
+  }
   switch (row.status) {
     case "expired":
-      return "이 승인 요청은 이미 만료되었습니다. 안전을 위해 실행하지 않았습니다. 요청을 다시 실행해 새 승인을 받아 주세요."
+      return language === "en"
+        ? "This approval request has expired. It was not executed for safety. Run the request again to request new approval."
+        : "이 승인 요청은 이미 만료되었습니다. 안전을 위해 실행하지 않았습니다. 요청을 다시 실행해 새 승인을 받아 주세요."
     case "consumed":
-      return "이 승인 요청은 이미 사용되었습니다. 같은 승인은 다시 사용할 수 없습니다."
+      return language === "en"
+        ? "This approval request has already been used. The same approval cannot be reused."
+        : "이 승인 요청은 이미 사용되었습니다. 같은 승인은 다시 사용할 수 없습니다."
     case "superseded":
-      return "이 승인 요청은 더 새 요청으로 대체되었습니다. 최신 승인 요청에 응답해 주세요."
+      return language === "en"
+        ? "This approval request was replaced by a newer request. Respond to the latest approval request."
+        : "이 승인 요청은 더 새 요청으로 대체되었습니다. 최신 승인 요청에 응답해 주세요."
     case "denied":
-      return "이 승인 요청은 이미 거부되었습니다. 필요한 경우 요청을 다시 실행해 주세요."
+      return language === "en"
+        ? "This approval request was already denied. Run the request again if approval is still needed."
+        : "이 승인 요청은 이미 거부되었습니다. 필요한 경우 요청을 다시 실행해 주세요."
     case "approved_once":
     case "approved_run":
-      return "이 승인 요청은 이미 승인 처리되었습니다. 중복 실행은 하지 않습니다."
+      return language === "en"
+        ? "This approval request has already been approved. Duplicate execution will not run."
+        : "이 승인 요청은 이미 승인 처리되었습니다. 중복 실행은 하지 않습니다."
     case "requested":
-      return "승인 요청이 아직 대기 중입니다. 최신 승인 메시지에서 다시 응답해 주세요."
+      return language === "en"
+        ? "This approval request is still pending. Respond from the latest approval message."
+        : "승인 요청이 아직 대기 중입니다. 최신 승인 메시지에서 다시 응답해 주세요."
   }
 }
 

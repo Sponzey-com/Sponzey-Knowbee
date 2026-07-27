@@ -1,4 +1,4 @@
-import { type AIProvider } from "../ai/index.js";
+import { type AIProvider, type AIProviderConfigSnapshot } from "../ai/index.js";
 import { type ScheduleContract } from "../contracts/index.js";
 export type ScheduleContractComparisonDecision = "same" | "different" | "clarify";
 export type ScheduleContractComparisonReasonCode = "same_schedule_identity" | "different_payload" | "different_time" | "different_destination" | "target_ambiguous" | "invalid_candidate_selection" | "invalid_ai_response" | "comparator_timeout" | "no_configured_provider" | "provider_error" | "no_candidates";
@@ -28,6 +28,7 @@ export declare function compareScheduleContractsWithAI(params: {
     model?: string;
     providerId?: string;
     provider?: AIProvider;
+    config?: AIProviderConfigSnapshot;
     timeoutMs?: number;
 }): Promise<ScheduleContractComparisonResult>;
 //# sourceMappingURL=comparison.d.ts.map

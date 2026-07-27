@@ -1,7 +1,6 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import JSON5 from "json5";
-import { getConfig, reloadConfig } from "../config/index.js";
-import { PATHS } from "../config/paths.js";
+import { readPersistedRawConfig, writePersistedRawConfig } from "../config/persisted-file.js";
+const EMPTY_ENV = Object.freeze({});
+const EMPTY_ARGV = Object.freeze([]);
 function normalizeUiMode(value) {
     if (typeof value !== "string")
         return null;
@@ -28,7 +27,7 @@ function parseBooleanEnv(value) {
     }
 }
 export function resolveUiModeRollbackActivation(input = {}) {
-    const env = input.env ?? process.env;
+    const env = input.env ?? EMPTY_ENV;
     const envEnabled = parseBooleanEnv(env["KNOWBEE_UI_MODE_ROLLBACK"]);
     const legacyAliasEnabled = parseBooleanEnv(env["KNOWBEE_LEGACY_UI"]);
     return {
@@ -52,9 +51,9 @@ function isProductionMode(value) {
     return value?.trim().toLowerCase() === "production";
 }
 export function resolveAdminUiActivation(input = {}) {
-    const env = input.env ?? process.env;
-    const argv = input.argv ?? process.argv;
-    const configEnabled = input.configEnabled ?? (getConfig().webui.admin?.enabled ?? false);
+    const env = input.env ?? EMPTY_ENV;
+    const argv = input.argv ?? EMPTY_ARGV;
+    const configEnabled = input.configEnabled ?? false;
     const envEnabled = parseBooleanEnv(env["KNOWBEE_ADMIN_UI"]);
     const cliEnabled = hasAdminCliFlag(argv);
     const localDevScriptEnabled = parseBooleanEnv(env["KNOWBEE_LOCAL_DEV_ADMIN_UI"]) || (env["KNOWBEE_ADMIN_UI_SOURCE"] === "local-script" && envEnabled);
@@ -90,12 +89,12 @@ export function resolveAdminUiActivation(input = {}) {
             : "disabled",
     };
 }
-export function isAdminUiEnabled() {
-    return resolveAdminUiActivation().enabled;
+export function isAdminUiEnabled(input = {}) {
+    return resolveAdminUiActivation(input).enabled;
 }
 export function resolveUiMode(input = {}) {
-    const adminEnabled = input.adminEnabled ?? isAdminUiEnabled();
-    const rollback = resolveUiModeRollbackActivation();
+    const adminEnabled = input.adminEnabled ?? isAdminUiEnabled(input.adminActivation);
+    const rollback = resolveUiModeRollbackActivation(input.rollbackActivation);
     if (rollback.enabled) {
         return {
             mode: "advanced",
@@ -106,7 +105,7 @@ export function resolveUiMode(input = {}) {
             schemaVersion: 1,
         };
     }
-    const preferredUiMode = normalizePreferredUiMode(input.preferredUiMode ?? getConfig().webui.preferredUiMode);
+    const preferredUiMode = normalizePreferredUiMode(input.preferredUiMode ?? "beginner");
     const requestedMode = normalizeUiMode(input.requestedMode);
     const mode = requestedMode === "admin"
         ? (adminEnabled ? "admin" : preferredUiMode)
@@ -120,24 +119,23 @@ export function resolveUiMode(input = {}) {
         schemaVersion: 1,
     };
 }
-export function getUiModeState() {
-    return resolveUiMode({ preferredUiMode: getConfig().webui.preferredUiMode });
+export function getUiModeState(input) {
+    const config = input.config;
+    const adminActivation = {
+        ...(input.adminActivation ?? {}),
+        configEnabled: input.adminActivation?.configEnabled ?? (config.webui.admin?.enabled ?? false),
+    };
+    return resolveUiMode({
+        ...input,
+        preferredUiMode: config.webui.preferredUiMode,
+        adminActivation,
+        adminEnabled: isAdminUiEnabled(adminActivation),
+    });
 }
-function readRawConfig() {
-    if (!existsSync(PATHS.configFile))
-        return {};
-    try {
-        const parsed = JSON5.parse(readFileSync(PATHS.configFile, "utf-8"));
-        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-    }
-    catch {
-        return {};
-    }
-}
-export function savePreferredUiMode(mode) {
-    if (isUiModeRollbackEnabled())
-        return getUiModeState();
-    const raw = readRawConfig();
+export function savePreferredUiMode(mode, input, paths) {
+    if (resolveUiModeRollbackActivation(input.rollbackActivation).enabled)
+        return getUiModeState(input);
+    const raw = readPersistedRawConfig(paths);
     const webui = raw.webui && typeof raw.webui === "object" && !Array.isArray(raw.webui)
         ? raw.webui
         : {};
@@ -145,8 +143,14 @@ export function savePreferredUiMode(mode) {
         ...webui,
         preferredUiMode: mode,
     };
-    writeFileSync(PATHS.configFile, JSON5.stringify(raw, null, 2), "utf-8");
-    reloadConfig();
-    return getUiModeState();
+    writePersistedRawConfig(raw, paths);
+    const config = {
+        ...input.config,
+        webui: {
+            ...input.config.webui,
+            preferredUiMode: mode,
+        },
+    };
+    return getUiModeState({ ...input, config });
 }
 //# sourceMappingURL=mode.js.map

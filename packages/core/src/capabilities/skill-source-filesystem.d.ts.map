@@ -1,0 +1,1 @@
+{"version":3,"file":"skill-source-filesystem.d.ts","sourceRoot":"","sources":["../../src/capabilities/skill-source-filesystem.ts"],"names":[],"mappings":"AAEA,OAAO,KAAK,EAAE,qBAAqB,EAAmC,MAAM,8BAA8B,CAAA;AAO1G,wBAAgB,uBAAuB,CAAC,KAAK,EAAE;IAC7C,aAAa,EAAE,MAAM,CAAA;IACrB,YAAY,EAAE,SAAS,MAAM,EAAE,CAAA;CAChC,GAAG,qBAAqB,CAqCxB"}

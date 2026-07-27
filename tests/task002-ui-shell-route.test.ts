@@ -4,9 +4,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerUiModeRoute } from "../packages/core/src/api/routes/ui-mode.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { upsertYeonjangRegistryObservation } from "../packages/core/src/yeonjang/registry.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: { logger: boolean }) => {
@@ -16,18 +21,14 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
-const previousAdminUi = process.env["KNOWBEE_ADMIN_UI"]
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ui-shell-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  delete process.env["KNOWBEE_ADMIN_UI"]
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-ui-shell-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 beforeEach(() => {
@@ -36,13 +37,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  if (previousAdminUi === undefined) delete process.env["KNOWBEE_ADMIN_UI"]
-  else process.env["KNOWBEE_ADMIN_UI"] = previousAdminUi
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -52,6 +46,7 @@ afterEach(() => {
 describe("task002 UI shell route", () => {
   it("returns a compact shell summary without raw secrets or diagnostic payloads", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerUiModeRoute(app)
     await app.ready()
     try {
@@ -88,10 +83,14 @@ describe("task002 UI shell route", () => {
   })
 
   it("reports admin availability from the explicit runtime flag only", async () => {
-    process.env["KNOWBEE_ADMIN_UI"] = "1"
-    reloadConfig()
     const app = Fastify({ logger: false })
-    registerUiModeRoute(app)
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerUiModeRoute(app, {
+      adminActivation: {
+        env: { KNOWBEE_ADMIN_UI: "1" },
+        nodeEnv: "development",
+      },
+    })
     await app.ready()
     try {
       const response = await app.inject({ method: "GET", url: "/api/ui/shell" })
@@ -165,6 +164,7 @@ describe("task002 UI shell route", () => {
     })).toEqual(expect.objectContaining({ ok: true }))
 
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerUiModeRoute(app)
     await app.ready()
     try {

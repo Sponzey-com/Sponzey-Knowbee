@@ -1,7 +1,7 @@
 import { create } from "zustand"
 import type { RootRun } from "../contracts/runs"
-import { isAiRelatedError, mapChatErrorMessage } from "../lib/chat-errors"
-import { getCurrentUiLanguage } from "./uiLanguage"
+import { isAiRelatedError } from "../lib/chat-errors"
+import type { UserRecoveryProjection } from "../lib/user-recovery"
 import { useRunsStore } from "./runs"
 import { createPendingAssistantTracker } from "./chat-delivery"
 export type { ArtifactAttachment, ToolCall } from "./chat-delivery"
@@ -25,6 +25,7 @@ export interface ApprovalRequest {
   params: unknown
   kind?: "approval" | "screen_confirmation"
   guidance?: string
+  expiresAt?: number | null
 }
 
 interface ChatState {
@@ -33,13 +34,13 @@ interface ChatState {
   running: boolean
   connected: boolean
   pendingApproval: ApprovalRequest | null
-  inputError: string
+  inputRecovery: UserRecoveryProjection | null
 
   setSessionId: (id: string) => void
   setConnected: (v: boolean) => void
   setRunning: (v: boolean) => void
-  setInputError: (message: string) => void
-  clearInputError: () => void
+  setInputRecovery: (recovery: UserRecoveryProjection) => void
+  clearInputRecovery: () => void
   addUserMessage: (content: string) => void
   addAssistantMessage: (content: string) => void
   setPendingApproval: (req: ApprovalRequest | null) => void
@@ -52,13 +53,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   running: false,
   connected: false,
   pendingApproval: null,
-  inputError: "",
+  inputRecovery: null,
 
   setSessionId: (id) => set({ sessionId: id }),
   setConnected: (v) => set({ connected: v }),
   setRunning: (v) => set({ running: v }),
-  setInputError: (message) => set({ inputError: message }),
-  clearInputError: () => set({ inputError: "" }),
+  setInputRecovery: (inputRecovery) => set({ inputRecovery }),
+  clearInputRecovery: () => set({ inputRecovery: null }),
 
   addUserMessage: (content) =>
     set((s) => ({
@@ -74,7 +75,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   clearMessages: () => {
     pendingAssistantTracker.clear()
-    set({ messages: [], sessionId: null, running: false, pendingApproval: null, inputError: "" })
+    set({ messages: [], sessionId: null, running: false, pendingApproval: null, inputRecovery: null })
   },
 }))
 
@@ -98,9 +99,15 @@ export function handleWsMessage(data: { type: string; [k: string]: unknown }) {
         useRunsStore.getState().upsertRun(run)
         if (!activeSessionId || run.sessionId === activeSessionId) {
           if (run.status === "failed" && isAiRelatedError(run.summary)) {
-            store.setInputError(mapChatErrorMessage(run.summary, getCurrentUiLanguage()))
+            store.setInputRecovery({
+              kind: "unavailable",
+              reasonCode: "request_failed",
+              messageKey: "unavailable",
+              action: "refresh_state",
+              actionLabelKey: "refresh_state",
+            })
           } else if (run.status === "running" || run.status === "completed") {
-            store.clearInputError()
+            store.clearInputRecovery()
           }
         }
       }
@@ -118,7 +125,7 @@ export function handleWsMessage(data: { type: string; [k: string]: unknown }) {
       if (activeSessionId && incomingSessionId !== activeSessionId) break
       pendingAssistantTracker.start(runId, incomingSessionId)
       store.setSessionId(incomingSessionId)
-      store.clearInputError()
+      store.clearInputRecovery()
       store.setRunning(true)
       break
 
@@ -158,7 +165,6 @@ export function handleWsMessage(data: { type: string; [k: string]: unknown }) {
         ...(typeof data.downloadUrl === "string" ? { downloadUrl: data.downloadUrl } : {}),
         ...(typeof data.previewable === "boolean" ? { previewable: data.previewable } : {}),
         fileName: String(data.fileName ?? ""),
-        ...(typeof data.filePath === "string" ? { filePath: data.filePath } : {}),
         ...(typeof data.mimeType === "string" ? { mimeType: data.mimeType } : {}),
         ...(typeof data.caption === "string" ? { caption: data.caption } : {}),
       })
@@ -179,6 +185,9 @@ export function handleWsMessage(data: { type: string; [k: string]: unknown }) {
         params: data.params,
         ...(typeof data.kind === "string" ? { kind: data.kind as ApprovalRequest["kind"] } : {}),
         ...(typeof data.guidance === "string" ? { guidance: data.guidance } : {}),
+        ...(typeof data.expiresAt === "number" || data.expiresAt === null
+          ? { expiresAt: data.expiresAt }
+          : {}),
       })
       break
 

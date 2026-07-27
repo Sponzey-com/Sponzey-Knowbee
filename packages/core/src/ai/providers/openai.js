@@ -1,11 +1,35 @@
 import OpenAI from "openai";
 import { nextApiKey, markKeyFailure } from "../types.js";
+import { AIProviderInvocationError, isAIProviderInvocationError, providerFailureReasonForHttpStatus, } from "../provider-failure.js";
 import { createLogger } from "../../logger/index.js";
 import { OPENAI_CODEX_RESPONSES_PATH, OPENAI_CODEX_USER_AGENT, readOpenAICodexAccessToken, resolveOpenAICodexBaseUrl, } from "../../auth/openai-codex-oauth.js";
+import { loadPromptValue } from "../../memory/prompt-fragments.js";
 const log = createLogger("ai:openai");
 const DEFAULT_MAX_OUTPUT_TOKENS = 2_048;
 const TOKEN_ESTIMATE_DIVISOR = 4;
 const TOKEN_SAFETY_HEADROOM = 1_024;
+const CODEX_OAUTH_FALLBACK_PROMPT_LABELS_SOURCE_ID = "codex_oauth_fallback_prompt_labels_user";
+async function fetchCodexResponse(url, init, signal) {
+    try {
+        return await fetch(url, init);
+    }
+    catch (failure) {
+        if (signal?.aborted || isAIProviderInvocationError(failure))
+            throw failure;
+        throw new AIProviderInvocationError("transport_failed");
+    }
+}
+function openAIProviderError(failure) {
+    if (isAIProviderInvocationError(failure))
+        return failure;
+    if (failure instanceof OpenAI.BadRequestError) {
+        return new AIProviderInvocationError("provider_contract_rejected");
+    }
+    if (failure instanceof OpenAI.APIConnectionError) {
+        return new AIProviderInvocationError("transport_failed");
+    }
+    return new AIProviderInvocationError("provider_unavailable");
+}
 const CONTEXT_LIMITS = {
     "gpt-5": 400_000,
     "gpt-5.4": 400_000,
@@ -272,16 +296,27 @@ function renderFallbackMessageContent(message) {
         }
         if (block.type === "tool_use") {
             const input = JSON.stringify(block.input ?? {});
-            parts.push('[tool request] ' + block.name + ' ' + input);
+            parts.push(codexOAuthFallbackPromptLabel("tool_request_prefix") + ' ' + block.name + ' ' + input);
             continue;
         }
         if (block.type === "tool_result") {
             const content = block.content.trim();
             if (content)
-                parts.push('[tool result] ' + content);
+                parts.push(codexOAuthFallbackPromptLabel("tool_result_prefix") + ' ' + content);
         }
     }
     return parts.join("\n").trim();
+}
+function codexOAuthFallbackPromptLabel(key) {
+    const value = loadPromptValue(CODEX_OAUTH_FALLBACK_PROMPT_LABELS_SOURCE_ID, {}, { required: true })
+        .split(/\r?\n/u)
+        .find((line) => line.startsWith(`${key}=`))
+        ?.slice(key.length + 1)
+        .trim();
+    if (!value) {
+        throw new Error(`prompt label missing: ${CODEX_OAUTH_FALLBACK_PROMPT_LABELS_SOURCE_ID}:${key}`);
+    }
+    return value;
 }
 export function buildCodexOAuthFallbackPrompt(messages) {
     const relevantMessages = messages.slice(-8);
@@ -290,10 +325,10 @@ export function buildCodexOAuthFallbackPrompt(messages) {
         const content = renderFallbackMessageContent(message);
         if (!content)
             continue;
-        const label = message.role === "assistant" ? "Assistant" : "User";
+        const label = codexOAuthFallbackPromptLabel(message.role === "assistant" ? "assistant_label" : "user_label");
         lines.push(label + ': ' + content);
     }
-    return lines.join("\n\n").trim() || "Continue the conversation.";
+    return lines.join("\n\n").trim() || codexOAuthFallbackPromptLabel("default_prompt");
 }
 function isLikelyHtmlError(detail) {
     const normalized = detail.trim().toLowerCase();
@@ -310,9 +345,10 @@ export function shouldRetryCodexOAuthWithSimplePayload(input) {
     if (!hasComplexPayload)
         return false;
     if (input.status === 401 || input.status === 403)
-        return true;
-    if (input.status === 400 || input.status === 422)
-        return true;
+        return false;
+    if (input.status === 400 || input.status === 422) {
+        return !input.requiredToolChoice;
+    }
     return isLikelyHtmlError(input.detail);
 }
 // ─── Provider ────────────────────────────────────────────────────────────────
@@ -353,26 +389,27 @@ export class OpenAIProvider {
             ...baseBody,
             input,
             ...(params.maxTokens !== undefined ? { max_output_tokens: params.maxTokens } : {}),
-            ...(tools ? { tools, tool_choice: "auto" } : {}),
+            ...(tools ? { tools, tool_choice: params.toolChoice ?? "auto" } : {}),
         };
-        let response = await fetch(url, {
+        let response = await fetchCodexResponse(url, {
             method: "POST",
             headers,
             body: JSON.stringify(primaryBody),
             ...(params.signal ? { signal: params.signal } : {}),
-        });
+        }, params.signal);
         if (!response.ok) {
             const detail = (await response.text().catch(() => "")).trim();
             const shouldRetry = shouldRetryCodexOAuthWithSimplePayload({
                 status: response.status,
                 detail,
                 hasTools: Boolean(tools),
+                requiredToolChoice: Boolean(tools && params.toolChoice === "required"),
                 hasMaxOutputTokens: params.maxTokens !== undefined,
                 messageCount: params.messages.length,
                 hasStructuredConversation: params.messages.some((message) => typeof message.content !== "string"),
             });
             if (!shouldRetry) {
-                throw new Error(detail || `${response.status} ${response.statusText}`);
+                throw new AIProviderInvocationError(providerFailureReasonForHttpStatus(response.status));
             }
             log.warn("chatgpt_oauth rich payload rejected; retrying with simplified prompt payload", {
                 status: response.status,
@@ -389,16 +426,21 @@ export class OpenAIProvider {
                                 text: buildCodexOAuthFallbackPrompt(params.messages),
                             }],
                     }],
+                // A required tool is an execution boundary, not an optional payload
+                // enhancement. Keep it available when simplifying the conversation.
+                ...(tools && params.toolChoice === "required"
+                    ? { tools, tool_choice: "required" }
+                    : {}),
             };
-            response = await fetch(url, {
+            response = await fetchCodexResponse(url, {
                 method: "POST",
                 headers,
                 body: JSON.stringify(fallbackBody),
                 ...(params.signal ? { signal: params.signal } : {}),
-            });
+            }, params.signal);
             if (!response.ok) {
-                const retryDetail = (await response.text().catch(() => "")).trim();
-                throw new Error(retryDetail || detail || `${response.status} ${response.statusText}`);
+                await response.text().catch(() => "");
+                throw new AIProviderInvocationError(providerFailureReasonForHttpStatus(response.status));
             }
         }
         const reader = response.body?.getReader();
@@ -563,7 +605,7 @@ export class OpenAIProvider {
                     messages: oaiMessages,
                     stream: false,
                     ...buildTokenLimitParams(params.model, maxTokens, forceLegacyMaxTokens),
-                    ...(tools ? { tools, tool_choice: "auto" } : {}),
+                    ...(tools ? { tools, tool_choice: params.toolChoice ?? "auto" } : {}),
                 }, { signal: params.signal });
                 try {
                     return await execute(compatibilityBaseUrl);
@@ -585,7 +627,7 @@ export class OpenAIProvider {
                     messages: oaiMessages,
                     stream: true,
                     ...buildTokenLimitParams(params.model, maxTokens, forceLegacyMaxTokens),
-                    ...(tools ? { tools, tool_choice: "auto" } : {}),
+                    ...(tools ? { tools, tool_choice: params.toolChoice ?? "auto" } : {}),
                 }, { signal: params.signal });
                 try {
                     return await execute(compatibilityBaseUrl);
@@ -688,7 +730,7 @@ export class OpenAIProvider {
                 log.warn("API key authentication failed, marking for cooldown");
                 markKeyFailure(this.profile, apiKey);
             }
-            throw err;
+            throw openAIProviderError(err);
         }
     }
 }

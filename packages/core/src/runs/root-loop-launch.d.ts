@@ -9,7 +9,13 @@ import type { ReconnectRequestGroupSelection } from "./store.js";
 import type { TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 import type { RunChunkDeliveryHandler } from "./delivery.js";
+import type { FinalResponseIdentityContext } from "./final-response-renderer.js";
+import type { KnowbeeConfig } from "../config/types.js";
+import type { ArtifactStorageContext } from "../artifacts/lifecycle.js";
+import type { MemoryJournalRepository } from "../memory/journal.js";
 export declare function prepareRootLoopLaunch(params: {
+    artifactStorage: ArtifactStorageContext;
+    memoryJournal: MemoryJournalRepository;
     runId: string;
     sessionId: string;
     requestGroupId: string;
@@ -23,6 +29,8 @@ export declare function prepareRootLoopLaunch(params: {
     currentTargetId: string | undefined;
     currentTargetLabel: string | undefined;
     workDir: string;
+    config: KnowbeeConfig;
+    finalResponseIdentityContext?: FinalResponseIdentityContext | undefined;
     skipIntake?: boolean;
     immediateCompletionText?: string;
     reconnectNeedsClarification: boolean;
@@ -35,6 +43,9 @@ export declare function prepareRootLoopLaunch(params: {
     isRootRequest: boolean;
     contextMode: AgentContextMode;
     taskProfile: TaskProfile;
+    scheduleId?: string;
+    includeScheduleMemory?: boolean;
+    memorySearchQuery?: string;
     syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies;
     defaultMaxDelegationTurns: number;
 }, dependencies: RootRunDriverDependencies, executionLoopRuntime: ExecutionLoopRuntimeState): {

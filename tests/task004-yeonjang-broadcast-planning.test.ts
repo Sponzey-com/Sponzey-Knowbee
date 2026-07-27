@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { planYeonjangBroadcastRun, buildYeonjangBroadcastAggregateSummary } from "../packages/core/src/yeonjang/broadcast.ts"
 import { buildYeonjangBroadcastPolicyProjection } from "../packages/core/src/yeonjang/broadcast-policy.ts"
 import type { MqttExtensionSnapshot } from "../packages/core/src/mqtt/broker.ts"
 import { projectYeonjangInstances } from "../packages/core/src/yeonjang/topology.ts"
+import { createTestDbRuntimeFixture, type TestDbRuntimeFixture } from "./fixtures/runtime-db.ts"
+
+let dbRuntime: TestDbRuntimeFixture
+beforeEach(() => { dbRuntime = createTestDbRuntimeFixture("knowbee-yeonjang-broadcast-") })
+afterEach(() => { dbRuntime.dispose() })
 
 function snapshot(overrides: Partial<MqttExtensionSnapshot>): MqttExtensionSnapshot {
   return {

@@ -1,310 +1,164 @@
-# Sponzey Knowbee Project Agent Prompt
-
-이 문서는 이 프로젝트에서 작업하는 모든 에이전트와 자동화 실행자가 지속적으로 따라야 하는 기본 개발 프롬프트이다. 사용자의 명시적 지시가 이 문서와 충돌하지 않는 한, 모든 코드 수정, 설계 판단, 테스트 작성, 리팩터링, 문서화 작업에 적용한다.
-
-## 1. 핵심 지향점
-
-- Layered Architecture를 기본 구조로 삼고, Clean Architecture 경계를 함께 지킨다.
-- Clean Architecture를 지향한다.
-- TDD 기반으로 코드를 작성하고 개발한다.
-- Tidy First 설계를 지향한다.
-- 추상화를 통한 기능 확장과 단순함을 함께 지향한다.
-
-이 원칙들은 우선순위가 아니라 동시에 만족해야 하는 기준이다. 어느 한 원칙을 이유로 다른 원칙을 무시하지 않는다. 예를 들어 추상화를 추가할 때도 테스트 가능성과 단순성을 해치지 않아야 하며, 빠른 구현을 하더라도 아키텍처 경계를 무너뜨리지 않아야 한다.
-
-## 2. 작업 기본 자세
-
-- 먼저 현재 코드와 문서를 읽고, 이미 존재하는 구조와 의도를 파악한다.
-- 기존 패턴, 네이밍, 테스트 스타일, 런타임 계약을 우선한다.
-- 사용자가 요청한 목표를 실제 동작 기준으로 해석한다.
-- 추측으로 넓은 리팩터링을 하지 않는다.
-- 관련 없는 파일, 포맷, 생성물, 사용자 변경 사항을 건드리지 않는다.
-- 기능을 끝냈다고 말하기 전에 검증 가능한 근거를 만든다.
-- 실패하거나 막히면 같은 시도를 반복하지 말고 입력, 경로, 대상, 도구, 검증 방식을 바꿔서 해결한다.
-
-## 3. Clean Architecture 적용 기준
-
-### 3.0 Layered Architecture 기본 경계
-
-- 도메인, 애플리케이션 유스케이스, 어댑터, 인프라, UI 계층을 구분한다.
-- 안쪽 계층은 바깥 계층을 직접 알지 않아야 한다.
-- 외부 입력, 환경, 파일, 프로세스 상태는 가장자리 계층에서 읽고, 내부 계층에는 명시적 인자와 계약 타입으로 전달한다.
-- 계층을 건너뛰는 편의 호출을 만들지 않는다. 필요한 경우 작은 포트/어댑터 계약을 먼저 만든다.
-- 계층 분리가 테스트를 어렵게 만들면 구조가 잘못된 것으로 보고, 테스트 가능한 경계를 다시 잡는다.
-
-### 3.1 의존성 방향
-
-- 도메인 규칙은 UI, 채널, DB, 외부 API, 특정 모델 제공자에 의존하지 않는다.
-- 외부 시스템 연동은 어댑터, 게이트웨이, 인프라 계층으로 격리한다.
-- UI는 도메인 결정을 직접 구현하지 않고, 상태와 명령을 명확한 계약으로 전달한다.
-- DB 스키마나 저장 형식이 도메인 규칙 자체가 되지 않게 한다.
-- 테스트 편의를 위해 내부 규칙을 외부 구현 세부사항에 묶지 않는다.
-
-### 3.2 계약 중심 설계
-
-- 실행 흐름, 토폴로지, 위임, 결과 취합, 채널 전달은 명시적인 계약 타입과 스키마로 표현한다.
-- 문자열 상태값, 이벤트 라벨, JSON 필드는 가능한 한 타입, enum, validator, normalizer로 보호한다.
-- 계약 변경이 필요하면 변환 계층과 회귀 테스트를 함께 둔다.
-- 레거시 필드는 무조건 유지하지 않는다. 실제 사용 경로가 사라졌다면 제거 계획을 세우고 제거한다.
-
-### 3.3 경계 보존
-
-- 프롬프트, 하네스, 런타임, WebUI, DB, 채널 어댑터의 책임을 섞지 않는다.
-- LLM이 판단해야 하는 자연어 의미 해석을 코드의 키워드 검색으로 대체하지 않는다.
-- 코드 하네스는 구조, 권한, 연결 가능성, 스키마, 안전 경계를 검증한다.
-- 의미 판단, 역할 판단, 위임 적합성 판단은 제공된 구조화 컨텍스트와 프롬프트 계약을 통해 수행한다.
-
-## 4. 설정과 환경 주입 기준
-
-설정은 실행 가능성과 재현성을 해치지 않도록 최소화한다. 외부 파일, 환경 변수, 프로세스 전역 상태는 필요한 시작 지점에서만 읽고, 그 이후 내부 실행 흐름에서는 명시적인 값으로 전달한다.
-
-### 4.1 외부 설정 최소화
-
-- 외부 파일에 설정되는 항목은 최소화한다.
-- 외부 설정 파일은 사용자/배포 환경마다 달라져야 하는 값에만 사용한다.
-- 도메인 정책, 실행 규칙, validator 기준, 아키텍처 경계는 외부 파일로 우회하지 않는다.
-- 설정 파일이 필요하면 스키마, 기본값, migration, 검증 테스트를 함께 둔다.
-- 테스트 편의를 위해 임의 설정 파일을 늘리지 않는다. 테스트에는 명시적 fixture나 생성자 인자를 우선한다.
-
-### 4.2 환경 상수 수용 시점
-
-- 환경 변수와 외부 환경 상수는 프로세스 시작 또는 명시적인 bootstrap 단계에서만 읽는다.
-- bootstrap 이후에는 `process.env`, 전역 mutable config, singleton config를 중간에 다시 읽거나 수정하지 않는다.
-- 외부 환경 상수는 프로그램 내부의 숨은 상수로 만들지 않는다. 필요한 값은 설정 객체, 유스케이스 인자, 함수 인자, command option처럼 명시적으로 전달한다.
-- 실행 중간에 환경 설정 내용을 삽입해 동작을 바꾸는 방식은 반드시 거부한다.
-- 기능별 런타임 변경이 필요하면 환경 변수 변경이 아니라 명시적 API, 명령 인자, 저장된 사용자 설정, 또는 검증된 런타임 계약으로 처리한다.
-
-### 4.3 프로세스 중간 설정 변경 금지
-
-- 코드가 실행 도중 `process.env`를 수정해 하위 모듈 동작을 바꾸는 패턴을 만들지 않는다.
-- 테스트가 필요한 경우에도 전역 환경을 직접 바꾸는 대신 의존성을 인자로 주입한다.
-- 외부 라이브러리 때문에 환경 변수가 필요하면 가장자리 어댑터에서만 설정하고, 영향 범위와 복구 방식을 테스트에 남긴다.
-- 스크립트가 환경 변수를 사용해야 할 때도 시작 전에 export하고, 실행 중 상태 전환 수단으로 사용하지 않는다.
-- 기존 코드가 중간 환경 변경에 의존한다면 새 기능에서 확대하지 말고, 명시적 인자 주입으로 전환하는 정리 계획을 세운다.
-
-## 5. 로그 기준
-
-로그는 목적별로 세 가지 수준을 기준으로 한다.
-
-- `product`: 프로덕트용 최소 로그. 사용자가 운영 중 알아야 하는 시작, 종료, 실패, 보안/권한, 최종 상태만 남긴다.
-- `debug`: 현장 확인용 디버그 로그. 배포/고객 환경에서 문제 원인을 확인할 수 있도록 요청 ID, run ID, adapter 상태, 외부 호출 결과 요약, 재시도/복구 흐름을 남긴다.
-- `dev`: 개발 및 테스트 확인용 로그. 개발 중 내부 상태, 상세 trace, fixture, 계약 조립 과정, 테스트 진단 정보를 볼 수 있게 한다.
-
-적용 기준:
-
-- 기본값은 `product`에 가까워야 하며, 사용자가 보는 UI나 일반 로그에 내부 복잡도를 노출하지 않는다.
-- `debug`와 `dev` 로그는 secret, token, private memory, 내부 원문 payload를 그대로 출력하지 않는다.
-- 로그 레벨은 bootstrap에서 결정하고, 실행 중 환경 변수 삽입으로 바꾸지 않는다.
-- 런타임 중 로그 상세도가 바뀌어야 하면 명시적인 관리자 API나 설정 저장소를 통해 검증된 계약으로 바꾼다.
-- 로그는 관찰 가능성을 위한 것이며, 도메인 흐름이나 성공/실패 판정의 근거가 되어서는 안 된다.
-
-## 6. TDD 기준
-
-### 6.1 기본 사이클
-
-1. 현재 실패나 요구사항을 재현하는 테스트를 먼저 찾거나 작성한다.
-2. 실패 이유가 목표와 맞는지 확인한다.
-3. 가장 작은 구현으로 테스트를 통과시킨다.
-4. 필요한 만큼만 정리한다.
-5. 관련 테스트와 타입체크를 실행한다.
-
-### 6.2 테스트 작성 원칙
-
-- 테스트는 구현 세부가 아니라 사용자 관찰 가능 동작과 계약을 검증한다.
-- 버그 수정에는 회귀 테스트를 추가한다.
-- 런타임 계약 변경에는 validator, normalizer, persistence, projection 테스트를 포함한다.
-- WebUI 변경에는 사용자가 보는 상태, 버튼, 입력, 저장, 스크롤, 접근 흐름을 검증한다.
-- 채널/토폴로지/위임 변경에는 이벤트, trace, DB snapshot, parent-child 관계, final delivery를 확인한다.
-- 숫자 제한, timeout, retry, attempt 같은 값은 실패 조건으로 쓰지 않는다. 단, 사용자가 명시한 제한이나 안전 경계는 테스트한다.
-- 환경/설정 변경에는 bootstrap 시점 수용, 명시적 인자 전달, 중간 `process.env` 변경 금지, 로그 레벨 경계 테스트를 포함한다.
-
-### 6.3 검증 기준
-
-- 단위 테스트만으로 충분하지 않은 변경은 통합 테스트 또는 smoke 검증을 추가한다.
-- 로컬 런타임 변경은 가능한 경우 실제 서버 재시작과 API/DB 확인으로 검증한다.
-- 프롬프트 변경은 prompt source 적재, assembly, regression test를 함께 고려한다.
-- 테스트를 실행하지 못했다면 이유와 남은 위험을 명확히 남긴다.
-
-## 7. Tidy First 기준
-
-### 7.1 구조 변경과 동작 변경 분리
-
-- 구조 정리와 동작 변경을 가능한 한 분리한다.
-- 동작 변경 전에 필요한 작은 정리를 먼저 하되, 정리 자체가 기능 변경이 되지 않게 한다.
-- 이름 변경, 파일 이동, 포맷 변경, dead code 제거는 목적과 범위를 분명히 한다.
-- 큰 리팩터링은 여러 작은 단계로 나눈다.
-
-### 7.2 작은 변경 단위
-
-- 한 번의 수정은 하나의 명확한 문제를 해결해야 한다.
-- 범위가 커지면 계획을 세우고 태스크로 나눈다.
-- 관련 없는 개선 아이디어는 즉시 구현하지 않고 별도 후속 항목으로 남긴다.
-- 중간 상태에서도 테스트 가능한 단위를 유지한다.
-
-### 7.3 정리의 우선순위
-
-다음 정리는 기능 개발 전에 우선할 수 있다.
-
-- 중복된 조건이 실제 버그를 만들고 있는 경우
-- 잘못된 추상화가 새 기능 구현을 방해하는 경우
-- 테스트가 불가능한 결합 때문에 회귀를 막을 수 없는 경우
-- 사용되지 않는 레거시 경로가 현재 목표와 충돌하는 경우
-- 이름이나 계약이 실제 의미와 달라 잘못된 사용을 유도하는 경우
-- 환경/설정이 프로세스 중간에 주입되어 재현성과 테스트 가능성을 해치는 경우
-- 로그가 secret이나 내부 원문 payload를 노출하거나, product/debug/dev 목적이 섞여 운영 판단을 흐리는 경우
-
-단, 단순히 보기 좋은 정리는 사용자 요청 범위 밖이면 하지 않는다.
-
-## 8. 추상화와 단순함
-
-### 8.1 추상화를 추가할 때
-
-추상화는 다음 조건 중 하나 이상을 만족할 때만 추가한다.
-
-- 실제 중복을 줄인다.
-- 변경 가능성이 높은 외부 구현을 안정된 내부 계약 뒤로 숨긴다.
-- 테스트 가능성을 높인다.
-- 런타임 정책과 구현 세부사항을 분리한다.
-- 여러 기능이 같은 도메인 개념을 공유하게 만든다.
-
-추상화를 만들 때는 이름, 입력, 출력, 실패 조건, 소유 계층을 명확히 한다.
-
-### 8.2 추상화를 피할 때
-
-다음 경우에는 추상화를 만들지 않는다.
-
-- 아직 한 곳에서만 쓰이고 변화 방향이 불분명하다.
-- 단순한 조건문보다 이해하기 어렵다.
-- 도메인 개념이 아니라 구현 편의만 감춘다.
-- 테스트가 오히려 더 복잡해진다.
-- 기존 계약과 의미가 겹친다.
-
-### 8.3 단순함의 기준
-
-- 사용자가 보는 UX는 가능한 한 단순해야 한다.
-- 내부 프로세스는 고도화될 수 있지만, UI에 내부 복잡도를 노출하지 않는다.
-- 단순함은 기능 누락이 아니라 명확한 기본 흐름, 적은 선택지, 안전한 자동 처리, 필요한 때의 진단 정보로 만든다.
-- GUI로 처리할 수 있는 것은 GUI로 처리하고, 텍스트 입력은 필요한 경우에만 요구한다.
-
-## 9. Knowbee 토폴로지와 위임 개발 원칙
-
-이 프로젝트의 핵심 목표는 사용자가 이해하기 쉬운 토폴로지 화면과, 내부적으로 강한 위임/검증/취합 런타임을 함께 제공하는 것이다.
-
-- 노비도 에이전트이고, 모든 에이전트는 자신의 direct child를 가질 수 있다.
-- 모든 에이전트와 팀은 사용자-facing 별명 또는 이름이 중복되면 안 된다.
-- 내부 ID는 시스템에서만 사용하고, 사용자 대화와 결과 전달에서는 에이전트 이름/별명으로 표시한다.
-- 상위 에이전트는 자신의 direct child 프로필과 연결만 보고 위임을 결정한다.
-- 연결되지 않은 실행자나 diagnostic-only 실행자를 임의로 선택하지 않는다.
-- 자식 결과는 최종 답변이 아니다. 부모가 검증하고 취합한 뒤 최종 전달한다.
-- 위임할 수 없으면 현재 에이전트가 자신의 능력과 허용 도구 안에서 자체 처리할 수 있는지 먼저 판단한다.
-- 자체 처리도 불가능하면 상위로 반환하거나 사용자 확인으로 전환한다.
-- provider direct 실행은 명시적 provider target이 있을 때만 허용한다.
-- `compiled_default_entry`, 암묵적 첫 노드 선택, 전체 목록 기반 우회 선택 같은 대표/기본 경로는 사용하지 않는다.
-- Skill/MCP 카탈로그는 공통 설정을 공유하되, 실제 enabled binding과 런타임 연결 상태는 에이전트별로 독립되어야 한다.
-- 저장 전 초안, 저장된 토폴로지, 런타임 활성 projection은 서로 다른 상태로 취급한다.
-
-## 10. 자연어 의미 판단 금지 경계
-
-- 요청이 어느 영역인지, 어떤 실행자가 적합한지, 어떤 행동 패턴인지 코드의 키워드 검색으로 결정하지 않는다.
-- 한국어, 영어, 오타, 혼합 언어, 별칭을 코드 테이블로 의미 매칭하지 않는다.
-- 코드가 할 일은 구조화된 컨텍스트를 만들고, 프롬프트/하네스가 판단할 수 있는 계약을 제공하며, 결과가 계약과 경계를 지키는지 검증하는 것이다.
-- 허용되는 문자열 처리는 구조적 처리로 한정한다.
-  - 명시적 ID, enum, JSON field, URL, path, file name, quoted literal, tool receipt, schema field
-  - redaction, validation, serialization, deserialization, exact ID/display-name normalization
-- 자연어 의미를 판단해야 하면 프롬프트와 하네스 계약을 개선한다.
-
-## 11. 실패와 복구 기준
-
-- retry count, attempt count, delegation turn count, queue retry count는 실패 조건이 아니다.
-- 횟수는 같은 방식이 통하지 않는다는 신호이며, 다른 방법을 찾기 위한 조건이다.
-- 실패는 더 이상 안전하게 바꿀 수 있는 방법이 없거나, 권한/안전/개인정보/외부 전송/삭제/결제 같은 경계를 넘는 경우에만 선언한다.
-- 복구할 때는 같은 대상과 같은 입력으로 같은 시도를 반복하지 않는다.
-- 복구 시 바꿀 수 있는 것은 작업 분할, 대상 실행자, 도구, 입력 형태, 실행 순서, 검증 방법, 권한 요청, 사용자 확인 경로다.
-- 사용자가 명시적으로 중단하면 즉시 취소를 전파한다.
-
-## 12. WebUI 개발 기준
-
-- 토폴로지 화면은 노드를 그리고 연결하고 선택한 노드를 정의하는 기본 흐름이 중심이다.
-- 상시 필요한 버튼만 노출한다.
-- 고급 설정, 내부 계약, 진단 정보는 기본 사용자 흐름에 노출하지 않는다.
-- 노드 이름, 성격, 하는 일은 사용자가 쉽게 정의하고 AI 도움을 받을 수 있어야 한다.
-- 초보/고급 화면 분리는 제거하고, 하나의 통합 설정 화면에서 기본값 중심의 간단 흐름과 필요 시 펼치는 세부 설정을 함께 제공한다.
-- 서브 에이전트 설정은 단일 source-of-truth에서 파생된 통합 view model로 다루며, 모델, Skill/MCP, 메모리, 권한, 위임, 모니터링은 선택한 에이전트의 접힘 섹션에서 다룬다.
-- `beginner`, `advanced`, `simple` 같은 기존 UI 모드 용어는 compatibility 계층과 테스트 migration 범위에서만 임시로 다루고, 새 사용자-facing 화면의 제품 구조로 확장하지 않는다.
-- 단일 노비 모드에서 서브 에이전트가 없다는 이유만으로 오류 상태를 만들지 않는다.
-- 통합 설정 화면에서도 raw 배열, raw contract, secret, token, 내부 ID를 그대로 편집/노출하지 않는다.
-- 저장은 명확해야 하며, 새로고침이나 페이지 이동 후에도 데이터가 DB 기준으로 유지되어야 한다.
-- 스크롤, 사이드바, 카드, 하단 영역은 화면 밖으로 숨어 조작 불가능해지면 안 된다.
-- 드래그 중인 노드는 드래그하는 동안 실제로 움직이는 피드백을 보여야 한다.
-- 실행 중인 노드는 화면에서 진행 상태가 보이고, 최종 결과와 실패 이유가 trace로 이어져야 한다.
-
-## 13. 프롬프트와 코드의 역할 분담
-
-코드로 구현할 것:
-
-- 스키마, 타입, validator, normalizer
-- DB 저장, migration, projection, trace persistence
-- 권한, 연결, direct-child 여부, channel boundary, risk boundary 검증
-- parent-child 실행 관계와 결과 취합
-- 이벤트 기록과 Runtime Inspector 표시
-- bootstrap 설정 적재, 명시적 인자 주입, 로그 레벨 계약
-- 테스트와 smoke 검증
-
-프롬프트로 처리할 것:
-
-- 자연어 요청의 목적과 영역 이해
-- 현재 에이전트가 받은 업무의 목적, 목표, 작업 단위 분할
-- direct child 프로필을 읽고 위임 가능성 판단
-- 결과 검토, 누락 판단, 취합 방향
-- 사용자에게 설명할 말투와 요약 방식
-
-프롬프트로만 처리하면 안 되는 것:
-
-- 권한 우회
-- 연결되지 않은 실행자 선택 허용
-- DB 영속성 보장
-- 환경/설정 주입 우회
-- 실패 상태 은폐
-- 테스트 생략
-- 채널 경계 무시
-
-코드로만 처리하면 안 되는 것:
-
-- 자연어 의미 기반 실행자 선택
-- 언어별 키워드 라우팅
-- 사용자 의도 추론을 고정 규칙으로 대체
-
-## 14. 작업 완료 조건
-
-작업은 다음을 만족해야 완료로 본다.
-
-- 사용자 요청의 실제 목표가 처리되었다.
-- 변경 범위가 요청과 관련된 곳으로 제한되었다.
-- Clean Architecture 경계를 해치지 않았다.
-- 설정은 bootstrap에서만 수용하고, 내부 흐름에는 명시적 인자로 전달되었다.
-- 로그는 product/debug/dev 목적 중 하나에 맞고 secret/private data를 노출하지 않는다.
-- 필요한 테스트가 추가되거나 갱신되었다.
-- 관련 테스트, 타입체크, 빌드, 또는 smoke 검증 중 필요한 것을 실행했다.
-- 실행하지 못한 검증은 이유와 남은 위험을 남겼다.
-- 사용자가 이해할 수 있는 결과, 변경 파일, 검증 결과를 간결하게 보고했다.
-
-## 15. Architecture Cleanup Gate
-
-아키텍처 정리, prompt/source 문서 정리, 레거시 경로 제거, 토폴로지/위임/복구 정책 변경은 다음 검증 묶음을 기준으로 삼는다.
-
-- `pnpm run test:architecture:static`: source-of-truth 문서, 삭제된 routing 개념, critical-decision audit, direct-child 계약을 확인한다.
-- `pnpm run test:architecture:runtime`: current-agent fallback, child result aggregation, final validation, direct child-channel delivery 금지를 확인한다.
-- `pnpm run test:architecture:webui`: 기본 topology UI가 ExecutorGraph 중심이고 EnterpriseTopology V1/WorkOrder/manual run/compile preview를 노출하지 않는지 확인한다.
-- `pnpm run test:architecture:prompts`: AGENTS.md와 runtime prompt source가 위임, 자체 처리, 복구, 완료 정책에서 충돌하지 않는지 확인한다.
-- `pnpm run test:architecture:generated`: TypeScript 원본과 core source compatibility artifact가 동기화되어 있는지 확인한다.
-
-이 suite가 실패하면 해당 실패는 단순 테스트 실패가 아니라 아키텍처 정책 회귀로 본다. 테스트 기대값이 오래된 경우에도 현재 지향점에 맞는 정책 테스트로 갱신해야 하며, 레거시 동작을 보존하기 위해 기대값을 되돌리지 않는다.
-
-## 16. 응답 규칙
-
-- 한국어 요청에는 한국어로 답한다.
-- 구현을 마쳤으면 핵심 변경과 검증 결과를 먼저 말한다.
-- 불확실한 부분은 숨기지 않는다.
-- 사용자에게 선택을 요구해야 할 때는 왜 선택이 필요한지 설명한다.
-- 단순한 작업은 짧게 보고한다.
-- 복잡한 작업은 계획, 변경, 검증, 남은 위험 순서로 보고한다.
+# Project Development Principles
+
+This document governs every code, test, script, prompt, release, and documentation change in Sponzey Knowbee. Treat `PROJECT.md` as the product goal and this document as the mandatory engineering boundary. Preserve user changes outside the requested scope.
+
+- Apply Layered Architecture, Clean Architecture, SOLID, TDD, and Tidy First to every behavior change.
+- Read the relevant implementation, contracts, and tests before editing. Identify the owning layer and the affected public contract before writing code.
+- Interpret completion as verified user-goal completion, not an HTTP success, process exit code, tool response, or adapter parser success.
+- Keep internal processes small, explicit, traceable, and independently testable. Remove dead code, prompts, data, and files only after proving no supported path uses them.
+- Use the existing package manager and project scripts. The supported runtime requires the Node version declared in `package.json`.
+
+# Architecture Rules
+
+- Separate Domain, Application/Use Case, Interface Adapter, Infrastructure/Framework, and Presentation/Delivery responsibilities.
+- Keep Domain deterministic. Domain code must not import or call HTTP, database, filesystem, network, shell, process, environment, UI, logger configuration, model SDK, channel SDK, or framework APIs.
+- Define explicit input and output models for every Use Case. Return closed success, failure, blocked, cancelled, or additional-input-required results; do not return ambiguous booleans or throw external failures across the application boundary.
+- Define a small purpose-specific port before adding an external implementation. Infrastructure implements ports; Application depends on ports; Domain depends only on values and rules.
+- Keep prompt assembly, harness policy, runtime orchestration, persistence, channel delivery, WebUI projection, and extension transport in distinct modules.
+- Keep system prompts in prompt source files. Write system prompts in English. User-facing answers must be generated by the LLM in the language of the user request.
+- Do not use keyword tables, locale-specific string matching, or semantic heuristics to choose an agent, decide a request meaning, determine result sufficiency, or decide retry strategy. Give the LLM structured context and validate its structured output with the harness.
+- Every non-conversational user request follows `diagnose -> plan -> execute -> verify -> report`. The LLM owns diagnosis, plan selection, evidence interpretation, result sufficiency, and next-action selection. Code owns schema validation, policy, permissions, state transitions, transport, persistence, and redaction.
+- Treat raw LLM plans, diagnoses, evidence envelopes, prompts, model responses, tool payloads, and work records as internal data. Expose them only through an explicitly authorized Audit boundary with redaction and access records.
+
+# Dependency Direction
+
+- Direct dependencies point inward: Presentation and Infrastructure depend on Application contracts; Application depends on Domain contracts; Domain depends on nothing outside itself.
+- Do not instantiate HTTP clients, database drivers, filesystem clients, shell runners, MQTT clients, model clients, or framework services inside Use Cases.
+- Do not pass framework request objects, environment maps, database rows, raw JSON payloads, or UI state objects into Domain or Application. Convert them in an adapter.
+- Do not let adapters decide natural-language meaning, market value freshness, user-goal completion, agent suitability, or final response wording.
+- Keep agent relationships explicit. Agents have only an internal ID and a user-facing unique name. Use the user-facing name in user-visible communication; reserve the ID for internal contracts and storage.
+- The main agent delegates only to direct children. A child may delegate only to its direct children. A parent validates and aggregates child results before final delivery.
+- Share Skill and MCP catalog configuration only as immutable capability definitions. Maintain enabled bindings, credentials, sessions, memory, history, and runtime connections independently per agent.
+- Keep each agent's short-term and long-term memory isolated. Exchange data only through explicit delegation input and result contracts.
+
+# Configuration Policy
+
+- Minimize external configuration files. Use them only for deployment- or user-specific values that cannot be represented as explicit input or code defaults.
+- Give every persisted configuration format a schema, default behavior, migration path, validation error, and regression test.
+- Read external configuration, environment variables, host facts, and extension settings once at startup or at an explicit approved bootstrap boundary.
+- Immediately validate raw values into an immutable typed `Config`. Do not pass raw environment maps, config file syntax, or environment variable names inward.
+- Create dependencies from typed configuration in the composition root and pass them through constructor arguments, function arguments, or an explicit context object.
+- Do not use global mutable configuration, static getters, service locators, hidden config reads, implicit working-directory discovery, or runtime configuration reloads.
+- Do not insert, mutate, or re-read environment values during a process to change behavior. Tests use explicit `Config` fixtures, never process-environment mutation.
+- Persisted user settings may change only through an explicit validated use case. A running execution uses its startup snapshot until a documented restart or a separately versioned runtime contract takes effect.
+
+Required startup flow:
+
+```text
+raw_environment = read_once_at_startup()
+config = validate_and_build_typed_config(raw_environment)
+dependencies = compose_dependencies(config)
+application = build_application(dependencies)
+application.run()
+```
+
+# Runtime Environment Handling
+
+- Treat extension, browser, camera, filesystem, process, network, and desktop-control access as external capabilities behind ports.
+- Select an exact extension instance when the user names a computer or extension. Evaluate each target independently before a broadcast request; never copy a side-effect command to all instances without per-target capability, permission, scope, and approval checks.
+- When an extension is unavailable, first use permitted local capabilities, Skills, MCP servers, connected agents, direct official sources, or external APIs. Report a limitation only after the LLM has evaluated materially different permitted paths.
+- Require explicit approval, idempotency, timeout, cancellation, and post-check contracts for side effects. A transport acknowledgement never proves the user goal.
+- Bind sensitive extension execution to immutable startup dependencies, explicit target identity, expiry, and single-use evidence. Never log secrets, admission signatures, nonces, raw browser targets, tokens, or raw extension payloads.
+- Define request, delegation, approval, retry, cancellation, and final delivery as structured contracts. Do not infer them from prose markers or loosely shaped JSON.
+
+# Logging Policy
+
+Use exactly three log classes. Choose the class at the owning boundary and test its redaction behavior.
+
+| Class | Purpose and allowed content | Forbidden content | Location and review rule |
+| --- | --- | --- | --- |
+| Product Log | User-impacting state transition, terminal result, reason code, correlation ID, and minimal error classification. | Secrets, tokens, raw requests/responses, personal data, raw prompts, raw model output, unrestricted stack traces. | Emit at Use Case and state-machine boundaries. Review that every field is necessary for operator action. |
+| Field Debug Log | Time-limited approved production diagnosis with masked config summary, truncated error summary, retry decision, and guard result. Default disabled. | Secrets, full payloads, raw stdout/stderr, full prompts, full model responses, unlimited retention. | Emit only through a scoped diagnostic boundary with target scope and retention. Review activation, masking, and expiry. |
+| Development Log | Local fixture, test, or implementation diagnosis. | Production-default output, deployment artifacts, secrets, or user data. | Isolate to development/test code. Remove or disable before merge. |
+
+- Configure log class at bootstrap. Do not alter log level through process-environment mutation while handling work.
+- Product and Field Debug logs must carry a correlation or run identifier when a workflow has one.
+- Logging is evidence for diagnosis, never proof of user-goal completion.
+
+# State Machine Policy
+
+- Model approval, retries, recursive prompt improvement, delegation, long-running work, cancellation, recovery, and finalization as explicit state machines when they have multiple events or terminal paths.
+- Define states, events, guards, allowed transitions, rejected transitions, failure states, cancellation states, terminal states, and recovery actions in one canonical contract.
+- Test every allowed and rejected transition. Emit Product Logs for state changes at the Application boundary.
+- Do not coordinate procedures with boolean combinations such as `isDone`, `shouldRetry`, or `isApproved` across modules.
+- Keep simple validation, projection, and one-shot value transformations as ordinary functions; do not add a state machine without a multi-event lifecycle.
+- A failed request returns to LLM diagnosis with prior evidence. Do not repeat an unchanged strategy against the same target and input.
+
+# TDD Policy
+
+- Write or identify a failing behavior test before changing behavior. State why it fails and which contract it protects.
+- Implement the smallest change that makes the test pass. Refactor only after the behavior is green.
+- Add regression coverage for every fixed defect.
+- Test Domain rules, Use Case result types, state transitions, configuration validation, redaction, error mapping, and adapter contracts.
+- Replace external APIs, files, databases, network, shell, time, randomness, and process execution with injected fakes or controllable ports in unit tests.
+- Add integration or controlled smoke coverage when a change crosses a transport, persistence, build, packaged extension, or UI boundary.
+- For WebUI work, test visible state, input editing, save behavior, navigation, accessibility, error recovery, and layout at the affected viewport. Do not claim completion from a static render alone.
+- For prompt changes, test source loading, prompt assembly, role separation, language rule, redaction, and the required structured output contract.
+- Run the narrow test set first, then the relevant build, typecheck, and wider regression set. Report tests not run and residual risk.
+
+# Tidy First Policy
+
+- Separate behavior-preserving cleanup from behavior change. Use a separate commit when feasible; otherwise label the two categories in the change description and keep the cleanup minimal.
+- Run existing tests before and after cleanup. Do not combine broad renames, file moves, formatting churn, generated artifact rewrites, or unrelated deletion with a feature change.
+- Perform a small cleanup first only when it removes a concrete obstacle: duplicate logic causing a bug, a misleading name, a broken boundary, a test-hostile dependency, a dead path, or sensitive log exposure.
+- Delete unused code, prompt sources, data, and files only after repository search and targeted tests show no supported path references them.
+- Preserve user worktree changes. Do not reset, checkout, or revert unrelated files.
+
+# Code Review Checklist
+
+- [ ] Does the change have one clear owning layer and an explicit public contract?
+- [ ] Does Domain remain free of framework, I/O, environment, UI, logging configuration, and concrete adapter dependencies?
+- [ ] Does Application receive external dependencies and typed configuration explicitly?
+- [ ] Are external API, database, filesystem, network, shell, browser, extension, and model calls confined to adapters or delivery boundaries?
+- [ ] Does every Use Case return explicit success, failure, blocked, cancellation, or additional-input results?
+- [ ] Are user-goal diagnosis, plan, evidence analysis, and completion verification performed by the LLM rather than semantic code heuristics?
+- [ ] Are internal structured LLM data and sensitive evidence hidden outside the authorized Audit boundary?
+- [ ] Are settings read once, validated at bootstrap, and never implicitly re-read or mutated during execution?
+- [ ] Are Product, Field Debug, and Development logs separated, redacted, and scoped correctly?
+- [ ] Does a multi-event workflow use an explicit tested state machine rather than flag combinations?
+- [ ] Was a failing test written first, followed by focused regression, build, and integration validation?
+- [ ] Is cleanup separated from behavior change and is unrelated worktree content untouched?
+- [ ] Does a side effect have target identity, authorization, idempotency, cancellation, timeout, and post-check evidence?
+- [ ] Does final reporting distinguish execution success from verified user-goal success?
+
+# Prohibited Patterns
+
+- Do not import or invoke I/O, environment, framework, UI, logger configuration, shell, database, network, or model SDKs from Domain.
+- Do not construct concrete infrastructure inside a Use Case.
+- Do not use a singleton, service locator, mutable global config, static config getter, hidden filesystem read, hidden `process.env` read, or runtime environment mutation.
+- Do not use semantic keyword routing, hard-coded natural-language intent matching, or deterministic fallback to replace required LLM diagnosis or result verification.
+- Do not expose system prompts, raw LLM reasoning, raw model output, internal evidence envelopes, secrets, tokens, memory contents, raw extension payloads, or raw browser targets in normal UI, API, logs, or user replies.
+- Do not treat HTTP success, process success, adapter success, tool success, command acknowledgement, or child completion as verified user-goal success.
+- Do not bypass explicit parent-child agent topology, choose an implicit default agent, merge independent agent memory, or duplicate aliases.
+- Do not use a retry count, token count, or timeout count alone as a terminal failure decision.
+- Do not change tests solely to accept a known defect. Do not mark an unchecked validation item complete.
+- Do not make destructive VCS operations or revert user changes without explicit user instruction.
+
+# Required Agent Behavior
+
+- Before editing, inspect the target module, its tests, the nearest contract, and this document. State the affected layer and first verification step in the work update.
+- Before behavior edits, add a failing test or state why a new test cannot be written and which existing contract test demonstrates the boundary.
+- Use `apply_patch` for source and document edits. Keep edits ASCII unless the existing document requires another character set.
+- Treat all user requests as work to resolve. Continue through distinct safe approaches before reporting a limitation. When a required permission, credential, external service, or irreversible decision prevents progress, report the direct reason, attempted paths, and the minimum required next action.
+- Use the user-facing agent name in all user-visible agent messages and delegation descriptions. Default the main agent name to Knowbee only while no user-selected agent name exists.
+- Keep all agent system prompts distinct by responsibility. Do not duplicate definitions across prompt files. Remove a prompt source only after proving it is unused and replacing any required contract.
+- Preserve independent agent memory boundaries. Carry only explicit task input, approved context, and result evidence across agent boundaries.
+- Keep basic UI focused on essential user actions. Place internal contracts, raw diagnostics, and advanced operational details behind an authorized audit or advanced boundary.
+- For any UI implementation, use responsive constraints instead of fixed page dimensions, prevent overflow, and verify interaction on affected desktop and mobile viewports.
+- When changing startup scripts or packaged extension behavior, run the relevant build and controlled restart verification. Never put secrets into command arguments, logs, or generated evidence.
+- Update task or plan status only after the stated Done Criteria and validation commands are satisfied.
+
+# Example Decision Rules
+
+| Situation | Required decision |
+| --- | --- |
+| A Use Case needs environment data | Read and validate it once in the composition root, then inject typed `Config`. |
+| A feature needs an external API or extension | Define an Application port; implement it in Infrastructure; test it with a fake. |
+| A Domain rule needs file, network, or database data | Fetch it through an Application port and pass only values needed by the rule. |
+| A result is uncertain | Return an explicit blocked or additional-input result and send evidence to LLM diagnosis. |
+| A tool reports success | Run the specified post-check and LLM result verification before final success. |
+| A request fails | Record structured evidence, choose a materially different permitted strategy through LLM diagnosis, and transition through the workflow state machine. |
+| A side effect targets an extension | Bind explicit target identity, capability, permission, approval, idempotency, timeout, cancellation, and post-check before dispatch. |
+| A production issue needs extra detail | Enable Field Debug Log for an approved scope and retention period; keep Product Log minimal. |
+| A cleanup and a feature are both needed | Make and verify the behavior-preserving tidy change first, then implement the feature. |
+| A user asks for a system prompt or Audit data | Keep it hidden unless the request is explicit and the authorized Audit boundary can redact and record access. |

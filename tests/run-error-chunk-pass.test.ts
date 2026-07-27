@@ -13,7 +13,7 @@ function createDependencies() {
 }
 
 describe("error chunk pass", () => {
-  it("logs and delivers when execution recovery is already stopped", async () => {
+  it("logs and blocks direct delivery when execution recovery is already stopped", async () => {
     const dependencies = createDependencies()
     const deliverTrackedChunk = vi.fn().mockResolvedValue(undefined)
 
@@ -43,16 +43,16 @@ describe("error chunk pass", () => {
     }, dependencies, {
       applyExternalRecoveryAttempt: vi.fn(),
       applyFatalFailure: vi.fn(),
-      deliverTrackedChunk,
       describeWorkerRuntimeErrorReason: vi.fn(),
     })
 
     expect(result).toEqual({ failed: false })
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-1", "실행 복구를 자동으로 계속할 수 없어 중단합니다.")
-    expect(deliverTrackedChunk).toHaveBeenCalled()
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-1", "user_facing_error_delivery_blocked:llm_required")
+    expect(deliverTrackedChunk).not.toHaveBeenCalled()
   })
 
-  it("creates worker runtime recovery and delivers the error chunk", async () => {
+  it("creates worker runtime recovery and blocks direct error chunk delivery", async () => {
     const dependencies = createDependencies()
     const deliverTrackedChunk = vi.fn().mockResolvedValue(undefined)
     const applyExternalRecoveryAttempt = vi.fn().mockReturnValue({
@@ -92,12 +92,12 @@ describe("error chunk pass", () => {
     }, dependencies, {
       applyExternalRecoveryAttempt,
       applyFatalFailure: vi.fn(),
-      deliverTrackedChunk,
       describeWorkerRuntimeErrorReason: vi.fn().mockReturnValue("sandbox denied"),
     })
 
     expect(applyExternalRecoveryAttempt).toHaveBeenCalled()
-    expect(deliverTrackedChunk).toHaveBeenCalled()
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-2", "user_facing_error_delivery_blocked:llm_required")
+    expect(deliverTrackedChunk).not.toHaveBeenCalled()
     expect(result).toEqual({
       failed: false,
       workerRuntimeRecovery: {
@@ -135,12 +135,12 @@ describe("error chunk pass", () => {
     }, dependencies, {
       applyExternalRecoveryAttempt: vi.fn(),
       applyFatalFailure,
-      deliverTrackedChunk,
       describeWorkerRuntimeErrorReason: vi.fn(),
     })
 
     expect(applyFatalFailure).toHaveBeenCalled()
-    expect(deliverTrackedChunk).toHaveBeenCalled()
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-3", "user_facing_error_delivery_blocked:llm_required")
+    expect(deliverTrackedChunk).not.toHaveBeenCalled()
     expect(result).toEqual({ failed: true })
   })
 })

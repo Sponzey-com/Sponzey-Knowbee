@@ -5,18 +5,42 @@ import { maybeRollupCapsuleChain, } from "./retrieval-restore.js";
 import { storeMemoryDocument } from "./store.js";
 import { buildDefaultMemoryCompactionAudit, resolveMemoryCompactionPolicy, } from "./model-policy.js";
 import { applyMemoryCapsuleDeterministicState, } from "./capsule.js";
+import { redactLogText } from "../logger/index.js";
+import { loadPromptValue } from "./prompt-fragments.js";
+import { evaluateCompactionPreservation } from "../contracts/long-term-memory-governance.js";
 export const SESSION_COMPACTION_TOKEN_THRESHOLD = 120_000;
 export const SESSION_COMPACTION_MESSAGE_THRESHOLD = 40;
 export const ROOT_SESSION_COMPACTION_DEFAULT_TAIL_SIZE = 8;
+export function resolveShortTermCompactionPolicy(memoryConfig) {
+    const tokenThreshold = memoryConfig?.compaction?.tokenThreshold ?? SESSION_COMPACTION_TOKEN_THRESHOLD;
+    const messageThreshold = memoryConfig?.compaction?.messageThreshold ?? SESSION_COMPACTION_MESSAGE_THRESHOLD;
+    const protectedRecentMessageCount = memoryConfig?.compaction?.protectedRecentMessageCount ?? ROOT_SESSION_COMPACTION_DEFAULT_TAIL_SIZE;
+    for (const [field, value] of [["tokenThreshold", tokenThreshold], ["messageThreshold", messageThreshold], ["protectedRecentMessageCount", protectedRecentMessageCount]]) {
+        if (!Number.isSafeInteger(value) || value <= 0)
+            throw new Error(`memory compaction ${field} must be a positive integer`);
+    }
+    return { tokenThreshold, messageThreshold, protectedRecentMessageCount, policyVersion: "memory-compaction:v1" };
+}
 const DEFAULT_SNAPSHOT_SUMMARY_CHARS = 1_200;
-const ROOT_SESSION_SUMMARY_PROMPT = [
-    "Return JSON only.",
-    "Schema:",
-    '{"what_happened":"","current_goal":[],"still_open":[],"confirmed_facts":[],"must_keep_constraints":[],"artifacts_and_receipts":[],"tool_side_effect_boundary":[],"retry_do_not_repeat":[],"handoff_ready_context":[]}',
-    "Keep arrays concise and concrete.",
-].join("\n");
+const ROOT_SESSION_SUMMARY_PROMPT_SOURCE_ID = "root_session_summary_prompt_user";
+const MEMORY_RESTORE_PROMPT_CONTEXT_LABELS_SOURCE_ID = "memory_restore_prompt_context_labels_user";
 const ROOT_SESSION_SUMMARY_MAX_TRANSCRIPT_CHARS = 10_000;
 const ROOT_SESSION_SUMMARY_MAX_MESSAGE_CHARS = 480;
+function rootSessionSummaryPrompt() {
+    return loadPromptValue(ROOT_SESSION_SUMMARY_PROMPT_SOURCE_ID, {}, { required: true });
+}
+function memoryCompactionContextLabel(key) {
+    const value = loadPromptValue(MEMORY_RESTORE_PROMPT_CONTEXT_LABELS_SOURCE_ID, {}, { required: true })
+        .split(/\r?\n/u)
+        .find((line) => line.startsWith(`${key}=`))
+        ?.slice(key.length + 1)
+        .trim();
+    return value ?? key;
+}
+function memoryCompactionErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 function normalizeWhitespace(value) {
     return value.replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 }
@@ -69,9 +93,9 @@ export function estimateContextTokens(value) {
     const text = value.map((message) => renderMessageForTranscript(message)).join("\n");
     return estimateContextTokens(text);
 }
-export function needsSessionCompaction(messages, totalTokens) {
-    return totalTokens > SESSION_COMPACTION_TOKEN_THRESHOLD
-        || messages.length > SESSION_COMPACTION_MESSAGE_THRESHOLD;
+export function needsSessionCompaction(messages, totalTokens, policy = resolveShortTermCompactionPolicy()) {
+    return totalTokens > policy.tokenThreshold
+        || messages.length > policy.messageThreshold;
 }
 export function truncateSnapshotSummary(summary, maxChars = DEFAULT_SNAPSHOT_SUMMARY_CHARS) {
     const normalized = normalizeWhitespace(summary);
@@ -162,9 +186,10 @@ export function hasBalancedToolUsePairs(messages) {
 }
 export function buildRootSessionCompactionReasonCodes(input) {
     const reasonCodes = new Set();
-    if (input.totalTokens > SESSION_COMPACTION_TOKEN_THRESHOLD)
+    const policy = input.policy ?? resolveShortTermCompactionPolicy();
+    if (input.totalTokens > policy.tokenThreshold)
         reasonCodes.add("token_threshold_exceeded");
-    if (input.messages.length > SESSION_COMPACTION_MESSAGE_THRESHOLD)
+    if (input.messages.length > policy.messageThreshold)
         reasonCodes.add("message_threshold_exceeded");
     if ((input.pruningDecisionCount ?? 0) > 0)
         reasonCodes.add("large_tool_payload_pruned");
@@ -195,6 +220,7 @@ export function extractRootSessionDeterministicState(input) {
     const mustKeepConstraints = [];
     const decisions = [];
     const recoveryStates = [];
+    const sourceRefs = [];
     if (input.requestGroupId?.trim())
         activeTaskIds.add(input.requestGroupId.trim());
     for (const line of extractStructuredMemoryLines(input.messages)) {
@@ -248,6 +274,10 @@ export function extractRootSessionDeterministicState(input) {
             case "recovery_state":
                 recoveryStates.push(rawValue);
                 break;
+            case "source_ref":
+            case "original_ref":
+                sourceRefs.push(rawValue);
+                break;
             default:
                 break;
         }
@@ -267,6 +297,7 @@ export function extractRootSessionDeterministicState(input) {
         mustKeepConstraints: normalizeStringArray(mustKeepConstraints),
         decisions: normalizeStringArray(decisions),
         recoveryStates: normalizeStringArray(recoveryStates),
+        sourceRefs: normalizeStringArray(sourceRefs),
     };
 }
 export function buildRootSessionPinnedWorkingSet(input) {
@@ -320,12 +351,21 @@ export async function executeRootSessionCompaction(input) {
     if (!hasBalancedToolUsePairs(input.messages)) {
         throw new Error("root session compaction blocked: blocked_by_unmatched_tool_pair");
     }
-    const sourceRefs = input.messages.map((_, index) => `active_window_message:${index}`);
+    const sourceRefs = normalizeStringArray([
+        ...input.messages.map((_, index) => `active_window_message:${index}`),
+        ...deterministicState.sourceRefs,
+    ]);
     const modelSummary = await buildRootSessionStructuredSummary({
         provider: input.provider,
         model: input.model,
         messages: input.messages,
+        ...(input.memoryConfig ? { memoryConfig: input.memoryConfig } : {}),
     });
+    const preservedSummary = applyDeterministicStateToStructuredSummary(deterministicState, modelSummary.summary);
+    const preservation = evaluateCompactionPreservation(buildCompactionPreservationEntries(deterministicState, preservedSummary));
+    if (preservation.status === "blocked") {
+        throw new Error(`root session compaction blocked: preservation_incomplete:${[...preservation.missingCategories, ...preservation.unpreservedCategories].join(",")}`);
+    }
     const capsule = persistRootSessionCompactionCapsule({
         sessionId: input.sessionId,
         sourceRefs,
@@ -334,8 +374,9 @@ export async function executeRootSessionCompaction(input) {
         modelProvider: input.provider.id,
         modelId: input.model,
         triggerReasonCodes: input.triggerReasonCodes,
-        structuredSummary: modelSummary.summary,
+        structuredSummary: preservedSummary,
         pinnedWorkingSet: workingSet,
+        agentNameSnapshot: input.agentNameSnapshot,
         ...(input.runId ? { runId: input.runId } : {}),
         ...(input.requestGroupId ? { requestGroupId: input.requestGroupId } : {}),
     });
@@ -389,6 +430,36 @@ export async function executeRootSessionCompaction(input) {
         sourceMessageCount: input.messages.length,
         ...(archiveDocumentId ? { archiveDocumentId } : {}),
         ...(rollup.rollupCapsule ? { rollupCapsuleId: rollup.rollupCapsule.capsuleId } : {}),
+    };
+}
+export function buildCompactionPreservationEntries(state, summary) {
+    const categories = [
+        ["goals", normalizeStringArray([...state.activeObjectives, ...state.activeTaskIds.map((item) => `active_task:${item}`)]), summary.currentGoal],
+        ["constraints", normalizeStringArray([...state.mustKeepConstraints, ...state.explicitTargetSelectors.map((item) => `target_selector:${item}`), ...state.explicitUserCorrections.map((item) => `user_correction:${item}`), ...state.finalDeliveryBlockReasons.map((item) => `final_delivery_block:${item}`)]), summary.mustKeepConstraints],
+        ["decisions", normalizeStringArray([...state.decisions, ...state.retryDoNotRepeatBoundary.map((item) => `retry_boundary:${item}`)]), normalizeStringArray([...summary.toolSideEffectBoundary, ...summary.retryDoNotRepeat.map((item) => `retry_boundary:${item}`)])],
+        ["unresolved_questions", normalizeStringArray([...state.pendingApprovals.map((item) => `pending_approval:${item}`), ...state.pendingDelivery.map((item) => `pending_delivery:${item}`), ...state.unresolvedResultReviewItems.map((item) => `result_review:${item}`)]), summary.stillOpen],
+        ["evidence", state.latestArtifactReceipts, summary.artifactsAndReceipts],
+        ["user_preferences", state.explicitUserCorrections.map((item) => `user_correction:${item}`), summary.mustKeepConstraints],
+        ["active_work_state", state.activeTaskIds.map((item) => `active_task:${item}`), summary.currentGoal],
+    ];
+    return categories.map(([category, sourceRefs, outputRefs]) => ({
+        category,
+        sourceRefs,
+        outputRefs: sourceRefs.length > 0 ? outputRefs : [],
+        explicitEmpty: sourceRefs.length === 0,
+    }));
+}
+export function applyDeterministicStateToStructuredSummary(state, summary) {
+    return {
+        ...summary,
+        currentGoal: normalizeStringArray([...summary.currentGoal, ...state.activeObjectives, ...state.activeTaskIds.map((item) => `active_task:${item}`)]),
+        stillOpen: normalizeStringArray([...summary.stillOpen, ...state.pendingApprovals.map((item) => `pending_approval:${item}`), ...state.pendingDelivery.map((item) => `pending_delivery:${item}`), ...state.unresolvedResultReviewItems.map((item) => `result_review:${item}`)]),
+        confirmedFacts: normalizeStringArray([...summary.confirmedFacts, ...state.confirmedFacts]),
+        mustKeepConstraints: normalizeStringArray([...summary.mustKeepConstraints, ...state.mustKeepConstraints, ...state.explicitTargetSelectors.map((item) => `target_selector:${item}`), ...state.explicitUserCorrections.map((item) => `user_correction:${item}`), ...state.finalDeliveryBlockReasons.map((item) => `final_delivery_block:${item}`)]),
+        artifactsAndReceipts: normalizeStringArray([...summary.artifactsAndReceipts, ...state.latestArtifactReceipts]),
+        toolSideEffectBoundary: normalizeStringArray([...summary.toolSideEffectBoundary, ...state.decisions]),
+        retryDoNotRepeat: normalizeStringArray([...summary.retryDoNotRepeat, ...state.retryDoNotRepeatBoundary]),
+        handoffReadyContext: normalizeStringArray([...summary.handoffReadyContext, ...state.recoveryStates]),
     };
 }
 export function rewriteRootSessionActiveWindow(input) {
@@ -456,7 +527,7 @@ function persistRootSessionCompactionCapsule(input) {
         capsuleVersion: 1,
         ...(parentCapsule ? { parentCapsuleId: parentCapsule.capsuleId } : {}),
         ownerScope,
-        nicknameSnapshot: "노비",
+        agentNameSnapshot: normalizeString(input.agentNameSnapshot) ?? "Knowbee",
         capsuleKind: "session_compaction",
         summary: buildRootSessionCapsuleSummary(input.structuredSummary),
         activeObjectives: input.structuredSummary.currentGoal,
@@ -543,6 +614,7 @@ async function buildRootSessionStructuredSummary(input) {
     const policy = resolveMemoryCompactionPolicy({
         provider: input.provider,
         executionModelId: input.model,
+        ...(input.memoryConfig ? { memoryConfig: input.memoryConfig } : {}),
     });
     if (!transcript) {
         return {
@@ -586,7 +658,7 @@ async function buildRootSessionStructuredSummary(input) {
                 model: candidate.modelId,
                 messages: [{
                         role: "user",
-                        content: `${ROOT_SESSION_SUMMARY_PROMPT}\n\n[conversation]\n${transcript}`,
+                        content: `${rootSessionSummaryPrompt()}\n\n${memoryCompactionContextLabel("conversation_header")}\n${transcript}`,
                     }],
                 maxTokens: 500,
             })) {
@@ -595,12 +667,13 @@ async function buildRootSessionStructuredSummary(input) {
             }
         }
         catch (error) {
+            const message = memoryCompactionErrorMessage(error);
             attempts.push({
                 modelId: candidate.modelId,
                 source: candidate.source,
                 maxContextTokens: candidate.maxContextTokens,
                 status: "provider_call_failed",
-                error: error instanceof Error ? error.message : String(error),
+                error: message,
             });
             continue;
         }
@@ -726,9 +799,9 @@ function renderMessageForTranscript(message) {
         if (block.type === "text")
             return block.text;
         if (block.type === "tool_use")
-            return `[tool_use:${block.name}] ${safeJsonStringify(block.input)}`;
+            return `[${memoryCompactionContextLabel("structured_tool_use_label")}:${block.name}] ${safeJsonStringify(block.input)}`;
         if (block.type === "tool_result")
-            return `[tool_result:${block.tool_use_id}] ${block.content}`;
+            return `[${memoryCompactionContextLabel("structured_tool_result_label")}:${block.tool_use_id}] ${block.content}`;
         return safeJsonStringify(block);
     });
     return normalizeWhitespace(lines.join("\n"));
@@ -749,42 +822,42 @@ function extractStructuredMemoryLines(messages) {
 }
 function renderPinnedWorkingSetPromptBlock(workingSet) {
     return [
-        "[pinned_working_set]",
-        renderSection("active_objectives", workingSet.activeObjectives),
-        renderSection("confirmed_facts", workingSet.confirmedFacts),
-        renderSection("constraints", workingSet.constraints),
-        renderSection("decisions", workingSet.decisions),
-        renderSection("pending_items", workingSet.pendingItems),
-        renderSection("artifact_refs", workingSet.artifactRefs.map((item) => item.note)),
+        memoryCompactionContextLabel("pinned_working_set_header"),
+        renderSection(memoryCompactionContextLabel("active_objectives_label"), workingSet.activeObjectives),
+        renderSection(memoryCompactionContextLabel("confirmed_facts_label").replace(/:$/u, ""), workingSet.confirmedFacts),
+        renderSection(memoryCompactionContextLabel("constraints_label"), workingSet.constraints),
+        renderSection(memoryCompactionContextLabel("decisions_label"), workingSet.decisions),
+        renderSection(memoryCompactionContextLabel("pending_items_label").replace(/:$/u, ""), workingSet.pendingItems),
+        renderSection(memoryCompactionContextLabel("artifact_refs_label"), workingSet.artifactRefs.map((item) => item.note)),
     ].filter(Boolean).join("\n");
 }
 function renderPinnedWorkingSetRetrievalOnlyBlock(workingSet) {
     return [
-        "[pinned_working_set_retrieval_only]",
-        renderInlineSection("active_objectives", workingSet.activeObjectives, 2, 120),
-        renderInlineSection("constraints", workingSet.constraints, 3, 160),
-        renderInlineSection("pending_items", workingSet.pendingItems, 3, 160),
+        memoryCompactionContextLabel("pinned_working_set_retrieval_only_header"),
+        renderInlineSection(memoryCompactionContextLabel("active_objectives_label"), workingSet.activeObjectives, 2, 120),
+        renderInlineSection(memoryCompactionContextLabel("constraints_label"), workingSet.constraints, 3, 160),
+        renderInlineSection(memoryCompactionContextLabel("pending_items_label").replace(/:$/u, ""), workingSet.pendingItems, 3, 160),
     ].filter(Boolean).join("\n");
 }
 function renderCompactedCapsulePromptBlock(capsule) {
     return [
-        "[latest_compacted_capsule]",
-        `summary: ${capsule.summary}`,
-        renderSection("active_objectives", capsule.activeObjectives),
-        renderSection("confirmed_facts", capsule.confirmedFacts),
-        renderSection("constraints", capsule.constraints),
-        renderSection("pending_items", capsule.pendingItems),
-        renderSection("artifact_refs", capsule.artifactRefs.map((item) => item.note)),
-        renderSection("recovery_hints", capsule.recoveryHints),
+        memoryCompactionContextLabel("latest_capsule_header"),
+        `${memoryCompactionContextLabel("summary_label")} ${capsule.summary}`,
+        renderSection(memoryCompactionContextLabel("active_objectives_label"), capsule.activeObjectives),
+        renderSection(memoryCompactionContextLabel("confirmed_facts_label").replace(/:$/u, ""), capsule.confirmedFacts),
+        renderSection(memoryCompactionContextLabel("constraints_label"), capsule.constraints),
+        renderSection(memoryCompactionContextLabel("pending_items_label").replace(/:$/u, ""), capsule.pendingItems),
+        renderSection(memoryCompactionContextLabel("artifact_refs_label"), capsule.artifactRefs.map((item) => item.note)),
+        renderSection(memoryCompactionContextLabel("recovery_hints_label"), capsule.recoveryHints),
     ].filter(Boolean).join("\n");
 }
 function renderRetrievalOnlyCapsulePromptBlock(capsule, snippets) {
     return [
-        "[retrieval_only_context]",
-        `summary: ${truncateSnapshotSummary(capsule.summary, 220)}`,
-        renderInlineSection("confirmed_facts", capsule.confirmedFacts, 2, 120),
-        renderInlineSection("artifact_refs", capsule.artifactRefs.map((item) => item.note), 2, 100),
-        renderSnippetSection("retrieval_snippets", snippets),
+        memoryCompactionContextLabel("retrieval_only_context_header"),
+        `${memoryCompactionContextLabel("summary_label")} ${truncateSnapshotSummary(capsule.summary, 220)}`,
+        renderInlineSection(memoryCompactionContextLabel("confirmed_facts_label").replace(/:$/u, ""), capsule.confirmedFacts, 2, 120),
+        renderInlineSection(memoryCompactionContextLabel("artifact_refs_label"), capsule.artifactRefs.map((item) => item.note), 2, 100),
+        renderSnippetSection(memoryCompactionContextLabel("retrieval_snippets_label"), snippets),
     ].filter(Boolean).join("\n");
 }
 function buildRootSessionCapsuleSummary(summary) {

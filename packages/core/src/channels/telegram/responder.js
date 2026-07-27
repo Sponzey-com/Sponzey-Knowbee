@@ -1,15 +1,18 @@
 import { sendTelegramFile, sendTelegramFileWithReceipt, sendTelegramPlainMessage, sendTelegramTextParts, sendTelegramTextPartsWithReceipts, } from "./message-delivery.js";
+import { buildToolStatusControl, renderToolStatusControlText } from "../interactive-control.js";
 export class TelegramResponder {
     bot;
     chatId;
     threadId;
-    constructor(bot, chatId, threadId) {
+    language;
+    constructor(bot, chatId, threadId, language = "ko") {
         this.bot = bot;
         this.chatId = chatId;
         this.threadId = threadId;
+        this.language = language;
     }
     async sendToolStatus(toolName) {
-        const text = `⚙️ Running: \`${toolName}\`...`;
+        const text = buildTelegramToolStatusText(toolName, "running", this.language);
         const other = this.threadId !== undefined
             ? { parse_mode: "Markdown", message_thread_id: this.threadId }
             : { parse_mode: "Markdown" };
@@ -17,8 +20,7 @@ export class TelegramResponder {
         return msg.message_id;
     }
     async updateToolStatus(messageId, toolName, success) {
-        const icon = success ? "✅" : "❌";
-        const text = `${icon} \`${toolName}\` ${success ? "done" : "failed"}`;
+        const text = buildTelegramToolStatusText(toolName, success ? "done" : "failed", this.language);
         try {
             await this.bot.api.editMessageText(this.chatId, messageId, text, {
                 parse_mode: "Markdown",
@@ -55,7 +57,7 @@ export class TelegramResponder {
         return sendTelegramPlainMessage({
             api: this.bot.api,
             target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
-            text: `❌ Error: ${message}`,
+            text: message,
         });
     }
     async sendReceipt(text) {
@@ -64,6 +66,9 @@ export class TelegramResponder {
             target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
             text,
         });
+    }
+    async sendIntakeAcknowledgement(text) {
+        return this.sendReceipt(text);
     }
     async sendFile(filePath, caption) {
         return sendTelegramFile({
@@ -82,5 +87,12 @@ export class TelegramResponder {
             ...(caption !== undefined ? { caption } : {}),
         });
     }
+}
+function buildTelegramToolStatusText(toolName, status, language) {
+    return renderToolStatusControlText(buildToolStatusControl({
+        toolLabel: toolName,
+        status: status === "done" ? "succeeded" : status,
+        language,
+    }), "telegram");
 }
 //# sourceMappingURL=responder.js.map

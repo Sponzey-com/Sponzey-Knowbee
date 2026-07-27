@@ -1,7 +1,12 @@
-import { isExplicitProviderRouteTarget, resolveRunRoute } from "./routing.js";
+import { isExplicitProviderRouteTarget } from "./routing.js";
+import { redactLogText } from "../logger/index.js";
 const MAX_DELAY_TIMER_MS = 2_147_483_647;
 const delayedRunTimers = new Map();
 const delayedSessionQueues = new Map();
+function safeQueueErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 function enqueueDelayedSessionRun(params, dependencies) {
     const previous = delayedSessionQueues.get(params.sessionId);
     if (previous) {
@@ -12,14 +17,16 @@ function enqueueDelayedSessionRun(params, dependencies) {
     }
     const next = (previous ?? Promise.resolve())
         .catch((error) => {
-        dependencies.logWarn(`previous delayed run queue recovered: ${error instanceof Error ? error.message : String(error)}`);
+        const message = safeQueueErrorMessage(error);
+        dependencies.logWarn(`previous delayed run queue recovered: ${message}`);
     })
         .then(params.task)
         .catch((error) => {
+        const message = safeQueueErrorMessage(error);
         dependencies.logError("delayed run queue task failed", {
             jobId: params.jobId,
             sessionId: params.sessionId,
-            error: error instanceof Error ? error.message : String(error),
+            error: message,
         });
     })
         .finally(() => {
@@ -32,7 +39,7 @@ function enqueueDelayedSessionRun(params, dependencies) {
 export function scheduleDelayedRootRun(params, dependencies) {
     const jobId = crypto.randomUUID();
     const now = dependencies.now ?? Date.now;
-    const resolveRouteImpl = dependencies.resolveRoute ?? resolveRunRoute;
+    const resolveRouteImpl = dependencies.resolveRoute;
     const setTimer = dependencies.setTimer ?? setTimeout;
     dependencies.logInfo("delayed run armed", {
         jobId,

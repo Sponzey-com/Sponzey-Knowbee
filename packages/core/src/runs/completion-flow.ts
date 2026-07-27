@@ -29,6 +29,11 @@ export type CompletionFlowDecision =
       reason: string
       remainingItems: string[]
       followupPrompt: string
+      followupEvidenceRefs: string[]
+      evidenceRevisionRefs?: string[]
+      followupExecutionMode?: "tool" | "response_only"
+      followupRequiredToolNames?: string[]
+      followupTargetRefs?: string[]
     }
   | {
       kind: "retry_truncated"
@@ -43,9 +48,23 @@ export type CompletionFlowDecision =
       remainingItems?: string[]
       userMessage?: string
     }
+  | {
+      kind: "blocked"
+      summary: string
+      reason: string
+      remainingItems: string[]
+    }
+
+function summarizeBlockingReasons(reasons: string[], fallback: string): string {
+  const uniqueReasons = [...new Set(reasons.map((reason) => reason.trim()).filter(Boolean))]
+  return uniqueReasons.length > 0 ? uniqueReasons.join(" ") : fallback
+}
 
 export function decideCompletionFlow(params: {
   review: CompletionReviewResult | null
+  reviewFailureReasonCode?:
+    | "completion_review_provider_failed"
+    | "completion_review_contract_invalid"
   executionSemantics: TaskExecutionSemantics
   preview: string
   deliverySatisfied: boolean
@@ -65,12 +84,26 @@ export function decideCompletionFlow(params: {
     truncatedOutputRecoveryAttempted: params.truncatedOutputRecoveryAttempted,
   })
 
+  if (params.reviewFailureReasonCode) {
+    return {
+      kind: "blocked",
+      summary: "기존 실행 결과를 보존하고 결과 검토 단계에서 종료합니다.",
+      reason:
+        params.reviewFailureReasonCode === "completion_review_provider_failed"
+          ? "결과 검토 LLM 응답을 받을 수 없어 같은 도구 실행을 반복하지 않았습니다."
+          : "결과 검토 응답 계약을 복구하지 못해 같은 도구 실행을 반복하지 않았습니다.",
+      remainingItems: ["보존된 실행 근거에 대한 LLM 결과 검토"],
+    }
+  }
+
   if (!params.review && !completionState.completionSatisfied) {
     return {
       kind: "recover_empty_result",
       summary: "실행 결과가 비어 있어 다른 방법으로 다시 시도합니다.",
-      reason: completionState.blockingReasons[0]
-        ?? "체크리스트 기준으로 완료 항목이 아직 모두 충족되지 않았습니다.",
+      reason: summarizeBlockingReasons(
+        completionState.blockingReasons,
+        "체크리스트 기준으로 완료 항목이 아직 모두 충족되지 않았습니다.",
+      ),
       remainingItems: ["실제 실행 결과를 남기거나 다른 방법으로 다시 시도해야 합니다."],
     }
   }
@@ -79,9 +112,10 @@ export function decideCompletionFlow(params: {
     return {
       kind: "recover_empty_result",
       summary: "완료 판정 근거가 부족해 다시 확인합니다.",
-      reason: completionState.blockingReasons[0]
-        ? `completion review가 complete를 반환했지만 checklist 기준으로는 아직 완료 항목이 남아 있습니다: ${completionState.blockingReasons[0]}`
-        : "completion review가 complete를 반환했지만 checklist 기준 완료 항목이 아직 남아 있습니다.",
+      reason: `completion review가 complete를 반환했지만 checklist 기준으로는 아직 완료 항목이 남아 있습니다: ${summarizeBlockingReasons(
+        completionState.blockingReasons,
+        "완료 근거가 부족합니다.",
+      )}`,
       remainingItems: ["실제 실행 또는 전달 근거를 다시 확인해야 합니다."],
     }
   }
@@ -109,8 +143,10 @@ export function decideCompletionFlow(params: {
     return {
       kind: "recover_empty_result",
       summary: "완료 판단 근거가 부족해 다시 시도합니다.",
-      reason: completionState.blockingReasons[0]
-        ?? "completion review 결과가 없고 checklist 기준 완료 항목도 아직 남아 있습니다.",
+      reason: summarizeBlockingReasons(
+        completionState.blockingReasons,
+        "completion review 결과가 없고 checklist 기준 완료 항목도 아직 남아 있습니다.",
+      ),
       remainingItems: ["실제 실행 또는 전달 근거를 다시 확인해야 합니다."],
     }
   }
@@ -132,6 +168,27 @@ export function decideCompletionFlow(params: {
       reason: review.reason,
       remainingItems: review.remainingItems,
       followupPrompt,
+      followupEvidenceRefs: review.followupEvidenceRefs,
+      evidenceRevisionRefs:
+        review.contextReceipt?.evidenceRefs ?? review.followupEvidenceRefs,
+      ...(review.followupExecutionMode
+        ? { followupExecutionMode: review.followupExecutionMode }
+        : {}),
+      ...(review.followupRequiredToolNames?.length
+        ? { followupRequiredToolNames: review.followupRequiredToolNames }
+        : {}),
+      ...(review.followupTargetRefs?.length
+        ? { followupTargetRefs: review.followupTargetRefs }
+        : {}),
+    }
+  }
+
+  if (review.status === "blocked" || review.status === "paths_exhausted") {
+    return {
+      kind: "blocked",
+      summary: review.summary || "확인 가능한 범위까지 처리했습니다.",
+      reason: review.reason || "사용 가능한 증거로는 요청을 완전히 검증할 수 없습니다.",
+      remainingItems: review.remainingItems,
     }
   }
 

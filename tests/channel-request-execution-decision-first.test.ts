@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.ts"
+import { createArtifactStorageContext } from "../packages/core/src/artifacts/lifecycle.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import type { AIProvider } from "../packages/core/src/ai/index.ts"
 import {
@@ -25,11 +25,15 @@ import {
 import { runAgentExecutionHarness } from "../packages/core/src/orchestration/execution-harness.ts"
 import { createEnterpriseTopologyRegistry } from "../packages/core/src/topology/registry.ts"
 import { runIntakeBridgePass } from "../packages/core/src/runs/intake-bridge-pass.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const now = Date.UTC(2026, 4, 7, 12, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 const rootExecutorId = EXECUTION_GRAPH_ROOT_AGENT_ID
 const madangsoeId = `${WORKSPACE_DRAFT_TOPOLOGY_ID}:node:executor-1`
@@ -38,25 +42,30 @@ const haengrangId = `${WORKSPACE_DRAFT_TOPOLOGY_ID}:node:executor-5`
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-channel-decision-first-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json")
-  writeFileSync(process.env.KNOWBEE_CONFIG, JSON.stringify({
-    orchestration: {
-      mode: "orchestration",
-      featureFlagEnabled: true,
-      subAgents: [],
-      teams: [],
-    },
-    ai: {
-      connection: {
-        provider: "openai",
-        model: "gpt-test",
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-channel-decision-first-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: JSON.stringify(
+      {
+        orchestration: {
+          mode: "orchestration",
+          featureFlagEnabled: true,
+          subAgents: [],
+          teams: [],
+        },
+        ai: {
+          connection: {
+            provider: "openai",
+            model: "gpt-test",
+          },
+        },
       },
-    },
-  }, null, 2))
-  reloadConfig()
+      null,
+      2,
+    ),
+  })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 afterEach(() => {
@@ -64,11 +73,6 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
 })
 
 function node(input: {
@@ -153,21 +157,24 @@ function buildInvestmentTopology(): EnterpriseTopology {
         id: "node:executor-5",
         name: "행랑아범",
         roleName: "재무 담당",
-        description: "코스피와 하이닉스 같은 시장, 기업, 투자 질문을 분석하고 재무 관점의 검토 결과를 정리합니다.",
+        description:
+          "코스피와 하이닉스 같은 시장, 기업, 투자 질문을 분석하고 재무 관점의 검토 결과를 정리합니다.",
         tags: ["finance", "investment", "market", "analysis"],
       }),
     ],
-    teams: [{
-      schemaVersion: ENTERPRISE_TOPOLOGY_SCHEMA_VERSION,
-      entityType: "team",
-      id: "team:workspace-decision",
-      name: "Workspace Decision Team",
-      status: "draft",
-      createdAt: now,
-      updatedAt: now,
-      nodeIds: ["node:executor-1", "node:executor-2", "node:executor-5"],
-      tags: ["workspace"],
-    }],
+    teams: [
+      {
+        schemaVersion: ENTERPRISE_TOPOLOGY_SCHEMA_VERSION,
+        entityType: "team",
+        id: "team:workspace-decision",
+        name: "Workspace Decision Team",
+        status: "draft",
+        createdAt: now,
+        updatedAt: now,
+        nodeIds: ["node:executor-1", "node:executor-2", "node:executor-5"],
+        tags: ["workspace"],
+      },
+    ],
     orgUnits: [],
     positions: [],
     persons: [],
@@ -177,9 +184,7 @@ function buildInvestmentTopology(): EnterpriseTopology {
     systems: [],
     tools: [],
     processes: [],
-    relations: [
-      delegatesTo("relation:madangsoe-samsigi", "node:executor-1", "node:executor-2"),
-    ],
+    relations: [delegatesTo("relation:madangsoe-samsigi", "node:executor-1", "node:executor-2")],
   }
 }
 
@@ -193,6 +198,10 @@ function createDependencies() {
     scheduleDelayedRun: vi.fn(),
     startDelegatedRun: vi.fn(),
     normalizeTaskProfile: vi.fn((taskProfile: string | undefined) => taskProfile ?? "general_chat"),
+    recordCanonicalIntakeDiagnosis: vi.fn(async () => ({ ok: true as const })),
+    authorizeCanonicalIntakePlan: vi.fn(async () => ({ ok: true as const })),
+    recordCanonicalExecutionStart: vi.fn(async () => ({ ok: true as const })),
+    releaseCanonicalSimplePath: vi.fn(async () => ({ ok: true as const })),
     recordExecutionDecisionTrace: vi.fn(),
     logInfo: vi.fn(),
   }
@@ -209,16 +218,18 @@ function taskIntakeResult() {
       mode: "accepted_receipt" as const,
       text: "요청을 분석해 실행자에게 전달합니다.",
     },
-    action_items: [{
-      id: "run-task-kospi",
-      type: "run_task" as const,
-      title: "코스피/하이닉스 투자 질문 검토",
-      priority: "normal" as const,
-      reason: "채널 요청을 적합한 실행자에게 위임해야 합니다.",
-      payload: {
-        goal: "코스피와 하이닉스 투자 질문을 검토한다.",
+    action_items: [
+      {
+        id: "run-task-kospi",
+        type: "run_task" as const,
+        title: "코스피/하이닉스 투자 질문 검토",
+        priority: "normal" as const,
+        reason: "채널 요청을 적합한 실행자에게 위임해야 합니다.",
+        payload: {
+          goal: "코스피와 하이닉스 투자 질문을 검토한다.",
+        },
       },
-    }],
+    ],
     structured_request: {
       source_language: "ko" as const,
       normalized_english: "Review an investment question about KOSPI and SK Hynix.",
@@ -297,18 +308,22 @@ function decisionFor(input: {
       title: "코스피/하이닉스 투자 질문 검토",
       summary: "현재 요청을 가장 적합한 직속 실행자에게 위임한다.",
       goals: ["직속 실행자 후보만 선택한다.", "provider direct 경로를 만들지 않는다."],
-      task_units: [{
-        id: "unit:investment-review",
-        title: "투자 질문 검토",
-        goal: "선택된 실행자가 재무 관점으로 요청을 처리한다.",
-        preferred_executor_id: input.selectedExecutorId,
-      }],
+      task_units: [
+        {
+          id: "unit:investment-review",
+          title: "투자 질문 검토",
+          goal: "선택된 실행자가 재무 관점으로 요청을 처리한다.",
+          preferred_executor_id: input.selectedExecutorId,
+        },
+      ],
       success_criteria: ["선택된 실행자와 연결 경로가 trace에 남는다."],
     },
-    required_outputs: [{
-      id: "answer",
-      label: "최종 답변",
-    }],
+    required_outputs: [
+      {
+        id: "answer",
+        label: "최종 답변",
+      },
+    ],
     risk_boundary: {
       requires_user_approval: false,
       reason: "테스트 범위의 실행자 선택입니다.",
@@ -325,7 +340,7 @@ function buildModuleDependencies(input: {
   captureContext?: (context: AgentExecutionContext) => void
   resolveRunRoute?: ReturnType<typeof vi.fn>
 }) {
-  const buildGraph = vi.fn((graphInput: BuildExecutionGraphSnapshotInput = {}) =>
+  const buildGraph = vi.fn((graphInput: BuildExecutionGraphSnapshotInput) =>
     buildExecutionGraphSnapshot({
       ...graphInput,
       mode: "workspace",
@@ -335,17 +350,21 @@ function buildModuleDependencies(input: {
   )
   return {
     analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
-    resolveRunRoute: input.resolveRunRoute ?? vi.fn().mockReturnValue({
-      targetId: "provider:openai",
-      targetLabel: "OpenAI",
-      providerId: "openai",
-      model: "gpt-test",
-      reason: "routing:provider:openai",
-    }),
+    resolveRunRoute:
+      input.resolveRunRoute ??
+      vi.fn().mockReturnValue({
+        targetId: "provider:openai",
+        targetLabel: "OpenAI",
+        providerId: "openai",
+        model: "gpt-test",
+        reason: "routing:provider:openai",
+      }),
     executeScheduleActions: vi.fn(),
     createDefaultScheduleActionDependencies: vi.fn(),
     inferDelegatedTaskProfile: vi.fn().mockReturnValue("finance_research"),
-    buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\n코스피와 하이닉스 투자 질문"),
+    buildFollowupPrompt: vi
+      .fn()
+      .mockReturnValue("[Task Intake Bridge]\n코스피와 하이닉스 투자 질문"),
     buildExecutionGraphSnapshot: buildGraph,
     runAgentExecutionHarness: (harnessInput: { context: AgentExecutionContext }) => {
       input.captureContext?.(harnessInput.context)
@@ -368,6 +387,7 @@ function createWorkspaceRegistry() {
 
 function requestParams() {
   return {
+    config: runtimeFixture.config,
     message: "코스피와 하이닉스 투자 관점으로 어떻게 봐야 하는지 알려줘",
     originalRequest: "코스피와 하이닉스 투자 관점으로 어떻게 봐야 하는지 알려줘",
     sessionId: "session:telegram-kospi",
@@ -376,6 +396,7 @@ function requestParams() {
     workDir: "/tmp",
     source: "telegram" as const,
     runId: "run:telegram-kospi",
+    artifactStorage: createArtifactStorageContext(runtimeFixture.paths),
     onChunk: undefined,
     reuseConversationContext: false,
   }
@@ -395,77 +416,94 @@ describe("channel request execution decision first", () => {
     })
     let capturedContext: AgentExecutionContext | undefined
 
-    const result = await runIntakeBridgePass(requestParams(), dependencies, buildModuleDependencies({
-      registry,
-      resolveRunRoute,
-      captureContext: (context) => {
-        capturedContext = context
-      },
-      callModel: async () => JSON.stringify(decisionFor({
-        selectedExecutorId: haengrangId,
-        selectedConnectionPath: [haengrangId],
-      })),
-    }))
+    const result = await runIntakeBridgePass(
+      requestParams(),
+      dependencies,
+      buildModuleDependencies({
+        registry,
+        resolveRunRoute,
+        captureContext: (context) => {
+          capturedContext = context
+        },
+        callModel: async () =>
+          JSON.stringify(
+            decisionFor({
+              selectedExecutorId: haengrangId,
+              selectedConnectionPath: [haengrangId],
+            }),
+          ),
+      }),
+    )
 
     expect(result).toEqual(expect.objectContaining({ kind: "complete_silent" }))
     expect(resolveRunRoute).not.toHaveBeenCalled()
-    expect(capturedContext?.execution_graph).toEqual(expect.objectContaining({
-      graph_source: "workspace_draft",
-      current_executor_id: rootExecutorId,
-      available_executor_ids: [madangsoeId, haengrangId],
-      diagnostic_executor_ids: [samsigiId],
-      topology_id: WORKSPACE_DRAFT_TOPOLOGY_ID,
-    }))
+    expect(capturedContext?.execution_graph).toEqual(
+      expect.objectContaining({
+        graph_source: "workspace_draft",
+        current_executor_id: rootExecutorId,
+        available_executor_ids: [madangsoeId, haengrangId],
+        diagnostic_executor_ids: [samsigiId],
+        topology_id: WORKSPACE_DRAFT_TOPOLOGY_ID,
+      }),
+    )
     expect(capturedContext?.accessible_executors).toEqual([
       expect.objectContaining({
         executor_id: madangsoeId,
-        display_name: "마당쇠",
+        agent_name: "마당쇠",
         role_name: "개발 리드",
       }),
       expect.objectContaining({
         executor_id: haengrangId,
-        display_name: "행랑아범",
+        agent_name: "행랑아범",
         role_name: "재무 담당",
       }),
     ])
     expect(capturedContext?.diagnostic_executors).toEqual([
       expect.objectContaining({
         executor_id: samsigiId,
-        display_name: "삼식이",
+        agent_name: "삼식이",
         visibility: "indirect",
         parent_executor_ids: [madangsoeId],
       }),
     ])
-    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(expect.objectContaining({
-      targetId: haengrangId,
-      targetLabel: "행랑아범",
-      agentExecutionDecision: expect.objectContaining({
-        selected_executor_id: haengrangId,
-        execution_route: "delegate_to_child",
+    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetId: haengrangId,
+        targetLabel: "행랑아범",
+        agentExecutionDecision: expect.objectContaining({
+          selected_executor_id: haengrangId,
+          execution_route: "delegate_to_child",
+        }),
+        agentExecutionDecisionTrace: expect.objectContaining({
+          decision_source: "knowbee_harness",
+          selected_executor_id: haengrangId,
+          validation_status: "valid",
+        }),
       }),
-      agentExecutionDecisionTrace: expect.objectContaining({
-        decision_source: "knowbee_harness",
-        selected_executor_id: haengrangId,
-        validation_status: "valid",
+    )
+    expect(dependencies.recordExecutionDecisionTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run:telegram-kospi",
+        agentExecutionDecision: expect.objectContaining({
+          selected_executor_id: haengrangId,
+        }),
+        executionDecisionTrace: expect.objectContaining({
+          decision_source: "knowbee_harness",
+          selected_executor_id: haengrangId,
+          validation_status: "valid",
+        }),
       }),
-    }))
-    expect(dependencies.recordExecutionDecisionTrace).toHaveBeenCalledWith(expect.objectContaining({
-      runId: "run:telegram-kospi",
-      agentExecutionDecision: expect.objectContaining({
-        selected_executor_id: haengrangId,
+    )
+    expect(dependencies.startDelegatedRun).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetId: "provider:openai",
       }),
-      executionDecisionTrace: expect.objectContaining({
-        decision_source: "knowbee_harness",
-        selected_executor_id: haengrangId,
-        validation_status: "valid",
+    )
+    expect(dependencies.startDelegatedRun).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetId: samsigiId,
       }),
-    }))
-    expect(dependencies.startDelegatedRun).not.toHaveBeenCalledWith(expect.objectContaining({
-      targetId: "provider:openai",
-    }))
-    expect(dependencies.startDelegatedRun).not.toHaveBeenCalledWith(expect.objectContaining({
-      targetId: samsigiId,
-    }))
+    )
   })
 
   it("uses the active provider as the execution-decision model before falling back", async () => {
@@ -486,14 +524,19 @@ describe("channel request execution decision first", () => {
       maxContextTokens: () => 16_000,
       async *chat(params) {
         decisionPrompt = String(params.messages[0]?.content ?? "")
-        yield { type: "text_delta", delta: JSON.stringify(decisionFor({
-          selectedExecutorId: haengrangId,
-          selectedConnectionPath: [haengrangId],
-        })) }
+        yield {
+          type: "text_delta",
+          delta: JSON.stringify(
+            decisionFor({
+              selectedExecutorId: haengrangId,
+              selectedConnectionPath: [haengrangId],
+            }),
+          ),
+        }
         yield { type: "message_stop", usage: { input_tokens: 1, output_tokens: 1 } }
       },
     }
-    const buildGraph = vi.fn((graphInput: BuildExecutionGraphSnapshotInput = {}) =>
+    const buildGraph = vi.fn((graphInput: BuildExecutionGraphSnapshotInput) =>
       buildExecutionGraphSnapshot({
         ...graphInput,
         mode: "workspace",
@@ -502,26 +545,34 @@ describe("channel request execution decision first", () => {
       }),
     )
 
-    await runIntakeBridgePass({
-      ...requestParams(),
-      providerId: provider.id,
-      provider,
-    }, dependencies, {
-      analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
-      resolveRunRoute,
-      executeScheduleActions: vi.fn(),
-      createDefaultScheduleActionDependencies: vi.fn(),
-      inferDelegatedTaskProfile: vi.fn().mockReturnValue("finance_research"),
-      buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\n코스피와 하이닉스 투자 질문"),
-      buildExecutionGraphSnapshot: buildGraph,
-    })
+    await runIntakeBridgePass(
+      {
+        ...requestParams(),
+        providerId: provider.id,
+        provider,
+      },
+      dependencies,
+      {
+        analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
+        resolveRunRoute,
+        executeScheduleActions: vi.fn(),
+        createDefaultScheduleActionDependencies: vi.fn(),
+        inferDelegatedTaskProfile: vi.fn().mockReturnValue("finance_research"),
+        buildFollowupPrompt: vi
+          .fn()
+          .mockReturnValue("[Task Intake Bridge]\n코스피와 하이닉스 투자 질문"),
+        buildExecutionGraphSnapshot: buildGraph,
+      },
+    )
 
     expect(decisionPrompt).toContain("AgentExecutionDecisionV2")
     expect(decisionPrompt).toContain("행랑아범")
-    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(expect.objectContaining({
-      targetId: haengrangId,
-      targetLabel: "행랑아범",
-    }))
+    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetId: haengrangId,
+        targetLabel: "행랑아범",
+      }),
+    )
     expect(resolveRunRoute).not.toHaveBeenCalled()
     expect(dependencies.appendRunEvent).not.toHaveBeenCalledWith(
       "run:telegram-kospi",
@@ -541,34 +592,45 @@ describe("channel request execution decision first", () => {
       reason: "routing:provider:openai",
     })
 
-    const result = await runIntakeBridgePass(requestParams(), dependencies, buildModuleDependencies({
-      registry,
-      resolveRunRoute,
-      callModel: async () => JSON.stringify(decisionFor({
-        selectedExecutorId: samsigiId,
-        selectedConnectionPath: [],
-        reason: "진단용 하위 실행자를 경로 없이 고른 잘못된 결정입니다.",
-      })),
-    }))
+    const result = await runIntakeBridgePass(
+      requestParams(),
+      dependencies,
+      buildModuleDependencies({
+        registry,
+        resolveRunRoute,
+        callModel: async () =>
+          JSON.stringify(
+            decisionFor({
+              selectedExecutorId: samsigiId,
+              selectedConnectionPath: [],
+              reason: "진단용 하위 실행자를 경로 없이 고른 잘못된 결정입니다.",
+            }),
+          ),
+      }),
+    )
 
-    expect(result).toEqual(expect.objectContaining({
-      kind: "awaiting_user",
-      eventLabel: "execution decision 사용자 확인 대기",
-      reason: "selected_executor_not_direct_child",
-    }))
+    expect(result).toEqual(
+      expect.objectContaining({
+        kind: "awaiting_user",
+        eventLabel: "execution decision 사용자 확인 대기",
+        reason: "selected_executor_not_direct_child",
+      }),
+    )
     expect(resolveRunRoute).not.toHaveBeenCalled()
     expect(dependencies.startDelegatedRun).not.toHaveBeenCalled()
-    expect(dependencies.recordExecutionDecisionTrace).toHaveBeenCalledWith(expect.objectContaining({
-      runId: "run:telegram-kospi",
-      agentExecutionDecision: expect.objectContaining({
-        execution_route: "ask_user",
+    expect(dependencies.recordExecutionDecisionTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run:telegram-kospi",
+        agentExecutionDecision: expect.objectContaining({
+          execution_route: "ask_user",
+        }),
+        executionDecisionTrace: expect.objectContaining({
+          selected_executor_id: samsigiId,
+          resolved_execution_route: "ask_user",
+          validation_status: "selected_executor_not_direct_child",
+        }),
       }),
-      executionDecisionTrace: expect.objectContaining({
-        selected_executor_id: samsigiId,
-        resolved_execution_route: "ask_user",
-        validation_status: "selected_executor_not_direct_child",
-      }),
-    }))
+    )
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith(
       "run:telegram-kospi",
       expect.stringContaining(`selected_executor=${samsigiId}`),

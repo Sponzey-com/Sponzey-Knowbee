@@ -1,5 +1,6 @@
 import { deriveCompletionStageState } from "./completion-state.js";
 export function decideReviewGate(params) {
+    const hasWebEvidence = params.successfulTools.some((item) => item.toolName === "web_fetch");
     const state = deriveCompletionStageState({
         review: null,
         executionSemantics: params.executionSemantics,
@@ -10,6 +11,13 @@ export function decideReviewGate(params) {
         requiresFilesystemMutation: params.requiresFilesystemMutation,
         truncatedOutputRecoveryAttempted: params.truncatedOutputRecoveryAttempted,
     });
+    if (params.successfulTools.length > 0) {
+        return {
+            kind: "run",
+            state,
+            reason: "successful_tool_result_requires_llm_result_diagnosis",
+        };
+    }
     if (params.deliveryOutcome.directArtifactDeliveryRequested
         && params.deliveryOutcome.deliverySatisfied
         && state.completionSatisfied) {
@@ -22,23 +30,13 @@ export function decideReviewGate(params) {
     if (!params.deliveryOutcome.directArtifactDeliveryRequested
         && state.completionSatisfied
         && params.deliveryOutcome.hasSuccessfulTextDelivery
+        && !hasWebEvidence
         && !params.requiresFilesystemMutation
         && !params.sawRealFilesystemMutation) {
         return {
             kind: "skip",
             state,
             reason: "reply 텍스트 전달 receipt와 checklist 기준 완료 항목이 이미 충족되어 completion review를 생략합니다.",
-        };
-    }
-    if (!params.deliveryOutcome.directArtifactDeliveryRequested
-        && state.completionSatisfied
-        && params.successfulTools.length > 0
-        && !params.requiresFilesystemMutation
-        && !params.sawRealFilesystemMutation) {
-        return {
-            kind: "skip",
-            state,
-            reason: "read-only 실행이 성공했고 checklist 기준 완료 항목이 이미 충족되어 completion review를 생략합니다.",
         };
     }
     return {

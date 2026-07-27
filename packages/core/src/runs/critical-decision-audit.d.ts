@@ -1,5 +1,5 @@
 export type CriticalDecisionAuditCategory = "display-only" | "candidate-search" | "critical-decision" | "temporary-guard";
-export type CriticalDecisionSignalKind = "structured-id-or-key" | "structured-intake-action" | "user-natural-language-regex" | "raw-prompt-ai-comparison" | "raw-prompt-normalized-dedupe" | "structured-contract-ai-comparison" | "vector-semantic-candidate" | "system-error-classification" | "system-event-label-classification" | "channel-label-classification";
+export type CriticalDecisionSignalKind = "structured-id-or-key" | "structured-intake-action" | "raw-prompt-ai-comparison" | "raw-prompt-normalized-dedupe" | "structured-contract-ai-comparison" | "system-error-classification" | "system-event-label-classification" | "channel-label-classification";
 export interface CriticalDecisionAuditEntry {
     id: string;
     file: string;
@@ -13,6 +13,10 @@ export interface CriticalDecisionAuditEntry {
     migrationTask?: string;
     migrationReason?: string;
     sourceMarker?: string;
+    maintenanceOwner?: string;
+    activeCallerEvidence?: string[];
+    removalCondition?: string;
+    validationPlan?: string;
 }
 export interface CriticalDecisionSourceScanRule {
     ruleId: string;

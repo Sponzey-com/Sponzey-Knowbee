@@ -40,6 +40,14 @@ export async function runLoopEntryPass(params, dependencies, moduleDependencies 
         }
         const intakeDirective = await dependencies.tryHandleIntakeBridge();
         if (intakeDirective) {
+            if (intakeDirective.kind === "execute") {
+                return {
+                    kind: "execute",
+                    nextMessage: intakeDirective.message,
+                    requiredToolNames: intakeDirective.requiredToolNames,
+                    intakeProcessed: true,
+                };
+            }
             return {
                 kind: "set_directive",
                 directive: intakeDirective,

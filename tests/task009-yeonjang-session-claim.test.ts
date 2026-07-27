@@ -2,24 +2,22 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { closeDb, getDb } from "../packages/core/src/db/index.js"
+import type { Database } from "better-sqlite3"
+import { closeDb } from "../packages/core/src/db/index.js"
 import {
   listYeonjangRegistryInstances,
   upsertYeonjangRegistryObservation,
 } from "../packages/core/src/yeonjang/registry.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let db: Database
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task009-yeonjang-session-claim-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  db = initializeTestDbRuntime(stateDir)
 }
 
 function seedObservation(overrides: Partial<Parameters<typeof upsertYeonjangRegistryObservation>[0]> = {}) {
@@ -64,11 +62,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -101,7 +94,7 @@ describe("task009 yeonjang session claim", () => {
       }),
     }))
 
-    const replaced = getDb()
+    const replaced = db
       .prepare<[string], { session_state: string; ended_at: number | null }>(
         "SELECT session_state, ended_at FROM yeonjang_instance_sessions WHERE session_id = ?",
       )
@@ -139,7 +132,7 @@ describe("task009 yeonjang session claim", () => {
       }),
     }))
 
-    const rejected = getDb()
+    const rejected = db
       .prepare<[string], { session_state: string; session_message: string | null; ended_at: number | null }>(
         "SELECT session_state, session_message, ended_at FROM yeonjang_instance_sessions WHERE session_id = ?",
       )

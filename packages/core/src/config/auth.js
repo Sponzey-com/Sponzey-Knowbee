@@ -2,10 +2,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import JSON5 from "json5";
-import { PATHS } from "./paths.js";
-export function generateAuthToken() {
+export function generateAuthToken(paths) {
     const token = randomBytes(32).toString("hex");
-    const configPath = PATHS.configFile;
+    const configPath = paths.configFile;
     let raw = {};
     if (existsSync(configPath)) {
         try {

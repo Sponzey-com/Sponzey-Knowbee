@@ -54,8 +54,8 @@ export interface AgentTopologyAgentInspector {
   agentId: string
   nodeId: string
   kind: "knowbee" | "sub_agent"
+  agentName: string
   displayName: string
-  nickname?: string
   status: string
   role: string
   specialtyTags: string[]
@@ -111,6 +111,7 @@ export interface AgentTopologyAgentInspector {
 export interface AgentTopologyTeamBuilderCandidate {
   agentId: string
   label: string
+  agentName?: string
   directChild: boolean
   configuredMember: boolean
   active: boolean
@@ -124,6 +125,7 @@ export interface AgentTopologyTeamBuilderCandidate {
 export interface AgentTopologyTeamMemberInspector {
   agentId: string
   label: string
+  agentName?: string
   membershipId?: string
   primaryRole: string
   teamRoles: string[]
@@ -149,7 +151,6 @@ export interface AgentTopologyTeamInspector {
   teamId: string
   nodeId: string
   displayName: string
-  nickname?: string
   status: string
   purpose: string
   ownerAgentId: string

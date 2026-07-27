@@ -1,17 +1,24 @@
 import { existsSync } from "node:fs"
-import { getConfig } from "../config/index.js"
 import {
-  resolveOpenAICodexBaseUrl,
-  resolveOpenAICodexAuthFilePath,
   type OpenAICodexOAuthConfig,
+  resolveOpenAICodexAuthFilePath,
+  resolveOpenAICodexBaseUrl,
 } from "../auth/openai-codex-oauth.js"
+import type { AIConnectionConfig, KnowbeeConfig } from "../config/types.js"
+import { SqliteLlmInvocationReceiptRepository } from "../db/llm-invocation-receipt-repository.js"
+import { ObservedAIProvider } from "./observed-provider.js"
 import { AnthropicProvider } from "./providers/anthropic.js"
 import { GeminiProvider } from "./providers/gemini.js"
 import { OpenAIProvider } from "./providers/openai.js"
-import type { AIConnectionConfig } from "../config/types.js"
-import type { AuthProfile, AIProvider } from "./types.js"
+import type { AIProvider, AuthProfile } from "./types.js"
 
-export type ProviderCredentialKind = "api_key" | "chatgpt_oauth" | "local_endpoint" | "custom_endpoint" | "none"
+export type AIProviderConfigSnapshot = Pick<KnowbeeConfig, "ai">
+export type ProviderCredentialKind =
+  | "api_key"
+  | "chatgpt_oauth"
+  | "local_endpoint"
+  | "custom_endpoint"
+  | "none"
 export type ProviderAdapterType =
   | "openai_chat"
   | "openai_codex_oauth"
@@ -101,19 +108,23 @@ export function normalizeOpenAICompatibleEndpoint(
   const normalized = endpoint?.trim()
   if (!normalized) return undefined
   if (providerId !== "ollama") return normalized
-  return /\/v1\/?$/i.test(normalized) ? normalized.replace(/\/+$/, "") : `${normalized.replace(/\/+$/, "")}/v1`
+  return /\/v1\/?$/i.test(normalized)
+    ? normalized.replace(/\/+$/, "")
+    : `${normalized.replace(/\/+$/, "")}/v1`
 }
 
 function isLocalEndpoint(endpoint: string | undefined): boolean {
   if (!endpoint?.trim()) return false
   try {
     const hostname = new URL(endpoint).hostname.toLowerCase()
-    return hostname === "localhost"
-      || hostname === "127.0.0.1"
-      || hostname === "::1"
-      || hostname.startsWith("192.168.")
-      || /^10\./.test(hostname)
-      || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)
+    return (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      hostname.startsWith("192.168.") ||
+      /^10\./.test(hostname) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)
+    )
   } catch {
     return false
   }
@@ -135,7 +146,8 @@ function resolveAdapterType(connection: AIConnectionConfig): ProviderAdapterType
   if (!providerId) return "none"
   if (providerId === "openai" && authMode === "chatgpt_oauth") return "openai_codex_oauth"
   if (providerId === "openai") return "openai_chat"
-  if (providerId === "ollama" || providerId === "llama" || providerId === "custom") return "openai_compatible"
+  if (providerId === "ollama" || providerId === "llama" || providerId === "custom")
+    return "openai_compatible"
   if (providerId === "anthropic") return "anthropic"
   if (providerId === "gemini") return "gemini"
   return "none"
@@ -144,14 +156,24 @@ function resolveAdapterType(connection: AIConnectionConfig): ProviderAdapterType
 function classifyBaseUrl(connection: AIConnectionConfig): ProviderBaseUrlClass {
   const providerId = connection.provider.trim()
   const authMode = connection.auth?.mode ?? "api_key"
-  const endpoint = providerId === "openai" || providerId === "ollama" || providerId === "llama" || providerId === "custom"
-    ? normalizeOpenAICompatibleEndpoint(providerId, connection.endpoint)
-    : connection.endpoint?.trim()
+  const endpoint =
+    providerId === "openai" ||
+    providerId === "ollama" ||
+    providerId === "llama" ||
+    providerId === "custom"
+      ? normalizeOpenAICompatibleEndpoint(providerId, connection.endpoint)
+      : connection.endpoint?.trim()
 
   if (!providerId) return "none"
   if (providerId === "openai" && authMode === "chatgpt_oauth") return "chatgpt_codex"
-  if (providerId === "openai") return isOfficialOpenAIEndpoint(endpoint) ? "official_openai" : (isLocalEndpoint(endpoint) ? "local" : "custom")
-  if (providerId === "ollama" || providerId === "llama") return isLocalEndpoint(endpoint) ? "local" : "custom"
+  if (providerId === "openai")
+    return isOfficialOpenAIEndpoint(endpoint)
+      ? "official_openai"
+      : isLocalEndpoint(endpoint)
+        ? "local"
+        : "custom"
+  if (providerId === "ollama" || providerId === "llama")
+    return isLocalEndpoint(endpoint) ? "local" : "custom"
   if (providerId === "custom") return isLocalEndpoint(endpoint) ? "local" : "custom"
   return endpoint ? "custom" : "provider_native"
 }
@@ -171,7 +193,12 @@ function resolveProviderEndpoint(connection: AIConnectionConfig): string | undef
     const endpoint = connection.endpoint?.trim()
     return endpoint ? resolveOpenAICodexBaseUrl(endpoint) : undefined
   }
-  if (providerId === "openai" || providerId === "ollama" || providerId === "llama" || providerId === "custom") {
+  if (
+    providerId === "openai" ||
+    providerId === "ollama" ||
+    providerId === "llama" ||
+    providerId === "custom"
+  ) {
     return normalizeOpenAICompatibleEndpoint(providerId, connection.endpoint)
   }
   return connection.endpoint?.trim() || undefined
@@ -185,7 +212,15 @@ function buildProviderFingerprint(connection: AIConnectionConfig): string {
   const oauthAuthFilePath = connection.auth?.oauthAuthFilePath?.trim() ?? ""
   const clientId = connection.auth?.clientId?.trim() ?? ""
   const apiKeyFingerprint = connection.auth?.apiKey?.trim() ? "api-key:set" : "api-key:empty"
-  return [providerId, authMode, endpoint, model, oauthAuthFilePath, clientId, apiKeyFingerprint].join("|")
+  return [
+    providerId,
+    authMode,
+    endpoint,
+    model,
+    oauthAuthFilePath,
+    clientId,
+    apiKeyFingerprint,
+  ].join("|")
 }
 
 export function resetAIProviderCache(): void {
@@ -194,17 +229,19 @@ export function resetAIProviderCache(): void {
   providerFingerprints.clear()
 }
 
-export function getActiveAIConnection(config = getConfig()): AIConnectionConfig {
+export function getActiveAIConnection(config: AIProviderConfigSnapshot): AIConnectionConfig {
   return config.ai.connection
 }
 
-function isOpenAIOAuthConfigured(connection = getActiveAIConnection()): boolean {
+function isOpenAIOAuthConfigured(connection: AIConnectionConfig): boolean {
   if (connection.provider !== "openai") return false
   if (connection.auth?.mode !== "chatgpt_oauth") return false
-  return existsSync(resolveOpenAICodexAuthFilePath({
-    authFilePath: connection.auth?.oauthAuthFilePath,
-    clientId: connection.auth?.clientId,
-  }))
+  return existsSync(
+    resolveOpenAICodexAuthFilePath({
+      authFilePath: connection.auth?.oauthAuthFilePath,
+      clientId: connection.auth?.clientId,
+    }),
+  )
 }
 
 function resolveCredentialKind(connection: AIConnectionConfig): ProviderCredentialKind {
@@ -218,7 +255,10 @@ function resolveCredentialKind(connection: AIConnectionConfig): ProviderCredenti
   return "none"
 }
 
-function resolveProviderConfigured(connection: AIConnectionConfig): { configured: boolean; reason: string | null } {
+function resolveProviderConfigured(connection: AIConnectionConfig): {
+  configured: boolean
+  reason: string | null
+} {
   const providerId = connection.provider.trim()
   if (!providerId) return { configured: false, reason: "provider_missing" }
 
@@ -249,11 +289,10 @@ function resolveProviderConfigured(connection: AIConnectionConfig): { configured
   return { configured: false, reason: "provider_unsupported" }
 }
 
-function hasConfiguredConnection(connection = getActiveAIConnection()): boolean {
-  return resolveProviderConfigured(connection).configured
-}
-
-export function resolveAIConnection(connection: AIConnectionConfig, providerId?: string): ResolvedAiConnection {
+export function resolveAIConnection(
+  connection: AIConnectionConfig,
+  providerId?: string,
+): ResolvedAiConnection {
   const activeProviderId = connection.provider.trim()
   const requestedProviderId = providerId?.trim() ?? ""
   const model = connection.model.trim()
@@ -271,7 +310,10 @@ export function resolveAIConnection(connection: AIConnectionConfig, providerId?:
   const credentialKind = resolveCredentialKind(connection)
   const adapterType = resolveAdapterType(connection)
   const baseUrlClass = classifyBaseUrl(connection)
-  const healthy = configured.configured && Boolean(model) && !(requestedProviderId && requestedProviderId !== activeProviderId)
+  const healthy =
+    configured.configured &&
+    Boolean(model) &&
+    !(requestedProviderId && requestedProviderId !== activeProviderId)
   const diagnosticId = [
     activeProviderId || "none",
     adapterType,
@@ -315,23 +357,30 @@ export function resolveAIConnection(connection: AIConnectionConfig, providerId?:
   }
 }
 
-export function resolveProviderResolutionSnapshot(providerId?: string, config = getConfig()): ProviderResolutionSnapshot {
-  const { requestedProviderId: _requestedProviderId, connection: _connection, ...snapshot } = resolveAIConnection(getActiveAIConnection(config), providerId)
+export function resolveProviderResolutionSnapshot(
+  providerId: string | undefined,
+  config: AIProviderConfigSnapshot,
+): ProviderResolutionSnapshot {
+  const {
+    requestedProviderId: _requestedProviderId,
+    connection: _connection,
+    ...snapshot
+  } = resolveAIConnection(getActiveAIConnection(config), providerId)
   return snapshot
 }
 
-export function detectAvailableProvider(): string {
-  const snapshot = resolveProviderResolutionSnapshot()
+export function detectAvailableProvider(config: AIProviderConfigSnapshot): string {
+  const snapshot = resolveProviderResolutionSnapshot(undefined, config)
   return snapshot.configured ? snapshot.providerId : ""
 }
 
-export function getDefaultModel(): string {
-  const snapshot = resolveProviderResolutionSnapshot()
+export function getDefaultModel(config: AIProviderConfigSnapshot): string {
+  const snapshot = resolveProviderResolutionSnapshot(undefined, config)
   return snapshot.configured ? snapshot.model : ""
 }
 
-export function inferProviderId(_model: string): string {
-  return detectAvailableProvider()
+export function inferProviderId(_model: string, config: AIProviderConfigSnapshot): string {
+  return detectAvailableProvider(config)
 }
 
 export function createProviderForConnection(connection: AIConnectionConfig): AIProvider {
@@ -353,7 +402,12 @@ export function createProviderForConnection(connection: AIConnectionConfig): AIP
     return new GeminiProvider(buildProfile([apiKey]), connection.endpoint?.trim() || undefined)
   }
 
-  if (activeProviderId === "openai" || activeProviderId === "ollama" || activeProviderId === "llama" || activeProviderId === "custom") {
+  if (
+    activeProviderId === "openai" ||
+    activeProviderId === "ollama" ||
+    activeProviderId === "llama" ||
+    activeProviderId === "custom"
+  ) {
     const apiKey = connection.auth?.apiKey?.trim()
     const profile = buildOAuthConfig(connection)
       ? buildProfile([])
@@ -365,7 +419,10 @@ export function createProviderForConnection(connection: AIConnectionConfig): AIP
   throw new Error(`Unsupported AI backend: "${activeProviderId}"`)
 }
 
-export function resolveProviderForConnection(connection: AIConnectionConfig, providerId?: string): ResolvedAiProvider | null {
+export function resolveProviderForConnection(
+  connection: AIConnectionConfig,
+  providerId?: string,
+): ResolvedAiProvider | null {
   const resolution = resolveAIConnection(connection, providerId)
   if (!resolution.healthy) return null
   return {
@@ -376,8 +433,11 @@ export function resolveProviderForConnection(connection: AIConnectionConfig, pro
   }
 }
 
-export function getProvider(providerId?: string): AIProvider {
-  const connection = getActiveAIConnection()
+export function getProvider(
+  providerId: string | undefined,
+  config: AIProviderConfigSnapshot,
+): AIProvider {
+  const connection = getActiveAIConnection(config)
   const resolved = resolveAIConnection(connection, providerId)
   const snapshot = resolved
   const activeProviderId = snapshot.configured ? snapshot.providerId : ""
@@ -385,21 +445,30 @@ export function getProvider(providerId?: string): AIProvider {
   const currentFingerprint = buildProviderFingerprint(connection)
 
   if (!activeProviderId) {
-    throw new Error(`No configured AI backend is available. Connect an AI in settings first. reason=${snapshot.fallbackReason ?? "unknown"}`)
+    throw new Error(
+      `No configured AI backend is available. Connect an AI in settings first. reason=${snapshot.fallbackReason ?? "unknown"}`,
+    )
   }
 
   if (requestedProviderId && requestedProviderId !== activeProviderId) {
-    throw new Error(`Only the configured active AI backend can be used. Active backend: "${activeProviderId}".`)
+    throw new Error(
+      `Only the configured active AI backend can be used. Active backend: "${activeProviderId}".`,
+    )
   }
 
-  if (providers.has(activeProviderId) && providerFingerprints.get(activeProviderId) === currentFingerprint) {
+  if (
+    providers.has(activeProviderId) &&
+    providerFingerprints.get(activeProviderId) === currentFingerprint
+  ) {
     return providers.get(activeProviderId)!
   }
 
   providers.delete(activeProviderId)
   profiles.delete(activeProviderId)
   providerFingerprints.set(activeProviderId, currentFingerprint)
-  const provider = createProviderForConnection(connection)
+  const provider = new ObservedAIProvider(createProviderForConnection(connection), {
+    repository: new SqliteLlmInvocationReceiptRepository(),
+  })
   providers.set(activeProviderId, provider)
   return provider
 }
@@ -407,8 +476,12 @@ export function getProvider(providerId?: string): AIProvider {
 const LLAMA_MODEL_PATTERN = /\bllama(?:[.\-:\w]*)?\b/i
 const OLLAMA_BASEURL_PATTERN = /(^|\/\/)(?:[^/]*ollama|127\.0\.0\.1:11434|localhost:11434)/i
 
-export function shouldForceReasoningMode(providerId: string, model: string): boolean {
-  const connection = getActiveAIConnection()
+export function shouldForceReasoningMode(
+  providerId: string,
+  model: string,
+  config: AIProviderConfigSnapshot,
+): boolean {
+  const connection = getActiveAIConnection(config)
   const endpoint = connection.endpoint?.trim() ?? ""
 
   if (providerId === "ollama" || providerId === "llama") return true
@@ -429,10 +502,28 @@ export function formatProviderAuditTrace(trace: ProviderAuditTrace): string {
     `base=${trace.baseUrlClass}`,
     `model=${trace.modelId || "model_missing"}`,
     `auth=${trace.credentialSourceKind ?? trace.authType}`,
-    ...(trace.endpointMismatch !== undefined ? [`endpoint_mismatch=${trace.endpointMismatch ? "true" : "false"}`] : []),
+    ...(trace.endpointMismatch !== undefined
+      ? [`endpoint_mismatch=${trace.endpointMismatch ? "true" : "false"}`]
+      : []),
     `healthy=${trace.healthy ? "true" : "false"}`,
     ...(trace.fallbackReason ? [`reason=${trace.fallbackReason}`] : []),
   ].join(" ")
 }
 
+export { AiChatDiagnosisProviderAdapter } from "./diagnosis-adapter.js"
+export type { AiChatDiagnosisProviderAdapterOptions } from "./diagnosis-adapter.js"
+export { AiChatSolutionPlanProviderAdapter } from "./solution-plan-adapter.js"
+export type { AiChatSolutionPlanProviderAdapterOptions } from "./solution-plan-adapter.js"
+export { AiChatCapabilitySelectionProviderAdapter } from "./capability-selection-adapter.js"
+export type { AiChatCapabilitySelectionProviderAdapterOptions } from "./capability-selection-adapter.js"
+export {
+  collectStructuredJsonAttempt,
+  StructuredJsonAttemptError,
+} from "./structured-json-attempt.js"
+export type {
+  StructuredJsonAttemptFailureStatus,
+  StructuredJsonAttemptResult,
+} from "./structured-json-attempt.js"
+export { AiChatWebResearchMethodProviderAdapter } from "./web-research-method-adapter.js"
+export type { AiChatWebResearchMethodProviderAdapterOptions } from "./web-research-method-adapter.js"
 export type { AIProvider, AIChunk, Message, ToolDefinition, ChatParams } from "./types.js"

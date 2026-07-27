@@ -2,6 +2,7 @@ import { readdirSync, statSync, readFileSync, existsSync } from "node:fs"
 import { join, basename } from "node:path"
 import { spawnSync } from "node:child_process"
 import { assertAllowedPath } from "./file.js"
+import { toolUserFacingErrorMessage } from "./error-redaction.js"
 import type { AgentTool, ToolResult } from "../types.js"
 
 const MAX_DEPTH = 10
@@ -197,7 +198,8 @@ function searchContentNode(
 
 export const fileSearchTool: AgentTool<FileSearchParams> = {
   name: "file_search",
-  description: "로컬 workspace의 파일명 또는 파일 내용을 검색합니다. 정규식 패턴 지원. 웹 검색 결과, 브라우저 HTML, 실시간 시세/날씨 값 추출에는 사용하지 마세요.",
+  evidenceSourceKind: "file",
+  description: "로컬 workspace의 파일명 또는 파일 내용을 검색합니다. 정규식 패턴 지원. 웹 문서 조회 결과, 브라우저 HTML, 실시간 시세/날씨 값 추출에는 사용하지 마세요.",
   parameters: {
     type: "object",
     properties: {
@@ -242,12 +244,12 @@ export const fileSearchTool: AgentTool<FileSearchParams> = {
     const searchPaths: string[] = []
     for (const p of rawPaths) {
       try {
-        assertAllowedPath(p)
+        assertAllowedPath(p, ctx.securityConfig)
         if (existsSync(p)) {
           searchPaths.push(p)
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
+        const msg = toolUserFacingErrorMessage(err)
         return { success: false, output: `Path not allowed: ${msg}`, error: msg }
       }
     }

@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import { api, getControlPlaneAdapterName, type StatusResponse } from "../api/client"
+import { type StatusResponse, api, getControlPlaneAdapterName } from "../api/client"
 
 interface ConnectionState {
   adapter: "local"
@@ -9,6 +9,7 @@ interface ConnectionState {
   status: StatusResponse | null
   initialize: (force?: boolean) => Promise<void>
   refresh: () => Promise<void>
+  acceptStatus: (status: StatusResponse) => void
   setDisconnected: (message: string) => void
 }
 
@@ -39,6 +40,14 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   },
   refresh: async () => {
     await get().initialize(true)
+  },
+  acceptStatus: (status) => {
+    set({
+      connected: true,
+      loading: false,
+      lastError: "",
+      status,
+    })
   },
   setDisconnected: (message) => {
     set({ connected: false, lastError: message })

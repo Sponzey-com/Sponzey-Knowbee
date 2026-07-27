@@ -11,9 +11,8 @@ export type ScheduleCandidateReason =
   | "identity_key"
   | "delivery_time"
   | "payload_destination"
-  | "semantic_candidate"
 
-export type ScheduleCandidateConfidence = "exact" | "strong" | "weak" | "semantic"
+export type ScheduleCandidateConfidence = "exact" | "strong" | "weak"
 
 export interface ScheduleCandidate {
   schedule: DbSchedule
@@ -30,7 +29,6 @@ export interface FindScheduleCandidatesByContractInput {
   sessionId?: string | null | undefined | undefined
   includeDisabled?: boolean
   limit?: number
-  semanticCandidates?: DbSchedule[]
 }
 
 interface CandidateSpec {
@@ -47,7 +45,6 @@ const CANDIDATE_ORDER: Record<ScheduleCandidateReason, number> = {
   identity_key: 1,
   delivery_time: 2,
   payload_destination: 3,
-  semantic_candidate: 4,
 }
 
 export function parseScheduleContractJson(value: string | null | undefined): ScheduleContract | null {
@@ -206,22 +203,6 @@ export function findScheduleCandidatesByContract(
       confidenceKind: "weak",
       requiresComparison: true,
       matchedKey: `${incomingPayloadHash}:destination`,
-    })
-  }
-
-  // knowbee-critical-decision-audit: schedules.candidates.semantic_candidate_boundary
-  // Vector/semantic/FTS hits can only enter as comparison-required candidates, never as final identity decisions.
-  for (const schedule of input.semanticCandidates ?? []) {
-    if (!includeDisabled && schedule.enabled !== 1) continue
-    const contract = parseScheduleContractJson(schedule.contract_json)
-    if (!contract) continue
-    addCandidate(candidates, {
-      schedule,
-      contract,
-      candidateReason: "semantic_candidate",
-      confidenceKind: "semantic",
-      requiresComparison: true,
-      matchedKey: "semantic_candidate",
     })
   }
 

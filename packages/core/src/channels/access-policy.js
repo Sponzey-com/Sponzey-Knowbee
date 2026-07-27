@@ -105,7 +105,7 @@ export function evaluateInboundAccessPolicy(input) {
         allowed: decision === "allowed",
         envelope,
         policy: snapshot,
-        ...(decision === "blocked" ? { responseText: buildPolicyFailureText(snapshot) } : {}),
+        ...(decision === "blocked" ? { notice: buildPolicyBlockedNotice(snapshot) } : {}),
     };
 }
 export function recordChannelAccessPolicyResult(result) {
@@ -140,13 +140,25 @@ function summarizePolicyDecision(input) {
     const target = input.room?.id ? ` room=${input.room.id}` : "";
     return `Channel policy ${input.decision}: ${input.provider} user=${input.sender.id}${target} reason=${input.reasonCode}`;
 }
-function buildPolicyFailureText(snapshot) {
-    if (snapshot.reasonCode === "blocked_room") {
-        return "This room is not allowed to use Knowbee. Ask an administrator to add it to the channel allowlist.";
-    }
-    if (snapshot.reasonCode === "blocked_user") {
-        return "Your account is not allowed to use Knowbee in this channel. Ask an administrator to add you to the channel allowlist.";
-    }
-    return "This channel request is blocked by Knowbee's access policy. Ask an administrator to update the channel allowlist.";
+function resolveBlockedScope(reasonCode) {
+    if (reasonCode === "blocked_user")
+        return "user";
+    if (reasonCode === "blocked_room")
+        return "room";
+    if (reasonCode === "blocked_user_and_room")
+        return "user_and_room";
+    return "unknown";
+}
+function buildPolicyBlockedNotice(snapshot) {
+    return {
+        kind: "channel_access_policy_blocked",
+        reasonCode: snapshot.reasonCode,
+        blockedScope: resolveBlockedScope(snapshot.reasonCode),
+        textSource: "channel_access_policy_notice",
+        renderingRequired: "llm_final_response",
+        finalAnswer: false,
+        assistantIdentityClaim: false,
+        fallbackDelivery: "block_without_llm_rendering",
+    };
 }
 //# sourceMappingURL=access-policy.js.map

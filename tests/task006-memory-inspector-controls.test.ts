@@ -1,9 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import type { AIChunk, AIProvider, ChatParams } from "../packages/core/src/ai/types.js"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import {
   closeDb,
   insertMessage,
@@ -17,10 +16,9 @@ import {
   buildMemoryInspectorSnapshot,
   runMemoryInspectorControl,
 } from "../packages/core/src/memory/inspector.ts"
-import { closeMemoryJournalDb } from "../packages/core/src/memory/journal.js"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 class ManualControlProvider implements AIProvider {
@@ -50,13 +48,11 @@ class ManualControlProvider implements AIProvider {
   }
 }
 
-function useTempState(): void {
+function useTempState() {
   closeDb()
-  closeMemoryJournalDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task006-memory-controls-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task006-memory-controls-"))
+  tempDirs.push(rootDir)
+  const fixture = createTestRuntimeConfigFixture({ rootDir, configText: `{
     ai: {
       connection: {
         provider: "openai",
@@ -72,10 +68,9 @@ function useTempState(): void {
         minContextTokens: 3000
       }
     }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  }` })
+  initializeTestDbRuntime(fixture.paths.stateDir)
+  return fixture.config
 }
 
 function seedRootSessionState(): void {
@@ -114,7 +109,7 @@ function seedRootSessionState(): void {
       threadKey: "thread-task006-memory-controls",
     }),
     ownerScopeKey: "",
-    nicknameSnapshot: "노비",
+    agentNameSnapshot: "노비",
     currentRawTokenEstimate: 180_000,
     currentRawMessageCount: 1,
     createdAt: now,
@@ -124,12 +119,6 @@ function seedRootSessionState(): void {
 
 afterEach(() => {
   closeDb()
-  closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -138,7 +127,7 @@ afterEach(() => {
 
 describe("task006 memory inspector controls", () => {
   it("executes force compaction and invalidates the latest capsule pointer without deleting history", async () => {
-    useTempState()
+    const config = useTempState()
     seedRootSessionState()
 
     const before = buildMemoryInspectorSnapshot({
@@ -146,7 +135,9 @@ describe("task006 memory inspector controls", () => {
       ownerId: "agent:knowbee",
       sessionId: "session-task006-memory-controls",
       limit: 12,
+      config,
     })
+    expect(before.ownerCards[0]?.agentNameSnapshot).toBe("노비")
     expect(before.controls).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ action: "force_compaction", enabled: true }),
@@ -161,6 +152,7 @@ describe("task006 memory inspector controls", () => {
       provider: new ManualControlProvider(),
       model: "compact-manual-control",
       limit: 12,
+      config,
     })
     expect(compactResult.enabled).toBe(true)
     expect(compactResult.reason).toBe("compaction_written")
@@ -176,6 +168,7 @@ describe("task006 memory inspector controls", () => {
       ownerId: "agent:knowbee",
       sessionId: "session-task006-memory-controls",
       limit: 12,
+      config,
     })
     expect(afterCompact.latestCapsule?.summary).toContain("manual control compaction")
     expect(afterCompact.controls).toEqual(
@@ -190,6 +183,7 @@ describe("task006 memory inspector controls", () => {
       ownerId: "agent:knowbee",
       sessionId: "session-task006-memory-controls",
       limit: 12,
+      config,
     })
     expect(invalidateResult.enabled).toBe(true)
     expect(invalidateResult.reason).toBe("capsule_pointer_cleared")
@@ -199,6 +193,7 @@ describe("task006 memory inspector controls", () => {
       ownerId: "agent:knowbee",
       sessionId: "session-task006-memory-controls",
       limit: 12,
+      config,
     })
     expect(afterInvalidate.latestCapsule).toBeNull()
     expect(afterInvalidate.ownerCards[0]?.compactionBlockReason).toBe("manually_invalidated_from_inspector")

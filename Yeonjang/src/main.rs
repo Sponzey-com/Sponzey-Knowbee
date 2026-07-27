@@ -1,12 +1,15 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+#![recursion_limit = "256"]
 
 mod automation;
+mod browser_focus_nonce;
 mod features;
 mod gui;
 mod icon;
 mod lifecycle;
 mod mqtt;
 mod node;
+mod path_policy;
 mod platform;
 mod protocol;
 mod settings;
@@ -22,7 +25,7 @@ use serde_json::json;
 
 use crate::lifecycle::{managed_runtime_state, new_shared_lifecycle_state};
 use crate::mqtt::{RuntimeEvent, start_runtime};
-use crate::node::spawn_request_task;
+use crate::node::spawn_request_task_with_settings;
 use crate::protocol::{Request, Response};
 use crate::settings::load_settings;
 
@@ -75,6 +78,7 @@ fn main() -> Result<()> {
 }
 
 fn run_stdio() -> Result<()> {
+    let settings = load_settings()?;
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut writer = stdout.lock();
@@ -87,7 +91,7 @@ fn run_stdio() -> Result<()> {
         }
 
         let response = match serde_json::from_str::<Request>(trimmed) {
-            Ok(request) => spawn_request_task(request).join().unwrap_or_else(|_| {
+            Ok(request) => spawn_request_task_with_settings(request, settings.clone()).join().unwrap_or_else(|_| {
                 Response::error(None, "request_failed", "request thread panicked")
             }),
             Err(error) => Response::error(None, "invalid_request", error.to_string()),
@@ -102,7 +106,8 @@ fn run_stdio() -> Result<()> {
 }
 
 fn run_exec_shell(command: String) -> Result<()> {
-    let response = spawn_request_task(Request {
+    let settings = load_settings()?;
+    let response = spawn_request_task_with_settings(Request {
         id: Some("local-exec".to_string()),
         method: "system.exec".to_string(),
         params: json!({
@@ -110,7 +115,7 @@ fn run_exec_shell(command: String) -> Result<()> {
             "shell": true,
         }),
         metadata: Default::default(),
-    })
+    }, settings)
     .join()
     .unwrap_or_else(|_| Response::error(None, "request_failed", "request thread panicked"));
     write_response_and_exit(response)
@@ -122,7 +127,8 @@ fn run_exec_binary(args: Vec<String>) -> Result<()> {
         std::process::exit(2);
     };
 
-    let response = spawn_request_task(Request {
+    let settings = load_settings()?;
+    let response = spawn_request_task_with_settings(Request {
         id: Some("local-exec-bin".to_string()),
         method: "system.exec".to_string(),
         params: json!({
@@ -131,7 +137,7 @@ fn run_exec_binary(args: Vec<String>) -> Result<()> {
             "shell": false,
         }),
         metadata: Default::default(),
-    })
+    }, settings)
     .join()
     .unwrap_or_else(|_| Response::error(None, "request_failed", "request thread panicked"));
     write_response_and_exit(response)

@@ -25,8 +25,11 @@ export interface AgentInstructionSourceInput {
     content: string;
     version?: string;
 }
-export interface InstructionDiscoveryOptions {
+export interface InstructionDiscoveryInput {
+    workDir: string;
+    globalStateDir: string;
+    fallbackBoundaryDir: string;
     agentSources?: AgentInstructionSourceInput[];
 }
-export declare function discoverInstructionChain(workDir?: string, options?: InstructionDiscoveryOptions): InstructionChain;
+export declare function discoverInstructionChain(input: InstructionDiscoveryInput): InstructionChain;
 //# sourceMappingURL=discovery.d.ts.map

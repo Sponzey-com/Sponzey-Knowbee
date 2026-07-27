@@ -6,16 +6,17 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::automation::{
     ApplicationLaunchRequest, ApplicationLaunchResult, AutomationBackend, AutomationCapabilities,
     CameraCaptureRequest, CameraCaptureResult, CameraDevice, CommandExecutionRequest,
-    CommandExecutionResult, KeyboardActionKind, KeyboardActionRequest, KeyboardActionResult,
-    KeyboardTypeRequest, KeyboardTypeResult, MouseActionKind, MouseActionRequest,
-    MouseActionResult, MouseClickRequest, MouseClickResult, MouseMoveRequest, MouseMoveResult,
-    PlatformKind, ScreenCaptureRequest, ScreenCaptureResult, SystemControlRequest,
-    SystemControlResult, SystemSnapshot,
+    CommandExecutionResult, FocusedTargetResult, KeyboardActionKind, KeyboardActionRequest,
+    KeyboardActionResult, KeyboardTypeRequest, KeyboardTypeResult, MouseActionKind,
+    MouseActionRequest, MouseActionResult, MouseClickRequest, MouseClickResult, MouseMoveRequest,
+    MouseMoveResult, MousePositionResult, PlatformKind, ScreenCaptureRequest, ScreenCaptureResult,
+    SystemControlRequest, SystemControlResult, SystemSnapshot,
 };
 use crate::platform::shared;
 
@@ -348,6 +349,15 @@ impl AutomationBackend for PlatformBackend {
         })
     }
 
+    fn mouse_position(&self) -> Result<MousePositionResult> {
+        let (x, y) = current_mouse_position_via_core_graphics()?;
+        Ok(MousePositionResult {
+            x,
+            y,
+            message: "Mouse position observed.".to_string(),
+        })
+    }
+
     fn click_mouse(&self, request: MouseClickRequest) -> Result<MouseClickResult> {
         shared::validate_mouse_click(&request)?;
         let button = normalize_mouse_button_name(&request.button)?;
@@ -479,6 +489,23 @@ impl AutomationBackend for PlatformBackend {
         })
     }
 
+    fn focused_target(&self) -> Result<FocusedTargetResult> {
+        let output = Command::new("osascript")
+            .arg("-e")
+            .arg("tell application \"System Events\" to get name of first application process whose frontmost is true")
+            .output()
+            .context("failed to observe macOS focused app")?;
+        if !output.status.success() {
+            return Ok(shared::focused_target_result(None, None, None));
+        }
+        let app_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(shared::focused_target_result(
+            (!app_name.is_empty()).then_some(app_name),
+            None,
+            None,
+        ))
+    }
+
     fn perform_keyboard_action(
         &self,
         request: KeyboardActionRequest,
@@ -545,6 +572,236 @@ enum MacosKeyboardTarget {
     KeyCode(u16),
 }
 
+#[derive(Debug, Clone)]
+struct MacosBrowserFocusPlanInput {
+    approval_granted: bool,
+    capability_advertised: bool,
+    command_backend_ready: bool,
+    focused_target_observation_backend_ready: bool,
+    interactive_desktop_session: bool,
+    target_alias: Option<String>,
+    process_name: Option<String>,
+    raw_window_title: Option<String>,
+    raw_url: Option<String>,
+    pid: Option<u32>,
+    window_id: Option<String>,
+    tab_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct MacosBrowserFocusCommandPlan {
+    command_accepted_candidate: bool,
+    execute_os_focus_now: bool,
+    reason_code: &'static str,
+    backend_family: &'static str,
+    public_target_name: String,
+    post_check_mode: &'static str,
+    audit_only_fields: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct MacosBrowserFocusCommandExecutionResult {
+    command_accepted: bool,
+    reason_code: &'static str,
+    focused_target_observation_required: bool,
+    goal_success: bool,
+}
+
+fn build_macos_browser_focus_command_plan(
+    input: MacosBrowserFocusPlanInput,
+) -> Result<MacosBrowserFocusCommandPlan> {
+    if !input.approval_granted {
+        bail!("side_effect_authorization_required");
+    }
+    if !input.capability_advertised {
+        bail!("capability_not_supported");
+    }
+    if !input.command_backend_ready {
+        bail!("command_backend_required");
+    }
+    if !input.focused_target_observation_backend_ready {
+        bail!("focused_target_observation_backend_required");
+    }
+    if !input.interactive_desktop_session {
+        bail!("headless_unavailable");
+    }
+
+    let _audit_only_identity_present =
+        input.pid.is_some() || input.window_id.is_some() || input.tab_id.is_some();
+    let public_target_name = resolve_macos_browser_focus_public_target_name(&input)?;
+
+    Ok(MacosBrowserFocusCommandPlan {
+        command_accepted_candidate: true,
+        execute_os_focus_now: false,
+        reason_code: "macos_browser_focus_command_plan_ready",
+        backend_family: "osascript",
+        public_target_name,
+        post_check_mode: "focused_target_observation_required",
+        audit_only_fields: vec![
+            "rawWindowTitle",
+            "rawUrl",
+            "queryToken",
+            "pid",
+            "windowId",
+            "tabId",
+            "automationScriptText",
+        ],
+    })
+}
+
+fn resolve_macos_browser_focus_public_target_name(
+    input: &MacosBrowserFocusPlanInput,
+) -> Result<String> {
+    for candidate in [
+        input.target_alias.as_deref(),
+        input.process_name.as_deref(),
+        input.raw_window_title.as_deref(),
+        input.raw_url.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let normalized = candidate.trim();
+        if !normalized.is_empty() {
+            return Ok(normalized.to_string());
+        }
+    }
+
+    bail!("target_identity_required")
+}
+
+fn execute_macos_browser_focus_command_plan<F>(
+    plan: &MacosBrowserFocusCommandPlan,
+    runner: F,
+) -> MacosBrowserFocusCommandExecutionResult
+where
+    F: FnOnce() -> Result<bool>,
+{
+    if !plan.command_accepted_candidate {
+        return macos_browser_focus_execution_result(false, "command_plan_not_ready");
+    }
+
+    match runner() {
+        Ok(true) => {
+            macos_browser_focus_execution_result(true, "macos_browser_focus_command_accepted")
+        }
+        Ok(false) => {
+            macos_browser_focus_execution_result(false, "macos_browser_focus_command_rejected")
+        }
+        Err(_) => macos_browser_focus_execution_result(false, "macos_browser_focus_command_failed"),
+    }
+}
+
+fn build_macos_browser_focus_osascript(plan: &MacosBrowserFocusCommandPlan) -> Result<String> {
+    if !plan.command_accepted_candidate {
+        bail!("command_plan_not_ready");
+    }
+    if plan.backend_family != "osascript" {
+        bail!("unsupported_browser_focus_backend_family");
+    }
+    let target_name = plan.public_target_name.trim();
+    if target_name.is_empty() {
+        bail!("target_identity_required");
+    }
+
+    Ok(format!(
+        "tell application {} to activate",
+        apple_script_string_literal(target_name)
+    ))
+}
+
+fn execute_macos_browser_focus_private<F>(
+    input: MacosBrowserFocusPlanInput,
+    runner: F,
+) -> MacosBrowserFocusCommandExecutionResult
+where
+    F: FnOnce(&str) -> Result<bool>,
+{
+    let plan = match build_macos_browser_focus_command_plan(input) {
+        Ok(plan) => plan,
+        Err(error) => {
+            return macos_browser_focus_execution_result(
+                false,
+                macos_browser_focus_sanitized_reason_code(&error),
+            );
+        }
+    };
+    let script = match build_macos_browser_focus_osascript(&plan) {
+        Ok(script) => script,
+        Err(error) => {
+            return macos_browser_focus_execution_result(
+                false,
+                macos_browser_focus_sanitized_reason_code(&error),
+            );
+        }
+    };
+
+    execute_macos_browser_focus_command_plan(&plan, || runner(&script))
+}
+
+/// The caller owns authentication and replay protection. This boundary receives
+/// only the signed process identity and never exposes the generated AppleScript.
+pub(crate) fn execute_verified_browser_focus(
+    process_name: &str,
+    interactive_desktop_session: bool,
+) -> Value {
+    let result = execute_macos_browser_focus_private(
+        MacosBrowserFocusPlanInput {
+            approval_granted: true,
+            capability_advertised: true,
+            command_backend_ready: true,
+            focused_target_observation_backend_ready: true,
+            interactive_desktop_session,
+            target_alias: None,
+            process_name: Some(process_name.trim().to_string()),
+            raw_window_title: None,
+            raw_url: None,
+            pid: None,
+            window_id: None,
+            tab_id: None,
+        },
+        |script| {
+            let output = Command::new("osascript").arg("-e").arg(script).output()?;
+            Ok(output.status.success())
+        },
+    );
+    serde_json::json!({
+        "commandAccepted": result.command_accepted,
+        "reasonCode": result.reason_code,
+        "focusedTargetObservationRequired": result.focused_target_observation_required,
+        "goalSuccess": result.goal_success,
+    })
+}
+
+fn macos_browser_focus_sanitized_reason_code(error: &anyhow::Error) -> &'static str {
+    let message = error.to_string();
+    match message.as_str() {
+        "side_effect_authorization_required" => "side_effect_authorization_required",
+        "capability_not_supported" => "capability_not_supported",
+        "command_backend_required" => "command_backend_required",
+        "focused_target_observation_backend_required" => {
+            "focused_target_observation_backend_required"
+        }
+        "headless_unavailable" => "headless_unavailable",
+        "target_identity_required" => "target_identity_required",
+        "command_plan_not_ready" => "command_plan_not_ready",
+        "unsupported_browser_focus_backend_family" => "unsupported_browser_focus_backend_family",
+        _ => "macos_browser_focus_command_failed",
+    }
+}
+
+fn macos_browser_focus_execution_result(
+    command_accepted: bool,
+    reason_code: &'static str,
+) -> MacosBrowserFocusCommandExecutionResult {
+    MacosBrowserFocusCommandExecutionResult {
+        command_accepted,
+        reason_code,
+        focused_target_observation_required: true,
+        goal_success: false,
+    }
+}
+
 fn run_osascript(script: &str) -> Result<()> {
     let output = Command::new("osascript")
         .arg("-e")
@@ -606,6 +863,39 @@ fn move_mouse_via_core_graphics(x: i32, y: i32) -> Result<()> {
         None,
         None,
     ))
+}
+
+fn current_mouse_position_via_core_graphics() -> Result<(i32, i32)> {
+    let script_path = write_swift_mouse_position_script()?;
+    let output = Command::new("xcrun")
+        .arg("swift")
+        .arg(&script_path)
+        .output()
+        .with_context(|| {
+            format!(
+                "failed to execute mouse position helper: {}",
+                script_path.display()
+            )
+        })?;
+
+    let _ = fs::remove_file(&script_path);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        bail!(
+            "mouse position observation failed: {}{}{}",
+            stderr.trim(),
+            if !stderr.trim().is_empty() && !stdout.trim().is_empty() {
+                " | "
+            } else {
+                ""
+            },
+            stdout.trim()
+        );
+    }
+
+    parse_mouse_position_json(String::from_utf8_lossy(&output.stdout).as_ref())
 }
 
 fn click_mouse_via_core_graphics(x: i32, y: i32, button: &str, double: bool) -> Result<()> {
@@ -1186,6 +1476,32 @@ fn write_swift_mouse_action_script() -> Result<PathBuf> {
     Ok(script_path)
 }
 
+fn write_swift_mouse_position_script() -> Result<PathBuf> {
+    let script_path = env::temp_dir().join(format!(
+        "yeonjang-mouse-position-{}.swift",
+        std::process::id()
+    ));
+    fs::write(&script_path, SWIFT_MOUSE_POSITION)
+        .with_context(|| format!("failed to write swift helper to {}", script_path.display()))?;
+    Ok(script_path)
+}
+
+fn parse_mouse_position_json(output: &str) -> Result<(i32, i32)> {
+    let value = serde_json::from_str::<Value>(output.trim())
+        .context("failed to parse mouse position helper JSON")?;
+    let x = value
+        .get("x")
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .context("mouse position helper JSON missing x")?;
+    let y = value
+        .get("y")
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .context("mouse position helper JSON missing y")?;
+    Ok((x, y))
+}
+
 fn write_swift_keyboard_action_script() -> Result<PathBuf> {
     let script_path = env::temp_dir().join(format!(
         "yeonjang-keyboard-action-{}.swift",
@@ -1287,6 +1603,20 @@ var payload: [String: Any] = [
 if includeBase64 {
     payload["base64Data"] = try Data(contentsOf: URL(fileURLWithPath: outputPath)).base64EncodedString()
 }
+let data = try JSONSerialization.data(withJSONObject: payload, options: [])
+FileHandle.standardOutput.write(data)
+"#;
+
+const SWIFT_MOUSE_POSITION: &str = r#"
+import Foundation
+import ApplicationServices
+
+let event = CGEvent(source: nil)
+let point = event?.location ?? CGPoint(x: 0, y: 0)
+let payload: [String: Int] = [
+    "x": Int(point.x.rounded()),
+    "y": Int(point.y.rounded())
+]
 let data = try JSONSerialization.data(withJSONObject: payload, options: [])
 FileHandle.standardOutput.write(data)
 "#;
@@ -1576,7 +1906,10 @@ do {
 #[cfg(test)]
 mod tests {
     use super::{
-        MacosKeyboardTarget, PlatformBackend, build_modifier_clause, build_modifier_key_codes,
+        MacosBrowserFocusCommandPlan, MacosBrowserFocusPlanInput, MacosKeyboardTarget,
+        PlatformBackend, build_macos_browser_focus_command_plan,
+        build_macos_browser_focus_osascript, build_modifier_clause, build_modifier_key_codes,
+        execute_macos_browser_focus_command_plan, execute_macos_browser_focus_private,
         normalize_macos_screen_capture_display, normalize_mouse_button_name,
         resolve_macos_keyboard_key_code, resolve_macos_keyboard_target,
         resolve_macos_system_control, resolve_optional_mouse_point,
@@ -1695,5 +2028,374 @@ mod tests {
                 .to_string()
                 .contains("target `remote-host` is not supported")
         );
+    }
+
+    #[test]
+    fn builds_browser_focus_command_plan_only_after_macos_preconditions() {
+        let plan = build_macos_browser_focus_command_plan(MacosBrowserFocusPlanInput {
+            approval_granted: true,
+            capability_advertised: true,
+            command_backend_ready: true,
+            focused_target_observation_backend_ready: true,
+            interactive_desktop_session: true,
+            target_alias: Some("업무 브라우저".to_string()),
+            process_name: Some("Google Chrome".to_string()),
+            raw_window_title: Some("Private Admin Console".to_string()),
+            raw_url: Some("https://example.test/admin?token=private".to_string()),
+            pid: Some(4401),
+            window_id: Some("window-private".to_string()),
+            tab_id: Some("tab-private".to_string()),
+        })
+        .expect("macOS focus plan should be accepted");
+
+        assert!(plan.command_accepted_candidate);
+        assert!(!plan.execute_os_focus_now);
+        assert_eq!(plan.reason_code, "macos_browser_focus_command_plan_ready");
+        assert_eq!(plan.backend_family, "osascript");
+        assert_eq!(plan.public_target_name, "업무 브라우저");
+        assert_eq!(plan.post_check_mode, "focused_target_observation_required");
+        assert_eq!(
+            plan.audit_only_fields,
+            vec![
+                "rawWindowTitle",
+                "rawUrl",
+                "queryToken",
+                "pid",
+                "windowId",
+                "tabId",
+                "automationScriptText",
+            ]
+        );
+
+        let public = serde_json::to_string(&plan).expect("serialize plan");
+        assert!(!public.contains("Private Admin Console"));
+        assert!(!public.contains("https://example.test"));
+        assert!(!public.contains("token=private"));
+        assert!(!public.contains("4401"));
+        assert!(!public.contains("window-private"));
+        assert!(!public.contains("tab-private"));
+        assert!(!public.contains("osascript private"));
+    }
+
+    #[test]
+    fn rejects_browser_focus_plan_without_required_gate() {
+        let error = build_macos_browser_focus_command_plan(MacosBrowserFocusPlanInput {
+            approval_granted: false,
+            capability_advertised: true,
+            command_backend_ready: true,
+            focused_target_observation_backend_ready: true,
+            interactive_desktop_session: true,
+            target_alias: Some("업무 브라우저".to_string()),
+            process_name: Some("Google Chrome".to_string()),
+            raw_window_title: None,
+            raw_url: None,
+            pid: None,
+            window_id: None,
+            tab_id: None,
+        })
+        .expect_err("approval gate should block browser focus plan");
+
+        assert!(
+            error
+                .to_string()
+                .contains("side_effect_authorization_required")
+        );
+    }
+
+    #[test]
+    fn rejects_browser_focus_plan_without_target_identity() {
+        let error = build_macos_browser_focus_command_plan(MacosBrowserFocusPlanInput {
+            approval_granted: true,
+            capability_advertised: true,
+            command_backend_ready: true,
+            focused_target_observation_backend_ready: true,
+            interactive_desktop_session: true,
+            target_alias: None,
+            process_name: None,
+            raw_window_title: None,
+            raw_url: None,
+            pid: None,
+            window_id: None,
+            tab_id: None,
+        })
+        .expect_err("target identity should be required");
+
+        assert!(error.to_string().contains("target_identity_required"));
+    }
+
+    #[test]
+    fn executes_browser_focus_plan_through_injected_runner() {
+        let plan = build_macos_browser_focus_command_plan(MacosBrowserFocusPlanInput {
+            approval_granted: true,
+            capability_advertised: true,
+            command_backend_ready: true,
+            focused_target_observation_backend_ready: true,
+            interactive_desktop_session: true,
+            target_alias: Some("업무 브라우저".to_string()),
+            process_name: Some("Google Chrome".to_string()),
+            raw_window_title: Some("Private Admin Console".to_string()),
+            raw_url: Some("https://example.test/admin?token=private".to_string()),
+            pid: Some(4401),
+            window_id: Some("window-private".to_string()),
+            tab_id: Some("tab-private".to_string()),
+        })
+        .expect("plan should be ready");
+        let mut called = false;
+
+        let result = execute_macos_browser_focus_command_plan(&plan, || {
+            called = true;
+            Ok(true)
+        });
+
+        assert!(called);
+        assert!(result.command_accepted);
+        assert_eq!(result.reason_code, "macos_browser_focus_command_accepted");
+        assert!(result.focused_target_observation_required);
+        assert!(!result.goal_success);
+
+        let public = serde_json::to_string(&result).expect("serialize execution result");
+        assert!(!public.contains("Private Admin Console"));
+        assert!(!public.contains("https://example.test"));
+        assert!(!public.contains("token=private"));
+        assert!(!public.contains("4401"));
+        assert!(!public.contains("window-private"));
+        assert!(!public.contains("tab-private"));
+        assert!(!public.contains("osascript"));
+    }
+
+    #[test]
+    fn maps_browser_focus_runner_rejection_to_sanitized_reason() {
+        let plan = build_macos_browser_focus_command_plan(MacosBrowserFocusPlanInput {
+            approval_granted: true,
+            capability_advertised: true,
+            command_backend_ready: true,
+            focused_target_observation_backend_ready: true,
+            interactive_desktop_session: true,
+            target_alias: Some("업무 브라우저".to_string()),
+            process_name: Some("Google Chrome".to_string()),
+            raw_window_title: None,
+            raw_url: None,
+            pid: None,
+            window_id: None,
+            tab_id: None,
+        })
+        .expect("plan should be ready");
+
+        let result = execute_macos_browser_focus_command_plan(&plan, || Ok(false));
+
+        assert!(!result.command_accepted);
+        assert_eq!(result.reason_code, "macos_browser_focus_command_rejected");
+        assert!(result.focused_target_observation_required);
+        assert!(!result.goal_success);
+    }
+
+    #[test]
+    fn maps_browser_focus_runner_error_without_leaking_raw_error() {
+        let plan = build_macos_browser_focus_command_plan(MacosBrowserFocusPlanInput {
+            approval_granted: true,
+            capability_advertised: true,
+            command_backend_ready: true,
+            focused_target_observation_backend_ready: true,
+            interactive_desktop_session: true,
+            target_alias: Some("업무 브라우저".to_string()),
+            process_name: Some("Google Chrome".to_string()),
+            raw_window_title: Some("Private Admin Console".to_string()),
+            raw_url: Some("https://example.test/admin?token=private".to_string()),
+            pid: Some(4401),
+            window_id: Some("window-private".to_string()),
+            tab_id: Some("tab-private".to_string()),
+        })
+        .expect("plan should be ready");
+
+        let result = execute_macos_browser_focus_command_plan(&plan, || {
+            anyhow::bail!("osascript private failure for window-private")
+        });
+        let public = serde_json::to_string(&result).expect("serialize execution result");
+
+        assert!(!result.command_accepted);
+        assert_eq!(result.reason_code, "macos_browser_focus_command_failed");
+        assert!(!public.contains("osascript private"));
+        assert!(!public.contains("window-private"));
+        assert!(!public.contains("Private Admin Console"));
+    }
+
+    #[test]
+    fn does_not_call_runner_for_unready_browser_focus_plan() {
+        let plan = MacosBrowserFocusCommandPlan {
+            command_accepted_candidate: false,
+            execute_os_focus_now: false,
+            reason_code: "command_backend_required",
+            backend_family: "osascript",
+            public_target_name: "업무 브라우저".to_string(),
+            post_check_mode: "focused_target_observation_required",
+            audit_only_fields: vec![],
+        };
+        let mut called = false;
+
+        let result = execute_macos_browser_focus_command_plan(&plan, || {
+            called = true;
+            Ok(true)
+        });
+
+        assert!(!called);
+        assert!(!result.command_accepted);
+        assert_eq!(result.reason_code, "command_plan_not_ready");
+        assert!(!result.goal_success);
+    }
+
+    #[test]
+    fn builds_private_browser_focus_osascript_from_sanitized_plan() {
+        let plan = MacosBrowserFocusCommandPlan {
+            command_accepted_candidate: true,
+            execute_os_focus_now: false,
+            reason_code: "macos_browser_focus_command_plan_ready",
+            backend_family: "osascript",
+            public_target_name: "Chrome \"Work\" \\ Desk".to_string(),
+            post_check_mode: "focused_target_observation_required",
+            audit_only_fields: vec!["automationScriptText"],
+        };
+
+        let script = build_macos_browser_focus_osascript(&plan).expect("script should build");
+
+        assert!(script.contains("tell application \"Chrome \\\"Work\\\" \\\\ Desk\""));
+        assert!(script.contains("activate"));
+        assert!(!script.contains("Private Admin Console"));
+        assert!(!script.contains("https://example.test"));
+        assert!(!script.contains("window-private"));
+    }
+
+    #[test]
+    fn rejects_private_browser_focus_osascript_for_unready_plan() {
+        let plan = MacosBrowserFocusCommandPlan {
+            command_accepted_candidate: false,
+            execute_os_focus_now: false,
+            reason_code: "command_backend_required",
+            backend_family: "osascript",
+            public_target_name: "Chrome".to_string(),
+            post_check_mode: "focused_target_observation_required",
+            audit_only_fields: vec![],
+        };
+
+        let error = build_macos_browser_focus_osascript(&plan)
+            .expect_err("unready plan should not build script");
+
+        assert!(error.to_string().contains("command_plan_not_ready"));
+    }
+
+    #[test]
+    fn browser_focus_execution_result_never_contains_private_script_text() {
+        let plan = MacosBrowserFocusCommandPlan {
+            command_accepted_candidate: true,
+            execute_os_focus_now: false,
+            reason_code: "macos_browser_focus_command_plan_ready",
+            backend_family: "osascript",
+            public_target_name: "Chrome".to_string(),
+            post_check_mode: "focused_target_observation_required",
+            audit_only_fields: vec!["automationScriptText"],
+        };
+        let script = build_macos_browser_focus_osascript(&plan).expect("script should build");
+
+        let result = execute_macos_browser_focus_command_plan(&plan, || {
+            assert!(script.contains("tell application"));
+            Ok(true)
+        });
+        let public = serde_json::to_string(&result).expect("serialize execution result");
+
+        assert!(!public.contains("tell application"));
+        assert!(!public.contains("activate"));
+        assert!(!public.contains("automationScriptText"));
+    }
+
+    #[test]
+    fn private_browser_focus_executor_passes_script_to_injected_runner_only() {
+        let mut captured_script = String::new();
+        let result = execute_macos_browser_focus_private(
+            MacosBrowserFocusPlanInput {
+                approval_granted: true,
+                capability_advertised: true,
+                command_backend_ready: true,
+                focused_target_observation_backend_ready: true,
+                interactive_desktop_session: true,
+                target_alias: Some("Chrome \"Work\"".to_string()),
+                process_name: Some("Google Chrome".to_string()),
+                raw_window_title: Some("Private Admin Console".to_string()),
+                raw_url: Some("https://example.test/admin?token=private".to_string()),
+                pid: Some(4401),
+                window_id: Some("window-private".to_string()),
+                tab_id: Some("tab-private".to_string()),
+            },
+            |script| {
+                captured_script = script.to_string();
+                Ok(script.contains("tell application \"Chrome \\\"Work\\\"\" to activate"))
+            },
+        );
+
+        assert!(captured_script.contains("tell application"));
+        assert!(result.command_accepted);
+        assert_eq!(result.reason_code, "macos_browser_focus_command_accepted");
+        assert!(!result.goal_success);
+
+        let public = serde_json::to_string(&result).expect("serialize execution result");
+        assert!(!public.contains("tell application"));
+        assert!(!public.contains("Chrome"));
+        assert!(!public.contains("Private Admin Console"));
+        assert!(!public.contains("https://example.test"));
+        assert!(!public.contains("token=private"));
+        assert!(!public.contains("window-private"));
+    }
+
+    #[test]
+    fn private_browser_focus_executor_does_not_call_runner_when_plan_is_blocked() {
+        let mut called = false;
+        let result = execute_macos_browser_focus_private(
+            MacosBrowserFocusPlanInput {
+                approval_granted: false,
+                capability_advertised: true,
+                command_backend_ready: true,
+                focused_target_observation_backend_ready: true,
+                interactive_desktop_session: true,
+                target_alias: Some("Chrome".to_string()),
+                process_name: Some("Google Chrome".to_string()),
+                raw_window_title: None,
+                raw_url: None,
+                pid: None,
+                window_id: None,
+                tab_id: None,
+            },
+            |_script| {
+                called = true;
+                Ok(true)
+            },
+        );
+
+        assert!(!called);
+        assert!(!result.command_accepted);
+        assert_eq!(result.reason_code, "side_effect_authorization_required");
+        assert!(!result.goal_success);
+    }
+
+    #[test]
+    fn private_browser_focus_executor_sanitizes_script_builder_failure() {
+        let result = execute_macos_browser_focus_private(
+            MacosBrowserFocusPlanInput {
+                approval_granted: true,
+                capability_advertised: true,
+                command_backend_ready: true,
+                focused_target_observation_backend_ready: true,
+                interactive_desktop_session: true,
+                target_alias: Some("   ".to_string()),
+                process_name: None,
+                raw_window_title: None,
+                raw_url: None,
+                pid: None,
+                window_id: None,
+                tab_id: None,
+            },
+            |_script| Ok(true),
+        );
+
+        assert!(!result.command_accepted);
+        assert_eq!(result.reason_code, "target_identity_required");
+        assert!(!result.goal_success);
     }
 }

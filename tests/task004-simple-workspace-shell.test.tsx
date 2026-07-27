@@ -79,7 +79,7 @@ describe("task004 simple workspace shell", () => {
     expect(saveButton).not.toMatch(/\sdisabled(=| |>)/)
   })
 
-  it("renders an executor-first top bar and left rail without advanced controls", () => {
+  it("renders a focused empty state without duplicate top-bar or left-rail actions", () => {
     const html = renderToStaticMarkup(
       createElement(
         ExecutorWorkspaceShell,
@@ -95,9 +95,9 @@ describe("task004 simple workspace shell", () => {
 
     expect(html).toContain('data-testid="executor-workspace-shell"')
     expect(html).toContain('data-testid="executor-workspace-topbar"')
-    expect(html).toContain('data-testid="executor-workspace-left-rail"')
+    expect(html).not.toContain('data-testid="executor-workspace-left-rail"')
     expect(html).toContain('data-testid="executor-workspace-main"')
-    expect(html).toContain("grid min-h-0 flex-1 overflow-hidden")
+    expect(html).toContain("flex min-h-0 flex-1 overflow-hidden")
     expect(html).toContain("overflow-y-auto")
     expect(html).toContain("overscroll-contain")
     expect(html).toContain("pb-4")
@@ -107,28 +107,24 @@ describe("task004 simple workspace shell", () => {
     expect(html).not.toContain("md:pb-16")
     expect(html).toContain("서브 에이전트 구성하기")
     expect(html).toContain("서브 에이전트를 추가하고 서로 선으로 연결하세요.")
-    expect(html).toContain("1. 서브 에이전트 추가")
-    expect(html).toContain("2. 서브 에이전트끼리 연결")
-    expect(html).toContain("3. 요청이 오면 자동 실행")
-    expect(html).toContain('data-testid="executor-workspace-top-add-executor"')
-    expect(html).toContain('data-testid="executor-workspace-top-delete-executor"')
-    expect(html).toContain('data-testid="executor-workspace-top-save"')
+    expect(html).not.toContain('data-testid="executor-workspace-guide-steps"')
+    expect(html).not.toContain('data-testid="executor-workspace-top-save"')
+    expect(html).not.toContain('data-testid="executor-workspace-top-delete-executor"')
+    expect(html).not.toContain('data-testid="executor-workspace-top-add-executor"')
+    expect(html).toContain('data-testid="executor-workspace-first-add-executor"')
     expect(html).not.toContain('data-testid="executor-workspace-advanced-entry"')
     expect(html).not.toContain("?ux=advanced")
     expect(html).not.toContain('data-testid="executor-workspace-top-connect-executor"')
     expect(html).toContain("서브 에이전트 추가")
-    expect(html).toContain("삭제")
-    expect(html).toContain("저장")
+    expect(html).not.toContain(">삭제</button>")
+    expect(html).not.toContain(">저장</button>")
     expect(html).not.toContain("자동 점검")
     expect(html).not.toContain("실행하기")
     expect(html).not.toContain("저장됨")
-    expect(html.indexOf('data-testid="executor-workspace-add-executor"')).toBeLessThan(
-      html.indexOf('data-testid="executor-workspace-add-section"'),
-    )
     expect(html).toContain("+ 서브 에이전트 추가")
-    expect(html).toContain("+ 영역 추가")
-    expect(html).toContain("서브 에이전트 목록")
-    expect(html).toContain("추천 서브 에이전트")
+    expect(html).not.toContain("+ 영역 추가")
+    expect(html).not.toContain("서브 에이전트 목록")
+    expect(html).not.toContain("추천 서브 에이전트")
     expect(html).toContain("고객 접수 담당자")
     expect(html).not.toContain('data-testid="executor-workspace-layer-build"')
     expect(html).not.toContain('data-testid="executor-workspace-layer-run"')
@@ -144,6 +140,38 @@ describe("task004 simple workspace shell", () => {
     expect(html).not.toContain("Tool")
     expect(html).not.toContain("Data")
     expect(html).not.toContain("Group")
+  })
+
+  it("uses the current main agent label in setup shell guidance when provided", () => {
+    const customHtml = renderToStaticMarkup(
+      createElement(
+        ExecutorWorkspaceShell,
+        {
+          selectedLayer: "build",
+          executorCount: 1,
+          connectionCount: 0,
+          rootAgentLabel: "마당쇠",
+        },
+        createElement("div", null, "workspace canvas"),
+      ),
+    )
+    const defaultAliasHtml = renderToStaticMarkup(
+      createElement(
+        ExecutorWorkspaceShell,
+        {
+          selectedLayer: "build",
+          executorCount: 1,
+          connectionCount: 0,
+          rootAgentLabel: "노비",
+        },
+        createElement("div", null, "workspace canvas"),
+      ),
+    )
+
+    expect(customHtml).toContain("마당쇠 기준")
+    expect(customHtml).toContain("마당쇠 기준으로 이 구성에 일을 위임")
+    expect(defaultAliasHtml).toContain("메인 에이전트 기준")
+    expect(defaultAliasHtml).toContain("메인 에이전트 기준으로 이 구성에 일을 위임")
   })
 
   it("uses the simple shell for the default enterprise topology workspace surface", () => {
@@ -239,8 +267,7 @@ describe("task004 simple workspace shell", () => {
     expect(advancedHtml).toContain("서브 에이전트 구성하기")
     expect(advancedHtml).not.toContain("Topology Workspace")
     expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/sub-agents")
-    expect(fallbackHtml).toContain("관리자 설정")
-    expect(fallbackHtml).toContain("서브 에이전트 작업공간")
+    expect(fallbackHtml).toContain("기능 상태를 확인할 수 없습니다")
     expect(fallbackHtml).not.toContain("simple workspace content")
   })
 })

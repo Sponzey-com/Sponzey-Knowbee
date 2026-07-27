@@ -130,7 +130,7 @@ describe("task009 topology workspace issue drawer and quick fixes", () => {
     expect(html).toContain('data-testid="topology-workspace-issue-source-runtime"')
     expect(html).toContain('data-testid="topology-workspace-issue-runtime"')
     expect(html).toContain("실행 실패를 복구해야 합니다.")
-    expect(html).toContain("fallback path 추가")
+    expect(html).toContain("예외 처리 경로 추가")
   })
 
   it("does not expose tool permission quick fixes in the default validation assistant", () => {

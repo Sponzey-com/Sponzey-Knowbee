@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import { listLatencyMetrics, resetLatencyMetrics } from "../packages/core/src/observability/latency.js"
@@ -17,6 +18,7 @@ import type {
 import {
   ResourceLockManager,
   SubSessionRunner,
+  buildSubSessionContract,
   createTextResultReport,
   planSubSessionExecutionWaves,
   recoverInterruptedSubSessions,
@@ -25,6 +27,12 @@ import {
   type SubSessionRunOutcome,
   type SubSessionRuntimeDependencies,
 } from "../packages/core/src/orchestration/sub-session-runner.ts"
+import {
+  buildSubSessionProgressSummary,
+  type SubSessionProgressAggregationItem,
+} from "../packages/core/src/orchestration/sub-session-progress-aggregation.ts"
+import { createTestSubSessionMemoryDependencies } from "./fixtures/sub-session-runtime.ts"
+import { createTestResultDiagnosisDependencies } from "./fixtures/agent-runtime.ts"
 
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 
@@ -98,8 +106,6 @@ function promptBundle(bundleId = "prompt-bundle:researcher"): AgentPromptBundle 
     agentId: "agent:researcher",
     agentType: "sub_agent",
     role: "research worker",
-    displayNameSnapshot: "Researcher",
-    nicknameSnapshot: "Res",
     personalitySnapshot: "Precise",
     teamContext: [],
     memoryPolicy,
@@ -138,8 +144,9 @@ function runInput(id: string, overrides: Partial<RunSubSessionInput> = {}): RunS
     command: command(id),
     agent: {
       agentId: "agent:researcher",
-      displayName: "Researcher",
-      nickname: "Res",
+      agentName: "Research Agent",
+      displayName: "Legacy Researcher Display",
+      nickname: "Legacy Res",
     },
     parentSessionId: "session-parent",
     promptBundle: promptBundle(),
@@ -154,6 +161,8 @@ function makeMemoryDependencies() {
   let time = now
   const clone = <T>(value: T): T => structuredClone(value)
   const dependencies: SubSessionRuntimeDependencies = {
+    ...createTestSubSessionMemoryDependencies(),
+    ...createTestResultDiagnosisDependencies(),
     now: () => {
       time += 1
       return time
@@ -187,7 +196,7 @@ function outcome(taskId: string, status: SubSessionStatus = "completed"): SubSes
       parentSessionId: "session-parent",
       parentRunId: "run-parent",
       agentId: "agent:researcher",
-      agentDisplayName: "Researcher",
+      agentName: "Researcher",
       commandRequestId: `command:${taskId}`,
       status,
       promptBundleId: "prompt-bundle:researcher",
@@ -219,15 +228,18 @@ describe("task006 sub-session runtime", () => {
   it("creates and completes sub-sessions under the same parent run", async () => {
     const { dependencies, sessions, events } = makeMemoryDependencies()
     const runner = new SubSessionRunner(dependencies)
+    let firstProgress: { speaker?: { agentNameSnapshot?: string; nicknameSnapshot?: string } } | undefined
 
     const first = await runner.runSubSession(runInput("one"), async (input, controls) => {
-      await controls.emitProgress("first progress")
+      firstProgress = await controls.emitProgress("first progress")
       return createTextResultReport({ command: input.command, text: "first result" })
     })
     const second = await runner.runSubSession(runInput("two"), async (input) =>
       createTextResultReport({ command: input.command, text: "second result" }))
 
     expect(first.status).toBe("completed")
+    expect(firstProgress?.speaker).toMatchObject({ agentNameSnapshot: "Research Agent" })
+    expect(firstProgress?.speaker).not.toHaveProperty("nicknameSnapshot")
     expect(second.status).toBe("completed")
     expect([...sessions.values()].map((session) => session.parentRunId)).toEqual(["run-parent", "run-parent"])
     expect(events.map((event) => event.label)).toEqual(expect.arrayContaining([
@@ -237,6 +249,146 @@ describe("task006 sub-session runtime", () => {
       "sub_session_created:sub:two",
       "sub_session_result:sub:two:completed",
     ]))
+  })
+
+  it("uses targetAgentNameSnapshot without adding legacy targetNicknameSnapshot during sub-session execution", async () => {
+    const { dependencies } = makeMemoryDependencies()
+    const runner = new SubSessionRunner(dependencies)
+    let progress: { speaker?: { agentNameSnapshot?: string; nicknameSnapshot?: string } } | undefined
+
+    const result = await runner.runSubSession(
+      runInput("agent-name-priority", {
+        command: {
+          ...command("agent-name-priority"),
+          targetAgentNameSnapshot: "새 연구자",
+        },
+      }),
+      async (input, controls) => {
+        expect(input.command.targetAgentNameSnapshot).toBe("새 연구자")
+        expect(input.command).not.toHaveProperty("targetNicknameSnapshot")
+        progress = await controls.emitProgress("agent name progress")
+        return createTextResultReport({ command: input.command, text: "named result" })
+      },
+    )
+
+    expect(result.status).toBe("completed")
+    expect(result.subSession.agentName).toBe("새 연구자")
+    expect(result.subSession.agentNameSnapshot).toBe("새 연구자")
+    expect(result.subSession).not.toHaveProperty("agentNickname")
+    expect(progress?.speaker).toMatchObject({ agentNameSnapshot: "새 연구자" })
+    expect(progress?.speaker).not.toHaveProperty("nicknameSnapshot")
+  })
+
+  it("fills missing command targetAgentNameSnapshot from the runtime agent snapshot", async () => {
+    const { dependencies } = makeMemoryDependencies()
+    const runner = new SubSessionRunner(dependencies)
+
+    const result = await runner.runSubSession(
+      runInput("agent-name-fill", {
+        agent: {
+          agentId: "agent:researcher",
+          agentName: "현장 연구자",
+          displayName: "Researcher",
+          nickname: "legacy-res",
+        },
+      }),
+      async (input) => {
+        expect(input.command.targetAgentNameSnapshot).toBe("현장 연구자")
+        expect(input.command).not.toHaveProperty("targetNicknameSnapshot")
+        return createTextResultReport({ command: input.command, text: "filled result" })
+      },
+    )
+
+    expect(result.status).toBe("completed")
+    expect(result.subSession.agentName).toBe("현장 연구자")
+    expect(result.subSession.agentNameSnapshot).toBe("현장 연구자")
+    expect(result.subSession).not.toHaveProperty("agentNickname")
+  })
+
+  it("does not infer runtime agent names from legacy displayName or nickname fields", async () => {
+    const { dependencies } = makeMemoryDependencies()
+    const runner = new SubSessionRunner(dependencies)
+    let progress: { speaker?: { agentNameSnapshot?: string; nicknameSnapshot?: string } } | undefined
+
+    const result = await runner.runSubSession(
+      runInput("legacy-name-only", {
+        agent: {
+          agentId: "agent:researcher",
+          displayName: "Legacy Display",
+          nickname: "Legacy Nick",
+        },
+      }),
+      async (input, controls) => {
+        expect(input.command.targetAgentNameSnapshot).toBeUndefined()
+        progress = await controls.emitProgress("legacy-only progress")
+        return createTextResultReport({ command: input.command, text: "legacy-only result" })
+      },
+    )
+
+    expect(result.status).toBe("completed")
+    expect(result.subSession.agentName).toBe("Unnamed sub-agent")
+    expect(result.subSession.agentNameSnapshot).toBeUndefined()
+    expect(result.subSession).not.toHaveProperty("agentDisplayName")
+    expect(progress?.speaker).toBeUndefined()
+    expect(JSON.stringify(result.subSession)).not.toContain("Legacy Display")
+    expect(JSON.stringify(result.subSession)).not.toContain("Legacy Nick")
+  })
+
+  it("does not infer parent agent names from legacy displayName or nickname fields", () => {
+    const contract = buildSubSessionContract(
+      runInput("legacy-parent-name-only", {
+        agent: {
+          agentId: "agent:researcher",
+          displayName: "Legacy Display",
+          nickname: "Legacy Nick",
+        },
+        parentAgent: {
+          agentId: "agent:parent",
+          displayName: "Legacy Parent Display",
+          nickname: "Legacy Parent Nick",
+        },
+      }),
+    )
+
+    expect(contract.agentNameSnapshot).toBeUndefined()
+    expect(contract.agentName).toBe("Unnamed sub-agent")
+    expect(contract).not.toHaveProperty("agentDisplayName")
+    expect(contract.parentAgentNameSnapshot).toBeUndefined()
+    expect(contract.parentAgentName).toBeUndefined()
+    expect(contract.parentAgentDisplayName).toBeUndefined()
+    expect(JSON.stringify(contract)).not.toContain("Legacy Display")
+    expect(JSON.stringify(contract)).not.toContain("Legacy Nick")
+    expect(JSON.stringify(contract)).not.toContain("Legacy Parent Display")
+    expect(JSON.stringify(contract)).not.toContain("Legacy Parent Nick")
+  })
+
+  it("does not expose legacy displayName or agentId in progress summaries", () => {
+    const legacyProgressItem = {
+      parentRunId: "run-parent",
+      subSessionId: "sub:legacy-progress",
+      agentId: "agent:internal-id",
+      agentDisplayName: "Legacy Progress Display",
+      status: "running",
+      summary: "collecting evidence",
+      at: now,
+    } as unknown as SubSessionProgressAggregationItem
+    const summary = buildSubSessionProgressSummary([legacyProgressItem])
+
+    expect(summary).toContain("Unnamed sub-agent running: collecting evidence")
+    expect(summary).not.toContain("Legacy Progress Display")
+    expect(summary).not.toContain("agent:internal-id")
+  })
+
+  it("creates handoff data exchanges with agent-name snapshot fields", () => {
+    const source = readFileSync(
+      "packages/core/src/orchestration/sub-session-runner.ts",
+      "utf8",
+    )
+
+    expect(source).toContain("sourceAgentNameSnapshot")
+    expect(source).toContain("recipientAgentNameSnapshot")
+    expect(source).not.toContain("sourceNicknameSnapshot: input.input.parentAgent")
+    expect(source).not.toContain("recipientNicknameSnapshot: input.input.agent")
   })
 
   it("runs independent sub-sessions in parallel groups", async () => {

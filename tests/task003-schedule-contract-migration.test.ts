@@ -3,15 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import {
   closeDb,
-  getDb,
   getSchedule,
   insertSchedule,
   isLegacySchedule,
   prepareScheduleContractPersistence,
-} from "../packages/core/src/db/index.ts"
+} from "../packages/core/src/db/index.js"
 import { runMigrations } from "../packages/core/src/db/migrations.ts"
 import {
   CONTRACT_SCHEMA_VERSION,
@@ -21,6 +19,7 @@ import {
   toCanonicalJson,
   type ScheduleContract,
 } from "../packages/core/src/index.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 type SqliteStatement = {
   run(...args: unknown[]): unknown
@@ -39,16 +38,13 @@ const require = createRequire(import.meta.url)
 const BetterSqlite3 = require("../packages/core/node_modules/better-sqlite3") as BetterSqlite3Factory
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
+let runtimeDb: ReturnType<typeof initializeTestDbRuntime>
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task003-schedule-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  runtimeDb = initializeTestDbRuntime(stateDir)
 }
 
 function scheduleContract(overrides: Partial<ScheduleContract> = {}): ScheduleContract {
@@ -110,11 +106,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -123,7 +114,7 @@ afterEach(() => {
 
 describe("task003 schedule contract migration", () => {
   it("adds schedule contract columns on fresh and legacy schemas idempotently", () => {
-    const freshColumns = getDb().prepare("PRAGMA table_info(schedules)").all() as Array<{ name: string }>
+    const freshColumns = runtimeDb.prepare("PRAGMA table_info(schedules)").all() as Array<{ name: string }>
     expect(freshColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
       "contract_json",
       "identity_key",
@@ -134,8 +125,9 @@ describe("task003 schedule contract migration", () => {
 
     const legacyDb = new BetterSqlite3(":memory:")
     try {
+      runMigrations(legacyDb)
       legacyDb.exec(`
-        CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
+        DROP TABLE schedules;
         CREATE TABLE schedules (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
@@ -154,9 +146,8 @@ describe("task003 schedule contract migration", () => {
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL
         );
+        DELETE FROM schema_migrations WHERE version = 22;
       `)
-      const insertMigration = legacyDb.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)")
-      for (let version = 1; version <= 21; version += 1) insertMigration.run(version, 1)
 
       runMigrations(legacyDb)
       runMigrations(legacyDb)
@@ -233,4 +224,3 @@ describe("task003 schedule contract migration", () => {
     expect(getSchedule("schedule-invalid-contract-task003")).toBeUndefined()
   })
 })
-

@@ -1,4 +1,5 @@
 import { buildStructuredExecutionBrief } from "./request-prompt.js";
+import { loadPromptValue } from "../memory/prompt-fragments.js";
 export function prepareRootLoopEntryPassLaunch(params, dependencies) {
     return {
         params: {
@@ -27,21 +28,22 @@ export function prepareRootLoopEntryPassLaunch(params, dependencies) {
 export function prepareRootExecutionCyclePassLaunch(params, dependencies) {
     const executionMessage = params.structuredRequest && params.state.currentMessage === params.requestMessage
         ? buildStructuredExecutionBrief({
-            header: "[Root Task Execution]",
-            introLines: [
-                "이 요청은 intake를 마치고 실제 실행 단계로 전달되었습니다.",
-            ],
+            header: loadPromptValue("root_execution_header_user"),
+            introLines: [loadPromptValue("root_execution_intake_complete_intro_user")],
             originalRequest: params.originalRequest,
             structuredRequest: params.structuredRequest,
             executionSemantics: params.executionSemantics,
             closingLines: [
-                "체크리스트 기준으로 실제 작업을 순서대로 수행하세요.",
-                "완료되지 않은 항목이 남아 있으면 종료하지 말고 계속 진행하세요.",
+                loadPromptValue("root_execution_checklist_order_closing_user"),
+                loadPromptValue("root_execution_incomplete_checklist_closing_user"),
             ],
         })
         : params.state.currentMessage;
+    const admittedCapabilityExecutionScope = dependencies.getAdmittedCapabilityExecutionScope?.();
     return {
         params: {
+            artifactStorage: params.artifactStorage,
+            memoryJournal: params.memoryJournal,
             runId: params.runId,
             sessionId: params.sessionId,
             requestGroupId: params.requestGroupId,
@@ -54,9 +56,23 @@ export function prepareRootExecutionCyclePassLaunch(params, dependencies) {
             },
             executionSemantics: params.executionSemantics,
             originalRequest: params.originalRequest,
-            memorySearchQuery: params.requestMessage,
+            ...(params.structuredRequest?.response_language_mode
+                ? { responseLanguageMode: params.structuredRequest.response_language_mode }
+                : {}),
+            memorySearchQuery: params.memorySearchQuery ?? params.requestMessage,
+            ...(admittedCapabilityExecutionScope
+                ? {
+                    admittedCapabilityExecutionScope,
+                }
+                : {}),
+            ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
+            ...(params.includeScheduleMemory ? { includeScheduleMemory: true } : {}),
             verificationRequest: params.requestMessage,
             workDir: params.workDir,
+            config: params.config,
+            ...(params.finalResponseIdentityContext
+                ? { finalResponseIdentityContext: params.finalResponseIdentityContext }
+                : {}),
             ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
             ...(dependencies.onDeliveryError ? { onDeliveryError: dependencies.onDeliveryError } : {}),
             abortExecutionStream: params.abortExecutionStream,
@@ -69,7 +85,8 @@ export function prepareRootExecutionCyclePassLaunch(params, dependencies) {
             requiresPrivilegedToolExecution: params.requiresPrivilegedToolExecution,
             pendingToolParams: params.pendingToolParams,
             filesystemMutationPaths: params.filesystemMutationPaths,
-            successfulTools: [],
+            successfulTools: params.state.successfulTools,
+            completionConditions: params.structuredRequest?.complete_condition ?? [],
             seenFollowupPrompts: params.seenFollowupPrompts,
             seenCommandFailureRecoveryKeys: params.seenCommandFailureRecoveryKeys,
             seenExecutionRecoveryKeys: params.seenExecutionRecoveryKeys,
@@ -77,7 +94,7 @@ export function prepareRootExecutionCyclePassLaunch(params, dependencies) {
             seenAiRecoveryKeys: params.seenAiRecoveryKeys,
             recoveryBudgetUsage: params.recoveryBudgetUsage,
             priorAssistantMessages: params.priorAssistantMessages,
-            syntheticApprovalAlreadyApproved: dependencies.getSyntheticApprovalAlreadyApproved(),
+            syntheticApprovalAlreadyApproved: dependencies.getSyntheticApprovalAlreadyApproved(params.executionSemantics.approvalTool),
             syntheticApprovalRuntimeDependencies: params.syntheticApprovalRuntimeDependencies,
             defaultMaxDelegationTurns: params.defaultMaxDelegationTurns,
         },
@@ -100,6 +117,12 @@ export function prepareRootExecutionCyclePassLaunch(params, dependencies) {
             grantRunApprovalScope: dependencies.grantRunApprovalScope,
             grantRunSingleApproval: dependencies.grantRunSingleApproval,
             ...(dependencies.onReviewError ? { onReviewError: dependencies.onReviewError } : {}),
+            recordCanonicalAttempt: dependencies.recordCanonicalAttempt,
+            recordCanonicalRecoveryReentry: dependencies.recordCanonicalRecoveryReentry,
+            recordCanonicalCompletionOutcome: dependencies.recordCanonicalCompletionOutcome,
+            recordCanonicalDelivery: dependencies.recordCanonicalDelivery,
+            stageCanonicalPendingResponse: dependencies.stageCanonicalPendingResponse,
+            consumeCanonicalPendingResponse: dependencies.consumeCanonicalPendingResponse,
         },
     };
 }

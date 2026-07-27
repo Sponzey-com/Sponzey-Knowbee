@@ -1,14 +1,13 @@
-import {
-  CONTRACT_SCHEMA_VERSION,
-  type ContractSchemaVersion,
-  type ContractValidationIssue,
-  type ContractValidationResult,
-  type JsonObject,
-  type JsonValue,
+import type {
+  ContractSchemaVersion,
+  ContractValidationIssue,
+  ContractValidationResult,
+  JsonObject,
+  JsonValue,
 } from "./index.js"
 import type { ChannelSource } from "../channels/contracts.js"
 
-export const SUB_AGENT_CONTRACT_SCHEMA_VERSION = CONTRACT_SCHEMA_VERSION
+export const SUB_AGENT_CONTRACT_SCHEMA_VERSION = 1 as const satisfies ContractSchemaVersion
 
 export type AgentEntityType = "knowbee" | "sub_agent"
 export type RelationshipEntityType =
@@ -19,6 +18,12 @@ export type RelationshipEntityType =
   | "capability"
   | "data_exchange"
 export type AgentStatus = "enabled" | "disabled" | "archived" | "degraded"
+export const AGENT_STATUSES: readonly AgentStatus[] = [
+  "enabled",
+  "disabled",
+  "archived",
+  "degraded",
+] as const
 export type OrchestrationMode = "single_knowbee" | "orchestration"
 export type OrchestrationFallbackStrategyMode =
   | "self_solve"
@@ -78,7 +83,7 @@ export type RelationshipEdgeType =
   | "permission"
   | "capability_delegation"
   | "team_membership"
-export type NicknameEntityType = AgentEntityType | "team"
+export type AgentNameEntityType = AgentEntityType | "team"
 export type NamedDeliveryKind = "data_exchange" | "result_report" | "handoff_context"
 export type TeamResultPolicyMode =
   | "lead_synthesis"
@@ -148,20 +153,23 @@ export interface DelegationPolicy {
   escalationPolicy?: "return_to_parent" | "ask_user" | "stop_with_report"
 }
 
-export interface NicknameSnapshot {
-  entityType: NicknameEntityType
+export interface AgentNameSnapshot {
+  entityType: AgentNameEntityType
   entityId: string
-  nicknameSnapshot: string
+  agentName?: string
+  agentNameSnapshot: string
 }
 
-export interface NicknameNamespaceEntry extends NicknameSnapshot {
+export type AgentAttributionSnapshot = AgentNameSnapshot
+
+export interface AgentNameNamespaceEntry extends AgentNameSnapshot {
   sourcePath?: string
 }
 
-export interface NicknameNamespaceConflict {
-  normalizedNickname: string
-  existing: NicknameNamespaceEntry
-  attempted: NicknameNamespaceEntry
+export interface AgentNameNamespaceConflict {
+  normalizedAgentName: string
+  existing: AgentNameNamespaceEntry
+  attempted: AgentNameNamespaceEntry
 }
 
 export interface OwnerScope {
@@ -239,9 +247,8 @@ export interface BaseAgentConfig {
   schemaVersion: ContractSchemaVersion
   agentType: AgentEntityType
   agentId: string
-  displayName: string
-  nickname?: string
-  normalizedNickname?: string
+  agentName: string
+  normalizedAgentName?: string
   status: AgentStatus
   role: string
   personality: string
@@ -273,6 +280,11 @@ export interface SubAgentConfig extends BaseAgentConfig {
 
 export type AgentConfig = KnowbeeConfig | SubAgentConfig
 
+export interface AgentConfigNameInput {
+  agentType: AgentEntityType
+  agentName?: string
+}
+
 export interface TeamMembership {
   membershipId: string
   teamId: string
@@ -301,8 +313,6 @@ export interface TeamConfig {
   schemaVersion: ContractSchemaVersion
   teamId: string
   displayName: string
-  nickname?: string
-  normalizedNickname?: string
   status: Exclude<AgentStatus, "degraded">
   purpose: string
   ownerAgentId?: string
@@ -365,7 +375,7 @@ export interface TeamExecutionPlan {
   teamExecutionPlanId: string
   parentRunId: string
   teamId: string
-  teamNicknameSnapshot?: string
+  teamNameSnapshot?: string
   ownerAgentId: string
   leadAgentId: string
   memberTaskAssignments: TeamExecutionPlanAssignment[]
@@ -408,8 +418,7 @@ export interface SessionContract {
   owner: OwnerScope
   parentRequestId: string
   status: SubSessionStatus
-  agentDisplayName?: string
-  agentNickname?: string
+  agentNameSnapshot?: string
   orchestrationPlanId?: string
   startedAt?: number
   finishedAt?: number
@@ -421,15 +430,16 @@ export interface SubSessionContract {
   parentSessionId: string
   parentRunId: string
   parentAgentId?: string
-  parentAgentDisplayName?: string
-  parentAgentNickname?: string
+  parentAgentName?: string
+  parentAgentNameSnapshot?: string
   agentId: string
-  agentDisplayName: string
-  agentNickname?: string
+  agentName: string
+  agentNameSnapshot?: string
   commandRequestId: string
   status: SubSessionStatus
   promptBundleId: string
   promptBundleSnapshot?: AgentPromptBundle
+  delegatedExecutionSnapshotFingerprint?: string
   memoryBootstrap?: SubSessionMemoryBootstrap
   modelExecutionSnapshot?: ModelExecutionSnapshot
   startedAt?: number
@@ -482,7 +492,7 @@ export interface SubSessionFeedbackCapsulePayload {
 
 export interface SubSessionMemoryBootstrap {
   ownerScope: SubSessionMemoryOwnerScope
-  nicknameSnapshot?: string
+  agentNameSnapshot?: string
   seedMode: "child_own_state"
   rawTranscriptIncluded: false
   latestCapsuleId?: string
@@ -619,9 +629,10 @@ export interface AgentPromptBundle {
   agentId: string
   agentType: AgentEntityType
   role: string
-  displayNameSnapshot: string
-  nicknameSnapshot?: string
-  personalitySnapshot: string
+  agentName?: string
+  agentNameSnapshot: string
+  personalitySnapshot?: string
+  promptLayerStack?: import("./sub-agent-prompt-layer.js").SubAgentPromptLayer[]
   teamContext: Array<{ teamId: string; displayName: string; roleHint?: string }>
   memoryPolicy: MemoryPolicy
   capabilityPolicy: CapabilityPolicy
@@ -654,8 +665,8 @@ export type AgentPromptFragmentKind =
   | "prompt_source"
   | "imported_profile"
   | "safety_rule"
-  | "self_nickname_rule"
-  | "nickname_attribution_rule"
+  | "self_agent_name_rule"
+  | "agent_name_attribution_rule"
   | "capability_catalog"
   | "capability_binding"
   | "executor_profile_projection"
@@ -687,7 +698,8 @@ export interface CommandRequest {
   parentRunId: string
   subSessionId: string
   targetAgentId: string
-  targetNicknameSnapshot?: string
+  targetAgentName?: string
+  targetAgentNameSnapshot?: string
   topologyExecutor?: {
     graphExecutionPlanId: string
     executorId?: string
@@ -704,7 +716,7 @@ export interface ProgressEvent {
   eventId: string
   parentRunId: string
   subSessionId: string
-  speaker?: NicknameSnapshot
+  speaker?: AgentAttributionSnapshot
   status: SubSessionStatus
   summary: string
   at: number
@@ -723,7 +735,7 @@ export interface ResultReport {
   resultReportId: string
   parentRunId: string
   subSessionId: string
-  source?: NicknameSnapshot
+  source?: AgentAttributionSnapshot
   status: "completed" | "needs_revision" | "failed"
   outputs: Array<{
     outputId: string
@@ -745,8 +757,10 @@ export interface FeedbackRequest {
   previousSubSessionIds: string[]
   targetAgentPolicy: FeedbackTargetAgentPolicy
   targetAgentId?: string
-  targetAgentNicknameSnapshot?: string
-  requestingAgentNicknameSnapshot?: string
+  targetAgentName?: string
+  targetAgentNameSnapshot?: string
+  requestingAgentName?: string
+  requestingAgentNameSnapshot?: string
   synthesizedContextExchangeId?: string
   carryForwardOutputs: Array<{
     outputId: string
@@ -778,8 +792,10 @@ export interface DataExchangePackage {
   exchangeId: string
   sourceOwner: OwnerScope
   recipientOwner: OwnerScope
-  sourceNicknameSnapshot?: string
-  recipientNicknameSnapshot?: string
+  sourceAgentName?: string
+  sourceAgentNameSnapshot?: string
+  recipientAgentName?: string
+  recipientAgentNameSnapshot?: string
   purpose: string
   allowedUse: "temporary_context" | "memory_candidate" | "verification_only"
   retentionPolicy: DataExchangeRetentionPolicy
@@ -794,7 +810,7 @@ export interface UserVisibleAgentMessage {
   identity: RuntimeIdentity
   messageId: string
   parentRunId: string
-  speaker: NicknameSnapshot
+  speaker: AgentAttributionSnapshot
   text: string
   createdAt: number
 }
@@ -803,8 +819,8 @@ export interface NamedHandoffEvent {
   identity: RuntimeIdentity
   handoffId: string
   parentRunId: string
-  sender: NicknameSnapshot
-  recipient: NicknameSnapshot
+  sender: AgentAttributionSnapshot
+  recipient: AgentAttributionSnapshot
   purpose: string
   createdAt: number
 }
@@ -814,8 +830,8 @@ export interface NamedDeliveryEvent {
   deliveryId: string
   parentRunId: string
   deliveryKind: NamedDeliveryKind
-  sender: NicknameSnapshot
-  recipient: NicknameSnapshot
+  sender: AgentAttributionSnapshot
+  recipient: AgentAttributionSnapshot
   summary: string
   exchangeId?: string
   resultReportId?: string
@@ -903,42 +919,61 @@ function addIssue(issues: ContractValidationIssue[], path: string, message: stri
   issues.push({ path, code: "contract_validation_failed", message })
 }
 
-function collapseNicknameWhitespace(value: string): string {
+function collapseAgentNameWhitespace(value: string): string {
   return value.trim().replace(/\s+/gu, " ")
 }
 
-export function normalizeNicknameSnapshot(value: string): string {
-  return collapseNicknameWhitespace(value)
+export function normalizeAgentNameSnapshot(value: string): string {
+  return collapseAgentNameWhitespace(value)
 }
 
-export function normalizeNickname(value: string): string {
-  return collapseNicknameWhitespace(value).toLowerCase()
+export function normalizeAgentName(value: string): string {
+  return collapseAgentNameWhitespace(value).toLowerCase()
 }
 
-export function findNicknameNamespaceConflict(
-  entries: NicknameNamespaceEntry[],
-): NicknameNamespaceConflict | undefined {
-  const seen = new Map<string, NicknameNamespaceEntry>()
+export const DEFAULT_KNOWBEE_AGENT_NAME = "Knowbee"
+
+export function findAgentNameNamespaceConflict(
+  entries: AgentNameNamespaceEntry[],
+): AgentNameNamespaceConflict | undefined {
+  const seen = new Map<string, AgentNameNamespaceEntry>()
   for (const entry of entries) {
-    const normalizedNickname = normalizeNickname(entry.nicknameSnapshot)
-    if (!normalizedNickname) continue
-    const existing = seen.get(normalizedNickname)
+    const normalizedAgentName = normalizeAgentName(entry.agentNameSnapshot)
+    if (!normalizedAgentName) continue
+    const existing = seen.get(normalizedAgentName)
     if (
       existing &&
       (existing.entityType !== entry.entityType || existing.entityId !== entry.entityId)
     ) {
       return {
-        normalizedNickname,
+        normalizedAgentName,
         existing,
         attempted: entry,
       }
     }
-    seen.set(normalizedNickname, entry)
+    seen.set(normalizedAgentName, entry)
   }
   return undefined
 }
 
+export function resolveAgentConfigAgentName(config: AgentConfigNameInput): string {
+  const agentName = normalizeAgentNameSnapshot(config.agentName ?? "")
+  if (agentName) return agentName
+  return config.agentType === "knowbee" ? DEFAULT_KNOWBEE_AGENT_NAME : "Unnamed sub-agent"
+}
+
+export function buildAgentNameSnapshotFromAgentConfig(config: Pick<BaseAgentConfig, "agentType" | "agentId" | "agentName">): AgentNameSnapshot {
+  const agentName = resolveAgentConfigAgentName(config)
+  return {
+    entityType: config.agentType,
+    entityId: config.agentId,
+    agentName,
+    agentNameSnapshot: agentName,
+  }
+}
+
 const USER_FACING_DISPLAY_NAME_ALIASES = ["displayName", "display_name", "nameForDisplay"] as const
+const INTERNAL_IDENTIFIER_PREFIXES = ["agent:", "team:", "session:", "sub_session:"] as const
 
 function rejectUserFacingDisplayNameAliases(
   record: Record<string, unknown>,
@@ -950,7 +985,7 @@ function rejectUserFacingDisplayNameAliases(
       addIssue(
         issues,
         `${path}.${key}`,
-        `${key} is not allowed in user-facing nickname attribution contracts.`,
+        `${key} is not allowed in user-facing agent name attribution contracts.`,
       )
   }
 }
@@ -966,15 +1001,78 @@ function hasNonEmptyString(
   return false
 }
 
-function hasNonEmptyNickname(
+function hasNonEmptyAgentName(
   record: Record<string, unknown>,
   key: string,
   path: string,
   issues: ContractValidationIssue[],
 ): boolean {
-  if (typeof record[key] === "string" && normalizeNickname(record[key]).length > 0) return true
-  addIssue(issues, `${path}.${key}`, `${key} must be a non-empty nickname.`)
+  if (typeof record[key] === "string" && normalizeAgentName(record[key]).length > 0) return true
+  addIssue(issues, `${path}.${key}`, `${key} must be a non-empty agent name.`)
   return false
+}
+
+function looksLikeInternalIdentifier(value: unknown): boolean {
+  if (typeof value !== "string") return false
+  const normalized = normalizeAgentName(value)
+  return INTERNAL_IDENTIFIER_PREFIXES.some((prefix) => normalized.startsWith(prefix))
+}
+
+function validateAgentConfigNameFields(
+  record: Record<string, unknown>,
+  path: string,
+  issues: ContractValidationIssue[],
+): void {
+  const agentNameIsPresent = hasNonEmptyAgentName(record, "agentName", path, issues)
+  if (
+    agentNameIsPresent &&
+    typeof record.agentName === "string" &&
+    typeof record.agentId === "string" &&
+    normalizeAgentName(record.agentName) === normalizeAgentName(record.agentId)
+  ) {
+    addIssue(issues, `${path}.agentName`, "agentName must be a user-facing name, not the internal agentId.")
+  } else if (agentNameIsPresent && looksLikeInternalIdentifier(record.agentName)) {
+    addIssue(issues, `${path}.agentName`, "agentName must not use internal identifier syntax.")
+  }
+  if ("normalizedAgentName" in record && record.normalizedAgentName !== undefined) {
+    const normalizedAgentNameIsPresent = hasNonEmptyAgentName(record, "normalizedAgentName", path, issues)
+    if (normalizedAgentNameIsPresent && looksLikeInternalIdentifier(record.normalizedAgentName)) {
+      addIssue(
+        issues,
+        `${path}.normalizedAgentName`,
+        "normalizedAgentName must not use internal identifier syntax.",
+      )
+    }
+    if (
+      typeof record.agentName === "string" &&
+      typeof record.normalizedAgentName === "string" &&
+      normalizedAgentNameIsPresent
+    ) {
+      const expected = normalizeAgentName(record.agentName)
+      const actual = normalizeAgentName(record.normalizedAgentName)
+      if (actual !== expected) {
+        addIssue(
+          issues,
+          `${path}.normalizedAgentName`,
+          "normalizedAgentName must match the normalized agentName.",
+        )
+      }
+    }
+  }
+
+  for (const key of USER_FACING_DISPLAY_NAME_ALIASES) {
+    if (key in record) addIssue(issues, `${path}.${key}`, `${key} is not allowed in agent config; use agentName.`)
+  }
+  if ("nickname" in record) {
+    addIssue(issues, `${path}.nickname`, "nickname is not allowed in agent config; use agentName.")
+  }
+  if ("normalizedNickname" in record) {
+    addIssue(
+      issues,
+      `${path}.normalizedNickname`,
+      "normalizedNickname is not allowed in agent config; use normalizedAgentName.",
+    )
+  }
 }
 
 function hasArray(
@@ -1091,6 +1189,14 @@ const MEMORY_RETENTION_POLICIES = new Set<MemoryPolicy["retentionPolicy"]>([
   "short_term",
   "long_term",
 ])
+const MEMORY_CAPSULE_MODES = new Set<NonNullable<MemoryPolicy["capsuleMode"]>>([
+  "session_compaction",
+  "rolling_summary",
+])
+const MEMORY_ARCHIVE_REFERENCE_MODES = new Set<NonNullable<MemoryPolicy["archiveReferenceMode"]>>([
+  "summary_reference",
+  "full_reference_disabled",
+])
 const RESOURCE_LOCK_KINDS = new Set<ResourceLockKind>([
   "file",
   "display",
@@ -1145,6 +1251,34 @@ function hasFiniteNumber(
   return false
 }
 
+function optionalNonNegativeIntegerIsValid(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+}
+
+function validateOptionalNonNegativeInteger(
+  record: Record<string, unknown>,
+  key: string,
+  path: string,
+  issues: ContractValidationIssue[],
+): boolean {
+  if (!(key in record) || record[key] === undefined) return true
+  if (optionalNonNegativeIntegerIsValid(record[key])) return true
+  addIssue(issues, `${path}.${key}`, `${key} must be a non-negative integer.`)
+  return false
+}
+
+function validateOptionalBoolean(
+  record: Record<string, unknown>,
+  key: string,
+  path: string,
+  issues: ContractValidationIssue[],
+): boolean {
+  if (!(key in record) || record[key] === undefined) return true
+  if (typeof record[key] === "boolean") return true
+  addIssue(issues, `${path}.${key}`, `${key} must be a boolean.`)
+  return false
+}
+
 function validateStringArray(
   value: unknown,
   path: string,
@@ -1187,6 +1321,52 @@ function validateOwnerScope(
   }
   hasNonEmptyString(value, "ownerId", path, issues)
   return true
+}
+
+function expectedAgentOwnerScope(value: Record<string, unknown>): OwnerScope | undefined {
+  if (
+    (value.agentType === "knowbee" || value.agentType === "sub_agent") &&
+    typeof value.agentId === "string" &&
+    value.agentId.trim().length > 0
+  ) {
+    return { ownerType: value.agentType, ownerId: value.agentId }
+  }
+  return undefined
+}
+
+function ownerScopeMatches(value: unknown, expected: OwnerScope): boolean {
+  return (
+    isRecord(value) &&
+    value.ownerType === expected.ownerType &&
+    typeof value.ownerId === "string" &&
+    value.ownerId.trim() === expected.ownerId.trim()
+  )
+}
+
+function validateMemoryPolicyAgentOwnerScope(
+  value: unknown,
+  path: string,
+  expectedOwner: OwnerScope | undefined,
+  issues: ContractValidationIssue[],
+): void {
+  if (!expectedOwner || !isRecord(value)) return
+  if (!ownerScopeMatches(value.owner, expectedOwner)) {
+    addIssue(issues, `${path}.owner`, "memoryPolicy.owner must match the agent owner scope.")
+  }
+  if (Array.isArray(value.readScopes)) {
+    value.readScopes.forEach((scope, index) => {
+      if (!ownerScopeMatches(scope, expectedOwner)) {
+        addIssue(
+          issues,
+          `${path}.readScopes[${index}]`,
+          "memoryPolicy.readScopes must include only the agent owner scope.",
+        )
+      }
+    })
+  }
+  if (!ownerScopeMatches(value.writeScope, expectedOwner)) {
+    addIssue(issues, `${path}.writeScope`, "memoryPolicy.writeScope must match the agent owner scope.")
+  }
 }
 
 function validateMemoryPolicy(
@@ -1233,6 +1413,40 @@ function validateMemoryPolicy(
       `${path}.writebackReviewRequired`,
       "writebackReviewRequired must be a boolean.",
     )
+  }
+  const rawWindowSizeIsValid = validateOptionalNonNegativeInteger(value, "rawWindowSize", path, issues)
+  const compactThresholdIsValid = validateOptionalNonNegativeInteger(value, "compactThreshold", path, issues)
+  if (
+    "capsuleMode" in value &&
+    value.capsuleMode !== undefined &&
+    (typeof value.capsuleMode !== "string" ||
+      !MEMORY_CAPSULE_MODES.has(value.capsuleMode as NonNullable<MemoryPolicy["capsuleMode"]>))
+  ) {
+    addIssue(issues, `${path}.capsuleMode`, "capsuleMode must be session_compaction or rolling_summary.")
+  }
+  if (
+    "archiveReferenceMode" in value &&
+    value.archiveReferenceMode !== undefined &&
+    (typeof value.archiveReferenceMode !== "string" ||
+      !MEMORY_ARCHIVE_REFERENCE_MODES.has(value.archiveReferenceMode as NonNullable<MemoryPolicy["archiveReferenceMode"]>))
+  ) {
+    addIssue(
+      issues,
+      `${path}.archiveReferenceMode`,
+      "archiveReferenceMode must be summary_reference or full_reference_disabled.",
+    )
+  }
+  validateOptionalBoolean(value, "handoffCapsuleAllowed", path, issues)
+  validateOptionalNonNegativeInteger(value, "lastCompactedAt", path, issues)
+  validateOptionalNonNegativeInteger(value, "capsuleCount", path, issues)
+  if (
+    rawWindowSizeIsValid &&
+    compactThresholdIsValid &&
+    optionalNonNegativeIntegerIsValid(value.rawWindowSize) &&
+    optionalNonNegativeIntegerIsValid(value.compactThreshold) &&
+    value.compactThreshold < value.rawWindowSize
+  ) {
+    addIssue(issues, `${path}.compactThreshold`, "compactThreshold must be greater than or equal to rawWindowSize.")
   }
   return true
 }
@@ -1556,7 +1770,7 @@ function validateRuntimeIdentity(
     addIssue(issues, path, "identity must be an object.")
     return false
   }
-  if (value.schemaVersion !== CONTRACT_SCHEMA_VERSION)
+  if (value.schemaVersion !== SUB_AGENT_CONTRACT_SCHEMA_VERSION)
     addIssue(issues, `${path}.schemaVersion`, "Unsupported contract schema version.")
   if (
     typeof value.entityType !== "string" ||
@@ -1574,13 +1788,13 @@ function validateRuntimeIdentity(
   return true
 }
 
-function validateNicknameSnapshot(
+function validateAgentNameSnapshot(
   value: unknown,
   path: string,
   issues: ContractValidationIssue[],
 ): boolean {
   if (!isRecord(value)) {
-    addIssue(issues, path, "nickname attribution snapshot must be an object.")
+    addIssue(issues, path, "agent name attribution snapshot must be an object.")
     return false
   }
   rejectUserFacingDisplayNameAliases(value, path, issues)
@@ -1592,8 +1806,30 @@ function validateNicknameSnapshot(
     addIssue(issues, `${path}.entityType`, "entityType must be knowbee, sub_agent, or team.")
   }
   hasNonEmptyString(value, "entityId", path, issues)
-  hasNonEmptyNickname(value, "nicknameSnapshot", path, issues)
+  hasNonEmptyString(value, "agentNameSnapshot", path, issues)
+  if ("agentName" in value && value.agentName !== undefined) {
+    hasNonEmptyString(value, "agentName", path, issues)
+    if (
+      typeof value.agentName === "string" &&
+      typeof value.agentNameSnapshot === "string" &&
+      normalizeAgentNameSnapshot(value.agentName) !== normalizeAgentNameSnapshot(value.agentNameSnapshot)
+    ) {
+      addIssue(issues, `${path}.agentName`, "agentName must match agentNameSnapshot.")
+    }
+  }
   return true
+}
+
+function validateAgentAttributionSnapshot(
+  value: unknown,
+  path: string,
+  issues: ContractValidationIssue[],
+): boolean {
+  if (!isRecord(value)) {
+    addIssue(issues, path, "agent name attribution snapshot must be an object.")
+    return false
+  }
+  return validateAgentNameSnapshot(value, path, issues)
 }
 
 function usesExtendedTeamShape(value: Record<string, unknown>): boolean {
@@ -1885,17 +2121,16 @@ export function validateAgentConfig(value: unknown): ContractValidationResult<Ag
       ],
     }
   }
-  if (value.schemaVersion !== CONTRACT_SCHEMA_VERSION)
+  if (value.schemaVersion !== SUB_AGENT_CONTRACT_SCHEMA_VERSION)
     addIssue(issues, "$.schemaVersion", "Unsupported contract schema version.")
   if (value.agentType !== "knowbee" && value.agentType !== "sub_agent") {
     addIssue(issues, "$.agentType", "agentType must be knowbee or sub_agent.")
   }
-  hasNonEmptyString(value, "agentId", "$", issues)
-  hasNonEmptyString(value, "displayName", "$", issues)
-  hasNonEmptyNickname(value, "nickname", "$", issues)
-  if ("normalizedNickname" in value && value.normalizedNickname !== undefined) {
-    hasNonEmptyNickname(value, "normalizedNickname", "$", issues)
+  if (!AGENT_STATUSES.includes(value.status as AgentStatus)) {
+    addIssue(issues, "$.status", "status must be enabled, disabled, archived, or degraded.")
   }
+  hasNonEmptyString(value, "agentId", "$", issues)
+  validateAgentConfigNameFields(value, "$", issues)
   hasNonEmptyString(value, "role", "$", issues)
   hasNonEmptyString(value, "personality", "$", issues)
   validateStringArray(value.specialtyTags, "$.specialtyTags", issues, {
@@ -1905,6 +2140,12 @@ export function validateAgentConfig(value: unknown): ContractValidationResult<Ag
   if ("modelProfile" in value && value.modelProfile !== undefined)
     validateModelProfile(value.modelProfile, "$.modelProfile", issues)
   validateMemoryPolicy(value.memoryPolicy, "$.memoryPolicy", issues)
+  validateMemoryPolicyAgentOwnerScope(
+    value.memoryPolicy,
+    "$.memoryPolicy",
+    expectedAgentOwnerScope(value),
+    issues,
+  )
   validateCapabilityPolicy(value.capabilityPolicy, "$.capabilityPolicy", issues)
   if ("delegationPolicy" in value && value.delegationPolicy !== undefined) {
     validateDelegationPolicy(value.delegationPolicy, "$.delegationPolicy", issues)
@@ -1972,14 +2213,12 @@ export function validateTeamConfig(value: unknown): ContractValidationResult<Tea
       ],
     }
   }
-  if (value.schemaVersion !== CONTRACT_SCHEMA_VERSION)
+  if (value.schemaVersion !== SUB_AGENT_CONTRACT_SCHEMA_VERSION)
     addIssue(issues, "$.schemaVersion", "Unsupported contract schema version.")
   hasNonEmptyString(value, "teamId", "$", issues)
   hasNonEmptyString(value, "displayName", "$", issues)
-  hasNonEmptyNickname(value, "nickname", "$", issues)
-  if ("normalizedNickname" in value && value.normalizedNickname !== undefined) {
-    hasNonEmptyNickname(value, "normalizedNickname", "$", issues)
-  }
+  if ("nickname" in value) addIssue(issues, "$.nickname", "nickname is not allowed in team config; use displayName.")
+  if ("normalizedNickname" in value) addIssue(issues, "$.normalizedNickname", "normalizedNickname is not allowed in team config.")
   hasNonEmptyString(value, "purpose", "$", issues)
   validateStringArray(value.memberAgentIds, "$.memberAgentIds", issues, {
     requireNonEmptyItems: true,
@@ -2070,7 +2309,7 @@ export function validateTeamConfig(value: unknown): ContractValidationResult<Tea
       addIssue(
         issues,
         `$.${forbidden}`,
-        "Teams cannot directly own tools, skills, MCP servers, or permission profiles.",
+        "Teams cannot directly own tools, work abilities, external feature connections, or permission profiles.",
       )
   }
   return issues.length === 0
@@ -2097,8 +2336,19 @@ export function validateTeamExecutionPlan(
   hasNonEmptyString(value, "teamExecutionPlanId", "$", issues)
   hasNonEmptyString(value, "parentRunId", "$", issues)
   hasNonEmptyString(value, "teamId", "$", issues)
-  if ("teamNicknameSnapshot" in value && value.teamNicknameSnapshot !== undefined) {
-    hasNonEmptyNickname(value, "teamNicknameSnapshot", "$", issues)
+  if (
+    "teamNameSnapshot" in value &&
+    value.teamNameSnapshot !== undefined &&
+    !(typeof value.teamNameSnapshot === "string" && normalizeAgentName(value.teamNameSnapshot))
+  ) {
+    addIssue(
+      issues,
+      "$.teamNameSnapshot",
+      "teamNameSnapshot must be a non-empty team name.",
+    )
+  }
+  if ("teamAgentNameSnapshot" in value) {
+    addIssue(issues, "$.teamAgentNameSnapshot", "teamAgentNameSnapshot is not allowed; use teamNameSnapshot.")
   }
   hasNonEmptyString(value, "ownerAgentId", "$", issues)
   hasNonEmptyString(value, "leadAgentId", "$", issues)
@@ -2489,8 +2739,22 @@ export function validateCommandRequest(value: unknown): ContractValidationResult
   hasNonEmptyString(value, "parentRunId", "$", issues)
   hasNonEmptyString(value, "subSessionId", "$", issues)
   hasNonEmptyString(value, "targetAgentId", "$", issues)
-  if ("targetNicknameSnapshot" in value && value.targetNicknameSnapshot !== undefined) {
-    hasNonEmptyNickname(value, "targetNicknameSnapshot", "$", issues)
+  if ("targetAgentName" in value && value.targetAgentName !== undefined) {
+    hasNonEmptyAgentName(value, "targetAgentName", "$", issues)
+  }
+  if ("targetAgentNameSnapshot" in value && value.targetAgentNameSnapshot !== undefined) {
+    hasNonEmptyAgentName(value, "targetAgentNameSnapshot", "$", issues)
+  }
+  if (
+    typeof value.targetAgentName === "string" &&
+    typeof value.targetAgentNameSnapshot === "string" &&
+    normalizeAgentNameSnapshot(value.targetAgentName) !== normalizeAgentNameSnapshot(value.targetAgentNameSnapshot)
+  ) {
+    addIssue(
+      issues,
+      "$.targetAgentName",
+      "targetAgentName must match targetAgentNameSnapshot when both are present.",
+    )
   }
   validateStructuredTaskScope(value.taskScope, "$.taskScope", issues)
   validateStringArray(value.contextPackageIds, "$.contextPackageIds", issues, {
@@ -2528,8 +2792,43 @@ export function validateDataExchangePackage(
   hasNonEmptyString(value, "exchangeId", "$", issues)
   validateOwnerScope(value.sourceOwner, "$.sourceOwner", issues)
   validateOwnerScope(value.recipientOwner, "$.recipientOwner", issues)
-  hasNonEmptyNickname(value, "sourceNicknameSnapshot", "$", issues)
-  hasNonEmptyNickname(value, "recipientNicknameSnapshot", "$", issues)
+  if (!(typeof value.sourceAgentNameSnapshot === "string" && normalizeAgentName(value.sourceAgentNameSnapshot))) {
+    addIssue(
+      issues,
+      "$.sourceAgentNameSnapshot",
+      "sourceAgentNameSnapshot must be a non-empty agent name.",
+    )
+  }
+  if ("sourceAgentName" in value && value.sourceAgentName !== undefined) {
+    hasNonEmptyString(value, "sourceAgentName", "$", issues)
+    if (
+      typeof value.sourceAgentName === "string" &&
+      typeof value.sourceAgentNameSnapshot === "string" &&
+      normalizeAgentNameSnapshot(value.sourceAgentName) !== normalizeAgentNameSnapshot(value.sourceAgentNameSnapshot)
+    ) {
+      addIssue(issues, "$.sourceAgentName", "sourceAgentName must match sourceAgentNameSnapshot.")
+    }
+  }
+  if (
+    !(typeof value.recipientAgentNameSnapshot === "string" && normalizeAgentName(value.recipientAgentNameSnapshot))
+  ) {
+    addIssue(
+      issues,
+      "$.recipientAgentNameSnapshot",
+      "recipientAgentNameSnapshot must be a non-empty agent name.",
+    )
+  }
+  if ("recipientAgentName" in value && value.recipientAgentName !== undefined) {
+    hasNonEmptyString(value, "recipientAgentName", "$", issues)
+    if (
+      typeof value.recipientAgentName === "string" &&
+      typeof value.recipientAgentNameSnapshot === "string" &&
+      normalizeAgentNameSnapshot(value.recipientAgentName) !==
+        normalizeAgentNameSnapshot(value.recipientAgentNameSnapshot)
+    ) {
+      addIssue(issues, "$.recipientAgentName", "recipientAgentName must match recipientAgentNameSnapshot.")
+    }
+  }
   hasNonEmptyString(value, "purpose", "$", issues)
   if (
     typeof value.allowedUse !== "string" ||
@@ -2603,7 +2902,7 @@ export function validateResultReport(
   hasNonEmptyString(value, "parentRunId", "$", issues)
   hasNonEmptyString(value, "subSessionId", "$", issues)
   if ("source" in value && value.source !== undefined)
-    validateNicknameSnapshot(value.source, "$.source", issues)
+    validateAgentAttributionSnapshot(value.source, "$.source", issues)
   if (
     typeof value.status !== "string" ||
     !RESULT_REPORT_STATUSES.has(value.status as ResultReport["status"])
@@ -2810,14 +3109,59 @@ export function validateFeedbackRequest(value: unknown): ContractValidationResul
   ) {
     addIssue(issues, "$.targetAgentId", "targetAgentId must be a string when present.")
   }
-  if ("targetAgentNicknameSnapshot" in value && value.targetAgentNicknameSnapshot !== undefined) {
-    hasNonEmptyNickname(value, "targetAgentNicknameSnapshot", "$", issues)
+  if ("targetAgentName" in value && value.targetAgentName !== undefined) {
+    hasNonEmptyAgentName(value, "targetAgentName", "$", issues)
   }
   if (
-    "requestingAgentNicknameSnapshot" in value &&
-    value.requestingAgentNicknameSnapshot !== undefined
+    "targetAgentNameSnapshot" in value &&
+    value.targetAgentNameSnapshot !== undefined &&
+    !(typeof value.targetAgentNameSnapshot === "string" && normalizeAgentName(value.targetAgentNameSnapshot))
   ) {
-    hasNonEmptyNickname(value, "requestingAgentNicknameSnapshot", "$", issues)
+    addIssue(
+      issues,
+      "$.targetAgentNameSnapshot",
+      "targetAgentNameSnapshot must be a non-empty agent name.",
+    )
+  }
+  if (
+    typeof value.targetAgentName === "string" &&
+    typeof value.targetAgentNameSnapshot === "string" &&
+    normalizeAgentNameSnapshot(value.targetAgentName) !== normalizeAgentNameSnapshot(value.targetAgentNameSnapshot)
+  ) {
+    addIssue(
+      issues,
+      "$.targetAgentName",
+      "targetAgentName must match targetAgentNameSnapshot when both are present.",
+    )
+  }
+  if ("requestingAgentName" in value && value.requestingAgentName !== undefined) {
+    hasNonEmptyAgentName(value, "requestingAgentName", "$", issues)
+  }
+  if (
+    "requestingAgentNameSnapshot" in value &&
+    value.requestingAgentNameSnapshot !== undefined &&
+    !(
+      typeof value.requestingAgentNameSnapshot === "string" &&
+      normalizeAgentName(value.requestingAgentNameSnapshot)
+    )
+  ) {
+    addIssue(
+      issues,
+      "$.requestingAgentNameSnapshot",
+      "requestingAgentNameSnapshot must be a non-empty agent name.",
+    )
+  }
+  if (
+    typeof value.requestingAgentName === "string" &&
+    typeof value.requestingAgentNameSnapshot === "string" &&
+    normalizeAgentNameSnapshot(value.requestingAgentName) !==
+      normalizeAgentNameSnapshot(value.requestingAgentNameSnapshot)
+  ) {
+    addIssue(
+      issues,
+      "$.requestingAgentName",
+      "requestingAgentName must match requestingAgentNameSnapshot when both are present.",
+    )
   }
   if (
     "synthesizedContextExchangeId" in value &&
@@ -2895,9 +3239,32 @@ export function validateAgentPromptBundle(
   hasNonEmptyString(value, "bundleId", "$", issues)
   hasNonEmptyString(value, "agentId", "$", issues)
   hasNonEmptyString(value, "role", "$", issues)
-  hasNonEmptyString(value, "displayNameSnapshot", "$", issues)
-  hasNonEmptyString(value, "personalitySnapshot", "$", issues)
+  hasNonEmptyString(value, "agentNameSnapshot", "$", issues)
+  if ("agentName" in value && value.agentName !== undefined) {
+    hasNonEmptyString(value, "agentName", "$", issues)
+    if (
+      typeof value.agentName === "string" &&
+      typeof value.agentNameSnapshot === "string" &&
+      normalizeAgentNameSnapshot(value.agentName) !== normalizeAgentNameSnapshot(value.agentNameSnapshot)
+    ) {
+      addIssue(issues, "$.agentName", "agentName must match agentNameSnapshot.")
+    }
+  }
+  if ("personalitySnapshot" in value && value.personalitySnapshot !== undefined) {
+    hasNonEmptyString(value, "personalitySnapshot", "$", issues)
+  }
+  if ("promptLayerStack" in value && value.promptLayerStack !== undefined) {
+    if (!Array.isArray(value.promptLayerStack)) {
+      addIssue(issues, "$.promptLayerStack", "promptLayerStack must be an array when present.")
+    }
+  }
   validateMemoryPolicy(value.memoryPolicy, "$.memoryPolicy", issues)
+  validateMemoryPolicyAgentOwnerScope(
+    value.memoryPolicy,
+    "$.memoryPolicy",
+    expectedAgentOwnerScope(value),
+    issues,
+  )
   validateCapabilityPolicy(value.capabilityPolicy, "$.capabilityPolicy", issues)
   validateStructuredTaskScope(value.taskScope, "$.taskScope", issues)
   validateStringArray(value.safetyRules, "$.safetyRules", issues, { requireNonEmptyItems: true })
@@ -2965,7 +3332,7 @@ export function validateUserVisibleAgentMessage(
   validateRuntimeIdentity(value.identity, "$.identity", issues)
   hasNonEmptyString(value, "messageId", "$", issues)
   hasNonEmptyString(value, "parentRunId", "$", issues)
-  validateNicknameSnapshot(value.speaker, "$.speaker", issues)
+  validateAgentAttributionSnapshot(value.speaker, "$.speaker", issues)
   hasNonEmptyString(value, "text", "$", issues)
   return issues.length === 0
     ? { ok: true, value: value as unknown as UserVisibleAgentMessage, issues: [] }
@@ -2992,8 +3359,8 @@ export function validateNamedHandoffEvent(
   validateRuntimeIdentity(value.identity, "$.identity", issues)
   hasNonEmptyString(value, "handoffId", "$", issues)
   hasNonEmptyString(value, "parentRunId", "$", issues)
-  validateNicknameSnapshot(value.sender, "$.sender", issues)
-  validateNicknameSnapshot(value.recipient, "$.recipient", issues)
+  validateAgentAttributionSnapshot(value.sender, "$.sender", issues)
+  validateAgentAttributionSnapshot(value.recipient, "$.recipient", issues)
   hasNonEmptyString(value, "purpose", "$", issues)
   return issues.length === 0
     ? { ok: true, value: value as unknown as NamedHandoffEvent, issues: [] }
@@ -3031,8 +3398,8 @@ export function validateNamedDeliveryEvent(
       "deliveryKind must be data_exchange, result_report, or handoff_context.",
     )
   }
-  validateNicknameSnapshot(value.sender, "$.sender", issues)
-  validateNicknameSnapshot(value.recipient, "$.recipient", issues)
+  validateAgentAttributionSnapshot(value.sender, "$.sender", issues)
+  validateAgentAttributionSnapshot(value.recipient, "$.recipient", issues)
   hasNonEmptyString(value, "summary", "$", issues)
   return issues.length === 0
     ? { ok: true, value: value as unknown as NamedDeliveryEvent, issues: [] }

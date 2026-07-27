@@ -6,7 +6,7 @@
   <img src="./resource/knowbee-1-512.png" alt="Knowbee" width="220" />
 </p>
 
-Sponzey Knowbee는 사용자의 컴퓨터 위에서 동작하는 로컬 우선 개인 AI 비서입니다. 제품 안에서 실제 사용자와 대화하고 작업을 맡는 이름은 `Knowbee`입니다.
+Sponzey Knowbee는 사용자의 컴퓨터 위에서 동작하는 로컬 우선 개인 AI 에이전트 플랫폼입니다. `Knowbee`는 영어 제품명이고, `노비`는 한국어 제품명입니다. 사용자가 메인 에이전트 `agent_name`을 따로 설정하지 않았을 때만 메인 에이전트는 기본 이름 `노비`를 사용하며, 설정된 `agent_name`이 있으면 그 값이 메인 에이전트의 자기 이름이 됩니다.
 
 Knowbee는 단순히 답변만 하는 채팅 봇이 아니라, 요청을 접수하고, 의도를 해석하고, 실행 경로를 고르고, 로컬 도구와 외부 연결을 사용하고, 진행 상태를 추적하고, 결과를 전달한 뒤, 일이 실제로 끝났는지까지 판단하는 작업 조율 시스템을 목표로 합니다.
 
@@ -21,7 +21,7 @@ Knowbee는 단순히 답변만 하는 채팅 봇이 아니라, 요청을 접수�
 - 프롬프트는 `prompts/` 아래 역할별 source file로 분리합니다.
 - 메모리, 검색 근거, 진단 정보, 작업 이력은 목적별로 분리해 저장합니다.
 - 예약, 전달 receipt, audit event, rollback evidence는 구조화된 기록으로 다룹니다.
-- 설정과 토폴로지 화면은 연결 상태를 시각적으로 확인할 수 있도록 구성합니다.
+- 설정과 서브 에이전트 설정 화면은 연결된 기능과 위임 흐름을 시각적으로 확인할 수 있도록 구성합니다.
 - 서브 에이전트와 팀은 명시적인 계약, hierarchy, 권한, 메모리 scope, 위임 session으로 표현합니다.
 
 현재 제품은 `Knowbee + 로컬 Gateway + WebUI + 선택 채널 + 선택 Yeonjang 연장 + 선택 서브 에이전트/팀 오케스트레이션` 구조로 이해하면 됩니다.
@@ -35,7 +35,7 @@ Knowbee는 단순히 답변만 하는 채팅 봇이 아니라, 요청을 접수�
 - MCP 서버와 Skill 등록
 - 대화 채널 설정
 - 런타임 상태, 진단, 고급 설정 확인
-- 설정, 기능, 토폴로지 상태 시각화
+- 설정, 기능, 서브 에이전트 설정, 위임 흐름 상태 시각화
 
 ### AI와 프롬프트 런타임
 
@@ -72,24 +72,24 @@ Yeonjang은 Knowbee가 사용자의 기기, 화면, 키보드, 마우스, 카메
 - Telegram 연동이 구현되어 있습니다.
 - Slack 연동은 구현 작업이 들어가 있으며, 전달, 승인, smoke 검증 쪽 안정화를 계속 진행 중입니다.
 
-### 예약과 웹 검색
+### 예약과 조회
 
 - 일회성/반복 예약은 일반 사용자 run과 분리해 관리합니다.
 - 예약의 동일성, payload, 전달, migration은 자연어 비교가 아니라 구조화된 key로 판단합니다.
-- 웹 검색은 source 후보, 근거, 검증, cache, degraded mode, 엄격한 완료 판정을 사용합니다.
+- 직접 URL 조회, 외부 API, 연장, Skill, MCP 결과는 source 후보, 근거, 검증, cache, degraded mode, 엄격한 완료 판정을 사용합니다.
 - vector 검색은 후보 제공자일 뿐 최종 판단자가 아닙니다.
 
 ### 서브 에이전트와 팀
 
 서브 에이전트는 숨은 별도 봇이 아니라 명시적인 계약과 실행 단위로 다룹니다.
 
-- `Knowbee`는 고정된 최상위 조정자입니다.
-- 서브 에이전트는 고유 nickname, 역할, 모델/기능 요약, 권한, 메모리 scope를 가집니다.
+- 사용자가 설정한 메인 에이전트가 최상위 조정자이며, 별도 이름이 없을 때만 기본 이름 `노비`를 사용합니다.
+- 서브 에이전트는 고유한 `agent_name`, 역할, 모델/기능 요약, 권한, 메모리 scope를 가집니다.
 - hierarchy는 트리 구조이며, 에이전트는 직속 하위 에이전트에게만 위임할 수 있습니다.
-- 팀은 독립 실행자가 아니라 특정 상위 에이전트가 소유한 planning group입니다.
+- 팀은 독립 에이전트가 아니라 특정 상위 에이전트가 소유한 planning group입니다.
 - 팀원은 owner의 직속 하위 에이전트에서 구성합니다.
 - 위임은 sub-session, data exchange package, result report, review verdict, monitoring event를 만듭니다.
-- 사용자가 시작한 요청의 최종 응답은 Knowbee가 책임집니다.
+- 사용자가 시작한 요청의 최종 응답은 메인 에이전트가 책임집니다.
 
 ## 프로젝트 구성
 
@@ -98,7 +98,7 @@ Yeonjang은 Knowbee가 사용자의 기기, 화면, 키보드, 마우스, 카메
 - `packages/cli`
   - daemon 실행과 로컬 명령 진입점
 - `packages/webui`
-  - 설정, 실행 현황, 토폴로지, 태스크 카드, 진단 UI
+  - 설정, 실행 현황, 서브 에이전트 설정, 태스크 카드, 진단 UI
 - `prompts`
   - 런타임 프롬프트 조립에 쓰는 prompt source 파일
 - `Yeonjang`
@@ -113,12 +113,12 @@ Yeonjang은 Knowbee가 사용자의 기기, 화면, 키보드, 마우스, 카메
 ### 요구 사항
 
 - 현재 주 지원 환경은 macOS입니다.
-- Node.js `22+`
+- Node.js `>=22.0.0 <26.0.0`
 - `corepack` 활성화
 - `pnpm@8.10.2`
 - Yeonjang을 소스에서 실행하려면 Rust / Cargo
 
-### 1단계. Node.js 22 준비
+### 1단계. 지원되는 Node.js 버전 준비
 
 ```bash
 nvm install 22
@@ -126,9 +126,9 @@ nvm use 22
 node -v
 ```
 
-`v22.x.x` 형태가 나오면 됩니다.
+`v22.x.x`부터 `v25.x.x` 사이가 나오면 됩니다. 권장 기준 버전은 Node.js 22입니다.
 
-Windows에서 `nvm`을 쓰지 않는다면 먼저 Node.js 22를 설치하고, 새 터미널을 연 뒤 아래로 확인하세요.
+Windows에서 `nvm`을 쓰지 않는다면 Node.js 22부터 25 사이 버전을 설치하고, 새 터미널을 연 뒤 아래로 확인하세요.
 
 ```bash
 node -v
@@ -142,24 +142,17 @@ corepack prepare pnpm@8.10.2 --activate
 pnpm -v
 ```
 
-`corepack` 명령이 없다면 Node 설치가 너무 오래되었거나 불완전한 상태입니다. 먼저 Node.js 22를 다시 설치하세요.
+`corepack` 명령이 없다면 Node 설치가 지원 범위를 벗어났거나 불완전한 상태입니다. 먼저 지원되는 Node.js 버전을 다시 설치하세요.
 
 이 저장소는 `pnpm` 워크스페이스를 사용합니다. `npm install`이 아니라 `pnpm install`을 사용해야 합니다.
 
 ### 3단계. 저장소 내려받기
 
-GitHub 저장소 이름이 이미 `Sponzey-Knowbee`로 바뀌었다면 아래 명령을 사용하세요.
+현재 GitHub 저장소를 내려받습니다.
 
 ```bash
 git clone https://github.com/Sponzey-com/Sponzey-Knowbee.git
 cd Sponzey-Knowbee
-```
-
-원격 저장소 이름을 아직 바꾸지 않았다면 기존 URL로 clone한 뒤 같은 순서로 진행하면 됩니다.
-
-```bash
-git clone https://github.com/Sponzey-com/Sponzey-Nobie.git
-cd Sponzey-Nobie
 ```
 
 ### 4단계. 의존성 설치
@@ -216,7 +209,7 @@ bash scripts/knowbee-start.sh
 
 ### 빠른 설치와 실행
 
-Node.js 22와 pnpm 준비가 끝난 뒤 처음 실행할 때는 아래 순서만 따르면 됩니다.
+지원되는 Node.js 버전과 pnpm 준비가 끝난 뒤 처음 실행할 때는 아래 순서만 따르면 됩니다.
 
 ```bash
 git clone https://github.com/Sponzey-com/Sponzey-Knowbee.git
@@ -224,13 +217,6 @@ cd Sponzey-Knowbee
 pnpm install
 pnpm -r build
 bash scripts/knowbee-start.sh
-```
-
-GitHub 저장소 이름이 아직 `Sponzey-Nobie`라면 앞의 두 줄만 아래처럼 바꿔서 실행하세요.
-
-```bash
-git clone https://github.com/Sponzey-com/Sponzey-Nobie.git
-cd Sponzey-Nobie
 ```
 
 ### 8단계. 자주 쓰는 로컬 제어 명령
@@ -256,6 +242,12 @@ bash scripts/stop-local.sh
 메모:
 
 - `knowbee-start.sh`는 시작 전에 필요한 Gateway 런타임 패키지를 빌드합니다.
+- 로컬 실행과 패키지 실행은 검증된
+  `packages/core/dist/runtime/serve-bundle.js` 산출물을 사용합니다.
+- 스크립트는 구조화된 시작 단계를 표시합니다. 30초 목표는 성능 신호이며, 실행 중인
+  Gateway는 명시적인 ready, failed, cancelled 결과가 나올 때까지 계속 관찰합니다.
+- 현재 Gateway PID, 저장소 소유권, listener, health와 WebUI 시작 검증이 모두 통과한
+  뒤에만 완료 문구를 출력합니다.
 - Gateway나 WebUI가 이미 실행 중이면 `knowbee-start.sh`가 정리 후 다시 시작할 수 있습니다.
 - 재시작 의도를 명확히 남기고 싶으면 `--restart` 옵션을 사용하세요.
 - Windows 네이티브 배치 진입점은 현재 Yeonjang에만 제공됩니다. 로컬 Gateway/WebUI 제어는 셸 스크립트를 기준으로 하므로 Windows에서는 bash 호환 셸을 사용하세요.
@@ -276,6 +268,61 @@ node packages/knowbee/bin/knowbee.js serve
 ```
 
 일반적인 로컬 개발과 설정에서는 WebUI와 서비스 수명주기를 같이 관리하는 `bash scripts/knowbee-start.sh` 사용을 권장합니다.
+
+### 결과물 정리
+
+오래된 진단 내보내기, 외부 서명 요청, 명시한 릴리스 출력 폴더를 확인하거나 정리할 때 admin cleanup 명령을 사용합니다.
+
+미리보기는 파일을 삭제하지 않습니다.
+
+```bash
+node packages/knowbee/bin/knowbee.js admin artifact-cleanup
+node packages/knowbee/bin/knowbee.js admin artifact-cleanup --json
+```
+
+패키지 설치 후에는 같은 미리보기를 아래처럼 실행합니다.
+
+```bash
+knowbee admin artifact-cleanup --json
+```
+
+명시한 릴리스 출력 폴더를 미리 확인할 때:
+
+```bash
+node packages/knowbee/bin/knowbee.js admin artifact-cleanup --release-output-dir ./release-output
+knowbee admin artifact-cleanup --release-output-dir ./release-output
+```
+
+미리보기 결과를 확인한 뒤에만 정리를 실행하세요.
+
+```bash
+node packages/knowbee/bin/knowbee.js admin artifact-cleanup --execute --confirm "CONFIRM ARTIFACT CLEANUP"
+knowbee admin artifact-cleanup --execute --confirm "CONFIRM ARTIFACT CLEANUP"
+```
+
+감사용 reason aggregate가 명시적으로 필요할 때만 아래 옵션을 사용합니다.
+
+```bash
+node packages/knowbee/bin/knowbee.js admin artifact-cleanup --audit --json
+knowbee admin artifact-cleanup --audit --json
+```
+
+기본 출력은 내부 reason code와 파일 경로를 숨깁니다. `--audit`는 집계된 reason count를 보여주지만, raw 파일 경로나 결과물 파일명은 노출하면 안 됩니다.
+
+실제 삭제 성공 경로를 실행하지 않고 설치형 CLI 경로만 smoke 확인하려면:
+
+```bash
+pnpm run smoke:artifact-cleanup-cli
+node scripts/smoke-artifact-cleanup-cli.mjs
+```
+
+삭제 성공 경로까지 확인하려면 격리된 fixture smoke를 실행합니다.
+
+```bash
+node scripts/smoke-artifact-cleanup-cli.mjs --destructive-fixture
+```
+
+destructive fixture smoke는 임시 릴리스 출력 폴더만 사용합니다. 실제 릴리스 출력 폴더나 사용자 state를 대상으로 삼으면 안 됩니다.
 
 ### Yeonjang 실행
 
@@ -339,7 +386,7 @@ cargo run --manifest-path Yeonjang/Cargo.toml
 - Yeonjang support profile은 다음 3가지입니다.
   - `desktop_interactive`: tray-first 데스크톱 앱
   - `desktop_limited`: GUI는 있으나 tray-first를 보장하지 않는 데스크톱 앱
-  - `headless_managed`: MQTT/runtime 전용 managed 노드
+  - `headless_managed`: MQTT/runtime 전용 managed 인스턴스
 - `desktop_interactive`는 숨김 창 + tray 아이콘을 기본으로 사용합니다. 창은 tray 메뉴로 다시 열고, Windows에서는 tray 더블 클릭으로도 다시 열 수 있습니다.
 - Linux는 tray icon click event 지원이 제한적이어서, 창 다시 열기는 tray 메뉴 기준으로 보는 편이 맞습니다.
 - Linux desktop 시작은 `DISPLAY` 또는 `WAYLAND_DISPLAY`가 있어야 합니다. 둘 다 없으면 GUI 스크립트 대신 headless managed 스크립트를 사용하세요.

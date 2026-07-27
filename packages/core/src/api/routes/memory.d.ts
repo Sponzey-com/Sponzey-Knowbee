@@ -1,3 +1,4 @@
 import type { FastifyInstance } from "fastify";
-export declare function registerMemoryRoute(app: FastifyInstance): void;
+import type { KnowbeeConfig } from "../../config/types.js";
+export declare function registerMemoryRoute(app: FastifyInstance, config: KnowbeeConfig): void;
 //# sourceMappingURL=memory.d.ts.map

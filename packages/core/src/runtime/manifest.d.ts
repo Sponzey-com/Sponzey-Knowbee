@@ -1,5 +1,8 @@
+import type { RuntimePaths } from "../config/paths.js";
+import type { KnowbeeConfig } from "../config/types.js";
 import { type ProviderCapabilityMatrix } from "../ai/capabilities.js";
 import { type RolloutSafetySnapshot } from "./rollout-safety.js";
+import { type AdminUiActivationInput } from "../ui/mode.js";
 export interface RuntimeManifestEnvironment {
     node: string;
     pnpm: string | null;
@@ -110,6 +113,10 @@ export interface RuntimeManifestReleasePackage {
     manifestId: string | null;
     releaseVersion: string | null;
     requiredMissingCount: number | null;
+    yeonjangPlatformCapabilityReady: boolean | null;
+    yeonjangPlatformCapabilityRequiredMethods: string[];
+    yeonjangPlatformCapabilityEvidenceCount: number | null;
+    yeonjangPlatformCapabilityFailureCount: number | null;
 }
 export interface RuntimeManifestAdminUi {
     enabled: boolean;
@@ -164,8 +171,12 @@ export interface RuntimeManifestOptions {
     now?: Date;
     includeEnvironment?: boolean;
     includeReleasePackage?: boolean;
+    adminActivation?: AdminUiActivationInput;
+    config: KnowbeeConfig;
+    paths: RuntimePaths;
+    processCwd?: string;
 }
-export declare function buildRuntimeManifest(options?: RuntimeManifestOptions): RuntimeManifest;
+export declare function buildRuntimeManifest(options: RuntimeManifestOptions): RuntimeManifest;
 export declare function getLastRuntimeManifest(): RuntimeManifest | null;
-export declare function refreshRuntimeManifest(options?: RuntimeManifestOptions): RuntimeManifest;
+export declare function refreshRuntimeManifest(options: RuntimeManifestOptions): RuntimeManifest;
 //# sourceMappingURL=manifest.d.ts.map

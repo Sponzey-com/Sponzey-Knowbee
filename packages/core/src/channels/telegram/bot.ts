@@ -1,11 +1,15 @@
 import { Bot } from "grammy"
+import type { ArtifactStorageContext } from "../../artifacts/lifecycle.js"
 import type { TelegramConfig } from "../../config/types.js"
+import { getSession, insertChannelMessageRef } from "../../db/index.js"
 import { eventBus } from "../../events/index.js"
-import { createLogger } from "../../logger/index.js"
-import { cancelRootRun, getRootRun } from "../../runs/store.js"
-import { startIngressRun } from "../../runs/ingress.js"
-import { createInboundMessageRecord } from "../../runs/request-isolation.js"
+import { createLogger, redactLogText } from "../../logger/index.js"
+import type { MemoryJournalRepository } from "../../memory/journal.js"
+import type { AgentHierarchyStorage } from "../../orchestration/hierarchy.js"
+import { submitUserRequest } from "../../runs/ingress.js"
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js"
+import { cancelRootRun, getRootRun } from "../../runs/store.js"
+import type { RootRun } from "../../runs/types.js"
 import {
   buildAccessPolicyFromAllowedIds,
   evaluateInboundAccessPolicy,
@@ -13,21 +17,129 @@ import {
 } from "../access-policy.js"
 import { resolveChannelContinuation } from "../continuation.js"
 import type { InboundEnvelope } from "../contracts.js"
-import { resolveSessionKey, getOrCreateTelegramSession, newSession, parseTelegramSessionKey } from "./session.js"
-import { TypingIndicator } from "./typing.js"
-import { TelegramResponder } from "./responder.js"
-import { FileHandler } from "./file-handler.js"
-import { registerCommands } from "./commands.js"
-import { registerApprovalHandler, setActiveChatForSession, clearActiveChatForSession } from "./approval-handler.js"
-import { getSession, insertChannelMessageRef } from "../../db/index.js"
+import { buildChannelIngressFailureNotice } from "../ingress-failure-notice.js"
+import {
+  type IntakeAcknowledgementControl,
+  deliverIntakeAcknowledgementControl,
+} from "../intake-acknowledgement-control.js"
+import { detectPrimaryMessageLanguage } from "../language.js"
+import {
+  type ChannelNoticeRenderDependencies,
+  renderChannelNoticeText,
+} from "../notice-rendering.js"
+import type { ChannelPendingResponseDeliveryInput } from "../pending-response-delivery.js"
+import {
+  clearActiveChatForSession,
+  registerApprovalHandler,
+  setActiveChatForSession,
+} from "./approval-handler.js"
+import {
+  type TelegramAttachmentKind,
+  type TelegramAttachmentNoticeLanguage,
+  buildTelegramAttachmentDownloadFailureNotice,
+  resolveTelegramAttachmentNoticeLanguage,
+} from "./attachment-notice.js"
+import { telegramAllowedRoomIdsForChatType, telegramRoomTypeForChatType } from "./auth.js"
 import { createTelegramChunkDeliveryHandler } from "./chunk-delivery.js"
+import { registerCommands } from "./commands.js"
+import { FileHandler } from "./file-handler.js"
+import { TelegramResponder, type TelegramResponderLanguage } from "./responder.js"
 import { setTelegramRuntimeError } from "./runtime.js"
 import {
-  telegramAllowedRoomIdsForChatType,
-  telegramRoomTypeForChatType,
-} from "./auth.js"
+  getOrCreateTelegramSession,
+  newSession,
+  parseTelegramSessionKey,
+  resolveSessionKey,
+} from "./session.js"
+import { TypingIndicator } from "./typing.js"
 
 const log = createLogger("channel:telegram")
+
+function telegramBotErrorMessage(error: unknown): string {
+  const raw =
+    error instanceof Error
+      ? error.message
+      : typeof (error as { message?: unknown })?.message === "string"
+        ? (error as { message: string }).message
+        : String(error)
+  return redactLogText(raw)
+}
+
+export function resolveTelegramInboundMessageLanguage(text: string): TelegramResponderLanguage {
+  const language = detectPrimaryMessageLanguage(text)
+  return language === "unknown" ? "en" : language
+}
+
+export function resolveTelegramAttachmentFailureLanguage(
+  caption: string | undefined,
+  languageCode: string | undefined,
+): TelegramAttachmentNoticeLanguage {
+  const captionLanguage = detectPrimaryMessageLanguage(caption ?? "")
+  return captionLanguage === "unknown"
+    ? resolveTelegramAttachmentNoticeLanguage(languageCode)
+    : captionLanguage
+}
+
+function telegramAttachmentFailureOriginalRequest(
+  caption: string | undefined,
+  attachmentKind: TelegramAttachmentKind,
+): string {
+  const normalizedCaption = caption?.trim()
+  return normalizedCaption && normalizedCaption.length > 0
+    ? normalizedCaption
+    : `Telegram ${attachmentKind} attachment request`
+}
+
+async function replyTelegramAttachmentFailureNotice(params: {
+  reply: (text: string) => Promise<unknown>
+  originalRequest: string
+  rawText: string
+  dependencies?: ChannelNoticeRenderDependencies | undefined
+}): Promise<void> {
+  const renderedNotice = await renderChannelNoticeText({
+    originalRequest: params.originalRequest,
+    rawText: params.rawText,
+    ...(params.dependencies ? { dependencies: params.dependencies } : {}),
+  })
+  if (renderedNotice.status === "ready") {
+    await params.reply(renderedNotice.text)
+  } else {
+    log.warn(`Skipped Telegram attachment failure notice delivery: ${renderedNotice.reason}`)
+  }
+}
+
+async function sendTelegramContinuationConfirmation(params: {
+  responder: TelegramResponder
+  originalRequest: string
+  rawText: string
+  dependencies?: ChannelNoticeRenderDependencies | undefined
+}): Promise<void> {
+  const renderedNotice = await renderChannelNoticeText({
+    originalRequest: params.originalRequest,
+    rawText: params.rawText,
+    ...(params.dependencies ? { dependencies: params.dependencies } : {}),
+  })
+  if (renderedNotice.status === "ready") {
+    await params.responder.sendReceipt(renderedNotice.text)
+  } else {
+    log.warn(`Skipped Telegram continuation confirmation delivery: ${renderedNotice.reason}`)
+  }
+}
+
+async function sendTelegramIngressReceipt(params: {
+  responder: TelegramResponder
+  control: IntakeAcknowledgementControl
+}): Promise<number | undefined> {
+  const result = await deliverIntakeAcknowledgementControl({
+    control: params.control,
+    deliver: (text) => params.responder.sendIntakeAcknowledgement(text),
+    onFailure: (error) =>
+      log.fieldDebug(
+        `Telegram intake acknowledgement delivery failed: ${telegramBotErrorMessage(error)}`,
+      ),
+  })
+  return result.status === "delivered" ? result.reference : undefined
+}
 
 export function findTelegramReplyTaskRef(params: {
   chatId: number
@@ -75,9 +187,14 @@ function buildTelegramContinuationEnvelope(params: {
     connectionId: "telegram:primary",
     messageId: String(params.messageId),
     ...(params.threadId !== undefined ? { threadId: String(params.threadId) } : {}),
-    ...(params.replyToMessageId !== undefined ? { replyToMessageId: String(params.replyToMessageId) } : {}),
+    ...(params.replyToMessageId !== undefined
+      ? { replyToMessageId: String(params.replyToMessageId) }
+      : {}),
     sender: { id: String(params.userId ?? 0), providerType: "user" },
-    room: { id: String(params.chatId), type: telegramRoomTypeForChatType(params.chatType ?? "unknown") },
+    room: {
+      id: String(params.chatId),
+      type: telegramRoomTypeForChatType(params.chatType ?? "unknown"),
+    },
     text: params.text ?? "",
     attachments: [],
     mentions: [],
@@ -89,7 +206,12 @@ function buildTelegramContinuationEnvelope(params: {
       createdAt: Date.now(),
     },
     ...(params.replyToMessageId !== undefined
-      ? { continuationContext: { parentMessageId: String(params.replyToMessageId), source: "reply" as const } }
+      ? {
+          continuationContext: {
+            parentMessageId: String(params.replyToMessageId),
+            source: "reply" as const,
+          },
+        }
       : {}),
     dedupeKey: `telegram:${params.chatId}:${params.threadId ?? "main"}:${params.messageId}`,
   }
@@ -101,16 +223,34 @@ export interface SessionStatus {
   running: boolean
 }
 
+export interface TelegramLiveSmokeIngressReceipt {
+  requestId: string
+  runId: string
+  requestGroupId: string
+  finished: Promise<RootRun | undefined>
+}
+
 export class TelegramChannel {
   private bot: Bot
   private runningRuns = new Map<string, Set<string>>()
   private sessionIds = new Map<string, string>()
   private fileHandler: FileHandler
   private pollingTask: Promise<void> | null = null
+  private liveSmokeSequence = 0
+  private liveSmokeStartObservers = new Map<
+    string,
+    (receipt: TelegramLiveSmokeIngressReceipt) => void
+  >()
 
-  constructor(private config: TelegramConfig) {
+  constructor(
+    private config: TelegramConfig,
+    private artifactStorage: ArtifactStorageContext,
+    private noticeRendering?: ChannelNoticeRenderDependencies,
+    private memoryJournal?: MemoryJournalRepository,
+    private hierarchyStorage?: AgentHierarchyStorage,
+  ) {
     this.bot = new Bot(config.botToken)
-    this.fileHandler = new FileHandler(this.bot)
+    this.fileHandler = new FileHandler(this.bot, artifactStorage)
     this._registerHandlers()
   }
 
@@ -155,6 +295,94 @@ export class TelegramChannel {
       runId: latestRunId,
       running: Boolean(runIds && runIds.size > 0),
     }
+  }
+
+  createPendingResponseDeliveryHandler(input: ChannelPendingResponseDeliveryInput) {
+    const session = getSession(input.sessionId)
+    if (!session || session.source !== "telegram" || !session.source_id) return undefined
+    const target = parseTelegramSessionKey(session.source_id)
+    if (!target) return undefined
+    const responder = new TelegramResponder(
+      this.bot,
+      target.chatId,
+      target.threadId,
+      input.language,
+    )
+    return createTelegramChunkDeliveryHandler({
+      artifactStorage: this.artifactStorage,
+      responder,
+      sessionId: input.sessionId,
+      chatId: target.chatId,
+      ...(target.threadId !== undefined ? { threadId: target.threadId } : {}),
+      ...(input.language ? { language: input.language } : {}),
+      getRunId: () => input.runId,
+      deliveryKind: "final",
+      noticeRendering: this.noticeRendering,
+      recordOutgoingMessageRef: (params) => this.recordOutgoingMessageRef(params),
+      logError: (message) => log.error(message),
+    })
+  }
+
+  async acceptLiveSmokeRequest(input: {
+    request: string
+    target: { chatId: number; userId: number; threadId?: number }
+  }): Promise<TelegramLiveSmokeIngressReceipt> {
+    if (!this.bot.isRunning()) throw new Error("telegram_live_smoke_runtime_unavailable")
+    if (!this.config.allowedUserIds.includes(input.target.userId)) {
+      throw new Error("telegram_live_smoke_target_not_allowed")
+    }
+    if (
+      input.target.chatId !== input.target.userId &&
+      !this.config.allowedGroupIds.includes(input.target.chatId)
+    ) {
+      throw new Error("telegram_live_smoke_target_not_allowed")
+    }
+    const request = input.request.trim()
+    if (!request) throw new Error("telegram_live_smoke_request_required")
+
+    this.liveSmokeSequence = (this.liveSmokeSequence + 1) % 1_000_000
+    const messageId = 1_000_000_000 + ((Date.now() + this.liveSmokeSequence) % 1_000_000_000)
+    const channelEventId = `${input.target.chatId}:${input.target.threadId ?? "main"}:${messageId}`
+    let started: TelegramLiveSmokeIngressReceipt | undefined
+    this.liveSmokeStartObservers.set(channelEventId, (receipt) => {
+      started = receipt
+    })
+    try {
+      await this.bot.handleUpdate({
+        update_id: messageId,
+        message: {
+          message_id: messageId,
+          date: Math.floor(Date.now() / 1_000),
+          chat:
+            input.target.chatId === input.target.userId
+              ? {
+                  id: input.target.chatId,
+                  type: "private",
+                  first_name: "Knowbee smoke",
+                }
+              : {
+                  id: input.target.chatId,
+                  type: "supergroup",
+                  title: "Knowbee smoke",
+                  ...(input.target.threadId === undefined ? {} : { is_forum: true as const }),
+                },
+          from: {
+            id: input.target.userId,
+            is_bot: false,
+            first_name: "Knowbee smoke",
+            language_code: "en",
+          },
+          text: request,
+          ...(input.target.threadId === undefined
+            ? {}
+            : { message_thread_id: input.target.threadId, is_topic_message: true }),
+        },
+      })
+    } finally {
+      this.liveSmokeStartObservers.delete(channelEventId)
+    }
+    if (!started) throw new Error("telegram_live_smoke_ingress_not_started")
+    return started
   }
 
   private addSessionRun(sessionKey: string, runId: string): void {
@@ -233,8 +461,9 @@ export class TelegramChannel {
       })
       recordChannelAccessPolicyResult(access)
       if (!access.allowed) {
-        log.warn(`Rejected user=${userId} chat=${chatId} type=${chatType} reason=${access.policy.reasonCode}`)
-        await ctx.reply(access.responseText ?? "This channel request is blocked by Knowbee's access policy.").catch(() => undefined)
+        log.warn(
+          `Rejected user=${userId} chat=${chatId} type=${chatType} reason=${access.policy.reasonCode}`,
+        )
         return
       }
 
@@ -242,7 +471,9 @@ export class TelegramChannel {
 
       const activeSessionStatus = this.getSessionStatus(sessionKey)
       if (activeSessionStatus.running && replyToMessageId === undefined) {
-        log.info(`Session ${sessionKey} already running; accepting message as a new independent run`)
+        log.info(
+          `Session ${sessionKey} already running; accepting message as a new independent run`,
+        )
       }
 
       // Determine message text and handle file attachments
@@ -259,9 +490,22 @@ export class TelegramChannel {
           const prefix = `[첨부파일: ${localPath}]\n`
           text = prefix + (message.caption ?? "")
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
+          const msg = telegramBotErrorMessage(err)
+          const notice = buildTelegramAttachmentDownloadFailureNotice({
+            attachmentKind: "document",
+            language: resolveTelegramAttachmentFailureLanguage(
+              message.caption,
+              ctx.from?.language_code,
+            ),
+            reason: msg,
+          })
           log.error(`Failed to download document: ${msg}`)
-          await ctx.reply(`❌ 파일 다운로드 실패: ${msg}`)
+          await replyTelegramAttachmentFailureNotice({
+            reply: (text) => ctx.reply(text),
+            originalRequest: telegramAttachmentFailureOriginalRequest(message.caption, "document"),
+            rawText: notice.text,
+            dependencies: this.noticeRendering,
+          })
           return
         }
       } else if (message.photo !== undefined && message.photo.length > 0) {
@@ -281,13 +525,30 @@ export class TelegramChannel {
           const filename = `photo_${Date.now()}.jpg`
 
           try {
-            const localPath = await this.fileHandler.downloadFile(largest.file_id, sessionId, filename)
+            const localPath = await this.fileHandler.downloadFile(
+              largest.file_id,
+              sessionId,
+              filename,
+            )
             const prefix = `[첨부파일: ${localPath}]\n`
             text = prefix + (message.caption ?? "")
           } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err)
+            const msg = telegramBotErrorMessage(err)
+            const notice = buildTelegramAttachmentDownloadFailureNotice({
+              attachmentKind: "photo",
+              language: resolveTelegramAttachmentFailureLanguage(
+                message.caption,
+                ctx.from?.language_code,
+              ),
+              reason: msg,
+            })
             log.error(`Failed to download photo: ${msg}`)
-            await ctx.reply(`❌ 사진 다운로드 실패: ${msg}`)
+            await replyTelegramAttachmentFailureNotice({
+              reply: (text) => ctx.reply(text),
+              originalRequest: telegramAttachmentFailureOriginalRequest(message.caption, "photo"),
+              rawText: notice.text,
+              dependencies: this.noticeRendering,
+            })
             return
           }
         }
@@ -305,10 +566,10 @@ export class TelegramChannel {
         userId: String(userId),
       })
 
-      // Set active chat for approval handler
-      setActiveChatForSession(sessionId, chatId, userId, threadId)
+      const language = resolveTelegramInboundMessageLanguage(text)
+      setActiveChatForSession(sessionId, chatId, userId, threadId, language)
 
-      const responder = new TelegramResponder(this.bot, chatId, threadId)
+      const responder = new TelegramResponder(this.bot, chatId, threadId, language)
 
       const typing = new TypingIndicator(async () => {
         await ctx.replyWithChatAction("typing")
@@ -318,10 +579,20 @@ export class TelegramChannel {
       let startedRunId = ""
       const continuation = resolveChannelContinuation({
         envelope: access.envelope,
+        language,
       })
       if (continuation.status === "ambiguous") {
         typing.stop()
-        await responder.sendReceipt(continuation.confirmationPrompt ?? "Please choose which previous task to continue.")
+        const confirmationText =
+          continuation.confirmationNotice?.text ?? continuation.confirmationPrompt
+        if (confirmationText?.trim()) {
+          await sendTelegramContinuationConfirmation({
+            responder,
+            originalRequest: text,
+            rawText: confirmationText,
+            dependencies: this.noticeRendering,
+          })
+        }
         clearActiveChatForSession(sessionId)
         return
       }
@@ -343,64 +614,89 @@ export class TelegramChannel {
         }
 
         const onChunk = createTelegramChunkDeliveryHandler({
+          artifactStorage: this.artifactStorage,
           responder,
           sessionId,
           chatId,
+          language,
           ...(threadId !== undefined ? { threadId } : {}),
           getRunId: () => startedRunId || undefined,
           recordOutgoingMessageRef: (params) => this.recordOutgoingMessageRef(params),
           logError: (message) => log.error(message),
+          noticeRendering: this.noticeRendering,
         })
 
-        const { started, receipt } = startIngressRun({
+        const runtimeConfig = this.noticeRendering?.config
+        if (!runtimeConfig) throw new Error("Telegram root run config snapshot is missing.")
+        if (!this.memoryJournal) throw new Error("Telegram memory journal context is missing.")
+        if (!this.hierarchyStorage)
+          throw new Error("Telegram hierarchy storage context is missing.")
+        const { started, acknowledgement } = submitUserRequest({
+          artifactStorage: this.artifactStorage,
+          memoryJournal: this.memoryJournal,
+          hierarchyStorage: this.hierarchyStorage,
+          config: runtimeConfig,
           message: text,
           sessionId,
-          ...(repliedTaskRef ? { requestGroupId: repliedTaskRef.request_group_id, forceRequestGroupReuse: true } : {}),
+          ...(repliedTaskRef
+            ? { requestGroupId: repliedTaskRef.request_group_id, forceRequestGroupReuse: true }
+            : {}),
           model: undefined,
-          source: "telegram",
-          inboundMessage: createInboundMessageRecord({
+          transport: {
             source: "telegram",
-            sessionId,
             channelEventId: `${chatId}:${threadId ?? "main"}:${message.message_id}`,
             externalChatId: chatId,
             externalThreadId: threadId,
             externalMessageId: message.message_id,
             userId,
-            rawText: text,
-          }),
+          },
           onChunk,
         })
 
         startedRunId = started.runId
         this.addSessionRun(sessionKey, started.runId)
-        if (receipt.text.trim()) {
-          const receiptMessageId = await responder.sendReceipt(receipt.text)
-          const startedRun = getRootRun(startedRunId)
-          recordMessageLedgerEvent({
-            runId: startedRunId,
-            requestGroupId: startedRun?.requestGroupId ?? startedRunId,
-            sessionKey: sessionId,
-            threadKey: sessionKey,
-            channel: "telegram",
-            eventKind: "fast_receipt_sent",
-            deliveryKey: `telegram:receipt:${chatId}:${threadId ?? "main"}:${receiptMessageId}`,
-            idempotencyKey: `telegram:receipt:${startedRunId}:${receiptMessageId}`,
-            status: "sent",
-            summary: "Telegram 접수 메시지를 전송했습니다.",
-            detail: {
-              chatId: String(chatId),
+        this.liveSmokeStartObservers.get(`${chatId}:${threadId ?? "main"}:${message.message_id}`)?.(
+          {
+            requestId: started.runId,
+            runId: started.runId,
+            requestGroupId: getRootRun(started.runId)?.requestGroupId ?? started.runId,
+            finished: started.finished,
+          },
+        )
+        {
+          const receiptMessageId = await sendTelegramIngressReceipt({
+            responder,
+            control: acknowledgement,
+          })
+          if (receiptMessageId !== undefined) {
+            const startedRun = getRootRun(startedRunId)
+            recordMessageLedgerEvent({
+              runId: startedRunId,
+              requestGroupId: startedRun?.requestGroupId ?? startedRunId,
+              sessionKey: sessionId,
+              threadKey: sessionKey,
+              channel: "telegram",
+              eventKind: "fast_receipt_sent",
+              deliveryKey: `telegram:receipt:${chatId}:${threadId ?? "main"}:${receiptMessageId}`,
+              idempotencyKey: `telegram:receipt:${startedRunId}:${receiptMessageId}`,
+              status: "sent",
+              summary: "Telegram 접수 메시지를 전송했습니다.",
+              detail: {
+                acknowledgementControl: acknowledgement,
+                chatId: String(chatId),
+                ...(threadId !== undefined ? { threadId } : {}),
+                messageId: receiptMessageId,
+              },
+            })
+            this.recordOutgoingMessageRef({
+              sessionId,
+              runId: startedRunId,
+              chatId,
               ...(threadId !== undefined ? { threadId } : {}),
               messageId: receiptMessageId,
-            },
-          })
-          this.recordOutgoingMessageRef({
-            sessionId,
-            runId: startedRunId,
-            chatId,
-            ...(threadId !== undefined ? { threadId } : {}),
-            messageId: receiptMessageId,
-            role: "assistant",
-          })
+              role: "assistant",
+            })
+          }
         }
         typing.stop()
         void started.finished.finally(() => {
@@ -409,9 +705,23 @@ export class TelegramChannel {
         })
         return
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
+        const message = telegramBotErrorMessage(err)
+        const notice = buildChannelIngressFailureNotice({
+          provider: "telegram",
+          userMessage: text,
+          reason: message,
+        })
         log.error(`Error handling message: ${message}`)
-        await responder.sendError(message).catch(() => undefined)
+        const renderedNotice = await renderChannelNoticeText({
+          originalRequest: text,
+          rawText: notice.text,
+          ...(this.noticeRendering ? { dependencies: this.noticeRendering } : {}),
+        })
+        if (renderedNotice.status === "ready") {
+          await responder.sendError(renderedNotice.text).catch(() => undefined)
+        } else {
+          log.warn(`Skipped Telegram ingress failure notice delivery: ${renderedNotice.reason}`)
+        }
       } finally {
         if (!startedRunId) {
           typing.stop()
@@ -420,11 +730,11 @@ export class TelegramChannel {
       }
     })
 
-    registerCommands(this.bot, this)
+    registerCommands(this.bot, this, this.noticeRendering)
     registerApprovalHandler(this.bot)
 
     this.bot.catch((err) => {
-      log.error(`grammy error: ${err.message}`)
+      log.error(`grammy error: ${telegramBotErrorMessage(err)}`)
     })
   }
 
@@ -448,14 +758,17 @@ export class TelegramChannel {
         onStart: () => {
           startupSettled = true
           setTelegramRuntimeError(null)
-          eventBus.emit("channel.connected", { channel: "telegram", detail: { transport: "long_polling" } })
+          eventBus.emit("channel.connected", {
+            channel: "telegram",
+            detail: { transport: "long_polling" },
+          })
           resolve()
         },
       })
 
       this.pollingTask = pollingTask
         .catch((err: unknown) => {
-          const message = err instanceof Error ? err.message : String(err)
+          const message = telegramBotErrorMessage(err)
           setTelegramRuntimeError(message)
           if (!startupSettled) {
             reject(err)
@@ -488,5 +801,24 @@ export class TelegramChannel {
 
     const responder = new TelegramResponder(this.bot, target.chatId, target.threadId)
     return responder.sendFinalResponse(text)
+  }
+
+  async sendFileToSession(
+    sessionId: string,
+    filePath: string,
+    caption?: string | undefined,
+  ): Promise<number> {
+    const session = getSession(sessionId)
+    if (!session || session.source !== "telegram" || !session.source_id) {
+      throw new Error(`Telegram session ${sessionId} not found`)
+    }
+
+    const target = parseTelegramSessionKey(session.source_id)
+    if (!target) {
+      throw new Error(`Telegram session ${sessionId} has invalid source_id`)
+    }
+
+    const responder = new TelegramResponder(this.bot, target.chatId, target.threadId)
+    return responder.sendFile(filePath, caption)
   }
 }

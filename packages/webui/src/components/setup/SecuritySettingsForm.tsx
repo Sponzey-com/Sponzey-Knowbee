@@ -1,3 +1,4 @@
+import React from "react"
 import type { SetupSecurityDraft } from "../../contracts/setup"
 import { useUiI18n } from "../../lib/ui-i18n"
 
@@ -8,7 +9,7 @@ export function SecuritySettingsForm({
 }: {
   value: SetupSecurityDraft
   onChange: (patch: Partial<SetupSecurityDraft>) => void
-  errors?: Partial<Record<"approvalTimeout", string>>
+  errors?: Partial<Record<"approvalTimeout" | "maxDelegationTurns", string>>
 }) {
   const { text } = useUiI18n()
 
@@ -37,6 +38,18 @@ export function SecuritySettingsForm({
           onChange={(event) => onChange({ approvalTimeout: Number(event.target.value) })}
         />
         {errors?.approvalTimeout ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.approvalTimeout}</p> : null}
+      </div>
+      <div>
+        <label className="mb-1 block text-sm font-medium text-stone-700">{text("최대 위임 단계", "Maximum Delegation Depth")}</label>
+        <input
+          type="number"
+          min={0}
+          step={1}
+          className="input"
+          value={value.maxDelegationTurns}
+          onChange={(event) => onChange({ maxDelegationTurns: Number(event.target.value) })}
+        />
+        {errors?.maxDelegationTurns ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.maxDelegationTurns}</p> : null}
       </div>
       <div>
         <label className="mb-1 block text-sm font-medium text-stone-700">{text("타임아웃 후 기본 동작", "Fallback After Timeout")}</label>

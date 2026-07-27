@@ -88,7 +88,29 @@ export function splitTextForChannel(text, maxLength) {
         parts.push(remaining);
     return parts;
 }
-export function describeUnsupportedCapability(capability) {
+export function describeUnsupportedCapability(capability, language = "en") {
+    if (language === "ko") {
+        switch (capability) {
+            case "supportsThreads":
+                return "이 채널은 스레드를 지원하지 않습니다. 답변은 기본 대화로 전송됩니다.";
+            case "supportsReplies":
+                return "이 채널은 직접 답장을 지원하지 않습니다. 응답은 일반 메시지로 전송됩니다.";
+            case "supportsEdits":
+                return "이 채널은 메시지 수정을 지원하지 않습니다. 새 수정 메시지가 필요합니다.";
+            case "supportsDeletes":
+                return "이 채널은 메시지 삭제를 지원하지 않습니다.";
+            case "supportsButtons":
+                return "이 채널은 대화형 버튼을 지원하지 않습니다. 텍스트 대체 응답 또는 Web UI 승인을 사용해야 합니다.";
+            case "supportsFiles":
+                return "이 채널은 기본 파일 전달을 지원하지 않습니다. 다운로드 링크나 다른 채널을 사용해야 합니다.";
+            case "supportsTypingIndicator":
+                return "이 채널은 입력 중 표시를 지원하지 않습니다. 진행 상태는 일반 상태 메시지로 표시해야 합니다.";
+            default:
+                return capability
+                    ? `이 채널은 ${capability} 기능을 지원하지 않습니다.`
+                    : "이 채널은 요청한 전달 기능을 지원하지 않습니다.";
+        }
+    }
     switch (capability) {
         case "supportsThreads":
             return "This channel does not support threads. The reply will be sent in the main conversation.";
@@ -97,11 +119,11 @@ export function describeUnsupportedCapability(capability) {
         case "supportsEdits":
             return "This channel does not support message edits. A new corrected message is required.";
         case "supportsDeletes":
-            return "This channel does not support message deletion through Knowbee.";
+            return "This channel does not support message deletion.";
         case "supportsButtons":
-            return "This channel does not support interactive buttons. Knowbee must use a text fallback or Web UI approval.";
+            return "This channel does not support interactive buttons. Use a text fallback or Web UI approval.";
         case "supportsFiles":
-            return "This channel does not support native file delivery. Knowbee must use a download link or another channel.";
+            return "This channel does not support native file delivery. Use a download link or another channel.";
         case "supportsTypingIndicator":
             return "This channel does not support typing indicators. Progress must be shown with normal status messages.";
         default:
@@ -113,10 +135,20 @@ export function describeUnsupportedCapability(capability) {
 export function buildCapabilityFallbackNotice(receipt) {
     if (receipt.status !== "unsupported_capability")
         return undefined;
+    const language = receipt.language ?? receipt.userFacingLanguage ?? "en";
     return {
-        title: "Unsupported channel capability",
-        message: receipt.errorMessage ?? describeUnsupportedCapability(receipt.capability),
+        kind: "channel_capability_fallback_notice",
+        title: language === "ko" ? "지원하지 않는 채널 기능" : "Unsupported channel capability",
+        message: receipt.errorMessage ?? describeUnsupportedCapability(receipt.capability, language),
+        language,
         severity: "warning",
+        deliveryMode: "fallback_notice",
+        textSource: "channel_capability_fallback_notice",
+        renderingRequired: "llm_final_response",
+        finalAnswer: false,
+        assistantIdentityClaim: false,
+        ...(receipt.capability ? { capability: receipt.capability } : {}),
+        ...(receipt.errorCode ? { errorCode: receipt.errorCode } : {}),
     };
 }
 function resolveMaxMessageLength(input) {

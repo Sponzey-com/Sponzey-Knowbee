@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type {
   AgentPromptBundle,
@@ -16,6 +16,11 @@ import {
   getSubAgentResultRetryBudgetLimit,
   reviewSubAgentResult,
 } from "../packages/core/src/agent/sub-agent-result-review.ts"
+import { createTestDbRuntimeFixture, type TestDbRuntimeFixture } from "./fixtures/runtime-db.ts"
+
+let dbRuntime: TestDbRuntimeFixture
+beforeEach(() => { dbRuntime = createTestDbRuntimeFixture("knowbee-sub-agent-review-") })
+afterEach(() => { dbRuntime.dispose() })
 import {
   buildSubSessionFeedbackCycleDirective,
 } from "../packages/core/src/runs/review-cycle-pass.ts"
@@ -27,8 +32,39 @@ import {
   SubSessionRunner,
   createTextResultReport,
 } from "../packages/core/src/orchestration/sub-session-runner.ts"
+import type { LlmDiagnosisProvider } from "../packages/core/src/contracts/llm-diagnosis-provider.ts"
+import type { LlmDiagnosisSchemaRepairProvider } from "../packages/core/src/contracts/llm-diagnosis-schema-repair-provider.ts"
+import type { LlmResultDiagnosisRecord } from "../packages/core/src/contracts/work-record.ts"
 
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
+
+const missingEvidenceResultDiagnosis: LlmResultDiagnosisRecord = {
+  diagnosis_summary: "The child result is missing required source evidence.",
+  sufficiency: "partial",
+  missing_information: ["missing_evidence:answer:source"],
+  conflicts: [],
+  risk: "none",
+  risks: [],
+  confidence: "high",
+  recommended_action: "retry",
+  reason: "The parent review requires source evidence before integration.",
+}
+
+class StaticResultDiagnosisProvider implements LlmDiagnosisProvider, LlmDiagnosisSchemaRepairProvider {
+  constructor(private readonly resultDiagnosis: LlmResultDiagnosisRecord) {}
+
+  diagnoseRequest(): unknown {
+    throw new Error("request diagnosis is not used by this test")
+  }
+
+  diagnoseResult(): unknown {
+    return this.resultDiagnosis
+  }
+
+  repairDiagnosis(): unknown {
+    return this.resultDiagnosis
+  }
+}
 
 function identity(entityType: RuntimeIdentity["entityType"], entityId: string): RuntimeIdentity {
   return {
@@ -149,7 +185,6 @@ function promptBundle(): AgentPromptBundle {
     agentId: "agent:researcher",
     agentType: "sub_agent",
     role: "research worker",
-    displayNameSnapshot: "Researcher",
     personalitySnapshot: "Precise",
     teamContext: [],
     memoryPolicy,
@@ -231,11 +266,17 @@ describe("task007 sub-agent result review", () => {
     const first = reviewSubAgentResult({
       resultReport: resultReport({ evidence: [] }),
       expectedOutputs: [evidenceOutput],
+      strategyFingerprint: "strategy:web-search-v1",
     })
     const second = reviewSubAgentResult({
       resultReport: resultReport({ evidence: [] }),
       expectedOutputs: [evidenceOutput],
       previousFailureKeys: [first.normalizedFailureKey ?? ""],
+      strategyFingerprint: "strategy:web-search-v1",
+      previousAttempts: [{
+        normalizedFailureKey: first.normalizedFailureKey ?? "",
+        strategyFingerprint: "strategy:web-search-v1",
+      }],
     })
 
     expect(first.status).toBe("needs_revision")
@@ -245,7 +286,30 @@ describe("task007 sub-agent result review", () => {
     expect(second.feedbackRequest).toBeUndefined()
   })
 
-  it("keeps legacy retry budget classes unbounded", () => {
+  it("allows the same missing criterion when the execution strategy changed", () => {
+    const first = reviewSubAgentResult({
+      resultReport: resultReport({ evidence: [] }),
+      expectedOutputs: [evidenceOutput],
+      strategyFingerprint: "strategy:web-search-v1",
+    })
+    const second = reviewSubAgentResult({
+      resultReport: resultReport({ evidence: [] }),
+      expectedOutputs: [evidenceOutput],
+      previousFailureKeys: [first.normalizedFailureKey ?? ""],
+      strategyFingerprint: "strategy:direct-source-v2",
+      previousAttempts: [{
+        normalizedFailureKey: first.normalizedFailureKey ?? "",
+        strategyFingerprint: "strategy:web-search-v1",
+      }],
+    })
+
+    expect(second.status).toBe("needs_revision")
+    expect(second.repeatedFailure).toBe(false)
+    expect(second.canRetry).toBe(true)
+    expect(second.feedbackRequest).toBeDefined()
+  })
+
+  it("uses bounded retry budgets for each result-review class", () => {
     expect(getSubAgentResultRetryBudgetLimit("default")).toBe(Number.MAX_SAFE_INTEGER)
     expect(getSubAgentResultRetryBudgetLimit("format_only")).toBe(Number.MAX_SAFE_INTEGER)
     expect(getSubAgentResultRetryBudgetLimit("risk_or_external")).toBe(Number.MAX_SAFE_INTEGER)
@@ -294,9 +358,12 @@ describe("task007 sub-agent result review", () => {
   it("connects typed review to SubSessionRunner lifecycle", async () => {
     const sessions = new Map<string, { status: string }>()
     const events: string[] = []
+    const diagnosisProvider = new StaticResultDiagnosisProvider(missingEvidenceResultDiagnosis)
     const runner = new SubSessionRunner({
       now: () => now,
       idProvider: () => "runner-id",
+      diagnosisProvider,
+      diagnosisRepairProvider: diagnosisProvider,
       loadSubSessionByIdempotencyKey: () => undefined,
       persistSubSession: (subSession) => {
         sessions.set(subSession.subSessionId, {

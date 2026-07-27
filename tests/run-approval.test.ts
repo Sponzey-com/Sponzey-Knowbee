@@ -57,6 +57,29 @@ describe("run approval helpers", () => {
     expect(approval).toBeNull()
   })
 
+  it("does not let an unrelated successful tool bypass privileged action approval", () => {
+    const approval = detectSyntheticApprovalRequest({
+      executionProfile: {
+        approvalRequired: true,
+        approvalTool: "screen_capture",
+      },
+      originalRequest: "현재 상태를 확인한 뒤 화면을 캡처해줘",
+      preview: "상태 확인을 마쳤으며 화면 캡처 승인이 필요합니다.",
+      review: {
+        status: "ask_user",
+        summary: "화면 캡처 전 승인이 필요합니다.",
+      },
+      usesWorkerRuntime: true,
+      requiresPrivilegedToolExecution: true,
+      successfulTools: [{ toolName: "system_status", output: "ready" }],
+      successfulFileDeliveries: [],
+      sawRealFilesystemMutation: false,
+    })
+
+    expect(approval).not.toBeNull()
+    expect(approval?.toolName).toBe("screen_capture")
+  })
+
   it("does not request approval for non-privileged non-worker flows", () => {
     const approval = detectSyntheticApprovalRequest({
       executionProfile: {

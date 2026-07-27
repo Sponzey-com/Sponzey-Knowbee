@@ -42,6 +42,7 @@ export interface GraphExecutionPlan {
 export function buildGraphExecutionPlan(input: {
   workspaceId: string
   graph: ExecutorGraphWorkspace
+  rootAgentNameSnapshot?: string
   now?: string
 }): GraphExecutionPlan {
   const now = input.now ?? new Date(0).toISOString()
@@ -56,12 +57,14 @@ export function buildGraphExecutionPlan(input: {
       executor,
       incomingConnections: incomingByExecutor.get(executor.id) ?? [],
       outgoingConnections: outgoingByExecutor.get(executor.id) ?? [],
+      ...(input.rootAgentNameSnapshot ? { rootAgentNameSnapshot: input.rootAgentNameSnapshot } : {}),
       now,
     })
     const delegationResolution = resolveNodeDelegation({
       executorId: executor.id,
       nodeContractId: executor.sourceNodeId ?? executor.id,
       taskAnalysis,
+      ...(input.rootAgentNameSnapshot ? { rootAgentNameSnapshot: input.rootAgentNameSnapshot } : {}),
       now,
     })
     return {

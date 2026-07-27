@@ -5,6 +5,14 @@ export function resolveSlackSessionKey(channelId: string, threadTs: string): str
   return `slack:${channelId}:${threadTs}`
 }
 
+export function parseSlackSessionKey(
+  sessionKey: string,
+): { channelId: string; threadTs: string } | null {
+  const match = /^slack:([^:]+):([^:]+)$/u.exec(sessionKey)
+  if (!match?.[1] || !match[2]) return null
+  return { channelId: match[1], threadTs: match[2] }
+}
+
 export function getOrCreateSlackSession(sessionKey: string): string {
   const db = getDb()
 

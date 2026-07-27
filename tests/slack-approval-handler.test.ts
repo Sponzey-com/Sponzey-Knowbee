@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { eventBus } from "../packages/core/src/events/index.js"
 import { listLatencyMetrics, resetLatencyMetrics } from "../packages/core/src/observability/latency.js"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.js"
+import { buildReviewedFinalResponse } from "./fixtures/final-response-review.ts"
 
 const getRootRunMock = vi.fn()
 
@@ -14,6 +16,16 @@ const {
   clearActiveSlackConversationForSession,
   handleSlackApprovalAction,
 } = await import("../packages/core/src/channels/slack/approval-handler.ts")
+
+function createPassThroughNoticeRendering() {
+  return {
+    config: DEFAULT_CONFIG,
+    workDir: DEFAULT_CONFIG.profile.workspace,
+    getDefaultModel: () => "test-model",
+    renderFinalResponseText: vi.fn(async (input) =>
+      buildReviewedFinalResponse(input, input.rawText)),
+  }
+}
 
 describe("slack approval handler", () => {
   beforeEach(() => {
@@ -104,6 +116,7 @@ describe("slack approval handler", () => {
       channelId: "C_APPROVAL",
       threadTs: "thread-123",
       userId: "U_APPROVER",
+      noticeRendering: createPassThroughNoticeRendering(),
       reply,
     })).resolves.toBe(true)
 

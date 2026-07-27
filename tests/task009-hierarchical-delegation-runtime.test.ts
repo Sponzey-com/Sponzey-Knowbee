@@ -30,6 +30,7 @@ function threeLevelTopologyFixture(): EnterpriseTopology {
   const triage = topology.nodes.find((node) => node.id === "node:triage")
   if (triage === undefined) throw new Error("expected triage node")
   triage.children = ["node:review"]
+  triage.allowedSystemIds = ["system:crm"]
   topology.nodes.push({
     schemaVersion: 1,
     entityType: "node",
@@ -66,6 +67,18 @@ function threeLevelTopologyFixture(): EnterpriseTopology {
     relationType: "delegates_to",
     from: { entityType: "node", id: "node:triage" },
     to: { entityType: "node", id: "node:review" },
+  })
+  topology.relations.push({
+    schemaVersion: 1,
+    entityType: "relation",
+    id: "relation:triage-crm",
+    name: "Triage uses CRM",
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+    relationType: "uses_system",
+    from: { entityType: "node", id: "node:triage" },
+    to: { entityType: "enterprise_system", id: "system:crm" },
   })
   return topology
 }

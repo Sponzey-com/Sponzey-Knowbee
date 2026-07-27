@@ -1,4 +1,4 @@
-import { type PromptSourceLocaleParityResult } from "./knowbee-md.js";
+import { type PromptSourceAssemblyCoverageReport, type PromptSourceLocaleParityResult } from "./knowbee-md.js";
 export type PromptRegressionSeverity = "error" | "warning";
 export type PromptRegressionLocale = "ko" | "en";
 export interface PromptRegressionIssue {
@@ -43,10 +43,14 @@ export interface PromptSourceRegressionResult {
     localeParity: PromptSourceLocaleParityResult;
     responsibility: PromptResponsibilityRuleResult[];
     policyCompatibility: PromptResponsibilityRuleResult[];
+    assemblyCoverage: PromptAssemblyCoverageRegressionResult[];
     impact: PromptImpactScenarioResult[];
     issues: PromptRegressionIssue[];
 }
-export declare function runPromptSourceRegression(workDir?: string, options?: {
+export interface PromptAssemblyCoverageRegressionResult extends PromptSourceAssemblyCoverageReport {
+    locale: PromptRegressionLocale;
+}
+export declare function runPromptSourceRegression(workDir: string, options?: {
     locales?: PromptRegressionLocale[];
 }): PromptSourceRegressionResult;
 //# sourceMappingURL=prompt-regression.d.ts.map

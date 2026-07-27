@@ -91,7 +91,10 @@ export function createWorkOrderRuntimeEnvelope(input) {
         commandRequestId,
         subSessionId,
         targetAgentId: input.targetAgentId ?? input.nodeContractSnapshot.id,
-        ...(input.targetNicknameSnapshot !== undefined ? { targetNicknameSnapshot: input.targetNicknameSnapshot } : {}),
+        ...(input.targetAgentName !== undefined || input.targetAgentNameSnapshot !== undefined
+            ? { targetAgentName: input.targetAgentName ?? input.targetAgentNameSnapshot }
+            : {}),
+        ...(input.targetAgentNameSnapshot !== undefined ? { targetAgentNameSnapshot: input.targetAgentNameSnapshot } : {}),
         contextPackageIds: [contextPackageId],
         expectedOutputs,
     });
@@ -344,7 +347,8 @@ function buildWorkOrderCommandRequest(input) {
         parentRunId: input.workOrder.topologyRunId,
         subSessionId: input.subSessionId,
         targetAgentId: input.targetAgentId,
-        ...(input.targetNicknameSnapshot !== undefined ? { targetNicknameSnapshot: input.targetNicknameSnapshot } : {}),
+        ...(input.targetAgentName !== undefined ? { targetAgentName: input.targetAgentName } : {}),
+        ...(input.targetAgentNameSnapshot !== undefined ? { targetAgentNameSnapshot: input.targetAgentNameSnapshot } : {}),
         ...(topologyExecutor ? { topologyExecutor } : {}),
         taskScope: {
             goal: input.workOrder.objective,

@@ -1,5 +1,6 @@
 import { createPublicKey, verify } from "node:crypto"
 import type { DiscordConfig } from "../../config/types.js"
+import { redactLogText } from "../../logger/index.js"
 import {
   buildUnsupportedCapabilityReceipt,
   createRawPayloadRef,
@@ -20,6 +21,7 @@ import {
   type JsonValue,
   type OutboundMessage,
 } from "../contracts.js"
+import { resolveUserFacingMessageLanguage } from "../language.js"
 import {
   getDiscordRuntimeStatus,
   setDiscordRuntimeError,
@@ -29,6 +31,11 @@ import {
 
 export type DiscordConnectionMode = "gateway" | "interactions_endpoint"
 export type DiscordDoctorSeverity = "error" | "warning"
+
+function discordAdapterErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 
 export interface DiscordDoctorIssue {
   code: string
@@ -556,7 +563,7 @@ export class DiscordChannelAdapter implements ChannelAdapter {
       setDiscordRuntimeRunning(true)
       setDiscordRuntimeError(null)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = discordAdapterErrorMessage(error)
       setDiscordRuntimeError(message)
       throw error
     }
@@ -640,6 +647,7 @@ export class DiscordChannelAdapter implements ChannelAdapter {
         capability: unsupportedCapability,
         idempotencyKey: message.idempotencyKey,
         timestamp: this.now(),
+        userFacingLanguage: message.userFacingLanguage,
       })
     }
 
@@ -699,7 +707,7 @@ export class DiscordChannelAdapter implements ChannelAdapter {
           : {}),
       }
     } catch (error) {
-      const messageText = error instanceof Error ? error.message : String(error)
+      const messageText = discordAdapterErrorMessage(error)
       const receipt: DeliveryReceipt = {
         channelId: outboundMessage.channelId,
         provider: outboundMessage.provider,
@@ -785,6 +793,7 @@ function normalizeDiscordMessage(
     mentions,
     timestamp,
     rawPayloadRef: createRawPayloadRef({ provider: "discord", payload: rawPayload, createdAt: timestamp }),
+    userFacingLanguage: resolveUserFacingMessageLanguage(text),
     ...(replyToMessageId
       ? { continuationContext: { parentMessageId: replyToMessageId, source: "reply" as const } }
       : {}),
@@ -815,6 +824,7 @@ function normalizeDiscordSlashCommand(
     mentions: [],
     timestamp,
     rawPayloadRef: createRawPayloadRef({ provider: "discord", payload: rawPayload, createdAt: timestamp }),
+    userFacingLanguage: resolveUserFacingMessageLanguage(formatDiscordSlashCommand(body.data)),
     dedupeKey: `discord:interaction:${body.id ?? timestamp}`,
   }
 }

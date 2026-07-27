@@ -251,4 +251,33 @@ describe("Discord adapter facade policies", () => {
       idempotencyKey: "discord:thread-policy",
     })
   })
+
+  it("redacts Discord delivery receipt errors", async () => {
+    const secret = "sk-task0620-discord-secret-value"
+    const localPath = "/Users/dongwooshin/.knowbee/discord/raw.json"
+    const adapter = createDiscordChannelAdapter({
+      config: discordConfig,
+      now: () => DISCORD_NOW,
+      transport: {
+        async start() {},
+        async stop() {},
+        async healthCheck() {
+          return { status: "healthy", checkedAt: DISCORD_NOW, message: "fixture transport is healthy." }
+        },
+        async sendMessage() {
+          throw new Error(`discord failed token=${secret} path=${localPath}`)
+        },
+      },
+    })
+
+    const receipt = await adapter.sendMessage({
+      ...buildDiscordOutboundMessage(),
+      idempotencyKey: "discord:redacted-error",
+    })
+    expect(receipt.status).toBe("failed")
+    expect(receipt.errorMessage).toContain("***")
+    expect(receipt.errorMessage).toContain("[internal-path-redacted]")
+    expect(receipt.errorMessage).not.toContain(secret)
+    expect(receipt.errorMessage).not.toContain(localPath)
+  })
 })

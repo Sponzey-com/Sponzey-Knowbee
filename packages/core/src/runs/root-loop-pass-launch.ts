@@ -1,8 +1,10 @@
-import { runExecutionCyclePass, type ExecutionCycleState } from "./execution-cycle-pass.js"
+import type { ExecutionCycleState, runExecutionCyclePass } from "./execution-cycle-pass.js"
 import type { LoopDirective } from "./loop-directive.js"
-import { runLoopEntryPass } from "./loop-entry-pass.js"
+import type { runLoopEntryPass } from "./loop-entry-pass.js"
 import type { RootLoopDependencies, RootLoopParams } from "./root-loop.js"
 import { buildStructuredExecutionBrief } from "./request-prompt.js"
+import { loadPromptValue } from "../memory/prompt-fragments.js"
+import type { FinalResponseIdentityContext } from "./final-response-renderer.js"
 
 export interface RootLoopEntryPassLaunch {
   params: Parameters<typeof runLoopEntryPass>[0]
@@ -54,6 +56,8 @@ export function prepareRootLoopEntryPassLaunch(
 
 export function prepareRootExecutionCyclePassLaunch(
   params: {
+    artifactStorage: RootLoopParams["artifactStorage"]
+    memoryJournal: RootLoopParams["memoryJournal"]
     runId: string
     sessionId: string
     requestGroupId: string
@@ -67,11 +71,16 @@ export function prepareRootExecutionCyclePassLaunch(
     structuredRequest?: RootLoopParams["structuredRequest"]
     requestMessage: string
     workDir: string
+    config: RootLoopParams["config"]
+    finalResponseIdentityContext?: FinalResponseIdentityContext | undefined
     toolsEnabled?: boolean
     workerSessionId?: string
     isRootRequest: boolean
     contextMode: RootLoopParams["contextMode"]
     taskProfile: RootLoopParams["taskProfile"]
+    scheduleId?: string
+    includeScheduleMemory?: boolean
+    memorySearchQuery?: string
     wantsDirectArtifactDelivery: boolean
     requiresFilesystemMutation: boolean
     requiresPrivilegedToolExecution: boolean
@@ -89,24 +98,27 @@ export function prepareRootExecutionCyclePassLaunch(
   },
   dependencies: RootLoopDependencies,
 ): RootExecutionCyclePassLaunch {
-  const executionMessage = params.structuredRequest && params.state.currentMessage === params.requestMessage
-    ? buildStructuredExecutionBrief({
-      header: "[Root Task Execution]",
-      introLines: [
-        "이 요청은 intake를 마치고 실제 실행 단계로 전달되었습니다.",
-      ],
-      originalRequest: params.originalRequest,
-      structuredRequest: params.structuredRequest,
-      executionSemantics: params.executionSemantics,
-      closingLines: [
-        "체크리스트 기준으로 실제 작업을 순서대로 수행하세요.",
-        "완료되지 않은 항목이 남아 있으면 종료하지 말고 계속 진행하세요.",
-      ],
-    })
-    : params.state.currentMessage
+  const executionMessage =
+    params.structuredRequest && params.state.currentMessage === params.requestMessage
+      ? buildStructuredExecutionBrief({
+          header: loadPromptValue("root_execution_header_user"),
+          introLines: [loadPromptValue("root_execution_intake_complete_intro_user")],
+          originalRequest: params.originalRequest,
+          structuredRequest: params.structuredRequest,
+          executionSemantics: params.executionSemantics,
+          closingLines: [
+            loadPromptValue("root_execution_checklist_order_closing_user"),
+            loadPromptValue("root_execution_incomplete_checklist_closing_user"),
+          ],
+        })
+      : params.state.currentMessage
+  const admittedCapabilityExecutionScope =
+    dependencies.getAdmittedCapabilityExecutionScope?.()
 
   return {
     params: {
+      artifactStorage: params.artifactStorage,
+      memoryJournal: params.memoryJournal,
       runId: params.runId,
       sessionId: params.sessionId,
       requestGroupId: params.requestGroupId,
@@ -119,9 +131,23 @@ export function prepareRootExecutionCyclePassLaunch(
       },
       executionSemantics: params.executionSemantics,
       originalRequest: params.originalRequest,
-      memorySearchQuery: params.requestMessage,
+      ...(params.structuredRequest?.response_language_mode
+        ? { responseLanguageMode: params.structuredRequest.response_language_mode }
+        : {}),
+      memorySearchQuery: params.memorySearchQuery ?? params.requestMessage,
+      ...(admittedCapabilityExecutionScope
+        ? {
+            admittedCapabilityExecutionScope,
+          }
+        : {}),
+      ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
+      ...(params.includeScheduleMemory ? { includeScheduleMemory: true } : {}),
       verificationRequest: params.requestMessage,
       workDir: params.workDir,
+      config: params.config,
+      ...(params.finalResponseIdentityContext
+        ? { finalResponseIdentityContext: params.finalResponseIdentityContext }
+        : {}),
       ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
       ...(dependencies.onDeliveryError ? { onDeliveryError: dependencies.onDeliveryError } : {}),
       abortExecutionStream: params.abortExecutionStream,
@@ -134,7 +160,8 @@ export function prepareRootExecutionCyclePassLaunch(
       requiresPrivilegedToolExecution: params.requiresPrivilegedToolExecution,
       pendingToolParams: params.pendingToolParams,
       filesystemMutationPaths: params.filesystemMutationPaths,
-      successfulTools: [],
+      successfulTools: params.state.successfulTools,
+      completionConditions: params.structuredRequest?.complete_condition ?? [],
       seenFollowupPrompts: params.seenFollowupPrompts,
       seenCommandFailureRecoveryKeys: params.seenCommandFailureRecoveryKeys,
       seenExecutionRecoveryKeys: params.seenExecutionRecoveryKeys,
@@ -142,7 +169,9 @@ export function prepareRootExecutionCyclePassLaunch(
       seenAiRecoveryKeys: params.seenAiRecoveryKeys,
       recoveryBudgetUsage: params.recoveryBudgetUsage,
       priorAssistantMessages: params.priorAssistantMessages,
-      syntheticApprovalAlreadyApproved: dependencies.getSyntheticApprovalAlreadyApproved(),
+      syntheticApprovalAlreadyApproved: dependencies.getSyntheticApprovalAlreadyApproved(
+        params.executionSemantics.approvalTool,
+      ),
       syntheticApprovalRuntimeDependencies: params.syntheticApprovalRuntimeDependencies,
       defaultMaxDelegationTurns: params.defaultMaxDelegationTurns,
     },
@@ -165,6 +194,12 @@ export function prepareRootExecutionCyclePassLaunch(
       grantRunApprovalScope: dependencies.grantRunApprovalScope,
       grantRunSingleApproval: dependencies.grantRunSingleApproval,
       ...(dependencies.onReviewError ? { onReviewError: dependencies.onReviewError } : {}),
+      recordCanonicalAttempt: dependencies.recordCanonicalAttempt,
+      recordCanonicalRecoveryReentry: dependencies.recordCanonicalRecoveryReentry,
+      recordCanonicalCompletionOutcome: dependencies.recordCanonicalCompletionOutcome,
+      recordCanonicalDelivery: dependencies.recordCanonicalDelivery,
+      stageCanonicalPendingResponse: dependencies.stageCanonicalPendingResponse,
+      consumeCanonicalPendingResponse: dependencies.consumeCanonicalPendingResponse,
     },
   }
 }

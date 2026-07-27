@@ -1,6 +1,7 @@
 import { basename } from "node:path"
 import { readFile } from "node:fs/promises"
 import type { SlackConfig } from "../../config/types.js"
+import type { ApprovalAggregateTextLanguage } from "../approval-aggregation.js"
 import {
   SlackRateLimitError,
   buildSlackSentDeliveryReceipt,
@@ -9,6 +10,14 @@ import {
   type SlackFileDeliveryResult,
   type SlackTextPartsDeliveryResult,
 } from "./message-delivery.js"
+import {
+  buildToolStatusControl,
+  renderToolStatusControlText,
+  type InteractiveControlText,
+} from "../interactive-control.js"
+import type { IntakeAcknowledgementControlText } from "../intake-acknowledgement-control.js"
+
+export type SlackResponderLanguage = "ko" | "en"
 
 export interface SlackApiEnvelope<T = Record<string, unknown>> {
   ok: boolean
@@ -52,6 +61,7 @@ export class SlackResponder {
     private config: SlackConfig,
     private channelId: string,
     private threadTs: string,
+    private language: SlackResponderLanguage = "ko",
   ) {}
 
   private async api<T extends SlackApiEnvelope = SlackApiEnvelope>(
@@ -97,7 +107,7 @@ export class SlackResponder {
     const response = await this.api<{ ok: boolean; ts: string }>("chat.postMessage", {
       channel: this.channelId,
       thread_ts: this.threadTs,
-      text: `Running: ${toolName}...`,
+      text: buildSlackToolStatusText(toolName, "running", this.language),
     })
     return response.ts
   }
@@ -106,7 +116,7 @@ export class SlackResponder {
     await this.api("chat.update", {
       channel: this.channelId,
       ts: messageId,
-      text: `${success ? "Done" : "Failed"}: ${toolName}`,
+      text: buildSlackToolStatusText(toolName, success ? "done" : "failed", this.language),
     })
   }
 
@@ -163,7 +173,7 @@ export class SlackResponder {
     const response = await this.api<{ ok: boolean; ts: string }>("chat.postMessage", {
       channel: this.channelId,
       thread_ts: this.threadTs,
-      text: `Error: ${message}`,
+      text: message,
     })
     return response.ts
   }
@@ -177,10 +187,19 @@ export class SlackResponder {
     return response.ts
   }
 
-  async sendApprovalRequest(runId: string, text: string): Promise<string> {
+  async sendIntakeAcknowledgement(text: IntakeAcknowledgementControlText): Promise<string> {
+    return this.sendReceipt(text)
+  }
+
+  async sendApprovalRequest(
+    runId: string,
+    text: InteractiveControlText,
+    language: ApprovalAggregateTextLanguage = "ko",
+  ): Promise<string> {
+    const copy = slackApprovalRequestCopy(language)
     const fallbackText = [
-      "승인 대기 중입니다.",
-      "바로 아래 버튼으로 승인하거나, 버튼이 보이지 않으면 이 스레드에 `approve`, `approve once`, `deny` 중 하나로 답해주세요.",
+      copy.pending,
+      copy.actionGuide,
     ].join("\n")
 
     await this.api<{ ok: boolean; ts: string }>("chat.postMessage", {
@@ -202,20 +221,20 @@ export class SlackResponder {
         elements: [
           {
             type: "button",
-            text: { type: "plain_text", text: "전체 승인" },
+            text: { type: "plain_text", text: copy.approveAll },
             action_id: "approval_allow_run",
             value: runId,
             style: "primary",
           },
           {
             type: "button",
-            text: { type: "plain_text", text: "이번 단계만" },
+            text: { type: "plain_text", text: copy.approveOnce },
             action_id: "approval_allow_once",
             value: runId,
           },
           {
             type: "button",
-            text: { type: "plain_text", text: "거부" },
+            text: { type: "plain_text", text: copy.deny },
             action_id: "approval_deny",
             value: runId,
             style: "danger",
@@ -227,7 +246,7 @@ export class SlackResponder {
     const response = await this.api<{ ok: boolean; ts: string }>("chat.postMessage", {
       channel: this.channelId,
       thread_ts: this.threadTs,
-      text: `승인 요청: ${text}`,
+      text: `${copy.title}: ${text}`,
       blocks,
     })
     return response.ts
@@ -307,5 +326,45 @@ export class SlackResponder {
         },
       }),
     }
+  }
+}
+
+function buildSlackToolStatusText(
+  toolName: string,
+  status: "running" | "done" | "failed",
+  language: SlackResponderLanguage,
+): string {
+  return renderToolStatusControlText(buildToolStatusControl({
+    toolLabel: toolName,
+    status: status === "done" ? "succeeded" : status,
+    language,
+  }), "slack")
+}
+
+function slackApprovalRequestCopy(language: ApprovalAggregateTextLanguage): {
+  pending: string
+  actionGuide: string
+  approveAll: string
+  approveOnce: string
+  deny: string
+  title: string
+} {
+  if (language === "en") {
+    return {
+      pending: "Approval is pending.",
+      actionGuide: "Use the buttons below, or reply in this thread with `approve`, `approve once`, or `deny`.",
+      approveAll: "Approve all",
+      approveOnce: "This step only",
+      deny: "Deny",
+      title: "Approval request",
+    }
+  }
+  return {
+    pending: "승인 대기 중입니다.",
+    actionGuide: "바로 아래 버튼으로 승인하거나, 버튼이 보이지 않으면 이 스레드에 `approve`, `approve once`, `deny` 중 하나로 답해주세요.",
+    approveAll: "전체 승인",
+    approveOnce: "이번 단계만",
+    deny: "거부",
+    title: "승인 요청",
   }
 }

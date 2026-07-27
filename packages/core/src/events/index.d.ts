@@ -86,7 +86,6 @@ export interface KnowbeeEvents {
         previewUrl?: string;
         downloadUrl?: string;
         previewable?: boolean;
-        filePath: string;
         fileName: string;
         mimeType?: string;
         caption?: string;

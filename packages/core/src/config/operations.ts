@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from "node:crypto"
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import JSON5 from "json5"
 import BetterSqlite3 from "better-sqlite3"
-import { PATHS } from "./paths.js"
+import type { RuntimePaths } from "./paths.js"
 import { MIGRATIONS } from "../db/migrations.js"
 import { closeDb, getDb } from "../db/index.js"
-import { sanitizeUserFacingError } from "../runs/error-sanitizer.js"
+import { redactLogText } from "../logger/index.js"
+import { sanitizeUserFacingError, type SanitizedErrorSummary } from "../runs/error-sanitizer.js"
 import {
   ensurePromptSourceFiles,
   exportPromptSourcesToFile,
@@ -52,6 +53,14 @@ export interface DatabaseImportResult {
   status: MigrationVersionStatus
 }
 
+export interface DatabaseImportLifecycleObserver {
+  onBackedUp(): void
+  onReplacing(): void
+  onVerifying(): void
+  onRollingBack(): void
+  onRollbackCompleted(): void
+}
+
 export interface ConfigExportResult {
   id: string
   configPath: string
@@ -90,8 +99,15 @@ export interface ConfigurationOperationsSnapshot {
   }
 }
 
-function backupRoot(): string {
-  return join(PATHS.stateDir, "backups")
+export type ConfigurationOperationPaths = Pick<RuntimePaths, "stateDir" | "configFile" | "dbFile">
+
+function configOperationRollbackErrorSummary(error: unknown): SanitizedErrorSummary {
+  const rawMessage = error instanceof Error ? error.message : String(error)
+  return sanitizeUserFacingError(redactLogText(rawMessage))
+}
+
+function backupRoot(paths: ConfigurationOperationPaths): string {
+  return join(paths.stateDir, "backups")
 }
 
 function timestampId(prefix: string): string {
@@ -134,7 +150,7 @@ function readMigrationStatusFromDb(db: BetterSqlite3.Database, dbPath: string, e
   }
 }
 
-export function getDatabaseMigrationStatus(dbPath = PATHS.dbFile): MigrationVersionStatus {
+export function getDatabaseMigrationStatus(dbPath: string): MigrationVersionStatus {
   const resolvedPath = resolve(dbPath)
   if (!existsSync(resolvedPath)) {
     const latestVersion = MIGRATIONS.reduce((max, migration) => Math.max(max, migration.version), 0)
@@ -158,7 +174,7 @@ export function getDatabaseMigrationStatus(dbPath = PATHS.dbFile): MigrationVers
   }
 }
 
-export function dryRunDatabaseMigrations(dbPath = PATHS.dbFile): MigrationDryRunResult {
+export function dryRunDatabaseMigrations(dbPath: string): MigrationDryRunResult {
   const status = getDatabaseMigrationStatus(dbPath)
   const pending = new Set(status.pendingVersions)
   const willApply = MIGRATIONS
@@ -187,14 +203,34 @@ function copyOptionalSqliteSidecar(sourceDbPath: string, backupDbPath: string, s
   return targetPath
 }
 
-export function createDatabaseBackup(kind: DatabaseBackupResult["kind"] = "backup", dbPath = PATHS.dbFile): DatabaseBackupResult {
+function restoreOptionalSqliteSidecar(sourceDbPath: string, targetDbPath: string, suffix: "-wal" | "-shm"): void {
+  const sourcePath = `${sourceDbPath}${suffix}`
+  const targetPath = `${targetDbPath}${suffix}`
+  if (existsSync(sourcePath)) {
+    replaceFileAtomically(sourcePath, targetPath)
+    return
+  }
+  rmSync(targetPath, { force: true })
+}
+
+function restoreSqliteDatabaseFromBackup(sourceDbPath: string, targetDbPath: string): void {
+  replaceFileAtomically(sourceDbPath, targetDbPath)
+  restoreOptionalSqliteSidecar(sourceDbPath, targetDbPath, "-wal")
+  restoreOptionalSqliteSidecar(sourceDbPath, targetDbPath, "-shm")
+}
+
+export function createDatabaseBackup(
+  kind: DatabaseBackupResult["kind"],
+  paths: ConfigurationOperationPaths,
+  dbPath = paths.dbFile,
+): DatabaseBackupResult {
   const resolvedPath = resolve(dbPath)
   if (!existsSync(resolvedPath)) throw new Error("DB 파일이 없어 backup을 만들 수 없습니다.")
-  mkdirSync(join(backupRoot(), "db"), { recursive: true })
+  mkdirSync(join(backupRoot(paths), "db"), { recursive: true })
 
   try {
-    if (resolvedPath === resolve(PATHS.dbFile)) {
-      getDb().pragma("wal_checkpoint(TRUNCATE)")
+    if (resolvedPath === resolve(paths.dbFile)) {
+      getDb({ paths }).pragma("wal_checkpoint(TRUNCATE)")
     }
   } catch {
     // Backup is still useful even when checkpoint is unavailable.
@@ -202,7 +238,7 @@ export function createDatabaseBackup(kind: DatabaseBackupResult["kind"] = "backu
 
   const createdAt = Date.now()
   const id = timestampId(kind === "export" ? "db-export" : kind === "rollback" ? "db-rollback" : "db-backup")
-  const backupPath = join(backupRoot(), "db", `${id}.sqlite3`)
+  const backupPath = join(backupRoot(paths), "db", `${id}.sqlite3`)
   copyFileSync(resolvedPath, backupPath)
   const walPath = copyOptionalSqliteSidecar(resolvedPath, backupPath, "-wal")
   const shmPath = copyOptionalSqliteSidecar(resolvedPath, backupPath, "-shm")
@@ -219,17 +255,21 @@ export function createDatabaseBackup(kind: DatabaseBackupResult["kind"] = "backu
   }
 }
 
-export function importDatabaseFromBackup(input: { backupPath: string; dbPath?: string }): DatabaseImportResult {
-  const targetPath = resolve(input.dbPath ?? PATHS.dbFile)
+export function importDatabaseFromBackup(
+  input: { backupPath: string; dbPath?: string },
+  paths: ConfigurationOperationPaths,
+  observer?: DatabaseImportLifecycleObserver,
+): DatabaseImportResult {
+  const targetPath = resolve(input.dbPath ?? paths.dbFile)
   const importPath = resolve(input.backupPath)
   if (!existsSync(importPath)) throw new Error("가져올 DB backup 파일을 찾을 수 없습니다.")
 
   const rollbackBackup = existsSync(targetPath)
-    ? createDatabaseBackup("rollback", targetPath)
+    ? createDatabaseBackup("rollback", paths, targetPath)
     : (() => {
         mkdirSync(dirname(targetPath), { recursive: true })
         const id = timestampId("db-empty-rollback")
-        const placeholder = join(backupRoot(), "db", `${id}.sqlite3`)
+        const placeholder = join(backupRoot(paths), "db", `${id}.sqlite3`)
         mkdirSync(dirname(placeholder), { recursive: true })
         writeFileSync(placeholder, "")
         return {
@@ -242,12 +282,15 @@ export function importDatabaseFromBackup(input: { backupPath: string; dbPath?: s
         }
       })()
 
+  observer?.onBackedUp()
   closeDb()
   mkdirSync(dirname(targetPath), { recursive: true })
-  copyFileSync(importPath, targetPath)
 
   try {
-    getDb()
+    observer?.onReplacing()
+    restoreSqliteDatabaseFromBackup(importPath, targetPath)
+    observer?.onVerifying()
+    getDb({ paths })
     return {
       ok: true,
       importedPath: importPath,
@@ -256,11 +299,38 @@ export function importDatabaseFromBackup(input: { backupPath: string; dbPath?: s
     }
   } catch (error) {
     closeDb()
-    copyFileSync(rollbackBackup.backupPath, targetPath)
-    getDb()
-    const sanitized = sanitizeUserFacingError(error instanceof Error ? error.message : String(error))
+    observer?.onRollingBack()
+    restoreSqliteDatabaseFromBackup(rollbackBackup.backupPath, targetPath)
+    getDb({ paths })
+    observer?.onRollbackCompleted()
+    const sanitized = configOperationRollbackErrorSummary(error)
     throw new Error(`DB import가 실패해 rollback했습니다: ${sanitized.userMessage}`)
   }
+}
+
+function resolveSafeBackupEntry(root: string, fileName: string): string {
+  const resolvedRoot = resolve(root)
+  const candidate = resolve(resolvedRoot, fileName)
+  const candidateRelative = relative(resolvedRoot, candidate)
+  if (candidateRelative === ".." || candidateRelative.startsWith(`..${sep}`) || candidateRelative.includes(sep)) {
+    throw new Error("invalid backup entry path")
+  }
+  if (existsSync(candidate)) {
+    const realCandidate = realpathSync(candidate)
+    const realRelative = relative(realpathSync(resolvedRoot), realCandidate)
+    if (realRelative === ".." || realRelative.startsWith(`..${sep}`) || realRelative.includes(sep)) {
+      throw new Error("backup entry resolves outside backup root")
+    }
+  }
+  return candidate
+}
+
+export function resolveDatabaseBackupPath(backupId: string, paths: ConfigurationOperationPaths): string {
+  const trimmed = backupId.trim()
+  if (!/^(?:db-backup|db-export)-[A-Za-z0-9._-]+$/u.test(trimmed) || basename(trimmed) !== trimmed) {
+    throw new Error("invalid database backup id")
+  }
+  return resolveSafeBackupEntry(join(backupRoot(paths), "db"), `${trimmed}.sqlite3`)
 }
 
 export function maskSecretsDeep(value: unknown): { value: unknown; maskedCount: number } {
@@ -268,14 +338,14 @@ export function maskSecretsDeep(value: unknown): { value: unknown; maskedCount: 
   return { value: redacted.value, maskedCount: redacted.maskedCount }
 }
 
-export function exportMaskedConfig(): ConfigExportResult {
-  const configPath = resolve(PATHS.configFile)
+export function exportMaskedConfig(paths: ConfigurationOperationPaths): ConfigExportResult {
+  const configPath = resolve(paths.configFile)
   if (!existsSync(configPath)) throw new Error("설정 파일이 없어 export할 수 없습니다.")
   const parsed = JSON5.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>
   const masked = maskSecretsDeep(parsed)
   const createdAt = Date.now()
   const id = timestampId("config-export")
-  const exportPath = join(backupRoot(), "config", `${id}.json`)
+  const exportPath = join(backupRoot(paths), "config", `${id}.json`)
   mkdirSync(dirname(exportPath), { recursive: true })
   const payload = {
     kind: "knowbee.config.export",
@@ -299,41 +369,52 @@ export function exportMaskedConfig(): ConfigExportResult {
   }
 }
 
-export function recoverPromptSources(workDir = process.cwd()) {
+export function recoverPromptSources(workDir: string) {
   return ensurePromptSourceFiles(workDir)
 }
 
-export function exportPromptSources(workDir = process.cwd()) {
+export function exportPromptSources(workDir: string, paths: ConfigurationOperationPaths) {
   return exportPromptSourcesToFile({
     workDir,
-    outputPath: join(backupRoot(), "prompts", `${timestampId("prompt-sources-export")}.json`),
+    outputPath: join(backupRoot(paths), "prompts", `${timestampId("prompt-sources-export")}.json`),
   })
 }
 
-export function importPromptSources(input: { workDir?: string; exportPath: string; overwrite?: boolean }) {
+export function resolvePromptSourcesExportPath(exportId: string, paths: ConfigurationOperationPaths): string {
+  const trimmed = exportId.trim()
+  if (!/^prompt-sources-export-[A-Za-z0-9._-]+\.json$/u.test(trimmed) || basename(trimmed) !== trimmed) {
+    throw new Error("invalid prompt source export id")
+  }
+  return resolveSafeBackupEntry(join(backupRoot(paths), "prompts"), trimmed)
+}
+
+export function importPromptSources(input: { workDir: string; exportPath: string; overwrite?: boolean }) {
   return importPromptSourcesFromFile({
-    workDir: input.workDir ?? process.cwd(),
+    workDir: input.workDir,
     exportPath: input.exportPath,
     overwrite: input.overwrite ?? false,
   })
 }
 
-export function buildConfigurationOperationsSnapshot(workDir = process.cwd()): ConfigurationOperationsSnapshot {
-  const maskedConfig = existsSync(PATHS.configFile)
-    ? maskSecretsDeep(JSON5.parse(readFileSync(PATHS.configFile, "utf-8")) as Record<string, unknown>)
+export function buildConfigurationOperationsSnapshot(
+  paths: ConfigurationOperationPaths,
+  workDir: string,
+): ConfigurationOperationsSnapshot {
+  const maskedConfig = existsSync(paths.configFile)
+    ? maskSecretsDeep(JSON5.parse(readFileSync(paths.configFile, "utf-8")) as Record<string, unknown>)
     : { value: {}, maskedCount: 0 }
   const promptSources = loadPromptSourceRegistry(workDir)
 
   return {
-    database: getDatabaseMigrationStatus(),
+    database: getDatabaseMigrationStatus(paths.dbFile),
     promptSources: {
       workDir,
       count: promptSources.length,
       versions: promptSources.map(({ content: _content, ...metadata }) => metadata),
     },
     config: {
-      configPath: resolve(PATHS.configFile),
-      exists: existsSync(PATHS.configFile),
+      configPath: resolve(paths.configFile),
+      exists: existsSync(paths.configFile),
       masked: maskedConfig.value as Record<string, unknown>,
       maskingPolicy: "Secrets are masked. Channel IDs and user IDs are retained because they are routing identifiers, not authentication secrets.",
     },
@@ -341,7 +422,12 @@ export function buildConfigurationOperationsSnapshot(workDir = process.cwd()): C
 }
 
 export function replaceFileAtomically(sourcePath: string, targetPath: string): void {
+  mkdirSync(dirname(targetPath), { recursive: true })
   const tempPath = `${targetPath}.tmp-${randomUUID()}`
-  copyFileSync(sourcePath, tempPath)
-  renameSync(tempPath, targetPath)
+  try {
+    copyFileSync(sourcePath, tempPath)
+    renameSync(tempPath, targetPath)
+  } finally {
+    rmSync(tempPath, { force: true })
+  }
 }

@@ -1,5 +1,9 @@
 # Node Definition Suggestion Prompt
 
+## Purpose
+
+Own internal suggestions for user-facing executor node names and role descriptions in the visual workflow editor.
+
 You are helping a user define an executor node in a visual workflow.
 
 The user should not need to understand internal runtime concepts.
@@ -16,7 +20,7 @@ For every alternative, set patch.name to a short, explicit Korean role name that
 
 When patch.description is requested, expand the user's node overview into a detailed Korean role description.
 
-The description must be specific enough for a sub-agent to understand how to work: responsibilities, decision criteria, step-by-step behavior, handoff content, and completion conditions.
+The description must include the details a sub-agent needs to work: responsibilities, decision criteria, step-by-step behavior, handoff content, and completion conditions.
 
 Before returning JSON, internally review each alternative for missing responsibilities, input interpretation, decision criteria, work steps, handoff details, completion criteria, and risk or clarification points.
 
@@ -25,6 +29,12 @@ Revise patch.description with anything missing from that review. Return only the
 Use rationale to briefly state what was strengthened after review.
 
 Do not return a one-sentence generic description for patch.description.
+
+## Out Of Scope
+
+- This module does not own topology persistence, execution routing, runtime delegation, memory writes, tool permission, channel delivery, logging, or final response wording.
+
+## Runtime Input
 
 Forbidden internal terms: {{forbiddenInternalTerms}}
 

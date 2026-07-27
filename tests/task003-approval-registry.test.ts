@@ -1,8 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, getDb, insertSession } from "../packages/core/src/db/index.js"
 import { eventBus } from "../packages/core/src/events/index.js"
 import {
@@ -13,27 +12,31 @@ import {
 } from "../packages/core/src/runs/approval-registry.ts"
 import { createRootRun } from "../packages/core/src/runs/store.js"
 import { ToolDispatcher } from "../packages/core/src/tools/dispatcher.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempConfig(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task003-approval-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task003-approval-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: `{
     security: {
       approvalMode: "always",
       approvalTimeout: 60,
       approvalTimeoutFallback: "deny"
     },
     webui: { enabled: true, host: "127.0.0.1", port: 0, auth: { enabled: false } }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  }`,
+  })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 beforeEach(() => {
@@ -42,11 +45,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -108,6 +106,76 @@ describe("task003 approval registry", () => {
     expect(getApprovalRegistryRow(approval.id)?.decision_source).toBe("timeout")
   })
 
+  it("rejects approval consumption outside the exact execution scope", () => {
+    const approval = createApprovalRegistryRequest({
+      id: "approval-scoped",
+      runId: "run-scoped",
+      requestGroupId: "group-scoped",
+      channel: "webui",
+      toolName: "shell_exec",
+      riskLevel: "dangerous",
+      kind: "approval",
+      params: { command: "pwd" },
+      metadata: { agentId: "agent:a" },
+      expiresAt: Date.now() + 60_000,
+    })
+    expect(resolveApprovalRegistryDecision({
+      approvalId: approval.id,
+      decision: "allow_once",
+      decisionSource: "webui",
+    }).accepted).toBe(true)
+
+    const mismatched = consumeApprovalRegistryDecision(approval.id, Date.now(), {
+      runId: "run-scoped",
+      requestGroupId: "group-scoped",
+      toolName: "shell_exec",
+      params: { command: "rm -rf target" },
+      agentId: "agent:b",
+    })
+    expect(mismatched).toMatchObject({
+      accepted: false,
+      status: "approved_once",
+      reason: "scope_mismatch",
+    })
+    expect(getApprovalRegistryRow(approval.id)?.status).toBe("approved_once")
+
+    const exact = consumeApprovalRegistryDecision(approval.id, Date.now(), {
+      runId: "run-scoped",
+      requestGroupId: "group-scoped",
+      toolName: "shell_exec",
+      params: { command: "pwd" },
+      agentId: "agent:a",
+    })
+    expect(exact).toMatchObject({ accepted: true, status: "consumed" })
+  })
+
+  it("rejects an approved decision that expires before consumption", () => {
+    const now = Date.now()
+    const approval = createApprovalRegistryRequest({
+      id: "approval-expired-after-decision",
+      runId: "run-expired-after-decision",
+      channel: "webui",
+      toolName: "file_write",
+      riskLevel: "sensitive",
+      kind: "approval",
+      params: { path: "memo.txt" },
+      expiresAt: now + 10,
+      now,
+    })
+    expect(resolveApprovalRegistryDecision({
+      approvalId: approval.id,
+      decision: "allow_once",
+      decisionSource: "webui",
+      now: now + 1,
+    }).accepted).toBe(true)
+
+    expect(consumeApprovalRegistryDecision(approval.id, now + 11)).toMatchObject({
+      accepted: false,
+      status: "expired",
+      reason: "late",
+    })
+  })
+
   it("supersedes previous requested approval for the same run and tool", () => {
     const first = createApprovalRegistryRequest({
       id: "approval-first",
@@ -148,7 +216,7 @@ describe("task003 approval registry", () => {
       source: "webui",
     })
 
-    const dispatcher = new ToolDispatcher()
+    const dispatcher = new ToolDispatcher({ config: runtimeFixture.config })
     const execute = vi.fn(async () => ({ success: true, output: "executed" }))
     dispatcher.register({
       name: "file_write",
@@ -185,5 +253,16 @@ describe("task003 approval registry", () => {
     expect(execute).toHaveBeenCalledTimes(1)
     const row = getDb().prepare<[], { status: string }>("SELECT status FROM approval_registry WHERE run_id = 'run-dispatch-approval'").get()
     expect(row?.status).toBe("consumed")
+
+    const audit = getDb()
+      .prepare<[], { params: string; output: string }>(
+        "SELECT params, output FROM audit_logs WHERE tool_name = 'file_write' ORDER BY timestamp DESC LIMIT 1",
+      )
+      .get()
+    expect(audit?.params).toContain('"name":"content"')
+    expect(audit?.params).not.toContain("hello")
+    expect(audit?.params).not.toContain("memo.txt")
+    expect(audit?.output).toContain('"success":true')
+    expect(audit?.output).not.toContain("executed")
   })
 })

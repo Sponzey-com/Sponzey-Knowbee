@@ -47,6 +47,7 @@ describe("execution chunk pass", () => {
     expect(result).toEqual({
       handled: true,
       preview: "hello",
+      previewSource: "llm_generated",
     })
     expect(dependencies.updateRunSummary).toHaveBeenCalledWith("run-1", "hello")
   })

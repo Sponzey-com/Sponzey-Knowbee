@@ -73,7 +73,7 @@ export function inferExecutorFromDescription(input: ExecutorInferenceInput): Exe
   const description = input.description.trim()
   const executorProfile = normalizeExecutorProfile(input.executorProfile, {
     executorId: "executor:draft",
-    displayName: name || "실행자",
+    displayName: name || "서브 에이전트",
     roleName: input.executorProfile?.roleName ?? "executor",
     definition: description || name || "업무를 처리한다.",
     does: description ? [description] : [],
@@ -287,7 +287,7 @@ function buildKoreanSummary(input: {
   toolHints: string[]
   outputHints: string[]
 }): string {
-  const name = input.name || "이 실행자"
+  const name = input.name || "이 서브 에이전트"
   const action = input.description || "업무를 처리합니다."
   const tools = input.toolHints.length > 0 ? ` 필요한 도구는 ${input.toolHints.join(", ")}입니다.` : ""
   return `${name}는 ${action} 예상 결과는 ${input.outputHints.join(", ")}입니다.${tools}`

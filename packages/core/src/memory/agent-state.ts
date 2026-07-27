@@ -4,7 +4,7 @@ import type {
   SubSessionMemoryBootstrap,
   SubSessionMemoryOwnerScope,
 } from "../contracts/sub-agent-orchestration.js"
-import { normalizeNicknameSnapshot } from "../contracts/sub-agent-orchestration.js"
+import { normalizeAgentNameSnapshot } from "../contracts/sub-agent-orchestration.js"
 import type { MemoryCapsule } from "./capsule.js"
 import { normalizeMemoryCapsuleOwnerScope } from "./capsule.js"
 
@@ -14,7 +14,7 @@ export interface AgentMemoryState {
   stateId: string
   ownerScope: SubSessionMemoryOwnerScope
   ownerScopeKey: string
-  nicknameSnapshot?: string
+  agentNameSnapshot?: string
   latestCapsuleId?: string
   currentRawTokenEstimate: number
   currentRawMessageCount: number
@@ -116,14 +116,14 @@ export function buildSubAgentMemoryStateScope(input: {
 
 export function normalizeAgentMemoryState(input: AgentMemoryState): AgentMemoryState {
   const ownerScope = normalizeSubSessionMemoryOwnerScope(input.ownerScope)
-  const nicknameSnapshot = normalizeString(input.nicknameSnapshot)
+  const agentNameSnapshot = normalizeString(input.agentNameSnapshot)
   const latestCapsuleId = normalizeString(input.latestCapsuleId)
   const compactionBlockReason = normalizeString(input.compactionBlockReason)
   return {
     stateId: normalizeString(input.stateId) ?? input.stateId,
     ownerScope,
     ownerScopeKey: buildAgentMemoryStateScopeKey(ownerScope),
-    ...(nicknameSnapshot ? { nicknameSnapshot } : {}),
+    ...(agentNameSnapshot ? { agentNameSnapshot } : {}),
     ...(latestCapsuleId ? { latestCapsuleId } : {}),
     currentRawTokenEstimate: Number.isFinite(input.currentRawTokenEstimate)
       ? Math.max(0, Math.floor(input.currentRawTokenEstimate))
@@ -165,7 +165,7 @@ export function buildAgentMemoryStateFromCapsule(input: {
     stateId: randomUUID(),
     ownerScope,
     ownerScopeKey: buildAgentMemoryStateScopeKey(ownerScope),
-    ...(capsule.nicknameSnapshot ? { nicknameSnapshot: capsule.nicknameSnapshot } : {}),
+    ...(capsule.agentNameSnapshot ? { agentNameSnapshot: capsule.agentNameSnapshot } : {}),
     latestCapsuleId: capsule.capsuleId,
     currentRawTokenEstimate: input.currentRawTokenEstimate,
     currentRawMessageCount: input.currentRawMessageCount,
@@ -186,7 +186,7 @@ function buildBootstrapPinnedItems(taskScope: StructuredTaskScope): string[] {
 
 export function buildChildOwnMemoryBootstrap(input: {
   agentId: string
-  nicknameSnapshot?: string
+  agentNameSnapshot?: string
   sessionId: string
   requestGroupId: string
   lineageId: string
@@ -212,8 +212,8 @@ export function buildChildOwnMemoryBootstrap(input: {
   })
   return {
     ownerScope,
-    ...(normalizeString(input.nicknameSnapshot)
-      ? { nicknameSnapshot: normalizeNicknameSnapshot(input.nicknameSnapshot!) }
+    ...(normalizeString(input.agentNameSnapshot)
+      ? { agentNameSnapshot: normalizeAgentNameSnapshot(input.agentNameSnapshot!) }
       : {}),
     seedMode: "child_own_state",
     rawTranscriptIncluded: false,
@@ -252,7 +252,7 @@ export function buildAgentMemoryStateFromBootstrap(input: {
     stateId: randomUUID(),
     ownerScope: bootstrap.ownerScope,
     ownerScopeKey: buildAgentMemoryStateScopeKey(bootstrap.ownerScope),
-    ...(bootstrap.nicknameSnapshot ? { nicknameSnapshot: bootstrap.nicknameSnapshot } : {}),
+    ...(bootstrap.agentNameSnapshot ? { agentNameSnapshot: bootstrap.agentNameSnapshot } : {}),
     ...(bootstrap.latestCapsuleId ? { latestCapsuleId: bootstrap.latestCapsuleId } : {}),
     currentRawTokenEstimate,
     currentRawMessageCount: 0,

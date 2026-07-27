@@ -1,4 +1,5 @@
 import type { GoogleChatConfig } from "../../config/types.js"
+import { redactLogText } from "../../logger/index.js"
 import {
   buildUnsupportedCapabilityReceipt,
   createRawPayloadRef,
@@ -17,6 +18,7 @@ import {
   type JsonValue,
   type OutboundMessage,
 } from "../contracts.js"
+import { resolveUserFacingMessageLanguage } from "../language.js"
 import {
   getGoogleChatRuntimeStatus,
   setGoogleChatRuntimeError,
@@ -26,6 +28,11 @@ import {
 
 export type GoogleChatConnectionMode = "webhook"
 export type GoogleChatDoctorSeverity = "error" | "warning"
+
+function googleChatAdapterErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 
 export interface GoogleChatDoctorIssue {
   code: string
@@ -440,7 +447,7 @@ export class GoogleChatChannelAdapter implements ChannelAdapter {
       setGoogleChatRuntimeRunning(true)
       setGoogleChatRuntimeError(null)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = googleChatAdapterErrorMessage(error)
       setGoogleChatRuntimeError(message)
       throw error
     }
@@ -509,6 +516,7 @@ export class GoogleChatChannelAdapter implements ChannelAdapter {
         capability: unsupportedCapability,
         idempotencyKey: message.idempotencyKey,
         timestamp: this.now(),
+        userFacingLanguage: message.userFacingLanguage,
       })
     }
 
@@ -568,7 +576,7 @@ export class GoogleChatChannelAdapter implements ChannelAdapter {
           : {}),
       }
     } catch (error) {
-      const messageText = error instanceof Error ? error.message : String(error)
+      const messageText = googleChatAdapterErrorMessage(error)
       const receipt: DeliveryReceipt = {
         channelId: outboundMessage.channelId,
         provider: outboundMessage.provider,
@@ -654,6 +662,7 @@ function normalizeGoogleChatMessage(
     mentions: [],
     timestamp,
     rawPayloadRef: createRawPayloadRef({ provider: "google_chat", payload: rawPayload, createdAt: timestamp }),
+    userFacingLanguage: resolveUserFacingMessageLanguage(text),
     ...(threadId
       ? { continuationContext: { parentMessageId: threadId, source: "thread" as const } }
       : {}),

@@ -67,6 +67,13 @@ export interface NodeDefinitionSuggestionWarning {
     code: "redaction_applied" | "locked_field_removed" | "unknown_field_removed" | "internal_term_removed" | "alternative_too_short" | "alternatives_too_similar" | "llm_not_configured" | "llm_response_invalid" | "rate_limited";
     message: string;
 }
+export interface NodeDefinitionSuggestionNotice {
+    kind: "topology_llm_not_configured";
+    textSource: "topology_control_notice";
+    renderingRequired: "llm_final_response";
+    finalAnswer: false;
+    assistantIdentityClaim: false;
+}
 export interface NodeDefinitionAlternative {
     alternativeId: string;
     title: string;
@@ -98,8 +105,10 @@ export interface NodeDefinitionSuggestionErrorResponse {
     error: NodeDefinitionSuggestionErrorCode;
     message: string;
     warnings: NodeDefinitionSuggestionWarning[];
+    notice?: NodeDefinitionSuggestionNotice;
 }
 export type NodeDefinitionSuggestionResult = NodeDefinitionSuggestionResponse | NodeDefinitionSuggestionErrorResponse;
+export declare function buildNodeDefinitionLlmNotConfiguredResult(): NodeDefinitionSuggestionErrorResponse;
 export interface ApplyNodeDefinitionAlternativeInput {
     executorId: string;
     alternativeId: string;
@@ -120,9 +129,9 @@ export interface ApplyNodeDefinitionAlternativeResult {
     appliedFields: NodeDefinitionField[];
     ignoredLockedFields: NodeDefinitionField[];
 }
-export declare const NODE_DEFINITION_ROLE_CHIPS: readonly ["실행자", "분석자", "검토자", "승인자", "문제 해결자", "결과 정리자"];
+export declare const NODE_DEFINITION_ROLE_CHIPS: readonly ["서브 에이전트", "분석자", "검토자", "승인자", "문제 해결자", "결과 정리자"];
 export declare const NODE_DEFINITION_STYLE_CHIPS: readonly ["빠르게", "꼼꼼하게", "초보자도 이해 가능하게", "결과 중심으로", "협업하기 좋게", "실패 대안까지 포함"];
-export declare const NODE_DEFINITION_OUTPUT_CHIPS: readonly ["구현 결과", "검토 의견", "작업 분할", "요약 보고", "테스트 결과", "다음 실행자에게 넘길 내용"];
+export declare const NODE_DEFINITION_OUTPUT_CHIPS: readonly ["구현 결과", "검토 의견", "작업 분할", "요약 보고", "테스트 결과", "다음 서브 에이전트에게 넘길 내용"];
 export declare function normalizeNodeDefinitionQuickChips(values: unknown): string[];
 export declare function initialNodeDefinitionQuickChipsFromDraft(draft: Pick<NodeDefinitionDraft, "name" | "description" | "capabilityHints" | "understandingSummary" | "quickChips">): string[];
 export declare function defaultNodeDefinitionFieldLocks(overrides?: Partial<NodeDefinitionFieldLocks>): NodeDefinitionFieldLocks;

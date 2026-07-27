@@ -1,14 +1,16 @@
 import { createRequire } from "node:module"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { tmpdir } from "node:os"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerAdminRoute } from "../packages/core/src/api/routes/admin.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { PATHS } from "../packages/core/src/config/paths.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
+import type { KnowbeeConfig } from "../packages/core/src/config/types.ts"
 import { closeDb, getDb } from "../packages/core/src/db/index.js"
 import { runDoctor } from "../packages/core/src/diagnostics/doctor.js"
 import { resolveAdminUiActivation } from "../packages/core/src/ui/mode.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: { logger: boolean }) => {
@@ -18,30 +20,29 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
-const previousAdminUi = process.env["KNOWBEE_ADMIN_UI"]
-const previousAdminUiSource = process.env["KNOWBEE_ADMIN_UI_SOURCE"]
-const previousLocalDevAdminUi = process.env["KNOWBEE_LOCAL_DEV_ADMIN_UI"]
-const previousNodeEnv = process.env["NODE_ENV"]
+let runtimeFixture: ReturnType<typeof createTestRuntimeConfigFixture>
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-admin-guard-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  delete process.env["KNOWBEE_ADMIN_UI"]
-  delete process.env["KNOWBEE_ADMIN_UI_SOURCE"]
-  delete process.env["KNOWBEE_LOCAL_DEV_ADMIN_UI"]
-  delete process.env["NODE_ENV"]
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-admin-guard-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
-function writeConfig(value: unknown): void {
-  mkdirSync(dirname(PATHS.configFile), { recursive: true })
-  writeFileSync(PATHS.configFile, JSON.stringify(value, null, 2), "utf-8")
-  reloadConfig()
+function writeConfig(value: unknown): KnowbeeConfig {
+  mkdirSync(dirname(runtimeFixture.paths.configFile), { recursive: true })
+  writeFileSync(runtimeFixture.paths.configFile, JSON.stringify(value, null, 2), "utf-8")
+  return runtimeFixture.load()
+}
+
+function adminUiRuntime(env: Record<string, string | undefined>, nodeEnv = "development") {
+  return {
+    uiModeRuntime: {
+      adminActivation: { env, argv: [], nodeEnv },
+      rollbackActivation: { env: {} },
+    },
+  }
 }
 
 beforeEach(() => {
@@ -50,19 +51,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  if (previousAdminUi === undefined) delete process.env["KNOWBEE_ADMIN_UI"]
-  else process.env["KNOWBEE_ADMIN_UI"] = previousAdminUi
-  if (previousAdminUiSource === undefined) delete process.env["KNOWBEE_ADMIN_UI_SOURCE"]
-  else process.env["KNOWBEE_ADMIN_UI_SOURCE"] = previousAdminUiSource
-  if (previousLocalDevAdminUi === undefined) delete process.env["KNOWBEE_LOCAL_DEV_ADMIN_UI"]
-  else process.env["KNOWBEE_LOCAL_DEV_ADMIN_UI"] = previousLocalDevAdminUi
-  if (previousNodeEnv === undefined) delete process.env["NODE_ENV"]
-  else process.env["NODE_ENV"] = previousNodeEnv
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -70,6 +58,14 @@ afterEach(() => {
 })
 
 describe("task009 admin activation and guard", () => {
+  it("keeps CLI admin UI flag out of process.env mutation", () => {
+    const cliEntry = readFileSync(new URL("../packages/cli/src/index.ts", import.meta.url), "utf-8")
+
+    expect(cliEntry).toContain('.option("--admin-ui"')
+    expect(cliEntry).not.toContain("process.env" + '["KNOWBEE_ADMIN_UI"] = "1"')
+    expect(cliEntry).not.toContain("process.env" + ".KNOWBEE_ADMIN_UI =")
+  })
+
   it("resolves admin activation from env, CLI, local script, and production config gate", () => {
     expect(resolveAdminUiActivation({ env: {}, argv: [], configEnabled: false, nodeEnv: "development" })).toEqual(expect.objectContaining({
       enabled: false,
@@ -109,6 +105,7 @@ describe("task009 admin activation and guard", () => {
 
   it("blocks admin API by default and records a diagnostic event", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAdminRoute(app)
     await app.ready()
     try {
@@ -126,11 +123,35 @@ describe("task009 admin activation and guard", () => {
     }
   })
 
-  it("opens admin API only when the explicit runtime flag is enabled", async () => {
-    process.env["KNOWBEE_ADMIN_UI"] = "1"
-    reloadConfig()
+  it("keeps admin API closed when env changes after route registration", async () => {
     const app = Fastify({ logger: false })
-    registerAdminRoute(app)
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerAdminRoute(app, {
+      uiModeRuntime: {
+        adminActivation: { env: {}, argv: [], nodeEnv: "development" },
+        rollbackActivation: { env: {} },
+      },
+    })
+    expect(resolveAdminUiActivation({
+      env: { KNOWBEE_ADMIN_UI: "1" },
+      argv: [],
+      configEnabled: false,
+      nodeEnv: "development",
+    }).enabled).toBe(true)
+    await app.ready()
+    try {
+      const response = await app.inject({ method: "GET", url: "/api/admin/runtime" })
+      expect(response.statusCode).toBe(403)
+      expect(response.json()).toEqual(expect.objectContaining({ ok: false, error: "admin_ui_disabled" }))
+    } finally {
+      await app.close()
+    }
+  })
+
+  it("opens admin API only when the explicit runtime flag is enabled", async () => {
+    const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerAdminRoute(app, adminUiRuntime({ KNOWBEE_ADMIN_UI: "1" }))
     await app.ready()
     try {
       const response = await app.inject({ method: "GET", url: "/api/admin/runtime" })
@@ -146,11 +167,9 @@ describe("task009 admin activation and guard", () => {
   })
 
   it("keeps production admin API closed until config and runtime flag are both enabled", async () => {
-    process.env["NODE_ENV"] = "production"
-    process.env["KNOWBEE_ADMIN_UI"] = "1"
-    reloadConfig()
     const blockedApp = Fastify({ logger: false })
-    registerAdminRoute(blockedApp)
+    installApiRuntimeConfig(blockedApp as never, runtimeFixture.config, runtimeFixture.paths)
+    registerAdminRoute(blockedApp, adminUiRuntime({ KNOWBEE_ADMIN_UI: "1" }, "production"))
     await blockedApp.ready()
     try {
       const blocked = await blockedApp.inject({ method: "GET", url: "/api/admin/runtime" })
@@ -159,9 +178,10 @@ describe("task009 admin activation and guard", () => {
       await blockedApp.close()
     }
 
-    writeConfig({ webui: { admin: { enabled: true } } })
+    const enabledConfig = writeConfig({ webui: { admin: { enabled: true } } })
     const enabledApp = Fastify({ logger: false })
-    registerAdminRoute(enabledApp)
+    installApiRuntimeConfig(enabledApp as never, enabledConfig, runtimeFixture.paths)
+    registerAdminRoute(enabledApp, adminUiRuntime({ KNOWBEE_ADMIN_UI: "1" }, "production"))
     await enabledApp.ready()
     try {
       const enabled = await enabledApp.inject({ method: "GET", url: "/api/admin/runtime" })
@@ -178,8 +198,7 @@ describe("task009 admin activation and guard", () => {
   })
 
   it("adds a doctor blocked warning when admin UI is enabled on a remote unauthenticated host", () => {
-    process.env["KNOWBEE_ADMIN_UI"] = "1"
-    writeConfig({
+    const config = writeConfig({
       webui: {
         host: "0.0.0.0",
         auth: { enabled: false },
@@ -187,7 +206,12 @@ describe("task009 admin activation and guard", () => {
       },
     })
 
-    const report = runDoctor({ mode: "quick", includeEnvironment: false, includeReleasePackage: false })
+    const report = runDoctor({ config, paths: runtimeFixture.paths,
+      mode: "quick",
+      includeEnvironment: false,
+      includeReleasePackage: false,
+      adminActivation: { env: { KNOWBEE_ADMIN_UI: "1" }, argv: [], nodeEnv: "development" },
+    })
     const adminCheck = report.checks.find((check) => check.name === "admin.ui")
     expect(adminCheck).toEqual(expect.objectContaining({
       status: "blocked",

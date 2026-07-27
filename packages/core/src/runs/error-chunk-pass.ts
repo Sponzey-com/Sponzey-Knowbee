@@ -1,6 +1,5 @@
 import type { AgentChunk } from "../agent/index.js"
 import {
-  deliverTrackedChunk,
   type RunChunkDeliveryHandler,
   type SuccessfulFileDelivery,
   type SuccessfulTextDelivery,
@@ -42,14 +41,12 @@ interface ErrorChunkPassDependencies extends ExternalRecoveryAttemptDependencies
 interface ErrorChunkPassModuleDependencies {
   applyExternalRecoveryAttempt: typeof applyExternalRecoveryAttempt
   applyFatalFailure: typeof applyFatalFailure
-  deliverTrackedChunk: typeof deliverTrackedChunk
   describeWorkerRuntimeErrorReason: typeof describeWorkerRuntimeErrorReason
 }
 
 const defaultModuleDependencies: ErrorChunkPassModuleDependencies = {
   applyExternalRecoveryAttempt,
   applyFatalFailure,
-  deliverTrackedChunk,
   describeWorkerRuntimeErrorReason,
 }
 
@@ -78,19 +75,17 @@ export async function applyErrorChunkPass(
   dependencies: ErrorChunkPassDependencies,
   moduleDependencies: ErrorChunkPassModuleDependencies = defaultModuleDependencies,
 ): Promise<ErrorChunkPassResult> {
+  dependencies.appendRunEvent(
+    params.runId,
+    "user_facing_error_text_source:runtime_deterministic",
+  )
+  dependencies.appendRunEvent(
+    params.runId,
+    "user_facing_error_delivery_blocked:llm_required",
+  )
+
   if (params.executionRecoveryLimitStop) {
     dependencies.appendRunEvent(params.runId, "실행 복구를 자동으로 계속할 수 없어 중단합니다.")
-    await moduleDependencies.deliverTrackedChunk({
-      onChunk: params.onChunk,
-      chunk: params.chunk,
-      runId: params.runId,
-      source: params.source,
-      targetKey: params.sessionId,
-      ...(params.onDeliveryError ? { onError: params.onDeliveryError } : {}),
-      successfulFileDeliveries: params.successfulFileDeliveries,
-      successfulTextDeliveries: params.successfulTextDeliveries,
-      appendEvent: dependencies.appendRunEvent,
-    })
     return { failed: false }
   }
 
@@ -114,18 +109,6 @@ export async function applyErrorChunkPass(
       limitRemainingItems: ["작업 세션 실패 원인을 더 분석해야 하지만 새 안전 대안이나 필요한 결정 정보가 부족합니다."],
     }, dependencies)
 
-    await moduleDependencies.deliverTrackedChunk({
-      onChunk: params.onChunk,
-      chunk: params.chunk,
-      runId: params.runId,
-      source: params.source,
-      targetKey: params.sessionId,
-      ...(params.onDeliveryError ? { onError: params.onDeliveryError } : {}),
-      successfulFileDeliveries: params.successfulFileDeliveries,
-      successfulTextDeliveries: params.successfulTextDeliveries,
-      appendEvent: dependencies.appendRunEvent,
-    })
-
     return applyWorkerRuntimeRecoveryAttempt(workerRuntimeRecoveryAttempt)
   }
 
@@ -143,18 +126,6 @@ export async function applyErrorChunkPass(
     appendMessageEventOnAbort: true,
     appendExtraEventsOnAbort: true,
   }, dependencies)
-
-  await moduleDependencies.deliverTrackedChunk({
-    onChunk: params.onChunk,
-    chunk: params.chunk,
-    runId: params.runId,
-    source: params.source,
-    targetKey: params.sessionId,
-    ...(params.onDeliveryError ? { onError: params.onDeliveryError } : {}),
-    successfulFileDeliveries: params.successfulFileDeliveries,
-    successfulTextDeliveries: params.successfulTextDeliveries,
-    appendEvent: dependencies.appendRunEvent,
-  })
 
   return { failed: failureState === "failed" }
 }

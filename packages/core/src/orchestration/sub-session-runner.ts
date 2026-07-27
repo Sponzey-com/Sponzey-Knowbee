@@ -8,12 +8,27 @@ import {
 } from "../agent/sub-agent-result-review.js"
 import { CONTRACT_SCHEMA_VERSION, type JsonValue } from "../contracts/index.js"
 import {
+  type DelegatedExecutionSnapshot,
+  validateDelegatedExecutionSnapshot,
+} from "../contracts/delegated-execution-snapshot.js"
+import {
+  runResultDiagnosisProviderWithRepair,
+  type LlmDiagnosisProvider,
+} from "../contracts/llm-diagnosis-provider.js"
+import type { LlmDiagnosisSchemaRepairProvider } from "../contracts/llm-diagnosis-schema-repair-provider.js"
+import { evaluateWorkBoundMemoryHandoff } from "../contracts/memory-handoff-compaction.js"
+import { evaluateMemoryExchangeOwnerBinding } from "../contracts/memory-exchange-owner-binding.js"
+import { authorizeDiagnosisActionRoute } from "../contracts/diagnosis-action-routing.js"
+import {
+  auditRuntimeChildWorkResultProjection,
+} from "../contracts/structured-work-audit.js"
+import {
+  type AgentNameSnapshot,
   type AgentPromptBundle,
   type CommandRequest,
   type ErrorReport,
   type FeedbackRequest,
   type ModelExecutionSnapshot,
-  type NicknameSnapshot,
   type OrchestrationPlan,
   type OwnerScope,
   type ParallelSubSessionGroup,
@@ -25,8 +40,9 @@ import {
   type SubSessionContract,
   type SubSessionMemoryBootstrap,
   type SubSessionStatus,
-  normalizeNicknameSnapshot,
+  normalizeAgentNameSnapshot,
 } from "../contracts/sub-agent-orchestration.js"
+import type { ActionDecision, LlmResultDiagnosisRecord } from "../contracts/work-record.js"
 import { recordControlEvent } from "../control-plane/timeline.js"
 import {
   getRunSubSessionByIdempotencyKey,
@@ -36,6 +52,7 @@ import {
   updateRunSubSession,
   upsertAgentMemoryState,
 } from "../db/index.js"
+import { redactLogText } from "../logger/index.js"
 import {
   buildAgentMemoryStateFromBootstrap,
   buildChildOwnMemoryBootstrap,
@@ -51,6 +68,8 @@ import { recordLateResultNoReply } from "../runs/channel-finalizer.js"
 import { type MessageLedgerEventInput, recordMessageLedgerEvent } from "../runs/message-ledger.js"
 import { appendRunEvent, getRootRun } from "../runs/store.js"
 import { recordOrchestrationEvent } from "./event-ledger.js"
+import { recordStructuredWorkAuditEventSafely } from "./structured-work-audit-ledger.js"
+import { recordRuntimeWorkRecordSnapshotSafely } from "./work-record-snapshot-ledger.js"
 import {
   type ModelAvailabilityDoctorSnapshot,
   type ModelExecutionAuditSummary,
@@ -69,14 +88,12 @@ import {
 
 export interface SubSessionRuntimeAgentSnapshot {
   agentId: string
-  displayName: string
-  nickname?: string
+  agentName: string
 }
 
 export interface SubSessionParentAgentSnapshot {
   agentId: string
-  displayName?: string
-  nickname?: string
+  agentName?: string
 }
 
 export interface RunSubSessionInput {
@@ -85,6 +102,7 @@ export interface RunSubSessionInput {
   parentAgent?: SubSessionParentAgentSnapshot
   parentSessionId: string
   promptBundle: AgentPromptBundle
+  delegationSnapshot?: DelegatedExecutionSnapshot
   memoryBootstrap?: SubSessionMemoryBootstrap
   channelKey?: string
   threadKey?: string
@@ -138,6 +156,11 @@ export interface SubSessionReviewRuntimeEventInput {
 export interface SubSessionRuntimeDependencies {
   now?: () => number
   idProvider?: () => string
+  prepareMemoryBootstrap?: (
+    input: RunSubSessionInput,
+    now: number,
+  ) => SubSessionMemoryBootstrap
+  initializeAgentMemoryState?: (bootstrap: SubSessionMemoryBootstrap) => void
   loadSubSessionByIdempotencyKey?: (
     idempotencyKey: string,
   ) => Promise<SubSessionContract | undefined> | SubSessionContract | undefined
@@ -155,6 +178,8 @@ export interface SubSessionRuntimeDependencies {
     resultReport: ResultReport
     subSession: SubSessionContract
   }) => Promise<SubAgentResultReview> | SubAgentResultReview
+  diagnosisProvider?: LlmDiagnosisProvider
+  diagnosisRepairProvider?: LlmDiagnosisSchemaRepairProvider
 }
 
 export interface SubSessionWorkItem {
@@ -330,6 +355,38 @@ function recordLateResultNoReplySafely(input: Parameters<typeof recordLateResult
   }
 }
 
+function renderResultJsonValue(value: JsonValue | undefined): string | undefined {
+  if (value === undefined) return undefined
+  return typeof value === "string" ? value : JSON.stringify(value)
+}
+
+function resultReportSummary(report: ResultReport): string {
+  const outputs = report.outputs
+    .map((output) => {
+      const value = renderResultJsonValue(output.value)
+      return value
+        ? `${output.outputId}:${output.status}:${value}`
+        : `${output.outputId}:${output.status}`
+    })
+    .join("\n")
+  return outputs || `${report.status}:${report.resultReportId}`
+}
+
+function resultReportEvidenceRefs(report: ResultReport): string[] {
+  return [
+    ...report.evidence.map((item) => `${item.kind}:${item.sourceRef}`),
+    ...report.artifacts.map((item) => item.path
+      ? `${item.kind}:${item.path}`
+      : `${item.kind}:${item.artifactId}`),
+  ]
+}
+
+function expectedOutputSummary(input: RunSubSessionInput): string {
+  return input.command.expectedOutputs
+    .map((output) => `${output.outputId}:${output.description}`)
+    .join("\n") || input.command.taskScope.goal
+}
+
 function isReplayableStatus(status: SubSessionStatus): boolean {
   return REPLAY_STATUSES.has(status)
 }
@@ -376,8 +433,13 @@ function isAbortLike(error: unknown): boolean {
 
 function asErrorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim()
-    ? error.message
+    ? redactLogText(error.message)
     : "sub-session execution failed"
+}
+
+function subSessionReasonDetail(error: unknown): string {
+  const raw = error instanceof Error && error.message.trim() ? error.message.trim() : "unknown_error"
+  return redactLogText(raw).replace(/\s+/g, "_").slice(0, 80) || "unknown_error"
 }
 
 function parseStoredSubSession(value: string): SubSessionContract | undefined {
@@ -400,7 +462,7 @@ function buildProgressEvent(input: {
   status: SubSessionStatus
   summary: string
 }): ProgressEvent {
-  const speaker = commandTargetNicknameSnapshot(input.command)
+  const speaker = commandTargetAgentNameSnapshot(input.command)
   return {
     identity: {
       ...input.command.identity,
@@ -422,31 +484,46 @@ function buildProgressEvent(input: {
   }
 }
 
-function commandTargetNicknameSnapshot(command: CommandRequest): NicknameSnapshot | undefined {
-  const nicknameSnapshot = command.targetNicknameSnapshot
-    ? normalizeNicknameSnapshot(command.targetNicknameSnapshot)
-    : ""
-  if (!nicknameSnapshot) return undefined
+function commandTargetAgentNameSnapshot(command: CommandRequest): AgentNameSnapshot | undefined {
+  const agentNameSnapshot = commandTargetAgentNameValue(command)
+  if (!agentNameSnapshot) return undefined
   return {
     entityType: "sub_agent",
     entityId: command.targetAgentId,
-    nicknameSnapshot,
+    agentNameSnapshot,
   }
 }
 
-function normalizeTargetNicknameSnapshot(input: RunSubSessionInput): string | undefined {
-  const nickname = input.command.targetNicknameSnapshot ?? input.agent.nickname
-  const normalized = nickname ? normalizeNicknameSnapshot(nickname) : ""
+function normalizeOptionalAgentName(value: string | undefined): string | undefined {
+  const normalized = value ? normalizeAgentNameSnapshot(value) : ""
   return normalized || undefined
 }
 
-function withEffectiveNicknameSnapshots(input: RunSubSessionInput): RunSubSessionInput {
-  if (input.command.targetNicknameSnapshot || !input.agent.nickname) return input
+function commandTargetAgentNameValue(command: CommandRequest): string | undefined {
+  return normalizeOptionalAgentName(command.targetAgentName) ?? normalizeOptionalAgentName(command.targetAgentNameSnapshot)
+}
+
+function runtimeAgentNameValue(agent: SubSessionRuntimeAgentSnapshot): string | undefined {
+  return normalizeOptionalAgentName(agent.agentName)
+}
+
+function targetAgentNameSnapshot(input: RunSubSessionInput): string | undefined {
+  return commandTargetAgentNameValue(input.command) ?? runtimeAgentNameValue(input.agent)
+}
+
+function withEffectiveAgentNameSnapshots(input: RunSubSessionInput): RunSubSessionInput {
+  const agentNameSnapshot = targetAgentNameSnapshot(input)
+  if (!agentNameSnapshot) return input
+  const commandHasAgentName =
+    normalizeOptionalAgentName(input.command.targetAgentName) ??
+    normalizeOptionalAgentName(input.command.targetAgentNameSnapshot)
+  if (commandHasAgentName) return input
   return {
     ...input,
     command: {
       ...input.command,
-      targetNicknameSnapshot: normalizeNicknameSnapshot(input.agent.nickname),
+      targetAgentName: agentNameSnapshot,
+      targetAgentNameSnapshot: agentNameSnapshot,
     },
   }
 }
@@ -463,11 +540,8 @@ function parentAgentIdSnapshot(input: RunSubSessionInput): string | undefined {
   return undefined
 }
 
-function parentAgentNicknameSnapshot(input: RunSubSessionInput): string | undefined {
-  const normalized = input.parentAgent?.nickname
-    ? normalizeNicknameSnapshot(input.parentAgent.nickname)
-    : ""
-  return normalized || undefined
+function parentAgentNameSnapshot(input: RunSubSessionInput): string | undefined {
+  return normalizeOptionalAgentName(input.parentAgent?.agentName)
 }
 
 function buildErrorReport(input: {
@@ -551,11 +625,10 @@ function buildPreparedSubSessionMemoryBootstrap(
     payload: handoffPayload,
     now,
   })
+  const agentNameSnapshot = targetAgentNameSnapshot(input)
   return buildChildOwnMemoryBootstrap({
     agentId: input.agent.agentId,
-    ...((input.agent.nickname ?? input.command.targetNicknameSnapshot)
-      ? { nicknameSnapshot: input.agent.nickname ?? input.command.targetNicknameSnapshot }
-      : {}),
+    ...(agentNameSnapshot ? { agentNameSnapshot } : {}),
     sessionId: input.parentSessionId,
     requestGroupId: input.command.commandRequestId,
     lineageId: input.command.subSessionId,
@@ -589,26 +662,77 @@ function createAndPersistSubSessionHandoffExchange(input: {
   payload: ReturnType<typeof buildSubSessionHandoffCapsulePayload>
   now: number
 }) {
-  const sourceOwner = ownerScopeForSubSessionAgent(
-    input.input.parentAgent?.agentId ?? "agent:knowbee",
-  )
+  const sourceOwner = input.input.parentAgent?.agentId
+    ? ownerScopeForSubSessionAgent(input.input.parentAgent.agentId)
+    : input.input.delegationSnapshot
+      ? input.input.command.identity.owner
+      : ownerScopeForSubSessionAgent("agent:knowbee")
   const recipientOwner = ownerScopeForSubSessionAgent(input.input.agent.agentId)
+  const sourceAgentNameSnapshot = parentAgentNameSnapshot(input.input)
+  const recipientAgentNameSnapshot =
+    targetAgentNameSnapshot(input.input) ?? "Unnamed sub-agent"
+  const allowedPayloadFieldNames = [
+    "kind",
+    "currentGoal",
+    "completionCriteria",
+    "constraints",
+    "artifactRefs",
+    "targetContext",
+    "latestSafeContextSummary",
+    "doNotRepeat",
+    "contextPackageIds",
+  ]
+  const ownerBinding = input.input.delegationSnapshot
+    ? evaluateMemoryExchangeOwnerBinding({
+        commandOwner: input.input.command.identity.owner,
+        sourceOwner,
+        recipientOwner,
+        targetAgentId: input.input.command.targetAgentId,
+        handoffId: input.input.delegationSnapshot.handoff.handoff_id,
+        executionSnapshotFingerprint: input.input.delegationSnapshot.fingerprint,
+      })
+    : undefined
+  if (ownerBinding && !ownerBinding.allowed) {
+    throw new Error(`sub-session memory owner binding blocked: ${ownerBinding.reasonCode}`)
+  }
+  const canonicalProvenanceRefs = ownerBinding?.provenanceRefs ?? []
+  const handoffDecision = evaluateWorkBoundMemoryHandoff({
+    handoffId: `exchange:handoff:${input.input.command.commandRequestId}`,
+    sourceAgentId: sourceOwner.ownerId,
+    recipientAgentId: recipientOwner.ownerId,
+    assignedWorkId: input.input.command.commandRequestId,
+    receiptWorkId: input.payload.targetContext.commandRequestId,
+    purpose: "Structured handoff capsule for child sub-session start.",
+    payloadFieldNames: Object.keys(input.payload),
+    allowedPayloadFieldNames,
+    contextRefs: input.payload.contextPackageIds,
+    allowedContextRefs: input.input.command.contextPackageIds,
+    provenanceRefs: uniqueValues([
+      ...canonicalProvenanceRefs,
+      `opaque:command_request:${input.input.command.commandRequestId}`,
+      ...input.input.command.contextPackageIds,
+      ...(input.payload.artifactRefs ?? []),
+    ]),
+    containsRawMemory: false,
+    containsUnrelatedHistory: false,
+    grantsLongTermRetention: false,
+    expiresAt: input.now + 24 * 60 * 60 * 1_000,
+    evaluatedAt: input.now,
+  })
+  if (handoffDecision.status === "blocked") {
+    throw new Error(`sub-session handoff blocked: ${handoffDecision.issueCodes.join(",")}`)
+  }
   const exchange = createDataExchangePackage({
     sourceOwner,
     recipientOwner,
-    ...(input.input.parentAgent?.nickname
-      ? { sourceNicknameSnapshot: input.input.parentAgent.nickname }
-      : input.input.parentAgent?.displayName
-        ? { sourceNicknameSnapshot: input.input.parentAgent.displayName }
-        : {}),
-    ...(input.input.agent.nickname
-      ? { recipientNicknameSnapshot: input.input.agent.nickname }
-      : { recipientNicknameSnapshot: input.input.agent.displayName }),
+    ...(sourceAgentNameSnapshot ? { sourceAgentNameSnapshot } : {}),
+    recipientAgentNameSnapshot,
     purpose: "Structured handoff capsule for child sub-session start.",
     allowedUse: "temporary_context",
     retentionPolicy: "session_only",
     redactionState: "not_sensitive",
     provenanceRefs: uniqueValues([
+      ...canonicalProvenanceRefs,
       `opaque:command_request:${input.input.command.commandRequestId}`,
       ...input.input.command.contextPackageIds,
       ...(input.payload.artifactRefs ?? []),
@@ -627,9 +751,10 @@ function createAndPersistSubSessionHandoffExchange(input: {
 }
 
 export function buildSubSessionContract(input: RunSubSessionInput): SubSessionContract {
-  const agentNickname = normalizeTargetNicknameSnapshot(input)
+  const agentNameSnapshot = targetAgentNameSnapshot(input)
+  const agentName = agentNameSnapshot ?? "Unnamed sub-agent"
   const parentAgentId = parentAgentIdSnapshot(input)
-  const parentAgentNickname = parentAgentNicknameSnapshot(input)
+  const parentAgentName = parentAgentNameSnapshot(input)
   const identity: RuntimeIdentity = {
     ...input.command.identity,
     schemaVersion: CONTRACT_SCHEMA_VERSION,
@@ -652,17 +777,18 @@ export function buildSubSessionContract(input: RunSubSessionInput): SubSessionCo
     parentSessionId: input.parentSessionId,
     parentRunId: input.command.parentRunId,
     ...(parentAgentId ? { parentAgentId } : {}),
-    ...(input.parentAgent?.displayName
-      ? { parentAgentDisplayName: input.parentAgent.displayName }
-      : {}),
-    ...(parentAgentNickname ? { parentAgentNickname } : {}),
+    ...(parentAgentName ? { parentAgentName } : {}),
+    ...(parentAgentName ? { parentAgentNameSnapshot: parentAgentName } : {}),
     agentId: input.agent.agentId,
-    agentDisplayName: input.agent.displayName,
-    ...(agentNickname ? { agentNickname } : {}),
+    agentName,
+    ...(agentNameSnapshot ? { agentNameSnapshot } : {}),
     commandRequestId: input.command.commandRequestId,
     status: "created",
     promptBundleId: input.promptBundle.bundleId,
     promptBundleSnapshot: input.promptBundle,
+    ...(input.delegationSnapshot
+      ? { delegatedExecutionSnapshotFingerprint: input.delegationSnapshot.fingerprint }
+      : {}),
     ...(input.memoryBootstrap ? { memoryBootstrap: input.memoryBootstrap } : {}),
     ...(input.modelExecutionPolicy ? { modelExecutionSnapshot: input.modelExecutionPolicy } : {}),
   }
@@ -964,11 +1090,10 @@ function buildDeferredWaveSummary(
 
 function buildNamedHandoffLabel(input: RunSubSessionInput, subSession: SubSessionContract): string {
   const sender =
-    subSession.parentAgentNickname ??
-    input.parentAgent?.displayName ??
+    subSession.parentAgentNameSnapshot ??
     subSession.parentAgentId ??
     "parent"
-  const recipient = subSession.agentNickname ?? subSession.agentDisplayName ?? subSession.agentId
+  const recipient = subSession.agentNameSnapshot ?? "Unnamed sub-agent"
   return `sub_session_handoff:${subSession.subSessionId}:${sender}->${recipient}:${input.command.commandRequestId}`
 }
 
@@ -1051,11 +1176,16 @@ export class SubSessionRunner {
   private readonly now: () => number
   private readonly idProvider: () => string
   private readonly dependencies: Required<
-    Omit<SubSessionRuntimeDependencies, "deliverResultToUser" | "reviewResultReport">
+    Omit<
+      SubSessionRuntimeDependencies,
+      "deliverResultToUser" | "reviewResultReport" | "diagnosisProvider" | "diagnosisRepairProvider"
+    >
   >
   private readonly customReviewResultReport:
     | NonNullable<SubSessionRuntimeDependencies["reviewResultReport"]>
     | undefined
+  private readonly diagnosisProvider: LlmDiagnosisProvider | undefined
+  private readonly diagnosisRepairProvider: LlmDiagnosisSchemaRepairProvider | undefined
   private readonly progressAggregator: SubSessionProgressAggregator
   private readonly recordLedgerEvent: (input: MessageLedgerEventInput) => string | null
   private readonly activeControllers = new Map<
@@ -1081,8 +1211,15 @@ export class SubSessionRunner {
         dependencies.progressAggregator ?? createSubSessionProgressAggregator({ now: this.now }),
       recordLedgerEvent: dependencies.recordLedgerEvent ?? recordMessageLedgerEvent,
       recordReviewEvent: dependencies.recordReviewEvent ?? defaultRecordSubSessionReviewEvent,
+      prepareMemoryBootstrap:
+        dependencies.prepareMemoryBootstrap ?? buildPreparedSubSessionMemoryBootstrap,
+      initializeAgentMemoryState: dependencies.initializeAgentMemoryState ?? ((bootstrap) => {
+        upsertAgentMemoryState(buildAgentMemoryStateFromBootstrap({ bootstrap }))
+      }),
     }
     this.customReviewResultReport = dependencies.reviewResultReport
+    this.diagnosisProvider = dependencies.diagnosisProvider
+    this.diagnosisRepairProvider = dependencies.diagnosisRepairProvider
     this.progressAggregator = this.dependencies.progressAggregator
     this.recordLedgerEvent = this.dependencies.recordLedgerEvent
   }
@@ -1091,7 +1228,34 @@ export class SubSessionRunner {
     input: RunSubSessionInput,
     handler: SubSessionExecutionHandler,
   ): Promise<SubSessionRunOutcome> {
-    const namedInput = withEffectiveNicknameSnapshots(input)
+    const namedInput = withEffectiveAgentNameSnapshots(input)
+    if (namedInput.delegationSnapshot) {
+      const snapshotValidation = validateDelegatedExecutionSnapshot(
+        namedInput.delegationSnapshot,
+        {
+          commandRequestId: namedInput.command.commandRequestId,
+          subSessionId: namedInput.command.subSessionId,
+          agentId: namedInput.agent.agentId,
+          promptBundleId: namedInput.promptBundle.bundleId,
+        },
+      )
+      if (!snapshotValidation.valid) {
+        const subSession = buildSubSessionContract(namedInput)
+        subSession.status = "failed"
+        const errorReport = buildErrorReport({
+          idProvider: this.idProvider,
+          command: namedInput.command,
+          reasonCode: snapshotValidation.reasonCode,
+          safeMessage: `Delegated execution snapshot is invalid: ${snapshotValidation.reasonCode}`,
+          retryable: false,
+        })
+        await this.dependencies.appendParentEvent(
+          subSession.parentRunId,
+          `sub_session_blocked_by_execution_snapshot:${subSession.subSessionId}:${snapshotValidation.reasonCode}`,
+        )
+        return { subSession, status: "failed", errorReport, replayed: false }
+      }
+    }
     const modelPolicy = resolveModelExecutionPolicy({
       agentId: namedInput.agent.agentId,
       promptBundle: namedInput.promptBundle,
@@ -1106,8 +1270,8 @@ export class SubSessionRunner {
       ...(modelPolicy.snapshot ? { modelExecutionPolicy: modelPolicy.snapshot } : {}),
     }
     const queuedAt = this.now()
-    const memoryBootstrap = buildPreparedSubSessionMemoryBootstrap(effectiveInput, queuedAt)
-    upsertAgentMemoryState(buildAgentMemoryStateFromBootstrap({ bootstrap: memoryBootstrap }))
+    const memoryBootstrap = this.dependencies.prepareMemoryBootstrap(effectiveInput, queuedAt)
+    this.dependencies.initializeAgentMemoryState(memoryBootstrap)
     const subSession = buildSubSessionContract({
       ...effectiveInput,
       memoryBootstrap,
@@ -1339,6 +1503,93 @@ export class SubSessionRunner {
         },
       })
       const review = await this.reviewResultReport(effectiveInput, result, subSession)
+      const diagnosedResult = await this.resolvePostReviewResultDiagnosis(effectiveInput, result, review, subSession)
+      const childResultAudit = auditRuntimeChildWorkResultProjection({
+        resultReport: result,
+        agentName: subSession.agentNameSnapshot ?? "Unnamed sub-agent",
+        taskGoal: effectiveInput.command.taskScope.goal,
+        ...(diagnosedResult
+          ? {
+              resultDiagnosis: diagnosedResult.resultDiagnosis,
+              actionDecision: diagnosedResult.actionDecision,
+            }
+          : {}),
+        review: {
+          accepted: review.accepted,
+          status: review.status,
+          missingItems: review.missingItems,
+          requiredChanges: review.requiredChanges,
+          risksOrGaps: review.risksOrGaps,
+          canRetry: review.canRetry,
+          ...(review.impossibleReason ? { impossibleReason: review.impossibleReason } : {}),
+        },
+      })
+      recordStructuredWorkAuditEventSafely({
+        audit: childResultAudit,
+        runId: subSession.parentRunId,
+        subSessionId: subSession.subSessionId,
+        agentId: subSession.agentId,
+        correlationId: subSession.parentRunId,
+        stage: "post_review_child_result",
+        source: "sub-session-runner",
+        dedupeKey: [
+          "orchestration:structured-work-audit",
+          "post_review_child_result",
+          subSession.parentRunId,
+          subSession.subSessionId,
+          result.resultReportId,
+        ].join(":"),
+        payload: {
+          resultReportId: result.resultReportId,
+        },
+      })
+      if (childResultAudit.status === "valid" && childResultAudit.value) {
+        recordRuntimeWorkRecordSnapshotSafely({
+          snapshotKind: "child_work_result",
+          stage: "post_review_child_result",
+          record: childResultAudit.value,
+          parentRunId: subSession.parentRunId,
+          subSessionId: subSession.subSessionId,
+          agentId: subSession.agentId,
+          resultReportId: result.resultReportId,
+          source: "sub-session-runner",
+        })
+      }
+      if (childResultAudit.status !== "valid") {
+        const reasonCode = "result_diagnosis_required"
+        const detail = childResultAudit.reasonCode ?? "unknown_result_diagnosis_audit_failure"
+        const safeMessage =
+          `Sub-session result integration blocked because a valid result diagnosis is required: ${detail}`
+        await this.changeStatus(subSession, "failed")
+        await this.flushProgressBatch(subSession.parentRunId, "terminal_flush")
+        await this.dependencies.appendParentEvent(
+          subSession.parentRunId,
+          `sub_session_result_diagnosis_blocked:${subSession.subSessionId}:${detail}`,
+        )
+        const errorReport = buildErrorReport({
+          idProvider: this.idProvider,
+          command: effectiveInput.command,
+          reasonCode,
+          safeMessage,
+          retryable: true,
+        })
+        this.recordSubSessionLifecycleEvent(
+          subSession,
+          "sub_session_failed",
+          "failed",
+          safeMessage,
+          { resultReportId: result.resultReportId, reasonCode, auditReasonCode: detail },
+        )
+        return {
+          subSession,
+          status: "failed",
+          resultReport: result,
+          errorReport,
+          review,
+          modelExecution,
+          replayed: false,
+        }
+      }
       const terminalStatus = review.status
       await this.changeStatus(subSession, terminalStatus)
       await this.flushProgressBatch(subSession.parentRunId, "terminal_flush")
@@ -1380,9 +1631,9 @@ export class SubSessionRunner {
         recordOrchestrationEvent: recordOrchestrationEventSafely,
       }).execute({
         parentRunId: subSession.parentRunId,
-        ...(subSession.parentAgentId
-          ? { parentAgentId: subSession.parentAgentId, requestingAgentId: subSession.parentAgentId }
-          : {}),
+        parentAgentId: subSession.parentAgentId ?? "agent:knowbee",
+        directChildAgentIds: [subSession.agentId],
+        ...(subSession.parentAgentId ? { requestingAgentId: subSession.parentAgentId } : {}),
         successCriteria: effectiveInput.command.expectedOutputs.map(
           (output) => output.description || output.outputId,
         ),
@@ -1619,12 +1870,13 @@ export class SubSessionRunner {
         },
       })
     }
+    const agentName = subSession.agentNameSnapshot ?? subSession.agentName
     const batch = this.progressAggregator.push({
       parentRunId: subSession.parentRunId,
       subSessionId: subSession.subSessionId,
       agentId: subSession.agentId,
-      agentDisplayName: subSession.agentDisplayName,
-      ...(subSession.agentNickname ? { agentNickname: subSession.agentNickname } : {}),
+      agentName,
+      ...(subSession.agentNameSnapshot ? { agentNameSnapshot: subSession.agentNameSnapshot } : {}),
       status: progress.status,
       summary: progress.summary,
       at: progress.at,
@@ -1660,8 +1912,8 @@ export class SubSessionRunner {
         items: batch.items.map((item) => ({
           subSessionId: item.subSessionId,
           agentId: item.agentId,
-          agentDisplayName: item.agentDisplayName,
-          agentNickname: item.agentNickname ?? null,
+          agentName: item.agentName ?? item.agentNameSnapshot ?? "Unnamed sub-agent",
+          agentNameSnapshot: item.agentNameSnapshot ?? null,
           status: item.status,
           summary: item.summary,
           at: item.at,
@@ -1683,6 +1935,7 @@ export class SubSessionRunner {
     summary: string,
     detail: Record<string, unknown> = {},
   ): void {
+    const agentName = subSession.agentNameSnapshot ?? subSession.agentName
     this.recordLedgerEvent({
       parentRunId: subSession.parentRunId,
       subSessionId: subSession.subSessionId,
@@ -1693,9 +1946,8 @@ export class SubSessionRunner {
       summary,
       idempotencyKey: `${eventKind}:${subSession.parentRunId}:${subSession.subSessionId}:${subSession.status}`,
       detail: {
-        agentDisplayName: subSession.agentDisplayName,
-        agentNickname: subSession.agentNickname ?? null,
-        agentNicknameSnapshot: subSession.agentNickname ?? null,
+        agentName,
+        agentNameSnapshot: subSession.agentNameSnapshot ?? null,
         status: subSession.status,
         ...detail,
       },
@@ -1724,6 +1976,74 @@ export class SubSessionRunner {
       retryClass: classifyRetryClass(input),
       additionalContextRefs: input.command.contextPackageIds,
     })
+  }
+
+  private async resolvePostReviewResultDiagnosis(
+    input: RunSubSessionInput,
+    resultReport: ResultReport,
+    review: SubAgentResultReview,
+    subSession: SubSessionContract,
+  ): Promise<{ resultDiagnosis: LlmResultDiagnosisRecord; actionDecision: ActionDecision } | undefined> {
+    if (!this.diagnosisProvider || !this.diagnosisRepairProvider) return undefined
+
+    try {
+      const diagnosisInput = {
+        provider: this.diagnosisProvider,
+        repairProvider: this.diagnosisRepairProvider,
+        ownerAgentName: subSession.agentNameSnapshot ?? "Unnamed sub-agent",
+        resultSummary: resultReportSummary(resultReport),
+        expectedOutput: expectedOutputSummary(input),
+        evidence: resultReportEvidenceRefs(resultReport),
+        risks: [
+          ...resultReport.risksOrGaps,
+          ...review.risksOrGaps,
+          ...review.missingItems.map((item) => `missing:${item}`),
+          ...review.requiredChanges.map((item) => `required_change:${item}`),
+        ],
+        workId: `work:${subSession.subSessionId}`,
+        stepId: `result:${resultReport.resultReportId}`,
+        evidenceSourceKind: "child" as const,
+        diagnosisSubjectKind: "sub_agent_result" as const,
+      }
+      const result = await runResultDiagnosisProviderWithRepair(diagnosisInput)
+
+      if (result.status === "valid" && result.target === "result_diagnosis") {
+        authorizeDiagnosisActionRoute({
+          receipt: result.receipt,
+          subjectPayload: {
+            ownerAgentName: diagnosisInput.ownerAgentName,
+            resultSummary: diagnosisInput.resultSummary,
+            expectedOutput: diagnosisInput.expectedOutput,
+            evidence: diagnosisInput.evidence,
+            risks: diagnosisInput.risks,
+            workId: diagnosisInput.workId,
+            stepId: diagnosisInput.stepId,
+            evidenceSourceKind: diagnosisInput.evidenceSourceKind,
+          },
+          diagnosis: result.diagnosis,
+        })
+        return {
+          resultDiagnosis: result.diagnosis,
+          actionDecision: {
+            selected_action: result.diagnosis.recommended_action,
+            reason: result.diagnosis.reason,
+          },
+        }
+      }
+
+      await this.dependencies.appendParentEvent(
+        subSession.parentRunId,
+        `result_diagnosis_unavailable:${subSession.subSessionId}:${result.status}`,
+      )
+      return undefined
+    } catch (error) {
+      const reason = subSessionReasonDetail(error)
+      await this.dependencies.appendParentEvent(
+        subSession.parentRunId,
+        `result_diagnosis_unavailable:${subSession.subSessionId}:provider_error:${reason}`,
+      )
+      return undefined
+    }
   }
 
   private async executeWithModelPolicy(input: {
@@ -2240,7 +2560,7 @@ export function createTextResultReport(input: {
 }): ResultReport {
   const idProvider = input.idProvider ?? defaultIdProvider
   const value: JsonValue = input.text ?? ""
-  const source = commandTargetNicknameSnapshot(input.command)
+  const source = commandTargetAgentNameSnapshot(input.command)
   return {
     identity: {
       ...input.command.identity,

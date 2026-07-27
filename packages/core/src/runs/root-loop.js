@@ -11,6 +11,8 @@ export async function runRootLoop(params, dependencies, moduleDependencies = def
     let state = bootstrapState.state;
     while (!params.controller.signal.aborted) {
         const loopTurn = await moduleDependencies.runRootLoopTurn({
+            artifactStorage: params.artifactStorage,
+            memoryJournal: params.memoryJournal,
             runId: params.runId,
             sessionId: params.sessionId,
             requestGroupId: params.requestGroupId,
@@ -24,13 +26,20 @@ export async function runRootLoop(params, dependencies, moduleDependencies = def
             recoveryBudgetUsage: params.recoveryBudgetUsage,
             executionSemantics: params.executionSemantics,
             originalRequest: params.originalRequest,
+            config: params.config,
             ...(params.structuredRequest ? { structuredRequest: params.structuredRequest } : {}),
             requestMessage: params.requestMessage,
             workDir: params.workDir,
+            ...(params.finalResponseIdentityContext
+                ? { finalResponseIdentityContext: params.finalResponseIdentityContext }
+                : {}),
             ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
             isRootRequest: params.isRootRequest,
             contextMode: params.contextMode,
             taskProfile: params.taskProfile,
+            ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
+            ...(params.includeScheduleMemory ? { includeScheduleMemory: true } : {}),
+            ...(params.memorySearchQuery ? { memorySearchQuery: params.memorySearchQuery } : {}),
             ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
             wantsDirectArtifactDelivery: params.wantsDirectArtifactDelivery,
             requiresFilesystemMutation: params.requiresFilesystemMutation,

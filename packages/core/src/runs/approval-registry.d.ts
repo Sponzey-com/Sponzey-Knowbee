@@ -43,8 +43,15 @@ export interface ApprovalRegistryDecisionResult {
     accepted: boolean;
     status: ApprovalRegistryStatus | "missing";
     decision?: ApprovalDecision;
-    reason?: ApprovalResolutionReason | "late" | "already_consumed" | "superseded";
+    reason?: ApprovalResolutionReason | "late" | "already_consumed" | "superseded" | "scope_mismatch";
     row?: ApprovalRegistryRow;
+}
+export interface ApprovalConsumptionScope {
+    runId: string;
+    requestGroupId?: string | null;
+    toolName: string;
+    params: unknown;
+    agentId?: string | null;
 }
 export declare function stableStringify(value: unknown): string;
 export declare function hashApprovalParams(params: unknown): string;
@@ -65,6 +72,7 @@ export declare function resolveApprovalRegistryDecision(params: {
     decisionSource: string;
     now?: number;
 }): ApprovalRegistryDecisionResult;
-export declare function consumeApprovalRegistryDecision(approvalId: string, now?: number): ApprovalRegistryDecisionResult;
-export declare function describeLateApproval(row: ApprovalRegistryRow | undefined): string;
+export declare function consumeApprovalRegistryDecision(approvalId: string, now?: number, expected?: ApprovalConsumptionScope): ApprovalRegistryDecisionResult;
+export type ApprovalNoticeLanguage = "ko" | "en";
+export declare function describeLateApproval(row: ApprovalRegistryRow | undefined, language?: ApprovalNoticeLanguage): string;
 //# sourceMappingURL=approval-registry.d.ts.map

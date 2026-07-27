@@ -17,11 +17,11 @@ export interface SubSessionInfo {
     parentRunId: string;
     parentSessionId: string;
     parentAgentId?: string;
-    parentAgentDisplayName?: string;
-    parentAgentNickname?: string;
+    parentAgentName?: string;
+    parentAgentNameSnapshot?: string;
     agentId: string;
-    agentDisplayName: string;
-    agentNickname?: string;
+    agentName: string;
+    agentNameSnapshot?: string;
     commandRequestId: string;
     status: SubSessionStatus;
     promptBundleId: string;

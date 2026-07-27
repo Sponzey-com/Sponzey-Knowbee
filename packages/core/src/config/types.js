@@ -107,15 +107,13 @@ export const DEFAULT_CONFIG = {
         password: "",
         allowAnonymous: false,
     },
-    search: {
-        web: {
-            provider: "duckduckgo",
-            maxResults: 5,
-        },
-    },
+    search: {},
     memory: {
         compaction: {
             minContextTokens: 3000,
+            tokenThreshold: 120_000,
+            messageThreshold: 40,
+            protectedRecentMessageCount: 8,
         },
         sessionRetentionDays: 30,
     },

@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 import { buildIncomingIntentContract } from "../packages/core/src/runs/active-run-projection.ts"
 import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
 import { buildTaskModels } from "../packages/core/src/runs/task-model.js"
 import { createInboundMessageRecord } from "../packages/core/src/runs/request-isolation.ts"
 import type { RootRun } from "../packages/core/src/runs/types.js"
+import { createTestStartPlanBoundaryDependencies } from "./fixtures/start-plan.ts"
 
 function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan>[1]>) {
   const reconnectRun = {
@@ -20,6 +22,7 @@ function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan
   } as any
 
   return {
+    ...createTestStartPlanBoundaryDependencies(),
     analyzeRequestEntrySemantics: vi.fn(() => ({ reuse_conversation_context: false, active_queue_cancellation_mode: null })),
     isReusableRequestGroup: vi.fn(() => false),
     listActiveSessionRequestGroups: vi.fn(() => [reconnectRun]),
@@ -97,6 +100,7 @@ describe("request continuity new message isolation", () => {
     })
 
     const result = await buildStartPlan({
+      config: DEFAULT_CONFIG,
       message: "현재 나스닥 지수도 확인해줘",
       sessionId: "telegram:chat-1",
       runId: "run-new-message",

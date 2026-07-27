@@ -53,12 +53,13 @@ import {
 import { normalizeLegacyExecutorDefaultText } from "../lib/executor-graph-relations"
 import {
   applyTopologyExecutorToSetupDraft,
+  archiveTopologySubAgentInSetupDraft,
   buildSubAgentTopologyProjection,
-  hasSetupSubAgentTopology,
 } from "../lib/topology-sub-agent-sync"
 import { useUiI18n } from "../lib/ui-i18n"
 import { buildUnifiedSettingsViewForSetupDraft } from "../lib/unified-settings-view"
 import { createDefaultBeginnerSubAgent } from "../lib/beginner-sub-agents"
+import { mainAgentNameForDraft } from "../lib/main-agent-copy"
 import type { EnterpriseTopologyRunTraceProjection } from "../lib/enterprise-topology-operations"
 import { useSetupStore } from "../stores/setup"
 import type { UiLanguage } from "../stores/uiLanguage"
@@ -494,7 +495,7 @@ function ExecutorTopologyV2Workspace({
       .catch((error: unknown) => {
         if (cancelled) return
         setLoadStatus("failed")
-        setErrorMessage(error instanceof Error ? error.message : text("토폴로지를 불러오지 못했습니다.", "Failed to load topology."))
+        setErrorMessage(error instanceof Error ? error.message : text("서브 에이전트 설정을 불러오지 못했습니다.", "Failed to load sub-agent settings."))
       })
     return () => {
       cancelled = true
@@ -502,14 +503,14 @@ function ExecutorTopologyV2Workspace({
   }, [text])
 
   const subAgentProjection = React.useMemo(
-    () => hasSetupSubAgentTopology(setupDraft)
+    () => setupDraft.subAgents
       ? buildSubAgentTopologyProjection({ draft: setupDraft })
       : null,
     [setupDraft],
   )
   const mainAgentDisplayName = React.useMemo(
-    () => setupDraft.mainAgent?.name.trim() || text("노비", "Knowbee"),
-    [setupDraft.mainAgent?.name, text],
+    () => mainAgentNameForDraft(setupDraft, language),
+    [language, setupDraft],
   )
   const effectiveTopology = subAgentProjection?.topology ?? topology
   const unifiedSettingsView = React.useMemo(
@@ -636,7 +637,7 @@ function ExecutorTopologyV2Workspace({
         setErrorMessage(
           saved.activation.issues?.join(", ") ||
             saved.activation.reasonCode ||
-            text("저장했지만 실행 토폴로지로 활성화하지 못했습니다.", "Saved, but failed to activate the executable topology."),
+            text("저장했지만 서브 에이전트 실행 구성으로 활성화하지 못했습니다.", "Saved, but failed to activate the sub-agent execution setup."),
         )
         return
       }
@@ -677,9 +678,25 @@ function ExecutorTopologyV2Workspace({
 
   const handleDeleteExecutor = React.useCallback(() => {
     if (!selectedExecutorId) return
+    const selectedSetupSubAgent = setupDraft.subAgents?.items.some((item) =>
+      item.agentId === selectedExecutorId && item.status !== "archived"
+    ) === true
+    if (selectedSetupSubAgent) {
+      const nextDraft = archiveTopologySubAgentInSetupDraft(setupDraft, selectedExecutorId)
+      setSelectedExecutorId(null)
+      setSaveStatus("loading")
+      setErrorMessage(null)
+      void saveSetupDraftSnapshot(nextDraft).then((ok) => {
+        setSaveStatus(ok ? "saved" : "failed")
+        setErrorMessage(ok
+          ? null
+          : text("서브 에이전트를 삭제하지 못했습니다.", "Failed to delete the sub-agent."))
+      })
+      return
+    }
     commitTopology((current) => deleteExecutorNodeV2(current, selectedExecutorId))
     setSelectedExecutorId(null)
-  }, [commitTopology, selectedExecutorId])
+  }, [commitTopology, saveSetupDraftSnapshot, selectedExecutorId, setupDraft, text])
 
   const handleExecutorChange = React.useCallback((executor: ExecutorDraft) => {
     if (subAgentProjection?.summaries.has(executor.id)) {
@@ -725,6 +742,7 @@ function ExecutorTopologyV2Workspace({
       selectedLayer={selectedLayer}
       savedStatusLabel={savedStatusLabel}
       validationLabel={validationLabel}
+      rootAgentLabel={mainAgentDisplayName}
       executorCount={activeNodes.length}
       connectionCount={activeEdges.length}
       showFirstStart={false}
@@ -792,6 +810,7 @@ function ExecutorTopologyV2Workspace({
               graph={graph}
               workspaceId={DEFAULT_TOPOLOGY_ID}
               topologyId={effectiveTopology.id}
+              rootAgentLabel={mainAgentDisplayName}
               subAgentSummary={selectedExecutorId ? subAgentProjection?.summaries.get(selectedExecutorId) : undefined}
               readOnly={Boolean(subAgentProjection && selectedExecutorId === "agent:knowbee")}
               onExecutorChange={handleExecutorChange}
@@ -895,7 +914,7 @@ export function TopologyV2FlowStatusCard({
               data-failure-code={failure.failureCode}
             >
               <span className="font-semibold">{failure.executorName}</span>
-              <span className="ml-1">{failure.failureCode}</span>
+              <span className="ml-1">{failureCodeLabel(failure.failureCode, text)}</span>
               <div className="text-rose-700">{failure.summary}</div>
             </div>
           ))}
@@ -931,8 +950,8 @@ function traceEmptyMessage(
   }
   if (reason === "no_topology_run_for_latest_task") {
     return text(
-      "실행 현황의 최근 요청에 연결된 토폴로지 실행 기록이 없습니다.",
-      "The latest activity-monitor request has no linked topology execution record.",
+      "실행 현황의 최근 요청에 연결된 서브 에이전트 실행 기록이 없습니다.",
+      "The latest activity-monitor request has no linked sub-agent execution record.",
     )
   }
   return text("최근 실행 기록이 아직 없습니다.", "There is no recent execution record yet.")
@@ -1020,6 +1039,30 @@ function traceToneClassName(tone: TopologyExecutionTraceEventViewModel["tone"]):
   return "border-stone-200 bg-white text-stone-700"
 }
 
+function failureCodeLabel(
+  failureCode: string,
+  text: ReturnType<typeof useUiI18n>["text"],
+): string {
+  switch (failureCode) {
+    case "exhaustion":
+    case "final_failure_after_exhaustion":
+      return text("처리 방법 소진", "Recovery exhausted")
+    case "prompt_bundle_preflight_failed":
+      return text("프롬프트 검증 차단", "Prompt blocked")
+    case "tool_permission_missing":
+    case "permission_or_tool_blocked":
+      return text("권한 또는 도구 필요", "Permission or tool needed")
+    case "success_criteria_unmet":
+      return text("완료 기준 미충족", "Criteria unmet")
+    case "runtime_risk":
+      return text("남은 위험 있음", "Runtime risk")
+    case "execution_incomplete":
+      return text("실행 미완료", "Incomplete")
+    default:
+      return text("실패 원인 확인 필요", "Review failure reason")
+  }
+}
+
 function traceStatusChipClassName(
   status: TopologyExecutionTraceViewModel["status"],
   loadStatus: TopologyLoadStatus,
@@ -1039,11 +1082,11 @@ function traceStatusLabel(
   text: ReturnType<typeof useUiI18n>["text"],
 ): string {
   if (loadStatus === "loading") return text("불러오는 중", "Loading")
-  if (loadStatus === "failed") return text("trace 오류", "Trace error")
+  if (loadStatus === "failed") return text("기록 오류", "History error")
   if (status === "failed") return text("실패", "Failed")
   if (status === "blocked") return text("안전 차단", "Blocked")
   if (status === "self_solved") return text("직접 처리", "Self solved")
-  if (status === "trace_missing") return text("trace 없음", "No trace")
+  if (status === "trace_missing") return text("기록 없음", "No history")
   if (status === "completed") return text("완료", "Completed")
   if (status === "running") return text("실행 중", "Running")
   return text("대기", "Idle")

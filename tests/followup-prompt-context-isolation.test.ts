@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
+import { createTestStartPlanBoundaryDependencies } from "./fixtures/start-plan.ts"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 import { buildPromptContextBlockPlan } from "../packages/core/src/orchestration/prompt-bundle.ts"
 import { buildFollowupPrompt } from "../packages/core/src/runs/action-execution.ts"
 import { prepareStartLaunch } from "../packages/core/src/runs/start-launch.ts"
@@ -136,6 +138,7 @@ function startPlanFixture(overrides: Record<string, unknown> = {}): any {
 async function prepareWithPlan(plan: any): Promise<any> {
   const createRootRun = vi.fn(() => ({ id: plan.requestGroupId }))
   await prepareStartLaunch({
+    config: DEFAULT_CONFIG,
     message: "새 요청",
     sessionId: "session-test",
     runId: "run-new",
@@ -145,6 +148,7 @@ async function prepareWithPlan(plan: any): Promise<any> {
     maxDelegationTurns: 4,
     hasRequestGroupExecutionQueue: () => false,
   }, {
+    ...createTestStartPlanBoundaryDependencies(),
     buildStartPlan: vi.fn(async () => plan) as any,
     isReusableRequestGroup: vi.fn(),
     listActiveSessionRequestGroups: vi.fn(),
@@ -220,7 +224,7 @@ describe("follow-up prompt context isolation", () => {
         type: "run_task",
         title: "구현 작업",
         priority: "normal",
-        reason: "하위 실행자에게 맡길 구현 작업",
+        reason: "하위 서브 에이전트에게 맡길 구현 작업",
         payload: {
           goal: "구현하고 검증한다.",
           success_criteria: ["테스트가 통과한다."],
@@ -231,7 +235,7 @@ describe("follow-up prompt context isolation", () => {
       intake: baseIntake(),
       selectedExecutorId: "topology:main:node:developer",
       selectedExecutorLabel: "개발자",
-      selectedExecutorReason: "직속 하위 실행자가 구현 역할과 일치합니다.",
+      selectedExecutorReason: "직속 하위 서브 에이전트가 구현 역할과 일치합니다.",
     })
 
     expect(prompt).toContain("[parent_work_order]")
@@ -240,7 +244,8 @@ describe("follow-up prompt context isolation", () => {
     expect(prompt).toContain("[return_to_parent_contract]")
     expect(prompt).toContain("[validated_executor]")
     expect(prompt).toContain("topology:main:node:developer")
-    expect(prompt).toContain("부모 실행자가 검증/취합")
+    expect(prompt).toContain("parent agent can review and aggregate")
+    expect(prompt).not.toContain("부모 실행자가 검증/취합")
     expect(prompt).not.toContain("선호 대상")
     expect(prompt).not.toContain("provider:openai")
     expect(prompt).toContain("Do not send or claim the final user-channel answer yourself.")

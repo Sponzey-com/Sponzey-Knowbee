@@ -3,6 +3,7 @@ import { createElement } from "../packages/webui/node_modules/react/index.js"
 import { renderToStaticMarkup } from "../packages/webui/node_modules/react-dom/server.js"
 import { afterEach, describe, expect, it } from "vitest"
 import { createCapabilities } from "../packages/core/src/control-plane/index.ts"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.js"
 import {
   ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_ALLOWED_TYPING_INPUTS,
   ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH,
@@ -56,7 +57,6 @@ import { resolveTopologyWorkspaceInitialLayer } from "../packages/webui/src/page
 import { useCapabilitiesStore } from "../packages/webui/src/stores/capabilities"
 
 const now = Date.UTC(2026, 3, 30, 22, 0, 0)
-const previousEnterpriseBuilderFlag = process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
 
 function disabledBuilderCapability(): FeatureCapability {
   return {
@@ -125,15 +125,10 @@ function traceOverlay(topologyId: string): TopologyRunTraceOverlayInput {
 
 afterEach(() => {
   useCapabilitiesStore.getState().setItems([])
-  if (previousEnterpriseBuilderFlag === undefined) {
-    delete process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
-  } else {
-    process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = previousEnterpriseBuilderFlag
-  }
 })
 
 describe("task012 Topology Workspace release gate", () => {
-  it("adds route, layer, and Executor-first workspace checks to Enterprise Topology release readiness", () => {
+  it("adds route, layer, and sub-agent-first workspace checks to Enterprise Topology release readiness", () => {
     const summary = buildEnterpriseTopologyReleaseReadinessSummary({
       now: new Date("2026-04-30T00:00:00.000Z"),
     })
@@ -177,7 +172,7 @@ describe("task012 Topology Workspace release gate", () => {
     ]))
   })
 
-  it("fails readiness when a visible layer, route alias, removed resources route, or Executor-first step regresses", () => {
+  it("fails readiness when a visible layer, route alias, removed resources route, or sub-agent-first step regresses", () => {
     const broken = buildEnterpriseTopologyReleaseReadinessSummary({
       now: new Date("2026-04-30T00:00:00.000Z"),
       workspaceUsability: buildEnterpriseTopologyWorkspaceUsabilityGate({
@@ -298,9 +293,9 @@ describe("task012 Topology Workspace release gate", () => {
   })
 
   it("keeps feature-flag-off fallback for workspace routes and root-run routing", () => {
-    process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = "off"
     useCapabilitiesStore.getState().setItems([disabledBuilderCapability()])
-    const apiCapability = createCapabilities().find((item) => item.key === "enterprise_topology_builder_ui")
+    const apiCapability = createCapabilities({ enterpriseTopologyBuilderEnabled: false, config: DEFAULT_CONFIG })
+      .find((item) => item.key === "enterprise_topology_builder_ui")
     const featureGateHtml = renderToStaticMarkup(
       createElement(
         FeatureGate,
@@ -330,7 +325,7 @@ describe("task012 Topology Workspace release gate", () => {
     })
 
     expect(apiCapability).toEqual(expect.objectContaining({ enabled: false, status: "disabled" }))
-    expect(featureGateHtml).toContain("기능 플래그")
+    expect(featureGateHtml).toContain("기능 상태를 확인할 수 없습니다")
     expect(featureGateHtml).not.toContain("workspace route content")
     expect(getUiNavigation("advanced", false).filter((item) => item.path === "/sub-agents")).toEqual([
       expect.objectContaining({ path: "/sub-agents" }),
@@ -361,9 +356,9 @@ describe("task012 Topology Workspace release gate", () => {
     expect(runbook).toContain("/advanced/enterprise-topology")
     expect(runbook).toContain("/advanced/topology?mode=build")
     expect(runbook).toContain("/advanced/topology?mode=resources")
-    expect(runbook).toContain("must stay on the simple Executor Graph surface")
+    expect(runbook).toContain("must stay on the simple sub-agent settings surface")
     expect(runbook).toContain("old Runtime Topology menu")
-    expect(runbook).toContain("Executor-first usability gate")
+    expect(runbook).toContain("Sub-agent-first usability gate")
     expect(runbook).toContain("Default UX leak gate")
     expect(runbook).toContain("enterprise_topology_builder_ui=off")
     expect(runbook).toContain("declared_observed_topology_analysis=off")

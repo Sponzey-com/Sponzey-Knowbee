@@ -132,6 +132,30 @@ describe("task007 WorkOrder runtime bridge", () => {
     })
   })
 
+  it("passes targetAgentName through to the generated CommandRequest", () => {
+    const topology = topologyFixture()
+    const node = intakeNode(topology)
+    const compiled = compiledFixture(topology)
+    const workOrder = workOrderFixture()
+
+    const result = createWorkOrderRuntimeEnvelope({
+      workOrder,
+      nodeContractSnapshot: node,
+      compiledTopologySnapshot: compiled,
+      targetAgentNameSnapshot: "접수 담당",
+      now: () => now,
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("expected runtime envelope")
+
+    const command = result.envelope.subSessionCommandRequest
+    expect(validateCommandRequest(command).ok).toBe(true)
+    expect(command.targetAgentName).toBe("접수 담당")
+    expect(command.targetAgentNameSnapshot).toBe("접수 담당")
+    expect(command).not.toHaveProperty("targetNicknameSnapshot")
+  })
+
   it("narrows permission scope against node contract and compiled tool scope", () => {
     const topology = topologyFixture()
     const node = intakeNode(topology)

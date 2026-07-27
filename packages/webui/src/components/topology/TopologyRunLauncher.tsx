@@ -106,6 +106,7 @@ export function TopologyRunLauncher({
   return (
     <TopologyRunStrip
       exposureMode={exposureMode}
+      topology={topology}
       templates={templates}
       selectedTemplateId={selectedTemplateId}
       selectedContextPresetId={selectedContextPresetId}

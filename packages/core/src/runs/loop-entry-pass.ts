@@ -10,6 +10,7 @@ import type { LoopDirective } from "./loop-directive.js"
 export type LoopEntryPassResult =
   | { kind: "break" }
   | { kind: "retry"; nextMessage: string }
+  | { kind: "execute"; nextMessage: string; requiredToolNames: string[]; intakeProcessed: true }
   | { kind: "set_directive"; directive: LoopDirective; intakeProcessed: boolean }
   | { kind: "proceed"; intakeProcessed: boolean }
 
@@ -84,6 +85,14 @@ export async function runLoopEntryPass(
 
     const intakeDirective = await dependencies.tryHandleIntakeBridge()
     if (intakeDirective) {
+      if (intakeDirective.kind === "execute") {
+        return {
+          kind: "execute",
+          nextMessage: intakeDirective.message,
+          requiredToolNames: intakeDirective.requiredToolNames,
+          intakeProcessed: true,
+        }
+      }
       return {
         kind: "set_directive",
         directive: intakeDirective,

@@ -1,3 +1,4 @@
+import { type ArtifactStorageContext } from "../artifacts/lifecycle.js";
 import type { ChannelSource } from "../channels/contracts.js";
 import type { TaskContinuitySnapshot } from "../db/index.js";
 import type { RootRun, RunStatus } from "./types.js";
@@ -50,7 +51,6 @@ export interface TaskDeliveryModel {
     artifact?: TaskArtifactModel;
 }
 export interface TaskArtifactModel {
-    filePath?: string;
     fileName: string;
     url?: string;
     previewUrl?: string;
@@ -178,5 +178,5 @@ export interface TaskModel {
     diagnostics?: TaskDiagnosticsModel;
     activities: TaskActivityModel[];
 }
-export declare function buildTaskModels(runs: RootRun[], continuitySnapshots?: TaskContinuitySnapshot[]): TaskModel[];
+export declare function buildTaskModels(runs: RootRun[], continuitySnapshots: TaskContinuitySnapshot[] | undefined, artifactStorage: ArtifactStorageContext): TaskModel[];
 //# sourceMappingURL=task-model.d.ts.map

@@ -8,9 +8,11 @@ import type {
 export function UnifiedSettingsSummaryPanel({
   view,
   variant = "full",
+  onPrimaryAction,
 }: {
   view: UnifiedSettingsViewModel
   variant?: "full" | "compact"
+  onPrimaryAction?: () => void
 }) {
   if (variant === "compact") {
     return (
@@ -86,6 +88,7 @@ export function UnifiedSettingsSummaryPanel({
           <button
             type="button"
             disabled={view.summary.primaryAction.disabled}
+            onClick={onPrimaryAction}
             className="h-9 rounded-lg border border-stone-900 bg-stone-900 px-3 text-xs font-semibold text-white disabled:border-stone-200 disabled:bg-stone-100 disabled:text-stone-400"
             data-testid="unified-settings-primary-action"
           >

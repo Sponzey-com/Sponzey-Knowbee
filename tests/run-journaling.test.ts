@@ -71,4 +71,30 @@ describe("run journaling helpers", () => {
 
     expect(onError).toHaveBeenCalledWith(expect.stringContaining("db locked"))
   })
+
+  it("redacts insert errors before reporting them through dependency hook", () => {
+    const onError = vi.fn()
+
+    safeInsertRunJournalRecord(
+      {
+        kind: "failure",
+        title: "failure",
+        content: "내용",
+        summary: "요약",
+      },
+      {
+        insertRecord: () => {
+          throw new Error("db locked token=sk-task0615-secret-value path=/Users/dongwooshin/.knowbee/raw.sqlite3")
+        },
+        onError,
+      },
+    )
+
+    const message = onError.mock.calls[0]?.[0] ?? ""
+    expect(message).toContain("memory journal insert failed")
+    expect(message).toContain("***")
+    expect(message).toContain("[internal-path-redacted]")
+    expect(message).not.toContain("sk-task0615")
+    expect(message).not.toContain("/Users/dongwooshin")
+  })
 })

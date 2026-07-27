@@ -3,7 +3,8 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { resolveWebUiLiveUpdateAck } from "../packages/core/src/api/ws/stream.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { type RuntimePaths, createRuntimePaths } from "../packages/core/src/config/paths.ts"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type {
   AgentPromptBundle,
@@ -16,7 +17,7 @@ import type {
   StructuredTaskScope,
   SubSessionContract,
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
-import { closeDb, getDb } from "../packages/core/src/db/index.ts"
+import { closeDb } from "../packages/core/src/db/index.js"
 import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
 import {
   listLatencyMetrics,
@@ -43,10 +44,11 @@ import {
   setFeatureFlagMode,
 } from "../packages/core/src/runtime/rollout-safety.ts"
 import { acknowledgeLiveUpdateMessage } from "../packages/webui/src/api/ws.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+import { createTestStartPlanBoundaryDependencies } from "./fixtures/start-plan.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimePaths: RuntimePaths
 
 function makeTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -168,8 +170,6 @@ function promptBundle(bundleId = "prompt-bundle:researcher"): AgentPromptBundle 
     agentId: "agent:researcher",
     agentType: "sub_agent",
     role: "research worker",
-    displayNameSnapshot: "Researcher",
-    nicknameSnapshot: "Res",
     personalitySnapshot: "Precise",
     teamContext: [],
     memoryPolicy,
@@ -204,8 +204,7 @@ function runInput(id: string): RunSubSessionInput {
     command: command(id),
     agent: {
       agentId: "agent:researcher",
-      displayName: "Researcher",
-      nickname: "Res",
+      agentName: "Res",
     },
     parentSessionId: "session-parent",
     promptBundle: promptBundle(),
@@ -216,6 +215,24 @@ function makeRuntimeDependencies() {
   const sessions = new Map<string, SubSessionContract>()
   let time = Date.UTC(2026, 3, 20, 0, 0, 0)
   const clone = <T>(value: T): T => structuredClone(value)
+  const resultDiagnosis = {
+    diagnosis_summary: "The result is sufficient for parent aggregation.",
+    sufficiency: "sufficient",
+    missing_information: [],
+    conflicts: [],
+    risk: "none",
+    risks: [],
+    confidence: "high",
+    recommended_action: "final_report",
+    reason: "The result satisfies the expected output.",
+  }
+  const diagnosisProvider = {
+    diagnoseRequest: async () => {
+      throw new Error("request diagnosis is not used")
+    },
+    diagnoseResult: async () => resultDiagnosis,
+    repairDiagnosis: async () => resultDiagnosis,
+  }
   const dependencies: SubSessionRuntimeDependencies = {
     now: () => {
       time += 100
@@ -240,28 +257,26 @@ function makeRuntimeDependencies() {
     },
     appendParentEvent: () => undefined,
     isParentCancelled: () => false,
+    diagnosisProvider,
+    diagnosisRepairProvider: diagnosisProvider,
   }
   return { dependencies, sessions }
 }
 
 beforeEach(() => {
   closeDb()
-  resetLatencyMetrics()
   const stateDir = makeTempDir("knowbee-task014-state-")
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
-  getDb()
+  runtimePaths = createRuntimePaths(
+    { KNOWBEE_STATE_DIR: stateDir },
+    { homeDir: stateDir, exists: () => false },
+  )
+  initializeTestDbRuntime(stateDir)
+  resetLatencyMetrics()
 })
 
 afterEach(() => {
-  closeDb()
   resetLatencyMetrics()
-  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_STATE_DIR")
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_CONFIG")
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
+  closeDb()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -300,7 +315,9 @@ describe("task014 release readiness", () => {
       summary.metrics.find((metric) => metric.targetId === "registry_lookup_latency")?.status,
     ).toBe("ok")
     expect(summary.missingRequiredMetrics).toContain("approval_aggregation_latency")
-    expect(summary.gateStatus).toBe("warning")
+    expect(summary.operationalStatus).toBe("warning")
+    expect(summary.gateStatus).toBe("failed")
+    expect(summary.acceptance.status).toBe("baseline_only")
   })
 
   it("includes approval aggregation and resource lock wait evidence in the release summary when the runtime collected them", () => {
@@ -430,6 +447,7 @@ describe("task014 release readiness", () => {
 
     const manifest = buildReleaseManifest({
       rootDir,
+      runtimePaths,
       releaseVersion: "v-task014",
       gitTag: "v-task014",
       gitCommit: "task014abc",
@@ -470,6 +488,13 @@ describe("task014 release readiness", () => {
           id: "admin:diagnostic-bundle",
           kind: "admin_diagnostic_bundle",
           status: "missing_optional",
+          handling: {
+            purpose: "sanitized_release_diagnostics",
+            audience: "release_package",
+            redaction: "sanitized",
+            retention: "release_lifecycle",
+            rawDataAllowed: false,
+          },
         }),
       ]),
     )
@@ -529,6 +554,7 @@ describe("task014 release readiness", () => {
   it("collects registry lookup, sub-session queue wait, first progress, and finalization latency from runtime paths", async () => {
     await buildStartPlan(
       {
+        config: DEFAULT_CONFIG,
         message: "작업을 병렬로 나눠줘",
         sessionId: "session-task014",
         runId: "run-task014",
@@ -536,6 +562,7 @@ describe("task014 release readiness", () => {
         source: "webui",
       },
       {
+        ...createTestStartPlanBoundaryDependencies(),
         analyzeRequestEntrySemantics: vi.fn(() => ({
           reuse_conversation_context: false,
           active_queue_cancellation_mode: null,
@@ -604,7 +631,7 @@ describe("task014 release readiness", () => {
                 parentSessionId: "session-parent",
                 parentRunId: "run-parent",
                 agentId: "agent:researcher",
-                agentDisplayName: "Researcher",
+                agentName: "Researcher",
                 commandRequestId: "command:left",
                 status: "completed",
                 promptBundleId: "prompt-bundle:researcher",
@@ -635,7 +662,7 @@ describe("task014 release readiness", () => {
                 parentSessionId: "session-parent",
                 parentRunId: "run-parent",
                 agentId: "agent:researcher",
-                agentDisplayName: "Researcher",
+                agentName: "Researcher",
                 commandRequestId: "command:right",
                 status: "completed",
                 promptBundleId: "prompt-bundle:researcher",

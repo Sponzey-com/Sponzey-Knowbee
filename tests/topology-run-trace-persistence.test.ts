@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type { OrchestrationPlan } from "../packages/core/src/contracts/sub-agent-orchestration.js"
 import {
@@ -15,27 +14,21 @@ import {
   resolveTopologyDispatchFollowupDecision,
 } from "../packages/core/src/runs/topology-dispatch-fallback.ts"
 import { getTopologyRunTraceProjection } from "../packages/core/src/topology-runtime/trace.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-topology-run-trace-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-topology-run-trace-"))
+  tempDirs.push(rootDir)
+  const runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function restoreState(): void {
   closeDb()
-  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_STATE_DIR")
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_CONFIG")
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 }
 
@@ -100,7 +93,7 @@ function dispatchResult(): DelegatedTaskDispatchResult {
       taskId: "task:review",
       subSessionId: "sub-session:review",
       agentId: "workspace:draft:node:review",
-      agentDisplayName: "검토자",
+      agentName: "검토자",
       agentSource: "topology",
       topologyId: "workspace:draft",
       topologyExecutorId: "node:review",
@@ -122,9 +115,13 @@ describe("topology run trace persistence", () => {
       dispatchResult: result,
       plan: activePlan,
       currentExecutorId: "agent:knowbee",
-      availableDirectChildExecutorIds: ["workspace:draft:node:finance"],
+      availableDirectChildExecutorIds: ["workspace:draft:node:review"],
     })
-    expect(decision).toBeDefined()
+    expect(decision).toMatchObject({
+      action: "self_solve",
+      reasonCode: "self_solve_after_delegation_failure",
+      rootLoopContinuation: "allowed_with_trace",
+    })
 
     const trace = recordTopologyDispatchFollowupTrace({
       decision: decision!,

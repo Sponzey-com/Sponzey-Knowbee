@@ -2,9 +2,15 @@ import {
   detectAvailableProvider,
   getDefaultModel,
   getProvider,
+  type AIProviderConfigSnapshot,
   type AIProvider,
   type ProviderAuditTrace,
 } from "../ai/index.js"
+import type { KnowbeeConfig } from "../config/types.js"
+import type { ArtifactStorageContext } from "../artifacts/lifecycle.js"
+import { dirname } from "node:path"
+import { createHash } from "node:crypto"
+import { createInstructionRuntimeContext } from "../instructions/merge.js"
 import type { ChannelSource } from "../channels/contracts.js"
 import {
   buildScheduleRegistrationCancelledEvent,
@@ -12,14 +18,17 @@ import {
 } from "../scheduler/lifecycle.js"
 import {
   analyzeTaskIntake,
+  analyzeTaskIntakeOutcome,
+  isTaskIntakeAnalysisOutcome,
+  LLM_INTAKE_RESULT_NOTE,
+  type AnalyzeTaskIntakeParams,
   type TaskExecutionSemantics,
+  type TaskIntakeAnalysisOutcome,
   type TaskIntentEnvelope,
+  type TaskIntakeResult,
   type TaskStructuredRequest,
 } from "../agent/intake.js"
-import {
-  reviewTaskCompletion,
-  type CompletionReviewResult,
-} from "../agent/completion-review.js"
+import { reviewTaskCompletion, type CompletionReviewResult } from "../agent/completion-review.js"
 import type { AgentContextMode } from "../agent/index.js"
 import { resolveRunRoute } from "./routing.js"
 import { normalizeDirectArtifactDeliverySemantics } from "./execution-profile.js"
@@ -30,14 +39,31 @@ import {
   inferDelegatedTaskProfile,
   type ScheduleDelayedRunRequest,
 } from "./action-execution.js"
-import type { RunChunkDeliveryHandler } from "./delivery.js"
-import type { LoopDirective } from "./loop-directive.js"
+import {
+  emitAssistantTextDelivery,
+  resolveAssistantTextDeliveryOutcome,
+  type RunChunkDeliveryHandler,
+} from "./delivery.js"
+import {
+  CanonicalExecutionFailure,
+  isCanonicalExecutionFailure,
+} from "./canonical-execution-failure.js"
+import {
+  combineUserFacingTextSources,
+  type LoopDirective,
+  type LoopDirectiveNotice,
+  type UserFacingTextSource,
+} from "./loop-directive.js"
 import type { TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
+import type { FirstResponseDeadline } from "./first-response-deadline.js"
+import type { FirstResponseReceiptRecorder } from "./first-response-receipt.js"
 import type {
   AgentExecutionDecision,
   AgentExecutionDecisionTraceSnapshot,
+  AgentExecutionToolBinding,
 } from "../orchestration/execution-decision-contract.js"
+import { redactLogText } from "../logger/index.js"
 import {
   decideExecutionRoute,
   type DecideExecutionRouteResult,
@@ -47,12 +73,19 @@ import {
   EXECUTION_GRAPH_ROOT_AGENT_ID,
 } from "../orchestration/execution-graph-snapshot.js"
 import {
+  executionHarnessPolicyContextLabel,
   formatAgentExecutionDecisionTraceRunEvent,
   runAgentExecutionHarness,
   type AgentExecutionHarnessResult,
   type AgentExecutionModelCaller,
 } from "../orchestration/execution-harness.js"
 import { loadPromptTemplate } from "../memory/knowbee-md.js"
+import {
+  buildCanonicalIntakeDiagnosisDescriptor,
+  type CanonicalIntakeDiagnosisDescriptor,
+} from "./canonical-intake-diagnosis.js"
+import { buildCanonicalSimplePathReleaseDescriptor } from "./canonical-simple-path.js"
+import { buildDirectLlmResponseReviewReceipt } from "./user-facing-response-gate.js"
 
 export interface DelegatedRunStartParams {
   message: string
@@ -93,13 +126,37 @@ interface IntakeBridgePassDependencies {
   updateRunSummary: (runId: string, summary: string) => void
   incrementDelegationTurnCount: (runId: string, summary: string) => void
   emitScheduleCreated: (payload: ReturnType<typeof buildScheduleRegistrationCreatedEvent>) => void
-  emitScheduleCancelled: (payload: ReturnType<typeof buildScheduleRegistrationCancelledEvent>) => void
+  emitScheduleCancelled: (
+    payload: ReturnType<typeof buildScheduleRegistrationCancelledEvent>,
+  ) => void
   scheduleDelayedRun: (params: ScheduleDelayedRunRequest) => void
   startDelegatedRun: (
     params: DelegatedRunStartParams,
   ) => void | DelegatedRunStartResult | Promise<void | DelegatedRunStartResult>
   normalizeTaskProfile: (taskProfile: string | undefined) => TaskProfile
   logInfo: (message: string, payload: Record<string, unknown>) => void
+  recordCanonicalIntakeDiagnosis: (
+    descriptor: CanonicalIntakeDiagnosisDescriptor,
+  ) => Promise<{ ok: true } | { ok: false; reasonCode: string }>
+  authorizeCanonicalIntakePlan: (input: {
+    runId: string
+    intake: TaskIntakeResult
+  }) => Promise<
+    | { ok: true; requiredToolNames?: string[] | undefined }
+    | { ok: false; reasonCode: string; safeEvidenceRefs?: readonly string[] }
+  >
+  recordCanonicalExecutionStart: (input: {
+    runId: string
+    intake: TaskIntakeResult
+  }) => Promise<{ ok: true } | { ok: false; reasonCode: string }>
+  releaseCanonicalSimplePath: (input: {
+    runId: string
+    workId: string
+    classificationFingerprint: `sha256:${string}`
+    answerSource: "llm_generated"
+    requestFingerprint: `sha256:${string}`
+    answerFingerprint: `sha256:${string}`
+  }) => Promise<{ ok: true } | { ok: false; reasonCode: string }>
   recordExecutionDecisionTrace?: (params: {
     runId: string
     agentExecutionDecision: AgentExecutionDecision
@@ -107,49 +164,62 @@ interface IntakeBridgePassDependencies {
   }) => void
 }
 
+type IntakeAnalysisProvider = (
+  params: AnalyzeTaskIntakeParams,
+) => Promise<TaskIntakeResult | TaskIntakeAnalysisOutcome | null>
+
 interface IntakeBridgePassModuleDependencies {
-  analyzeTaskIntake: typeof analyzeTaskIntake
+  analyzeTaskIntake: IntakeAnalysisProvider
+  emitAssistantTextDelivery?: typeof emitAssistantTextDelivery
   resolveRunRoute: typeof resolveRunRoute
   executeScheduleActions: typeof executeScheduleActions
   createDefaultScheduleActionDependencies: typeof createDefaultScheduleActionDependencies
   inferDelegatedTaskProfile: typeof inferDelegatedTaskProfile
   buildFollowupPrompt: typeof buildFollowupPrompt
+  decideExecutionRoute?: typeof decideExecutionRoute
   buildExecutionGraphSnapshot?: typeof buildExecutionGraphSnapshot
   runAgentExecutionHarness?: typeof runAgentExecutionHarness
   reviewTaskCompletion?: typeof reviewTaskCompletion
 }
 
 const defaultModuleDependencies: IntakeBridgePassModuleDependencies = {
-  analyzeTaskIntake,
+  analyzeTaskIntake: analyzeTaskIntakeOutcome,
+  emitAssistantTextDelivery,
   resolveRunRoute,
   executeScheduleActions,
   createDefaultScheduleActionDependencies,
   inferDelegatedTaskProfile,
   buildFollowupPrompt,
+  decideExecutionRoute,
   buildExecutionGraphSnapshot,
   runAgentExecutionHarness,
   reviewTaskCompletion,
 }
 
-type DecisionRouteWithTrace = Extract<DecideExecutionRouteResult, { decisionResult: AgentExecutionHarnessResult }>
+type DecisionRouteWithTrace = Extract<
+  DecideExecutionRouteResult,
+  { decisionResult: AgentExecutionHarnessResult }
+>
 
 function buildExecutionDecisionModelCaller(input: {
   providerId?: string | undefined
   provider?: AIProvider | undefined
   model?: string | undefined
   workDir?: string | undefined
+  config?: AIProviderConfigSnapshot | undefined
 }): AgentExecutionModelCaller | undefined {
-  const providerId = input.providerId?.trim() || detectAvailableProvider()
+  if (!input.config) return undefined
+  const providerId = input.providerId?.trim() || detectAvailableProvider(input.config)
   let provider = input.provider
   if (!provider && providerId) {
     try {
-      provider = getProvider(providerId)
+      provider = getProvider(providerId, input.config)
     } catch {
       provider = undefined
     }
   }
   if (!provider) return undefined
-  const model = input.model?.trim() || getDefaultModel() || provider.supportedModels[0]
+  const model = input.model?.trim() || getDefaultModel(input.config) || provider.supportedModels[0]
   if (!model) return undefined
   return async (params): Promise<string> => {
     let output = ""
@@ -159,9 +229,9 @@ function buildExecutionDecisionModelCaller(input: {
         sourceId: "execution_decision_harness",
         workDir: input.workDir,
         variables: {
-          policyBlock: "[Execution Harness Runtime Policy Sources]\nstatus: provided in the user prompt",
-          allowedActions: "provided in the user prompt",
-          contextJson: "The requested JSON decision context is provided in the user prompt.",
+          policyBlock: `${executionHarnessPolicyContextLabel("policy_sources_title")}\nstatus: ${executionHarnessPolicyContextLabel("provided_in_user_prompt")}`,
+          allowedActions: executionHarnessPolicyContextLabel("provided_in_user_prompt"),
+          contextJson: executionHarnessPolicyContextLabel("context_json_in_user_prompt"),
         },
       }),
       messages: [{ role: "user", content: params.prompt }],
@@ -186,6 +256,11 @@ function recordExecutionDecisionTraceForRun(
   })
 }
 
+function safeReviewErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
+
 async function reviewDelegatedChildCompletion(input: {
   params: Parameters<typeof runIntakeBridgePass>[0]
   dependencies: IntakeBridgePassDependencies
@@ -194,18 +269,23 @@ async function reviewDelegatedChildCompletion(input: {
   childSummary: string
 }): Promise<CompletionReviewResult | null> {
   const reviewer = input.moduleDependencies.reviewTaskCompletion
-  if (!reviewer) return null
+  if (!reviewer || !input.params.config) return null
   return reviewer({
+    instructionRuntime: createInstructionRuntimeContext(
+      dirname(input.params.artifactStorage.rootDir),
+    ),
     originalRequest: input.params.originalRequest,
     latestAssistantMessage: input.childSummary,
     ...(input.params.model ? { model: input.params.model } : {}),
     ...(input.params.providerId ? { providerId: input.params.providerId } : {}),
     ...(input.params.provider ? { provider: input.params.provider } : {}),
+    config: input.params.config,
     workDir: input.params.workDir,
   }).catch((error) => {
+    const message = safeReviewErrorMessage(error)
     input.dependencies.appendRunEvent(
       input.params.runId,
-      `parent_run_child_result_review_failed:intake_followup;child_run=${input.childRunId};error=${error instanceof Error ? error.message : String(error)}`,
+      `parent_run_child_result_review_failed:intake_followup;child_run=${input.childRunId};error=${message}`,
     )
     return null
   })
@@ -215,64 +295,119 @@ function buildDelegatedChildCompletionFollowupPrompt(params: {
   originalRequest: string
   childSummary: string
   review: CompletionReviewResult
+  workDir: string
 }): string {
-  return [
-    "[Delegated Child Completion Follow-up]",
-    "The previous delegated child result did not fully satisfy the original request.",
-    "",
-    `Original user request:\n${params.originalRequest}`,
-    "",
-    `Previous child result:\n${params.childSummary}`,
-    "",
-    `Review summary:\n${params.review.summary || "추가 확인이 필요합니다."}`,
-    params.review.reason ? `\nReview reason:\n${params.review.reason}` : "",
-    params.review.remainingItems.length > 0
-      ? `\nRemaining items:\n${params.review.remainingItems.map((item) => `- ${item}`).join("\n")}`
-      : "",
-    "",
-    "Continue autonomously using a different concrete source path or tool path when the previous path was insufficient.",
-    "Do not finalize until the requested values are verified, or until every viable path is exhausted with clear evidence.",
-    "",
-    `Focused follow-up:\n${params.review.followupPrompt ?? params.review.summary}`,
-  ].filter(Boolean).join("\n")
+  return loadPromptTemplate({
+    sourceId: "delegated_child_followup_user",
+    workDir: params.workDir,
+    variables: {
+      originalRequest: params.originalRequest,
+      childSummary: params.childSummary,
+      reviewSummary: params.review.summary || "추가 확인이 필요합니다.",
+      reviewReason: params.review.reason ? `Review reason:\n${params.review.reason}` : "",
+      remainingItems:
+        params.review.remainingItems.length > 0
+          ? `Remaining items:\n${params.review.remainingItems.map((item) => `- ${item}`).join("\n")}`
+          : "",
+      focusedFollowup: params.review.followupPrompt ?? params.review.summary,
+    },
+  })
 }
 
 function buildDelegatedChildReviewDirective(params: {
   originalRequest: string
   childSummary: string
   review: CompletionReviewResult
+  workDir: string
 }): LoopDirective | null {
+  if (params.review.status === "ask_user") {
+    const explicitUserMessage = params.review.userMessage?.trim()
+    const reasonMessage = params.review.reason?.trim()
+    const userMessage =
+      explicitUserMessage || reasonMessage || "요청을 완료하려면 추가 확인이 필요합니다."
+    const userMessageSource: UserFacingTextSource =
+      explicitUserMessage || reasonMessage ? "mixed" : "runtime_deterministic"
+    const reason = reasonMessage && reasonMessage !== userMessage ? reasonMessage : undefined
+    return {
+      kind: "awaiting_user",
+      preview: "",
+      summary: params.review.summary || "하위 실행 결과 검증에서 사용자 확인이 필요합니다.",
+      ...(reason ? { reason } : {}),
+      userMessage,
+      userMessageSource,
+      remainingItems: params.review.remainingItems,
+      eventLabel: "하위 실행 결과 검증 사용자 확인",
+    }
+  }
+
   if (params.review.status === "followup" || params.review.remainingItems.length > 0) {
+    const nextMessage = buildDelegatedChildCompletionFollowupPrompt(params)
     return {
       kind: "retry_intake",
       summary: params.review.summary || "하위 실행 결과에 남은 항목이 있어 계속 확인합니다.",
       reason: params.review.reason || "하위 실행 결과가 원 요청을 완전히 충족하지 않았습니다.",
-      message: buildDelegatedChildCompletionFollowupPrompt(params),
+      message: nextMessage,
+      recoveryAdmission: {
+        previousStrategyFingerprint: fingerprintIntakeStrategy(params.originalRequest),
+        nextStrategyFingerprint: fingerprintIntakeStrategy(nextMessage),
+        changedDimensions: ["strategy"],
+      },
       remainingItems: params.review.remainingItems,
       eventLabel: "하위 실행 결과 미완료로 재분석",
-    }
-  }
-
-  if (params.review.status === "ask_user") {
-    const userMessage = params.review.userMessage
-      || params.review.reason
-      || "요청을 완료하려면 추가 확인이 필요합니다."
-    return {
-      kind: "awaiting_user",
-      preview: userMessage,
-      summary: params.review.summary || "하위 실행 결과 검증에서 사용자 확인이 필요합니다.",
-      reason: params.review.reason,
-      userMessage,
-      remainingItems: params.review.remainingItems,
-      eventLabel: "하위 실행 결과 검증 사용자 확인",
     }
   }
 
   return null
 }
 
+function fingerprintIntakeStrategy(message: string): `sha256:${string}` {
+  return `sha256:${createHash("sha256").update(message).digest("hex")}`
+}
+
+export function resolveIntakeDirectReceiptCompletion(
+  intake: Pick<TaskIntakeResult, "notes" | "user_message">,
+): LoopDirective | null {
+  if (
+    intake.user_message.mode !== "clarification_receipt" &&
+    intake.user_message.mode !== "failed_receipt"
+  ) {
+    return null
+  }
+
+  const text = intake.user_message.text.trim()
+  if (!text) return null
+  const textSource = resolveIntakeUserMessageTextSource(intake.notes)
+
+  if (intake.user_message.mode === "clarification_receipt") {
+    return {
+      kind: "awaiting_user",
+      preview: "",
+      summary: "추가 입력이 필요합니다.",
+      userMessage: text,
+      userMessageSource: textSource,
+      eventLabel:
+        textSource === "llm_generated" ? "intake 확인 질문 대기" : "intake 런타임 확인 질문 대기",
+    }
+  }
+
+  return {
+    kind: "stop",
+    preview: "",
+    summary: "요청을 처리할 수 없습니다.",
+    userMessage: text,
+    userMessageSource: textSource,
+    eventLabel:
+      textSource === "llm_generated" ? "intake 실패 응답 종료" : "intake 런타임 실패 응답 종료",
+  }
+}
+
+function resolveIntakeUserMessageTextSource(notes: string[]): UserFacingTextSource {
+  return notes.includes(LLM_INTAKE_RESULT_NOTE) ? "llm_generated" : "runtime_deterministic"
+}
+
 export async function runIntakeBridgePass(
   params: {
+    artifactStorage: ArtifactStorageContext
     message: string
     originalRequest: string
     sessionId: string
@@ -280,28 +415,210 @@ export async function runIntakeBridgePass(
     model: string | undefined
     providerId?: string | undefined
     provider?: AIProvider | undefined
+    config: KnowbeeConfig
     workDir: string
     source: ChannelSource
     runId: string
     onChunk: RunChunkDeliveryHandler | undefined
+    signal?: AbortSignal
+    firstResponseDeadline?: FirstResponseDeadline
+    nowMs?: () => number
+    recordFirstResponseReceipt?: FirstResponseReceiptRecorder
     reuseConversationContext: boolean
+    executionTools?: AgentExecutionToolBinding[] | undefined
   },
   dependencies: IntakeBridgePassDependencies,
   moduleDependencies: IntakeBridgePassModuleDependencies = defaultModuleDependencies,
 ): Promise<LoopDirective | null> {
-  const intakeSessionId = params.requestGroupId !== params.runId || params.reuseConversationContext
-    ? params.sessionId
-    : undefined
-  const intake = await moduleDependencies.analyzeTaskIntake({
-    userMessage: params.message,
-    ...(intakeSessionId ? { sessionId: intakeSessionId } : {}),
-    requestGroupId: params.requestGroupId,
-    ...(params.model ? { model: params.model } : {}),
-    workDir: params.workDir,
-    source: params.source,
-  }).catch(() => null)
+  const intakeSessionId =
+    params.requestGroupId !== params.runId || params.reuseConversationContext
+      ? params.sessionId
+      : undefined
+  let intake: TaskIntakeResult | null
+  let directResponseProvenance:
+    | Extract<TaskIntakeAnalysisOutcome, { status: "success" }>["directResponseProvenance"]
+    | undefined
+  try {
+    const analysis = await moduleDependencies.analyzeTaskIntake({
+      userMessage: params.message,
+      ...(intakeSessionId ? { sessionId: intakeSessionId } : {}),
+      requestGroupId: params.requestGroupId,
+      ...(params.model ? { model: params.model } : {}),
+      config: params.config,
+      workDir: params.workDir,
+      source: params.source,
+      ...(params.signal ? { signal: params.signal } : {}),
+      ...(params.firstResponseDeadline
+        ? { firstResponseDeadline: params.firstResponseDeadline }
+        : {}),
+      ...(params.nowMs ? { nowMs: params.nowMs } : {}),
+      instructionRuntime: createInstructionRuntimeContext(dirname(params.artifactStorage.rootDir)),
+    })
+    if (isTaskIntakeAnalysisOutcome(analysis)) {
+      if (analysis.status === "failure") {
+        throw new CanonicalExecutionFailure({
+          phase: "intake",
+          reasonCode: analysis.reasonCode,
+          retryable: analysis.retryable,
+        })
+      }
+      intake = analysis.intake
+      directResponseProvenance = analysis.directResponseProvenance
+    } else {
+      intake = analysis
+    }
+  } catch (failure) {
+    if (isCanonicalExecutionFailure(failure)) throw failure
+    throw new CanonicalExecutionFailure({
+      phase: "intake",
+      reasonCode: "provider_unavailable",
+      retryable: true,
+    })
+  }
 
-  if (!intake) return null
+  if (!intake) {
+    throw new CanonicalExecutionFailure({
+      phase: "intake",
+      reasonCode: "intake_contract_unavailable",
+      retryable: false,
+    })
+  }
+
+  const nonReplyActionCount = intake.action_items.filter((item) => item.type !== "reply").length
+  const directAnswerText = intake.user_message.text.trim()
+  const isDirectAnswerCompletion =
+    intake.intent.category === "direct_answer" &&
+    intake.user_message.mode === "direct_answer" &&
+    nonReplyActionCount === 0
+  const textSource = resolveIntakeUserMessageTextSource(intake.notes)
+  if (directAnswerText && isDirectAnswerCompletion && textSource === "llm_generated") {
+    const releaseDescriptor = buildCanonicalSimplePathReleaseDescriptor({
+      runId: params.runId,
+      classification: {
+        category: intake.intent.category,
+        mode: intake.user_message.mode,
+        nonReplyActionCount,
+      },
+      answerSource: textSource,
+      requestText: params.originalRequest,
+      answerText: directAnswerText,
+    })
+    const release = await dependencies.releaseCanonicalSimplePath(releaseDescriptor)
+    if (!release.ok) {
+      throw new CanonicalExecutionFailure({
+        phase: "execution",
+        reasonCode: release.reasonCode,
+        retryable: false,
+      })
+    }
+    dependencies.logInfo("intake bridge result", {
+      runId: params.runId,
+      sessionId: params.sessionId,
+      category: intake.intent.category,
+      actions: intake.action_items.map((item) => item.type),
+      scheduling: intake.scheduling,
+    })
+    dependencies.appendRunEvent(params.runId, `Intake: ${intake.intent.category}`)
+    if (intake.intent.summary.trim())
+      dependencies.updateRunSummary(params.runId, intake.intent.summary.trim())
+    return {
+      kind: "complete",
+      text: directAnswerText,
+      textSource,
+      ...(directResponseProvenance ? { responseReview: {
+        rawText: directAnswerText,
+        rawTextSource: "llm_generated",
+        contentKind: "direct_answer",
+        expectedLanguage:
+          intake.structured_request.source_language === "ko" ||
+          intake.structured_request.source_language === "en"
+            ? intake.structured_request.source_language
+            : "unknown",
+        receipt: buildDirectLlmResponseReviewReceipt({
+          rawText: directAnswerText,
+          responseText: directAnswerText,
+          ...directResponseProvenance,
+        }),
+      } } : {}),
+      eventLabel:
+        textSource === "llm_generated" ? "intake 즉시 응답 완료" : "intake 런타임 즉시 응답 완료",
+    }
+  }
+
+  if (
+    intake.user_message.mode === "accepted_receipt" &&
+    directAnswerText &&
+    textSource === "llm_generated"
+  ) {
+    const progressReceipt = await moduleDependencies.emitAssistantTextDelivery?.({
+      runId: params.runId,
+      sessionId: params.sessionId,
+      text: directAnswerText,
+      textSource,
+      source: params.source,
+      onChunk: params.onChunk,
+      deliveryKind: "progress",
+      ...(params.nowMs ? { monotonicNow: params.nowMs } : {}),
+      ...(params.signal ? { isCancelled: () => params.signal?.aborted ?? false } : {}),
+    })
+    const progressOutcome = progressReceipt
+      ? resolveAssistantTextDeliveryOutcome(progressReceipt)
+      : undefined
+    dependencies.appendRunEvent(
+      params.runId,
+      !progressOutcome
+        ? "first_response_progress_delivery_failed:delivery_port_unavailable"
+        : progressOutcome.hasDeliveryFailure
+        ? `first_response_progress_delivery_failed:${progressOutcome.reasonCode ?? progressOutcome.failureStage}`
+        : "first_response_progress_delivered",
+    )
+    if (
+      progressReceipt?.runId &&
+      progressReceipt.receiptRef &&
+      progressReceipt.deliveredAtMs !== undefined
+    ) {
+      params.recordFirstResponseReceipt?.({
+        runId: progressReceipt.runId,
+        receiptRef: progressReceipt.receiptRef,
+        deliveredAtMs: progressReceipt.deliveredAtMs,
+      })
+    }
+  }
+
+  const canonicalDiagnosis = await dependencies.recordCanonicalIntakeDiagnosis(
+    buildCanonicalIntakeDiagnosisDescriptor({ runId: params.runId, intake }),
+  )
+  if (!canonicalDiagnosis.ok) {
+    throw new CanonicalExecutionFailure({
+      phase: "intake",
+      reasonCode: canonicalDiagnosis.reasonCode,
+      retryable: false,
+    })
+  }
+
+  const canonicalPolicy = await dependencies.authorizeCanonicalIntakePlan({
+    runId: params.runId,
+    intake,
+  })
+  if (!canonicalPolicy.ok) {
+    throw new CanonicalExecutionFailure({
+      phase: "policy",
+      reasonCode: canonicalPolicy.reasonCode,
+      retryable: false,
+    })
+  }
+
+  const canonicalExecution = await dependencies.recordCanonicalExecutionStart({
+    runId: params.runId,
+    intake,
+  })
+  if (!canonicalExecution.ok) {
+    throw new CanonicalExecutionFailure({
+      phase: "execution",
+      reasonCode: canonicalExecution.reasonCode,
+      retryable: false,
+    })
+  }
 
   dependencies.logInfo("intake bridge result", {
     runId: params.runId,
@@ -319,29 +636,45 @@ export async function runIntakeBridgePass(
   const replyAction = intake.action_items.find((item) => item.type === "reply")
   if (replyAction) {
     const content = getString(replyAction.payload.content)
-    if (content) {
-      return {
-        kind: "complete",
-        text: content,
-        eventLabel: "intake 즉시 응답 완료",
-      }
+    if (content && intake.notes.includes(LLM_INTAKE_RESULT_NOTE) && nonReplyActionCount > 0) {
+      dependencies.appendRunEvent(params.runId, "intake_reply_action_ignored:mixed_actions")
     }
   }
 
-  const scheduleActions = intake.action_items.filter((item) => item.type === "create_schedule" || item.type === "cancel_schedule")
-  const delegatedActions = intake.action_items.filter((item) => item.type === "run_task" || item.type === "delegate_agent")
+  const scheduleActions = intake.action_items.filter(
+    (item) => item.type === "create_schedule" || item.type === "cancel_schedule",
+  )
+  const delegatedActions = intake.action_items.filter(
+    (item) => item.type === "run_task" || item.type === "delegate_agent",
+  )
 
-  if (scheduleActions.length > 0 || delegatedActions.length > 0 || intake.intent.category === "schedule_request") {
+  if (
+    scheduleActions.length > 0 ||
+    delegatedActions.length > 0 ||
+    intake.intent.category === "schedule_request"
+  ) {
     const responseParts: string[] = []
+    const responsePartTextSources: UserFacingTextSource[] = []
+    const responsePartNotices: LoopDirectiveNotice[] = []
     let delegatedFollowupCount = 0
 
     if (scheduleActions.length > 0 || intake.intent.category === "schedule_request") {
+      if (!params.config) {
+        return {
+          kind: "complete",
+          text: "일정 작업을 실행할 런타임 설정 snapshot이 없어 요청을 처리하지 못했습니다.",
+          textSource: "runtime_deterministic",
+          eventLabel: "일정 실행 설정 누락",
+        }
+      }
       const scheduleResult = moduleDependencies.executeScheduleActions(
         scheduleActions,
         intake,
         params,
         moduleDependencies.createDefaultScheduleActionDependencies({
+          artifactStorage: params.artifactStorage,
           scheduleDelayedRun: dependencies.scheduleDelayedRun,
+          config: params.config,
         }),
       )
       dependencies.logInfo("schedule action handled", {
@@ -351,70 +684,72 @@ export async function runIntakeBridgePass(
         ok: scheduleResult.ok,
         message: scheduleResult.message,
       })
-      const shouldRetryScheduleIntake = !scheduleResult.ok
-        && scheduleResult.successCount === 0
-        && delegatedActions.length === 0
+      const shouldRetryScheduleIntake =
+        !scheduleResult.ok && scheduleResult.successCount === 0 && delegatedActions.length === 0
 
       if (shouldRetryScheduleIntake) {
         return {
-          kind: "retry_intake",
-          summary: "일정 요청을 다시 분석하고 가능한 일정 방안으로 재시도합니다.",
+          kind: "stop",
+          preview: "",
+          summary: "일정 요청을 처리하지 못했습니다.",
           reason: scheduleResult.detail || scheduleResult.message,
-          message: buildScheduleIntakeRecoveryPrompt({
-            originalRequest: params.originalRequest,
-            previousReceipt: scheduleResult.message,
-            reason: scheduleResult.detail || scheduleResult.message,
-          }),
           remainingItems: [
-            "유효한 run_at 또는 cron 일정으로 다시 해석",
-            "필요한 경우에만 최소한의 확인 질문 생성",
+            "유효한 run_at 또는 cron 일정이 필요합니다.",
           ],
-          eventLabel: "일정 해석 실패로 재분석",
+          eventLabel: "일정 실행 실패 종료",
         }
       }
 
       if (scheduleResult.message.trim()) {
         responseParts.push(scheduleResult.message.trim())
+        responsePartTextSources.push(scheduleResult.messageTextSource)
+        if (scheduleResult.notice) responsePartNotices.push(scheduleResult.notice)
       }
 
       for (const receipt of scheduleResult.receipts) {
         if (receipt.kind === "schedule_create_one_time") {
-          dependencies.emitScheduleCreated(buildScheduleRegistrationCreatedEvent({
-            runId: params.runId,
-            requestGroupId: params.requestGroupId,
-            registrationKind: "one_time",
-            title: receipt.title,
-            task: receipt.task,
-            source: receipt.source,
-            scheduleText: receipt.scheduleText,
-            runAtMs: receipt.runAtMs,
-          }))
+          dependencies.emitScheduleCreated(
+            buildScheduleRegistrationCreatedEvent({
+              runId: params.runId,
+              requestGroupId: params.requestGroupId,
+              registrationKind: "one_time",
+              title: receipt.title,
+              task: receipt.task,
+              source: receipt.source,
+              scheduleText: receipt.scheduleText,
+              runAtMs: receipt.runAtMs,
+            }),
+          )
           continue
         }
 
         if (receipt.kind === "schedule_create_recurring") {
-          dependencies.emitScheduleCreated(buildScheduleRegistrationCreatedEvent({
-            runId: receipt.originRunId,
-            requestGroupId: receipt.originRequestGroupId,
-            registrationKind: "recurring",
-            title: receipt.title,
-            task: receipt.task,
-            source: receipt.source,
-            scheduleText: receipt.scheduleText,
-            scheduleId: receipt.scheduleId,
-            cron: receipt.cron,
-            ...(receipt.targetSessionId ? { targetSessionId: receipt.targetSessionId } : {}),
-            driver: receipt.driver,
-          }))
+          dependencies.emitScheduleCreated(
+            buildScheduleRegistrationCreatedEvent({
+              runId: receipt.originRunId,
+              requestGroupId: receipt.originRequestGroupId,
+              registrationKind: "recurring",
+              title: receipt.title,
+              task: receipt.task,
+              source: receipt.source,
+              scheduleText: receipt.scheduleText,
+              scheduleId: receipt.scheduleId,
+              cron: receipt.cron,
+              ...(receipt.targetSessionId ? { targetSessionId: receipt.targetSessionId } : {}),
+              driver: receipt.driver,
+            }),
+          )
           continue
         }
 
-        dependencies.emitScheduleCancelled(buildScheduleRegistrationCancelledEvent({
-          runId: params.runId,
-          requestGroupId: params.requestGroupId,
-          cancelledScheduleIds: receipt.cancelledScheduleIds,
-          cancelledNames: receipt.cancelledNames,
-        }))
+        dependencies.emitScheduleCancelled(
+          buildScheduleRegistrationCancelledEvent({
+            runId: params.runId,
+            requestGroupId: params.requestGroupId,
+            cancelledScheduleIds: receipt.cancelledScheduleIds,
+            cancelledNames: receipt.cancelledNames,
+          }),
+        )
       }
     }
 
@@ -446,34 +781,43 @@ export async function runIntakeBridgePass(
         action: delegatedAction,
       })
       const preferredTarget =
-        getString(delegatedAction.payload.preferred_target)
-        || getString(delegatedAction.payload.preferredTarget)
-        || intake.intent_envelope.preferred_target
+        getString(delegatedAction.payload.preferred_target) ||
+        getString(delegatedAction.payload.preferredTarget) ||
+        intake.intent_envelope.preferred_target
+      if (!params.config) throw new Error("execution graph runtime config is required")
       const callModel = buildExecutionDecisionModelCaller({
         providerId: params.providerId,
         provider: params.provider,
         model: params.model,
+        config: params.config,
         workDir: params.workDir,
       })
-      const decisionRoute = await decideExecutionRoute({
-        originalRequest: params.originalRequest,
-        delegatedTitle: delegatedAction.title,
-        delegatedTaskProfile,
-        sessionId: params.sessionId,
-        source: params.source,
-        preferredTarget,
-        fallbackModel: params.model,
-        currentExecutorId: EXECUTION_GRAPH_ROOT_AGENT_ID,
-        buildExecutionGraphSnapshot: moduleDependencies.buildExecutionGraphSnapshot,
-        runAgentExecutionHarness: moduleDependencies.runAgentExecutionHarness,
-        ...(callModel ? { callModel } : {}),
-        resolveExplicitProviderTarget: (routeInput) =>
-          moduleDependencies.resolveRunRoute({
-            preferredTarget: routeInput.preferredTarget,
-            taskProfile: routeInput.taskProfile,
-            fallbackModel: routeInput.fallbackModel,
-          }),
-      })
+      const decisionRoute = await (moduleDependencies.decideExecutionRoute ?? decideExecutionRoute)(
+        {
+          originalRequest: params.originalRequest,
+          delegatedTitle: delegatedAction.title,
+          delegatedTaskProfile,
+          sessionId: params.sessionId,
+          source: params.source,
+          preferredTarget,
+          fallbackModel: params.model,
+          currentExecutorId: EXECUTION_GRAPH_ROOT_AGENT_ID,
+          config: params.config,
+          ...(params.executionTools ? { availableTools: params.executionTools } : {}),
+          buildExecutionGraphSnapshot: moduleDependencies.buildExecutionGraphSnapshot,
+          runAgentExecutionHarness: moduleDependencies.runAgentExecutionHarness,
+          ...(callModel ? { callModel } : {}),
+          resolveExplicitProviderTarget: (routeInput) =>
+            moduleDependencies.resolveRunRoute(
+              {
+                preferredTarget: routeInput.preferredTarget,
+                taskProfile: routeInput.taskProfile,
+                fallbackModel: routeInput.fallbackModel,
+              },
+              params.config,
+            ),
+        },
+      )
 
       if (decisionRoute.kind === "self_solve") {
         recordExecutionDecisionTraceForRun(dependencies, params.runId, decisionRoute)
@@ -494,10 +838,48 @@ export async function runIntakeBridgePass(
           preferredTarget: preferredTarget ?? null,
           reason: "provider_direct_blocked_without_explicit_target",
         })
-        continue
+        return {
+          kind: "execute",
+          message: moduleDependencies.buildFollowupPrompt({
+            originalMessage: params.originalRequest,
+            intake: delegatedIntake,
+            action: delegatedAction,
+            taskProfile: delegatedTaskProfile,
+          }),
+          requiredToolNames: canonicalPolicy.requiredToolNames ?? [],
+          eventLabel: "LLM intake 실행 계약 적용",
+        }
       }
 
-      if (decisionRoute.kind === "ask_user" || decisionRoute.kind === "boundary_failure") {
+      if (decisionRoute.kind === "boundary_failure") {
+        recordExecutionDecisionTraceForRun(dependencies, params.runId, decisionRoute)
+        dependencies.appendRunEvent(
+          params.runId,
+          formatAgentExecutionDecisionTraceRunEvent(decisionRoute.decisionResult.decisionTrace),
+        )
+        return {
+          kind: "execute",
+          message: moduleDependencies.buildFollowupPrompt({
+            originalMessage: params.originalRequest,
+            intake: delegatedIntake,
+            action: delegatedAction,
+            taskProfile: delegatedTaskProfile,
+            selectedExecutorReason:
+              decisionRoute.agentExecutionDecision.unresolved_reason?.trim()
+              || decisionRoute.agentExecutionDecision.reason.trim(),
+          }),
+          requiredToolNames: [],
+          eventLabel: "execution decision 경계 결과 재진단",
+        }
+      }
+
+      if (decisionRoute.kind === "ask_user") {
+        const explicitUserMessage = decisionRoute.agentExecutionDecision.unresolved_reason?.trim()
+        const reasonMessage = decisionRoute.agentExecutionDecision.reason?.trim()
+        const userMessage =
+          explicitUserMessage ?? "요청을 계속 진행하려면 필요한 조건을 확인해 주세요."
+        const userMessageSource: UserFacingTextSource =
+          explicitUserMessage || reasonMessage ? "mixed" : "runtime_deterministic"
         recordExecutionDecisionTraceForRun(dependencies, params.runId, decisionRoute)
         dependencies.appendRunEvent(
           params.runId,
@@ -505,22 +887,18 @@ export async function runIntakeBridgePass(
         )
         return {
           kind: "awaiting_user",
-          preview: decisionRoute.agentExecutionDecision.unresolved_reason
-            ?? decisionRoute.agentExecutionDecision.reason,
-          summary: decisionRoute.kind === "boundary_failure"
-            ? "현재 실행 경계 안에서 처리할 수 없는 요청입니다."
-            : "실행 전에 사용자 확인이 필요합니다.",
-          reason: decisionRoute.agentExecutionDecision.reason,
-          userMessage: decisionRoute.agentExecutionDecision.unresolved_reason
-            ?? "요청을 계속 진행하려면 필요한 조건을 확인해 주세요.",
-          eventLabel: decisionRoute.kind === "boundary_failure"
-            ? "execution decision 경계 실패"
-            : "execution decision 사용자 확인 대기",
+          preview: "",
+          summary: "실행 전에 사용자 확인이 필요합니다.",
+          ...(reasonMessage ? { reason: reasonMessage } : {}),
+          userMessage,
+          userMessageSource,
+          eventLabel: "execution decision 사용자 확인 대기",
         }
       }
 
       const route =
-        decisionRoute.kind === "explicit_provider_target" || decisionRoute.kind === "delegate_to_child"
+        decisionRoute.kind === "explicit_provider_target" ||
+        decisionRoute.kind === "delegate_to_child"
           ? decisionRoute.route
           : undefined
       if (!route) continue
@@ -566,18 +944,23 @@ export async function runIntakeBridgePass(
         model: route.model ?? params.model ?? null,
         providerId: route.providerId ?? null,
         workerRuntime: routeWorkerRuntime?.kind ?? null,
-        executionGraph: decisionRoute.kind === "delegate_to_child"
-          ? {
-              graphId: decisionRoute.executionGraph.graphId,
-              graphSource: decisionRoute.executionGraph.graphSource,
-              topologyId: decisionRoute.executionGraph.topologyId ?? null,
-              currentExecutorId: decisionRoute.executionGraph.currentExecutorId,
-              availableExecutorIds: decisionRoute.executionGraph.availableExecutorIds,
-            }
-          : null,
-        executionDecisionSource: decisionRoute.kind === "delegate_to_child" ? "knowbee_harness" : null,
+        executionGraph:
+          decisionRoute.kind === "delegate_to_child"
+            ? {
+                graphId: decisionRoute.executionGraph.graphId,
+                graphSource: decisionRoute.executionGraph.graphSource,
+                topologyId: decisionRoute.executionGraph.topologyId ?? null,
+                currentExecutorId: decisionRoute.executionGraph.currentExecutorId,
+                availableExecutorIds: decisionRoute.executionGraph.availableExecutorIds,
+              }
+            : null,
+        executionDecisionSource:
+          decisionRoute.kind === "delegate_to_child" ? "knowbee_harness" : null,
       })
-      dependencies.incrementDelegationTurnCount(params.runId, `${delegatedAction.title} 후속 작업을 시작합니다.`)
+      dependencies.incrementDelegationTurnCount(
+        params.runId,
+        `${delegatedAction.title} 후속 작업을 시작합니다.`,
+      )
 
       const delegatedRequestGroupId = `${params.runId}:child:${delegatedFollowupCount + 1}`
       const delegatedRun = await dependencies.startDelegatedRun({
@@ -599,7 +982,9 @@ export async function runIntakeBridgePass(
         ...(routeWorkerRuntime ? { workerRuntime: routeWorkerRuntime } : {}),
         ...(route.targetId ? { targetId: route.targetId } : {}),
         ...(route.targetLabel ? { targetLabel: route.targetLabel } : {}),
-        ...(decisionRoute.kind === "delegate_to_child" ? { agentExecutionDecision: decisionRoute.agentExecutionDecision } : {}),
+        ...(decisionRoute.kind === "delegate_to_child"
+          ? { agentExecutionDecision: decisionRoute.agentExecutionDecision }
+          : {}),
         ...(decisionRoute.kind === "delegate_to_child"
           ? { agentExecutionDecisionTrace: decisionRoute.decisionResult.decisionTrace }
           : {}),
@@ -638,10 +1023,12 @@ export async function runIntakeBridgePass(
               originalRequest: params.originalRequest,
               childSummary,
               review: completionReview,
+              workDir: params.workDir,
             })
             if (reviewDirective) return reviewDirective
           }
           responseParts.push(childSummary)
+          responsePartTextSources.push(completionReview ? "llm_reviewed" : "llm_generated")
         }
       }
     }
@@ -650,6 +1037,8 @@ export async function runIntakeBridgePass(
       return {
         kind: "complete",
         text: responseParts.join("\n\n"),
+        textSource: combineUserFacingTextSources(responsePartTextSources),
+        ...(responsePartNotices.length === 1 ? { notice: responsePartNotices[0] } : {}),
         eventLabel: "intake 처리 결과 전달",
       }
     }
@@ -664,36 +1053,10 @@ export async function runIntakeBridgePass(
     return null
   }
 
-  if (intake.user_message.mode === "clarification_receipt" || intake.user_message.mode === "failed_receipt") {
-    const text = intake.user_message.text.trim()
-    if (text) {
-      return {
-        kind: "complete",
-        text,
-        eventLabel: "intake 확인 응답 완료",
-      }
-    }
-  }
+  const directReceiptCompletion = resolveIntakeDirectReceiptCompletion(intake)
+  if (directReceiptCompletion) return directReceiptCompletion
 
   return null
-}
-
-function buildScheduleIntakeRecoveryPrompt(params: {
-  originalRequest: string
-  previousReceipt: string
-  reason: string
-}): string {
-  return [
-    "[Schedule Intake Recovery]",
-    "The previous schedule-analysis pass did not create a valid schedule action.",
-    `Original user request: ${params.originalRequest}`,
-    `Previous schedule receipt: ${params.previousReceipt}`,
-    `Failure reason: ${params.reason}`,
-    "Re-analyze this as a scheduling request.",
-    "Produce a concrete create_schedule or cancel_schedule action with a valid run_at or cron value.",
-    "Only ask a clarification question if a required time expression or delivery target is truly missing.",
-    "Do not return a success receipt unless a schedule action can actually be executed.",
-  ].join("\n\n")
 }
 
 function getString(value: unknown): string | undefined {
@@ -701,6 +1064,5 @@ function getString(value: unknown): string | undefined {
 }
 
 function isDelegatedRunStartResult(value: unknown): value is DelegatedRunStartResult {
-  return typeof value === "object" && value !== null &&
-    ("finished" in value || "runId" in value)
+  return typeof value === "object" && value !== null && ("finished" in value || "runId" in value)
 }

@@ -116,9 +116,9 @@ describe("external recovery planning", () => {
     expect(plan.nextState.workerRuntime).toBeUndefined()
     expect(plan.routeEventLabel).toContain("기본 추론 경로")
     expect(plan.nextMessage).toContain("[Worker Runtime Error Recovery]")
-    expect(plan.nextMessage).toContain("실패한 접근 방식: 외부 작업 세션 / gpt-4o-mini")
-    expect(plan.nextMessage).toContain("같은 AI 연결(외부 작업 세션)과 같은 대상")
-    expect(plan.nextMessage).not.toContain("다시 사용 금지 대상:")
+    expect(plan.nextMessage).toContain("Failed approach: 외부 작업 세션 / gpt-4o-mini")
+    expect(plan.nextMessage).toContain("Recover on the same AI connection (외부 작업 세션) and target")
+    expect(plan.nextMessage).not.toContain("Avoid these targets:")
   })
 
   it("keeps recovery on the same AI connection even when another target is proposed", () => {
@@ -155,8 +155,8 @@ describe("external recovery planning", () => {
     expect(plan.routeChanged).toBe(false)
     expect(plan.nextState.targetLabel).toBe("OpenAI")
     expect(plan.routeEventLabel).toBeUndefined()
-    expect(plan.nextMessage).toContain("실패한 접근 방식: OpenAI / openai / gpt-4o-mini")
-    expect(plan.nextMessage).toContain("같은 AI 연결(OpenAI)과 같은 대상")
+    expect(plan.nextMessage).toContain("Failed approach: OpenAI / openai / gpt-4o-mini")
+    expect(plan.nextMessage).toContain("Recover on the same AI connection (OpenAI) and target")
     expect(plan.nextMessage).not.toContain("Anthropic")
   })
 })

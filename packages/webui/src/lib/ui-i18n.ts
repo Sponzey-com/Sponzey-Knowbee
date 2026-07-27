@@ -1,4 +1,5 @@
-import { getUiLocale, pickUiText, type UiLanguage, useUiLanguageStore } from "../stores/uiLanguage"
+import { useMemo } from "react"
+import { type UiLanguage, getUiLocale, pickUiText, useUiLanguageStore } from "../stores/uiLanguage"
 
 type Replacement = {
   pattern: RegExp
@@ -94,12 +95,10 @@ const EN_DISPLAY_REPLACEMENTS: Replacement[] = [
   { pattern: /Telegram Bot 연결 성공:\s*(.+)$/gm, replace: (_m, name) => `Telegram bot connected successfully: ${name}` },
   { pattern: /Telegram 설정은 저장되었지만 현재 런타임이 시작되지 않았습니다\./g, replace: "Telegram details are saved, but the runtime has not started yet." },
   { pattern: /Telegram 채널이 비활성화되어 있습니다\./g, replace: "The Telegram channel is disabled." },
-  { pattern: /기존 감사 로그 API는 있으나 run-centric 제어면과의 통합은 아직 정리 중입니다\./g, replace: "The legacy audit log API exists, but integration with the run-centric control surface is still being finalized." },
-  { pattern: /플러그인 런타임은 기존 구현이 있으나 WebUI-first 제어면과의 통합은 아직 완료되지 않았습니다\./g, replace: "The plugin runtime exists, but integration with the WebUI-first control surface is not complete yet." },
-  { pattern: /실제 오케스트레이터와 위임 제어 루프는 Phase 0003 이후 연결합니다\./g, replace: "The real orchestrator and delegation control loop will be connected later." },
-  { pattern: /채팅은 완료 응답 기준으로 동작하며, 토큰 단위 실시간 스트리밍 표시는 아직 정리 중입니다\./g, replace: "Chat currently works on completed responses, and token-level live streaming is still being finalized." },
-  { pattern: /세션별\/요청별 override는 후속 Phase에서 연결합니다\./g, replace: "Session-level and request-level overrides will be added later." },
-  { pattern: /시맨틱 메모리\/검색 제어면은 후속 Phase 범위입니다\./g, replace: "The semantic memory and search controls will be added later." },
+  { pattern: /플러그인 런타임은 현재 WebUI에서 직접 제어할 수 없습니다\. 기존 실행 경로를 사용하세요\./g, replace: "The plugin runtime cannot be controlled directly from the WebUI right now. Use the existing runtime path." },
+  { pattern: /채팅은 현재 완료 응답 방식으로 제공됩니다\. 토큰 단위 실시간 표시는 사용할 수 없습니다\./g, replace: "Chat currently uses completed responses. Token-level live streaming is unavailable." },
+  { pattern: /세션별\/요청별 AI override는 현재 사용할 수 없습니다\. 기본 AI 설정을 사용하세요\./g, replace: "Session-level and request-level AI overrides are unavailable right now. Use the default AI settings." },
+  { pattern: /시맨틱 메모리\/검색 제어는 현재 사용할 수 없습니다\. 기본 메모리 기능을 사용하세요\./g, replace: "Semantic memory and search controls are unavailable right now. Use the default memory features." },
   { pattern: /스케줄러가 설정에서 비활성화되어 있습니다\./g, replace: "The scheduler is disabled in settings." },
   { pattern: /MQTT 브로커가 설정에서 비활성화되어 있습니다\./g, replace: "The MQTT broker is disabled in settings." },
   { pattern: /MQTT 브로커가 비활성화되어 있습니다\./g, replace: "The MQTT broker is disabled." },
@@ -110,20 +109,19 @@ const EN_DISPLAY_REPLACEMENTS: Replacement[] = [
   { pattern: /(.+):(\d+) 에서 브로커가 실행 중입니다\. ID\/password 인증이 필요합니다\./g, replace: (_m, host, port) => `Broker is running at ${host}:${port}. Username/password is required.` },
   { pattern: /(.+):(\d+) 에서 브로커가 실행 중입니다\. ID\/password 인증이 켜져 있고 익명 접속도 허용됩니다\./g, replace: (_m, host, port) => `Broker is running at ${host}:${port}. Username/password is enabled and anonymous access is also allowed.` },
   { pattern: /(.+):(\d+) 에서 브로커가 실행 중입니다\. 익명 접속만 허용됩니다\./g, replace: (_m, host, port) => `Broker is running at ${host}:${port}. Anonymous access only is allowed.` },
-  { pattern: /MCP 서버가 설정되지 않았습니다\./g, replace: "No MCP servers are configured." },
-  { pattern: /설정된 MCP 서버가 아직 준비되지 않았습니다\./g, replace: "The configured MCP servers are not ready yet." },
-  { pattern: /필수 MCP 서버 (\d+)개가 준비되지 않았습니다\./g, replace: (_m, count) => `${count} required MCP server(s) are not ready.` },
-  { pattern: /MCP 서버 (\d+)\/(\d+)개가 준비되었습니다\./g, replace: (_m, ready, total) => `${ready}/${total} MCP server(s) are ready.` },
+  { pattern: /외부 기능 연결이 설정되지 않았습니다\./g, replace: "No external feature connections are configured." },
+  { pattern: /설정된 외부 기능 연결이 아직 준비되지 않았습니다\./g, replace: "The configured external feature connections are not ready yet." },
+  { pattern: /필수 외부 기능 연결 (\d+)개가 준비되지 않았습니다\./g, replace: (_m, count) => `${count} required external feature connection(s) are not ready.` },
+  { pattern: /외부 기능 연결 (\d+)\/(\d+)개가 준비되었습니다\./g, replace: (_m, ready, total) => `${ready}/${total} external feature connection(s) are ready.` },
   { pattern: /연결 성공: 도구 (\d+)개를 확인했습니다\./g, replace: (_m, count) => `Connection successful: detected ${count} tool(s).` },
   { pattern: /연결은 성공했지만, 표시할 도구가 없습니다\./g, replace: "Connection succeeded, but there are no tools to show." },
-  { pattern: /HTTP 방식\(MCP HTTP\)은 아직 준비 중입니다\. 지금은 stdio 방식만 사용할 수 있습니다\./g, replace: "HTTP transport (MCP HTTP) is not ready yet. Only stdio transport is available right now." },
+  { pattern: /HTTP 방식 외부 기능 연결은 아직 준비 중입니다\. 지금은 stdio 방식만 사용할 수 있습니다\./g, replace: "HTTP transport external feature connections are not ready yet. Only stdio transport is available right now." },
   { pattern: /실행 명령\(Command\)을 입력해야 합니다\./g, replace: "Enter a command to run." },
-  { pattern: /Skill 경로를 입력해야 합니다\./g, replace: "Enter a Skill path." },
-  { pattern: /입력한 Skill 경로를 찾을 수 없습니다\./g, replace: "The specified Skill path could not be found." },
-  { pattern: /Skill 경로는 파일 또는 폴더여야 합니다\./g, replace: "The Skill path must be a file or folder." },
-  { pattern: /Skill 폴더를 확인했습니다\./g, replace: "Skill folder verified." },
-  { pattern: /Skill 파일을 확인했습니다\./g, replace: "Skill file verified." },
-  { pattern: /고급 메모리와 시맨틱 검색 제어면은 이후 단계에서 연결합니다\./g, replace: "Advanced memory and semantic search controls will be added later." },
+  { pattern: /작업 능력 경로를 입력해야 합니다\./g, replace: "Enter a work ability path." },
+  { pattern: /입력한 작업 능력 경로를 찾을 수 없습니다\./g, replace: "The specified work ability path could not be found." },
+  { pattern: /작업 능력 경로는 파일 또는 폴더여야 합니다\./g, replace: "The work ability path must be a file or folder." },
+  { pattern: /작업 능력 폴더를 확인했습니다\./g, replace: "Work ability folder verified." },
+  { pattern: /작업 능력 파일을 확인했습니다\./g, replace: "Work ability file verified." },
 ]
 
 const USER_HIDDEN_OPERATIONAL_COUNTER_REPLACEMENTS: Replacement[] = [
@@ -151,14 +149,20 @@ export function translateDisplayText(language: UiLanguage, text: string): string
 
 export function useUiI18n() {
   const language = useUiLanguageStore((state) => state.language)
-  return {
-    language,
-    text: (korean: string, english: string) => pickUiText(language, korean, english),
-    displayText: (text: string) => translateDisplayText(language, text),
-    formatTime: (value: number, options?: Intl.DateTimeFormatOptions) =>
-      new Date(value).toLocaleTimeString(getUiLocale(language), options ?? { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-    formatDateTime: (value: number, options?: Intl.DateTimeFormatOptions) =>
-      new Date(value).toLocaleString(getUiLocale(language), options),
-    locale: getUiLocale(language),
-  }
+  return useMemo(
+    () => ({
+      language,
+      text: (korean: string, english: string) => pickUiText(language, korean, english),
+      displayText: (text: string) => translateDisplayText(language, text),
+      formatTime: (value: number, options?: Intl.DateTimeFormatOptions) =>
+        new Date(value).toLocaleTimeString(
+          getUiLocale(language),
+          options ?? { hour: "2-digit", minute: "2-digit", second: "2-digit" },
+        ),
+      formatDateTime: (value: number, options?: Intl.DateTimeFormatOptions) =>
+        new Date(value).toLocaleString(getUiLocale(language), options),
+      locale: getUiLocale(language),
+    }),
+    [language],
+  )
 }

@@ -1,42 +1,59 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PATHS } from "../config/index.js";
-import { createLogger } from "../logger/index.js";
+import { createLogger, redactLogText } from "../logger/index.js";
 import { getSchedule, updateSchedule } from "../db/index.js";
 import { isValidCron } from "./cron.js";
 const log = createLogger("scheduler:system");
 const CRON_MARKER_PREFIX = "# knowbee-schedule:";
 const WINDOWS_TASK_PREFIX = "KnowbeeSchedule-";
+const NODE_SYSTEM_CRON_PROCESS = Object.freeze({
+    platform: process.platform,
+    execPath: process.execPath,
+    exists: existsSync,
+    spawn: (command, args, options) => {
+        const result = spawnSync(command, args, options);
+        return {
+            ...(result.error ? { error: result.error } : {}),
+            status: result.status,
+            stdout: result.stdout ?? "",
+            stderr: result.stderr ?? "",
+        };
+    },
+});
+function systemCronErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 function shellQuote(value) {
     return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 function resolveCliDistPath() {
     return fileURLToPath(new URL("../../../cli/dist/index.js", import.meta.url));
 }
-function supportsSystemCrontab() {
-    if (!existsSync(resolveCliDistPath()))
+function supportsSystemCrontab(processAdapter) {
+    if (!processAdapter.exists(resolveCliDistPath()))
         return false;
-    if (process.platform === "win32")
+    if (processAdapter.platform === "win32")
         return false;
-    const probe = spawnSync("crontab", ["-l"], { encoding: "utf-8" });
+    const probe = processAdapter.spawn("crontab", ["-l"], { encoding: "utf-8" });
     if (probe.error)
         return false;
     return true;
 }
-function supportsWindowsTaskScheduler() {
-    if (!existsSync(resolveCliDistPath()))
+function supportsWindowsTaskScheduler(processAdapter) {
+    if (!processAdapter.exists(resolveCliDistPath()))
         return false;
-    if (process.platform !== "win32")
+    if (processAdapter.platform !== "win32")
         return false;
-    const probe = spawnSync("schtasks", ["/Query"], { encoding: "utf-8" });
+    const probe = processAdapter.spawn("schtasks", ["/Query"], { encoding: "utf-8" });
     if (probe.error)
         return false;
     return probe.status === 0;
 }
-function readCurrentCrontab() {
-    const result = spawnSync("crontab", ["-l"], { encoding: "utf-8" });
+function readCurrentCrontab(processAdapter) {
+    const result = processAdapter.spawn("crontab", ["-l"], { encoding: "utf-8" });
     if (result.error) {
         throw result.error;
     }
@@ -49,9 +66,9 @@ function readCurrentCrontab() {
     }
     throw new Error((result.stderr || result.stdout || `crontab -l failed with status ${result.status}`).trim());
 }
-function writeCrontab(lines) {
+function writeCrontab(lines, processAdapter) {
     const content = `${lines.filter((line, index, arr) => !(line === "" && arr[index - 1] === "")).join("\n").trim()}\n`;
-    const result = spawnSync("crontab", ["-"], {
+    const result = processAdapter.spawn("crontab", ["-"], {
         encoding: "utf-8",
         input: content,
     });
@@ -78,13 +95,12 @@ function stripManagedEntry(lines, scheduleId) {
     }
     return next;
 }
-function buildManagedEntry(schedule) {
+export function buildManagedSystemCronEntry(schedule, paths, processAdapter = NODE_SYSTEM_CRON_PROCESS) {
     const cliPath = resolveCliDistPath();
-    const nodePath = process.execPath;
-    const logsFile = join(PATHS.logsDir, "schedule-system-cron.log");
-    mkdirSync(dirname(logsFile), { recursive: true });
+    const nodePath = processAdapter.execPath;
+    const logsFile = join(paths.logsDir, "schedule-system-cron.log");
     const command = [
-        `KNOWBEE_STATE_DIR=${shellQuote(PATHS.stateDir)}`,
+        `KNOWBEE_STATE_DIR=${shellQuote(paths.stateDir)}`,
         shellQuote(nodePath),
         shellQuote(cliPath),
         "schedule",
@@ -100,23 +116,23 @@ function buildManagedEntry(schedule) {
 function toWindowsTaskName(scheduleId) {
     return `${WINDOWS_TASK_PREFIX}${scheduleId}`;
 }
-function buildWindowsTaskCommand(schedule) {
+function buildWindowsTaskCommand(schedule, processAdapter) {
     const cliPath = resolveCliDistPath();
     return [
-        process.execPath,
+        processAdapter.execPath,
         cliPath,
         "schedule",
         "run",
         schedule.id,
     ].map((item) => `"${item.replace(/"/g, '""')}"`).join(" ");
 }
-function tryBuildWindowsTaskScheduleArgs(schedule) {
+function tryBuildWindowsTaskScheduleArgs(schedule, processAdapter) {
     const parts = schedule.cron_expression.trim().split(/\s+/);
     if (parts.length !== 5 || !isValidCron(schedule.cron_expression))
         return null;
     const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
     const taskName = toWindowsTaskName(schedule.id);
-    const base = ["/Create", "/F", "/TN", taskName, "/TR", buildWindowsTaskCommand(schedule)];
+    const base = ["/Create", "/F", "/TN", taskName, "/TR", buildWindowsTaskCommand(schedule, processAdapter)];
     if (/^\*\/\d+$/.test(minute) && hour === "*" && dayOfMonth === "*" && month === "*" && dayOfWeek === "*") {
         return [...base, "/SC", "MINUTE", "/MO", minute.slice(2)];
     }
@@ -126,8 +142,8 @@ function tryBuildWindowsTaskScheduleArgs(schedule) {
     }
     return null;
 }
-function upsertWindowsScheduledTask(schedule) {
-    if (!supportsWindowsTaskScheduler()) {
+function upsertWindowsScheduledTask(schedule, processAdapter) {
+    if (!supportsWindowsTaskScheduler(processAdapter)) {
         return {
             driver: "internal",
             reason: "Windows 작업 스케줄러를 사용할 수 없어 내부 scheduler로 유지합니다.",
@@ -135,17 +151,17 @@ function upsertWindowsScheduledTask(schedule) {
     }
     const taskName = toWindowsTaskName(schedule.id);
     if (!schedule.enabled) {
-        spawnSync("schtasks", ["/Delete", "/F", "/TN", taskName], { encoding: "utf-8" });
+        processAdapter.spawn("schtasks", ["/Delete", "/F", "/TN", taskName], { encoding: "utf-8" });
         return { driver: "system_schtasks" };
     }
-    const args = tryBuildWindowsTaskScheduleArgs(schedule);
+    const args = tryBuildWindowsTaskScheduleArgs(schedule, processAdapter);
     if (!args) {
         return {
             driver: "internal",
             reason: "현재 cron 표현식을 Windows 작업 스케줄러로 변환할 수 없어 내부 scheduler로 유지합니다.",
         };
     }
-    const result = spawnSync("schtasks", args, { encoding: "utf-8" });
+    const result = processAdapter.spawn("schtasks", args, { encoding: "utf-8" });
     if (result.error) {
         throw result.error;
     }
@@ -154,25 +170,25 @@ function upsertWindowsScheduledTask(schedule) {
     }
     return { driver: "system_schtasks" };
 }
-export function reconcileSystemCronSchedule(schedule) {
-    if (process.platform === "win32") {
-        const result = upsertWindowsScheduledTask(schedule);
+export function reconcileSystemCronSchedule(schedule, paths, processAdapter = NODE_SYSTEM_CRON_PROCESS) {
+    if (processAdapter.platform === "win32") {
+        const result = upsertWindowsScheduledTask(schedule, processAdapter);
         if (result.driver === "internal") {
             try {
-                removeManagedScheduleExecution(schedule.id);
+                removeManagedScheduleExecution(schedule.id, paths, processAdapter);
             }
             catch (error) {
-                log.warn(`failed to clear stale windows task for schedule ${schedule.id}: ${error instanceof Error ? error.message : String(error)}`);
+                log.warn(`failed to clear stale windows task for schedule ${schedule.id}: ${systemCronErrorMessage(error)}`);
             }
         }
         return result;
     }
-    if (!supportsSystemCrontab()) {
+    if (!supportsSystemCrontab(processAdapter)) {
         try {
-            removeSystemCronSchedule(schedule.id);
+            removeSystemCronSchedule(schedule.id, processAdapter);
         }
         catch (error) {
-            log.warn(`failed to clear stale system cron for schedule ${schedule.id}: ${error instanceof Error ? error.message : String(error)}`);
+            log.warn(`failed to clear stale system cron for schedule ${schedule.id}: ${systemCronErrorMessage(error)}`);
         }
         return {
             driver: "internal",
@@ -180,35 +196,36 @@ export function reconcileSystemCronSchedule(schedule) {
         };
     }
     if (!schedule.enabled) {
-        removeSystemCronSchedule(schedule.id);
+        removeSystemCronSchedule(schedule.id, processAdapter);
         return { driver: "system_crontab" };
     }
-    const existing = readCurrentCrontab();
+    const existing = readCurrentCrontab(processAdapter);
     const withoutManagedEntry = stripManagedEntry(existing, schedule.id);
-    const next = [...withoutManagedEntry, ...buildManagedEntry(schedule)];
-    writeCrontab(next);
+    mkdirSync(paths.logsDir, { recursive: true });
+    const next = [...withoutManagedEntry, ...buildManagedSystemCronEntry(schedule, paths, processAdapter)];
+    writeCrontab(next, processAdapter);
     return { driver: "system_crontab" };
 }
-export function removeSystemCronSchedule(scheduleId) {
-    if (!supportsSystemCrontab())
+export function removeSystemCronSchedule(scheduleId, processAdapter = NODE_SYSTEM_CRON_PROCESS) {
+    if (!supportsSystemCrontab(processAdapter))
         return;
-    const existing = readCurrentCrontab();
+    const existing = readCurrentCrontab(processAdapter);
     const next = stripManagedEntry(existing, scheduleId);
-    writeCrontab(next);
+    writeCrontab(next, processAdapter);
 }
-export function reconcileScheduleExecution(scheduleId) {
+export function reconcileScheduleExecution(scheduleId, paths, processAdapter = NODE_SYSTEM_CRON_PROCESS) {
     const schedule = getSchedule(scheduleId);
     if (!schedule) {
         throw new Error(`Schedule ${scheduleId} not found`);
     }
     let result;
     try {
-        result = reconcileSystemCronSchedule(schedule);
+        result = reconcileSystemCronSchedule(schedule, paths, processAdapter);
     }
     catch (error) {
-        log.warn(`failed to register system schedule ${scheduleId}: ${error instanceof Error ? error.message : String(error)}`);
+        log.warn(`failed to register system schedule ${scheduleId}: ${systemCronErrorMessage(error)}`);
         try {
-            removeManagedScheduleExecution(scheduleId);
+            removeManagedScheduleExecution(scheduleId, paths, processAdapter);
         }
         catch {
             // ignore stale cleanup failure
@@ -223,13 +240,13 @@ export function reconcileScheduleExecution(scheduleId) {
     }
     return result;
 }
-export function removeManagedScheduleExecution(scheduleId) {
-    if (process.platform === "win32") {
-        if (!supportsWindowsTaskScheduler())
+export function removeManagedScheduleExecution(scheduleId, _paths, processAdapter = NODE_SYSTEM_CRON_PROCESS) {
+    if (processAdapter.platform === "win32") {
+        if (!supportsWindowsTaskScheduler(processAdapter))
             return;
-        spawnSync("schtasks", ["/Delete", "/F", "/TN", toWindowsTaskName(scheduleId)], { encoding: "utf-8" });
+        processAdapter.spawn("schtasks", ["/Delete", "/F", "/TN", toWindowsTaskName(scheduleId)], { encoding: "utf-8" });
         return;
     }
-    removeSystemCronSchedule(scheduleId);
+    removeSystemCronSchedule(scheduleId, processAdapter);
 }
 //# sourceMappingURL=system-cron.js.map

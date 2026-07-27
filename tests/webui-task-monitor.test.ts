@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest"
-import { buildTaskMonitorCards, describeTaskDeliveryStatus, filterActiveTaskMonitorCards, filterTaskTimelineForMode } from "../packages/webui/src/lib/task-monitor.js"
 import type { RootRun } from "../packages/webui/src/contracts/runs.js"
 import type { TaskModel } from "../packages/webui/src/contracts/tasks.js"
+import {
+  buildTaskMonitorCards,
+  describeTaskDeliveryStatus,
+  filterActiveTaskMonitorCards,
+  filterTaskTimelineForMode,
+  runAgentName,
+} from "../packages/webui/src/lib/task-monitor.js"
 
 const text = (ko: string, _en: string) => ko
 
-function makeRun(overrides: Partial<RootRun> & Pick<RootRun, "id" | "requestGroupId" | "prompt">): RootRun {
+function makeRun(
+  overrides: Partial<RootRun> & Pick<RootRun, "id" | "requestGroupId" | "prompt">,
+): RootRun {
   return {
     id: overrides.id,
     sessionId: overrides.sessionId ?? "session-1",
@@ -33,14 +41,16 @@ function makeRun(overrides: Partial<RootRun> & Pick<RootRun, "id" | "requestGrou
     ...(overrides.targetLabel ? { targetLabel: overrides.targetLabel } : {}),
     ...(overrides.workerRuntimeKind ? { workerRuntimeKind: overrides.workerRuntimeKind } : {}),
     ...(overrides.workerSessionId ? { workerSessionId: overrides.workerSessionId } : {}),
-    ...(overrides.agentDisplayName ? { agentDisplayName: overrides.agentDisplayName } : {}),
-    ...(overrides.agentNickname ? { agentNickname: overrides.agentNickname } : {}),
+    ...(overrides.agentName ? { agentName: overrides.agentName } : {}),
+    ...(overrides.agentNameSnapshot ? { agentNameSnapshot: overrides.agentNameSnapshot } : {}),
     ...(overrides.parentRunId ? { parentRunId: overrides.parentRunId } : {}),
     ...(overrides.handoffSummary ? { handoffSummary: overrides.handoffSummary } : {}),
   }
 }
 
-function makeTask(overrides: Partial<TaskModel> & Pick<TaskModel, "id" | "requestGroupId" | "anchorRunId">): TaskModel {
+function makeTask(
+  overrides: Partial<TaskModel> & Pick<TaskModel, "id" | "requestGroupId" | "anchorRunId">,
+): TaskModel {
   const deliveryChecklistStatus =
     overrides.delivery?.status === "failed"
       ? "failed"
@@ -56,12 +66,26 @@ function makeTask(overrides: Partial<TaskModel> & Pick<TaskModel, "id" | "reques
           ? "completed"
           : "running"
   const defaultChecklistItems = [
-    { key: "request" as const, status: "completed" as const, summary: overrides.requestText ?? "Original request" },
-    { key: "execution" as const, status: overrides.status === "completed" ? "completed" as const : "running" as const, summary: overrides.summary ?? "Task summary" },
+    {
+      key: "request" as const,
+      status: "completed" as const,
+      summary: overrides.requestText ?? "Original request",
+    },
+    {
+      key: "execution" as const,
+      status: overrides.status === "completed" ? ("completed" as const) : ("running" as const),
+      summary: overrides.summary ?? "Task summary",
+    },
     { key: "delivery" as const, status: deliveryChecklistStatus },
-    { key: "completion" as const, status: completionChecklistStatus, summary: overrides.summary ?? "Task summary" },
+    {
+      key: "completion" as const,
+      status: completionChecklistStatus,
+      summary: overrides.summary ?? "Task summary",
+    },
   ]
-  const actionableChecklistItems = defaultChecklistItems.filter((item) => item.status !== "not_required")
+  const actionableChecklistItems = defaultChecklistItems.filter(
+    (item) => item.status !== "not_required",
+  )
 
   return {
     id: overrides.id,
@@ -86,7 +110,9 @@ function makeTask(overrides: Partial<TaskModel> & Pick<TaskModel, "id" | "reques
       items: defaultChecklistItems,
       completedCount: actionableChecklistItems.filter((item) => item.status === "completed").length,
       actionableCount: actionableChecklistItems.length,
-      failedCount: actionableChecklistItems.filter((item) => item.status === "failed" || item.status === "cancelled").length,
+      failedCount: actionableChecklistItems.filter(
+        (item) => item.status === "failed" || item.status === "cancelled",
+      ).length,
     },
     monitor: overrides.monitor ?? {
       activeAttemptCount: 1,
@@ -107,73 +133,99 @@ function makeTask(overrides: Partial<TaskModel> & Pick<TaskModel, "id" | "reques
 
 describe("webui task monitor helper", () => {
   it("builds one card from a task projection and hides internal attempts from the default tree", () => {
-    const cards = buildTaskMonitorCards([
-      makeTask({
-        id: "task-1",
-        requestGroupId: "task-1",
-        anchorRunId: "run-root",
-        attempts: [
-          {
-            id: "run-root",
-            taskId: "task-1",
-            requestGroupId: "task-1",
-            kind: "primary",
-            title: "Take a screenshot",
-            prompt: "Take a screenshot",
-            status: "running",
-            summary: "첫 실행",
-            userVisible: true,
-            createdAt: 1,
-            updatedAt: 2,
+    const cards = buildTaskMonitorCards(
+      [
+        makeTask({
+          id: "task-1",
+          requestGroupId: "task-1",
+          anchorRunId: "run-root",
+          attempts: [
+            {
+              id: "run-root",
+              taskId: "task-1",
+              requestGroupId: "task-1",
+              kind: "primary",
+              title: "Take a screenshot",
+              prompt: "Take a screenshot",
+              status: "running",
+              summary: "첫 실행",
+              userVisible: true,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+            {
+              id: "run-verify",
+              taskId: "task-1",
+              requestGroupId: "task-1",
+              kind: "verification",
+              title: "Verification",
+              prompt: "[Filesystem Verification]",
+              status: "completed",
+              summary: "검증 중",
+              userVisible: false,
+              createdAt: 3,
+              updatedAt: 4,
+            },
+            {
+              id: "run-followup",
+              taskId: "task-1",
+              requestGroupId: "task-1",
+              kind: "followup",
+              title: "Retry",
+              prompt: "Take a screenshot again",
+              status: "running",
+              summary: "후속 실행",
+              userVisible: true,
+              createdAt: 5,
+              updatedAt: 6,
+            },
+          ],
+          latestAttemptId: "run-followup",
+          runIds: ["run-root", "run-verify", "run-followup"],
+          monitor: {
+            activeAttemptCount: 2,
+            runningAttemptCount: 2,
+            queuedAttemptCount: 0,
+            visibleAttemptCount: 2,
+            internalAttemptCount: 1,
+            recoveryAttemptCount: 0,
+            activeRecoveryCount: 0,
+            duplicateExecutionRisk: true,
+            awaitingApproval: false,
+            awaitingUser: false,
+            deliveryStatus: "not_requested",
           },
-          {
-            id: "run-verify",
-            taskId: "task-1",
-            requestGroupId: "task-1",
-            kind: "verification",
-            title: "Verification",
-            prompt: "[Filesystem Verification]",
-            status: "completed",
-            summary: "검증 중",
-            userVisible: false,
-            createdAt: 3,
-            updatedAt: 4,
-          },
-          {
-            id: "run-followup",
-            taskId: "task-1",
-            requestGroupId: "task-1",
-            kind: "followup",
-            title: "Retry",
-            prompt: "Take a screenshot again",
-            status: "running",
-            summary: "후속 실행",
-            userVisible: true,
-            createdAt: 5,
-            updatedAt: 6,
-          },
-        ],
-        latestAttemptId: "run-followup",
-        runIds: ["run-root", "run-verify", "run-followup"],
-        monitor: {
-          activeAttemptCount: 2,
-          runningAttemptCount: 2,
-          queuedAttemptCount: 0,
-          visibleAttemptCount: 2,
-          internalAttemptCount: 1,
-          recoveryAttemptCount: 0,
-          activeRecoveryCount: 0,
-          duplicateExecutionRisk: true,
-          awaitingApproval: false,
-          awaitingUser: false,
-          deliveryStatus: "not_requested",
-        },
-      }),
-    ], [
-      makeRun({ id: "run-root", requestGroupId: "task-1", prompt: "Take a screenshot", summary: "첫 실행", createdAt: 1, updatedAt: 2 }),
-      makeRun({ id: "run-verify", requestGroupId: "task-1", prompt: "[Filesystem Verification]", summary: "검증 중", status: "completed", createdAt: 3, updatedAt: 4 }),
-      makeRun({ id: "run-followup", requestGroupId: "task-1", prompt: "Take a screenshot again", summary: "후속 실행", createdAt: 5, updatedAt: 6 }),
-    ], text)
+        }),
+      ],
+      [
+        makeRun({
+          id: "run-root",
+          requestGroupId: "task-1",
+          prompt: "Take a screenshot",
+          summary: "첫 실행",
+          createdAt: 1,
+          updatedAt: 2,
+        }),
+        makeRun({
+          id: "run-verify",
+          requestGroupId: "task-1",
+          prompt: "[Filesystem Verification]",
+          summary: "검증 중",
+          status: "completed",
+          createdAt: 3,
+          updatedAt: 4,
+        }),
+        makeRun({
+          id: "run-followup",
+          requestGroupId: "task-1",
+          prompt: "Take a screenshot again",
+          summary: "후속 실행",
+          createdAt: 5,
+          updatedAt: 6,
+        }),
+      ],
+      text,
+    )
 
     expect(cards).toHaveLength(1)
     expect(cards[0]?.attempts).toHaveLength(3)
@@ -194,57 +246,69 @@ describe("webui task monitor helper", () => {
   })
 
   it("shows root and child task lineage in the monitor tree", () => {
-    const cards = buildTaskMonitorCards([
-      makeTask({
-        id: "lineage-1",
-        requestGroupId: "root-group",
-        anchorRunId: "run-root",
-        attempts: [
-          {
-            id: "run-root",
-            taskId: "lineage-1",
-            requestGroupId: "root-group",
-            kind: "primary",
-            title: "Main request",
-            prompt: "Collect logs",
-            status: "completed",
-            summary: "루트 작업",
-            userVisible: true,
-            createdAt: 1,
-            updatedAt: 2,
-          },
-          {
-            id: "run-child",
-            taskId: "lineage-1",
-            requestGroupId: "child-group",
-            kind: "followup",
-            title: "Child request",
-            prompt: "Inspect Windows logs",
-            status: "running",
-            summary: "서브 작업 실행 중",
-            userVisible: true,
-            createdAt: 3,
-            updatedAt: 4,
-          },
-        ],
-        latestAttemptId: "run-child",
-        runIds: ["run-root", "run-child"],
-      }),
-    ], [
-      makeRun({ id: "run-root", requestGroupId: "root-group", prompt: "Collect logs", summary: "루트 작업", runScope: "root", createdAt: 1, updatedAt: 2 }),
-      makeRun({
-        id: "run-child",
-        requestGroupId: "child-group",
-        prompt: "Inspect Windows logs",
-        summary: "서브 작업 실행 중",
-        runScope: "child",
-        parentRunId: "run-root",
-        targetLabel: "마당쇠",
-        handoffSummary: "윈도우 장비 로그만 별도 확인",
-        createdAt: 3,
-        updatedAt: 4,
-      }),
-    ], text)
+    const cards = buildTaskMonitorCards(
+      [
+        makeTask({
+          id: "lineage-1",
+          requestGroupId: "root-group",
+          anchorRunId: "run-root",
+          attempts: [
+            {
+              id: "run-root",
+              taskId: "lineage-1",
+              requestGroupId: "root-group",
+              kind: "primary",
+              title: "Main request",
+              prompt: "Collect logs",
+              status: "completed",
+              summary: "루트 작업",
+              userVisible: true,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+            {
+              id: "run-child",
+              taskId: "lineage-1",
+              requestGroupId: "child-group",
+              kind: "followup",
+              title: "Child request",
+              prompt: "Inspect Windows logs",
+              status: "running",
+              summary: "서브 작업 실행 중",
+              userVisible: true,
+              createdAt: 3,
+              updatedAt: 4,
+            },
+          ],
+          latestAttemptId: "run-child",
+          runIds: ["run-root", "run-child"],
+        }),
+      ],
+      [
+        makeRun({
+          id: "run-root",
+          requestGroupId: "root-group",
+          prompt: "Collect logs",
+          summary: "루트 작업",
+          runScope: "root",
+          createdAt: 1,
+          updatedAt: 2,
+        }),
+        makeRun({
+          id: "run-child",
+          requestGroupId: "child-group",
+          prompt: "Inspect Windows logs",
+          summary: "서브 작업 실행 중",
+          runScope: "child",
+          parentRunId: "run-root",
+          targetLabel: "마당쇠",
+          handoffSummary: "윈도우 장비 로그만 별도 확인",
+          createdAt: 3,
+          updatedAt: 4,
+        }),
+      ],
+      text,
+    )
 
     expect(cards[0]?.treeNodes.map((node) => node.label)).toEqual([
       "기본 실행 · 새 요청",
@@ -253,216 +317,316 @@ describe("webui task monitor helper", () => {
     expect(cards[0]?.treeNodes[1]?.summary).toContain("윈도우 장비 로그만 별도 확인")
   })
 
+  it("normalizes child run labels through one canonical agent name", () => {
+    const run = makeRun({
+      id: "run-child-name",
+      requestGroupId: "child-name-group",
+      prompt: "Inspect Windows logs",
+      runScope: "child",
+      agentName: "Canonical Agent Name",
+      agentNameSnapshot: "Snapshot Agent Name",
+      targetLabel: "Target Label",
+    })
+
+    expect(
+      runAgentName({
+        id: "run-child-name",
+        kind: "followup",
+        label: "후속 실행",
+        prompt: run.prompt,
+        status: run.status,
+        summary: run.summary,
+        userVisible: true,
+        run,
+      }),
+    ).toBe("Canonical Agent Name")
+  })
+
+  it("does not use legacy child run display names as agent labels", () => {
+    const withTarget = {
+      ...makeRun({
+        id: "run-child-legacy-target",
+        requestGroupId: "child-legacy-target-group",
+        prompt: "Inspect Windows logs",
+        runScope: "child",
+        targetLabel: "Target Agent Name",
+      }),
+      agentDisplayName: "Legacy Display Name",
+    } as RootRun & { agentDisplayName: string }
+    const legacyOnly = {
+      ...makeRun({
+        id: "run-child-legacy-only",
+        requestGroupId: "child-legacy-only-group",
+        prompt: "Inspect Windows logs",
+        runScope: "child",
+      }),
+      agentDisplayName: "Legacy Display Name",
+    } as RootRun & { agentDisplayName: string }
+
+    expect(
+      runAgentName({
+        id: "run-child-legacy-target",
+        kind: "followup",
+        label: "후속 실행",
+        prompt: withTarget.prompt,
+        status: withTarget.status,
+        summary: withTarget.summary,
+        userVisible: true,
+        run: withTarget,
+      }),
+    ).toBe("Target Agent Name")
+    expect(
+      runAgentName({
+        id: "run-child-legacy-only",
+        kind: "followup",
+        label: "후속 실행",
+        prompt: legacyOnly.prompt,
+        status: legacyOnly.status,
+        summary: legacyOnly.summary,
+        userVisible: true,
+        run: legacyOnly,
+      }),
+    ).toBeUndefined()
+  })
+
   it("tracks delivery separately from task status", () => {
-    const cards = buildTaskMonitorCards([
-      makeTask({
-        id: "task-2",
-        requestGroupId: "task-2",
-        anchorRunId: "run-delivery",
-        status: "completed",
-        delivery: {
-          taskId: "task-2",
-          status: "delivered",
-          sourceAttemptId: "run-delivery",
-          channel: "telegram",
-          summary: "텔레그램 파일 전달 완료: /tmp/file.txt",
-        },
-        monitor: {
-          activeAttemptCount: 0,
-          runningAttemptCount: 0,
-          queuedAttemptCount: 0,
-          visibleAttemptCount: 1,
-          internalAttemptCount: 0,
-          recoveryAttemptCount: 0,
-          activeRecoveryCount: 0,
-          duplicateExecutionRisk: false,
-          awaitingApproval: false,
-          awaitingUser: false,
-          deliveryStatus: "delivered",
-        },
-        attempts: [
-          {
-            id: "run-delivery",
+    const cards = buildTaskMonitorCards(
+      [
+        makeTask({
+          id: "task-2",
+          requestGroupId: "task-2",
+          anchorRunId: "run-delivery",
+          status: "completed",
+          delivery: {
             taskId: "task-2",
-            requestGroupId: "task-2",
-            kind: "primary",
-            title: "Send the file",
-            prompt: "Send the file",
-            status: "completed",
-            summary: "파일을 보냈습니다.",
-            userVisible: true,
-            createdAt: 1,
-            updatedAt: 2,
-          },
-        ],
-        latestAttemptId: "run-delivery",
-        runIds: ["run-delivery"],
-        activities: [
-          {
-            id: "evt-1",
-            taskId: "task-2",
-            kind: "delivery.delivered",
-            at: 3,
+            status: "delivered",
+            sourceAttemptId: "run-delivery",
+            channel: "telegram",
             summary: "텔레그램 파일 전달 완료: /tmp/file.txt",
-            attemptId: "run-delivery",
           },
-        ],
-      }),
-    ], [
-      makeRun({
-        id: "run-delivery",
-        requestGroupId: "task-2",
-        prompt: "Send the file",
-        status: "completed",
-        summary: "파일을 보냈습니다.",
-        createdAt: 1,
-        updatedAt: 2,
-      }),
-    ], text)
+          monitor: {
+            activeAttemptCount: 0,
+            runningAttemptCount: 0,
+            queuedAttemptCount: 0,
+            visibleAttemptCount: 1,
+            internalAttemptCount: 0,
+            recoveryAttemptCount: 0,
+            activeRecoveryCount: 0,
+            duplicateExecutionRisk: false,
+            awaitingApproval: false,
+            awaitingUser: false,
+            deliveryStatus: "delivered",
+          },
+          attempts: [
+            {
+              id: "run-delivery",
+              taskId: "task-2",
+              requestGroupId: "task-2",
+              kind: "primary",
+              title: "Send the file",
+              prompt: "Send the file",
+              status: "completed",
+              summary: "파일을 보냈습니다.",
+              userVisible: true,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+          latestAttemptId: "run-delivery",
+          runIds: ["run-delivery"],
+          activities: [
+            {
+              id: "evt-1",
+              taskId: "task-2",
+              kind: "delivery.delivered",
+              at: 3,
+              summary: "텔레그램 파일 전달 완료: /tmp/file.txt",
+              attemptId: "run-delivery",
+            },
+          ],
+        }),
+      ],
+      [
+        makeRun({
+          id: "run-delivery",
+          requestGroupId: "task-2",
+          prompt: "Send the file",
+          status: "completed",
+          summary: "파일을 보냈습니다.",
+          createdAt: 1,
+          updatedAt: 2,
+        }),
+      ],
+      text,
+    )
 
     expect(cards[0]?.representative.status).toBe("completed")
     expect(cards[0]?.delivery.status).toBe("delivered")
     expect(cards[0]?.timeline[0]?.runLabel).toBe("새 요청")
-    expect(describeTaskDeliveryStatus(cards[0]!.delivery.status, text)).toBe("전달 완료")
+    expect(describeTaskDeliveryStatus(cards[0]?.delivery.status ?? "not_requested", text)).toBe(
+      "전달 완료",
+    )
     expect(cards[0]?.checklist.completedCount).toBe(4)
   })
 
   it("preserves delivery artifact metadata for task detail panels", () => {
-    const cards = buildTaskMonitorCards([
-      makeTask({
-        id: "task-artifact",
-        requestGroupId: "task-artifact",
-        anchorRunId: "run-artifact",
-        status: "completed",
-        delivery: {
-          taskId: "task-artifact",
-          status: "delivered",
-          sourceAttemptId: "run-artifact",
-          channel: "webui",
-          summary: "WebUI 파일 전달 완료: /state/artifacts/screens/screenshot.png",
-          artifact: {
-            filePath: "/state/artifacts/screens/screenshot.png",
-            fileName: "screenshot.png",
-            url: "/api/artifacts/screens/screenshot.png",
-            mimeType: "image/png",
-          },
-        },
-        attempts: [
-          {
-            id: "run-artifact",
+    const rawArtifactPath = "/state/artifacts/screens/screenshot.png"
+    const cards = buildTaskMonitorCards(
+      [
+        makeTask({
+          id: "task-artifact",
+          requestGroupId: "task-artifact",
+          anchorRunId: "run-artifact",
+          status: "completed",
+          delivery: {
             taskId: "task-artifact",
-            requestGroupId: "task-artifact",
-            kind: "primary",
-            title: "Capture screen",
-            prompt: "Capture screen",
-            status: "completed",
-            summary: "캡처 완료",
-            userVisible: true,
-            createdAt: 1,
-            updatedAt: 2,
+            status: "delivered",
+            sourceAttemptId: "run-artifact",
+            channel: "webui",
+            summary: `WebUI 파일 전달 완료: ${rawArtifactPath}`,
+            artifact: {
+              fileName: "screenshot.png",
+              url: "/api/artifacts/screens/screenshot.png",
+              mimeType: "image/png",
+            },
           },
-        ],
-        latestAttemptId: "run-artifact",
-        runIds: ["run-artifact"],
-        monitor: {
-          activeAttemptCount: 0,
-          runningAttemptCount: 0,
-          queuedAttemptCount: 0,
-          visibleAttemptCount: 1,
-          internalAttemptCount: 0,
-          recoveryAttemptCount: 0,
-          activeRecoveryCount: 0,
-          duplicateExecutionRisk: false,
-          awaitingApproval: false,
-          awaitingUser: false,
-          deliveryStatus: "delivered",
-        },
-      }),
-    ], [
-      makeRun({
-        id: "run-artifact",
-        requestGroupId: "task-artifact",
-        prompt: "Capture screen",
-        status: "completed",
-        summary: "캡처 완료",
-      }),
-    ], text)
+          attempts: [
+            {
+              id: "run-artifact",
+              taskId: "task-artifact",
+              requestGroupId: "task-artifact",
+              kind: "primary",
+              title: "Capture screen",
+              prompt: "Capture screen",
+              status: "completed",
+              summary: "캡처 완료",
+              userVisible: true,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+          latestAttemptId: "run-artifact",
+          runIds: ["run-artifact"],
+          monitor: {
+            activeAttemptCount: 0,
+            runningAttemptCount: 0,
+            queuedAttemptCount: 0,
+            visibleAttemptCount: 1,
+            internalAttemptCount: 0,
+            recoveryAttemptCount: 0,
+            activeRecoveryCount: 0,
+            duplicateExecutionRisk: false,
+            awaitingApproval: false,
+            awaitingUser: false,
+            deliveryStatus: "delivered",
+          },
+        }),
+      ],
+      [
+        makeRun({
+          id: "run-artifact",
+          requestGroupId: "task-artifact",
+          prompt: "Capture screen",
+          status: "completed",
+          summary: "캡처 완료",
+        }),
+      ],
+      text,
+    )
 
     expect(cards[0]?.delivery.artifact).toEqual({
-      filePath: "/state/artifacts/screens/screenshot.png",
       fileName: "screenshot.png",
       url: "/api/artifacts/screens/screenshot.png",
       mimeType: "image/png",
     })
+    expect(JSON.stringify(cards[0]?.delivery.artifact)).not.toContain(rawArtifactPath)
   })
 
   it("keeps recovery attempts internal while the task stays visible", () => {
-    const cards = buildTaskMonitorCards([
-      makeTask({
-        id: "task-5",
-        requestGroupId: "task-5",
-        anchorRunId: "run-root",
-        attempts: [
-          {
-            id: "run-root",
-            taskId: "task-5",
-            requestGroupId: "task-5",
-            kind: "primary",
-            title: "Create the report",
-            prompt: "Create the report",
-            status: "running",
-            summary: "첫 실행",
-            userVisible: true,
-            createdAt: 1,
-            updatedAt: 2,
+    const cards = buildTaskMonitorCards(
+      [
+        makeTask({
+          id: "task-5",
+          requestGroupId: "task-5",
+          anchorRunId: "run-root",
+          attempts: [
+            {
+              id: "run-root",
+              taskId: "task-5",
+              requestGroupId: "task-5",
+              kind: "primary",
+              title: "Create the report",
+              prompt: "Create the report",
+              status: "running",
+              summary: "첫 실행",
+              userVisible: true,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+            {
+              id: "run-recovery",
+              taskId: "task-5",
+              requestGroupId: "task-5",
+              kind: "filesystem_retry",
+              title: "Filesystem retry",
+              prompt: "[Filesystem Execution Required]\nTask: Create the report",
+              status: "running",
+              summary: "실제 파일 작업 재시도 중",
+              userVisible: false,
+              createdAt: 3,
+              updatedAt: 4,
+            },
+          ],
+          latestAttemptId: "run-recovery",
+          runIds: ["run-root", "run-recovery"],
+          recoveryAttempts: [
+            {
+              id: "run-recovery",
+              taskId: "task-5",
+              sourceAttemptId: "run-root",
+              kind: "filesystem",
+              status: "running",
+              summary: "실제 파일 작업 재시도 중",
+              userVisible: false,
+              createdAt: 3,
+              updatedAt: 4,
+            },
+          ],
+          monitor: {
+            activeAttemptCount: 2,
+            runningAttemptCount: 2,
+            queuedAttemptCount: 0,
+            visibleAttemptCount: 1,
+            internalAttemptCount: 1,
+            recoveryAttemptCount: 1,
+            activeRecoveryCount: 1,
+            duplicateExecutionRisk: true,
+            awaitingApproval: false,
+            awaitingUser: false,
+            deliveryStatus: "not_requested",
           },
-          {
-            id: "run-recovery",
-            taskId: "task-5",
-            requestGroupId: "task-5",
-            kind: "filesystem_retry",
-            title: "Filesystem retry",
-            prompt: "[Filesystem Execution Required]\nTask: Create the report",
-            status: "running",
-            summary: "실제 파일 작업 재시도 중",
-            userVisible: false,
-            createdAt: 3,
-            updatedAt: 4,
-          },
-        ],
-        latestAttemptId: "run-recovery",
-        runIds: ["run-root", "run-recovery"],
-        recoveryAttempts: [
-          {
-            id: "run-recovery",
-            taskId: "task-5",
-            sourceAttemptId: "run-root",
-            kind: "filesystem",
-            status: "running",
-            summary: "실제 파일 작업 재시도 중",
-            userVisible: false,
-            createdAt: 3,
-            updatedAt: 4,
-          },
-        ],
-        monitor: {
-          activeAttemptCount: 2,
-          runningAttemptCount: 2,
-          queuedAttemptCount: 0,
-          visibleAttemptCount: 1,
-          internalAttemptCount: 1,
-          recoveryAttemptCount: 1,
-          activeRecoveryCount: 1,
-          duplicateExecutionRisk: true,
-          awaitingApproval: false,
-          awaitingUser: false,
-          deliveryStatus: "not_requested",
-        },
-      }),
-    ], [
-      makeRun({ id: "run-root", requestGroupId: "task-5", prompt: "Create the report", summary: "첫 실행", createdAt: 1, updatedAt: 2 }),
-      makeRun({ id: "run-recovery", requestGroupId: "task-5", prompt: "[Filesystem Execution Required]", summary: "실제 파일 작업 재시도 중", createdAt: 3, updatedAt: 4 }),
-    ], text)
+        }),
+      ],
+      [
+        makeRun({
+          id: "run-root",
+          requestGroupId: "task-5",
+          prompt: "Create the report",
+          summary: "첫 실행",
+          createdAt: 1,
+          updatedAt: 2,
+        }),
+        makeRun({
+          id: "run-recovery",
+          requestGroupId: "task-5",
+          prompt: "[Filesystem Execution Required]",
+          summary: "실제 파일 작업 재시도 중",
+          createdAt: 3,
+          updatedAt: 4,
+        }),
+      ],
+      text,
+    )
 
     expect(cards[0]?.internalAttempts.map((attempt) => attempt.kind)).toEqual(["filesystem_retry"])
     expect(cards[0]?.treeNodes.map((node) => node.id)).toEqual(["run-root"])
@@ -470,79 +634,83 @@ describe("webui task monitor helper", () => {
   })
 
   it("tracks failed delivery separately from task completion", () => {
-    const cards = buildTaskMonitorCards([
-      makeTask({
-        id: "task-6",
-        requestGroupId: "task-6",
-        anchorRunId: "run-delivery-failed",
-        status: "completed",
-        failure: {
-          kind: "delivery",
-          status: "failed",
-          title: "전달 실패",
-          summary: "텔레그램 응답 전달 실패: timeout",
-          detailLines: ["텔레그램 세션이 연결되어 있지 않습니다."],
-          sourceAttemptId: "run-delivery-failed",
-        },
-        delivery: {
-          taskId: "task-6",
-          status: "failed",
-          sourceAttemptId: "run-delivery-failed",
-          channel: "telegram",
-          summary: "텔레그램 응답 전달 실패: timeout",
-        },
-        monitor: {
-          activeAttemptCount: 0,
-          runningAttemptCount: 0,
-          queuedAttemptCount: 0,
-          visibleAttemptCount: 1,
-          internalAttemptCount: 0,
-          recoveryAttemptCount: 0,
-          activeRecoveryCount: 0,
-          duplicateExecutionRisk: false,
-          awaitingApproval: false,
-          awaitingUser: false,
-          deliveryStatus: "failed",
-        },
-        attempts: [
-          {
-            id: "run-delivery-failed",
-            taskId: "task-6",
-            requestGroupId: "task-6",
-            kind: "primary",
-            title: "Send the summary",
-            prompt: "Send the summary",
-            status: "completed",
-            summary: "전달 단계에서 실패했습니다.",
-            userVisible: true,
-            createdAt: 1,
-            updatedAt: 2,
-          },
-        ],
-        latestAttemptId: "run-delivery-failed",
-        runIds: ["run-delivery-failed"],
-        activities: [
-          {
-            id: "evt-2",
-            taskId: "task-6",
-            kind: "delivery.failed",
-            at: 3,
+    const cards = buildTaskMonitorCards(
+      [
+        makeTask({
+          id: "task-6",
+          requestGroupId: "task-6",
+          anchorRunId: "run-delivery-failed",
+          status: "completed",
+          failure: {
+            kind: "delivery",
+            status: "failed",
+            title: "전달 실패",
             summary: "텔레그램 응답 전달 실패: timeout",
-            attemptId: "run-delivery-failed",
+            detailLines: ["텔레그램 세션이 연결되어 있지 않습니다."],
+            sourceAttemptId: "run-delivery-failed",
           },
-        ],
-      }),
-    ], [
-      makeRun({
-        id: "run-delivery-failed",
-        requestGroupId: "task-6",
-        prompt: "Send the summary",
-        status: "completed",
-        summary: "전달 단계에서 실패했습니다.",
-        createdAt: 1,
-        updatedAt: 2,
-      }),
-    ], text)
+          delivery: {
+            taskId: "task-6",
+            status: "failed",
+            sourceAttemptId: "run-delivery-failed",
+            channel: "telegram",
+            summary: "텔레그램 응답 전달 실패: timeout",
+          },
+          monitor: {
+            activeAttemptCount: 0,
+            runningAttemptCount: 0,
+            queuedAttemptCount: 0,
+            visibleAttemptCount: 1,
+            internalAttemptCount: 0,
+            recoveryAttemptCount: 0,
+            activeRecoveryCount: 0,
+            duplicateExecutionRisk: false,
+            awaitingApproval: false,
+            awaitingUser: false,
+            deliveryStatus: "failed",
+          },
+          attempts: [
+            {
+              id: "run-delivery-failed",
+              taskId: "task-6",
+              requestGroupId: "task-6",
+              kind: "primary",
+              title: "Send the summary",
+              prompt: "Send the summary",
+              status: "completed",
+              summary: "전달 단계에서 실패했습니다.",
+              userVisible: true,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+          latestAttemptId: "run-delivery-failed",
+          runIds: ["run-delivery-failed"],
+          activities: [
+            {
+              id: "evt-2",
+              taskId: "task-6",
+              kind: "delivery.failed",
+              at: 3,
+              summary: "텔레그램 응답 전달 실패: timeout",
+              attemptId: "run-delivery-failed",
+            },
+          ],
+        }),
+      ],
+      [
+        makeRun({
+          id: "run-delivery-failed",
+          requestGroupId: "task-6",
+          prompt: "Send the summary",
+          status: "completed",
+          summary: "전달 단계에서 실패했습니다.",
+          createdAt: 1,
+          updatedAt: 2,
+        }),
+      ],
+      text,
+    )
 
     expect(cards[0]?.representative.status).toBe("completed")
     expect(cards[0]?.delivery.status).toBe("failed")
@@ -555,140 +723,178 @@ describe("webui task monitor helper", () => {
       sourceAttemptId: "run-delivery-failed",
       sourceAttemptLabel: "새 요청",
     })
-    expect(describeTaskDeliveryStatus(cards[0]!.delivery.status, text)).toBe("전달 실패")
+    expect(describeTaskDeliveryStatus(cards[0]?.delivery.status ?? "not_requested", text)).toBe(
+      "전달 실패",
+    )
   })
 
   it("filters only active task cards for queue views", () => {
-    const cards = buildTaskMonitorCards([
-      makeTask({
-        id: "task-3",
-        requestGroupId: "task-3",
-        anchorRunId: "run-active",
-        status: "running",
-        attempts: [
-          {
-            id: "run-active",
-            taskId: "task-3",
-            requestGroupId: "task-3",
-            kind: "primary",
-            title: "Active task",
-            prompt: "Active task",
-            status: "running",
-            summary: "active",
-            userVisible: true,
-            createdAt: 1,
-            updatedAt: 2,
+    const cards = buildTaskMonitorCards(
+      [
+        makeTask({
+          id: "task-3",
+          requestGroupId: "task-3",
+          anchorRunId: "run-active",
+          status: "running",
+          attempts: [
+            {
+              id: "run-active",
+              taskId: "task-3",
+              requestGroupId: "task-3",
+              kind: "primary",
+              title: "Active task",
+              prompt: "Active task",
+              status: "running",
+              summary: "active",
+              userVisible: true,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+          latestAttemptId: "run-active",
+          runIds: ["run-active"],
+        }),
+        makeTask({
+          id: "task-4",
+          requestGroupId: "task-4",
+          anchorRunId: "run-done",
+          status: "completed",
+          attempts: [
+            {
+              id: "run-done",
+              taskId: "task-4",
+              requestGroupId: "task-4",
+              kind: "primary",
+              title: "Done task",
+              prompt: "Done task",
+              status: "completed",
+              summary: "done",
+              userVisible: true,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+          latestAttemptId: "run-done",
+          runIds: ["run-done"],
+          monitor: {
+            activeAttemptCount: 0,
+            runningAttemptCount: 0,
+            queuedAttemptCount: 0,
+            visibleAttemptCount: 1,
+            internalAttemptCount: 0,
+            recoveryAttemptCount: 0,
+            activeRecoveryCount: 0,
+            duplicateExecutionRisk: false,
+            awaitingApproval: false,
+            awaitingUser: false,
+            deliveryStatus: "not_requested",
           },
-        ],
-        latestAttemptId: "run-active",
-        runIds: ["run-active"],
-      }),
-      makeTask({
-        id: "task-4",
-        requestGroupId: "task-4",
-        anchorRunId: "run-done",
-        status: "completed",
-        attempts: [
-          {
-            id: "run-done",
-            taskId: "task-4",
-            requestGroupId: "task-4",
-            kind: "primary",
-            title: "Done task",
-            prompt: "Done task",
-            status: "completed",
-            summary: "done",
-            userVisible: true,
-            createdAt: 1,
-            updatedAt: 2,
-          },
-        ],
-        latestAttemptId: "run-done",
-        runIds: ["run-done"],
-        monitor: {
-          activeAttemptCount: 0,
-          runningAttemptCount: 0,
-          queuedAttemptCount: 0,
-          visibleAttemptCount: 1,
-          internalAttemptCount: 0,
-          recoveryAttemptCount: 0,
-          activeRecoveryCount: 0,
-          duplicateExecutionRisk: false,
-          awaitingApproval: false,
-          awaitingUser: false,
-          deliveryStatus: "not_requested",
-        },
-      }),
-    ], [
-      makeRun({ id: "run-active", requestGroupId: "task-3", prompt: "Active task", status: "running" }),
-      makeRun({ id: "run-done", requestGroupId: "task-4", prompt: "Done task", status: "completed" }),
-    ], text)
+        }),
+      ],
+      [
+        makeRun({
+          id: "run-active",
+          requestGroupId: "task-3",
+          prompt: "Active task",
+          status: "running",
+        }),
+        makeRun({
+          id: "run-done",
+          requestGroupId: "task-4",
+          prompt: "Done task",
+          status: "completed",
+        }),
+      ],
+      text,
+    )
 
     expect(filterActiveTaskMonitorCards(cards).map((card) => card.key)).toEqual(["task-3"])
   })
 
   it("uses explicit task run ids instead of regrouping raw runs by request group", () => {
-    const cards = buildTaskMonitorCards([
-      makeTask({
-        id: "task-7",
-        requestGroupId: "shared-group",
-        anchorRunId: "run-owned",
-        latestAttemptId: "run-owned",
-        runIds: ["run-owned"],
-        attempts: [
-          {
-            id: "run-owned",
-            taskId: "task-7",
-            requestGroupId: "shared-group",
-            kind: "primary",
-            title: "Owned run",
-            prompt: "Owned run",
-            status: "running",
-            summary: "실제 태스크 run",
-            userVisible: true,
-            createdAt: 1,
-            updatedAt: 2,
-          },
-        ],
-      }),
-    ], [
-      makeRun({ id: "run-owned", requestGroupId: "shared-group", prompt: "Owned run", summary: "실제 태스크 run", createdAt: 1, updatedAt: 2 }),
-      makeRun({ id: "run-leaked", requestGroupId: "shared-group", prompt: "Leaked run", summary: "구형 heuristic이면 섞이던 run", createdAt: 3, updatedAt: 4 }),
-    ], text)
+    const cards = buildTaskMonitorCards(
+      [
+        makeTask({
+          id: "task-7",
+          requestGroupId: "shared-group",
+          anchorRunId: "run-owned",
+          latestAttemptId: "run-owned",
+          runIds: ["run-owned"],
+          attempts: [
+            {
+              id: "run-owned",
+              taskId: "task-7",
+              requestGroupId: "shared-group",
+              kind: "primary",
+              title: "Owned run",
+              prompt: "Owned run",
+              status: "running",
+              summary: "실제 태스크 run",
+              userVisible: true,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+        }),
+      ],
+      [
+        makeRun({
+          id: "run-owned",
+          requestGroupId: "shared-group",
+          prompt: "Owned run",
+          summary: "실제 태스크 run",
+          createdAt: 1,
+          updatedAt: 2,
+        }),
+        makeRun({
+          id: "run-leaked",
+          requestGroupId: "shared-group",
+          prompt: "Leaked run",
+          summary: "구형 heuristic이면 섞이던 run",
+          createdAt: 3,
+          updatedAt: 4,
+        }),
+      ],
+      text,
+    )
 
     expect(cards[0]?.runs.map((run) => run.id)).toEqual(["run-owned"])
     expect(cards[0]?.attempts[0]?.prompt).toBe("Owned run")
   })
 
   it("keeps a task card visible even when the raw runs list no longer contains its representative run", () => {
-    const cards = buildTaskMonitorCards([
-      makeTask({
-        id: "task-8",
-        requestGroupId: "task-8",
-        anchorRunId: "run-missing",
-        latestAttemptId: "run-missing",
-        runIds: ["run-missing"],
-        status: "completed",
-        canCancel: false,
-        requestText: "오래된 태스크",
-        summary: "projection만 남은 태스크",
-        attempts: [
-          {
-            id: "run-missing",
-            taskId: "task-8",
-            requestGroupId: "task-8",
-            kind: "primary",
-            title: "오래된 태스크",
-            prompt: "오래된 태스크",
-            status: "completed",
-            summary: "projection만 남은 태스크",
-            userVisible: true,
-            createdAt: 1,
-            updatedAt: 2,
-          },
-        ],
-      }),
-    ], [], text)
+    const cards = buildTaskMonitorCards(
+      [
+        makeTask({
+          id: "task-8",
+          requestGroupId: "task-8",
+          anchorRunId: "run-missing",
+          latestAttemptId: "run-missing",
+          runIds: ["run-missing"],
+          status: "completed",
+          canCancel: false,
+          requestText: "오래된 태스크",
+          summary: "projection만 남은 태스크",
+          attempts: [
+            {
+              id: "run-missing",
+              taskId: "task-8",
+              requestGroupId: "task-8",
+              kind: "primary",
+              title: "오래된 태스크",
+              prompt: "오래된 태스크",
+              status: "completed",
+              summary: "projection만 남은 태스크",
+              userVisible: true,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+        }),
+      ],
+      [],
+      text,
+    )
 
     expect(cards).toHaveLength(1)
     expect(cards[0]?.representative.id).toBe("run-missing")
@@ -696,124 +902,158 @@ describe("webui task monitor helper", () => {
     expect(cards[0]?.representative.prompt).toBe("오래된 태스크")
   })
 
-  it("orders task cards by request creation time instead of restart-updated time", () => {
-    const cards = buildTaskMonitorCards([
-      makeTask({
-        id: "old-restored-task",
-        requestGroupId: "old-restored-task",
-        anchorRunId: "run-old-restored",
-        latestAttemptId: "run-old-restored",
-        runIds: ["run-old-restored"],
-        title: "오래된 대기 요청",
-        status: "awaiting_user",
-        createdAt: 10,
-        updatedAt: 1_000,
-        attempts: [
-          {
-            id: "run-old-restored",
-            taskId: "old-restored-task",
-            requestGroupId: "old-restored-task",
-            kind: "primary",
-            title: "오래된 대기 요청",
-            prompt: "오래된 대기 요청",
-            status: "awaiting_user",
-            summary: "재시작 복구로 갱신됨",
-            userVisible: true,
-            createdAt: 10,
-            updatedAt: 1_000,
-          },
-        ],
-      }),
-      makeTask({
-        id: "new-task",
-        requestGroupId: "new-task",
-        anchorRunId: "run-new",
-        latestAttemptId: "run-new",
-        runIds: ["run-new"],
-        title: "방금 들어온 요청",
-        status: "completed",
-        createdAt: 100,
-        updatedAt: 200,
-        attempts: [
-          {
-            id: "run-new",
-            taskId: "new-task",
-            requestGroupId: "new-task",
-            kind: "primary",
-            title: "방금 들어온 요청",
-            prompt: "방금 들어온 요청",
-            status: "completed",
-            summary: "완료",
-            userVisible: true,
-            createdAt: 100,
-            updatedAt: 200,
-          },
-        ],
-      }),
-    ], [
-      makeRun({ id: "run-old-restored", requestGroupId: "old-restored-task", prompt: "오래된 대기 요청", status: "awaiting_user", createdAt: 10, updatedAt: 1_000 }),
-      makeRun({ id: "run-new", requestGroupId: "new-task", prompt: "방금 들어온 요청", status: "completed", createdAt: 100, updatedAt: 200 }),
-    ], text)
+  it("keeps active restored work ahead of newer terminal history", () => {
+    const cards = buildTaskMonitorCards(
+      [
+        makeTask({
+          id: "old-restored-task",
+          requestGroupId: "old-restored-task",
+          anchorRunId: "run-old-restored",
+          latestAttemptId: "run-old-restored",
+          runIds: ["run-old-restored"],
+          title: "오래된 대기 요청",
+          status: "awaiting_user",
+          createdAt: 10,
+          updatedAt: 1_000,
+          attempts: [
+            {
+              id: "run-old-restored",
+              taskId: "old-restored-task",
+              requestGroupId: "old-restored-task",
+              kind: "primary",
+              title: "오래된 대기 요청",
+              prompt: "오래된 대기 요청",
+              status: "awaiting_user",
+              summary: "재시작 복구로 갱신됨",
+              userVisible: true,
+              createdAt: 10,
+              updatedAt: 1_000,
+            },
+          ],
+        }),
+        makeTask({
+          id: "new-task",
+          requestGroupId: "new-task",
+          anchorRunId: "run-new",
+          latestAttemptId: "run-new",
+          runIds: ["run-new"],
+          title: "방금 들어온 요청",
+          status: "completed",
+          createdAt: 100,
+          updatedAt: 200,
+          attempts: [
+            {
+              id: "run-new",
+              taskId: "new-task",
+              requestGroupId: "new-task",
+              kind: "primary",
+              title: "방금 들어온 요청",
+              prompt: "방금 들어온 요청",
+              status: "completed",
+              summary: "완료",
+              userVisible: true,
+              createdAt: 100,
+              updatedAt: 200,
+            },
+          ],
+        }),
+      ],
+      [
+        makeRun({
+          id: "run-old-restored",
+          requestGroupId: "old-restored-task",
+          prompt: "오래된 대기 요청",
+          status: "awaiting_user",
+          createdAt: 10,
+          updatedAt: 1_000,
+        }),
+        makeRun({
+          id: "run-new",
+          requestGroupId: "new-task",
+          prompt: "방금 들어온 요청",
+          status: "completed",
+          createdAt: 100,
+          updatedAt: 200,
+        }),
+      ],
+      text,
+    )
 
-    expect(cards.map((card) => card.key)).toEqual(["new-task", "old-restored-task"])
+    expect(cards.map((card) => card.key)).toEqual(["old-restored-task", "new-task"])
   })
 
   it("uses updated time only as a tie-breaker when request creation time is identical", () => {
-    const cards = buildTaskMonitorCards([
-      makeTask({
-        id: "same-created-old-update",
-        requestGroupId: "same-created-old-update",
-        anchorRunId: "run-same-created-old-update",
-        latestAttemptId: "run-same-created-old-update",
-        runIds: ["run-same-created-old-update"],
-        title: "먼저 갱신된 요청",
-        createdAt: 100,
-        updatedAt: 120,
-        attempts: [
-          {
-            id: "run-same-created-old-update",
-            taskId: "same-created-old-update",
-            requestGroupId: "same-created-old-update",
-            kind: "primary",
-            title: "먼저 갱신된 요청",
-            prompt: "먼저 갱신된 요청",
-            status: "running",
-            summary: "동일 생성 시각",
-            userVisible: true,
-            createdAt: 100,
-            updatedAt: 120,
-          },
-        ],
-      }),
-      makeTask({
-        id: "same-created-new-update",
-        requestGroupId: "same-created-new-update",
-        anchorRunId: "run-same-created-new-update",
-        latestAttemptId: "run-same-created-new-update",
-        runIds: ["run-same-created-new-update"],
-        title: "나중에 갱신된 요청",
-        createdAt: 100,
-        updatedAt: 180,
-        attempts: [
-          {
-            id: "run-same-created-new-update",
-            taskId: "same-created-new-update",
-            requestGroupId: "same-created-new-update",
-            kind: "primary",
-            title: "나중에 갱신된 요청",
-            prompt: "나중에 갱신된 요청",
-            status: "running",
-            summary: "동일 생성 시각",
-            userVisible: true,
-            createdAt: 100,
-            updatedAt: 180,
-          },
-        ],
-      }),
-    ], [
-      makeRun({ id: "run-same-created-old-update", requestGroupId: "same-created-old-update", prompt: "먼저 갱신된 요청", createdAt: 100, updatedAt: 120 }),
-      makeRun({ id: "run-same-created-new-update", requestGroupId: "same-created-new-update", prompt: "나중에 갱신된 요청", createdAt: 100, updatedAt: 180 }),
-    ], text)
+    const cards = buildTaskMonitorCards(
+      [
+        makeTask({
+          id: "same-created-old-update",
+          requestGroupId: "same-created-old-update",
+          anchorRunId: "run-same-created-old-update",
+          latestAttemptId: "run-same-created-old-update",
+          runIds: ["run-same-created-old-update"],
+          title: "먼저 갱신된 요청",
+          createdAt: 100,
+          updatedAt: 120,
+          attempts: [
+            {
+              id: "run-same-created-old-update",
+              taskId: "same-created-old-update",
+              requestGroupId: "same-created-old-update",
+              kind: "primary",
+              title: "먼저 갱신된 요청",
+              prompt: "먼저 갱신된 요청",
+              status: "running",
+              summary: "동일 생성 시각",
+              userVisible: true,
+              createdAt: 100,
+              updatedAt: 120,
+            },
+          ],
+        }),
+        makeTask({
+          id: "same-created-new-update",
+          requestGroupId: "same-created-new-update",
+          anchorRunId: "run-same-created-new-update",
+          latestAttemptId: "run-same-created-new-update",
+          runIds: ["run-same-created-new-update"],
+          title: "나중에 갱신된 요청",
+          createdAt: 100,
+          updatedAt: 180,
+          attempts: [
+            {
+              id: "run-same-created-new-update",
+              taskId: "same-created-new-update",
+              requestGroupId: "same-created-new-update",
+              kind: "primary",
+              title: "나중에 갱신된 요청",
+              prompt: "나중에 갱신된 요청",
+              status: "running",
+              summary: "동일 생성 시각",
+              userVisible: true,
+              createdAt: 100,
+              updatedAt: 180,
+            },
+          ],
+        }),
+      ],
+      [
+        makeRun({
+          id: "run-same-created-old-update",
+          requestGroupId: "same-created-old-update",
+          prompt: "먼저 갱신된 요청",
+          createdAt: 100,
+          updatedAt: 120,
+        }),
+        makeRun({
+          id: "run-same-created-new-update",
+          requestGroupId: "same-created-new-update",
+          prompt: "나중에 갱신된 요청",
+          createdAt: 100,
+          updatedAt: 180,
+        }),
+      ],
+      text,
+    )
 
     expect(cards.map((card) => card.key)).toEqual([
       "same-created-new-update",
@@ -822,40 +1062,74 @@ describe("webui task monitor helper", () => {
   })
 
   it("keeps timeline ordering stable and hides diagnostic-only events in normal mode", () => {
-    const cards = buildTaskMonitorCards([
-      makeTask({
-        id: "task-diagnostics",
-        requestGroupId: "task-diagnostics",
-        anchorRunId: "run-diagnostics",
-        attempts: [
-          {
-            id: "run-diagnostics",
-            taskId: "task-diagnostics",
-            requestGroupId: "task-diagnostics",
-            kind: "primary",
-            title: "Check monitor",
-            prompt: "Check monitor",
-            status: "completed",
-            summary: "done",
-            userVisible: true,
-            createdAt: 1,
-            updatedAt: 2,
-          },
-        ],
-        latestAttemptId: "run-diagnostics",
-        runIds: ["run-diagnostics"],
-        activities: [
-          { id: "evt-b", taskId: "task-diagnostics", kind: "attempt.completed", at: 20, summary: "사용자 결과", attemptId: "run-diagnostics" },
-          { id: "evt-a", taskId: "task-diagnostics", kind: "attempt.completed", at: 20, summary: "memory chunk hit receipt", attemptId: "run-diagnostics" },
-          { id: "evt-c", taskId: "task-diagnostics", kind: "delivery.failed", at: 10, summary: "전달 실패", attemptId: "run-diagnostics" },
-        ],
-      }),
-    ], [
-      makeRun({ id: "run-diagnostics", requestGroupId: "task-diagnostics", prompt: "Check monitor", status: "completed" }),
-    ], text)
+    const cards = buildTaskMonitorCards(
+      [
+        makeTask({
+          id: "task-diagnostics",
+          requestGroupId: "task-diagnostics",
+          anchorRunId: "run-diagnostics",
+          attempts: [
+            {
+              id: "run-diagnostics",
+              taskId: "task-diagnostics",
+              requestGroupId: "task-diagnostics",
+              kind: "primary",
+              title: "Check monitor",
+              prompt: "Check monitor",
+              status: "completed",
+              summary: "done",
+              userVisible: true,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+          latestAttemptId: "run-diagnostics",
+          runIds: ["run-diagnostics"],
+          activities: [
+            {
+              id: "evt-b",
+              taskId: "task-diagnostics",
+              kind: "attempt.completed",
+              at: 20,
+              summary: "사용자 결과",
+              attemptId: "run-diagnostics",
+            },
+            {
+              id: "evt-a",
+              taskId: "task-diagnostics",
+              kind: "attempt.completed",
+              at: 20,
+              summary: "memory chunk hit receipt",
+              attemptId: "run-diagnostics",
+            },
+            {
+              id: "evt-c",
+              taskId: "task-diagnostics",
+              kind: "delivery.failed",
+              at: 10,
+              summary: "전달 실패",
+              attemptId: "run-diagnostics",
+            },
+          ],
+        }),
+      ],
+      [
+        makeRun({
+          id: "run-diagnostics",
+          requestGroupId: "task-diagnostics",
+          prompt: "Check monitor",
+          status: "completed",
+        }),
+      ],
+      text,
+    )
 
     expect(cards[0]?.timeline.map((event) => event.id)).toEqual(["evt-a", "evt-b", "evt-c"])
-    expect(filterTaskTimelineForMode(cards[0]!.timeline, "normal").map((event) => event.id)).toEqual(["evt-b", "evt-c"])
-    expect(filterTaskTimelineForMode(cards[0]!.timeline, "diagnostic").map((event) => event.id)).toEqual(["evt-a", "evt-b", "evt-c"])
+    expect(
+      filterTaskTimelineForMode(cards[0]?.timeline ?? [], "normal").map((event) => event.id),
+    ).toEqual(["evt-b", "evt-c"])
+    expect(
+      filterTaskTimelineForMode(cards[0]?.timeline ?? [], "diagnostic").map((event) => event.id),
+    ).toEqual(["evt-a", "evt-b", "evt-c"])
   })
 })

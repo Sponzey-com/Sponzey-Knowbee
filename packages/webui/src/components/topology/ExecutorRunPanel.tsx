@@ -410,7 +410,7 @@ export function ExecutorRunPanel({
               }`}
               data-testid="topology-run-history-item"
             >
-              {run.entryNodeId ?? text("실행", "Run")} · {formatRunTime(run.startedAt)}
+              {historyRunEntryLabel(run.entryNodeId, resolved, text)} · {formatRunTime(run.startedAt)}
             </button>
           ))}
         </div>
@@ -439,9 +439,9 @@ function resolveSelectedStartExecutor(input: {
 }
 
 function fallbackCandidates(targetState?: TopologyRunTargetState | null): ExecutorRunStartCandidate[] {
-  return (targetState?.entryNodeIds ?? []).map((executorId) => ({
+  return (targetState?.entryNodeIds ?? []).map((executorId, index) => ({
     executorId,
-    label: executorId,
+    label: `서브 에이전트 ${index + 1}`,
     description: "",
     confidence: 0.72,
     incomingConnectionCount: 0,
@@ -491,6 +491,17 @@ function startLabel(state: ExecutorRunResolvedState): string | null {
   return state.candidates.find((candidate) => candidate.executorId === id)?.label ??
     state.graph?.executors.find((executor) => executor.id === id)?.name ??
     id
+}
+
+function historyRunEntryLabel(
+  entryNodeId: string | undefined,
+  state: ExecutorRunResolvedState,
+  text: (ko: string, en: string) => string,
+): string {
+  if (!entryNodeId) return text("실행", "Run")
+  return state.graph?.executors.find((executor) => executor.id === entryNodeId)?.name ??
+    state.candidates.find((candidate) => candidate.executorId === entryNodeId)?.label ??
+    text("서브 에이전트", "Sub-agent")
 }
 
 function runStatusTone(status: string | undefined): string {

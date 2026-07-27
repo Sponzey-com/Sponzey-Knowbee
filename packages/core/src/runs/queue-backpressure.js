@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { insertQueueBackpressureEvent } from "../db/index.js";
+import { redactLogText } from "../logger/index.js";
 export const QUEUE_NAMES = [
     "fast_receipt",
     "interactive_run",
@@ -51,6 +52,10 @@ function stateFor(queueName) {
 }
 function recoveryStateKey(queueName, recoveryKey) {
     return `${queueName}:${recoveryKey}`;
+}
+function safeQueueErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
 }
 function safeRecordQueueEvent(input) {
     const signalCount = input.signalCount ?? 0;
@@ -132,7 +137,7 @@ async function runJob(queueName, budget, job) {
             ...(job.requestGroupId ? { requestGroupId: job.requestGroupId } : {}),
             pendingCount: state.pending.length,
             ...(job.recoveryKey ? { recoveryKey: job.recoveryKey } : {}),
-            detail: { error: error instanceof Error ? error.message : String(error) },
+            detail: { error: safeQueueErrorMessage(error) },
         });
         job.reject(error);
     }

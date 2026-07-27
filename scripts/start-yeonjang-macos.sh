@@ -61,12 +61,19 @@ find_running_pid() {
 
 stop_existing() {
   cleanup_stale_pid
-  if [[ ! -f "$PID_FILE" ]]; then
-    return
+  local pid=""
+  if [[ -f "$PID_FILE" ]]; then
+    pid="$(cat "$PID_FILE")"
+  else
+    # A prior app launch can outlive a stale/missing PID file. Stop only the
+    # app bundle belonging to this repository before replacing that bundle.
+    local existing_bundle
+    existing_bundle="$(resolve_app_bundle_path)"
+    if [[ -n "$existing_bundle" ]]; then
+      pid="$(find_running_pid "$existing_bundle/Contents/MacOS/$APP_NAME" || true)"
+    fi
   fi
-
-  local pid
-  pid="$(cat "$PID_FILE")"
+  [[ -z "$pid" ]] && return
   echo "기존 Yeonjang GUI를 종료합니다. PID=$pid"
   kill "$pid" >/dev/null 2>&1 || true
 
@@ -111,6 +118,14 @@ resolve_binary_path() {
   fi
 }
 
+if [[ "$RESTART_YEONJANG" == "1" ]]; then
+  echo "Yeonjang macOS GUI를 재시작합니다..."
+fi
+
+# The build script replaces the entire .app bundle. Terminate the owned app
+# before that replacement so no running binary is left detached from its bundle.
+stop_existing
+
 echo "Yeonjang macOS GUI 빌드를 확인합니다..."
 bash "$ROOT_DIR/scripts/build-yeonjang-macos.sh"
 
@@ -121,11 +136,6 @@ if [[ -z "$APP_BUNDLE_PATH" && ! -x "$BINARY_PATH" ]]; then
   exit 1
 fi
 
-if [[ "$RESTART_YEONJANG" == "1" ]]; then
-  echo "Yeonjang macOS GUI를 재시작합니다..."
-fi
-
-stop_existing
 : > "$LOG_FILE"
 
 echo "Yeonjang GUI를 시작합니다..."

@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
+import type { AgentHierarchyStorage } from "../packages/core/src/orchestration/hierarchy.ts"
+import { createTestAgentRuntimeDependencies } from "./fixtures/agent-runtime.ts"
 
 const startIngressRunMock = vi.fn()
 const sendReceiptMock = vi.fn(async () => "slack-message-1")
@@ -30,6 +33,7 @@ vi.mock("../packages/core/src/channels/slack/session.js", () => ({
 vi.mock("../packages/core/src/channels/slack/responder.js", () => ({
   SlackResponder: vi.fn().mockImplementation(() => ({
     sendReceipt: sendReceiptMock,
+    sendIntakeAcknowledgement: sendReceiptMock,
     sendError: vi.fn(async () => "error-ts"),
     sendApprovalRequest: vi.fn(async () => "approval-ts"),
     sendToolStatus: vi.fn(async () => "tool-ts"),
@@ -53,6 +57,22 @@ vi.mock("../packages/core/src/runs/store.js", () => ({
 }))
 
 const { SlackChannel } = await import("../packages/core/src/channels/slack/bot.ts")
+const runtimeDependencies = createTestAgentRuntimeDependencies("/tmp/knowbee-slack-bot-test")
+const hierarchyStorage = {} as AgentHierarchyStorage
+
+function createNoticeRendering() {
+  return {
+    config: DEFAULT_CONFIG,
+    workDir: DEFAULT_CONFIG.profile.workspace,
+    getDefaultModel: () => "gpt-test",
+    renderFinalResponseText: vi.fn(async (input: { rawText: string; textSource: string }) => ({
+      text: input.rawText,
+      textSource: "llm_reviewed" as const,
+      promptSourceId: "final_response" as const,
+      rawTextSource: input.textSource,
+    })),
+  }
+}
 
 describe("slack channel", () => {
   beforeEach(() => {
@@ -63,9 +83,13 @@ describe("slack channel", () => {
         runId: "run-slack-1",
         finished: Promise.resolve(),
       },
-      receipt: {
+      acknowledgement: {
+        kind: "intake_acknowledgement",
+        state: "request_received",
         language: "ko",
-        text: "요청을 접수했습니다. 분석을 시작합니다.",
+        deliveryMode: "interactive_control",
+        finalAnswer: false,
+        assistantIdentityClaim: false,
       },
     })
     findChannelMessageRefMock.mockReset().mockReturnValue(null)
@@ -79,7 +103,7 @@ describe("slack channel", () => {
       appToken: "xapp-test",
       allowedUserIds: ["U_ALLOWED"],
       allowedChannelIds: ["C_ALLOWED"],
-    }) as unknown as {
+    }, runtimeDependencies.artifactStorage, createNoticeRendering(), runtimeDependencies.memoryJournal, hierarchyStorage) as unknown as {
       socket: { send: ReturnType<typeof vi.fn> }
       handleSocketMessage: (raw: string) => Promise<void>
     }
@@ -118,10 +142,11 @@ describe("slack channel", () => {
     await channel.handleSocketMessage(messageEnvelope)
 
     expect(startIngressRunMock).toHaveBeenCalledTimes(1)
+    expect(startIngressRunMock).toHaveBeenCalledWith(expect.objectContaining({ config: DEFAULT_CONFIG }))
     expect(sendReceiptMock).toHaveBeenCalledTimes(1)
   })
 
-  it("continues a request group when a user comments in a Slack thread under a Knowbee response", async () => {
+  it("keeps Slack thread comments isolated unless an explicit continuation target exists", async () => {
     findLatestChannelMessageRefForThreadMock.mockReturnValue({
       id: "ref-thread-final",
       source: "slack",
@@ -141,7 +166,7 @@ describe("slack channel", () => {
       appToken: "xapp-test",
       allowedUserIds: ["U_ALLOWED"],
       allowedChannelIds: ["C_ALLOWED"],
-    }) as unknown as {
+    }, runtimeDependencies.artifactStorage, createNoticeRendering(), runtimeDependencies.memoryJournal, hierarchyStorage) as unknown as {
       socket: { send: ReturnType<typeof vi.fn> }
       handleSocketMessage: (raw: string) => Promise<void>
     }
@@ -170,14 +195,13 @@ describe("slack channel", () => {
       externalMessageId: "1712570000.400000",
       externalThreadId: "1712570000.100000",
     })
-    expect(findLatestChannelMessageRefForThreadMock).toHaveBeenCalledWith({
-      source: "slack",
-      externalChatId: "C_ALLOWED",
-      externalThreadId: "1712570000.100000",
-    })
+    expect(findLatestChannelMessageRefForThreadMock).not.toHaveBeenCalled()
     expect(startIngressRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      message: "이전 답변 기준으로 이어서 진행해줘",
+    }))
+    expect(startIngressRunMock.mock.calls[0]?.[0]).not.toMatchObject({
       requestGroupId: "request-group-thread",
       forceRequestGroupReuse: true,
-    }))
+    })
   })
 })

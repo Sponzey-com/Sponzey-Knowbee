@@ -1,6 +1,6 @@
 import { analyzeRequestEntrySemantics } from "./entry-semantics.js";
 import { compareRequestContinuationWithAI } from "./entry-comparison.js";
-import { buildStartPlan } from "./start-plan.js";
+import { buildStartPlan, defaultStartPlanDependencies, } from "./start-plan.js";
 import { buildPromptContextBlockPlan } from "../orchestration/prompt-bundle.js";
 import { formatAgentExecutionDecisionTraceRunEvent } from "../orchestration/execution-harness.js";
 import { applyStartInitialization } from "./start-initialization.js";
@@ -16,6 +16,9 @@ const defaultDependencies = {
     buildWorkerSessionId,
     normalizeTaskProfile,
     findLatestWorkerSessionRun,
+    resolveOrchestrationMode: defaultStartPlanDependencies.resolveOrchestrationMode,
+    buildOrchestrationPlan: defaultStartPlanDependencies.buildOrchestrationPlan,
+    resolveTopologyRootRunRouting: defaultStartPlanDependencies.resolveTopologyRootRunRouting,
     ensureSessionExists,
     createRootRun,
     applyStartInitialization,
@@ -41,6 +44,7 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         ...(params.taskProfile ? { taskProfile: params.taskProfile } : {}),
         ...(params.model ? { model: params.model } : {}),
         ...(params.targetId ? { targetId: params.targetId } : {}),
+        ...(params.mainAgentNameSnapshot ? { mainAgentNameSnapshot: params.mainAgentNameSnapshot } : {}),
         ...(params.workerRuntime ? { workerRuntime: params.workerRuntime } : {}),
         ...(params.orchestrationPlannerIntent
             ? { orchestrationPlannerIntent: params.orchestrationPlannerIntent }
@@ -48,6 +52,7 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         ...(params.agentExecutionDecision
             ? { agentExecutionDecision: params.agentExecutionDecision }
             : {}),
+        config: params.config,
     }, {
         analyzeRequestEntrySemantics: dependencies.analyzeRequestEntrySemantics,
         isReusableRequestGroup: dependencies.isReusableRequestGroup,
@@ -57,9 +62,9 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         buildWorkerSessionId: dependencies.buildWorkerSessionId,
         normalizeTaskProfile: dependencies.normalizeTaskProfile,
         findLatestWorkerSessionRun: dependencies.findLatestWorkerSessionRun,
-        ...(dependencies.resolveOrchestrationMode ? { resolveOrchestrationMode: dependencies.resolveOrchestrationMode } : {}),
-        ...(dependencies.buildOrchestrationPlan ? { buildOrchestrationPlan: dependencies.buildOrchestrationPlan } : {}),
-        ...(dependencies.resolveTopologyRootRunRouting ? { resolveTopologyRootRunRouting: dependencies.resolveTopologyRootRunRouting } : {}),
+        resolveOrchestrationMode: dependencies.resolveOrchestrationMode ?? defaultStartPlanDependencies.resolveOrchestrationMode,
+        buildOrchestrationPlan: dependencies.buildOrchestrationPlan ?? defaultStartPlanDependencies.buildOrchestrationPlan,
+        resolveTopologyRootRunRouting: dependencies.resolveTopologyRootRunRouting ?? defaultStartPlanDependencies.resolveTopologyRootRunRouting,
     });
     dependencies.ensureSessionExists(params.sessionId, params.source, params.now);
     const promptContextPlan = buildPromptContextBlockPlan({
@@ -116,6 +121,7 @@ export async function prepareStartLaunch(params, dependencies = defaultDependenc
         ...(Object.keys(promptSourceSnapshot).length > 0 ? { promptSourceSnapshot } : {}),
     });
     const startInitialization = dependencies.applyStartInitialization({
+        memoryJournal: params.memoryJournal,
         runId: params.runId,
         sessionId: params.sessionId,
         requestGroupId: startPlan.requestGroupId,

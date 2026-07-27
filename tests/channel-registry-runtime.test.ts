@@ -15,7 +15,6 @@ import {
   type ChannelConnectionRecord,
 } from "../packages/core/src/channels/connections.ts"
 import type { ChannelCapabilities } from "../packages/core/src/channels/contracts.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { DEFAULT_CONFIG, type KnowbeeConfig } from "../packages/core/src/config/types.ts"
 import {
   closeDb,
@@ -23,18 +22,15 @@ import {
   listChannelRuntimeEvents,
 } from "../packages/core/src/db/index.js"
 import { getFeatureFlag, setFeatureFlagMode } from "../packages/core/src/runtime/rollout-safety.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-channel-registry-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 beforeEach(() => {
@@ -43,11 +39,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -220,6 +211,34 @@ describe("channel registry runtime", () => {
       event_kind: "start_failed",
       health_status: "failed",
     })
+  })
+
+  it("redacts registry runtime start failure messages before health and event persistence", async () => {
+    const config = configWithTelegram()
+    const rawToken = "xoxb-channel-secret-1234567890"
+    const rawPath = "/Users/example/private/channel.log"
+    const registry = new ChannelRegistry({
+      config,
+      factories: [makeFactory({
+        onStart: () => {
+          throw new Error(`socket denied token=${rawToken} path=${rawPath}`)
+        },
+      })],
+      now: () => 105,
+    })
+
+    const result = await registry.startEnabled()
+    const serializedResult = JSON.stringify(result)
+    const serializedEvents = JSON.stringify(listChannelRuntimeEvents({ provider: "telegram" }))
+
+    expect(serializedResult).not.toContain(rawToken)
+    expect(serializedResult).not.toContain(rawPath)
+    expect(serializedEvents).not.toContain(rawToken)
+    expect(serializedEvents).not.toContain(rawPath)
+    expect(serializedResult).toContain("***")
+    expect(serializedResult).toContain("[internal-path-redacted]")
+    expect(serializedEvents).toContain("***")
+    expect(serializedEvents).toContain("[internal-path-redacted]")
   })
 
   it("keeps registry runtime behind an explicit feature flag for rollback", () => {

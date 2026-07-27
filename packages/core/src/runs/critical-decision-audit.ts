@@ -7,11 +7,9 @@ export type CriticalDecisionAuditCategory =
 export type CriticalDecisionSignalKind =
   | "structured-id-or-key"
   | "structured-intake-action"
-  | "user-natural-language-regex"
   | "raw-prompt-ai-comparison"
   | "raw-prompt-normalized-dedupe"
   | "structured-contract-ai-comparison"
-  | "vector-semantic-candidate"
   | "system-error-classification"
   | "system-event-label-classification"
   | "channel-label-classification"
@@ -29,6 +27,10 @@ export interface CriticalDecisionAuditEntry {
   migrationTask?: string
   migrationReason?: string
   sourceMarker?: string
+  maintenanceOwner?: string
+  activeCallerEvidence?: string[]
+  removalCondition?: string
+  validationPlan?: string
 }
 
 export interface CriticalDecisionSourceScanRule {
@@ -77,20 +79,6 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     sourceMarker: "knowbee-critical-decision-audit: schedules.comparison.contract_projection_only",
   },
   {
-    id: "schedules.candidates.semantic_candidate_boundary",
-    file: "packages/core/src/schedules/candidates.ts",
-    symbols: ["findScheduleCandidatesByContract"],
-    category: "candidate-search",
-    decisionArea: "schedule candidate search",
-    signalKind: "vector-semantic-candidate",
-    languageSensitive: true,
-    userFacingRisk: "vector/semantic/FTS 점수가 최종 동일성 판단으로 승격되면 다른 언어 요청에서 예약 수정/취소 대상이 오판될 수 있다.",
-    currentRole: "semantic 후보는 candidateReason=semantic_candidate, confidenceKind=semantic, requiresComparison=true로만 남기고 final decision으로 사용하지 않는다.",
-    migrationTask: "Task 006",
-    migrationReason: "semantic 후보 탐색은 최종 판단이 아니며 contract comparator 또는 명시 ID 기반 후보로 축소해야 한다.",
-    sourceMarker: "knowbee-critical-decision-audit: schedules.candidates.semantic_candidate_boundary",
-  },
-  {
     id: "scheduled.tool_disable_keyword_guard",
     file: "packages/core/src/runs/scheduled.ts",
     symbols: ["shouldDisableToolsForScheduledTask"],
@@ -137,18 +125,22 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     sourceMarker: "knowbee-critical-decision-audit: start-plan.contract_continuation_boundary",
   },
   {
-    id: "completion.followup_prompt_dedupe",
+    id: "completion.followup_structured_key_dedupe",
     file: "packages/core/src/runs/completion-application.ts",
-    symbols: ["decideCompletionApplication"],
-    category: "temporary-guard",
+    symbols: ["decideCompletionApplication", "buildStructuredFollowupKey"],
+    category: "critical-decision",
     decisionArea: "follow-up retry loop dedupe",
-    signalKind: "raw-prompt-normalized-dedupe",
-    languageSensitive: true,
-    userFacingRisk: "후속 지시 문구가 같은지 lower/trim 문자열로 판단해 언어와 표현 차이에 취약하다.",
-    currentRole: "같은 후속 지시 반복으로 무한 루프가 생기는 것을 막는 임시 반복 방지 장치.",
-    migrationTask: "Task 006, Task 008",
-    migrationReason: "반복 방지는 raw prompt normalize가 아니라 structured follow-up id, recovery key, work order id 기반으로 대체해야 한다.",
-    sourceMarker: "knowbee-critical-decision-audit: completion.followup_prompt_dedupe",
+    signalKind: "structured-id-or-key",
+    languageSensitive: false,
+    userFacingRisk: "후속 실행이 같은 completion review 구조를 반복하면 무한 루프를 막고 사용자에게 중단 이유를 보고한다.",
+    currentRole: "completion review의 구조화 필드에서 생성한 follow-up key로 같은 후속 실행 반복을 차단한다.",
+    sourceMarker: "knowbee-critical-decision-audit: completion.followup_structured_key_dedupe",
+    maintenanceOwner: "runs/completion-application",
+    activeCallerEvidence: [
+      "buildStructuredFollowupKey derives a stable key from completion review fields.",
+      "review-cycle-pass checks seen follow-up keys before deciding another follow-up retry.",
+    ],
+    validationPlan: "Run completion application loop tests plus static-critical-decision-guard after changing follow-up loop protection.",
   },
   {
     id: "recovery.normalized_error_key",
@@ -211,19 +203,6 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
     userFacingRisk: "채널 event id가 누락되면 중복 접수 방지가 약해질 수 있다.",
     currentRole: "자연어 내용이 아니라 source/session/chat/thread/message id로 inbound event 중복을 막는 권장 fast path.",
     sourceMarker: "knowbee-critical-decision-audit: ingress.external_identity_dedupe",
-  },
-  {
-    id: "store.reconnect_prompt_similarity",
-    file: "packages/core/src/runs/store.ts",
-    symbols: ["scoreReconnectCandidate", "looksLikeContinuationMessage", "tokenizeReconnectTerms"],
-    category: "temporary-guard",
-    decisionArea: "active run reconnect candidate scoring",
-    signalKind: "user-natural-language-regex",
-    languageSensitive: true,
-    userFacingRisk: "새 요청과 기존 run prompt/summary를 문자열 겹침으로 비교하면 다른 언어와 표현에서 재연결 대상이 오판될 수 있다.",
-    currentRole: "active run reconnect 후보 점수를 raw prompt token overlap과 continuation regex로 보정하는 제거 대상 경로.",
-    migrationTask: "Task 006",
-    migrationReason: "active run 재연결은 명시 ID, request group id, IntentContract 비교 결과로 대체해야 한다.",
   },
   {
     id: "start-plan.structured_contract_inspection_boundary",
@@ -293,24 +272,7 @@ export const criticalDecisionAuditEntries: CriticalDecisionAuditEntry[] = [
   },
 ]
 
-export const criticalDecisionSourceScanRules: CriticalDecisionSourceScanRule[] = [
-  {
-    ruleId: "completion-followup-normalized-dedupe",
-    entryId: "completion.followup_prompt_dedupe",
-    file: "packages/core/src/runs/completion-application.ts",
-    pattern: /followupPrompt\.replace\(\/\\s\+\/g, " "\)\.trim\(\)\.toLowerCase\(\)/u,
-    migrationTask: "Task 006, Task 008",
-    migrationReason: "후속 지시 반복 방지를 structured follow-up id, recovery key, work order id 기반으로 대체해야 한다.",
-  },
-  {
-    ruleId: "store-reconnect-prompt-similarity",
-    entryId: "store.reconnect_prompt_similarity",
-    file: "packages/core/src/runs/store.ts",
-    pattern: /const CONTINUATION_MESSAGE_PATTERNS[\s\S]*?function scoreReconnectCandidate[\s\S]*?overlap\.length/u,
-    migrationTask: "Task 006",
-    migrationReason: "active run 재연결 점수화를 명시 ID와 IntentContract 비교 기반으로 대체해야 한다.",
-  },
-]
+export const criticalDecisionSourceScanRules: CriticalDecisionSourceScanRule[] = []
 
 export function getCriticalDecisionAuditEntry(id: string): CriticalDecisionAuditEntry | undefined {
   return criticalDecisionAuditEntries.find((entry) => entry.id === id)

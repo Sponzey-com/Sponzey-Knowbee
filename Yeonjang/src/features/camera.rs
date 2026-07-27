@@ -1,6 +1,6 @@
 use anyhow::Result;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::automation::{AutomationBackend, CameraCaptureRequest};
 use crate::platform::current_backend;
@@ -19,6 +19,16 @@ pub fn list_devices() -> Result<Value> {
     Ok(serde_json::to_value(current_backend().list_cameras()?)?)
 }
 
+pub fn permission_status() -> Result<Value> {
+    Ok(json!({
+        "status": "unknown",
+        "reason": "os_permission_status_unavailable",
+        "platform": std::env::consts::OS,
+        "canAttemptCapture": true,
+        "requiresUserAction": false,
+    }))
+}
+
 pub fn capture(params: CaptureParams) -> Result<Value> {
     let request = CameraCaptureRequest {
         device_id: params.device_id,
@@ -28,4 +38,20 @@ pub fn capture(params: CaptureParams) -> Result<Value> {
     Ok(serde_json::to_value(
         current_backend().capture_camera(request)?,
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permission_status_returns_recovery_fields_without_capture() {
+        let result = permission_status().expect("camera permission status");
+
+        assert!(result["status"].as_str().unwrap_or_default().len() > 0);
+        assert!(result["reason"].as_str().unwrap_or_default().len() > 0);
+        assert!(result["platform"].as_str().unwrap_or_default().len() > 0);
+        assert!(result["canAttemptCapture"].is_boolean());
+        assert!(result["requiresUserAction"].is_boolean());
+    }
 }

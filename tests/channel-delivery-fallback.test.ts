@@ -145,8 +145,13 @@ describe("channel delivery fallback", () => {
       capability: "supportsButtons",
       errorCode: "buttons_unavailable",
     })).toMatchObject({
+      kind: "channel_capability_fallback_notice",
       title: "Unsupported channel capability",
       severity: "warning",
+      textSource: "channel_capability_fallback_notice",
+      renderingRequired: "llm_final_response",
+      finalAnswer: false,
+      assistantIdentityClaim: false,
     })
     expect(splitTextForChannel("", 10)).toEqual([])
   })

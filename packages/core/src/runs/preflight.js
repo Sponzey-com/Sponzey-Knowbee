@@ -1,4 +1,4 @@
-import { detectAvailableProvider, getDefaultModel } from "../ai/index.js";
+import { detectAvailableProvider, getDefaultModel, } from "../ai/index.js";
 import { getSlackRuntimeStatus } from "../channels/slack/runtime.js";
 import { getTelegramRuntimeStatus } from "../channels/telegram/runtime.js";
 import { getMqttExtensionSnapshots } from "../mqtt/broker.js";
@@ -73,7 +73,15 @@ function resolveChannelFailure(input) {
 function resolveAiFailure(input) {
     if (!requiresAiRoute(input))
         return null;
-    if (!hasExplicitAiRoute(input) && !detectAvailableProvider()) {
+    if (!input.config) {
+        return {
+            code: "ai_connection_unavailable",
+            summary: "AI 설정 스냅샷이 없어 요청을 시작할 수 없습니다.",
+            userMessage: "AI 설정을 확인할 수 없습니다. 설정에서 AI 연결을 저장한 뒤 다시 요청해 주세요.",
+            eventLabel: "preflight_failed: ai_config_unavailable",
+        };
+    }
+    if (!hasExplicitAiRoute(input) && !detectAvailableProvider(input.config)) {
         return {
             code: "ai_connection_unavailable",
             summary: "사용 가능한 AI 연결이 없어 요청을 시작할 수 없습니다.",
@@ -81,7 +89,7 @@ function resolveAiFailure(input) {
             eventLabel: "preflight_failed: ai_connection_unavailable",
         };
     }
-    if (!input.model?.trim() && !getDefaultModel()) {
+    if (!input.model?.trim() && !getDefaultModel(input.config)) {
         return {
             code: "ai_model_unavailable",
             summary: "기본 모델이 설정되어 있지 않아 요청을 시작할 수 없습니다.",

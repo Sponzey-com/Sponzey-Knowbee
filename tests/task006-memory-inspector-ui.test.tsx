@@ -38,7 +38,7 @@ function snapshot(): MemoryInspectorSnapshot {
         ownerId: "agent:knowbee",
         sessionId: "session:task006",
         requestGroupId: "group:task006",
-        nicknameSnapshot: "노비",
+        agentNameSnapshot: "마당쇠",
         latestCapsuleId: "capsule:task006",
         currentRawTokenEstimate: 180000,
         currentRawMessageCount: 41,
@@ -155,10 +155,28 @@ describe("task006 memory inspector ui", () => {
   })
 
   it("renders memory inspector cards and hides manual controls outside admin mode", () => {
+    const data = snapshot()
+    const { agentNameSnapshot: _agentNameSnapshot, ...legacyOwner } = data.ownerCards[0]!
+    data.ownerCards = [
+      data.ownerCards[0]!,
+      {
+        ...legacyOwner,
+        ownerScopeKey: "sub_agent:agent:legacy:session:task006",
+        ownerType: "sub_agent",
+        ownerId: "agent:legacy",
+        nicknameSnapshot: "Legacy Nickname",
+      },
+      {
+        ...legacyOwner,
+        ownerScopeKey: "main_agent:agent:knowbee:session:legacy",
+        ownerType: "main_agent",
+        ownerId: "agent:knowbee",
+      },
+    ]
     const html = renderToStaticMarkup(
       createElement(MemoryInspectorPanel, {
         mode: "advanced",
-        snapshot: snapshot(),
+        snapshot: data,
         loading: false,
         error: "",
         actionLoading: false,
@@ -169,10 +187,16 @@ describe("task006 memory inspector ui", () => {
       }),
     )
 
-    expect(html).toContain("Memory inspector")
-    expect(html).toContain("Compact preview")
-    expect(html).toContain("Restore trace")
-    expect(html).not.toContain("Manual controls")
+    expect(html).toContain("메모리 점검")
+    expect(html).toContain("마당쇠")
+    expect(html).toContain("메인 에이전트")
+    expect(html).not.toContain("Knowbee / 노비")
+    expect(html).toContain("이름 없는 서브 에이전트")
+    expect(html).not.toContain("Legacy Nickname")
+    expect(html).not.toContain("agent:legacy")
+    expect(html).toContain("압축 미리보기")
+    expect(html).toContain("복원 기록")
+    expect(html).not.toContain("관리자 조작")
   })
 
   it("shows manual controls in admin mode", () => {
@@ -195,8 +219,8 @@ describe("task006 memory inspector ui", () => {
       }),
     )
 
-    expect(html).toContain("Manual controls")
-    expect(html).toContain("dry-run compact")
-    expect(html).toContain("source 41")
+    expect(html).toContain("관리자 조작")
+    expect(html).toContain("압축 미리보기")
+    expect(html).toContain("전체 41")
   })
 })

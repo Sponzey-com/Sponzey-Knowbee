@@ -1,3 +1,4 @@
+import { DEFAULT_KNOWBEE_AGENT_NAME, resolveAgentConfigAgentName, } from "../contracts/sub-agent-orchestration.js";
 const RESERVED_ROOT_NAMES = new Set(["knowbee", "노비"]);
 function cleanText(value) {
     return value?.trim() ?? "";
@@ -6,7 +7,10 @@ function normalizeName(value) {
     return cleanText(value).toLocaleLowerCase("ko-KR");
 }
 function preferredDisplayLabel(agent) {
-    return cleanText(agent.nickname) || cleanText(agent.displayName) || agent.agentId;
+    return resolveAgentConfigAgentName(agent);
+}
+function rootAgentName(rootAgent) {
+    return cleanText(rootAgent.agentName) || DEFAULT_KNOWBEE_AGENT_NAME;
 }
 function isReservedRootName(value) {
     return RESERVED_ROOT_NAMES.has(normalizeName(value));
@@ -16,7 +20,7 @@ function conflictsWithRootName(value, rootAgent) {
     if (!normalized) {
         return false;
     }
-    return normalized === normalizeName(rootAgent.displayName) || normalized === normalizeName(rootAgent.nickname);
+    return normalized === normalizeName(rootAgent.agentName);
 }
 function activeParentChildRelationships(relationships) {
     return relationships.filter((relationship) => relationship.relationshipType === "parent_child" && relationship.status === "active");
@@ -31,15 +35,15 @@ function parentIdFor(agentId, relationships) {
     return activeParentChildRelationships(relationships).find((relationship) => relationship.childAgentId === agentId)
         ?.parentAgentId;
 }
-function displayNameForAgent(agentId, rootAgent, agents) {
+function agentNameForAgent(agentId, rootAgent, agents) {
     if (!agentId) {
         return undefined;
     }
     if (agentId === rootAgent.agentId) {
-        return cleanText(rootAgent.nickname) || cleanText(rootAgent.displayName) || rootAgent.agentId;
+        return rootAgentName(rootAgent);
     }
     const agent = agents.find((candidate) => candidate.agentId === agentId);
-    return agent ? preferredDisplayLabel(agent) : agentId;
+    return agent ? preferredDisplayLabel(agent) : undefined;
 }
 function isTopLevelAgent(agentId, rootAgent, relationships) {
     return activeParentChildRelationships(relationships).some((relationship) => relationship.parentAgentId === rootAgent.agentId && relationship.childAgentId === agentId);
@@ -70,19 +74,21 @@ function buildReadiness(agent, input) {
     const modelMissing = agent.modelProfile && input.catalogs?.modelIds
         ? !input.catalogs.modelIds.includes(modelCatalogId(agent.modelProfile))
         : false;
-    const duplicateNickname = hasDuplicateNickname(agent, input.agents);
+    const agentName = preferredDisplayLabel(agent);
+    const duplicateAgentName = hasDuplicateAgentName(agent, input.agents);
+    const reservedAgentName = isReservedRootName(agentName) || conflictsWithRootName(agentName, input.rootAgent);
     const memoryScopedToAgent = isMemoryScopedToAgent(agent.agentId, agent.memoryPolicy);
     const active = input.runtime?.activeAgentIds?.includes(agent.agentId) ?? false;
     const items = [
-        buildReadinessItem("identity", cleanText(agent.displayName) && !duplicateNickname && !isReservedRootName(agent.displayName) && !isReservedRootName(agent.nickname)
+        buildReadinessItem("identity", cleanText(agentName) && !duplicateAgentName && !reservedAgentName
             ? "ready"
             : "blocked", "Identity", [
-            ...(cleanText(agent.displayName) ? [] : ["display_name_required"]),
-            ...(duplicateNickname ? ["nickname_duplicate"] : []),
-            ...(isReservedRootName(agent.displayName) || isReservedRootName(agent.nickname) ? ["reserved_knowbee_name"] : []),
+            ...(cleanText(agentName) ? [] : ["agent_name_required"]),
+            ...(duplicateAgentName ? ["agent_name_duplicate"] : []),
+            ...(reservedAgentName ? ["reserved_knowbee_name"] : []),
         ]),
         buildReadinessItem("model", modelMissing ? "blocked" : "ready", agent.modelProfile ? "Model override" : "Inherited model", modelMissing ? ["model_id_missing"] : []),
-        buildReadinessItem("skill_mcp", missingSkillIds.length > 0 || missingMcpServerIds.length > 0 ? "blocked" : "ready", "Skill and MCP", [
+        buildReadinessItem("skill_mcp", missingSkillIds.length > 0 || missingMcpServerIds.length > 0 ? "blocked" : "ready", "작업 능력/외부 기능", [
             ...missingSkillIds.map((id) => `missing_skill:${id}`),
             ...missingMcpServerIds.map((id) => `missing_mcp:${id}`),
         ]),
@@ -110,14 +116,14 @@ function buildReadiness(agent, input) {
         reasonCodes: items.flatMap((item) => item.reasonCodes),
     };
 }
-function hasDuplicateNickname(agent, agents) {
-    const normalized = normalizeName(agent.nickname);
+function hasDuplicateAgentName(agent, agents) {
+    const normalized = normalizeName(preferredDisplayLabel(agent));
     if (!normalized) {
         return false;
     }
     return agents.some((candidate) => candidate.agentId !== agent.agentId &&
         candidate.status !== "archived" &&
-        normalizeName(candidate.nickname) === normalized);
+        normalizeName(preferredDisplayLabel(candidate)) === normalized);
 }
 function ownerMatchesAgent(agentId, scope) {
     return scope.ownerType === "sub_agent" && scope.ownerId === agentId;
@@ -144,22 +150,21 @@ function driftFromSaved(saved, runtimeAgent) {
         return false;
     }
     return (saved.profileVersion !== runtimeAgent.profileVersion ||
-        saved.displayName !== runtimeAgent.displayName ||
-        saved.nickname !== runtimeAgent.nickname);
+        preferredDisplayLabel(saved) !== preferredDisplayLabel(runtimeAgent));
 }
 function buildSummaryView(agent, input) {
     const parentAgentId = parentIdFor(agent.agentId, input.relationships);
     const readiness = buildReadiness(agent, input);
     const lifecycleState = input.lifecycleState ?? lifecycleForAgent(agent, input.runtime);
+    const agentName = resolveAgentConfigAgentName(agent);
     return {
         id: agent.agentId,
-        displayName: agent.displayName,
-        nickname: agent.nickname,
-        displayLabel: preferredDisplayLabel(agent),
-        attributionLabel: preferredDisplayLabel(agent),
+        agentName,
+        displayLabel: agentName,
+        attributionLabel: agentName,
         role: agent.role,
-        description: agent.personality,
-        parentDisplayName: displayNameForAgent(parentAgentId, input.rootAgent, input.agents),
+        description: agent.role,
+        parentDisplayName: agentNameForAgent(parentAgentId, input.rootAgent, input.agents),
         childCount: directChildIds(agent.agentId, input.relationships).length,
         isTopLevel: isTopLevelAgent(agent.agentId, input.rootAgent, input.relationships),
         lifecycleState,
@@ -181,7 +186,7 @@ function toBeginnerCard(summary, agent) {
     return {
         ...summary,
         safePermissionState,
-        skillMcpSummary: `${skillCount} skills, ${mcpCount} MCP servers`,
+        skillMcpSummary: `작업 능력 ${skillCount}개, 외부 기능 ${mcpCount}개`,
         lastStateLabel: stateLabelForSummary(summary),
     };
 }
@@ -199,7 +204,7 @@ function stateLabelForSummary(summary) {
 }
 function buildSummaryCounts(rootAgent, agents) {
     return {
-        rootDisplayName: cleanText(rootAgent.nickname) || cleanText(rootAgent.displayName) || rootAgent.agentId,
+        rootDisplayName: rootAgentName(rootAgent),
         topLevelAgentCount: agents.filter((agent) => agent.isTopLevel).length,
         totalAgentCount: agents.length,
         readyAgentCount: agents.filter((agent) => agent.readinessState === "ready").length,
@@ -215,7 +220,8 @@ function sortAgentsByTopology(agents, rootAgent, relationships) {
         if (leftTop !== rightTop) {
             return leftTop ? -1 : 1;
         }
-        return left.displayName.localeCompare(right.displayName) || left.agentId.localeCompare(right.agentId);
+        return preferredDisplayLabel(left).localeCompare(preferredDisplayLabel(right)) ||
+            left.agentId.localeCompare(right.agentId);
     });
 }
 export function buildBeginnerSubAgentSetupView(input) {
@@ -236,7 +242,7 @@ export function buildBeginnerSubAgentSetupView(input) {
                 ? "needs_attention"
                 : "ready";
     return {
-        orchestrationMode: savedAgents.length > 0 ? "orchestration" : "single_knowbee",
+        orchestrationMode: savedAgents.length > 0 ? "orchestration" : "direct_main_agent",
         summary,
         cards: summaries.map((summaryView) => {
             const agent = savedAgents.find((candidate) => candidate.agentId === summaryView.id);
@@ -260,12 +266,11 @@ function buildAdvancedDetail(agent, summary, input) {
         summary,
         identity: {
             agentId: agent.agentId,
-            displayName: agent.displayName,
-            nickname: agent.nickname,
+            agentName: summary.agentName,
             displayLabel: summary.displayLabel,
             attributionLabel: summary.attributionLabel,
             role: agent.role,
-            description: agent.personality,
+            description: agent.role,
             specialtyTags: agent.specialtyTags,
             avoidTasks: agent.avoidTasks,
         },
@@ -396,8 +401,7 @@ export function buildSubAgentStateProjection(input) {
     };
 }
 function sameSavedShape(left, right) {
-    return (left.displayName === right.displayName &&
-        left.nickname === right.nickname &&
+    return (left.agentName === right.agentName &&
         left.role === right.role &&
         left.description === right.description);
 }
@@ -411,34 +415,27 @@ function validateAgentExists(command, context, issues) {
 function validateIdentityNameSet(values, rootAgent, issues) {
     for (const value of values) {
         if (isReservedRootName(value.value) || conflictsWithRootName(value.value, rootAgent)) {
-            pushIssue(issues, value.path, "reserved_knowbee_name", "Only the root agent may use the Knowbee name.");
+            pushIssue(issues, value.path, "reserved_knowbee_name", "Reserved main-agent names cannot be used by sub-agents.");
         }
     }
 }
-function validateNicknameUnique(agentId, nickname, context, issues) {
-    const normalized = normalizeName(nickname);
-    if (!normalized) {
-        return;
-    }
-    const duplicate = context.agents.find((agent) => agent.agentId !== agentId && agent.status !== "archived" && normalizeName(agent.nickname) === normalized);
-    if (duplicate) {
-        pushIssue(issues, "nickname", "nickname_duplicate", "Sub-agent nicknames must be unique.");
+function validateAgentNamePresent(path, agentName, issues) {
+    if (!cleanText(agentName)) {
+        pushIssue(issues, path, "agent_name_required", "A user-facing agent name is required.");
     }
 }
-function validateAttributionLabelUnique(agentId, attributionLabel, context, issues) {
-    const normalized = normalizeName(attributionLabel);
+function validateAgentNameUnique(agentId, path, agentName, context, issues) {
+    const normalized = normalizeName(agentName);
     if (!normalized) {
-        pushIssue(issues, "attributionLabel", "attribution_label_required", "A user-facing attribution label is required.");
         return;
     }
-    const duplicate = context.agents.find((agent) => {
-        if (agent.agentId === agentId || agent.status === "archived")
-            return false;
-        return normalizeName(preferredDisplayLabel(agent)) === normalized;
-    });
+    const duplicate = context.agents.find((agent) => agent.agentId !== agentId && agent.status !== "archived" && normalizeName(preferredDisplayLabel(agent)) === normalized);
     if (duplicate) {
-        pushIssue(issues, "attributionLabel", "nickname_duplicate", "User-facing agent labels must be unique.");
+        pushIssue(issues, path, "agent_name_duplicate", "User-facing agent names must be unique.");
     }
+}
+function commandAgentNameForValidation(command) {
+    return cleanText(command.agentName);
 }
 function validateCatalogIds(ids, catalogIds, path, issues) {
     for (const id of missingFromCatalog(ids, catalogIds)) {
@@ -540,28 +537,18 @@ export function validateSubAgentSettingsCommand(command, context) {
             if (!context.agents.some((agent) => agent.agentId === command.parentAgentId) && command.parentAgentId !== context.rootAgent.agentId) {
                 pushIssue(issues, "parentAgentId", "parent_missing", "The parent agent does not exist.");
             }
-            if (!cleanText(command.displayName)) {
-                pushIssue(issues, "displayName", "display_name_required", "A display name is required.");
-            }
-            validateIdentityNameSet([
-                { path: "displayName", value: command.displayName },
-                { path: "nickname", value: command.nickname },
-            ], context.rootAgent, issues);
-            validateNicknameUnique(undefined, command.nickname, context, issues);
+            const agentName = commandAgentNameForValidation(command);
+            validateAgentNamePresent("agentName", agentName, issues);
+            validateIdentityNameSet([{ path: "agentName", value: agentName }], context.rootAgent, issues);
+            validateAgentNameUnique(undefined, "agentName", agentName, context, issues);
             break;
         }
         case "update_identity": {
             validateAgentExists(command, context, issues);
-            if (!cleanText(command.displayName)) {
-                pushIssue(issues, "displayName", "display_name_required", "A display name is required.");
-            }
-            validateIdentityNameSet([
-                { path: "displayName", value: command.displayName },
-                { path: "nickname", value: command.nickname },
-                { path: "attributionLabel", value: command.attributionLabel },
-            ], context.rootAgent, issues);
-            validateNicknameUnique(command.agentId, command.nickname, context, issues);
-            validateAttributionLabelUnique(command.agentId, command.attributionLabel, context, issues);
+            const agentName = commandAgentNameForValidation(command);
+            validateAgentNamePresent("agentName", agentName, issues);
+            validateIdentityNameSet([{ path: "agentName", value: agentName }], context.rootAgent, issues);
+            validateAgentNameUnique(command.agentId, "agentName", agentName, context, issues);
             break;
         }
         case "update_model_policy":

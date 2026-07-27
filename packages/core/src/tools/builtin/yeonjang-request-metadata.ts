@@ -17,8 +17,10 @@ export function withYeonjangRequestMetadata(
   ctx: ToolContext,
   options: YeonjangClientOptions = {},
 ): YeonjangClientOptions {
+  const mqttConfig = options.mqttConfig ?? ctx.mqttConfig
   return {
     ...options,
+    ...(mqttConfig ? { mqttConfig } : {}),
     metadata: {
       ...(options.metadata ?? {}),
       ...buildYeonjangRequestMetadata(ctx),

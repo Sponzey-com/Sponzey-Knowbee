@@ -1,6 +1,12 @@
+import { redactLogText } from "../../logger/index.js";
 import { buildUnsupportedCapabilityReceipt, createRawPayloadRef, defineChannelAdapter, defineChannelCapabilities, resolveDeliveryReceiptStatus, } from "../contracts.js";
+import { resolveUserFacingMessageLanguage } from "../language.js";
 import { TelegramChannel } from "./bot.js";
 import { getActiveTelegramChannel, getTelegramRuntimeStatus, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel, } from "./runtime.js";
+function telegramAdapterErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 const DEFAULT_CHANNEL_ID = "telegram:primary";
 const DEFAULT_CONNECTION_ID = "telegram:primary";
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
@@ -113,6 +119,7 @@ export function normalizeTelegramInboundUpdate(rawPayload, options = {}) {
             mentions: normalizeTelegramMentions(text, [...(message.entities ?? []), ...(message.caption_entities ?? [])]),
             timestamp,
             rawPayloadRef: createRawPayloadRef({ provider: "telegram", payload: rawPayload, createdAt: timestamp }),
+            userFacingLanguage: resolveUserFacingMessageLanguage(text),
             ...(replyToMessageId
                 ? { continuationContext: { parentMessageId: replyToMessageId, source: "reply" } }
                 : {}),
@@ -164,6 +171,10 @@ export class TelegramChannelAdapter {
     provider = "telegram";
     connectionId;
     config;
+    runtimeConfig;
+    artifactStorage;
+    memoryJournal;
+    hierarchyStorage;
     connectionMode;
     transport;
     now;
@@ -172,6 +183,10 @@ export class TelegramChannelAdapter {
         this.channelId = options.channelId ?? DEFAULT_CHANNEL_ID;
         this.connectionId = options.connectionId ?? DEFAULT_CONNECTION_ID;
         this.config = options.config;
+        this.runtimeConfig = options.runtimeConfig;
+        this.artifactStorage = options.artifactStorage;
+        this.memoryJournal = options.memoryJournal;
+        this.hierarchyStorage = options.hierarchyStorage;
         this.connectionMode = options.connectionMode ?? "polling";
         this.transport = options.transport;
         this.now = options.now ?? Date.now;
@@ -193,7 +208,18 @@ export class TelegramChannelAdapter {
         }
         if (!this.config)
             throw new Error("Telegram config is missing.");
-        const channel = new TelegramChannel(this.config);
+        if (!this.runtimeConfig)
+            throw new Error("Telegram runtime config snapshot is missing.");
+        if (!this.artifactStorage)
+            throw new Error("Telegram artifact storage context is missing.");
+        if (!this.memoryJournal)
+            throw new Error("Telegram memory journal context is missing.");
+        if (!this.hierarchyStorage)
+            throw new Error("Telegram hierarchy storage context is missing.");
+        const channel = new TelegramChannel(this.config, this.artifactStorage, {
+            config: this.runtimeConfig,
+            workDir: this.runtimeConfig.profile.workspace,
+        }, this.memoryJournal, this.hierarchyStorage);
         try {
             await channel.start();
             this.channel = channel;
@@ -201,7 +227,7 @@ export class TelegramChannelAdapter {
             setTelegramRuntimeError(null);
         }
         catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = telegramAdapterErrorMessage(error);
             setTelegramRuntimeError(message);
             throw error;
         }
@@ -218,6 +244,9 @@ export class TelegramChannelAdapter {
             this.channel?.stop();
         }
         this.channel = null;
+    }
+    createPendingResponseDeliveryHandler(input) {
+        return this.channel?.createPendingResponseDeliveryHandler(input);
     }
     async healthCheck() {
         const policy = resolveTelegramConnectionPolicy({
@@ -266,6 +295,7 @@ export class TelegramChannelAdapter {
                 capability: unsupportedCapability,
                 idempotencyKey: message.idempotencyKey,
                 timestamp: this.now(),
+                userFacingLanguage: message.userFacingLanguage,
             });
         }
         if (!message.target.roomId) {
@@ -321,7 +351,7 @@ export class TelegramChannelAdapter {
             };
         }
         catch (error) {
-            const messageText = error instanceof Error ? error.message : String(error);
+            const messageText = telegramAdapterErrorMessage(error);
             return {
                 channelId: message.channelId,
                 provider: message.provider,

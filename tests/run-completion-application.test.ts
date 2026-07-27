@@ -1,7 +1,96 @@
 import { describe, expect, it } from "vitest"
-import { decideCompletionApplication } from "../packages/core/src/runs/completion-application.ts"
+import {
+  buildCompletionFollowupTransitionIdentity,
+  buildStructuredFollowupKey,
+  decideCompletionApplication,
+} from "../packages/core/src/runs/completion-application.ts"
 
 describe("run completion application", () => {
+  it("distinguishes materially different LLM follow-up strategies without exposing prompt text", () => {
+    const base = {
+      kind: "followup" as const,
+      summary: "A changed strategy is required.",
+      reason: "The first source did not satisfy the request.",
+      remainingItems: ["Verify the current fact."],
+      followupEvidenceRefs: ["evidence:search"],
+      followupExecutionMode: "tool" as const,
+      followupRequiredToolNames: ["web_fetch"],
+      followupTargetRefs: ["https://example.com/source"],
+    }
+    const first = buildStructuredFollowupKey({
+      ...base,
+      followupPrompt: "Fetch the observed source and verify its timestamp.",
+    })
+    const second = buildStructuredFollowupKey({
+      ...base,
+      followupPrompt: "Fetch the observed source and compare its publication time.",
+    })
+
+    expect(first).not.toBe(second)
+    expect(first).toMatch(/^completion-followup:[a-f0-9]{16}$/u)
+    expect(second).not.toContain("publication")
+  })
+
+  it("projects the existing follow-up key fields through one explicit transition identity", () => {
+    const identity = buildCompletionFollowupTransitionIdentity({
+      kind: "followup",
+      summary: " Verify the source. ",
+      reason: " Current evidence is partial. ",
+      remainingItems: [" freshness ", "freshness"],
+      followupPrompt: " Fetch the observed source. ",
+      followupEvidenceRefs: ["evidence:z", "evidence:a"],
+      followupExecutionMode: "tool",
+      followupRequiredToolNames: ["web_fetch", "web_fetch"],
+      followupTargetRefs: ["target:z", "target:a"],
+    })
+
+    expect(identity).toEqual({
+      kind: "completion_followup",
+      actionProposal: "Fetch the observed source.",
+      reason: "Current evidence is partial.",
+      remainingItems: ["freshness", "freshness"],
+      summary: "Verify the source.",
+      evidenceRefs: ["evidence:a", "evidence:z"],
+      executionMode: "tool",
+      requiredToolNames: ["web_fetch"],
+      targetRefs: ["target:a", "target:z"],
+    })
+  })
+
+  it("treats wording-only response revisions over the same evidence as one transition", () => {
+    const base = {
+      kind: "followup" as const,
+      followupEvidenceRefs: ["evidence:a"],
+      followupExecutionMode: "response_only" as const,
+      followupRequiredToolNames: [],
+      followupTargetRefs: [],
+    }
+    const first = buildStructuredFollowupKey({
+      ...base,
+      summary: "Rewrite the answer.",
+      reason: "The answer needs a timestamp.",
+      remainingItems: ["Add the timestamp."],
+      followupPrompt: "Use the evidence to add the timestamp.",
+    }, ["evidence:a", "evidence:b"])
+    const paraphrase = buildStructuredFollowupKey({
+      ...base,
+      summary: "Revise the response.",
+      reason: "The basis time is not shown.",
+      remainingItems: ["Report the basis time."],
+      followupPrompt: "Report the basis time from the existing evidence.",
+    }, ["evidence:b", "evidence:a"])
+    const changedEvidence = buildStructuredFollowupKey({
+      ...base,
+      summary: "Revise after collecting new evidence.",
+      reason: "A new source is now available.",
+      remainingItems: ["Use the new source."],
+      followupPrompt: "Use the new evidence revision.",
+    }, ["evidence:a", "evidence:b", "evidence:c"])
+
+    expect(first).toBe(paraphrase)
+    expect(changedEvidence).not.toBe(first)
+  })
+
   it("returns stop only when no safe execution recovery alternative remains", () => {
     const decision = decideCompletionApplication({
       decision: {
@@ -65,6 +154,11 @@ describe("run completion application", () => {
         reason: "남은 항목이 있습니다.",
         remainingItems: ["남은 파일 생성"],
         followupPrompt: "남은 파일만 생성하세요.",
+        followupEvidenceRefs: [
+          "tool-result:web_search:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ],
+        followupRequiredToolNames: ["web_fetch"],
+        followupTargetRefs: ["https://example.com/direct"],
       },
       originalRequest: "남은 파일을 만들어줘",
       previousResult: "부분 완료",
@@ -82,7 +176,10 @@ describe("run completion application", () => {
     expect(decision.kind).toBe("retry")
     if (decision.kind === "retry") {
       expect(decision.budgetKind).toBe("interpretation")
-      expect(decision.normalizedFollowupPrompt).toBe("남은 파일만 생성하세요.".toLowerCase())
+      expect(decision.structuredFollowupKey).toMatch(/^completion-followup:[a-f0-9]{16}$/u)
+      expect(decision.structuredFollowupKey).not.toContain("남은 파일")
+      expect(decision.nextMessage).toContain("Do not repeat a generic web_search")
+      expect(decision.requiredToolNames).toEqual(["web_fetch"])
     }
   })
 
@@ -141,5 +238,32 @@ describe("run completion application", () => {
       expect(decision.markTruncatedOutputRecoveryAttempted).toBe(true)
       expect(decision.clearWorkerRuntime).toBe(true)
     }
+  })
+
+  it("stops a terminal blocked decision without spending another retry", () => {
+    const decision = decideCompletionApplication({
+      decision: {
+        kind: "blocked",
+        summary: "확인 가능한 범위까지 조사했습니다.",
+        reason: "현재 증거에는 검증 가능한 직접 출처가 없습니다.",
+        remainingItems: ["직접 출처의 기준 시각 확인"],
+      },
+      originalRequest: "현재 값을 알려줘",
+      previousResult: "검색 결과와 한계를 함께 정리했습니다.",
+      successfulTools: [],
+      sawRealFilesystemMutation: false,
+      usedTurns: 1,
+      maxTurns: 5,
+      interpretationBudgetLimit: 5,
+      executionBudgetLimit: 5,
+      canRetryInterpretation: true,
+      canRetryExecution: true,
+      followupAlreadySeen: false,
+    })
+
+    expect(decision).toMatchObject({
+      kind: "stop",
+      reason: "현재 증거에는 검증 가능한 직접 출처가 없습니다.",
+    })
   })
 })

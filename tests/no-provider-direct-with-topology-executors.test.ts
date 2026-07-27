@@ -1,50 +1,57 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { createArtifactStorageContext } from "../packages/core/src/artifacts/lifecycle.ts"
 import {
   AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
   type AgentExecutionDecision,
 } from "../packages/core/src/orchestration/execution-decision-contract.ts"
-import {
-  runAgentExecutionHarness,
-} from "../packages/core/src/orchestration/execution-harness.ts"
+import { runAgentExecutionHarness } from "../packages/core/src/orchestration/execution-harness.ts"
 import {
   buildExampleEnterpriseTopology,
   createEnterpriseTopologyRegistry,
 } from "../packages/core/src/index.ts"
-import { reloadConfig } from "../packages/core/src/config/index.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { runIntakeBridgePass } from "../packages/core/src/runs/intake-bridge-pass.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const now = Date.UTC(2026, 4, 7, 12, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempState(overrides: Record<string, unknown> = {}): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-no-provider-direct-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json")
-  writeFileSync(process.env.KNOWBEE_CONFIG, JSON.stringify({
-    orchestration: {
-      maxDelegationTurns: 5,
-      mode: "orchestration",
-      featureFlagEnabled: true,
-      subAgents: [],
-      teams: [],
-      ...overrides,
-    },
-    ai: {
-      connection: {
-        provider: "openai",
-        model: "gpt-test",
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-no-provider-direct-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: JSON.stringify(
+      {
+        orchestration: {
+          maxDelegationTurns: 5,
+          mode: "orchestration",
+          featureFlagEnabled: true,
+          subAgents: [],
+          teams: [],
+          ...overrides,
+        },
+        ai: {
+          connection: {
+            provider: "openai",
+            model: "gpt-test",
+          },
+        },
       },
-    },
-  }, null, 2))
-  reloadConfig()
+      null,
+      2,
+    ),
+  })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 afterEach(() => {
@@ -52,11 +59,6 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
 })
 
 function createDependencies() {
@@ -69,6 +71,10 @@ function createDependencies() {
     scheduleDelayedRun: vi.fn(),
     startDelegatedRun: vi.fn(),
     normalizeTaskProfile: vi.fn((taskProfile: string | undefined) => taskProfile ?? "general_chat"),
+    recordCanonicalIntakeDiagnosis: vi.fn(async () => ({ ok: true as const })),
+    authorizeCanonicalIntakePlan: vi.fn(async () => ({ ok: true as const })),
+    recordCanonicalExecutionStart: vi.fn(async () => ({ ok: true as const })),
+    releaseCanonicalSimplePath: vi.fn(async () => ({ ok: true as const })),
     logInfo: vi.fn(),
   }
 }
@@ -84,17 +90,19 @@ function taskIntakeResult(actionPayload: Record<string, unknown> = {}) {
       mode: "accepted_receipt" as const,
       text: "후속 실행을 시작합니다.",
     },
-    action_items: [{
-      id: "run-task-1",
-      type: "run_task" as const,
-      title: "채널 요청 후속 실행",
-      priority: "normal" as const,
-      reason: "needs follow-up",
-      payload: {
-        goal: "Process the channel request.",
-        ...actionPayload,
+    action_items: [
+      {
+        id: "run-task-1",
+        type: "run_task" as const,
+        title: "채널 요청 후속 실행",
+        priority: "normal" as const,
+        reason: "needs follow-up",
+        payload: {
+          goal: "Process the channel request.",
+          ...actionPayload,
+        },
       },
-    }],
+    ],
     structured_request: {
       source_language: "ko" as const,
       normalized_english: "Process the channel request.",
@@ -169,18 +177,22 @@ function decisionForExecutor(selectedExecutorId: string): AgentExecutionDecision
       title: "채널 요청 후속 실행",
       summary: "현재 요청을 연결된 실행자에게 위임한다.",
       goals: ["직속 실행자에게 위임", "결과를 사용자에게 전달"],
-      task_units: [{
-        id: "unit:delegate",
-        title: "위임 실행",
-        goal: "선택된 실행자가 요청을 처리한다.",
-        preferred_executor_id: selectedExecutorId,
-      }],
+      task_units: [
+        {
+          id: "unit:delegate",
+          title: "위임 실행",
+          goal: "선택된 실행자가 요청을 처리한다.",
+          preferred_executor_id: selectedExecutorId,
+        },
+      ],
       success_criteria: ["선택된 실행자와 연결 경로가 trace에 남는다."],
     },
-    required_outputs: [{
-      id: "answer",
-      label: "최종 답변",
-    }],
+    required_outputs: [
+      {
+        id: "answer",
+        label: "최종 답변",
+      },
+    ],
     risk_boundary: {
       requires_user_approval: false,
       reason: "테스트 요청은 추가 승인이 필요하지 않다.",
@@ -206,10 +218,12 @@ function fallbackDecision(route: "ask_user" | "return_to_parent"): AgentExecutio
       task_units: [],
       success_criteria: ["fallback 상태가 명확하다"],
     },
-    required_outputs: [{
-      id: "fallback",
-      label: "fallback 사유",
-    }],
+    required_outputs: [
+      {
+        id: "fallback",
+        label: "fallback 사유",
+      },
+    ],
     risk_boundary: {
       requires_user_approval: route === "ask_user",
       reason: "fallback state test",
@@ -241,39 +255,50 @@ describe("run_task provider direct guard", () => {
       reason: "routing:provider:openai",
     })
 
-    const result = await runIntakeBridgePass({
-      message: "코스피 관련 질문을 처리해줘",
-      originalRequest: "코스피 관련 질문을 처리해줘",
-      sessionId: "session:no-provider-direct",
-      requestGroupId: "run:no-provider-direct",
-      model: "gpt-test",
-      workDir: "/tmp",
-      source: "telegram",
-      runId: "run:no-provider-direct",
-      onChunk: undefined,
-      reuseConversationContext: false,
-    }, dependencies, {
-      analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
-      resolveRunRoute,
-      executeScheduleActions: vi.fn(),
-      createDefaultScheduleActionDependencies: vi.fn(),
-      inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
-      buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\n코스피 관련 질문을 처리해줘"),
-      runAgentExecutionHarness: (input) => runAgentExecutionHarness({
-        ...input,
-        callModel: async () => JSON.stringify(decisionForExecutor(selectedExecutorId)),
-      }),
-    })
+    const result = await runIntakeBridgePass(
+      {
+        config: runtimeFixture.config,
+        message: "코스피 관련 질문을 처리해줘",
+        originalRequest: "코스피 관련 질문을 처리해줘",
+        sessionId: "session:no-provider-direct",
+        requestGroupId: "run:no-provider-direct",
+        model: "gpt-test",
+        workDir: "/tmp",
+        source: "telegram",
+        runId: "run:no-provider-direct",
+        artifactStorage: createArtifactStorageContext(runtimeFixture.paths),
+        onChunk: undefined,
+        reuseConversationContext: false,
+      },
+      dependencies,
+      {
+        analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
+        resolveRunRoute,
+        executeScheduleActions: vi.fn(),
+        createDefaultScheduleActionDependencies: vi.fn(),
+        inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
+        buildFollowupPrompt: vi
+          .fn()
+          .mockReturnValue("[Task Intake Bridge]\n코스피 관련 질문을 처리해줘"),
+        runAgentExecutionHarness: (input) =>
+          runAgentExecutionHarness({
+            ...input,
+            callModel: async () => JSON.stringify(decisionForExecutor(selectedExecutorId)),
+          }),
+      },
+    )
 
     expect(result).toEqual(expect.objectContaining({ kind: "complete_silent" }))
     expect(resolveRunRoute).not.toHaveBeenCalled()
-    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(expect.objectContaining({
-      targetId: selectedExecutorId,
-      agentExecutionDecision: expect.objectContaining({
-        selected_executor_id: selectedExecutorId,
-        execution_route: "delegate_to_child",
+    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetId: selectedExecutorId,
+        agentExecutionDecision: expect.objectContaining({
+          selected_executor_id: selectedExecutorId,
+          execution_route: "delegate_to_child",
+        }),
       }),
-    }))
+    )
   })
 
   it("allows provider direct only when the request carries an explicit provider target", async () => {
@@ -288,37 +313,50 @@ describe("run_task provider direct guard", () => {
       reason: "routing:provider:openai",
     })
 
-    await runIntakeBridgePass({
-      message: "provider openai로 직접 처리해줘",
-      originalRequest: "provider openai로 직접 처리해줘",
-      sessionId: "session:explicit-provider",
-      requestGroupId: "run:explicit-provider",
-      model: "gpt-test",
-      workDir: "/tmp",
-      source: "telegram",
-      runId: "run:explicit-provider",
-      onChunk: undefined,
-      reuseConversationContext: false,
-    }, dependencies, {
-      analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult({
-        preferred_target: "provider:openai",
-      })),
-      resolveRunRoute,
-      executeScheduleActions: vi.fn(),
-      createDefaultScheduleActionDependencies: vi.fn(),
-      inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
-      buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\nprovider direct"),
-      runAgentExecutionHarness: runAgentExecutionHarnessMock,
-    })
+    await runIntakeBridgePass(
+      {
+        config: runtimeFixture.config,
+        message: "provider openai로 직접 처리해줘",
+        originalRequest: "provider openai로 직접 처리해줘",
+        sessionId: "session:explicit-provider",
+        requestGroupId: "run:explicit-provider",
+        model: "gpt-test",
+        workDir: "/tmp",
+        source: "telegram",
+        runId: "run:explicit-provider",
+        artifactStorage: createArtifactStorageContext(runtimeFixture.paths),
+        onChunk: undefined,
+        reuseConversationContext: false,
+      },
+      dependencies,
+      {
+        analyzeTaskIntake: vi.fn().mockResolvedValue(
+          taskIntakeResult({
+            preferred_target: "provider:openai",
+          }),
+        ),
+        resolveRunRoute,
+        executeScheduleActions: vi.fn(),
+        createDefaultScheduleActionDependencies: vi.fn(),
+        inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
+        buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\nprovider direct"),
+        runAgentExecutionHarness: runAgentExecutionHarnessMock,
+      },
+    )
 
-    expect(resolveRunRoute).toHaveBeenCalledWith(expect.objectContaining({
-      preferredTarget: "provider:openai",
-    }))
+    expect(resolveRunRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preferredTarget: "provider:openai",
+      }),
+      expect.objectContaining({ orchestration: expect.any(Object) }),
+    )
     expect(runAgentExecutionHarnessMock).not.toHaveBeenCalled()
-    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(expect.objectContaining({
-      targetId: "provider:openai",
-      providerId: "openai",
-    }))
+    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetId: "provider:openai",
+        providerId: "openai",
+      }),
+    )
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith(
       "run:explicit-provider",
       "execution_decision_fallback:explicit_provider; provider_direct_allowed_with_explicit_target; target=provider:openai",
@@ -343,32 +381,40 @@ describe("run_task provider direct guard", () => {
       reason: "routing:provider:openai",
     })
 
-    const result = await runIntakeBridgePass({
-      message: "실행자가 판단하지 못하면 노비가 직접 처리해줘",
-      originalRequest: "실행자가 판단하지 못하면 노비가 직접 처리해줘",
-      sessionId: "session:fallback",
-      requestGroupId: "run:fallback",
-      model: "gpt-test",
-      workDir: "/tmp",
-      source: "telegram",
-      runId: "run:fallback",
-      onChunk: undefined,
-      reuseConversationContext: false,
-    }, dependencies, {
-      analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
-      resolveRunRoute,
-      executeScheduleActions: vi.fn(),
-      createDefaultScheduleActionDependencies: vi.fn(),
-      inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
-      buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\nself solve"),
-      runAgentExecutionHarness,
-    })
+    const result = await runIntakeBridgePass(
+      {
+        config: runtimeFixture.config,
+        message: "실행자가 판단하지 못하면 노비가 직접 처리해줘",
+        originalRequest: "실행자가 판단하지 못하면 노비가 직접 처리해줘",
+        sessionId: "session:fallback",
+        requestGroupId: "run:fallback",
+        model: "gpt-test",
+        workDir: "/tmp",
+        source: "telegram",
+        runId: "run:fallback",
+        artifactStorage: createArtifactStorageContext(runtimeFixture.paths),
+        onChunk: undefined,
+        reuseConversationContext: false,
+      },
+      dependencies,
+      {
+        analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
+        resolveRunRoute,
+        executeScheduleActions: vi.fn(),
+        createDefaultScheduleActionDependencies: vi.fn(),
+        inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
+        buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\nself solve"),
+        runAgentExecutionHarness,
+      },
+    )
 
-    expect(result).toEqual(expect.objectContaining({
-      kind: "awaiting_user",
-      eventLabel: "execution decision 사용자 확인 대기",
-      reason: "No execution decision model caller was provided.",
-    }))
+    expect(result).toEqual(
+      expect.objectContaining({
+        kind: "awaiting_user",
+        eventLabel: "execution decision 사용자 확인 대기",
+        reason: "No execution decision model caller was provided.",
+      }),
+    )
     expect(resolveRunRoute).not.toHaveBeenCalled()
     expect(dependencies.startDelegatedRun).not.toHaveBeenCalled()
     expect(dependencies.appendRunEvent).not.toHaveBeenCalledWith(
@@ -382,34 +428,43 @@ describe("run_task provider direct guard", () => {
     const dependencies = createDependencies()
     const resolveRunRoute = vi.fn()
 
-    const result = await runIntakeBridgePass({
-      message: "실행 전 확인이 필요하면 물어봐",
-      originalRequest: "실행 전 확인이 필요하면 물어봐",
-      sessionId: "session:ask-user",
-      requestGroupId: "run:ask-user",
-      model: "gpt-test",
-      workDir: "/tmp",
-      source: "telegram",
-      runId: "run:ask-user",
-      onChunk: undefined,
-      reuseConversationContext: false,
-    }, dependencies, {
-      analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
-      resolveRunRoute,
-      executeScheduleActions: vi.fn(),
-      createDefaultScheduleActionDependencies: vi.fn(),
-      inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
-      buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\nask user"),
-      runAgentExecutionHarness: (input) => runAgentExecutionHarness({
-        ...input,
-        callModel: async () => JSON.stringify(fallbackDecision("ask_user")),
-      }),
-    })
+    const result = await runIntakeBridgePass(
+      {
+        config: runtimeFixture.config,
+        message: "실행 전 확인이 필요하면 물어봐",
+        originalRequest: "실행 전 확인이 필요하면 물어봐",
+        sessionId: "session:ask-user",
+        requestGroupId: "run:ask-user",
+        model: "gpt-test",
+        workDir: "/tmp",
+        source: "telegram",
+        runId: "run:ask-user",
+        artifactStorage: createArtifactStorageContext(runtimeFixture.paths),
+        onChunk: undefined,
+        reuseConversationContext: false,
+      },
+      dependencies,
+      {
+        analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
+        resolveRunRoute,
+        executeScheduleActions: vi.fn(),
+        createDefaultScheduleActionDependencies: vi.fn(),
+        inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
+        buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\nask user"),
+        runAgentExecutionHarness: (input) =>
+          runAgentExecutionHarness({
+            ...input,
+            callModel: async () => JSON.stringify(fallbackDecision("ask_user")),
+          }),
+      },
+    )
 
-    expect(result).toEqual(expect.objectContaining({
-      kind: "awaiting_user",
-      eventLabel: "execution decision 사용자 확인 대기",
-    }))
+    expect(result).toEqual(
+      expect.objectContaining({
+        kind: "awaiting_user",
+        eventLabel: "execution decision 사용자 확인 대기",
+      }),
+    )
     expect(resolveRunRoute).not.toHaveBeenCalled()
     expect(dependencies.startDelegatedRun).not.toHaveBeenCalled()
   })
@@ -419,35 +474,44 @@ describe("run_task provider direct guard", () => {
     const dependencies = createDependencies()
     const resolveRunRoute = vi.fn()
 
-    const result = await runIntakeBridgePass({
-      message: "상위로 돌려야 하면 이유를 남겨줘",
-      originalRequest: "상위로 돌려야 하면 이유를 남겨줘",
-      sessionId: "session:return-parent",
-      requestGroupId: "run:return-parent",
-      model: "gpt-test",
-      workDir: "/tmp",
-      source: "telegram",
-      runId: "run:return-parent",
-      onChunk: undefined,
-      reuseConversationContext: false,
-    }, dependencies, {
-      analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
-      resolveRunRoute,
-      executeScheduleActions: vi.fn(),
-      createDefaultScheduleActionDependencies: vi.fn(),
-      inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
-      buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\nreturn parent"),
-      runAgentExecutionHarness: (input) => runAgentExecutionHarness({
-        ...input,
-        callModel: async () => JSON.stringify(fallbackDecision("return_to_parent")),
-      }),
-    })
+    const result = await runIntakeBridgePass(
+      {
+        config: runtimeFixture.config,
+        message: "상위로 돌려야 하면 이유를 남겨줘",
+        originalRequest: "상위로 돌려야 하면 이유를 남겨줘",
+        sessionId: "session:return-parent",
+        requestGroupId: "run:return-parent",
+        model: "gpt-test",
+        workDir: "/tmp",
+        source: "telegram",
+        runId: "run:return-parent",
+        artifactStorage: createArtifactStorageContext(runtimeFixture.paths),
+        onChunk: undefined,
+        reuseConversationContext: false,
+      },
+      dependencies,
+      {
+        analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
+        resolveRunRoute,
+        executeScheduleActions: vi.fn(),
+        createDefaultScheduleActionDependencies: vi.fn(),
+        inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
+        buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\nreturn parent"),
+        runAgentExecutionHarness: (input) =>
+          runAgentExecutionHarness({
+            ...input,
+            callModel: async () => JSON.stringify(fallbackDecision("return_to_parent")),
+          }),
+      },
+    )
 
-    expect(result).toEqual(expect.objectContaining({
-      kind: "awaiting_user",
-      eventLabel: "execution decision 사용자 확인 대기",
-      reason: "parent_executor_missing",
-    }))
+    expect(result).toEqual(
+      expect.objectContaining({
+        kind: "awaiting_user",
+        eventLabel: "execution decision 사용자 확인 대기",
+        reason: "parent_executor_missing",
+      }),
+    )
     expect(resolveRunRoute).not.toHaveBeenCalled()
     expect(dependencies.startDelegatedRun).not.toHaveBeenCalled()
   })

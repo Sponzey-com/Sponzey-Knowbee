@@ -6,7 +6,8 @@ import { getDb, getRunSubSession, getRunSubSessionByIdempotencyKey, insertRunSub
 import { eventBus } from "../events/index.js";
 import { recordLatencyMetric } from "../observability/latency.js";
 import { appendRunEvent, getRootRun } from "../runs/store.js";
-import { buildFeedbackLoopPackage, buildRedelegatedSubSessionInput, decideFeedbackLoopContinuation, validateRedelegationTarget, } from "./feedback-loop.js";
+import { buildFeedbackLoopPackage, buildRedelegatedSubSessionInput, buildRedelegatedTaskScope, decideFeedbackLoopContinuation, validateRedelegationTarget, } from "./feedback-loop.js";
+import { authorizeEvidenceBackedRedelegation, buildParentResultDisposition, fingerprintStructuredTaskScope, isRedelegationReasonCode, } from "./evidence-redelegation.js";
 import { validateNestedCommandRequest } from "./nested-delegation.js";
 import { buildSubSessionContract, canTransitionSubSessionStatus, transitionSubSessionStatus, } from "./sub-session-runner.js";
 const ACTIVE_CONTROL_STATUSES = new Set([
@@ -43,6 +44,15 @@ function boundedLimit(value, fallback = 50) {
     if (!Number.isFinite(parsed) || parsed <= 0)
         return fallback;
     return Math.min(Math.floor(parsed), 200);
+}
+function subSessionAgentName(subSession) {
+    return (trimmedString(subSession.agentNameSnapshot) ??
+        trimmedString(subSession.agentName) ??
+        "Unnamed sub-agent");
+}
+function subSessionParentAgentName(subSession) {
+    return (trimmedString(subSession.parentAgentNameSnapshot) ??
+        trimmedString(subSession.parentAgentName));
 }
 export function sanitizeSubSessionControlText(value) {
     let result = value;
@@ -92,7 +102,7 @@ function parseSpawnBody(body) {
     const command = commandValidation.value;
     if (!isRecord(input.agent) ||
         !trimmedString(input.agent.agentId) ||
-        !trimmedString(input.agent.displayName)) {
+        !trimmedString(input.agent.agentName)) {
         return { approvalRequired: false, error: "invalid_agent_snapshot" };
     }
     if (!trimmedString(input.parentSessionId))
@@ -262,6 +272,8 @@ export function getSubSessionInfo(subSessionId, expectedParentRunId) {
     if (!access.ok)
         return access;
     const subSession = access.subSession;
+    const agentName = subSessionAgentName(subSession);
+    const parentAgentName = subSessionParentAgentName(subSession);
     return {
         ok: true,
         info: {
@@ -269,15 +281,13 @@ export function getSubSessionInfo(subSessionId, expectedParentRunId) {
             parentRunId: subSession.parentRunId,
             parentSessionId: subSession.parentSessionId,
             ...(subSession.parentAgentId ? { parentAgentId: subSession.parentAgentId } : {}),
-            ...(subSession.parentAgentDisplayName
-                ? { parentAgentDisplayName: subSession.parentAgentDisplayName }
-                : {}),
-            ...(subSession.parentAgentNickname
-                ? { parentAgentNickname: subSession.parentAgentNickname }
+            ...(parentAgentName ? { parentAgentName } : {}),
+            ...(subSession.parentAgentNameSnapshot
+                ? { parentAgentNameSnapshot: subSession.parentAgentNameSnapshot }
                 : {}),
             agentId: subSession.agentId,
-            agentDisplayName: subSession.agentDisplayName,
-            ...(subSession.agentNickname ? { agentNickname: subSession.agentNickname } : {}),
+            agentName,
+            ...(subSession.agentNameSnapshot ? { agentNameSnapshot: subSession.agentNameSnapshot } : {}),
             commandRequestId: subSession.commandRequestId,
             status: subSession.status,
             promptBundleId: subSession.promptBundleId,
@@ -385,16 +395,30 @@ function feedbackLoopResult(subSession, action, body, auditCorrelationId) {
     }
     const expectedOutputs = expectedOutputsForSubSession(subSession);
     const previousFailureKeys = stringArray(record.previousFailureKeys);
+    const previousStrategyFingerprints = stringArray(record.previousStrategyFingerprints);
+    const strategyFingerprint = trimmedString(record.strategyFingerprint);
+    const previousAttempts = previousFailureKeys.flatMap((normalizedFailureKey, index) => {
+        const previousStrategyFingerprint = previousStrategyFingerprints[index];
+        return previousStrategyFingerprint
+            ? [{ normalizedFailureKey, strategyFingerprint: previousStrategyFingerprint }]
+            : [];
+    });
     const review = reviewSubAgentResult({
         resultReport: resultReport.resultReport,
         expectedOutputs,
         previousFailureKeys,
+        previousAttempts,
+        ...(strategyFingerprint ? { strategyFingerprint } : {}),
         additionalContextRefs: stringArray(record.additionalContextRefs),
         now: nowMs,
     });
     const continuation = decideFeedbackLoopContinuation({
         review,
+        retryCount: previousFailureKeys.length,
+        retryLimit: review.retryBudgetLimit,
         previousFailureKeys,
+        previousAttempts,
+        ...(strategyFingerprint ? { currentStrategyFingerprint: strategyFingerprint } : {}),
     });
     if (continuation.action === "limited_success_finalized") {
         const controlEventId = recordSubSessionControlEvent({
@@ -425,8 +449,7 @@ function feedbackLoopResult(subSession, action, body, auditCorrelationId) {
         return { ok: false, statusCode: 409, reasonCode: continuation.reasonCode };
     }
     const targetAgentId = action === "redelegate" ? trimmedString(record.targetAgentId) : subSession.agentId;
-    const targetAgentNickname = action === "redelegate" ? trimmedString(record.targetAgentNickname) : subSession.agentNickname;
-    const targetAgentDisplayName = trimmedString(record.targetAgentDisplayName) ?? targetAgentNickname ?? targetAgentId;
+    const targetAgentName = action === "redelegate" ? trimmedString(record.targetAgentNameSnapshot) : subSession.agentNameSnapshot;
     const targetAgentPolicy = action === "redelegate" ? "alternative_direct_child" : "same_agent";
     const validation = validateRedelegationTarget({
         policy: targetAgentPolicy,
@@ -454,10 +477,14 @@ function feedbackLoopResult(subSession, action, body, auditCorrelationId) {
         expectedOutputs,
         targetAgentPolicy,
         ...(targetAgentId ? { targetAgentId } : {}),
-        ...(targetAgentNickname ? { targetAgentNicknameSnapshot: targetAgentNickname } : {}),
+        ...(targetAgentName ? { targetAgentName } : {}),
+        ...(targetAgentName ? { targetAgentNameSnapshot: targetAgentName } : {}),
         ...(subSession.parentAgentId ? { requestingAgentId: subSession.parentAgentId } : {}),
-        ...(subSession.parentAgentNickname
-            ? { requestingAgentNicknameSnapshot: subSession.parentAgentNickname }
+        ...(subSession.parentAgentNameSnapshot
+            ? {
+                requestingAgentName: subSession.parentAgentNameSnapshot,
+                requestingAgentNameSnapshot: subSession.parentAgentNameSnapshot,
+            }
             : {}),
         parentRunId: subSession.parentRunId,
         parentSessionId: subSession.parentSessionId,
@@ -476,16 +503,59 @@ function feedbackLoopResult(subSession, action, body, auditCorrelationId) {
     });
     let redelegatedSubSessionId;
     if (action === "redelegate" && targetAgentId) {
+        const reasonCode = trimmedString(record.redelegationReasonCode);
+        if (!reasonCode || !isRedelegationReasonCode(reasonCode)) {
+            return { ok: false, statusCode: 409, reasonCode: "redelegation_reason_required" };
+        }
+        const correctedScope = buildRedelegatedTaskScope({
+            sourceSubSession: subSession,
+            feedbackRequest: feedbackPackage.feedbackRequest,
+        });
+        const disposition = buildParentResultDisposition({
+            reviewId: `review:${feedbackPackage.feedbackRequest.feedbackRequestId}`,
+            sourceResultReportId: resultReport.resultReport.resultReportId,
+            review,
+            correctedScope,
+            preservedEvidenceRefs: resultReport.resultReport.evidence.map((evidence) => `evidence:${evidence.evidenceId}`),
+        });
+        if (disposition.outcome !== "correct") {
+            return { ok: false, statusCode: 409, reasonCode: "redelegation_review_not_corrective" };
+        }
+        const originalScope = subSession.promptBundleSnapshot?.taskScope ?? {
+            goal: resultReport.resultReport.outputs.map((output) => output.outputId).join(", ") || "Review delegated result.",
+            intentType: "review",
+            actionType: "sub_agent_feedback_revision",
+            constraints: [],
+            expectedOutputs,
+            reasonCodes: [],
+        };
+        const previousStrategyFingerprint = previousStrategyFingerprints.at(-1);
+        const authorization = authorizeEvidenceBackedRedelegation({
+            correction: disposition.correction,
+            parentAgentName: subSession.parentAgentNameSnapshot ?? subSession.parentAgentName ?? "Knowbee",
+            previousTargetAgentName: subSession.agentNameSnapshot ?? subSession.agentName,
+            nextTargetAgentName: targetAgentName ?? targetAgentId,
+            reasonCode,
+            reasonDetail: trimmedString(record.redelegationReasonDetail) ?? "",
+            reasonEvidenceRefs: stringArray(record.redelegationReasonEvidenceRefs),
+            originalScopeFingerprint: fingerprintStructuredTaskScope(originalScope),
+            ...(previousStrategyFingerprint ? { previousStrategyFingerprint } : {}),
+            ...(strategyFingerprint ? { currentStrategyFingerprint: strategyFingerprint } : {}),
+        });
+        if (!authorization.ok) {
+            return { ok: false, statusCode: 409, reasonCode: authorization.reasonCode };
+        }
         const requestedRedelegatedSubSessionId = trimmedString(record.redelegatedSubSessionId);
         const redelegatedInput = buildRedelegatedSubSessionInput({
             sourceSubSession: subSession,
             feedbackRequest: feedbackPackage.feedbackRequest,
             targetAgentId,
-            ...(targetAgentDisplayName ? { targetAgentDisplayName } : {}),
-            ...(targetAgentNickname ? { targetAgentNickname } : {}),
+            ...(targetAgentName ? { targetAgentName } : {}),
+            ...(targetAgentName ? { targetAgentNameSnapshot: targetAgentName } : {}),
             ...(requestedRedelegatedSubSessionId
                 ? { subSessionId: requestedRedelegatedSubSessionId }
                 : {}),
+            redelegationAuthorizationReceiptId: authorization.authorizationReceiptId,
         });
         const ack = spawnSubSessionAck({ input: redelegatedInput, auditCorrelationId });
         if (!ack.ok) {

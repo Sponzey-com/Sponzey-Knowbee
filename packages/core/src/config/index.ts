@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import JSON5 from "json5"
 import { DEFAULT_CONFIG, type AIConnectionProvider, type KnowbeeConfig } from "./types.js"
-import { PATHS } from "./paths.js"
+import type { RuntimePaths } from "./paths.js"
 
 function toObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -263,43 +263,50 @@ function parseIntegerEnv(value: string | undefined): number | undefined {
   return Number.isInteger(parsed) ? parsed : undefined
 }
 
-function readEnvOverrides(): Partial<KnowbeeConfig> {
-  const mqttEnabled = parseBooleanEnv(process.env["KNOWBEE_MQTT_ENABLED"])
-  const mqttHost = process.env["KNOWBEE_MQTT_HOST"]?.trim()
-  const mqttPort = parseIntegerEnv(process.env["KNOWBEE_MQTT_PORT"])
-  const mqttUsername = process.env["KNOWBEE_MQTT_USERNAME"]?.trim()
-  const mqttPassword = process.env["KNOWBEE_MQTT_PASSWORD"]
-  const mqttAllowAnonymous = parseBooleanEnv(process.env["KNOWBEE_MQTT_ALLOW_ANONYMOUS"])
+type EnvSnapshot = Record<string, string | undefined>
+
+type DeepConfigPartial<T> = T extends readonly unknown[]
+  ? T
+  : T extends object
+    ? { [K in keyof T]?: DeepConfigPartial<T[K]> }
+    : T
+
+function readEnvOverrides(env: EnvSnapshot): DeepConfigPartial<KnowbeeConfig> {
+  const mqttEnabled = parseBooleanEnv(env["KNOWBEE_MQTT_ENABLED"])
+  const mqttHost = env["KNOWBEE_MQTT_HOST"]?.trim()
+  const mqttPort = parseIntegerEnv(env["KNOWBEE_MQTT_PORT"])
+  const mqttUsername = env["KNOWBEE_MQTT_USERNAME"]?.trim()
+  const mqttPassword = env["KNOWBEE_MQTT_PASSWORD"]
+  const mqttAllowAnonymous = parseBooleanEnv(env["KNOWBEE_MQTT_ALLOW_ANONYMOUS"])
+  const overrides: DeepConfigPartial<KnowbeeConfig> = {}
 
   if (
-    mqttEnabled == null &&
-    !mqttHost &&
-    mqttPort == null &&
-    mqttUsername == null &&
-    mqttPassword == null &&
-    mqttAllowAnonymous == null
+    mqttEnabled != null ||
+    mqttHost ||
+    mqttPort != null ||
+    mqttUsername != null ||
+    mqttPassword != null ||
+    mqttAllowAnonymous != null
   ) {
-    return {}
-  }
-
-  return {
-    mqtt: {
+    overrides.mqtt = {
       enabled: mqttEnabled ?? DEFAULT_CONFIG.mqtt.enabled,
       host: mqttHost || DEFAULT_CONFIG.mqtt.host,
       port: mqttPort ?? DEFAULT_CONFIG.mqtt.port,
       username: mqttUsername ?? DEFAULT_CONFIG.mqtt.username,
       password: mqttPassword ?? DEFAULT_CONFIG.mqtt.password,
       allowAnonymous: mqttAllowAnonymous ?? DEFAULT_CONFIG.mqtt.allowAnonymous,
-    },
+    }
   }
+
+  return overrides
 }
 
 /**
- * Parse a .env file and apply values to process.env.
+ * Parse a .env file and apply values to an env snapshot.
  * - 값이 있는 키: 쉘 환경변수에 없을 때만 설정 (쉘 우선)
  * - 값이 빈 키 (KEY=): 쉘에서 온 값이라도 강제 삭제 — "이 키를 쓰지 않겠다"는 명시적 선언
  */
-function loadDotEnv(filePath: string): void {
+function loadDotEnv(filePath: string, env: EnvSnapshot): void {
   if (!existsSync(filePath)) return
   const lines = readFileSync(filePath, "utf-8").split(/\r?\n/)
   for (const raw of lines) {
@@ -317,9 +324,9 @@ function loadDotEnv(filePath: string): void {
     if (!key) continue
     if (value === "") {
       // 빈 값으로 명시 → 쉘에서 상속된 값도 제거
-      delete process.env[key]
-    } else if (!(key in process.env)) {
-      process.env[key] = value
+      delete env[key]
+    } else if (!(key in env)) {
+      env[key] = value
     }
   }
 }
@@ -328,32 +335,37 @@ function loadDotEnv(filePath: string): void {
  * Load .env files. Priority:
  *  1. 쉘 환경변수 (비어있지 않은 값에 한해)
  *  2. cwd()/.env
- *  3. ~/.wizby/.env (legacy ~/.howie/.env fallback via PATHS)
+ *  3. stateDir/.env
  * .env에서 KEY= (빈 값)으로 설정하면 쉘 환경변수도 무효화됨
  */
-export function loadEnv(): void {
-  loadDotEnv(join(process.cwd(), ".env"))
-  loadDotEnv(join(PATHS.stateDir, ".env"))
+export function loadEnv(
+  baseEnv: EnvSnapshot,
+  locations: { cwd: string; stateDir: string },
+): EnvSnapshot {
+  const env = { ...baseEnv }
+  loadDotEnv(join(locations.cwd, ".env"), env)
+  loadDotEnv(join(locations.stateDir, ".env"), env)
+  return env
 }
 
-function substituteEnvVars(value: string): string {
+function substituteEnvVars(value: string, env: EnvSnapshot): string {
   return value.replace(/\$\{([^}]+)\}/g, (_, name: string) => {
-    return process.env[name] ?? ""
+    return env[name] ?? ""
   })
 }
 
-function substituteDeep(obj: unknown): unknown {
-  if (typeof obj === "string") return substituteEnvVars(obj)
-  if (Array.isArray(obj)) return obj.map(substituteDeep)
+function substituteDeep(obj: unknown, env: EnvSnapshot): unknown {
+  if (typeof obj === "string") return substituteEnvVars(obj, env)
+  if (Array.isArray(obj)) return obj.map((item) => substituteDeep(item, env))
   if (obj !== null && typeof obj === "object") {
     return Object.fromEntries(
-      Object.entries(obj as Record<string, unknown>).map(([k, v]) => [k, substituteDeep(v)]),
+      Object.entries(obj as Record<string, unknown>).map(([k, v]) => [k, substituteDeep(v, env)]),
     )
   }
   return obj
 }
 
-function deepMerge<T>(base: T, override: Partial<T>): T {
+function deepMerge<T>(base: T, override: DeepConfigPartial<T>): T {
   if (override === null || typeof override !== "object" || Array.isArray(override)) {
     return override as T
   }
@@ -370,37 +382,31 @@ function deepMerge<T>(base: T, override: Partial<T>): T {
   return result as T
 }
 
-let _config: KnowbeeConfig | null = null
+export interface ConfigSnapshotLoadInput {
+  baseEnv: EnvSnapshot
+  cwd: string
+  paths: RuntimePaths
+}
 
-export function loadConfig(): KnowbeeConfig {
-  loadEnv()
-  const configPath = PATHS.configFile
-  const envOverrides = readEnvOverrides()
+export function loadConfigSnapshot(input: ConfigSnapshotLoadInput): KnowbeeConfig {
+  const env = loadEnv(input.baseEnv, {
+    cwd: input.cwd,
+    stateDir: input.paths.stateDir,
+  })
+  const configPath = input.paths.configFile
+  const envOverrides = readEnvOverrides(env)
 
   if (!existsSync(configPath)) {
-    _config = deepMerge(DEFAULT_CONFIG, envOverrides)
-    return _config
+    return deepMerge<KnowbeeConfig>(DEFAULT_CONFIG, envOverrides)
   }
 
   const raw = readFileSync(configPath, "utf-8")
   const parsed = JSON5.parse(raw) as Partial<KnowbeeConfig>
   const normalized = normalizeLegacyAiConfig(parsed)
-  const substituted = substituteDeep(normalized) as Partial<KnowbeeConfig>
-  _config = deepMerge(deepMerge(DEFAULT_CONFIG, substituted), envOverrides)
-  return _config
+  const substituted = substituteDeep(normalized, env) as Partial<KnowbeeConfig>
+  return deepMerge<KnowbeeConfig>(deepMerge<KnowbeeConfig>(DEFAULT_CONFIG, substituted), envOverrides)
 }
 
-export function getConfig(): KnowbeeConfig {
-  if (!_config) return loadConfig()
-  return _config
-}
-
-export function reloadConfig(): KnowbeeConfig {
-  _config = null
-  return loadConfig()
-}
-
-export { PATHS } from "./paths.js"
 export {
   MIGRATION_ROLLBACK_RUNBOOK,
   buildBackupTargetInventory,
@@ -416,6 +422,7 @@ export type {
   BackupSnapshotFile,
   BackupSnapshotManifest,
   BackupSnapshotOptions,
+  BackupRehearsalPaths,
   BackupTargetInventory,
   BackupTargetKind,
   BackupTargetReason,

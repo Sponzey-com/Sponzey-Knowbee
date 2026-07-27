@@ -67,7 +67,7 @@ function dispatchResult(): DelegatedTaskDispatchResult {
       taskId: "task:finance",
       subSessionId: "sub:madang",
       agentId: "workspace:draft:node:madang",
-      agentDisplayName: "마당쇠",
+      agentName: "마당쇠",
       agentSource: "topology",
       topologyId: "workspace:draft",
       topologyExecutorId: "node:madang",
@@ -96,6 +96,8 @@ describe("phase027 topology redispatch after child timeout signal", () => {
       rootLoopContinuation: "blocked",
       alternativeExecutorIds: ["workspace:draft:node:hangrang"],
     })
+    expect(decision?.summary).toContain("직속 하위 서브 에이전트")
+    expect(decision?.summary).not.toContain("direct child 실행자")
     expect(decision?.failedReasonCodes).toEqual(["child_result_pending_signal"])
   })
 })

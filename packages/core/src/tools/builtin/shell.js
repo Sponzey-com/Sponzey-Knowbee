@@ -1,6 +1,9 @@
 import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../yeonjang/mqtt-client.js";
 import { buildYeonjangTargetParameterProperties, buildYeonjangTargetResolutionDetails, buildYeonjangTargetSelectionFailure, recordYeonjangRemoteExecutionApproval, revalidateYeonjangTargetSelection, resolveYeonjangTargetSelection, } from "./yeonjang-target.js";
 import { withYeonjangRequestMetadata } from "./yeonjang-request-metadata.js";
+import { toolUserFacingErrorMessage } from "./error-redaction.js";
+import { buildYeonjangRequiredFailure } from "./yeonjang-required-failure.js";
+import { resolveLocalOrYeonjangEvidenceSourceKind } from "../evidence-source.js";
 const DEFAULT_TIMEOUT_SEC = 300;
 // Simple obfuscation patterns to reject
 const OBFUSCATION_PATTERNS = [
@@ -22,19 +25,11 @@ function resolveRemoteWorkDir(workDir) {
     const normalized = workDir?.trim();
     return normalized ? normalized : undefined;
 }
-function yeonjangRequiredFailure(method) {
-    return {
-        success: false,
-        output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 현재 연결된 연장이 \`${method}\` 메서드를 지원하지 않거나 연결되어 있지 않습니다.`,
-        error: "YEONJANG_REQUIRED",
-        details: {
-            requiredExecutor: "yeonjang",
-            requiredMethod: method,
-        },
-    };
-}
 export const shellExecTool = {
     name: "shell_exec",
+    resolveEvidenceSourceKind: resolveLocalOrYeonjangEvidenceSourceKind,
+    runtimeHealthMode: "additional",
+    runtimeMethodIds: ["system.exec"],
     description: "Execute a shell command on the local machine. " +
         "Use this for running scripts, installing packages, querying system state, etc. " +
         "Output is captured and returned. Long-running commands will be killed after the timeout.",
@@ -128,7 +123,7 @@ export const shellExecTool = {
         }
         catch (error) {
             if (!isYeonjangUnavailableError(error)) {
-                const message = error instanceof Error ? error.message : String(error);
+                const message = toolUserFacingErrorMessage(error);
                 return {
                     success: false,
                     output: `Yeonjang 명령 실행 실패: ${message}`,
@@ -140,7 +135,7 @@ export const shellExecTool = {
                 };
             }
         }
-        const failure = yeonjangRequiredFailure("system.exec");
+        const failure = buildYeonjangRequiredFailure({ method: "system.exec" });
         return {
             ...failure,
             details: {

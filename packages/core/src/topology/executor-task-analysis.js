@@ -1,3 +1,4 @@
+import { DEFAULT_MAIN_AGENT_NAME_KO } from "../agent/main-agent-identity.js";
 export function buildNodeTaskAnalysis(input) {
     const now = input.now ?? new Date(0).toISOString();
     const description = input.executor.description.trim();
@@ -24,7 +25,7 @@ export function buildNodeTaskAnalysis(input) {
             ? [...input.executor.inferredSuccessCriteria]
             : ["처리 결과가 기록됨"],
         failureBoundaries: riskBoundary.failureBoundaries,
-        safeAlternatives: buildSafeAlternatives(input.executor),
+        safeAlternatives: buildSafeAlternatives(input.executor, input.rootAgentNameSnapshot),
         confidence: input.executor.confidence,
         needsUserConfirmation,
         createdAt: now,
@@ -56,7 +57,7 @@ function buildTaskUnits(executor, goals) {
 function buildInputNeeds(connections) {
     if (connections.length === 0)
         return ["사용자 실행 입력"];
-    return connections.map((connection) => `이전 실행자 ${connection.fromExecutorId}의 ${connection.label}`);
+    return connections.map((connection) => `이전 서브 에이전트 ${connection.fromExecutorId}의 ${connection.label}`);
 }
 function structuredRiskBoundary(executor, executionRiskBoundary) {
     if (executionRiskBoundary) {
@@ -77,7 +78,11 @@ function structuredRiskBoundary(executor, executionRiskBoundary) {
         failureBoundaries: ["안전한 대안이 없을 때만 실패로 전환"],
     };
 }
-function buildSafeAlternatives(executor) {
+function rootAgentDisplayName(value) {
+    return value?.trim() || DEFAULT_MAIN_AGENT_NAME_KO;
+}
+function buildSafeAlternatives(executor, rootAgentNameSnapshot) {
+    const rootAgentName = rootAgentDisplayName(rootAgentNameSnapshot);
     return [
         {
             alternativeId: `alternative:${executor.id}:task-split`,
@@ -89,7 +94,7 @@ function buildSafeAlternatives(executor) {
             alternativeId: `alternative:${executor.id}:fallback-route`,
             title: "다른 실행 경로 찾기",
             changedDimension: "fallback_route",
-            description: "맞는 서브 에이전트, 연장, 노비 직접 처리 순서로 다른 경로를 찾는다.",
+            description: `맞는 서브 에이전트, 연장, ${rootAgentName} 직접 처리 순서로 다른 경로를 찾는다.`,
         },
     ];
 }

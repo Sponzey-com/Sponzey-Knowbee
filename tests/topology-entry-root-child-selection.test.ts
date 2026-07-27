@@ -18,29 +18,22 @@ import {
   type TopologyRootRunRoutingDecision,
 } from "../packages/core/src/topology-runtime/harness.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const now = Date.UTC(2026, 4, 7, 0, 0, 0)
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task007-entry-root-child-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task007-entry-root-child-"))
+  tempDirs.push(rootDir)
+  const runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -80,21 +73,21 @@ function modeSnapshot(topologyId: string): OrchestrationModeSnapshot {
     activeSubAgents: [
       {
         agentId: `${topologyId}:node:intake`,
-        displayName: "Customer Request Intake",
+        agentName: "Customer Request Intake",
         source: "topology",
         topologyId,
         executorId: "node:intake",
       },
       {
         agentId: `${topologyId}:node:triage`,
-        displayName: "Customer Request Triage",
+        agentName: "Customer Request Triage",
         source: "topology",
         topologyId,
         executorId: "node:triage",
       },
       {
         agentId: `${topologyId}:node:finance`,
-        displayName: "행랑아범",
+        agentName: "행랑아범",
         source: "topology",
         topologyId,
         executorId: "node:finance",
@@ -120,8 +113,8 @@ function decision(input: {
     selected_connection_path: input.selectedConnectionPath,
     task_profile: {
       title: "토폴로지 entry 선택",
-      summary: "선택된 실행자가 노비 직속 하위인지 또는 연결 경로로 접근 가능한지 검증한다.",
-      goals: ["노비 직속 하위는 바로 entry로 실행한다."],
+      summary: "선택된 서브 에이전트가 메인 에이전트 직속인지 또는 연결 경로로 접근 가능한지 검증한다.",
+      goals: ["메인 에이전트 직속 서브 에이전트는 바로 entry로 실행한다."],
       task_units: [{
         id: "unit:entry",
         title: "entry 검증",

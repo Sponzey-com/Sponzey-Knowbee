@@ -2,10 +2,13 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { closeDb, listMessageLedgerEvents } from "../packages/core/src/db/index.ts"
+import { closeDb, listMessageLedgerEvents } from "../packages/core/src/db/index.js"
 import type { ToolContext } from "../packages/core/src/tools/types.ts"
 import { upsertYeonjangRegistryObservation } from "../packages/core/src/yeonjang/registry.ts"
+import { createTestArtifactStorage } from "./fixtures/artifact-storage.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+import { withToolAuthorization } from "./fixtures/tool-authorization.ts"
 
 const getYeonjangCapabilities = vi.fn()
 const invokeYeonjangMethod = vi.fn()
@@ -43,9 +46,15 @@ vi.mock("../packages/core/src/mqtt/broker.js", () => ({
 
 const { yeonjangBroadcastRunTool } = await import("../packages/core/src/tools/builtin/yeonjang-broadcast.ts")
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
+function executeAuthorizedBroadcast(params: Record<string, unknown>, ctx: ToolContext) {
+  return yeonjangBroadcastRunTool.execute(
+    params as Parameters<typeof yeonjangBroadcastRunTool.execute>[0],
+    withToolAuthorization(ctx, yeonjangBroadcastRunTool.name, params),
+  )
+}
+
 const tempDirs: string[] = []
+let artifactStorage: ReturnType<typeof createTestArtifactStorage>
 
 function stableHexHash(value: string): string {
   let hash = 0xcbf29ce484222325n
@@ -69,11 +78,11 @@ function gatewayHostFingerprintRaw(): string {
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task004-yeonjang-broadcast-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task004-yeonjang-broadcast-"))
+  tempDirs.push(rootDir)
+  const runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
+  artifactStorage = createTestArtifactStorage(runtimeFixture.paths.stateDir)
 }
 
 function seedObservation(overrides: Partial<Parameters<typeof upsertYeonjangRegistryObservation>[0]> = {}) {
@@ -113,6 +122,7 @@ function seedObservation(overrides: Partial<Parameters<typeof upsertYeonjangRegi
 
 function createContext(userMessage = "모든 연장 화면을 캡처해줘"): ToolContext {
   return {
+    artifactStorage,
     sessionId: "session-1",
     runId: "run-1",
     requestGroupId: "request-group-1",
@@ -219,11 +229,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -231,6 +236,43 @@ afterEach(() => {
 })
 
 describe("task004 yeonjang broadcast tool", () => {
+  it("rejects direct adapter execution without a dispatcher authorization receipt", async () => {
+    const result = await yeonjangBroadcastRunTool.execute({
+      toolName: "screen_capture",
+      targetSelector: { type: "all_online" },
+      broadcastIntent: { confirm: true },
+    }, createContext())
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "YEONJANG_BROADCAST_AUTHORIZATION_REQUIRED",
+      details: {
+        reasonCode: "missing_or_scope_mismatched_authorization_receipt",
+      },
+    })
+    expect(invokeYeonjangMethod).not.toHaveBeenCalled()
+  })
+
+  it("rejects an authorization receipt scoped to different broadcast params", async () => {
+    const approvedParams = {
+      toolName: "screen_capture",
+      toolParams: { display: 0 },
+      targetSelector: { type: "all_online" },
+      broadcastIntent: { confirm: true },
+    }
+    const attemptedParams = {
+      ...approvedParams,
+      toolParams: { display: 1 },
+    }
+    const result = await yeonjangBroadcastRunTool.execute(
+      attemptedParams,
+      withToolAuthorization(createContext(), yeonjangBroadcastRunTool.name, approvedParams),
+    )
+
+    expect(result.error).toBe("YEONJANG_BROADCAST_AUTHORIZATION_REQUIRED")
+    expect(invokeYeonjangMethod).not.toHaveBeenCalled()
+  })
+
   it("captures per-target artifacts in isolated namespaces and returns a partial-success summary", async () => {
     invokeYeonjangMethod
       .mockResolvedValueOnce({
@@ -251,7 +293,7 @@ describe("task004 yeonjang broadcast tool", () => {
         message: "linux ok",
       })
 
-    const result = await yeonjangBroadcastRunTool.execute({
+    const result = await executeAuthorizedBroadcast({
       toolName: "screen_capture",
       targetSelector: { type: "all_online" },
       broadcastIntent: { confirm: true },
@@ -319,7 +361,7 @@ describe("task004 yeonjang broadcast tool", () => {
   })
 
   it("blocks dangerous shell broadcast before invoking any Yeonjang target", async () => {
-    const result = await yeonjangBroadcastRunTool.execute({
+    const result = await executeAuthorizedBroadcast({
       toolName: "shell_exec",
       toolParams: { command: "rm -rf /tmp/demo" },
       targetSelector: { type: "all_online" },
@@ -342,7 +384,7 @@ describe("task004 yeonjang broadcast tool", () => {
       message: "win ok",
     })
 
-    const result = await yeonjangBroadcastRunTool.execute({
+    const result = await executeAuthorizedBroadcast({
       toolName: "screen_capture",
       targetSelector: { type: "all_online" },
       broadcastIntent: { confirm: true },

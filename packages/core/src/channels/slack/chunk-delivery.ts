@@ -1,10 +1,14 @@
 import type { AgentChunk } from "../../agent/index.js"
-import { buildArtifactAccessDescriptor } from "../../artifacts/lifecycle.js"
+import {
+  buildArtifactAccessDescriptor,
+  type ArtifactStorageContext,
+} from "../../artifacts/lifecycle.js"
 import {
   type ChunkDeliveryReceipt,
   type RunChunkDeliveryHandler,
   deliverArtifactOnce,
 } from "../../runs/delivery.js"
+import { sanitizeCompletionAwaitingUserText } from "../../runs/completion-application.js"
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js"
 import {
   buildTextDeliveryKey,
@@ -13,6 +17,9 @@ import {
 } from "../../runs/message-ledger.js"
 import type { ArtifactDeliveryResultDetails } from "../../tools/types.js"
 import type { DeliveryReceipt } from "../contracts.js"
+import { buildChannelChunkErrorNotice } from "../chunk-error-notice.js"
+import { renderChannelNoticeText, type ChannelNoticeRenderDependencies } from "../notice-rendering.js"
+import { redactLogText } from "../../logger/index.js"
 import {
   buildSlackFailedDeliveryReceipt,
   buildSlackSentDeliveryReceipt,
@@ -20,6 +27,11 @@ import {
   type SlackFileDeliveryResult,
   type SlackTextPartsDeliveryResult,
 } from "./message-delivery.js"
+
+function slackChunkDeliveryErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 
 export interface SlackChunkResponder {
   sendToolStatus(toolName: string): Promise<string>
@@ -40,15 +52,18 @@ export interface SlackChunkResponder {
 }
 
 export interface SlackChunkDeliveryContext {
+  artifactStorage: ArtifactStorageContext
   responder: SlackChunkResponder
   sessionId: string
   channelId: string
   threadTs: string
+  language?: SlackChunkFallbackLanguage | undefined
   getRunId: () => string | undefined
   deliveryKind?: MessageLedgerDeliveryKind
   parentRunId?: string
   subSessionId?: string
   agentId?: string
+  noticeRendering?: ChannelNoticeRenderDependencies | undefined
   recordOutgoingMessageRef: (params: {
     sessionId: string
     runId: string
@@ -60,7 +75,24 @@ export interface SlackChunkDeliveryContext {
   logError: (message: string) => void
 }
 
-function isArtifactDeliveryDetails(value: unknown): value is ArtifactDeliveryResultDetails {
+export type SlackChunkFallbackLanguage = "ko" | "en"
+export type SlackChunkFallbackReason = "artifact_upload_failed"
+
+export interface SlackChunkFallbackNotice {
+  kind: "slack_chunk_fallback"
+  reason: SlackChunkFallbackReason
+  language: SlackChunkFallbackLanguage
+  text: string
+  deliveryMode: "diagnostic"
+  textSource: "slack_chunk_fallback_notice"
+  renderingRequired: "llm_final_response"
+  finalAnswer: false
+  assistantIdentityClaim: false
+}
+
+function isArtifactDeliveryDetails(
+  value: unknown,
+): value is ArtifactDeliveryResultDetails & { filePath: string } {
   if (!value || typeof value !== "object") return false
   const candidate = value as Partial<ArtifactDeliveryResultDetails>
   return (
@@ -71,16 +103,32 @@ function isArtifactDeliveryDetails(value: unknown): value is ArtifactDeliveryRes
   )
 }
 
-function buildSlackArtifactFallbackMessage(
-  fileName: string,
-  downloadUrl?: string,
-  caption?: string,
-): string {
-  const title = caption?.trim() || fileName
-  if (!downloadUrl) {
-    return `파일 업로드가 실패했습니다. 안전한 다운로드 링크도 만들 수 없어 같은 Slack 스레드에서 완료할 수 없습니다.\n- 파일: ${title}`
+export function buildSlackArtifactFallbackNotice(input: {
+  fileName: string
+  downloadUrl?: string | undefined
+  caption?: string | undefined
+  language?: SlackChunkFallbackLanguage | undefined
+}): SlackChunkFallbackNotice {
+  const language = input.language ?? "ko"
+  const title = input.caption?.trim() || input.fileName
+  const text = input.downloadUrl
+    ? language === "en"
+      ? `File upload failed, so a download link is provided in this Slack thread instead.\n- File: ${title}\n- Download: ${input.downloadUrl}`
+      : `파일 업로드가 실패해 같은 Slack 스레드에 다운로드 링크로 대신 전달합니다.\n- 파일: ${title}\n- 다운로드: ${input.downloadUrl}`
+    : language === "en"
+      ? `File upload failed. No safe download link could be created in this Slack thread.\n- File: ${title}`
+      : `파일 업로드가 실패했습니다. 안전한 다운로드 링크도 만들 수 없어 같은 Slack 스레드에서 완료할 수 없습니다.\n- 파일: ${title}`
+  return {
+    kind: "slack_chunk_fallback",
+    reason: "artifact_upload_failed",
+    language,
+    text,
+    deliveryMode: "diagnostic",
+    textSource: "slack_chunk_fallback_notice",
+    renderingRequired: "llm_final_response",
+    finalAnswer: false,
+    assistantIdentityClaim: false,
   }
-  return `파일 업로드가 실패해 같은 Slack 스레드에 다운로드 링크로 대신 전달합니다.\n- 파일: ${title}\n- 다운로드: ${downloadUrl}`
 }
 
 function shouldSendToolStartStatus(toolName: string): boolean {
@@ -179,7 +227,7 @@ export function createSlackChunkDeliveryHandler(
       }
     } catch (error) {
       recordSlackTextDeliveryFailure(error, text, kind)
-      context.logError(`Failed to send Slack text delivery: ${error instanceof Error ? error.message : String(error)}`)
+      context.logError(`Failed to send Slack text delivery: ${slackChunkDeliveryErrorMessage(error)}`)
       return undefined
     }
   }
@@ -206,6 +254,7 @@ export function createSlackChunkDeliveryHandler(
   return async (chunk: AgentChunk): Promise<ChunkDeliveryReceipt | undefined> => {
     if (chunk.type === "text") {
       if (toolOwnedResponseActive) return
+      if (chunk.textSource !== "llm_reviewed") return
       bufferedText += chunk.delta
       return
     }
@@ -236,7 +285,11 @@ export function createSlackChunkDeliveryHandler(
       const isolatedToolResponse = decideIsolatedToolResponse(chunk)
       if (isolatedToolResponse.kind === "artifact" && isArtifactDeliveryDetails(chunk.details)) {
         const details = chunk.details
+        const caption = details.caption
+          ? sanitizeCompletionAwaitingUserText(details.caption)
+          : undefined
         const receipt = await deliverArtifactOnce({
+          artifactStorage: context.artifactStorage,
           runId: context.getRunId(),
           channel: "slack",
           filePath: details.filePath,
@@ -248,7 +301,7 @@ export function createSlackChunkDeliveryHandler(
               const sent = await sendFileWithReceipt(
                 details.filePath,
                 `slack:file:${context.getRunId() ?? "pending"}:${details.filePath}`,
-                details.caption,
+                caption,
               )
               recordIfRunPresent(sent.messageId, "assistant")
               return {
@@ -258,26 +311,27 @@ export function createSlackChunkDeliveryHandler(
                     channel: "slack" as const,
                     filePath: details.filePath,
                     ...(sent.permalink ? { url: sent.permalink } : {}),
-                    ...(details.caption ? { caption: details.caption } : {}),
+                    ...(caption ? { caption } : {}),
                     messageId: sent.messageId,
                     deliveryReceipts: [sent.receipt],
                   },
                 ],
               }
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error)
+              const message = slackChunkDeliveryErrorMessage(error)
               context.logError(`Failed to send Slack file: ${message}`)
               const artifact = buildArtifactAccessDescriptor({
                 filePath: details.filePath,
                 sizeBytes: details.size,
                 ...(details.mimeType ? { mimeType: details.mimeType } : {}),
+              }, context.artifactStorage)
+              const fallbackNotice = buildSlackArtifactFallbackNotice({
+                fileName: artifact.fileName,
+                downloadUrl: artifact.ok ? artifact.downloadUrl : undefined,
+                caption,
+                language: context.language,
               })
-              const fallbackText = buildSlackArtifactFallbackMessage(
-                artifact.fileName,
-                artifact.ok ? artifact.downloadUrl : undefined,
-                details.caption,
-              )
-              const sent = await sendFinalText(fallbackText, "artifact-fallback")
+              const sent = await sendFinalText(fallbackNotice.text, "artifact-fallback")
               if (!sent) throw error
               for (const fallbackMessageId of sent.messageIds) {
                 recordIfRunPresent(fallbackMessageId, "assistant")
@@ -304,7 +358,7 @@ export function createSlackChunkDeliveryHandler(
                           previewable: artifact.previewable,
                           mimeType: artifact.mimeType,
                           sizeBytes: details.size,
-                          ...(details.caption ? { caption: details.caption } : {}),
+                          ...(caption ? { caption } : {}),
                           ...(sent.messageIds[0] !== undefined ? { messageId: sent.messageIds[0] } : {}),
                           deliveryReceipts: sent.deliveryReceipts,
                         },
@@ -324,7 +378,7 @@ export function createSlackChunkDeliveryHandler(
 
       if (isolatedToolResponse.kind === "text" && isolatedToolResponse.text) {
         toolOwnedResponseActive = true
-        bufferedText = isolatedToolResponse.text
+        bufferedText = sanitizeCompletionAwaitingUserText(isolatedToolResponse.text)
       }
       return
     }
@@ -359,7 +413,22 @@ export function createSlackChunkDeliveryHandler(
 
     if (chunk.type === "error") {
       if (toolOwnedResponseActive) return
-      const messageId = await context.responder.sendError(chunk.message)
+      const notice = buildChannelChunkErrorNotice({
+        provider: "slack",
+        reason: redactLogText(chunk.message),
+        language: context.language,
+      })
+      const renderedNotice = await renderChannelNoticeText({
+        originalRequest: context.language === "ko" ? "Slack 채널 오류" : "Slack channel error",
+        rawText: notice.text,
+        ...(context.noticeRendering ? { dependencies: context.noticeRendering } : {}),
+      })
+      if (renderedNotice.status === "blocked") {
+        context.logError(`Skipped Slack chunk error notice delivery: ${renderedNotice.reason}`)
+        bufferedText = ""
+        return
+      }
+      const messageId = await context.responder.sendError(renderedNotice.text)
       recordIfRunPresent(messageId, "assistant")
       bufferedText = ""
     }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import { validateOrchestrationPlan } from "../packages/core/src/contracts/sub-agent-orchestration.js"
 import type {
@@ -20,6 +20,20 @@ import type {
   AgentRegistryEntry,
   OrchestrationRegistrySnapshot,
 } from "../packages/core/src/orchestration/registry.ts"
+import {
+  createTestDbRuntimeFixture,
+  type TestDbRuntimeFixture,
+} from "./fixtures/runtime-db.ts"
+
+let dbRuntime: TestDbRuntimeFixture
+
+beforeEach(() => {
+  dbRuntime = createTestDbRuntimeFixture("knowbee-planner-selection-")
+})
+
+afterEach(() => {
+  dbRuntime.dispose()
+})
 
 const now = Date.UTC(2026, 4, 7, 0, 0, 0)
 const rootExecutorId = "agent:knowbee"

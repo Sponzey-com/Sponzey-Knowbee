@@ -1,8 +1,12 @@
 import type { AIProvider, Message } from "../ai/types.js";
+import type { MemoryConfig } from "../config/types.js";
 import { type MemoryCapsule, type MemoryCapsuleArtifactRef } from "./capsule.js";
+import type { ShortTermCompactionPolicySnapshot } from "../contracts/memory-handoff-compaction.js";
+import { type CompactionPreservationEntry } from "../contracts/long-term-memory-governance.js";
 export declare const SESSION_COMPACTION_TOKEN_THRESHOLD = 120000;
 export declare const SESSION_COMPACTION_MESSAGE_THRESHOLD = 40;
 export declare const ROOT_SESSION_COMPACTION_DEFAULT_TAIL_SIZE = 8;
+export declare function resolveShortTermCompactionPolicy(memoryConfig?: MemoryConfig): ShortTermCompactionPolicySnapshot;
 export type RootSessionCompactionReasonCode = "token_threshold_exceeded" | "message_threshold_exceeded" | "large_tool_payload_pruned" | "root_continuity_refresh_needed" | "blocked_by_pending_finalization" | "blocked_by_unmatched_tool_pair" | "blocked_by_cancellation_or_recovery";
 export interface SessionCompactionSnapshotInput {
     sessionId: string;
@@ -46,6 +50,7 @@ export interface RootSessionDeterministicState {
     mustKeepConstraints: string[];
     decisions: string[];
     recoveryStates: string[];
+    sourceRefs: string[];
 }
 export interface RootSessionPinnedWorkingSet {
     activeObjectives: string[];
@@ -88,9 +93,11 @@ interface RootSessionCompactionAttemptInput {
     provider: AIProvider;
     model: string;
     sessionId: string;
+    agentNameSnapshot: string;
     messages: Message[];
     sourceTokenEstimate: number;
     triggerReasonCodes: RootSessionCompactionReasonCode[];
+    memoryConfig?: MemoryConfig;
     runId?: string;
     requestGroupId?: string;
 }
@@ -101,7 +108,7 @@ interface RootSessionCompactionRewriteResult {
     resultTokenEstimate: number;
 }
 export declare function estimateContextTokens(value: string | Message[]): number;
-export declare function needsSessionCompaction(messages: Message[], totalTokens: number): boolean;
+export declare function needsSessionCompaction(messages: Message[], totalTokens: number, policy?: ShortTermCompactionPolicySnapshot): boolean;
 export declare function truncateSnapshotSummary(summary: string, maxChars?: number): string;
 export declare function buildSessionCompactionSnapshot(input: SessionCompactionSnapshotInput): SessionCompactionSnapshot;
 export declare function runSilentMemoryFlushBeforeCompaction(input: SilentMemoryFlushInput): string | undefined;
@@ -112,6 +119,7 @@ export declare function buildRootSessionCompactionReasonCodes(input: {
     totalTokens: number;
     pruningDecisionCount?: number;
     deterministicState?: RootSessionDeterministicState;
+    policy?: ShortTermCompactionPolicySnapshot;
 }): RootSessionCompactionReasonCode[];
 export declare function extractRootSessionDeterministicState(input: {
     messages: Message[];
@@ -121,6 +129,8 @@ export declare function buildRootSessionPinnedWorkingSet(input: {
     deterministicState: RootSessionDeterministicState;
 }): RootSessionPinnedWorkingSet;
 export declare function executeRootSessionCompaction(input: RootSessionCompactionAttemptInput): Promise<RootSessionCompactionExecutionResult>;
+export declare function buildCompactionPreservationEntries(state: RootSessionDeterministicState, summary: RootSessionStructuredSummary): CompactionPreservationEntry[];
+export declare function applyDeterministicStateToStructuredSummary(state: RootSessionDeterministicState, summary: RootSessionStructuredSummary): RootSessionStructuredSummary;
 export declare function rewriteRootSessionActiveWindow(input: {
     messages: Message[];
     capsule: MemoryCapsule;

@@ -3,12 +3,13 @@ import {
   chmodSync,
   cpSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs"
+import { execFileSync } from "node:child_process"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -116,8 +117,12 @@ function copyMetaPackage(outputDir, version) {
 function main() {
   const options = parseArgs(process.argv.slice(2))
   const version = packageVersion(options.version)
+  execFileSync(process.execPath, ["scripts/build-gateway-startup-bundle.mjs"], {
+    cwd: rootDir,
+    stdio: "pipe",
+  })
   mkdirSync(options.outputDir, { recursive: true })
-  copyBuiltPackage(options.outputDir, {
+  const coreTargetDir = copyBuiltPackage(options.outputDir, {
     sourcePackageDir: "core",
     targetPackageDir: "core",
     name: "@sponzey/core",
@@ -125,6 +130,7 @@ function main() {
     dependencies: readJson(join(rootDir, "packages", "core", "package.json")).dependencies,
     copy: ["dist"],
   })
+  cpSync(join(rootDir, "prompts"), join(coreTargetDir, "dist", "prompts"), { recursive: true })
   copyBuiltPackage(options.outputDir, {
     sourcePackageDir: "webui",
     targetPackageDir: "webui",

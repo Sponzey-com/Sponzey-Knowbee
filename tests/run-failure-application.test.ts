@@ -27,16 +27,16 @@ describe("run failure application", () => {
     }, dependencies)
 
     expect(result).toBe("failed")
-    expect(dependencies.appendRunEvent).toHaveBeenNthCalledWith(1, "run-1", "command failed")
+    expect(dependencies.appendRunEvent).toHaveBeenNthCalledWith(1, "run-1", "도구 또는 실행 경로에서 오류가 발생했습니다.")
     expect(dependencies.appendRunEvent).toHaveBeenNthCalledWith(2, "run-1", "worker-session 실행 실패")
-    expect(dependencies.setRunStepStatus).toHaveBeenCalledWith("run-1", "executing", "failed", "command failed")
-    expect(dependencies.updateRunStatus).toHaveBeenCalledWith("run-1", "failed", "command failed", false)
+    expect(dependencies.setRunStepStatus).toHaveBeenCalledWith("run-1", "executing", "failed", "도구 또는 실행 경로에서 오류가 발생했습니다.")
+    expect(dependencies.updateRunStatus).toHaveBeenCalledWith("run-1", "failed", "도구 또는 실행 경로에서 오류가 발생했습니다.", false)
     expect(dependencies.rememberRunFailure).toHaveBeenCalledWith({
       runId: "run-1",
       sessionId: "session-1",
       source: "telegram",
       summary: "실행 중 오류로 요청이 중단되었습니다.",
-      detail: "command failed",
+      detail: "도구 또는 실행 경로에서 오류가 발생했습니다.",
       title: "run_error",
     })
     expect(dependencies.markAbortedRunCancelledIfActive).not.toHaveBeenCalled()

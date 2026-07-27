@@ -1,4 +1,5 @@
 import type { AIChunk, AIProvider, ChatParams, Message, ToolDefinition } from "../ai/types.js";
+import type { MemoryConfig } from "../config/types.js";
 import type { AgentPromptBundle, DataExchangePackage, OwnerScope } from "../contracts/sub-agent-orchestration.js";
 export type ContextPreflightStatus = "ok" | "needs_pruning" | "needs_compaction" | "blocked_context_overflow";
 export interface ContextPreflightBreakdown {
@@ -45,10 +46,13 @@ export interface ContextPreflightResult {
     compaction?: ContextCompactionDecision;
 }
 export interface ContextPreflightMetadata {
+    invocationId?: string;
     runId?: string;
     sessionId?: string;
     requestGroupId?: string;
     operation?: string;
+    llmStage?: import("../observability/llm-invocation-receipt.js").LlmInvocationStage;
+    mainAgentNameSnapshot?: string;
 }
 export interface ContextPreflightPreparedChat extends ContextPreflightResult {
     messages: Message[];
@@ -90,10 +94,12 @@ export declare function pruneMessagesForContext(input: {
 export declare function prepareChatContext(input: ChatParams & {
     provider: AIProvider;
     metadata?: ContextPreflightMetadata;
+    memoryConfig?: MemoryConfig;
 }): Promise<ContextPreflightPreparedChat>;
 export declare function chatWithContextPreflight(input: ChatParams & {
     provider: AIProvider;
     metadata?: ContextPreflightMetadata;
+    memoryConfig?: MemoryConfig;
 }): AsyncGenerator<AIChunk>;
 export declare function validateAgentPromptBundleContextScope(input: {
     bundle: Pick<AgentPromptBundle, "agentId" | "agentType" | "memoryPolicy">;

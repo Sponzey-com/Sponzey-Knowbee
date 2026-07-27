@@ -7,23 +7,30 @@ import {
   cleanupExpiredArtifacts,
   computeArtifactExpiresAt,
   recordArtifactMetadata,
+  type ArtifactStorageContext,
 } from "../packages/core/src/artifacts/lifecycle.ts"
-import { PATHS, reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, getDb, getLatestArtifactMetadataByPath, insertSession } from "../packages/core/src/db/index.js"
 import { deliverArtifactOnce, resendArtifact, resetArtifactDeliveryDedupeForTest } from "../packages/core/src/runs/delivery.ts"
 import { createRootRun } from "../packages/core/src/runs/store.ts"
+import { createTestArtifactStorage } from "./fixtures/artifact-storage.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let artifactStorage: ArtifactStorageContext
+const deletableArtifactEvidence = () => ({
+  activeReferenceCount: 0,
+  referenceScanCompleted: true,
+  migrationRequired: false,
+  rollbackRequired: false,
+  deletionApproved: true,
+})
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempCompat("knowbee-task008-artifact-")
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  artifactStorage = createTestArtifactStorage(stateDir)
+  initializeTestDbRuntime(stateDir)
 }
 
 function mkdtempCompat(prefix: string): string {
@@ -33,7 +40,7 @@ function mkdtempCompat(prefix: string): string {
 }
 
 function writeArtifact(relativePath: string, content = "artifact"): string {
-  const filePath = join(PATHS.stateDir, "artifacts", relativePath)
+  const filePath = join(artifactStorage.rootDir, relativePath)
   mkdirSync(dirname(filePath), { recursive: true })
   writeFileSync(filePath, content)
   return filePath
@@ -47,11 +54,6 @@ beforeEach(() => {
 afterEach(() => {
   resetArtifactDeliveryDedupeForTest()
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -62,7 +64,7 @@ describe("task008 artifact lifecycle", () => {
   it("builds safe WebUI URLs only for stateDir artifacts", () => {
     const filePath = writeArtifact("screens/메인 화면.png")
 
-    const descriptor = buildArtifactAccessDescriptor({ filePath, mimeType: "image/png" })
+    const descriptor = buildArtifactAccessDescriptor({ filePath, mimeType: "image/png" }, artifactStorage)
     expect(descriptor).toMatchObject({
       ok: true,
       fileName: "메인 화면.png",
@@ -73,7 +75,7 @@ describe("task008 artifact lifecycle", () => {
       downloadUrl: "/api/artifacts/screens/%EB%A9%94%EC%9D%B8%20%ED%99%94%EB%A9%B4.png?download=1",
     })
 
-    const outside = buildArtifactAccessDescriptor({ filePath: join(tmpdir(), "outside-artifact.png") })
+    const outside = buildArtifactAccessDescriptor({ filePath: join(tmpdir(), "outside-artifact.png") }, artifactStorage)
     expect(outside.ok).toBe(false)
     expect(outside.reason).toBe("outside_state_artifacts")
     expect(outside.userMessage).toContain("안전한 artifact 저장소 밖")
@@ -95,7 +97,7 @@ describe("task008 artifact lifecycle", () => {
       expiresAt: now - 1,
       createdAt: now - 10_000,
       metadata: { source: "test" },
-    })
+    }, artifactStorage)
 
     const row = getLatestArtifactMetadataByPath(resolve(filePath))
     expect(row).toMatchObject({
@@ -112,7 +114,7 @@ describe("task008 artifact lifecycle", () => {
     })
     expect(computeArtifactExpiresAt("permanent", now)).toBeNull()
 
-    const expired = cleanupExpiredArtifacts({ now, deleteFiles: true })
+    const expired = cleanupExpiredArtifacts({ now, deleteFiles: true, cleanupEvidence: deletableArtifactEvidence }, artifactStorage)
     expect(expired.map((artifact) => artifact.id)).toEqual([id])
     expect(existsSync(filePath)).toBe(false)
     expect(getLatestArtifactMetadataByPath(resolve(filePath))?.deleted_at).toBe(now)
@@ -121,7 +123,7 @@ describe("task008 artifact lifecycle", () => {
   it("uses download fallback for non-previewable files", () => {
     const filePath = writeArtifact("exports/result.zip", "zip")
 
-    const descriptor = buildArtifactAccessDescriptor({ filePath, mimeType: "application/zip" })
+    const descriptor = buildArtifactAccessDescriptor({ filePath, mimeType: "application/zip" }, artifactStorage)
 
     expect(descriptor).toMatchObject({
       ok: true,
@@ -130,6 +132,44 @@ describe("task008 artifact lifecycle", () => {
       url: "/api/artifacts/exports/result.zip?download=1",
       previewUrl: "/api/artifacts/exports/result.zip",
       downloadUrl: "/api/artifacts/exports/result.zip?download=1",
+    })
+  })
+
+  it.each(["internal", "audit"] as const)(
+    "does not expose %s artifacts through the public access descriptor",
+    (dataClassification) => {
+      const filePath = writeArtifact(`private/${dataClassification}.json`, "{}")
+
+      expect(
+        buildArtifactAccessDescriptor({
+          filePath,
+          mimeType: "application/json",
+          dataClassification,
+        }, artifactStorage),
+      ).toMatchObject({
+        ok: false,
+        previewable: false,
+        downloadable: false,
+        reason: "restricted_data_classification",
+      })
+    },
+  )
+
+  it("persists explicit artifact data classification without a schema migration", () => {
+    const filePath = writeArtifact("private/audit.json", "{}")
+
+    recordArtifactMetadata({
+      ownerChannel: "audit",
+      artifactPath: filePath,
+      dataClassification: "audit",
+    }, artifactStorage)
+
+    const row = getLatestArtifactMetadataByPath(resolve(filePath))
+    expect(JSON.parse(row?.metadata_json ?? "{}")).toMatchObject({
+      dataClassification: "audit",
+      artifactLifecycle: {
+        delivery: { downloadable: false },
+      },
     })
   })
 
@@ -156,6 +196,7 @@ describe("task008 artifact lifecycle", () => {
     const resendTask = vi.fn(async () => "resent")
 
     await expect(deliverArtifactOnce({
+      artifactStorage,
       runId: "run-artifact-resend",
       channel: "webui",
       channelTarget: "session-artifact-resend",
@@ -165,6 +206,7 @@ describe("task008 artifact lifecycle", () => {
       task: firstTask,
     })).resolves.toBe("sent")
     await expect(deliverArtifactOnce({
+      artifactStorage,
       runId: "run-artifact-resend",
       channel: "webui",
       channelTarget: "session-artifact-resend",
@@ -174,6 +216,7 @@ describe("task008 artifact lifecycle", () => {
       task: duplicateTask,
     })).resolves.toBeUndefined()
     await expect(resendArtifact({
+      artifactStorage,
       runId: "run-artifact-resend",
       channel: "webui",
       channelTarget: "session-artifact-resend",

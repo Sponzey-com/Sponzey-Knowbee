@@ -15,26 +15,32 @@ import {
 } from "../packages/core/src/runs/queue-backpressure.ts"
 
 describe("run recovery budget helpers", () => {
-  it("keeps recovery kinds unbounded by fixed retry count", () => {
+  it("does not turn configured delegation counts into recovery stop conditions", () => {
     const usage = createRecoveryBudgetUsage()
 
     expect(getRecoveryBudgetState({
       usage,
       kind: "interpretation",
       maxDelegationTurns: 5,
-    }).limit).toBe(0)
+    })).toMatchObject({
+      limit: 0,
+      policy: {
+        kind: "strategy_guarded",
+        policyVersion: "recovery.changed-strategy-guarded:v3",
+      },
+    })
 
     expect(getRecoveryBudgetState({
       usage,
       kind: "delivery",
       maxDelegationTurns: 5,
-    }).limit).toBe(0)
+    })).toMatchObject({ limit: 0, policy: { kind: "strategy_guarded" } })
 
     expect(getRecoveryBudgetState({
       usage,
       kind: "external",
       maxDelegationTurns: 5,
-    }).limit).toBe(0)
+    })).toMatchObject({ limit: 0, policy: { kind: "strategy_guarded" } })
   })
 
   it("consumes budget independently per recovery kind", () => {

@@ -1,5 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { ToolContext } from "../packages/core/src/tools/types.ts"
+
+const isolatedStateDir = join(tmpdir(), `knowbee-camera-tool-test-${process.pid}`)
 
 const canYeonjangHandleMethod = vi.fn()
 const invokeYeonjangMethod = vi.fn()
@@ -30,10 +34,30 @@ vi.mock("node:fs", async () => {
   }
 })
 
+const realFs = await vi.importActual<typeof import("node:fs")>("node:fs")
+realFs.mkdirSync(isolatedStateDir, { recursive: true })
+const { closeDb } = await import("../packages/core/src/db/index.js")
+const { initializeTestDbRuntime } = await import("./fixtures/runtime-db.ts")
+initializeTestDbRuntime(isolatedStateDir)
+
 const { yeonjangCameraCaptureTool } = await import("../packages/core/src/tools/builtin/yeonjang.ts")
+
+afterAll(() => {
+  closeDb()
+  realFs.rmSync(isolatedStateDir, { recursive: true, force: true })
+})
 
 function createContext(): ToolContext {
   return {
+    artifactStorage: {
+      rootDir: join(isolatedStateDir, "artifacts"),
+      fileSystem: {
+        exists: realFs.existsSync,
+        realpath: realFs.realpathSync,
+        remove: (path) => realFs.rmSync(path, { force: true }),
+        stat: realFs.statSync,
+      },
+    },
     sessionId: "session-1",
     runId: "run-1",
     requestGroupId: "request-group-1",
@@ -119,10 +143,109 @@ describe("yeonjang camera capture tool", () => {
       mimeType: "image/jpeg",
       sizeBytes: 123,
       transferEncoding: "base64",
+      artifactVerification: {
+        status: "verified",
+        artifactRef: expect.stringMatching(/^artifact:/),
+        mimeType: "image/jpeg",
+        sizeBytes: 321,
+      },
     })
     expect(result.details).not.toHaveProperty("output_path")
     expect(result.details).not.toHaveProperty("base64_data")
+    expect(result.details).not.toHaveProperty("localSavedPath")
+    expect(result.output).not.toContain(join(isolatedStateDir, "artifacts"))
     expect(writeFileSync).toHaveBeenCalledTimes(1)
+    expect(writeFileSync.mock.calls[0]?.[0]).toEqual(
+      expect.stringContaining(join(isolatedStateDir, "artifacts", "yeonjang")),
+    )
+  })
+
+  it("projects a WebUI camera artifact by opaque ref instead of internal path", async () => {
+    invokeYeonjangMethod.mockResolvedValueOnce({
+      device_id: "camera-1",
+      mime_type: "image/png",
+      transfer_encoding: "base64",
+      base64_data: "aGVsbG8=",
+      message: "Camera capture completed.",
+    })
+
+    const result = await yeonjangCameraCaptureTool.execute({
+      extensionId: "yeonjang-main",
+      deviceId: "camera-1",
+    }, {
+      ...createContext(),
+      source: "webui",
+    })
+
+    expect(result).toMatchObject({
+      success: true,
+      details: {
+        kind: "artifact_delivery",
+        channel: "webui",
+        artifactRef: expect.stringMatching(/^artifact:/),
+        mimeType: "image/png",
+        size: 321,
+      },
+    })
+    expect(result.details).not.toHaveProperty("filePath")
+    expect(JSON.stringify(result)).not.toContain(join(isolatedStateDir, "artifacts"))
+  })
+
+  it("rejects an acknowledgement when the saved image artifact is empty", async () => {
+    statSync.mockReturnValueOnce({ size: 0 })
+    invokeYeonjangMethod.mockResolvedValueOnce({
+      device_id: "camera-1",
+      mime_type: "image/jpeg",
+      transfer_encoding: "base64",
+      base64_data: "aGVsbG8=",
+      message: "Camera capture completed.",
+    })
+
+    const result = await yeonjangCameraCaptureTool.execute({
+      extensionId: "yeonjang-main",
+      deviceId: "camera-1",
+    }, createContext())
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "CAMERA_ARTIFACT_EMPTY",
+      details: {
+        via: "yeonjang",
+        artifactVerification: {
+          status: "failed",
+          reasonCode: "camera_artifact_empty",
+        },
+      },
+    })
+    expect(result.details).not.toHaveProperty("kind", "artifact_delivery")
+  })
+
+  it("rejects capture bytes without a supported image MIME type", async () => {
+    invokeYeonjangMethod.mockResolvedValueOnce({
+      device_id: "camera-1",
+      mime_type: "application/octet-stream",
+      transfer_encoding: "base64",
+      base64_data: "aGVsbG8=",
+      message: "Camera capture completed.",
+    })
+
+    const result = await yeonjangCameraCaptureTool.execute({
+      extensionId: "yeonjang-main",
+      deviceId: "camera-1",
+    }, createContext())
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "CAMERA_ARTIFACT_MIME_INVALID",
+      details: {
+        via: "yeonjang",
+        artifactVerification: {
+          status: "failed",
+          reasonCode: "camera_artifact_mime_invalid",
+        },
+      },
+    })
+    expect(writeFileSync).not.toHaveBeenCalled()
   })
 
   it("stops early when the user requests front camera on an iPhone continuity device", async () => {

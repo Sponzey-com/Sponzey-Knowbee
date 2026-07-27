@@ -2,6 +2,8 @@ export function prepareRootLoopLaunch(params, dependencies, executionLoopRuntime
     const { executionProfile } = executionLoopRuntime;
     const originalUserRequest = executionLoopRuntime.originalUserRequest;
     const rootLoopParams = {
+        artifactStorage: params.artifactStorage,
+        memoryJournal: params.memoryJournal,
         runId: params.runId,
         sessionId: params.sessionId,
         requestGroupId: params.requestGroupId,
@@ -9,12 +11,15 @@ export function prepareRootLoopLaunch(params, dependencies, executionLoopRuntime
         onChunk: params.onChunk,
         controller: params.controller,
         ...(params.skipIntake ? { skipIntake: params.skipIntake } : {}),
-        ...(params.immediateCompletionText ? { immediateCompletionText: params.immediateCompletionText } : {}),
+        ...(params.immediateCompletionText
+            ? { immediateCompletionText: params.immediateCompletionText }
+            : {}),
         reconnectNeedsClarification: params.reconnectNeedsClarification,
         ...(params.reconnectTargetTitle ? { reconnectTargetTitle: params.reconnectTargetTitle } : {}),
         ...(params.reconnectSelection ? { reconnectSelection: params.reconnectSelection } : {}),
         queuedBehindRequestGroupRun: params.queuedBehindRequestGroupRun,
         currentMessage: params.message,
+        requiredToolNames: executionProfile.requiredToolNames,
         currentModel: params.currentModel,
         currentProviderId: params.currentProviderId,
         currentProvider: params.currentProvider,
@@ -27,10 +32,17 @@ export function prepareRootLoopLaunch(params, dependencies, executionLoopRuntime
         structuredRequest: executionProfile.structuredRequest,
         executionSemantics: executionProfile.executionSemantics,
         workDir: params.workDir,
+        config: params.config,
+        ...(params.finalResponseIdentityContext
+            ? { finalResponseIdentityContext: params.finalResponseIdentityContext }
+            : {}),
         ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
         isRootRequest: params.isRootRequest,
         contextMode: params.contextMode,
         taskProfile: params.taskProfile,
+        ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
+        ...(params.includeScheduleMemory ? { includeScheduleMemory: true } : {}),
+        ...(params.memorySearchQuery ? { memorySearchQuery: params.memorySearchQuery } : {}),
         wantsDirectArtifactDelivery: executionProfile.wantsDirectArtifactDelivery,
         requiresFilesystemMutation: executionLoopRuntime.requiresFilesystemMutation,
         requiresPrivilegedToolExecution: executionLoopRuntime.requiresPrivilegedToolExecution,
@@ -47,6 +59,11 @@ export function prepareRootLoopLaunch(params, dependencies, executionLoopRuntime
         defaultMaxDelegationTurns: params.defaultMaxDelegationTurns,
     };
     const rootLoopDependencies = {
+        ...(dependencies.getAdmittedCapabilityExecutionScope
+            ? {
+                getAdmittedCapabilityExecutionScope: dependencies.getAdmittedCapabilityExecutionScope,
+            }
+            : {}),
         appendRunEvent: dependencies.appendRunEvent,
         updateRunSummary: dependencies.updateRunSummary,
         setRunStepStatus: dependencies.setRunStepStatus,
@@ -68,6 +85,12 @@ export function prepareRootLoopLaunch(params, dependencies, executionLoopRuntime
         grantRunApprovalScope: dependencies.grantRunApprovalScope,
         grantRunSingleApproval: dependencies.grantRunSingleApproval,
         ...(dependencies.onReviewError ? { onReviewError: dependencies.onReviewError } : {}),
+        recordCanonicalAttempt: dependencies.recordCanonicalAttempt,
+        recordCanonicalRecoveryReentry: dependencies.recordCanonicalRecoveryReentry,
+        recordCanonicalCompletionOutcome: dependencies.recordCanonicalCompletionOutcome,
+        recordCanonicalDelivery: dependencies.recordCanonicalDelivery,
+        stageCanonicalPendingResponse: dependencies.stageCanonicalPendingResponse,
+        consumeCanonicalPendingResponse: dependencies.consumeCanonicalPendingResponse,
         ...(dependencies.onDeliveryError ? { onDeliveryError: dependencies.onDeliveryError } : {}),
         executeLoopDirective: dependencies.executeLoopDirective,
         tryHandleActiveQueueCancellation: dependencies.tryHandleActiveQueueCancellation,

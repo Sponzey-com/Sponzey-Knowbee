@@ -1,8 +1,9 @@
 import { existsSync, statSync } from "node:fs"
 import { homedir } from "node:os"
-import { getConfig, type KnowbeeConfig } from "../config/index.js"
-import type { McpServerConfig, SkillConfigItem } from "../config/types.js"
+import type { KnowbeeConfig, McpServerConfig, SkillConfigItem } from "../config/types.js"
+import { redactLogText } from "../logger/index.js"
 import { McpStdioClient } from "../mcp/client.js"
+import { McpHttpClient } from "../mcp/http-client.js"
 import { mcpRegistry } from "../mcp/registry.js"
 
 export type SetupCapabilityStatus = "ready" | "disabled" | "planned" | "error"
@@ -38,6 +39,11 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
+function setupExtensionConnectionErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw.replace(/https?:\/\/\S+/giu, "[external-endpoint-redacted]"))
+}
+
 function normalizePath(value: string): string {
   const trimmed = value.trim()
   if (!trimmed) return ""
@@ -58,25 +64,27 @@ function evaluateSkill(item: SkillConfigItem): { status: SetupCapabilityStatus; 
 
   const path = normalizePath(item.path ?? "")
   if (!path) {
-    return { status: "error", reason: "로컬 Skill 경로를 입력해야 합니다." }
+    return { status: "error", reason: "로컬 작업 능력 경로를 입력해야 합니다." }
   }
 
   if (!existsSync(path)) {
-    return { status: "error", reason: "입력한 Skill 경로를 찾을 수 없습니다." }
+    return { status: "error", reason: "입력한 작업 능력 경로를 찾을 수 없습니다." }
   }
 
   const stat = statSync(path)
   if (!stat.isDirectory() && !stat.isFile()) {
-    return { status: "error", reason: "Skill 경로는 파일 또는 폴더여야 합니다." }
+    return { status: "error", reason: "작업 능력 경로는 파일 또는 폴더여야 합니다." }
   }
 
   return {
     status: "ready",
-    reason: stat.isDirectory() ? "로컬 Skill 폴더를 찾았습니다." : "로컬 Skill 파일을 찾았습니다.",
+    reason: stat.isDirectory()
+      ? "로컬 작업 능력 폴더를 찾았습니다."
+      : "로컬 작업 능력 파일을 찾았습니다.",
   }
 }
 
-export function buildMcpSetupDraft(config: KnowbeeConfig = getConfig()): { servers: SetupMcpServerDraft[] } {
+export function buildMcpSetupDraft(config: KnowbeeConfig): { servers: SetupMcpServerDraft[] } {
   const statuses = new Map(mcpRegistry.getStatuses().map((status) => [status.name, status]))
   const servers = Object.entries(config.mcp?.servers ?? {}).map(([name, serverConfig]) => {
     const status = statuses.get(name)
@@ -90,13 +98,7 @@ export function buildMcpSetupDraft(config: KnowbeeConfig = getConfig()): { serve
       url: serverConfig.url ?? "",
       required: Boolean(serverConfig.required),
       enabled: serverConfig.enabled !== false,
-      status: status
-        ? status.ready
-          ? "ready"
-          : status.error
-            ? "error"
-            : "disabled"
-        : "disabled",
+      status: status ? (status.ready ? "ready" : status.error ? "error" : "disabled") : "disabled",
       ...(status?.error ? { reason: status.error } : {}),
       tools: status?.tools.map((tool) => tool.name) ?? [],
     } satisfies SetupMcpServerDraft
@@ -105,10 +107,14 @@ export function buildMcpSetupDraft(config: KnowbeeConfig = getConfig()): { serve
   return { servers }
 }
 
-export function persistMcpSetupDraft(raw: Record<string, unknown>, draft: { servers: SetupMcpServerDraft[] }): void {
-  const rawMcp = raw.mcp && typeof raw.mcp === "object" && !Array.isArray(raw.mcp)
-    ? (raw.mcp as Record<string, unknown>)
-    : {}
+export function persistMcpSetupDraft(
+  raw: Record<string, unknown>,
+  draft: { servers: SetupMcpServerDraft[] },
+): void {
+  const rawMcp =
+    raw.mcp && typeof raw.mcp === "object" && !Array.isArray(raw.mcp)
+      ? (raw.mcp as Record<string, unknown>)
+      : {}
 
   const servers = Object.fromEntries(
     draft.servers
@@ -146,18 +152,19 @@ export function persistMcpSetupDraft(raw: Record<string, unknown>, draft: { serv
   }
 }
 
-export async function testMcpServerConnection(server: SetupMcpServerDraft): Promise<{ ok: boolean; message: string; tools: string[] }> {
-  if (server.transport === "http") {
-    return {
-      ok: false,
-      message: "HTTP 방식(MCP HTTP)은 아직 준비 중입니다. 지금은 stdio 방식만 사용할 수 있습니다.",
-      tools: [],
-    }
-  }
-
-  if (!server.command.trim()) {
+export async function testMcpServerConnection(
+  server: SetupMcpServerDraft,
+  defaultCwd: string,
+  options: {
+    readonly baseEnv?: Readonly<Record<string, string | undefined>>
+    readonly signal?: AbortSignal
+  } = {},
+): Promise<{ ok: boolean; message: string; tools: string[] }> {
+  if (server.transport === "stdio" && !server.command.trim()) {
     return { ok: false, message: "실행 명령(Command)을 입력해야 합니다.", tools: [] }
   }
+  if (server.transport === "http" && !server.url.trim())
+    return { ok: false, message: "HTTP endpoint를 입력해야 합니다.", tools: [] }
 
   const args = server.argsText
     .split(/\n+/)
@@ -167,33 +174,49 @@ export async function testMcpServerConnection(server: SetupMcpServerDraft): Prom
 
   const config: McpServerConfig = {
     enabled: true,
-    transport: "stdio",
-    command: server.command.trim(),
+    transport: server.transport,
     startupTimeoutSec: 10,
     toolTimeoutSec: 30,
   }
-  if (args.length > 0) config.args = args
-  if (cwd) config.cwd = cwd
+  if (server.transport === "http") config.url = server.url.trim()
+  else {
+    config.command = server.command.trim()
+    if (args.length > 0) config.args = args
+    if (cwd) config.cwd = cwd
+  }
 
-  const client = new McpStdioClient({
-    name: server.name || "setup_test",
-    config,
-  })
+  const client =
+    server.transport === "http"
+      ? new McpHttpClient({ config })
+      : new McpStdioClient({
+          name: server.name || "setup_test",
+          config,
+          defaultCwd,
+          ...(options.baseEnv ? { baseEnv: { ...options.baseEnv } } : {}),
+        })
 
   try {
-    await client.initialize()
-    const tools = await client.listTools()
+    if (options.signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError")
+    if (client instanceof McpHttpClient) await client.initialize(options.signal)
+    else await client.initialize()
+    const tools =
+      client instanceof McpHttpClient
+        ? await client.listTools(options.signal)
+        : await client.listTools()
+    if (options.signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError")
     return {
       ok: true,
-      message: tools.length > 0
-        ? `연결 성공: 도구 ${tools.length}개를 확인했습니다.`
-        : "연결은 성공했지만, 표시할 도구가 없습니다.",
+      message:
+        tools.length > 0
+          ? `연결 성공: 도구 ${tools.length}개를 확인했습니다.`
+          : "연결은 성공했지만, 표시할 도구가 없습니다.",
       tools: tools.map((tool) => tool.name),
     }
   } catch (error) {
+    const message = setupExtensionConnectionErrorMessage(error)
     return {
       ok: false,
-      message: error instanceof Error ? error.message : String(error),
+      message,
       tools: [],
     }
   } finally {
@@ -201,7 +224,7 @@ export async function testMcpServerConnection(server: SetupMcpServerDraft): Prom
   }
 }
 
-export function buildSkillsSetupDraft(config: KnowbeeConfig = getConfig()): { items: SetupSkillDraftItem[] } {
+export function buildSkillsSetupDraft(config: KnowbeeConfig): { items: SetupSkillDraftItem[] } {
   const items = (config.skills?.items ?? []).map((item) => {
     const evaluation = evaluateSkill(item)
     return {
@@ -220,7 +243,10 @@ export function buildSkillsSetupDraft(config: KnowbeeConfig = getConfig()): { it
   return { items }
 }
 
-export function persistSkillsSetupDraft(raw: Record<string, unknown>, draft: { items: SetupSkillDraftItem[] }): void {
+export function persistSkillsSetupDraft(
+  raw: Record<string, unknown>,
+  draft: { items: SetupSkillDraftItem[] },
+): void {
   raw.skills = {
     items: draft.items
       .filter((item) => item.label.trim())
@@ -240,32 +266,42 @@ export function persistSkillsSetupDraft(raw: Record<string, unknown>, draft: { i
   }
 }
 
-export function testSkillPath(path: string): { ok: boolean; message: string; resolvedPath?: string } {
+export function testSkillPath(path: string): {
+  ok: boolean
+  message: string
+  resolvedPath?: string
+} {
   const resolvedPath = normalizePath(path)
   if (!resolvedPath) {
-    return { ok: false, message: "Skill 경로를 입력해야 합니다." }
+    return { ok: false, message: "작업 능력 경로를 입력해야 합니다." }
   }
 
   if (!existsSync(resolvedPath)) {
-    return { ok: false, message: "입력한 Skill 경로를 찾을 수 없습니다.", resolvedPath }
+    return { ok: false, message: "입력한 작업 능력 경로를 찾을 수 없습니다.", resolvedPath }
   }
 
   const stat = statSync(resolvedPath)
   if (!stat.isDirectory() && !stat.isFile()) {
-    return { ok: false, message: "Skill 경로는 파일 또는 폴더여야 합니다.", resolvedPath }
+    return { ok: false, message: "작업 능력 경로는 파일 또는 폴더여야 합니다.", resolvedPath }
   }
 
   return {
     ok: true,
-    message: stat.isDirectory() ? "Skill 폴더를 확인했습니다." : "Skill 파일을 확인했습니다.",
+    message: stat.isDirectory()
+      ? "작업 능력 폴더를 확인했습니다."
+      : "작업 능력 파일을 확인했습니다.",
     resolvedPath,
   }
 }
 
-export function cloneMcpDraft(value: { servers: SetupMcpServerDraft[] }): { servers: SetupMcpServerDraft[] } {
+export function cloneMcpDraft(value: { servers: SetupMcpServerDraft[] }): {
+  servers: SetupMcpServerDraft[]
+} {
   return clone(value)
 }
 
-export function cloneSkillsDraft(value: { items: SetupSkillDraftItem[] }): { items: SetupSkillDraftItem[] } {
+export function cloneSkillsDraft(value: { items: SetupSkillDraftItem[] }): {
+  items: SetupSkillDraftItem[]
+} {
   return clone(value)
 }

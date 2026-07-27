@@ -9,6 +9,10 @@ export interface ExecutorUnderstandingPanelProps {
   name: string
   description: string
   inference?: ExecutorInferenceResult
+  titleKo?: string
+  titleEn?: string
+  lowConfidenceMessageKo?: string
+  lowConfidenceMessageEn?: string
   confirmDisabled?: boolean
   onConfirm?: () => void
 }
@@ -17,6 +21,10 @@ export function ExecutorUnderstandingPanel({
   name,
   description,
   inference,
+  titleKo,
+  titleEn,
+  lowConfidenceMessageKo,
+  lowConfidenceMessageEn,
   confirmDisabled = false,
   onConfirm,
 }: ExecutorUnderstandingPanelProps) {
@@ -37,7 +45,7 @@ export function ExecutorUnderstandingPanel({
       <div>
         <div>
           <div className="text-xs font-semibold text-stone-950">
-            {text("노비가 이해한 내용", "What Knowbee understood")}
+            {text(titleKo ?? "메인 에이전트가 이해한 내용", titleEn ?? "What the main agent understood")}
           </div>
           <p className="mt-1 text-xs leading-5 text-stone-600">
             {text(resolvedInference.summaryKo, resolvedInference.summaryEn)}
@@ -51,8 +59,8 @@ export function ExecutorUnderstandingPanel({
           data-testid="executor-understanding-low-confidence"
         >
           {text(
-            "설명이 짧아 요청 처리 중 노비가 필요한 내용을 더 물어볼 수 있습니다.",
-            "The description is short, so Knowbee may ask for missing details while handling a request.",
+            lowConfidenceMessageKo ?? "설명이 짧아 요청 처리 중 메인 에이전트가 필요한 내용을 더 물어볼 수 있습니다.",
+            lowConfidenceMessageEn ?? "The description is short, so the main agent may ask for missing details while handling a request.",
           )}
         </div>
       ) : null}

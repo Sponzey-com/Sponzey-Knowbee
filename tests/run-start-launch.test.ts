@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 import { buildIncomingIntentContract } from "../packages/core/src/runs/active-run-projection.ts"
 import { prepareStartLaunch } from "../packages/core/src/runs/start-launch.ts"
 import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
+import { createTestStartPlanBoundaryDependencies } from "./fixtures/start-plan.ts"
 
 describe("prepare start launch", () => {
   it("creates the run and initializes it from the computed start plan", async () => {
@@ -44,6 +46,7 @@ describe("prepare start launch", () => {
     }))
 
     const result = await prepareStartLaunch({
+      config: DEFAULT_CONFIG,
       message: "continue work",
       sessionId: "session-1",
       runId: "run-1",
@@ -56,6 +59,7 @@ describe("prepare start launch", () => {
       targetLabel: "OpenAI",
       hasRequestGroupExecutionQueue: (requestGroupId) => requestGroupId === "group-prev",
     }, {
+      ...createTestStartPlanBoundaryDependencies(),
       buildStartPlan: buildStartPlan as any,
       isReusableRequestGroup: vi.fn(),
       listActiveSessionRequestGroups: vi.fn(),
@@ -122,6 +126,7 @@ describe("prepare start launch", () => {
     }))
 
     await prepareStartLaunch({
+      config: DEFAULT_CONFIG,
       message: "delayed hello",
       sessionId: "session-delayed",
       runId: "run-delayed",
@@ -133,6 +138,7 @@ describe("prepare start launch", () => {
       originRequestGroupId: "origin-group-1",
       hasRequestGroupExecutionQueue: () => false,
     }, {
+      ...createTestStartPlanBoundaryDependencies(),
       buildStartPlan: buildStartPlan as any,
       isReusableRequestGroup: vi.fn(),
       listActiveSessionRequestGroups: vi.fn(),
@@ -161,6 +167,7 @@ describe("prepare start launch", () => {
 
   it("keeps structured provider target contracts isolated without explicit continuation", async () => {
     const result = await prepareStartLaunch({
+      config: DEFAULT_CONFIG,
       message: "continue the previous work",
       sessionId: "session-real",
       runId: "run-real",
@@ -175,6 +182,7 @@ describe("prepare start launch", () => {
       }),
       hasRequestGroupExecutionQueue: () => false,
     }, {
+      ...createTestStartPlanBoundaryDependencies(),
       buildStartPlan,
       analyzeRequestEntrySemantics: vi.fn((message: string) => ({
         reuse_conversation_context: false,

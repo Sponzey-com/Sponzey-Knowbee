@@ -9,8 +9,7 @@ import type { SetupDraft, SetupSubAgentDraftItem } from "../packages/webui/src/c
 
 const rootAgent = {
   id: "agent:knowbee",
-  displayName: "Knowbee",
-  nickname: "노비",
+  agentName: "Knowbee",
 }
 
 function setupDraft(item: SetupSubAgentDraftItem): SetupDraft {
@@ -43,8 +42,8 @@ function agent(overrides: Partial<SetupSubAgentDraftItem> = {}): SetupSubAgentDr
   return {
     agentId: "agent:researcher",
     parentAgentId: "agent:knowbee",
+    agentName: "조사",
     displayName: "Researcher",
-    nickname: "조사",
     role: "Research helper",
     description: "Collect evidence and summarize it.",
     skillMcpBindings: {
@@ -112,8 +111,7 @@ describe("task007 unified settings detail sections", () => {
       agents: [
         {
           id: "agent:researcher",
-          displayName: "Researcher",
-          nickname: "Research",
+          agentName: "Research",
           role: "Research helper",
           workDescription: "Collect evidence and summarize it.",
           parentId: "agent:knowbee",
@@ -162,8 +160,8 @@ describe("task007 unified settings detail sections", () => {
       "monitoring",
     ])
     expect(detailText).toContain("모델")
-    expect(detailText).toContain("Skill 2")
-    expect(detailText).toContain("MCP 1")
+    expect(detailText).toContain("작업 능력 2")
+    expect(detailText).toContain("외부 기능 1")
     expect(detailText).toContain("압축")
     expect(detailText).toContain("승인 1")
     expect(detailText).toContain("재위임")
@@ -172,6 +170,21 @@ describe("task007 unified settings detail sections", () => {
     expect(detailText).not.toContain("token:unsafe")
     expect(detailText).not.toContain("agent:child-internal-1")
     expect(detailText).not.toContain("run:secret")
+  })
+
+  it("uses explicit setup agentName for selected labels", () => {
+    const view = buildUnifiedSettingsViewForSetupDraft({
+      draft: setupDraft(agent({
+        agentName: "정리 담당",
+        displayName: "Researcher",
+      })),
+      language: "ko",
+      selectedAgentId: "agent:researcher",
+    })
+
+    expect(view.agents[0]?.label).toBe("정리 담당")
+    expect(view.selectedAgent?.label).toBe("정리 담당")
+    expect(view.selectedAgentDetail?.label).toBe("정리 담당")
   })
 
   it("renders selected detail sections in the summary panel without raw advanced contracts", () => {
@@ -185,7 +198,7 @@ describe("task007 unified settings detail sections", () => {
     expect(html).toContain('data-testid="unified-settings-selected-detail"')
     expect(html).toContain('data-testid="unified-settings-detail-section"')
     expect(html).toContain("모델")
-    expect(html).toContain("Skill/MCP")
+    expect(html).toContain("작업 능력/외부 기능")
     expect(html).toContain("메모리")
     expect(html).toContain("권한")
     expect(html).toContain("위임")

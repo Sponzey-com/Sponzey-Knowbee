@@ -1,4 +1,4 @@
-export type RunOrchestrationMode = "single_knowbee" | "orchestration"
+export type RunOrchestrationMode = "direct_main_agent" | "single_knowbee" | "orchestration"
 
 export type RuntimeInspectorControlAction =
   | "send"
@@ -25,6 +25,28 @@ export type RunStatus =
   | "failed"
   | "cancelled"
   | "interrupted"
+
+export type RequestExecutionOutcomeStatus =
+  | "in_progress"
+  | "awaiting_approval"
+  | "awaiting_user"
+  | "succeeded"
+  | "partially_succeeded"
+  | "blocked"
+  | "exhausted"
+  | "cancelled"
+  | "internal_fault"
+
+export type RequestDeliveryOutcomeStatus =
+  | "not_started"
+  | "pending"
+  | "delivered"
+  | "failed"
+
+export interface RequestExecutionOutcome {
+  executionStatus: RequestExecutionOutcomeStatus
+  deliveryStatus: RequestDeliveryOutcomeStatus
+}
 
 export type RunStepStatus = "pending" | "running" | "completed" | "failed" | "cancelled"
 
@@ -82,8 +104,8 @@ export interface RootRun {
   orchestrationPlanSnapshot?: Record<string, unknown>
   subSessionIds?: string[]
   subSessionsSnapshot?: Array<Record<string, unknown>>
-  agentDisplayName?: string
-  agentNickname?: string
+  agentName?: string
+  agentNameSnapshot?: string
   currentStepKey: string
   currentStepIndex: number
   totalSteps: number
@@ -158,7 +180,7 @@ export interface RunRuntimeInspectorFeedback {
   status: "none" | "requested" | "redelegation_requested"
   feedbackRequestId?: string
   targetAgentId?: string
-  targetAgentNickname?: string
+  targetAgentNameSnapshot?: string
   reasonCode?: string
   missingItemCount?: number
   requiredChangeCount?: number
@@ -184,8 +206,8 @@ export interface RunRuntimeInspectorSubSession {
   subSessionId: string
   parentRunId: string
   agentId: string
-  agentDisplayName: string
-  agentNickname?: string
+  agentName: string
+  agentNameSnapshot?: string
   status:
     | "created"
     | "queued"
@@ -213,9 +235,11 @@ export interface RunRuntimeInspectorSubSession {
 export interface RunRuntimeInspectorDataExchangeSummary {
   exchangeId: string
   sourceOwnerId: string
-  sourceNickname?: string
+  sourceAgentName?: string
+  sourceAgentNameSnapshot?: string
   recipientOwnerId: string
-  recipientNickname?: string
+  recipientAgentName?: string
+  recipientAgentNameSnapshot?: string
   purpose: string
   allowedUse: "temporary_context" | "memory_candidate" | "verification_only"
   retentionPolicy: "session_only" | "short_term" | "long_term_candidate"
@@ -360,6 +384,16 @@ export interface RunRuntimeInspectorProjection {
   timeline: RunRuntimeInspectorTimelineEvent[]
   topologyRuns: RunRuntimeInspectorTopologyRun[]
   finalizer: RunRuntimeInspectorFinalizer
+  typedTrace?: {
+    status: "ready" | "not_recorded" | "unavailable"
+    currentStage: "not_started" | "request" | "analysis" | "execution" | "evidence" | "review" | "recovery" | "finalization" | "unknown"
+    eventCount: number
+    terminal: boolean
+    issueCount: number
+    verification: "not_started" | "evidence_recorded" | "reviewed" | "unknown"
+    recoveryCount: number
+    blocker: "none" | "policy" | "exhausted" | "cancelled" | "unknown"
+  }
   redaction: {
     payloadsRedacted: true
     rawPayloadVisible: false

@@ -16,6 +16,13 @@ function sanitizeDisplayVersion(value) {
     const trimmed = value.trim();
     return trimmed || null;
 }
+export function createVersionEnvironmentSnapshot(env) {
+    return Object.freeze({
+        displayVersion: sanitizeDisplayVersion(env["KNOWBEE_DISPLAY_VERSION"]),
+        gitVersion: sanitizeDisplayVersion(env["KNOWBEE_GIT_VERSION"]),
+    });
+}
+const VERSION_ENV = createVersionEnvironmentSnapshot(process.env);
 export function getWorkspaceRootPath() {
     let current = dirname(fileURLToPath(import.meta.url));
     while (true) {
@@ -42,9 +49,8 @@ export function getCurrentAppVersion() {
         return "0.1.0";
     }
 }
-export function getCurrentDisplayVersion() {
-    const explicit = sanitizeDisplayVersion(process.env["KNOWBEE_DISPLAY_VERSION"])
-        ?? sanitizeDisplayVersion(process.env["KNOWBEE_GIT_VERSION"]);
+export function getCurrentDisplayVersion(snapshot = VERSION_ENV) {
+    const explicit = snapshot.displayVersion ?? snapshot.gitVersion;
     if (explicit)
         return explicit;
     try {

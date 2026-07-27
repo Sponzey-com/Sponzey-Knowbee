@@ -1,5 +1,9 @@
 # Recovery Policy
 
+## Purpose
+
+Own failure classification, changed-strategy recovery, count-signal interpretation, child-result recovery, current-fact retrieval recovery, and impossible-reason fallback.
+
 This file covers only failure analysis and retry rules.
 
 ---
@@ -19,7 +23,7 @@ This file covers only failure analysis and retry rules.
 - Build recovery keys from `tool + target + normalized error kind + action`.
 - Check permission, path, target, channel, input format, execution order, and capability first.
 - Do not stop ordinary execution because a fixed retry count was reached.
-- Treat retry count, attempt count, repeated failure count, and queue retry count as signals to search for another method, not as failure conditions.
+- Treat retry count, attempt count, delegation turn count, repeated failure count, and queue retry count as signals to search for another method, not as failure conditions.
 - If telemetry or a legacy component reports `retry_exhausted`, `max_attempts_reached`, `retry_budget_exhausted`, `delegation_turns_exhausted`, or `too_many_failures`, reclassify it as `count_signal_observed` and search for a changed strategy unless the user explicitly set that limit.
 - Treat ordinary model timeouts as recovery signals. Treat queue, external tool, approval, and network timeouts as boundary timeouts that require waiting, fallback, changed source/tool, or user confirmation; they are not business completion failures by themselves.
 - Do stop repeating the same recovery key when there is no new evidence, no changed input, and no changed target.
@@ -64,8 +68,7 @@ This file covers only failure analysis and retry rules.
 - If no child candidate is suitable, evaluate whether the current agent can self-solve within its role, tools, and permission boundary before returning unresolved.
 - If failure came from a hierarchy violation, do not bypass through a grandchild or another tree. Ask the current direct child to replan, or close with an impossible reason.
 - Team member failure is separate from Team failure. Report member-level status and choose fallback members only within the owner's direct members.
-- Execution-decision failure must not fall through to provider direct execution. Use self-solve, direct-current-agent handling, return-to-parent, ask-parent, ask-user, or an explicit failure reason unless the user provided an explicit provider target.
-- Topology runtime fallback, missing direct-child candidates, or inactive graph state must be recovered through the current-agent fallback contract. They are not reasons to call a provider directly.
+- Execution-decision failure, topology runtime fallback, missing direct-child candidates, and inactive graph state must follow the fallback route boundary owned by `knowbee-execution.md`; this module only owns changed-strategy recovery.
 
 ---
 
@@ -74,3 +77,7 @@ This file covers only failure analysis and retry rules.
 - Do not paste long raw failure logs to the user.
 - Do not ask for restart, reinstall, or manual execution without a concrete reason.
 - Do not redo substeps that already succeeded while recovering a later failure.
+
+## Out Of Scope
+
+- This module does not own identity, user profile values, shared vocabulary, request intake, primary executor selection, topology graph meaning, work-record schema, memory write policy, tool permission, channel delivery, UI behavior, logging, or final response wording.

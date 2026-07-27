@@ -1,10 +1,20 @@
 import React, { type ReactNode } from "react"
-import type { RootRun } from "../../contracts/runs"
+import type {
+  RequestExecutionOutcome,
+  RequestExecutionOutcomeStatus,
+  RootRun,
+} from "../../contracts/runs"
 import { useUiI18n } from "../../lib/ui-i18n"
 import { CancelRunButton } from "./CancelRunButton"
 import { CollapsibleText } from "./CollapsibleText"
 import { RunTargetSummary } from "./RunTargetSummary"
-import { toContextModeText, toRunStatusText, toTaskProfileText } from "./runLabels"
+import {
+  toContextModeText,
+  toRequestDeliveryOutcomeText,
+  toRequestExecutionOutcomeText,
+  toRunStatusText,
+  toTaskProfileText,
+} from "./runLabels"
 
 export interface RunStatusTreeNode {
   id: string
@@ -33,6 +43,25 @@ function toStatusPillClass(status: RootRun["status"]) {
   }
 }
 
+function toOutcomePillClass(status: RequestExecutionOutcomeStatus) {
+  switch (status) {
+    case "succeeded":
+      return "bg-emerald-50 text-emerald-700 ring-emerald-200"
+    case "blocked":
+    case "exhausted":
+    case "internal_fault":
+      return "bg-rose-50 text-rose-700 ring-rose-200"
+    case "awaiting_approval":
+    case "awaiting_user":
+    case "partially_succeeded":
+      return "bg-amber-50 text-amber-700 ring-amber-200"
+    case "in_progress":
+      return "bg-sky-50 text-sky-700 ring-sky-200"
+    default:
+      return "bg-stone-100 text-stone-700 ring-stone-200"
+  }
+}
+
 export function RunStatusCard({
   run,
   selected,
@@ -40,8 +69,10 @@ export function RunStatusCard({
   onCancel,
   extraContent,
   treeNodes,
+  outcome,
 }: {
   run: RootRun
+  outcome?: RequestExecutionOutcome
   selected?: boolean
   onSelect?: () => void
   onCancel?: () => void
@@ -72,13 +103,34 @@ export function RunStatusCard({
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-stone-900">{run.title}</div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500">
-            <span>{toTaskProfileText(run.taskProfile, language)} · {text(`진행 ${run.currentStepIndex}/${run.totalSteps}`, `Progress ${run.currentStepIndex}/${run.totalSteps}`)}</span>
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${toStatusPillClass(run.status)}`}>
-              {toRunStatusText(run.status, language)}
+            <span>
+              {toTaskProfileText(run.taskProfile, language)} ·{" "}
+              {text(
+                `진행 ${run.currentStepIndex}/${run.totalSteps}`,
+                `Progress ${run.currentStepIndex}/${run.totalSteps}`,
+              )}
             </span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${
+                outcome
+                  ? toOutcomePillClass(outcome.executionStatus)
+                  : toStatusPillClass(run.status)
+              }`}
+            >
+              {outcome
+                ? toRequestExecutionOutcomeText(outcome.executionStatus, language)
+                : toRunStatusText(run.status, language)}
+            </span>
+            {outcome && outcome.deliveryStatus !== "not_started" ? (
+              <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-semibold text-stone-700 ring-1 ring-stone-200">
+                {toRequestDeliveryOutcomeText(outcome.deliveryStatus, language)}
+              </span>
+            ) : null}
           </div>
           <div className="mt-2 text-xs leading-5 text-stone-600">
-            <span className="font-semibold text-stone-700">{text("현재 상태:", "Current status:")}</span>{" "}
+            <span className="font-semibold text-stone-700">
+              {text("현재 상태:", "Current status:")}
+            </span>{" "}
             <CollapsibleText
               value={displayText(run.summary)}
               showMoreLabel={text("전체 보기", "Show more")}
@@ -93,7 +145,7 @@ export function RunStatusCard({
         <RunTargetSummary run={run} />
         {run.workerSessionId ? (
           <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
-            {text("세션", "Session")} {run.workerSessionId}
+            {text("작업 세션 연결됨", "Worker session connected")}
           </span>
         ) : null}
         <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-stone-700">
@@ -103,12 +155,19 @@ export function RunStatusCard({
 
       {treeNodes && treeNodes.length > 0 ? (
         <div className="mb-4 rounded-2xl border border-stone-200 bg-stone-50/80 px-3 py-3">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-500">{text("진행 흐름", "Progress flow")}</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-500">
+            {text("진행 흐름", "Progress flow")}
+          </div>
           <div className="mt-3 space-y-3">
             {treeNodes.map((node) => (
-              <div key={node.id} className={node.isRoot ? "" : "relative ml-5 border-l border-stone-200 pl-4"}>
+              <div
+                key={node.id}
+                className={node.isRoot ? "" : "relative ml-5 border-l border-stone-200 pl-4"}
+              >
                 <div className="flex items-start gap-3">
-                  <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${node.isRoot ? "bg-stone-900" : "bg-stone-400"}`} />
+                  <span
+                    className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${node.isRoot ? "bg-stone-900" : "bg-stone-400"}`}
+                  />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="text-xs font-semibold text-stone-900">{node.label}</div>
@@ -135,11 +194,13 @@ export function RunStatusCard({
         <button
           onClick={onSelect}
           type="button"
-          className="rounded-xl border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-50"
+          className="min-h-11 rounded-xl border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-50"
         >
           {text("상세 보기", "View details")}
         </button>
-        {onCancel && run.canCancel ? <CancelRunButton canCancel={run.canCancel} onCancel={onCancel} /> : null}
+        {onCancel && run.canCancel ? (
+          <CancelRunButton canCancel={run.canCancel} onCancel={onCancel} />
+        ) : null}
       </div>
     </div>
   )

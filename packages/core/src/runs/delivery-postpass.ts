@@ -101,6 +101,15 @@ export function decideDirectArtifactDeliveryFlow(params: {
     return { kind: "none" }
   }
 
+  if (isPlainTextInformationCompletion(params)) {
+    return {
+      kind: "complete",
+      deliverySummary: "텍스트 결과 전달 완료",
+      finalText: params.previousResult.trim(),
+      eventLabel: "텍스트 결과 전달 요청 완료",
+    }
+  }
+
   const deliveryRecovery = selectDirectArtifactDeliveryRecovery({
     source: params.source,
     successfulFileDeliveries: params.successfulFileDeliveries,
@@ -140,4 +149,28 @@ export function decideDirectArtifactDeliveryFlow(params: {
     }),
     eventLabel: "메신저 결과 전달 재시도",
   }
+}
+
+function isPlainTextInformationCompletion(params: {
+  successfulFileDeliveries: SuccessfulFileDelivery[]
+  previousResult: string
+  successfulTools: SuccessfulToolEvidence[]
+}): boolean {
+  if (params.successfulFileDeliveries.length > 0) return false
+  if (!params.previousResult.trim()) return false
+
+  const toolNames = params.successfulTools
+    .map((tool) => tool.toolName.trim())
+    .filter(Boolean)
+  if (toolNames.length === 0) return false
+  if (toolNames.some(isArtifactProducingToolName)) return false
+  return toolNames.some(isTextInformationToolName)
+}
+
+function isArtifactProducingToolName(toolName: string): boolean {
+  return /^(screen_capture|screenshot|camera_|file_|filesystem_|telegram_send_file|slack_send_file|yeonjang_|shell_exec|app_launch|process_kill|mouse_|keyboard_)/iu.test(toolName)
+}
+
+function isTextInformationToolName(toolName: string): boolean {
+  return /^(web_search|web_fetch|browser_|fetch|http_get|knowledge|memory_)/iu.test(toolName)
 }

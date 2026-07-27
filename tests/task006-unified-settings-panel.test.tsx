@@ -24,8 +24,8 @@ function agent(overrides: Partial<SetupSubAgentDraftItem> = {}): SetupSubAgentDr
   return {
     agentId: "agent:researcher",
     parentAgentId: "agent:knowbee",
+    agentName: overrides.agentName ?? "조사",
     displayName: "Researcher",
-    nickname: "조사",
     role: "Research helper",
     description: "Collect evidence and return a short summary.",
     status: "enabled",
@@ -45,7 +45,7 @@ describe("task006 unified settings summary panel", () => {
 
     expect(view.title).toBe("서브 에이전트 설정")
     expect(view.summary.productName).toBe("노비")
-    expect(view.summary.mode).toBe("single_knowbee")
+    expect(view.summary.mode).toBe("direct_main_agent")
     expect(view.summary.status).toBe("skipped")
     expect(view.summary.issueCount).toBe(0)
     expect(view.summary.primaryAction).toEqual({
@@ -78,8 +78,8 @@ describe("task006 unified settings summary panel", () => {
         items: [
           agent({
             agentId: "agent:secret-internal-123",
+            agentName: "Bearer sk-task006-agent-name-secret-1234567890",
             displayName: "{\"token\":\"sk-task006-secret-value-1234567890\"}",
-            nickname: "Bearer sk-task006-nickname-secret-1234567890",
             role: "Uses /Users/dongwooshin/.knowbee/private/raw.json",
             description: "{\"raw\":\"xoxb-task006-secret-token-1234567890\"}",
           }),
@@ -118,6 +118,7 @@ describe("task006 unified settings summary panel", () => {
     const source = readFileSync("packages/webui/src/lib/unified-settings-view.ts", "utf8")
 
     expect(source).toContain("buildUnifiedSettingsViewModel")
+    expect(source).not.toContain('displayName: "Knowbee"')
     expect(source).not.toMatch(/process\.env/)
     expect(source).not.toMatch(/localStorage|sessionStorage|document\.cookie/)
     expect(source).not.toMatch(/fetch\(|readFile|writeFile/)

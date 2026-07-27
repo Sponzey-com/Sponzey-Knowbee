@@ -1,22 +1,33 @@
 import { eventBus } from "../../events/index.js";
-import { createLogger } from "../../logger/index.js";
+import { createLogger, redactLogText } from "../../logger/index.js";
 import { getRootRun } from "../../runs/store.js";
 import { attachApprovalChannelMessage, describeLateApproval, getLatestApprovalForRun } from "../../runs/approval-registry.js";
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js";
 import { recordLatencyMetric } from "../../observability/latency.js";
 import { appendApprovalAggregateItem, buildApprovalAggregateText, resolveApprovalAggregate, } from "../approval-aggregation.js";
+import { buildTelegramApprovalCallbackNotice, buildTelegramApprovalResultLabel, resolveTelegramApprovalCallbackLanguage, } from "./approval-callback-notice.js";
 import { buildApprovalKeyboard, buildResultKeyboard } from "./keyboards.js";
 const log = createLogger("channel:telegram:approval");
+function telegramApprovalErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 // Map from runId → pending approval data
 const pending = new Map();
+const resolvedApprovalLanguages = new Map();
 // Map from sessionId → active chat info (set by bot.ts before runAgent)
 export const activeChats = new Map();
 const activeChatRefs = new Map();
 // Most recent active chat (for single-user cases when we don't have sessionId in event)
 let latestActiveChat;
 let detachTelegramApprovalRequestListener = null;
-export function setActiveChatForSession(sessionId, chatId, userId, threadId) {
-    const chat = { chatId, userId, ...(threadId !== undefined ? { threadId } : {}) };
+export function setActiveChatForSession(sessionId, chatId, userId, threadId, language) {
+    const chat = {
+        chatId,
+        userId,
+        ...(threadId !== undefined ? { threadId } : {}),
+        ...(language ? { language } : {}),
+    };
     activeChats.set(sessionId, chat);
     activeChatRefs.set(sessionId, (activeChatRefs.get(sessionId) ?? 0) + 1);
     latestActiveChat = chat;
@@ -45,6 +56,7 @@ export function registerApprovalHandler(bot) {
         const observedAt = Date.now();
         const paramsStr = JSON.stringify(params, null, 2).slice(0, 300);
         const existing = pending.get(runId);
+        const language = existing?.language ?? target.language ?? "ko";
         const aggregated = appendApprovalAggregateItem(existing?.context, {
             ...(approvalId ? { approvalId } : {}),
             runId,
@@ -59,10 +71,10 @@ export function registerApprovalHandler(bot) {
             paramsPreview: paramsStr,
             resolve,
         }, target.userId, observedAt);
-        const text = buildApprovalAggregateText({ context: aggregated.context, channel: "telegram" });
+        const text = buildApprovalAggregateText({ context: aggregated.context, channel: "telegram", language });
         let sentMsgId = existing?.messageId;
         try {
-            const keyboard = buildApprovalKeyboard(runId);
+            const keyboard = buildApprovalKeyboard(runId, language);
             const sendOpts = target.threadId !== undefined
                 ? { reply_markup: keyboard, message_thread_id: target.threadId }
                 : { reply_markup: keyboard };
@@ -75,7 +87,7 @@ export function registerApprovalHandler(bot) {
             }
         }
         catch (err) {
-            const errMsg = err instanceof Error ? err.message : String(err);
+            const errMsg = telegramApprovalErrorMessage(err);
             log.error(`Failed to send approval message: ${errMsg}`);
             return;
         }
@@ -88,6 +100,7 @@ export function registerApprovalHandler(bot) {
                 const entry = pending.get(runId);
                 if (!entry)
                     return;
+                resolvedApprovalLanguages.set(runId, entry.language);
                 pending.delete(runId);
                 const resolvedItems = resolveApprovalAggregate(entry.context, "deny", "timeout");
                 for (const item of resolvedItems) {
@@ -99,6 +112,7 @@ export function registerApprovalHandler(bot) {
             chatId: target.chatId,
             messageId: sentMsgId ?? 0,
             requesterId: target.userId,
+            language,
             timeout,
         });
         if (existing && aggregated.appended && aggregated.aggregationLatencyMs !== null) {
@@ -141,6 +155,8 @@ export function registerApprovalHandler(bot) {
         const entry = pending.get(runId);
         if (entry?.timeout)
             clearTimeout(entry.timeout);
+        if (entry?.language)
+            resolvedApprovalLanguages.set(runId, entry.language);
         pending.delete(runId);
     });
     detachTelegramApprovalRequestListener = () => {
@@ -150,6 +166,7 @@ export function registerApprovalHandler(bot) {
     bot.on("callback_query:data", async (ctx) => {
         const data = ctx.callbackQuery.data;
         const from = ctx.from;
+        const callbackLanguage = resolveTelegramApprovalCallbackLanguage(ctx.from?.language_code);
         if (data === "noop") {
             await ctx.answerCallbackQuery();
             return;
@@ -164,16 +181,26 @@ export function registerApprovalHandler(bot) {
         }
         const entry = pending.get(runId);
         if (entry === undefined) {
-            const lateMessage = describeLateApproval(getLatestApprovalForRun(runId));
-            await ctx.answerCallbackQuery(lateMessage.startsWith("처리할 승인 요청을 찾을 수 없습니다.") ? "이미 처리된 요청입니다." : lateMessage);
+            const language = resolvedApprovalLanguages.get(runId) ?? callbackLanguage;
+            const lateMessage = describeLateApproval(getLatestApprovalForRun(runId), language);
+            const notFoundMessage = describeLateApproval(undefined, language);
+            await ctx.answerCallbackQuery(buildTelegramApprovalCallbackNotice({
+                language,
+                reason: "late",
+                text: lateMessage === notFoundMessage
+                    ? buildTelegramApprovalCallbackNotice({ language, reason: "late" }).text
+                    : lateMessage,
+            }).text);
             return;
         }
         if (from.id !== entry.requesterId) {
-            await ctx.answerCallbackQuery("⚠️ 권한 없음: 요청자만 응답할 수 있습니다.");
+            await ctx.answerCallbackQuery(buildTelegramApprovalCallbackNotice({ language: callbackLanguage, reason: "unauthorized" }).text);
             return;
         }
+        const language = entry.language;
         if (entry.timeout)
             clearTimeout(entry.timeout);
+        resolvedApprovalLanguages.set(runId, entry.language);
         pending.delete(runId);
         const decision = approveAllMatch !== null
             ? "allow_run"
@@ -183,17 +210,12 @@ export function registerApprovalHandler(bot) {
         const primary = entry.context.items[0];
         const primaryKind = primary?.kind ?? "approval";
         const username = from.first_name ?? from.username ?? String(from.id);
-        const resultLabel = primaryKind === "screen_confirmation"
-            ? decision === "allow_run"
-                ? `✅ ${username}이 준비 완료 후 전체 진행`
-                : decision === "allow_once"
-                    ? `🔹 ${username}이 이번 단계 진행 확인`
-                    : `❌ ${username}이 준비 미완료로 요청 취소`
-            : decision === "allow_run"
-                ? `✅ ${username}이 이 요청 전체를 승인함`
-                : decision === "allow_once"
-                    ? `🔹 ${username}이 이번 단계만 승인함`
-                    : `❌ ${username}이 거부하고 요청을 취소함`;
+        const resultLabel = buildTelegramApprovalResultLabel({
+            language,
+            approvalKind: primaryKind,
+            decision,
+            username,
+        });
         try {
             await bot.api.editMessageReplyMarkup(entry.chatId, entry.messageId, {
                 reply_markup: buildResultKeyboard(resultLabel),
@@ -202,17 +224,12 @@ export function registerApprovalHandler(bot) {
         catch {
             // best-effort
         }
-        await ctx.answerCallbackQuery(primaryKind === "screen_confirmation"
-            ? decision === "allow_run"
-                ? "✅ 준비 완료 후 전체 진행"
-                : decision === "allow_once"
-                    ? "🔹 이번 단계 진행"
-                    : "❌ 준비 미완료, 취소"
-            : decision === "allow_run"
-                ? "✅ 이 요청 전체 승인"
-                : decision === "allow_once"
-                    ? "🔹 이번 단계 승인"
-                    : "❌ 거부 후 취소");
+        await ctx.answerCallbackQuery(buildTelegramApprovalCallbackNotice({
+            language,
+            reason: "decision",
+            approvalKind: primaryKind,
+            decision,
+        }).text);
         const resolvedItems = resolveApprovalAggregate(entry.context, decision, "user");
         for (const item of resolvedItems) {
             eventBus.emit("approval.resolved", { ...(item.approvalId ? { approvalId: item.approvalId } : {}), runId, decision, toolName: item.toolName, kind: item.kind, reason: "user" });
@@ -227,6 +244,7 @@ export function resetTelegramApprovalStateForTest() {
             clearTimeout(entry.timeout);
     }
     pending.clear();
+    resolvedApprovalLanguages.clear();
     activeChats.clear();
     activeChatRefs.clear();
     latestActiveChat = undefined;

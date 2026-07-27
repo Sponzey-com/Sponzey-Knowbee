@@ -71,4 +71,32 @@ describe("request-group execution queue", () => {
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-2", "execution_queue_running")
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-2", "execution_queue_released")
   })
+
+  it("redacts queue task failure details before invoking logging dependencies", async () => {
+    const requestGroupId = "rq-redaction-test"
+    const secret = "sk-task0580-execution-secret-1234567890"
+    const localPath = "/Users/dongwooshin/private/execution-queue-secret.txt"
+    const dependencies = {
+      getRootRun: () => undefined,
+      logInfo: vi.fn(),
+      logWarn: vi.fn(),
+      logError: vi.fn(),
+      appendRunEvent: vi.fn(),
+    }
+
+    const result = await enqueueRequestGroupExecution({
+      requestGroupId,
+      runId: "run-redaction",
+      task: async () => {
+        throw new Error(`token=${secret} path=${localPath}`)
+      },
+    }, dependencies)
+
+    expect(result).toBeUndefined()
+    const payload = JSON.stringify(dependencies.logError.mock.calls[0]?.[1] ?? {})
+    expect(payload).toContain("token=***")
+    expect(payload).toContain("[internal-path-redacted]")
+    expect(payload).not.toContain(secret)
+    expect(payload).not.toContain(localPath)
+  })
 })

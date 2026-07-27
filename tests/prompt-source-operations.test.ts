@@ -7,9 +7,15 @@ import {
   checkPromptSourceLocaleParity,
   dryRunPromptSourceAssembly,
   loadPromptSourceRegistry,
+  PromptSourceHarnessValidationError,
   rollbackPromptSourceBackup,
+  writePromptSourceWithHarness,
   writePromptSourceWithBackup,
 } from "../packages/core/src/memory/knowbee-md.ts"
+import type {
+  PromptImprovementApprovalRecord,
+  PromptImprovementHarnessInput,
+} from "../packages/core/src/memory/prompt-improvement-harness.ts"
 
 const tempDirs: string[] = []
 
@@ -27,7 +33,6 @@ function createPromptFixture(): string {
     ["knowbee-execution.md", "Knowbee Execution Decision Policy"],
     ["memory_policy.md", "Memory Policy"],
     ["tool_policy.md", "Tool Policy"],
-    ["web_retrieval_planner.md", "Web Retrieval Recovery Planner"],
     ["recovery_policy.md", "Recovery Policy"],
     ["topology_executor_policy.md", "Topology Executor Policy"],
     ["completion_policy.md", "Completion Policy"],
@@ -38,6 +43,47 @@ function createPromptFixture(): string {
     writeFileSync(join(promptsDir, filename), `# ${title}\n\n## 기준\n\n${filename} content\n`, "utf-8")
   }
   return root
+}
+
+function approvalRecord(overrides: Partial<PromptImprovementApprovalRecord> = {}): PromptImprovementApprovalRecord {
+  return {
+    approvedBy: "user:prompt-source-editor",
+    approvedAt: "2026-07-04T00:00:00.000Z",
+    approvalScope: ["apply_change"],
+    targetPromptSources: ["identity:en"],
+    targetHarnessSources: [],
+    riskAccepted: "medium",
+    ...overrides,
+  }
+}
+
+function harnessInput(overrides: Partial<PromptImprovementHarnessInput> = {}): PromptImprovementHarnessInput {
+  return {
+    improvementGoal: "Clarify identity prompt behavior.",
+    improvementKind: "prompt_source",
+    improvingAgentName: "노비",
+    improvingAgentType: "main",
+    parentReviewerAgentName: "",
+    triggerSource: "user_request",
+    targetPromptSources: ["identity:en"],
+    activeHarnessVersion: "prompt_improvement.md:sha256:test",
+    targetHarnessSources: [],
+    agentOwnedPromptScope: ["identity"],
+    currentBehavior: "Identity source needs a concise rule.",
+    desiredBehavior: "Identity source contains the concise rule.",
+    userReactionEvidence: ["User explicitly requested prompt update."],
+    responseStrategyTarget: "identity",
+    harnessChangeScope: [],
+    harnessGuardrailsToPreserve: [],
+    nonGoals: ["Do not change tool policy."],
+    allowedChangeScope: ["identity:en"],
+    requiredInvariants: ["identity", "user_language"],
+    requiredTests: ["tests/prompt-source-operations.test.ts"],
+    approvalMode: "user_required",
+    approvalRecord: approvalRecord(),
+    rollbackPlan: "Restore identity:en from backup:identity:v1.",
+    ...overrides,
+  }
 }
 
 afterEach(() => {
@@ -63,11 +109,11 @@ describe("prompt source operations", () => {
       "definitions",
       "identity",
       "user",
+      "tool_policy",
+      "memory_policy",
       "soul",
       "planner",
       "knowbee_execution",
-      "memory_policy",
-      "tool_policy",
       "recovery_policy",
       "topology_executor_policy",
       "completion_policy",
@@ -106,6 +152,50 @@ describe("prompt source operations", () => {
     expect(readFileSync(promptPath, "utf-8")).toBe(beforeContent)
   })
 
+  it("gates prompt source writes with harness validation", () => {
+    const root = createPromptFixture()
+    const promptPath = join(root, "prompts", "identity.md")
+    const beforeContent = readFileSync(promptPath, "utf-8")
+
+    expect(() => writePromptSourceWithHarness({
+      workDir: root,
+      sourceId: "identity",
+      locale: "en",
+      content: "# Identity\n\n## Rules\n\nInvalid write\n",
+      harnessInput: { improvementKind: "prompt_source" },
+    })).toThrow(PromptSourceHarnessValidationError)
+    expect(readFileSync(promptPath, "utf-8")).toBe(beforeContent)
+
+    const mutableSourceAudit: unknown[] = []
+    const result = writePromptSourceWithHarness({
+      workDir: root,
+      sourceId: "identity",
+      locale: "en",
+      content: "# Identity\n\n## Rules\n\nHarness-approved copy\n",
+      harnessInput: harnessInput(),
+      recordMutableSourceAudit: (record) => mutableSourceAudit.push(record),
+    })
+
+    expect(result.harnessValidation.ok).toBe(true)
+    expect(result.sourceWriteState).toBe("written")
+    expect(result.activationState).toBe("activation_pending")
+    expect(result.backup).toBeTruthy()
+    expect(result.harnessReport.baselineCapture.sourceChecksums).toEqual([
+      { sourceRef: "identity:en", beforeChecksum: result.diff.beforeChecksum },
+    ])
+    expect(result.harnessReport.baselineCapture.activeHarnessVersion).toBe("prompt_improvement.md:sha256:test")
+    expect(result.harnessReport.baselineCapture.rollbackTarget).toBe(result.backup?.backupPath)
+    expect(mutableSourceAudit).toEqual([expect.objectContaining({
+      event: "prompt_improvement.mutable_source_execution",
+      sourceKind: "prompt_registry_record",
+      sourceRef: "identity:en",
+      writerKind: "prompt_registry_record",
+      decision: "applied",
+      reasonCode: null,
+    })])
+    expect(readFileSync(promptPath, "utf-8")).toContain("Harness-approved copy")
+  })
+
   it("rejects unsafe source writes and reports locale parity gaps", () => {
     const root = createPromptFixture()
     expect(() => writePromptSourceWithBackup({
@@ -125,5 +215,27 @@ describe("prompt source operations", () => {
       message: "planner is missing English source",
     })
     expect(loadPromptSourceRegistry(root).some((source) => source.sourceId === "identity")).toBe(true)
+  })
+
+  it("rejects actual ambiguous, overloaded, and duplicate prompt content before writing", () => {
+    const root = createPromptFixture()
+    const promptPath = join(root, "prompts", "identity.md")
+    const beforeContent = readFileSync(promptPath, "utf-8")
+    const invalidContents = [
+      "# Identity\n\n- Handle requests appropriately.\n",
+      `# Identity\n\n- ${"x".repeat(301)}\n`,
+      "# Identity\n\n- Use the configured agent name.\n- Use the configured agent name.\n",
+    ]
+
+    for (const content of invalidContents) {
+      expect(() => writePromptSourceWithHarness({
+        workDir: root,
+        sourceId: "identity",
+        locale: "en",
+        content,
+        harnessInput: harnessInput(),
+      })).toThrow(/prompt source quality validation failed/iu)
+      expect(readFileSync(promptPath, "utf-8")).toBe(beforeContent)
+    }
   })
 })

@@ -6,8 +6,10 @@ import {
   type DbScheduleDeliveryReceipt,
   type DbScheduleRun,
 } from "../db/index.js"
+import { redactLogText } from "../logger/index.js"
 import { parseScheduleContractJson } from "../schedules/candidates.js"
 import { buildMemoryInspectorSnapshot } from "../memory/inspector.js"
+import type { KnowbeeConfig } from "../config/types.js"
 
 export type AdminMemoryOwnerKind = "user" | "diagnostic"
 export type AdminSchedulerQueueState = "disabled" | "waiting" | "missed" | "running" | "retrying" | "idle"
@@ -293,6 +295,7 @@ export interface AdminRuntimeInspectors {
 }
 
 interface InspectorInput {
+  config: KnowbeeConfig
   timeline: ControlTimeline
   ledgerEvents: DbMessageLedgerEvent[]
   limit?: number
@@ -413,11 +416,16 @@ function clampLimit(value: number | undefined, fallback = 100): number {
   return Math.max(1, Math.min(500, Math.floor(value ?? fallback)))
 }
 
+function adminRuntimeQueryErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactText(raw)
+}
+
 function queryRows<T>(label: string, run: () => T[]): QueryResult<T> {
   try {
     return { rows: run(), degradedReasons: [] }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = adminRuntimeQueryErrorMessage(error)
     return { rows: [], degradedReasons: [`${label}: ${message}`] }
   }
 }
@@ -444,7 +452,7 @@ function asNumber(value: unknown): number | null {
 }
 
 function redactText(value: string, max = 220): string {
-  let next = value
+  let next = redactLogText(value)
   for (const [pattern, replacement] of SECRET_TEXT_PATTERNS) next = next.replace(pattern, replacement)
   if (next.length <= max) return next
   return `${next.slice(0, max)}...`
@@ -680,6 +688,7 @@ function buildMemoryInspector(input: InspectorInput): AdminMemoryInspector {
     ...(input.filters?.sessionKey ? { sessionId: input.filters.sessionKey } : {}),
     ...(input.filters?.requestGroupId ? { requestGroupId: input.filters.requestGroupId } : {}),
     limit: Math.min(limit, 12),
+    config: input.config,
   })
 
   return {

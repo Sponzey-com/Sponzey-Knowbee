@@ -1,6 +1,7 @@
 import type { ControlTimeline } from "../control-plane/timeline.js";
 import { type DbMessageLedgerEvent } from "../db/index.js";
 import { buildMemoryInspectorSnapshot } from "../memory/inspector.js";
+import type { KnowbeeConfig } from "../config/types.js";
 export type AdminMemoryOwnerKind = "user" | "diagnostic";
 export type AdminSchedulerQueueState = "disabled" | "waiting" | "missed" | "running" | "retrying" | "idle";
 export interface AdminMemoryDocumentView {
@@ -293,6 +294,7 @@ export interface AdminRuntimeInspectors {
     orchestration: AdminOrchestrationInspector;
 }
 interface InspectorInput {
+    config: KnowbeeConfig;
     timeline: ControlTimeline;
     ledgerEvents: DbMessageLedgerEvent[];
     limit?: number;

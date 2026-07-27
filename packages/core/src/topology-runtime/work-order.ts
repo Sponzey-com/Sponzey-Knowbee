@@ -73,7 +73,8 @@ export interface WorkOrderRuntimeEnvelopeInput {
   commandRequestId?: string
   subSessionId?: string
   targetAgentId?: string
-  targetNicknameSnapshot?: string
+  targetAgentName?: string
+  targetAgentNameSnapshot?: string
   contextPackageId?: string
   now?: () => number
   authorityPreflight?: WorkOrderAuthorityPreflightInput
@@ -236,7 +237,10 @@ export function createWorkOrderRuntimeEnvelope(input: WorkOrderRuntimeEnvelopeIn
     commandRequestId,
     subSessionId,
     targetAgentId: input.targetAgentId ?? input.nodeContractSnapshot.id,
-    ...(input.targetNicknameSnapshot !== undefined ? { targetNicknameSnapshot: input.targetNicknameSnapshot } : {}),
+    ...(input.targetAgentName !== undefined || input.targetAgentNameSnapshot !== undefined
+      ? { targetAgentName: input.targetAgentName ?? input.targetAgentNameSnapshot }
+      : {}),
+    ...(input.targetAgentNameSnapshot !== undefined ? { targetAgentNameSnapshot: input.targetAgentNameSnapshot } : {}),
     contextPackageIds: [contextPackageId],
     expectedOutputs,
   })
@@ -527,7 +531,8 @@ function buildWorkOrderCommandRequest(input: {
   commandRequestId: string
   subSessionId: string
   targetAgentId: string
-  targetNicknameSnapshot?: string
+  targetAgentName?: string
+  targetAgentNameSnapshot?: string
   contextPackageIds: string[]
   expectedOutputs: ExpectedOutputContract[]
 }): CommandRequest {
@@ -538,7 +543,8 @@ function buildWorkOrderCommandRequest(input: {
     parentRunId: input.workOrder.topologyRunId,
     subSessionId: input.subSessionId,
     targetAgentId: input.targetAgentId,
-    ...(input.targetNicknameSnapshot !== undefined ? { targetNicknameSnapshot: input.targetNicknameSnapshot } : {}),
+    ...(input.targetAgentName !== undefined ? { targetAgentName: input.targetAgentName } : {}),
+    ...(input.targetAgentNameSnapshot !== undefined ? { targetAgentNameSnapshot: input.targetAgentNameSnapshot } : {}),
     ...(topologyExecutor ? { topologyExecutor } : {}),
     taskScope: {
       goal: input.workOrder.objective,

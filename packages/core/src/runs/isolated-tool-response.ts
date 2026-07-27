@@ -1,4 +1,5 @@
 import type { AgentChunk } from "../agent/index.js"
+import { isArtifactDeliveryResultDetails } from "../tools/types.js"
 
 export interface IsolatedToolResponseDecision {
   kind: "none" | "artifact" | "text"
@@ -7,24 +8,6 @@ export interface IsolatedToolResponseDecision {
 
 interface ExplicitToolResponseOwnershipDetails {
   responseOwnership?: "final_text"
-}
-
-function isArtifactDeliveryDetails(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false
-
-  const candidate = value as Partial<{
-    kind: string
-    channel: string
-    filePath: string
-    size: number
-    source: string
-  }>
-
-  return candidate.kind === "artifact_delivery"
-    && (candidate.channel === "telegram" || candidate.channel === "webui" || candidate.channel === "slack")
-    && typeof candidate.filePath === "string"
-    && typeof candidate.size === "number"
-    && typeof candidate.source === "string"
 }
 
 function hasExplicitFinalTextOwnership(value: unknown): value is ExplicitToolResponseOwnershipDetails {
@@ -38,7 +21,7 @@ export function decideIsolatedToolResponse(chunk: AgentChunk): IsolatedToolRespo
     return { kind: "none" }
   }
 
-  if (isArtifactDeliveryDetails(chunk.details)) {
+  if (isArtifactDeliveryResultDetails(chunk.details)) {
     return { kind: "artifact" }
   }
 

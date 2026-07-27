@@ -1,4 +1,5 @@
 import { type AgentConfig, type CapabilityRiskLevel, type TeamConfig, type TeamMembership } from "../contracts/sub-agent-orchestration.js";
+import { type AgentHierarchyConfigSnapshot, type AgentHierarchyStorage } from "./hierarchy.js";
 import { type RegistryServiceDependencies } from "./registry.js";
 export type TeamCompositionDiagnosticSeverity = "info" | "warning" | "invalid";
 export type TeamHealthStatus = "healthy" | "degraded" | "invalid";
@@ -82,9 +83,11 @@ export interface TeamCompositionValidationResult {
     diagnostics: TeamCompositionDiagnostic[];
 }
 export interface TeamCompositionServiceDependencies extends RegistryServiceDependencies {
+    config: AgentHierarchyConfigSnapshot;
+    storage: AgentHierarchyStorage;
     now?: () => number;
 }
-export declare function createTeamCompositionService(dependencies?: TeamCompositionServiceDependencies): {
+export declare function createTeamCompositionService(dependencies: TeamCompositionServiceDependencies): {
     evaluate: (input: string | unknown) => TeamCompositionValidationResult;
     coverage(teamId: string): TeamCoverageReport | undefined;
     health(teamId: string): TeamHealthReport | undefined;

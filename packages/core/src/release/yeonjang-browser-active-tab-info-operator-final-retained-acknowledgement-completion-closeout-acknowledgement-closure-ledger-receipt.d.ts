@@ -1,0 +1,31 @@
+import type { YeonjangBrowserActiveTabInfoFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedger } from "./yeonjang-browser-active-tab-info-final-retained-acknowledgement-completion-closeout-acknowledgement-closure-ledger.js";
+export type YeonjangBrowserActiveTabInfoOperatorFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerReceiptStatus = "ready";
+export type YeonjangBrowserActiveTabInfoOperatorFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerReceiptBlockingReasonCode = "operator_final_retained_acknowledgement_completion_closeout_acknowledgement_closure_ledger_receipt_ledger_not_ready" | "operator_final_retained_acknowledgement_completion_closeout_acknowledgement_closure_ledger_receipt_ref_invalid" | "operator_final_retained_acknowledgement_completion_closeout_acknowledgement_closure_ledger_receipt_product_log_evidence_ref_invalid" | "operator_final_retained_acknowledgement_completion_closeout_acknowledgement_closure_ledger_receipt_ack_ref_invalid";
+export interface YeonjangBrowserActiveTabInfoOperatorFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerReceiptInput {
+    finalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedger: YeonjangBrowserActiveTabInfoFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedger;
+    sanitizedOperatorFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerReceiptRef: string;
+    productLogEvidenceRef: string;
+    operatorFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerRef: string;
+}
+export type YeonjangBrowserActiveTabInfoOperatorFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerReceipt = Readonly<{
+    schemaVersion: "knowbee.yeonjang-browser-active-tab-info-operator-final-retained-acknowledgement-completion-closeout-acknowledgement-closure-ledger-receipt.v1";
+    method: "browser.active_tab_info";
+    status: "operator_final_retained_acknowledgement_completion_closeout_acknowledgement_closure_ledger_receipt_ready" | "blocked";
+    reasonCode: "active_tab_info_operator_final_retained_acknowledgement_completion_closeout_acknowledgement_closure_ledger_receipt_ready" | "active_tab_info_operator_final_retained_acknowledgement_completion_closeout_acknowledgement_closure_ledger_receipt_blocked";
+    blockingReasonCodes?: readonly YeonjangBrowserActiveTabInfoOperatorFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerReceiptBlockingReasonCode[];
+    receipt?: Readonly<{
+        operatorFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerReceiptId: string;
+        finalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerId: string;
+        sanitizedOperatorFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerReceiptRef: string;
+        productLogEvidenceRef: string;
+        operatorFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerRef: string;
+        receiptStatus: YeonjangBrowserActiveTabInfoOperatorFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerReceiptStatus;
+    }>;
+    releaseReadinessNow: false;
+    publicationReadinessNow: false;
+    enableSkillMappingNow: false;
+    addProductionBindingNow: false;
+    enableDefaultLiveSmokeNow: false;
+}>;
+export declare function buildYeonjangBrowserActiveTabInfoOperatorFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerReceipt(input: YeonjangBrowserActiveTabInfoOperatorFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerReceiptInput): YeonjangBrowserActiveTabInfoOperatorFinalRetainedAcknowledgementCompletionCloseoutAcknowledgementClosureLedgerReceipt;
+//# sourceMappingURL=yeonjang-browser-active-tab-info-operator-final-retained-acknowledgement-completion-closeout-acknowledgement-closure-ledger-receipt.d.ts.map

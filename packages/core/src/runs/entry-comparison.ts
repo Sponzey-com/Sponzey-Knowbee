@@ -1,4 +1,4 @@
-import { detectAvailableProvider, getDefaultModel, getProvider, type AIProvider } from "../ai/index.js"
+import { detectAvailableProvider, getDefaultModel, getProvider, type AIProvider, type AIProviderConfigSnapshot } from "../ai/index.js"
 import type { Message } from "../ai/types.js"
 import {
   buildIntentComparisonProjection,
@@ -9,8 +9,20 @@ import {
 import { stableContractHash, type IntentContract, type JsonObject } from "../contracts/index.js"
 import { chatWithContextPreflight } from "./context-preflight.js"
 import { loadPromptTemplate } from "../memory/knowbee-md.js"
+import { loadPromptValue } from "../memory/prompt-fragments.js"
 
 export type RequestContinuationDecisionKind = "same_run" | "new_run" | "clarify" | "cancel_target" | "update_target"
+
+const COMPARISON_PROMPT_CONTEXT_LABELS_SOURCE_ID = "comparison_prompt_context_labels_user"
+
+function comparisonPromptContextLabel(key: string): string {
+  const value = loadPromptValue(COMPARISON_PROMPT_CONTEXT_LABELS_SOURCE_ID, {}, { required: true })
+    .split(/\r?\n/u)
+    .find((line) => line.startsWith(`${key}=`))
+    ?.slice(key.length + 1)
+    .trim()
+  return value ?? key
+}
 
 export interface RequestContinuationDecision {
   kind: RequestContinuationDecisionKind
@@ -72,6 +84,7 @@ export async function compareRequestContinuationWithAI(params: {
   model?: string
   providerId?: string
   provider?: AIProvider
+  config?: AIProviderConfigSnapshot
   timeoutMs?: number
 }): Promise<RequestContinuationDecision> {
   if (params.candidates.length === 0) {
@@ -100,23 +113,27 @@ export async function compareRequestContinuationWithAI(params: {
     }
   }
 
-  const model = params.model?.trim() || getDefaultModel()
-  const providerId = params.providerId?.trim() || detectAvailableProvider()
+  if (!params.config) {
+    return safeFallbackDecision(params.candidates.length, "AI config missing")
+  }
+
+  const model = params.model?.trim() || getDefaultModel(params.config)
+  const providerId = params.providerId?.trim() || detectAvailableProvider(params.config)
   if (!model || !providerId) {
     return safeFallbackDecision(params.candidates.length, "no configured provider")
   }
 
-  const provider = params.provider ?? getProvider(providerId)
+  const provider = params.provider ?? getProvider(providerId, params.config)
   // knowbee-critical-decision-audit: entry-comparison.contract_projection_comparison
   // Comparator inputs are canonical contract projections and stable ids only.
   const messages: Message[] = [
     {
       role: "user",
       content: [
-        "Incoming intent contract projection:",
+        comparisonPromptContextLabel("incoming_intent_contract_projection_label"),
         JSON.stringify(incomingProjection),
         "",
-        "Active run contract candidates:",
+        comparisonPromptContextLabel("active_run_contract_candidates_label"),
         JSON.stringify(comparableCandidates.map(serializeActiveRunCandidateForComparison)),
       ].join("\n"),
     },

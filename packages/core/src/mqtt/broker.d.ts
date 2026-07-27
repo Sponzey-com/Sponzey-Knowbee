@@ -1,4 +1,4 @@
-import type { MqttConfig } from "../config/types.js";
+import type { KnowbeeConfig, MqttConfig } from "../config/types.js";
 export interface MqttBrokerSnapshot {
     enabled: boolean;
     running: boolean;
@@ -63,7 +63,7 @@ export interface MqttExchangeLogEntry {
     payload: unknown;
 }
 export declare function validateMqttBrokerConfig(config: MqttConfig): string | null;
-export declare function startMqttBroker(): Promise<void>;
+export declare function startMqttBroker(config: MqttConfig): Promise<void>;
 export declare function stopMqttBroker(): Promise<void>;
 export declare function getMqttBrokerSnapshot(): MqttBrokerSnapshot;
 export declare function getMqttExtensionSnapshots(): MqttExtensionSnapshot[];
@@ -72,6 +72,6 @@ export declare function disconnectMqttExtension(extensionId: string): Promise<{
     ok: boolean;
     message: string;
 }>;
-export declare function restartMqttBrokerFromConfig(): Promise<void>;
+export declare function restartMqttBrokerFromConfig(config: Pick<KnowbeeConfig, "mqtt">): Promise<void>;
 export {};
 //# sourceMappingURL=broker.d.ts.map

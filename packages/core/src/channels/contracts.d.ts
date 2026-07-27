@@ -1,3 +1,4 @@
+import type { ChannelUserFacingLanguage } from "./language.js";
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | {
     [key: string]: JsonValue;
@@ -92,6 +93,7 @@ export interface InboundEnvelope {
     mentions: ChannelMention[];
     timestamp: number;
     rawPayloadRef: RawPayloadRef;
+    userFacingLanguage?: ChannelUserFacingLanguage;
     continuationContext?: ChannelContinuationContext;
     accessPolicy?: ChannelAccessPolicySnapshot;
     dedupeKey: string;
@@ -149,8 +151,10 @@ export interface OutboundMessage {
     priority: OutboundPriority;
     idempotencyKey: string;
     redactionPolicy: OutboundRedactionPolicy;
+    userFacingLanguage?: DeliveryReceiptUserFacingLanguage;
 }
 export type DeliveryReceiptStatus = "accepted" | "sent" | "delivered" | "failed" | "partial" | "rate_limited" | "blocked_by_policy" | "unsupported_capability";
+export type DeliveryReceiptUserFacingLanguage = ChannelUserFacingLanguage;
 export interface DeliveryReceiptPart {
     status: DeliveryReceiptStatus;
     messageId?: string;
@@ -174,6 +178,7 @@ export interface DeliveryReceipt {
     retryAfterMs?: number;
     errorCode?: string;
     errorMessage?: string;
+    userFacingLanguage?: DeliveryReceiptUserFacingLanguage;
 }
 export type InteractionKind = "approval" | "cancel" | "retry" | "choose_option" | "provide_input";
 export type ApprovalInteractionDecision = "allow_once" | "allow_run" | "deny";
@@ -291,6 +296,7 @@ export declare function buildUnsupportedCapabilityReceipt(params: {
     capability: keyof ChannelCapabilities | string;
     idempotencyKey: string;
     timestamp?: number;
+    userFacingLanguage?: DeliveryReceiptUserFacingLanguage | undefined;
 }): DeliveryReceipt;
 export declare function createRawPayloadRef(input: {
     provider: ChannelProviderId;

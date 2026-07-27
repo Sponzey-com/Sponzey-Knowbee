@@ -19,6 +19,7 @@ import {
   recordOrchestrationEvent,
   validateOrchestrationEventInput,
 } from "../packages/core/src/orchestration/event-ledger.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: {
@@ -33,8 +34,6 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 
 function makeTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -61,18 +60,12 @@ beforeEach(() => {
   closeDb()
   resetLatencyMetrics()
   const stateDir = makeTempDir("knowbee-task022-state-")
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  getDb()
+  initializeTestDbRuntime(stateDir)
 })
 
 afterEach(() => {
   closeDb()
   resetLatencyMetrics()
-  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_STATE_DIR")
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_CONFIG")
-  else process.env.KNOWBEE_CONFIG = previousConfig
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })

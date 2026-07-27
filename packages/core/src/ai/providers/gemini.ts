@@ -118,7 +118,16 @@ export class GeminiProvider implements AIProvider {
         ...(params.maxTokens !== undefined ? { maxOutputTokens: params.maxTokens } : {}),
       },
       ...(params.system?.trim() ? { system_instruction: { parts: [{ text: params.system }] } } : {}),
-      ...(tools ? { tools, toolConfig: { functionCallingConfig: { mode: "AUTO" } } } : {}),
+      ...(tools
+        ? {
+            tools,
+            toolConfig: {
+              functionCallingConfig: {
+                mode: params.toolChoice === "required" ? "ANY" : "AUTO",
+              },
+            },
+          }
+        : {}),
     }
 
     log.debug(`chat() model=${params.model} messages=${params.messages.length}`)

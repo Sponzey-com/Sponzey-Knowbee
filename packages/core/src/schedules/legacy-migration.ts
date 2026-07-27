@@ -9,7 +9,7 @@ import {
   type DeliveryChannel,
   type ScheduleContract,
 } from "../contracts/index.js"
-import { getConfig } from "../config/index.js"
+import type { KnowbeeConfig } from "../config/types.js"
 import {
   getSchedule,
   getSchedules,
@@ -152,7 +152,10 @@ function auditLegacyMigration(params: {
   }
 }
 
-export function buildLegacyScheduleMigrationReport(schedule: DbSchedule): LegacyScheduleMigrationReport {
+export function buildLegacyScheduleMigrationReport(
+  schedule: DbSchedule,
+  config: KnowbeeConfig,
+): LegacyScheduleMigrationReport {
   const legacy = isLegacySchedule(schedule)
   if (!legacy) {
     return {
@@ -188,7 +191,6 @@ export function buildLegacyScheduleMigrationReport(schedule: DbSchedule): Legacy
     }
   }
 
-  const config = getConfig()
   const timezone = normalizeScheduleTimezone(schedule.timezone, config.scheduler.timezone || config.profile.timezone)
   if (!schedule.timezone) warnings.push("Legacy schedule did not store a timezone; current default timezone will be used.")
 
@@ -250,10 +252,13 @@ export function buildLegacyScheduleMigrationReport(schedule: DbSchedule): Legacy
   }
 }
 
-export function dryRunLegacyScheduleMigration(scheduleId: string, options: { audit?: boolean } = {}): LegacyScheduleMigrationReport | null {
+export function dryRunLegacyScheduleMigration(
+  scheduleId: string,
+  options: { audit?: boolean; config: KnowbeeConfig },
+): LegacyScheduleMigrationReport | null {
   const schedule = getSchedule(scheduleId)
   if (!schedule) return null
-  const report = buildLegacyScheduleMigrationReport(schedule)
+  const report = buildLegacyScheduleMigrationReport(schedule, options.config)
   if (options.audit === true) {
     auditLegacyMigration({
       schedule,
@@ -266,10 +271,13 @@ export function dryRunLegacyScheduleMigration(scheduleId: string, options: { aud
   return report
 }
 
-export function applyLegacyScheduleMigration(scheduleId: string): { ok: boolean; report: LegacyScheduleMigrationReport | null; error?: string } {
+export function applyLegacyScheduleMigration(
+  scheduleId: string,
+  options: { config: KnowbeeConfig },
+): { ok: boolean; report: LegacyScheduleMigrationReport | null; error?: string } {
   const schedule = getSchedule(scheduleId)
   if (!schedule) return { ok: false, report: null, error: "schedule_not_found" }
-  const report = buildLegacyScheduleMigrationReport(schedule)
+  const report = buildLegacyScheduleMigrationReport(schedule, options.config)
   if (!report.convertible || !report.contract) {
     const error = report.reasons[0] ?? "legacy migration is not convertible"
     auditLegacyMigration({ schedule, action: "convert", result: "failed", report, error })
@@ -288,19 +296,22 @@ export function applyLegacyScheduleMigration(scheduleId: string): { ok: boolean;
   return { ok: true, report }
 }
 
-export function keepLegacySchedule(scheduleId: string): { ok: boolean; report: LegacyScheduleMigrationReport | null; error?: string } {
+export function keepLegacySchedule(
+  scheduleId: string,
+  options: { config: KnowbeeConfig },
+): { ok: boolean; report: LegacyScheduleMigrationReport | null; error?: string } {
   const schedule = getSchedule(scheduleId)
   if (!schedule) return { ok: false, report: null, error: "schedule_not_found" }
-  const report = buildLegacyScheduleMigrationReport(schedule)
+  const report = buildLegacyScheduleMigrationReport(schedule, options.config)
   auditLegacyMigration({ schedule, action: "keep", result: "success", report })
   return { ok: true, report }
 }
 
-export function listLegacyScheduleMigrationItems(): LegacyScheduleMigrationItem[] {
+export function listLegacyScheduleMigrationItems(config: KnowbeeConfig): LegacyScheduleMigrationItem[] {
   return getSchedules()
     .filter((schedule) => isLegacySchedule(schedule))
     .map((schedule) => {
-      const report = buildLegacyScheduleMigrationReport(schedule)
+      const report = buildLegacyScheduleMigrationReport(schedule, config)
       return {
         scheduleId: schedule.id,
         name: schedule.name,

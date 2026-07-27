@@ -1,4 +1,4 @@
-export type UnifiedSettingsMode = "single_knowbee" | "orchestration";
+export type UnifiedSettingsMode = "direct_main_agent" | "orchestration";
 export type UnifiedSettingsMonitoringState = "idle" | "loaded" | "stale" | "partial" | "failed";
 export type UnifiedSettingsMonitoringTone = "info" | "warning" | "success" | "error";
 export type UnifiedSettingsLifecycleState = "empty" | "drafting" | "validating" | "ready_to_save" | "saving" | "saved" | "activating" | "active" | "needs_attention" | "failed" | "cancelled";
@@ -38,8 +38,7 @@ export interface UnifiedSettingsTransitionResult {
 }
 export interface UnifiedSettingsRootAgentInput {
     id: string;
-    displayName: string;
-    nickname?: string | undefined;
+    agentName?: string | undefined;
 }
 export interface UnifiedSettingsAgentDetailInput {
     model?: {
@@ -101,8 +100,7 @@ export interface UnifiedSettingsMonitoringTraceInput {
 }
 export interface UnifiedSettingsAgentInput {
     id: string;
-    displayName: string;
-    nickname?: string | undefined;
+    agentName?: string | undefined;
     role?: string | undefined;
     workDescription?: string | undefined;
     parentId?: string | undefined;
@@ -110,12 +108,12 @@ export interface UnifiedSettingsAgentInput {
 }
 export type UnifiedSettingsReadinessStatus = "ready" | "skipped" | "needs_attention" | "blocked";
 export type UnifiedSettingsReadinessSeverity = "attention" | "blocked";
-export type UnifiedSettingsReadinessIssueCode = "sub_agent_required" | "display_name_required" | "role_required" | "work_description_required" | "display_name_duplicate" | "nickname_duplicate" | "reserved_root_name";
+export type UnifiedSettingsReadinessIssueCode = "sub_agent_required" | "agent_name_required" | "role_required" | "work_description_required" | "agent_name_duplicate" | "reserved_root_name";
 export interface UnifiedSettingsReadinessIssue {
     code: UnifiedSettingsReadinessIssueCode;
     severity: UnifiedSettingsReadinessSeverity;
     agentId?: string | undefined;
-    field?: "displayName" | "nickname" | "role" | "workDescription" | undefined;
+    field?: "agentName" | "role" | "workDescription" | undefined;
 }
 export interface EvaluateUnifiedSettingsReadinessInput {
     mode: UnifiedSettingsMode;
@@ -240,5 +238,5 @@ export interface BuildUnifiedSettingsViewModelInput extends EvaluateUnifiedSetti
     lifecycleState: UnifiedSettingsLifecycleState;
     selectedAgentId?: string | undefined;
 }
-export declare function buildUnifiedSettingsViewModel(input: BuildUnifiedSettingsViewModelInput): UnifiedSettingsViewModel;
+export declare function buildUnifiedSettingsViewModel(rawInput: BuildUnifiedSettingsViewModelInput): UnifiedSettingsViewModel;
 //# sourceMappingURL=unified-settings.d.ts.map

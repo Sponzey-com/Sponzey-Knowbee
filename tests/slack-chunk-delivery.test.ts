@@ -4,21 +4,20 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createSlackChunkDeliveryHandler } from "../packages/core/src/channels/slack/chunk-delivery.ts"
 import { SlackRateLimitError } from "../packages/core/src/channels/slack/message-delivery.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { resetArtifactDeliveryDedupeForTest } from "../packages/core/src/runs/delivery.js"
+import { createTestArtifactStorage } from "./fixtures/artifact-storage.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let artifactStorage: ReturnType<typeof createTestArtifactStorage>
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-slack-chunk-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
+  artifactStorage = createTestArtifactStorage(stateDir)
 }
 
 beforeEach(() => {
@@ -28,11 +27,6 @@ beforeEach(() => {
 afterEach(() => {
   resetArtifactDeliveryDedupeForTest()
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -40,7 +34,7 @@ afterEach(() => {
 })
 
 describe("slack chunk delivery helper", () => {
-  it("buffers assistant text and returns text delivery receipt on done", async () => {
+  it("buffers reviewed assistant text and returns text delivery receipt on done", async () => {
     const responder = {
       sendToolStatus: vi.fn(),
       updateToolStatus: vi.fn(),
@@ -50,6 +44,7 @@ describe("slack chunk delivery helper", () => {
     }
     const recordOutgoingMessageRef = vi.fn()
     const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "slack-session",
       channelId: "C_SLACK",
@@ -59,7 +54,7 @@ describe("slack chunk delivery helper", () => {
       logError: vi.fn(),
     })
 
-    await onChunk?.({ type: "text", delta: "안녕 슬랙" })
+    await onChunk?.({ type: "text", delta: "안녕 슬랙", textSource: "llm_reviewed" })
     const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
 
     expect(responder.sendFinalResponse).toHaveBeenCalledWith("안녕 슬랙")
@@ -87,6 +82,33 @@ describe("slack chunk delivery helper", () => {
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(2)
   })
 
+  it("does not send unreviewed text chunks as Slack final text", async () => {
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn().mockResolvedValue(["slack-msg"]),
+      sendError: vi.fn(),
+    }
+    const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
+      responder,
+      sessionId: "slack-session",
+      channelId: "C_SLACK",
+      threadTs: "thread-unreviewed",
+      getRunId: () => "run-slack-unreviewed",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    await onChunk?.({ type: "text", delta: "검토되지 않은 원문" })
+    await onChunk?.({ type: "text", delta: "검토되지 않은 모델 원문", textSource: "llm_generated" })
+    const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
+
+    expect(responder.sendFinalResponse).not.toHaveBeenCalled()
+    expect(receipt).toBeUndefined()
+  })
+
   it("returns artifact delivery receipt for successful Slack file delivery", async () => {
     const responder = {
       sendToolStatus: vi.fn(),
@@ -97,6 +119,7 @@ describe("slack chunk delivery helper", () => {
     }
     const recordOutgoingMessageRef = vi.fn()
     const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "slack-session",
       channelId: "C_SLACK",
@@ -142,6 +165,55 @@ describe("slack chunk delivery helper", () => {
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(1)
   })
 
+  it("redacts Yeonjang internal evidence from Slack artifact captions", async () => {
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn().mockResolvedValue("slack-redacted-file-ts"),
+      sendFinalResponse: vi.fn(),
+      sendError: vi.fn(),
+    }
+    const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
+      responder,
+      sessionId: "slack-session",
+      channelId: "C_SLACK",
+      threadTs: "thread-redacted-artifact",
+      getRunId: () => "run-slack-redacted-artifact",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    const receipt = await onChunk?.({
+      type: "tool_end",
+      toolName: "screen_capture",
+      success: true,
+      output: "sent",
+      details: {
+        kind: "artifact_delivery",
+        channel: "slack",
+        filePath: "/tmp/slack-redacted.png",
+        caption:
+          "yeonjang-goal-validation:screen_capture:candidate_not_validated:result_diagnosis_not_sufficient operationId=operation:slack-artifact raw observed state",
+        size: 123,
+        source: "slack",
+      },
+    })
+
+    expect(responder.sendFile).toHaveBeenCalledWith(
+      "/tmp/slack-redacted.png",
+      "작업 결과를 확인하기 위해 추가 확인이 필요합니다.",
+    )
+    expect(receipt?.artifactDeliveries?.[0]?.caption).toBe(
+      "작업 결과를 확인하기 위해 추가 확인이 필요합니다.",
+    )
+    const serialized = JSON.stringify(receipt)
+    expect(serialized).not.toContain("yeonjang-goal-validation")
+    expect(serialized).not.toContain("operationId")
+    expect(serialized).not.toContain("operation:slack-artifact")
+    expect(serialized).not.toContain("raw observed state")
+  })
+
   it("does not send the same artifact twice for one Slack run", async () => {
     const responder = {
       sendToolStatus: vi.fn(),
@@ -152,6 +224,7 @@ describe("slack chunk delivery helper", () => {
     }
     const recordOutgoingMessageRef = vi.fn()
     const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "slack-session",
       channelId: "C_SLACK",
@@ -211,6 +284,7 @@ describe("slack chunk delivery helper", () => {
       sendError: vi.fn(),
     }
     const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "slack-session",
       channelId: "C_SLACK",
@@ -247,6 +321,7 @@ describe("slack chunk delivery helper", () => {
       sendError: vi.fn(),
     }
     const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "slack-session",
       channelId: "C_SLACK",
@@ -284,6 +359,7 @@ describe("slack chunk delivery helper", () => {
     }
     const recordOutgoingMessageRef = vi.fn()
     const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "slack-session",
       channelId: "C_SLACK",
@@ -327,6 +403,7 @@ describe("slack chunk delivery helper", () => {
       sendError: vi.fn(),
     }
     const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "slack-session",
       channelId: "C_SLACK",
@@ -366,6 +443,7 @@ describe("slack chunk delivery helper", () => {
       sendError: vi.fn(),
     }
     const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "slack-session",
       channelId: "C_SLACK",
@@ -411,6 +489,49 @@ describe("slack chunk delivery helper", () => {
     })
   })
 
+  it("redacts Yeonjang internal evidence from Slack isolated final-text tool output", async () => {
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn().mockResolvedValue(["slack-redacted-final-ts"]),
+      sendError: vi.fn(),
+    }
+    const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
+      responder,
+      sessionId: "slack-session",
+      channelId: "C_SLACK",
+      threadTs: "thread-redacted-text",
+      getRunId: () => "run-slack-redacted-text",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    await onChunk?.({
+      type: "tool_end",
+      toolName: "mouse_click",
+      success: true,
+      output:
+        "yeonjang-goal-validation:mouse_click:candidate_not_validated:result_diagnosis_not_sufficient operationId=operation:slack-redacted receipt payload raw observed state",
+      details: {
+        via: "yeonjang",
+        responseOwnership: "final_text",
+      },
+    })
+    const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
+
+    expect(responder.sendFinalResponse).toHaveBeenCalledWith(
+      "작업 결과를 확인하기 위해 추가 확인이 필요합니다.",
+    )
+    const serialized = JSON.stringify(receipt)
+    expect(serialized).not.toContain("yeonjang-goal-validation")
+    expect(serialized).not.toContain("operationId")
+    expect(serialized).not.toContain("operation:slack-redacted")
+    expect(serialized).not.toContain("receipt payload")
+    expect(serialized).not.toContain("raw observed state")
+  })
+
   it("records Slack rate-limited final text delivery without failing the run chunk", async () => {
     const logError = vi.fn()
     const responder = {
@@ -424,6 +545,7 @@ describe("slack chunk delivery helper", () => {
       sendError: vi.fn(),
     }
     const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "slack-session",
       channelId: "C_SLACK",
@@ -433,11 +555,43 @@ describe("slack chunk delivery helper", () => {
       logError,
     })
 
-    await onChunk?.({ type: "text", delta: "레이트 리밋 응답" })
+    await onChunk?.({ type: "text", delta: "레이트 리밋 응답", textSource: "llm_reviewed" })
     const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
 
     expect(receipt).toBeUndefined()
     expect(logError).toHaveBeenCalledWith("Failed to send Slack text delivery: Slack API rate limit exceeded.")
+  })
+
+  it("redacts Slack final text delivery errors before invoking logError", async () => {
+    const logError = vi.fn()
+    const rawToken = "sk-slack-delivery-secret-1234567890"
+    const rawPath = "/Users/example/private/slack-delivery.log"
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn().mockRejectedValue(new Error(`Slack delivery failed token=${rawToken} path=${rawPath}`)),
+      sendError: vi.fn(),
+    }
+    const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
+      responder,
+      sessionId: "slack-session",
+      channelId: "C_SLACK",
+      threadTs: "thread-redaction",
+      getRunId: () => "run-slack-redaction",
+      recordOutgoingMessageRef: vi.fn(),
+      logError,
+    })
+
+    await onChunk?.({ type: "text", delta: "redacted slack response", textSource: "llm_reviewed" })
+    await onChunk?.({ type: "done", totalTokens: 0 })
+    const payload = JSON.stringify(logError.mock.calls)
+
+    expect(payload).not.toContain(rawToken)
+    expect(payload).not.toContain(rawPath)
+    expect(payload).toContain("***")
+    expect(payload).toContain("[internal-path-redacted]")
   })
 
   it("falls back to Slack thread artifact link when file upload fails", async () => {
@@ -449,6 +603,7 @@ describe("slack chunk delivery helper", () => {
       sendError: vi.fn(),
     }
     const onChunk = createSlackChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "slack-session",
       channelId: "C_SLACK",

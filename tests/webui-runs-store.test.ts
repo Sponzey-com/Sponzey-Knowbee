@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const { mockApi, mockSetDisconnected } = vi.hoisted(() => ({
   mockApi: {
+    workSnapshot: vi.fn(),
     runs: vi.fn(),
     tasks: vi.fn(),
     runOperationsSummary: vi.fn(),
@@ -137,6 +138,21 @@ function makeOperationsSummary() {
   }
 }
 
+function makeWorkSnapshot(
+  runs: ReturnType<typeof makeRun>[],
+  tasks: ReturnType<typeof makeTask>[],
+  observedAt: number,
+) {
+  return {
+    observedAt,
+    runs,
+    executionOutcomes: {},
+    activeRunProjections: [],
+    tasks,
+    operationsSummary: makeOperationsSummary(),
+  }
+}
+
 describe("webui runs store", () => {
   beforeEach(() => {
     useRunsStore.setState({
@@ -148,6 +164,7 @@ describe("webui runs store", () => {
       operationsSummary: null,
       selectedRunId: null,
     })
+    mockApi.workSnapshot.mockReset()
     mockApi.runs.mockReset()
     mockApi.tasks.mockReset()
     mockApi.runOperationsSummary.mockReset()
@@ -188,34 +205,28 @@ describe("webui runs store", () => {
   })
 
   it("ignores stale refresh responses when concurrent snapshots resolve out of order", async () => {
-    const runsFirst = deferred<{ runs: ReturnType<typeof makeRun>[] }>()
-    const tasksFirst = deferred<{ tasks: ReturnType<typeof makeTask>[] }>()
-    const operationsFirst = deferred<{ summary: ReturnType<typeof makeOperationsSummary> }>()
-    const runsSecond = deferred<{ runs: ReturnType<typeof makeRun>[] }>()
-    const tasksSecond = deferred<{ tasks: ReturnType<typeof makeTask>[] }>()
-    const operationsSecond = deferred<{ summary: ReturnType<typeof makeOperationsSummary> }>()
+    const first = deferred<ReturnType<typeof makeWorkSnapshot>>()
+    const second = deferred<ReturnType<typeof makeWorkSnapshot>>()
 
-    mockApi.runs
-      .mockReturnValueOnce(runsFirst.promise)
-      .mockReturnValueOnce(runsSecond.promise)
-    mockApi.tasks
-      .mockReturnValueOnce(tasksFirst.promise)
-      .mockReturnValueOnce(tasksSecond.promise)
-    mockApi.runOperationsSummary
-      .mockReturnValueOnce(operationsFirst.promise)
-      .mockReturnValueOnce(operationsSecond.promise)
+    mockApi.workSnapshot
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
 
     const firstRefresh = useRunsStore.getState().refresh()
     const secondRefresh = useRunsStore.getState().refresh()
 
-    runsSecond.resolve({ runs: [makeRun("task-newer", 20), makeRun("task-older", 10)] })
-    tasksSecond.resolve({ tasks: [makeTask("task-newer", 20), makeTask("task-older", 10)] })
-    operationsSecond.resolve({ summary: makeOperationsSummary() })
+    second.resolve(makeWorkSnapshot(
+      [makeRun("task-newer", 20), makeRun("task-older", 10)],
+      [makeTask("task-newer", 20), makeTask("task-older", 10)],
+      20,
+    ))
     await secondRefresh
 
-    runsFirst.resolve({ runs: [makeRun("task-older", 10)] })
-    tasksFirst.resolve({ tasks: [makeTask("task-older", 10)] })
-    operationsFirst.resolve({ summary: makeOperationsSummary() })
+    first.resolve(makeWorkSnapshot(
+      [makeRun("task-older", 10)],
+      [makeTask("task-older", 10)],
+      10,
+    ))
     await firstRefresh
 
     expect(useRunsStore.getState().runs.map((run) => run.id)).toEqual(["task-newer", "task-older"])
@@ -225,8 +236,7 @@ describe("webui runs store", () => {
 
   it("removes the selected history item through the delete API and refreshes", async () => {
     mockApi.deleteRunHistory.mockResolvedValue({ ok: true, deletedRunCount: 1 })
-    mockApi.runs.mockResolvedValue({ runs: [] })
-    mockApi.tasks.mockResolvedValue({ tasks: [] })
+    mockApi.workSnapshot.mockResolvedValue(makeWorkSnapshot([], [], 20))
 
     useRunsStore.setState({
       initialized: true,
@@ -241,21 +251,21 @@ describe("webui runs store", () => {
     await useRunsStore.getState().deleteRunHistory("task-old")
 
     expect(mockApi.deleteRunHistory).toHaveBeenCalledWith("task-old")
-    expect(mockApi.runs).toHaveBeenCalled()
-    expect(mockApi.tasks).toHaveBeenCalled()
-    expect(mockApi.runOperationsSummary).toHaveBeenCalled()
+    expect(mockApi.workSnapshot).toHaveBeenCalled()
   })
 
   it("clears historical history through the delete API and refreshes", async () => {
     mockApi.clearHistoricalRunHistory.mockResolvedValue({ ok: true, deletedRunCount: 3 })
-    mockApi.runs.mockResolvedValue({ runs: [makeRun("task-active", 20)] })
-    mockApi.tasks.mockResolvedValue({ tasks: [makeTask("task-active", 20)] })
+    mockApi.workSnapshot.mockResolvedValue(makeWorkSnapshot(
+      [makeRun("task-active", 20)],
+      [makeTask("task-active", 20)],
+      20,
+    ))
 
     await useRunsStore.getState().clearHistoricalRunHistory()
 
     expect(mockApi.clearHistoricalRunHistory).toHaveBeenCalledTimes(1)
-    expect(mockApi.runs).toHaveBeenCalled()
-    expect(mockApi.tasks).toHaveBeenCalled()
+    expect(mockApi.workSnapshot).toHaveBeenCalled()
   })
 
   it("cleans stale runs through the operations API and refreshes snapshots", async () => {
@@ -270,14 +280,12 @@ describe("webui runs store", () => {
       },
       summary: makeOperationsSummary(),
     })
-    mockApi.runs.mockResolvedValue({ runs: [] })
-    mockApi.tasks.mockResolvedValue({ tasks: [] })
+    mockApi.workSnapshot.mockResolvedValue(makeWorkSnapshot([], [], 20))
 
     await useRunsStore.getState().cleanupStaleRuns()
 
     expect(mockApi.cleanupStaleRuns).toHaveBeenCalledTimes(1)
-    expect(mockApi.runs).toHaveBeenCalled()
-    expect(mockApi.tasks).toHaveBeenCalled()
+    expect(mockApi.workSnapshot).toHaveBeenCalled()
     expect(useRunsStore.getState().operationsSummary).toEqual(makeOperationsSummary())
   })
 })

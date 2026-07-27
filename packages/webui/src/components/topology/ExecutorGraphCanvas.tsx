@@ -49,6 +49,7 @@ interface ExecutorFlowNodeData extends Record<string, unknown> {
   resources: ExecutorCardResourceChip[]
   relation?: ExecutorGraphRelationInfo
   subAgentSummary?: TopologySubAgentSummary
+  rootAgentLabel?: string
   working: boolean
   executionStatus?: ExecutorCardExecutionStatus
 }
@@ -273,6 +274,7 @@ function ExecutorFlowNodeView(props: NodeProps) {
         relationLabel={data.relation ? text(data.relation.relationLabelKo, data.relation.relationLabelEn) : undefined}
         relationDescription={data.relation ? text(data.relation.relationDetailKo, data.relation.relationDetailEn) : undefined}
         roleLabel={data.relation?.roleLabel}
+        rootAgentLabel={data.rootAgentLabel}
         shortId={data.relation?.shortId}
         duplicateName={data.relation?.duplicateName}
         selectableWithoutPath={data.relation?.selectableWithoutPath}
@@ -318,6 +320,7 @@ function executorFlowNodes(
         resources: card.resources,
         relation: relationInfoById.get(executor.id),
         subAgentSummary: subAgentSummaries?.get(executor.id),
+        rootAgentLabel,
         working: activeExecutorIds.has(executor.id) || Boolean(executor.sourceNodeId && activeExecutorIds.has(executor.sourceNodeId)),
         executionStatus: executorStatuses[executor.id] ?? (activeExecutorIds.has(executor.id) ? "running" : undefined),
       },

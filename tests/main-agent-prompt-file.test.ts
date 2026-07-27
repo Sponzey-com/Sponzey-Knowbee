@@ -1,15 +1,82 @@
 import { readdirSync, readFileSync } from "node:fs"
 import { basename } from "node:path"
 import { describe, expect, it } from "vitest"
-import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
+import { DEFAULT_CONFIG, type KnowbeeConfig } from "../packages/core/src/config/types.ts"
 import {
-  answerMainAgentSelfNameQuestion,
   buildMainAgentIdentityPromptContext,
   buildMainAgentPromptVariables,
   resolveMainAgentSelfName,
   resolvePromptLocaleForRequest,
 } from "../packages/core/src/agent/main-agent-identity.ts"
 import { loadPromptSourceRegistry, loadPromptTemplate } from "../packages/core/src/memory/knowbee-md.ts"
+
+function configWithMainAgentName(input: {
+  language?: string
+  agentName?: string
+  displayName?: string
+  nickname?: string
+}): KnowbeeConfig {
+  const agentName = input.agentName?.trim()
+  const displayName = input.displayName ?? agentName ?? "Knowbee"
+  const nickname = input.nickname ?? displayName
+  return {
+    ...DEFAULT_CONFIG,
+    profile: { ...DEFAULT_CONFIG.profile, language: input.language ?? "ko" },
+    orchestration: {
+      ...DEFAULT_CONFIG.orchestration,
+      knowbee: {
+        schemaVersion: 1,
+        agentType: "knowbee",
+        agentId: "agent:knowbee",
+        ...(agentName ? { agentName, normalizedAgentName: agentName.toLowerCase() } : {}),
+        displayName,
+        nickname,
+        normalizedNickname: nickname.toLowerCase(),
+        status: "enabled",
+        role: "Main assistant",
+        personality: "Concise",
+        specialtyTags: [],
+        avoidTasks: [],
+        memoryPolicy: {
+          owner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
+          visibility: "private",
+          readScopes: [{ ownerType: "knowbee", ownerId: "agent:knowbee" }],
+          writeScope: { ownerType: "knowbee", ownerId: "agent:knowbee" },
+          retentionPolicy: "long_term",
+          writebackReviewRequired: false,
+        },
+        capabilityPolicy: {
+          permissionProfile: {
+            profileId: "profile:knowbee-main",
+            riskCeiling: "moderate",
+            approvalRequiredFrom: "moderate",
+            allowExternalNetwork: true,
+            allowFilesystemWrite: false,
+            allowShellExecution: false,
+            allowScreenControl: false,
+            allowedPaths: [],
+          },
+          skillMcpAllowlist: {
+            enabledSkillIds: [],
+            enabledMcpServerIds: [],
+            enabledToolNames: [],
+            disabledToolNames: [],
+            secretScopeId: "agent:knowbee",
+          },
+          rateLimit: { maxConcurrentCalls: 1 },
+        },
+        profileVersion: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        coordinator: {
+          defaultMode: "single_knowbee",
+          fallbackMode: "single_knowbee",
+          maxDelegatedSubSessions: 1,
+        },
+      },
+    },
+  }
+}
 
 describe("main agent file-backed prompt identity", () => {
   it("renders the configured main-agent self name into the file-backed system prompt", () => {
@@ -22,6 +89,8 @@ describe("main agent file-backed prompt identity", () => {
           schemaVersion: 1,
           agentType: "knowbee" as const,
           agentId: "agent:knowbee",
+          agentName: "마당쇠",
+          normalizedAgentName: "마당쇠",
           displayName: "마당쇠",
           nickname: "마당쇠",
           normalizedNickname: "마당쇠",
@@ -78,10 +147,23 @@ describe("main agent file-backed prompt identity", () => {
       variables: buildMainAgentPromptVariables(config),
     })
 
-    expect(context).toContain("Current main-agent self name: 마당쇠")
-    expect(prompt).toContain("You are 마당쇠.")
-    expect(prompt).toContain("Current main-agent self name: `마당쇠`")
+    expect(context).toContain("Current main-agent self name: `마당쇠`")
+    expect(prompt).toContain("Current main agent name: `마당쇠`.")
+    expect(prompt).toContain("act as the platform-level main agent, not as a general-purpose chatbot")
+    expect(prompt).toContain("Preserve conversational replies for requests that need only a response")
     expect(prompt).not.toContain("You are Knowbee.")
+  })
+
+  it("uses main-agent agentName instead of legacy displayName or nickname in identity context", () => {
+    const config = configWithMainAgentName({
+      agentName: "마당쇠",
+      displayName: "Legacy Main Display",
+      nickname: "Legacy Main Nick",
+    })
+
+    expect(resolveMainAgentSelfName(config, "ko")).toBe("마당쇠")
+    expect(buildMainAgentIdentityPromptContext(config, "ko")).toContain("Current main-agent self name: `마당쇠`")
+    expect(buildMainAgentIdentityPromptContext(config, "ko")).not.toContain("Legacy Main Nick")
   })
 
   it("localizes the default self name for Korean name questions", () => {
@@ -152,19 +234,20 @@ describe("main agent file-backed prompt identity", () => {
 
     expect(promptLocale).toBe("ko")
     expect(resolveMainAgentSelfName(config, promptLocale)).toBe("노비")
-    expect(buildMainAgentIdentityPromptContext(config, promptLocale)).toContain("Current main-agent self name: 노비")
-    expect(prompt).toContain("You are 노비.")
+    expect(buildMainAgentIdentityPromptContext(config, promptLocale)).toContain("Current main-agent self name: `노비`")
+    expect(prompt).toContain("Current main agent name: `노비`.")
     expect(prompt).not.toContain("You are Knowbee.")
   })
 
-  it("routes only assistant self-name questions through the deterministic answer", () => {
+  it("resolves Korean assistant self-name questions without using the user-name phrase", () => {
     const config = {
       ...DEFAULT_CONFIG,
       profile: { ...DEFAULT_CONFIG.profile, language: "ko" },
     }
 
-    expect(answerMainAgentSelfNameQuestion(config, "니 이름이 뭐니?")).toBe("제 이름은 노비입니다.")
-    expect(answerMainAgentSelfNameQuestion(config, "내 이름이 뭐니?")).toBeNull()
+    expect(resolvePromptLocaleForRequest(config.profile.language, "니 이름이 뭐니?")).toBe("ko")
+    expect(resolveMainAgentSelfName(config, "ko")).toBe("노비")
+    expect(buildMainAgentIdentityPromptContext(config, "ko")).toContain("User profile name or display name identifies the user")
   })
 
   it("does not treat the user's profile name as the main agent self-name", () => {
@@ -232,7 +315,7 @@ describe("main agent file-backed prompt identity", () => {
     }
 
     expect(resolveMainAgentSelfName(config, "ko")).toBe("노비")
-    expect(answerMainAgentSelfNameQuestion(config, "니 이름이 뭐니?")).toBe("제 이름은 노비입니다.")
+    expect(buildMainAgentIdentityPromptContext(config, "ko")).toContain("Current main-agent self name: `노비`")
   })
 
   it("keeps active prompt bodies out of runtime source code", () => {
@@ -242,7 +325,6 @@ describe("main agent file-backed prompt identity", () => {
       "packages/core/src/agent/completion-review.ts",
       "packages/core/src/runs/entry-comparison.ts",
       "packages/core/src/runs/intake-bridge-pass.ts",
-      "packages/core/src/runs/web-retrieval-planner.ts",
       "packages/core/src/schedules/comparison.ts",
       "packages/core/src/topology/node-definition-suggestion.ts",
       "packages/core/src/api/routes/settings.ts",

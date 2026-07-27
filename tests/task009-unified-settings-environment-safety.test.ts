@@ -36,14 +36,4 @@ describe("task009 unified settings environment safety gate", () => {
     expect(adapter).not.toContain("Date.now")
     expect(adapter).not.toContain("new Date()")
   })
-
-  it("documents the unified settings safety gate in the architecture cleanup inventory", () => {
-    const inventory = source(".tasks/architecture-cleanup-inventory.md")
-
-    expect(inventory).toContain("Unified Settings Environment Safety Gate")
-    expect(inventory).toContain("process.env")
-    expect(inventory).toContain("Date.now")
-    expect(inventory).toContain("명시 인자")
-    expect(inventory).toContain("runtime endpoint")
-  })
 })

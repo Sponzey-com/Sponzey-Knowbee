@@ -8,8 +8,12 @@ import { memoryInitCommand, memoryShowCommand } from "./commands/memory.js"
 import { indexCommand, indexClearCommand } from "./commands/index-cmd.js"
 import { scheduleRunCommand } from "./commands/schedule.js"
 import { channelSmokeCommand } from "./commands/smoke.js"
+import { liveAcceptanceCommand } from "./commands/live-acceptance.js"
 import { doctorCommand } from "./commands/doctor.js"
-import { getCurrentDisplayVersion } from "@knowbee/core"
+import { artifactCleanupCommand } from "./commands/artifact-cleanup.js"
+import { captureRuntimePaths, getCurrentDisplayVersion, loadConfigSnapshot } from "@knowbee/core"
+import { reportCliCommandFailure } from "./command-error.js"
+import { getCliBaseEnv } from "./runtime-env.js"
 import {
   pluginListCommand,
   pluginInstallCommand,
@@ -21,11 +25,9 @@ import {
 
 const VERSION = getCurrentDisplayVersion()
 
-function startServeCommand(options: { adminUi?: boolean }): void {
-  if (options.adminUi) process.env["KNOWBEE_ADMIN_UI"] = "1"
+function startServeCommand(): void {
   serveCommand().catch((err: unknown) => {
-    console.error("Fatal:", err instanceof Error ? err.message : String(err))
-    process.exit(1)
+    reportCliCommandFailure(err, "fatal")
   })
 }
 
@@ -49,8 +51,7 @@ program
     yes?: boolean
   }) => {
     runCommand(message, options).catch((err: unknown) => {
-      console.error("Fatal error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err, "fatal")
     })
   })
 
@@ -59,20 +60,20 @@ program
   .command("init")
   .description("Create a default config file at ~/.knowbee/config.json5")
   .action(() => {
-    initConfig()
+    initConfig(captureRuntimePaths())
   })
 
 // knowbee status
 program
   .command("status")
   .description("Show current agent status and configuration summary")
-  .action(async () => {
-    const { getConfig, PATHS } = await import("@knowbee/core")
-    const cfg = getConfig()
+  .action(() => {
+    const paths = captureRuntimePaths()
+    const cfg = loadConfigSnapshot({ baseEnv: getCliBaseEnv(), cwd: process.cwd(), paths })
     console.log(`스폰지 노비 · Sponzey Knowbee v${VERSION}`)
-    console.log(`State dir:   ${PATHS.stateDir}`)
-    console.log(`Config:      ${PATHS.configFile}`)
-    console.log(`DB:          ${PATHS.dbFile}`)
+    console.log(`State dir:   ${paths.stateDir}`)
+    console.log(`Config:      ${paths.configFile}`)
+    console.log(`DB:          ${paths.dbFile}`)
     console.log(`Provider:    ${cfg.ai.connection.provider}`)
     console.log(`Model:       ${cfg.ai.connection.model}`)
     console.log(`Approval:    ${cfg.security.approvalMode}`)
@@ -98,8 +99,7 @@ schedule
   .description("저장된 스케줄을 한 번 실행합니다 (system cron 실행용)")
   .action((id: string) => {
     scheduleRunCommand(id).catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err)
     })
   })
 
@@ -108,13 +108,30 @@ smoke
   .command("channels")
   .description("WebUI, Telegram, Slack 채널 파이프라인 smoke 점검을 실행합니다")
   .option("--channel <channel>", "webui | telegram | slack 중 하나만 실행")
-  .option("--live", "실제 채널 live-run 실행 (KNOWBEE_CHANNEL_SMOKE_LIVE=1 필요)")
+  .option("--live", "실행 중인 Gateway에서 실제 채널 live-run 실행 (시작 전 KNOWBEE_CHANNEL_SMOKE_LIVE=1 필요)")
   .option("--json", "결과를 JSON으로 출력")
   .action((options: { channel?: string; live?: boolean; json?: boolean }) => {
     channelSmokeCommand(options).catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err)
     })
+  })
+
+smoke
+  .command("acceptance")
+  .description("전체 production live acceptance를 Gateway에서 실행합니다")
+  .option("--request <path>", "candidate와 승인 참조가 포함된 execution request JSON")
+  .option("--check", "외부 실행 없이 Gateway 준비 상태만 확인")
+  .option("--json", "bounded 결과를 JSON으로 출력")
+  .action((options: { request?: string; check?: boolean; json?: boolean }) => {
+    liveAcceptanceCommand({
+      ...(options.request === undefined ? {} : { requestPath: options.request }),
+      ...(options.check === undefined ? {} : { check: options.check }),
+      ...(options.json === undefined ? {} : { json: options.json }),
+    }).catch(
+      (err: unknown) => {
+        reportCliCommandFailure(err)
+      },
+    )
   })
 
 program
@@ -126,8 +143,30 @@ program
   .option("--write", "진단 보고서를 state diagnostics 디렉토리에 저장합니다")
   .action((options: { quick?: boolean; full?: boolean; json?: boolean; write?: boolean }) => {
     doctorCommand(options).catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err)
+    })
+  })
+
+const admin = program.command("admin").description("관리자 진단 및 유지보수 명령")
+admin
+  .command("artifact-cleanup")
+  .description("오래된 진단/릴리스 결과물을 미리보기하거나 정리합니다")
+  .option("--execute", "미리보기 대신 정리를 실행합니다")
+  .option("--confirm <phrase>", "실행 확인 문구")
+  .option("--max-age-ms <ms>", "정리 대상 최소 보관 시간(ms)")
+  .option("--release-output-dir <path>", "명시적으로 정리할 릴리스 출력 폴더")
+  .option("--json", "사용자 표시용 projection을 JSON으로 출력합니다")
+  .option("--audit", "감사용 reason aggregate를 함께 출력합니다")
+  .action((options: {
+    execute?: boolean
+    confirm?: string
+    maxAgeMs?: string
+    releaseOutputDir?: string
+    json?: boolean
+    audit?: boolean
+  }) => {
+    artifactCleanupCommand(options).catch((err: unknown) => {
+      reportCliCommandFailure(err)
     })
   })
 
@@ -146,8 +185,7 @@ const serviceActions: Array<{ name: ServiceAction; desc: string }> = [
 for (const { name, desc } of serviceActions) {
   svc.command(name).description(desc).action(() => {
     runServiceAction(name).catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err)
     })
   })
 }
@@ -159,8 +197,7 @@ mem
   .description("Create a KNOWBEE.md template in the current directory")
   .action(() => {
     memoryInitCommand().catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err)
     })
   })
 mem
@@ -168,8 +205,7 @@ mem
   .description("Show stored long-term memories")
   .action(() => {
     memoryShowCommand().catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err)
     })
   })
 
@@ -182,8 +218,7 @@ idx
   .option("--stats", "현재 인덱스 통계만 표시")
   .action((path: string | undefined, opts: { exclude?: string[]; stats?: boolean }) => {
     indexCommand(path ?? ".", opts).catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err)
     })
   })
 idx
@@ -191,8 +226,7 @@ idx
   .description("인덱스를 초기화합니다 (path 지정 시 해당 경로만)")
   .action((path: string | undefined) => {
     indexClearCommand(path).catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err)
     })
   })
 
@@ -203,8 +237,7 @@ plug
   .description("설치된 플러그인 목록 표시")
   .action(() => {
     pluginListCommand().catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err)
     })
   })
 plug
@@ -214,8 +247,7 @@ plug
   .option("-v, --version <ver>", "버전 지정")
   .action((entryPath: string, opts: { name?: string; version?: string }) => {
     pluginInstallCommand(entryPath, opts).catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err)
     })
   })
 plug
@@ -223,8 +255,7 @@ plug
   .description("플러그인 제거")
   .action((name: string) => {
     pluginUninstallCommand(name).catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err)
     })
   })
 plug
@@ -232,8 +263,7 @@ plug
   .description("플러그인 활성화")
   .action((name: string) => {
     pluginEnableCommand(name).catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err)
     })
   })
 plug
@@ -241,8 +271,7 @@ plug
   .description("플러그인 비활성화")
   .action((name: string) => {
     pluginDisableCommand(name).catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err)
     })
   })
 plug
@@ -250,8 +279,7 @@ plug
   .description("플러그인 상세 정보")
   .action((name: string) => {
     pluginInfoCommand(name).catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+      reportCliCommandFailure(err)
     })
   })
 
@@ -261,9 +289,8 @@ auth
   .command("generate")
   .description("Generate a new WebUI auth token and enable auth in config")
   .action(() => {
-    generateAuthToken().catch((err: unknown) => {
-      console.error("Error:", err instanceof Error ? err.message : String(err))
-      process.exit(1)
+    generateAuthToken(captureRuntimePaths()).catch((err: unknown) => {
+      reportCliCommandFailure(err)
     })
   })
 

@@ -3,6 +3,7 @@ import type { AggregationResult } from "./aggregation.js";
 import type { ChildDispatchSummary } from "./child-dispatcher.js";
 import type { NodeToolExecutionSummary } from "./tool-dispatcher.js";
 import type { AggregatedNodeValidationResult } from "./validation.js";
+import type { SolutionPathReview } from "./solution-path-exhaustion.js";
 export type RecoveryOptionReviewCode = "self_execution_attempted" | "self_execution_untried" | "child_delegation_attempted" | "child_delegation_untried" | "child_delegation_not_available" | "tool_execution_attempted" | "tool_execution_untried" | "tool_execution_not_available" | "retry_attempted" | "retry_untried" | "retry_not_available" | "fallback_attempted" | "fallback_untried" | "fallback_not_available" | "partial_success_checked" | "partial_success_unchecked" | "partial_success_not_available" | "parent_recovery_checked" | "parent_recovery_unchecked";
 export interface NodeRecoveryControllerOptions {
     selfExecutionAttempted?: boolean;
@@ -19,6 +20,7 @@ export interface NodeRecoveryControllerOptions {
     requirePartialSuccessReview?: boolean;
     requireParentRecoveryReview?: boolean;
     recommendedAction?: string;
+    solutionPathReviews?: SolutionPathReview[];
 }
 export interface BuildNodeRecoveryReviewInput {
     workOrder: WorkOrder;

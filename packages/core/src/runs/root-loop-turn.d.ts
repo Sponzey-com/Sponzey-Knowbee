@@ -9,7 +9,12 @@ import type { RecoveryBudgetUsage } from "./recovery-budget.js";
 import type { TaskProfile } from "./types.js";
 import type { AgentContextMode } from "../agent/index.js";
 import type { TaskExecutionSemantics, TaskStructuredRequest } from "../agent/intake.js";
+import type { KnowbeeConfig } from "../config/types.js";
+import type { ArtifactStorageContext } from "../artifacts/lifecycle.js";
+import type { MemoryJournalRepository } from "../memory/journal.js";
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js";
+import type { FinalResponseIdentityContext } from "./final-response-renderer.js";
+import type { RootRunDriverDependencies } from "./root-run-driver.js";
 export interface RootLoopTurnDependencies {
     appendRunEvent: (runId: string, message: string) => void;
     updateRunSummary: (runId: string, summary: string) => void;
@@ -25,6 +30,7 @@ export interface RootLoopTurnDependencies {
     }) => void;
     incrementDelegationTurnCount: (runId: string, summary: string) => void;
     markAbortedRunCancelledIfActive: (runId: string) => void;
+    getAdmittedCapabilityExecutionScope?: RootRunDriverDependencies["getAdmittedCapabilityExecutionScope"];
     getDelegationTurnState: () => {
         usedTurns: number;
         maxTurns: number;
@@ -40,15 +46,21 @@ export interface RootLoopTurnDependencies {
         reason?: string;
         remainingItems?: string[];
     }>;
-    rememberRunApprovalScope: (runId: string) => void;
-    grantRunApprovalScope: (runId: string) => void;
-    grantRunSingleApproval: (runId: string) => void;
+    rememberRunApprovalScope: (runId: string, toolName: string) => void;
+    grantRunApprovalScope: (runId: string, toolName: string) => void;
+    grantRunSingleApproval: (runId: string, toolName: string) => void;
     onDeliveryError?: (message: string) => void;
     onReviewError?: (message: string) => void;
+    recordCanonicalAttempt: RootRunDriverDependencies["recordCanonicalAttempt"];
+    recordCanonicalRecoveryReentry: RootRunDriverDependencies["recordCanonicalRecoveryReentry"];
+    recordCanonicalCompletionOutcome: RootRunDriverDependencies["recordCanonicalCompletionOutcome"];
+    recordCanonicalDelivery: RootRunDriverDependencies["recordCanonicalDelivery"];
+    stageCanonicalPendingResponse: RootRunDriverDependencies["stageCanonicalPendingResponse"];
+    consumeCanonicalPendingResponse: RootRunDriverDependencies["consumeCanonicalPendingResponse"];
     executeLoopDirective: (directive: LoopDirective) => Promise<"break">;
     tryHandleActiveQueueCancellation: () => Promise<LoopDirective | null>;
     tryHandleIntakeBridge: (currentMessage: string) => Promise<LoopDirective | null>;
-    getSyntheticApprovalAlreadyApproved: () => boolean;
+    getSyntheticApprovalAlreadyApproved: (toolName: string) => boolean;
 }
 interface RootLoopTurnModuleDependencies {
     prepareRootLoopEntryPassLaunch: typeof prepareRootLoopEntryPassLaunch;
@@ -58,6 +70,8 @@ interface RootLoopTurnModuleDependencies {
     runExecutionCyclePass: typeof runExecutionCyclePass;
 }
 export interface RootLoopTurnParams {
+    artifactStorage: ArtifactStorageContext;
+    memoryJournal: MemoryJournalRepository;
     runId: string;
     sessionId: string;
     requestGroupId: string;
@@ -74,10 +88,15 @@ export interface RootLoopTurnParams {
     structuredRequest?: TaskStructuredRequest;
     requestMessage: string;
     workDir: string;
+    config: KnowbeeConfig;
+    finalResponseIdentityContext?: FinalResponseIdentityContext | undefined;
     toolsEnabled?: boolean;
     isRootRequest: boolean;
     contextMode: AgentContextMode;
     taskProfile: TaskProfile;
+    scheduleId?: string;
+    includeScheduleMemory?: boolean;
+    memorySearchQuery?: string;
     workerSessionId?: string;
     wantsDirectArtifactDelivery: boolean;
     requiresFilesystemMutation: boolean;

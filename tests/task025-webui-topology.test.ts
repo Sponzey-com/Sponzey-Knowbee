@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { readFileSync } from "node:fs"
 import type {
   AgentTopologyProjection,
   AgentTopologyTeamInspector,
@@ -20,6 +21,7 @@ import {
   mergeTopologyFlowNodesWithCurrentPositions,
   resolveTopologyConnectionIntent,
   resolveTopologyNodeDragDropIntent,
+  topologyAgentDisplayLabel,
   topologyEdgeVisualStyle,
   updateTeamBuilderDraft,
   updateTeamBuilderDraftRole,
@@ -241,6 +243,7 @@ function projection(): AgentTopologyProjection {
           agentId: "agent:alpha",
           nodeId: "agent:agent:alpha",
           kind: "sub_agent",
+          agentName: "Alpha",
           displayName: "Alpha",
           status: "enabled",
           role: "researcher",
@@ -307,6 +310,8 @@ describe("task025 webui topology helpers", () => {
     const betaNode = elements.nodes.find((node) => node.id === "agent:agent:beta")
 
     expect(teamNode?.type).toBe("topologyNode")
+    expect(teamNode?.data.label).toBe("Topology Team")
+    expect(teamNode?.data.label).not.toBe("Legacy Team Nick")
     expect(teamNode?.data.group).toBe(true)
     expect(teamNode?.draggable).toBe(true)
     expect(teamNode?.style).toEqual(expect.objectContaining({ width: 578, height: 212 }))
@@ -325,6 +330,68 @@ describe("task025 webui topology helpers", () => {
     expect(hierarchy?.target).toBe("team:team:topology")
     expect(hierarchy?.style).not.toHaveProperty("strokeDasharray")
     expect(topologyEdgeVisualStyle("invalid").stroke).toBe("#dc2626")
+  })
+
+  it("uses canonical agentName for agent flow labels before legacy names", () => {
+    const runtime = projection()
+    runtime.nodes = runtime.nodes.map((node) =>
+      node.entityId === "agent:alpha" ? { ...node, label: "Legacy Display" } : node,
+    )
+    runtime.inspectors.agents["agent:alpha"] = {
+      ...runtime.inspectors.agents["agent:alpha"],
+      agentName: "정식 이름",
+      displayName: "Legacy Display",
+      nickname: "Legacy Nick",
+    } as typeof runtime.inspectors.agents["agent:alpha"] & { agentName: string }
+
+    const elements = buildTopologyFlowElements(runtime)
+    const alphaNode = elements.nodes.find((node) => node.id === "agent:agent:alpha")
+
+    expect(alphaNode?.data.label).toBe("정식 이름")
+    expect(alphaNode?.data.label).not.toBe("Legacy Display")
+  })
+
+  it("uses an explicit fallback instead of legacy labels when agentName is missing", () => {
+    const runtime = projection()
+    runtime.nodes = runtime.nodes.map((node) =>
+      node.entityId === "agent:alpha" ? { ...node, label: "Legacy Display" } : node,
+    )
+    runtime.inspectors.agents["agent:alpha"] = {
+      ...runtime.inspectors.agents["agent:alpha"],
+      agentName: "",
+      displayName: "Legacy Display",
+      nickname: "Legacy Nick",
+    } as typeof runtime.inspectors.agents["agent:alpha"] & { agentName: string }
+
+    const elements = buildTopologyFlowElements(runtime)
+    const alphaNode = elements.nodes.find((node) => node.id === "agent:agent:alpha")
+
+    expect(alphaNode?.data.label).toBe("Unnamed agent")
+    expect(alphaNode?.data.label).not.toBe("Legacy Display")
+    expect(alphaNode?.data.label).not.toBe("Legacy Nick")
+  })
+
+  it("shares the agentName label helper across flow and inspector surfaces", () => {
+    const pageSource = readFileSync(
+      new URL("../packages/webui/src/pages/TopologyPage.tsx", import.meta.url),
+      "utf-8",
+    )
+
+    expect(topologyAgentDisplayLabel({
+      agentName: "정식 이름",
+      displayName: "Legacy Display",
+      nickname: "Legacy Nick",
+    })).toBe("정식 이름")
+    expect(topologyAgentDisplayLabel({
+      agentName: "",
+      displayName: "Legacy Display",
+      nickname: "Legacy Nick",
+    })).toBe("Unnamed agent")
+    expect(pageSource).toContain("topologyAgentDisplayLabel(agent)")
+    expect(pageSource).not.toContain("agent.agentName?.trim() || agent.displayName")
+    expect(pageSource).not.toMatch(/updateTopologyAgent[\s\S]{0,300}displayName/u)
+    expect(pageSource).not.toMatch(/updateTopologyAgent[\s\S]{0,300}nickname/u)
+    expect(pageSource).not.toContain("team.nickname ?? team.displayName")
   })
 
   it("sizes team group nodes from the team lead and members and lays them out inside the team", () => {
@@ -646,6 +713,7 @@ describe("task025 webui topology helpers", () => {
   it("summarizes diagnostics and keeps redacted inspector data free of raw secrets", () => {
     const runtime = projection()
     const cards = buildTopologySummaryCards(runtime, text)
+    expect(cards.find((card) => card.id === "agents")?.label).toBe("서브 에이전트")
     expect(cards.find((card) => card.id === "issues")?.tone).toBe("emerald")
     expect(runtime.inspectors.agents["agent:alpha"].skillMcp.secretScope).toBe("configured")
     expect(JSON.stringify(runtime)).not.toMatch(/sk-task025-secret|private raw memory|rawPayload/i)
@@ -672,19 +740,23 @@ describe("task025 webui topology helpers", () => {
       expect.objectContaining({
         agentId: "agent:delta",
         agentType: "sub_agent",
-        displayName: "Delta",
+        agentName: "Delta",
         status: "enabled",
       }),
     )
+    expect(agent.agent).not.toHaveProperty("displayName")
+    expect(agent.agent).not.toHaveProperty("nickname")
     expect("relationship" in agent).toBe(false)
     expect(team.team).toEqual(
       expect.objectContaining({
         teamId: "team:review-team",
+        displayName: "Review Team",
         ownerAgentId: "agent:alpha",
         leadAgentId: "agent:alpha",
         purpose: "Review sub-agent outputs.",
       }),
     )
+    expect(team.team).not.toHaveProperty("nickname")
     expect(team.team).toEqual(expect.objectContaining({ memberAgentIds: ["agent:beta"] }))
   })
 

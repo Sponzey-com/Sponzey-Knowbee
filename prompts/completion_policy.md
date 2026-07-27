@@ -2,6 +2,10 @@
 
 This file covers only completion decisions.
 
+## Purpose
+
+Own completion readiness, parent aggregation readiness, final validation readiness, and delivery readiness decisions.
+
 ---
 
 ## Runtime Usage
@@ -10,12 +14,14 @@ This file covers only completion decisions.
 - Usage scope: `runtime`.
 - Included in normal system prompt assembly, agent prompt bundles, and execution-finalization policy context.
 - It must not define channel routing, tool selection, or executor selection rules except by referencing their owning policy files.
+- It must not define result diagnosis fields, recovery candidate generation, or final response wording except by referencing their owning policy files.
 
 ---
 
 ## Completion Criteria
 
-- Declare completion only when there is an actual result or a clear impossible-reason result.
+- Declare successful execution completion only when there is an actual result that satisfies the requested outcome.
+- A verified impossible-reason result is ready for a blocked or failed report, not successful execution completion.
 - Separate execution completion from delivery completion.
 - If the user asked for artifact delivery, a delivery receipt is required.
 - File creation requires confirming the actual file exists.
@@ -31,21 +37,21 @@ This file covers only completion decisions.
 - Completion review must refer to the selected executor and visible delegation flow when explaining delegated work; do not introduce a separate hidden decision actor.
 - Child output is an intermediate return to the parent/requesting agent until that parent verifies it against the root request and required outputs.
 - Child output must be treated as a parent-facing report, not as final delivery. The report must separate confirmed facts, unverified items, attempted methods, remaining alternatives, artifacts, risk notes, and handoff summary.
-- The parent/requesting agent must aggregate child results before finalization and choose one next action: augment the same child, delegate to another direct child, self-solve, ask the user, return upward, fail with reason, or finalize.
+- The parent/requesting agent must aggregate child results before finalization and then use `result_review.md`, `recovery_policy.md`, and `knowbee-execution.md` for next-action recommendation and route selection.
 - Limited success, partial output, missing evidence, reported gaps, and child failure are alternative-search triggers. They are not final answers by themselves.
-- Final delivery is allowed only after the parent aggregation says the original request criteria are satisfied or the parent has a verified impossible-reason result.
+- Final delivery is allowed only after the parent aggregation says the original request criteria are satisfied, or after it authorizes a blocked or failed report from a verified impossible-reason result.
 - One successful child agent does not complete the whole request when other completion criteria remain.
 - Team work requires actual member-level results plus TeamLead or owner synthesis before it can be considered complete.
 - Do not treat a ChildAgent's claim that it sent a final user-channel answer as completion.
-- For user requests started through Knowbee, completion requires Knowbee's final review and delivery.
+- For user requests started at the root main-agent boundary, completion requires the root main agent's final review and delivery.
 - For delegated work, completion requires the parent/requesting agent's review, synthesis, and return path before it can move upward.
-- Results that need sub-agent attribution must be tied to nickname snapshots.
+- Results that need sub-agent attribution must be tied to `agent_name` snapshots.
 
-## Final Answer Shape
+## Final Response Boundary
 
-- Final answers that used delegated work must distinguish confirmed facts from unverified items and unresolved issues.
-- Current or externally retrieved facts must include verification method, source reference, and source time when available.
-- If an item remains unverified after safe alternatives are exhausted, say that explicitly as the parent's final synthesis rather than presenting the child report as complete.
+- Follow `final_response.md` for final user-facing natural-language wording.
+- Follow `output_policy.md` for sub-agent attribution, evidence framing, and user-visible output shape.
+- This file only decides whether the result is ready for final response rendering.
 
 ## Final Validation Gate
 
@@ -53,7 +59,7 @@ This file covers only completion decisions.
 - Current/latest/market/legal/schedule facts may be delivered only when every required value is verified from a concrete source, or when all safe alternatives are exhausted and the answer is explicitly framed as limited.
 - Missing required values, source conflicts, or source-less current facts are recovery conditions while safe alternatives remain. They are not final answers.
 - Child result review and parent final validation have different responsibilities. Child review decides whether a child report can be integrated; parent final validation decides whether the user-facing final answer can be delivered.
-- If final validation blocks delivery, continue with an alternative source, another eligible child, self-processing inside the current agent's allowed tools, or user confirmation according to the parent aggregation decision.
+- If final validation blocks delivery, send the validation diagnosis to `result_review.md` and `recovery_policy.md` for next-action recommendation.
 
 ---
 
@@ -61,7 +67,7 @@ This file covers only completion decisions.
 
 - Continue if completion criteria remain, even when some substeps are done.
 - Pending approval, pending delivery, and pending user input are not completion.
-- Impossible requests complete by returning the reason without changing the target.
+- For an impossible request, preserve the target and deliver the verified reason through a blocked or failed terminal result.
 
 ---
 
@@ -70,3 +76,7 @@ This file covers only completion decisions.
 - Do not treat intake receipts as completion messages.
 - Do not claim capture, delivery, or file creation based only on text.
 - Do not convert physically or logically impossible work into a similar arbitrary task.
+
+## Out Of Scope
+
+- This module does not own channel routing, tool selection, executor selection, result diagnosis fields, recovery candidate generation, final user-facing wording, sub-agent handoff payloads, or prompt visibility rules.

@@ -9,6 +9,7 @@ import {
   persistChannelConnections,
 } from "./connections.js"
 import type { ChannelCapabilities, ChannelProvider } from "./contracts.js"
+import type { ChannelPendingResponseDeliveryOwner } from "./pending-response-delivery.js"
 
 export const CHANNEL_REGISTRY_RUNTIME_FEATURE_KEY = "channel_registry_runtime"
 
@@ -28,6 +29,7 @@ export interface ChannelRuntimeAdapter {
   stop(): Promise<void> | void
   healthCheck(): Promise<ChannelRuntimeHealth>
   getCapabilities(): ChannelCapabilities
+  createPendingResponseDeliveryHandler?: ChannelPendingResponseDeliveryOwner["createPendingResponseDeliveryHandler"]
 }
 
 export interface ChannelRuntimeHealth {

@@ -1,16 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { toolUserFacingErrorMessage } from "./error-redaction.js";
+import { buildYeonjangRequiredFailure } from "./yeonjang-required-failure.js";
 const execFileAsync = promisify(execFile);
-function yeonjangRequiredFailure(reason) {
-    return {
-        success: false,
-        output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. ${reason}`,
-        error: "YEONJANG_REQUIRED",
-        details: {
-            requiredExecutor: "yeonjang",
-        },
-    };
-}
 // ─── Parsing ──────────────────────────────────────────────────────────────────
 async function getProcesses() {
     const platform = process.platform;
@@ -86,7 +78,7 @@ export const processListTool = {
             procs = await getProcesses();
         }
         catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = toolUserFacingErrorMessage(err);
             return { success: false, output: `프로세스 목록 조회 실패: ${msg}`, error: msg };
         }
         if (filter) {
@@ -138,7 +130,10 @@ export const processKillTool = {
                 ? `프로세스 "${params.name}"`
                 : "대상 프로세스";
         const signalLabel = params.signal ?? "SIGTERM";
-        return yeonjangRequiredFailure(`${targetDescription} 종료(${signalLabel})는 현재 코어 로컬 경로에서 금지되어 있습니다.`);
+        return buildYeonjangRequiredFailure({
+            reason: `${targetDescription} 종료(${signalLabel})는 현재 코어 로컬 경로에서 금지되어 있습니다.`,
+            reasonCode: "core_local_path_forbidden",
+        });
     },
 };
 //# sourceMappingURL=process.js.map

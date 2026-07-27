@@ -1,5 +1,6 @@
 import type { RunChunkDeliveryHandler } from "./delivery.js";
 import { type ActiveQueueCancellationMode } from "./entry-semantics.js";
+import { type MemoryJournalRepository } from "../memory/journal.js";
 import type { FinalizationSource } from "./finalization.js";
 import type { LoopDirective } from "./loop-directive.js";
 import type { RootRun, TaskProfile } from "./types.js";
@@ -22,6 +23,7 @@ export declare function tryHandleActiveQueueCancellation(params: {
 }): Promise<LoopDirective | null>;
 export declare function ensureSessionExists(sessionId: string, source: RootRun["source"], now: number): void;
 export declare function rememberRunInstruction(params: {
+    memoryJournal: MemoryJournalRepository;
     runId: string;
     sessionId: string;
     requestGroupId: string;
@@ -29,6 +31,7 @@ export declare function rememberRunInstruction(params: {
     message: string;
 }): void;
 export declare function rememberRunSuccess(params: {
+    memoryJournal: MemoryJournalRepository;
     runId: string;
     sessionId: string;
     source: FinalizationSource;
@@ -52,6 +55,7 @@ export declare function rememberToolResultWriteback(params: {
     requestGroupId?: string;
 }): void;
 export declare function rememberRunFailure(params: {
+    memoryJournal: MemoryJournalRepository;
     runId: string;
     sessionId: string;
     source: FinalizationSource;

@@ -1,11 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
 import type { ToolContext } from "../packages/core/src/tools/types.ts"
 import { upsertYeonjangRegistryObservation } from "../packages/core/src/yeonjang/registry.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const canYeonjangHandleMethod = vi.fn()
 const getYeonjangCapabilities = vi.fn()
@@ -44,17 +44,15 @@ const { mouseMoveTool } = await import("../packages/core/src/tools/builtin/ui/mo
 const { keyboardTypeTool } = await import("../packages/core/src/tools/builtin/ui/keyboard.ts")
 const { windowFocusTool } = await import("../packages/core/src/tools/builtin/ui/window.ts")
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let artifactRoot = ""
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-run-yeonjang-required-tools-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  artifactRoot = join(stateDir, "artifacts")
+  initializeTestDbRuntime(stateDir)
 }
 
 function seedObservation(overrides: Partial<Parameters<typeof upsertYeonjangRegistryObservation>[0]> = {}) {
@@ -95,6 +93,15 @@ function seedObservation(overrides: Partial<Parameters<typeof upsertYeonjangRegi
 
 function createContext(userMessage = "연장으로 실행해줘", source: ToolContext["source"] = "telegram"): ToolContext {
   return {
+    artifactStorage: {
+      rootDir: artifactRoot,
+      fileSystem: {
+        exists: existsSync,
+        realpath: realpathSync,
+        remove: (path) => rmSync(path, { force: true }),
+        stat: statSync,
+      },
+    },
     sessionId: "session-1",
     runId: "run-1",
     requestGroupId: "request-group-1",
@@ -150,11 +157,6 @@ describe("yeonjang required tools", () => {
 
   afterEach(() => {
     closeDb()
-    if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-    else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-    if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-    else process.env["KNOWBEE_CONFIG"] = previousConfig
-    reloadConfig()
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop()
       if (dir) rmSync(dir, { recursive: true, force: true })

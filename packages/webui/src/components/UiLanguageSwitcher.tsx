@@ -11,6 +11,7 @@ export function UiLanguageSwitcher({ className = "" }: { className?: string }) {
       <div className="inline-flex rounded-xl bg-stone-100 p-1">
         <button
           type="button"
+          aria-pressed={language === "ko"}
           onClick={() => setLanguage("ko")}
           className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${language === "ko" ? "bg-stone-900 text-white" : "text-stone-600"}`}
         >
@@ -18,6 +19,7 @@ export function UiLanguageSwitcher({ className = "" }: { className?: string }) {
         </button>
         <button
           type="button"
+          aria-pressed={language === "en"}
           onClick={() => setLanguage("en")}
           className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${language === "en" ? "bg-stone-900 text-white" : "text-stone-600"}`}
         >

@@ -3,6 +3,7 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { toolUserFacingErrorMessage } from "../error-redaction.js";
 const execFileAsync = promisify(execFile);
 async function readClipboard() {
     const platform = process.platform;
@@ -68,7 +69,7 @@ export const clipboardReadTool = {
             return { success: true, output: text };
         }
         catch (err) {
-            return { success: false, output: `클립보드 읽기 실패: ${err instanceof Error ? err.message : String(err)}` };
+            return { success: false, output: `클립보드 읽기 실패: ${toolUserFacingErrorMessage(err)}` };
         }
     },
 };
@@ -90,7 +91,7 @@ export const clipboardWriteTool = {
             return { success: true, output: `클립보드에 복사됨 (${params.text.length}자)` };
         }
         catch (err) {
-            return { success: false, output: `클립보드 쓰기 실패: ${err instanceof Error ? err.message : String(err)}` };
+            return { success: false, output: `클립보드 쓰기 실패: ${toolUserFacingErrorMessage(err)}` };
         }
     },
 };

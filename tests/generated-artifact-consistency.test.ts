@@ -7,19 +7,15 @@ const repoRoot = process.cwd()
 const coreDir = join(repoRoot, "packages/core")
 const sourceDir = join(coreDir, "src")
 const outputDir = join(coreDir, `.artifact-consistency-test-${process.pid}`)
+const cleanBuildEnvironment = Object.freeze(
+  Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) => !["NODE_PATH", "NODE_OPTIONS", "TEST"].includes(key) && !key.startsWith("VITEST"),
+    ),
+  ),
+)
 
 const GENERATED_SUFFIXES = [".d.ts.map", ".js.map", ".d.ts", ".js"]
-
-const JS_ONLY_COMPATIBILITY_STEMS = new Set([
-  "api/routes/oauth",
-  "auth/chatgpt-oauth",
-  "llm/index",
-  "llm/providers/anthropic",
-  "llm/providers/gemini",
-  "llm/providers/openai",
-  "llm/types",
-  "memory/sidekick-md",
-])
 
 function walkFiles(dir: string): string[] {
   const results: string[] = []
@@ -59,7 +55,12 @@ function buildCleanCoreArtifacts(): void {
       "--tsBuildInfoFile",
       join(outputDir, ".tsbuildinfo"),
     ],
-    { cwd: repoRoot, stdio: "pipe" },
+    {
+      cwd: repoRoot,
+      env: { ...cleanBuildEnvironment, NODE_ENV: "production" },
+      maxBuffer: 16 * 1024 * 1024,
+      stdio: "pipe",
+    },
   )
 }
 
@@ -79,51 +80,52 @@ describe("core generated artifact policy", () => {
     expect(pkg.files).toEqual(["dist"])
   })
 
-  it(
-    "keeps src compatibility artifacts synchronized with a clean TypeScript build",
-    () => {
-      buildCleanCoreArtifacts()
+  it("keeps src compatibility artifacts synchronized with a clean TypeScript build", () => {
+    buildCleanCoreArtifacts()
 
-      try {
-        const cleanGenerated = walkFiles(outputDir)
-          .filter(isGeneratedArtifact)
-          .map((file) => relative(outputDir, file))
-          .sort()
-        const cleanGeneratedSet = new Set(cleanGenerated)
+    try {
+      const cleanGenerated = walkFiles(outputDir)
+        .filter(isGeneratedArtifact)
+        .map((file) => relative(outputDir, file))
+        .sort()
+      const cleanGeneratedSet = new Set(cleanGenerated)
 
-        const missingFromSource = cleanGenerated.filter((relPath) => !existsSync(join(sourceDir, relPath)))
-        const mismatchedWithSource = cleanGenerated.filter((relPath) => {
-          const cleanPath = join(outputDir, relPath)
-          const sourcePath = join(sourceDir, relPath)
-          return existsSync(sourcePath) && readFileSync(cleanPath, "utf8") !== readFileSync(sourcePath, "utf8")
+      const missingFromSource = cleanGenerated.filter(
+        (relPath) => !existsSync(join(sourceDir, relPath)),
+      )
+      const mismatchedWithSource = cleanGenerated.filter((relPath) => {
+        const cleanPath = join(outputDir, relPath)
+        const sourcePath = join(sourceDir, relPath)
+        return (
+          existsSync(sourcePath) &&
+          readFileSync(cleanPath, "utf8") !== readFileSync(sourcePath, "utf8")
+        )
+      })
+
+      const unexpectedSourceOnly = walkFiles(sourceDir)
+        .filter(isGeneratedArtifact)
+        .map((file) => relative(sourceDir, file))
+        .filter((relPath) => {
+          if (cleanGeneratedSet.has(relPath)) return false
+          return true
         })
+        .sort()
 
-        const unexpectedSourceOnly = walkFiles(sourceDir)
-          .filter(isGeneratedArtifact)
-          .map((file) => relative(sourceDir, file))
-          .filter((relPath) => {
-            if (cleanGeneratedSet.has(relPath)) return false
-            return !JS_ONLY_COMPATIBILITY_STEMS.has(stripGeneratedSuffix(relPath))
-          })
-          .sort()
+      expect({
+        missingFromSource: missingFromSource.slice(0, 20),
+        mismatchedWithSource: mismatchedWithSource.slice(0, 20),
+        unexpectedSourceOnly: unexpectedSourceOnly.slice(0, 20),
+      }).toEqual({
+        missingFromSource: [],
+        mismatchedWithSource: [],
+        unexpectedSourceOnly: [],
+      })
+    } finally {
+      rmSync(outputDir, { recursive: true, force: true })
+    }
+  }, 90_000)
 
-        expect({
-          missingFromSource: missingFromSource.slice(0, 20),
-          mismatchedWithSource: mismatchedWithSource.slice(0, 20),
-          unexpectedSourceOnly: unexpectedSourceOnly.slice(0, 20),
-        }).toEqual({
-          missingFromSource: [],
-          mismatchedWithSource: [],
-          unexpectedSourceOnly: [],
-        })
-      } finally {
-        rmSync(outputDir, { recursive: true, force: true })
-      }
-    },
-    90_000,
-  )
-
-  it("keeps JS-only source artifacts explicit until removal", () => {
+  it("does not retain source-only generated artifacts", () => {
     const sourceOnlyStems = walkFiles(sourceDir)
       .filter(isGeneratedArtifact)
       .map((file) => relative(sourceDir, file))
@@ -132,6 +134,6 @@ describe("core generated artifact policy", () => {
       .filter((stem) => !existsSync(join(sourceDir, `${stem}.ts`)))
       .sort()
 
-    expect(sourceOnlyStems).toEqual([...JS_ONLY_COMPATIBILITY_STEMS].sort())
+    expect(sourceOnlyStems).toEqual([])
   })
 })

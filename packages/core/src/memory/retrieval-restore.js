@@ -3,10 +3,20 @@ import { getMemoryCapsule, getTaskContinuity, insertDiagnosticEvent, insertMemor
 import { normalizeMemoryCapsule } from "./capsule.js";
 import { searchMemoryChunks } from "./search.js";
 import { buildMemoryInjectionContext } from "./store.js";
+import { loadPromptValue } from "./prompt-fragments.js";
 export const MEMORY_CAPSULE_ROLLUP_RECENT_LIMIT = 2;
 export const MEMORY_CAPSULE_ROLLUP_COUNT_THRESHOLD = 4;
 export const MEMORY_CAPSULE_ROLLUP_TOKEN_THRESHOLD = 2_200;
 export const MEMORY_PROMPT_TIME_RECALL_LIMIT = 3;
+const MEMORY_RESTORE_PROMPT_CONTEXT_LABELS_SOURCE_ID = "memory_restore_prompt_context_labels_user";
+function memoryRestorePromptContextLabel(key, variables = {}) {
+    const value = loadPromptValue(MEMORY_RESTORE_PROMPT_CONTEXT_LABELS_SOURCE_ID, variables, { required: true })
+        .split(/\r?\n/u)
+        .find((line) => line.startsWith(`${key}=`))
+        ?.slice(key.length + 1)
+        .trim();
+    return value ?? key;
+}
 function normalizeString(value) {
     if (typeof value !== "string")
         return undefined;
@@ -69,9 +79,9 @@ function renderMessageContent(message) {
         if (block.type === "text")
             return block.text;
         if (block.type === "tool_use")
-            return `[tool_use:${block.name}] ${safeJson(block.input)}`;
+            return `[${memoryRestorePromptContextLabel("structured_tool_use_label")}:${block.name}] ${safeJson(block.input)}`;
         if (block.type === "tool_result") {
-            return `[tool_result:${block.tool_use_id}] ${typeof block.content === "string" ? block.content : safeJson(block.content)}`;
+            return `[${memoryRestorePromptContextLabel("structured_tool_result_label")}:${block.tool_use_id}] ${typeof block.content === "string" ? block.content : safeJson(block.content)}`;
         }
         return safeJson(block);
     }).join("\n").trim();
@@ -121,21 +131,21 @@ function sameOwnerScope(left, right) {
         && (left.channelKey ?? null) === (right.channelKey ?? null)
         && (left.threadKey ?? null) === (right.threadKey ?? null);
 }
-function renderCapsuleInline(label, capsule, maxSummaryChars) {
+function renderCapsuleInline(header, capsule, maxSummaryChars) {
     const facts = capsule.confirmedFacts.slice(0, 2).join("; ") || "[]";
     const pending = capsule.pendingItems.slice(0, 3).join("; ") || "[]";
     return [
-        `[${label}]`,
-        `summary: ${truncateText(capsule.summary, maxSummaryChars)}`,
-        `confirmed_facts: ${truncateText(facts, 180)}`,
-        `pending_items: ${truncateText(pending, 180)}`,
+        header,
+        `${memoryRestorePromptContextLabel("summary_label")} ${truncateText(capsule.summary, maxSummaryChars)}`,
+        `${memoryRestorePromptContextLabel("confirmed_facts_label")} ${truncateText(facts, 180)}`,
+        `${memoryRestorePromptContextLabel("pending_items_label")} ${truncateText(pending, 180)}`,
     ].join("\n");
 }
 function renderRecentCapsulesSection(capsules) {
     const items = capsules
         .slice(0, MEMORY_CAPSULE_ROLLUP_RECENT_LIMIT)
         .map((capsule) => `- ${capsule.capsuleId}: ${truncateText(capsule.summary, 180)}`);
-    return items.length > 0 ? `[recent_capsules]\n${items.join("\n")}` : undefined;
+    return items.length > 0 ? `${memoryRestorePromptContextLabel("recent_capsules_header")}\n${items.join("\n")}` : undefined;
 }
 function sortCapsuleIds(values) {
     return [...values].sort((left, right) => left.localeCompare(right));
@@ -179,7 +189,7 @@ function buildRollupCapsule(input) {
         capsuleVersion: 1,
         ...(latestSource ? { parentCapsuleId: latestSource.capsuleId } : {}),
         ownerScope: input.ownerScope,
-        ...(latestSource?.nicknameSnapshot ? { nicknameSnapshot: latestSource.nicknameSnapshot } : {}),
+        ...(latestSource?.agentNameSnapshot ? { agentNameSnapshot: latestSource.agentNameSnapshot } : {}),
         capsuleKind: "lineage_compaction",
         summary,
         activeObjectives,
@@ -365,23 +375,25 @@ export function buildMaintenanceRestoreContext(input) {
 export function renderMaintenanceRestorePromptBlock(context) {
     if (!context.latestCapsule && !context.rollupCapsule && !context.taskContinuity)
         return undefined;
-    const lines = ["[maintenance_restore]"];
+    const lines = [memoryRestorePromptContextLabel("maintenance_restore_header")];
     if (context.latestInstructionSummary) {
-        lines.push(`latest_instruction_summary: ${truncateText(context.latestInstructionSummary, 220)}`);
+        lines.push(`${memoryRestorePromptContextLabel("latest_instruction_summary_label")} ${truncateText(context.latestInstructionSummary, 220)}`);
     }
     if (context.taskContinuity?.latestSuccessfulSummary) {
-        lines.push(`latest_successful_summary: ${truncateText(context.taskContinuity.latestSuccessfulSummary, 220)}`);
+        lines.push(`${memoryRestorePromptContextLabel("latest_successful_summary_label")} ${truncateText(context.taskContinuity.latestSuccessfulSummary, 220)}`);
     }
     if (context.taskContinuity?.latestTargetContext) {
-        lines.push(`latest_target_context: ${truncateText(context.taskContinuity.latestTargetContext, 220)}`);
+        lines.push(`${memoryRestorePromptContextLabel("latest_target_context_label")} ${truncateText(context.taskContinuity.latestTargetContext, 220)}`);
     }
-    if (context.latestCapsule)
-        lines.push(renderCapsuleInline("latest_compacted_capsule", context.latestCapsule, 260));
+    if (context.latestCapsule) {
+        lines.push(renderCapsuleInline(memoryRestorePromptContextLabel("latest_capsule_header"), context.latestCapsule, 260));
+    }
     const recentSection = renderRecentCapsulesSection(context.recentCapsules.slice(1));
     if (recentSection)
         lines.push(recentSection);
-    if (context.rollupCapsule)
-        lines.push(renderCapsuleInline("rollup_capsule", context.rollupCapsule, 180));
+    if (context.rollupCapsule) {
+        lines.push(renderCapsuleInline(memoryRestorePromptContextLabel("rollup_capsule_header"), context.rollupCapsule, 180));
+    }
     return lines.join("\n");
 }
 function isSameSessionRecall(result, currentSessionId) {
@@ -434,9 +446,9 @@ export async function buildPromptTimeRecallContext(input) {
     const promptBlockBase = buildMemoryInjectionContext(results, { maxChunks: limit, maxChars: 1_000, maxChunkChars: 280 });
     const promptBlock = promptBlockBase
         ? [
-            "[prompt_time_recall]",
-            `query: ${truncateText(query, 220)}`,
-            `same_session_evidence_only: ${sameSessionResultCount > 0 ? "true" : "false"}`,
+            memoryRestorePromptContextLabel("prompt_time_recall_header"),
+            `${memoryRestorePromptContextLabel("query_label")} ${truncateText(query, 220)}`,
+            `${memoryRestorePromptContextLabel("same_session_evidence_only_label")} ${sameSessionResultCount > 0 ? "true" : "false"}`,
             promptBlockBase,
         ].join("\n")
         : undefined;

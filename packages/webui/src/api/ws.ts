@@ -28,10 +28,12 @@ export function onWsConnect(fn: (connected: boolean) => void) {
   return () => { connectListeners = connectListeners.filter((h) => h !== fn) }
 }
 
-export function sendWs(data: unknown) {
+export function sendWs(data: unknown): boolean {
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(data))
+    return true
   }
+  return false
 }
 
 function readOptionalString(value: unknown): string | undefined {

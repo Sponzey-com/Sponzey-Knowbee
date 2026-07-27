@@ -3,8 +3,8 @@ import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { registerTopologyRoutes, resetTopologyGuiDraftStoreForTest } from "../packages/core/src/api/routes/topologies.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
 import {
   buildAgentTeamTopologyImportPreview,
@@ -13,6 +13,8 @@ import {
   type EnterpriseTopology,
 } from "../packages/core/src/index.ts"
 import { topologyIssueTargetId } from "../packages/webui/src/components/topology/TopologyValidationAssistant.tsx"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: {
@@ -30,8 +32,7 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 
 const now = Date.UTC(2026, 3, 30, 12, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 function topologyFixture(): EnterpriseTopology {
   return structuredClone(buildExampleEnterpriseTopology(now))
@@ -49,11 +50,10 @@ function topologyWithDeclaredToolIssue(): EnterpriseTopology {
 function useTempState(): void {
   closeDb()
   resetTopologyGuiDraftStoreForTest()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task022-topology-import-export-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task022-topology-import-export-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 afterEach(() => {
@@ -62,11 +62,6 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
 })
 
 describe("task022 enterprise topology import/export and migration assistant", () => {
@@ -94,6 +89,7 @@ describe("task022 enterprise topology import/export and migration assistant", ()
   it("adds API/client methods for JSON/YAML export and dry-run import issue mapping", async () => {
     useTempState()
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerTopologyRoutes(app)
     await app.ready()
     try {
@@ -215,6 +211,10 @@ describe("task022 enterprise topology import/export and migration assistant", ()
       importedFromAgentConfigId: "agent:intake",
       source_role: "migration_source_only",
     }))
+    expect(preview.topology.nodes[0]).toEqual(expect.objectContaining({
+      name: "Intake Agent",
+    }))
+    expect(preview.topology.nodes[0]).not.toHaveProperty("displayName")
     expect(preview.topology.relations[0]).toEqual(expect.objectContaining({
       relationType: "delegates_to",
       metadata: expect.objectContaining({ source_relationship_type: "parent_child" }),

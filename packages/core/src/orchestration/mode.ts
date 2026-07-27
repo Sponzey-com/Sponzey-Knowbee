@@ -1,10 +1,16 @@
-import { getConfig, type OrchestrationConfig } from "../config/index.js"
+import type { OrchestrationConfig } from "../config/types.js"
 import { listAgentConfigs, type DbAgentConfig } from "../db/index.js"
-import type { OrchestrationMode, SubAgentConfig } from "../contracts/sub-agent-orchestration.js"
+import {
+  resolveAgentConfigAgentName,
+  type OrchestrationMode,
+  type SubAgentConfig,
+} from "../contracts/sub-agent-orchestration.js"
 import {
   createLegacyTopologyRegistry,
   legacyTopologyEnvelopeToExecutorCompatibilityEnvelope,
 } from "../topology/legacy-enterprise-topology-adapter.js"
+import { redactLogText } from "../logger/index.js"
+import { DEFAULT_MAIN_AGENT_NAME_KO } from "../agent/main-agent-identity.js"
 
 export type OrchestrationRuntimeStatus = "ready" | "disabled" | "degraded"
 
@@ -18,8 +24,7 @@ export type OrchestrationModeReasonCode =
 
 export interface OrchestrationRegistryAgentSnapshot {
   agentId: string
-  displayName: string
-  nickname?: string
+  agentName: string
   source: "topology" | "db" | "config"
   topologyId?: string
   executorId?: string
@@ -30,6 +35,7 @@ export interface OrchestrationModeSnapshot {
   status: OrchestrationRuntimeStatus
   featureFlagEnabled: boolean
   requestedMode: OrchestrationMode
+  mainAgentNameSnapshot?: string | undefined
   activeSubAgentCount: number
   totalSubAgentCount: number
   disabledSubAgentCount: number
@@ -45,16 +51,20 @@ export interface RegistryLoadResult {
   disabledSubAgentCount: number
 }
 
+export type OrchestrationModeConfigSnapshot = Pick<{ orchestration: OrchestrationConfig }, "orchestration">
+
 interface ResolveOrchestrationModeDependencies {
-  getConfig?: () => Pick<{ orchestration: OrchestrationConfig }, "orchestration">
+  config: OrchestrationModeConfigSnapshot
   loadRegistry?: () => RegistryLoadResult | Promise<RegistryLoadResult>
+  mainAgentNameSnapshot?: string | undefined
   now?: () => number
   timeoutMs?: number
 }
 
 interface ResolveOrchestrationModeSyncDependencies {
-  getConfig?: () => Pick<{ orchestration: OrchestrationConfig }, "orchestration">
+  config: OrchestrationModeConfigSnapshot
   loadRegistry?: () => RegistryLoadResult
+  mainAgentNameSnapshot?: string | undefined
   now?: () => number
 }
 
@@ -71,20 +81,42 @@ function isOrchestrationFeatureEnabled(config: OrchestrationConfig): boolean {
   return config.featureFlagEnabled === true && requestedModeFromConfig(config) === "orchestration"
 }
 
+function normalizedMainAgentNameSnapshot(value: string | undefined): string {
+  return value?.trim() || DEFAULT_MAIN_AGENT_NAME_KO
+}
+
+function directMainAgentModeLabel(mainAgentNameSnapshot: string | undefined): string {
+  return `${normalizedMainAgentNameSnapshot(mainAgentNameSnapshot)} 직접 처리 모드`
+}
+
+function orchestrationModeErrorDetail(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
+
 function configSubAgentSnapshot(agent: SubAgentConfig): OrchestrationRegistryAgentSnapshot {
+  const agentName = resolveAgentConfigAgentName(agent)
   return {
     agentId: agent.agentId,
-    displayName: agent.displayName,
-    ...(agent.nickname ? { nickname: agent.nickname } : {}),
+    agentName,
     source: "config",
+  }
+}
+
+function dbAgentNameSnapshot(agent: DbAgentConfig): string {
+  try {
+    const parsed = JSON.parse(agent.config_json) as { agentName?: unknown }
+    const agentName = typeof parsed.agentName === "string" ? parsed.agentName : undefined
+    return resolveAgentConfigAgentName(agentName ? { agentType: "sub_agent", agentName } : { agentType: "sub_agent" })
+  } catch {
+    return resolveAgentConfigAgentName({ agentType: "sub_agent" })
   }
 }
 
 function dbSubAgentSnapshot(agent: DbAgentConfig): OrchestrationRegistryAgentSnapshot {
   return {
     agentId: agent.agent_id,
-    displayName: agent.display_name,
-    ...(agent.nickname ? { nickname: agent.nickname } : {}),
+    agentName: dbAgentNameSnapshot(agent),
     source: "db",
   }
 }
@@ -125,12 +157,12 @@ function topologyExecutorCandidates(): RegistryCandidate[] {
     const adapted = legacyTopologyEnvelopeToExecutorCompatibilityEnvelope(exported)
     for (const node of adapted.envelope.version.topology.nodes) {
       if (node.status === "archived") continue
-      const displayName = node.displayName?.trim() || node.name.trim()
-      if (!displayName) continue
+      const agentName = node.displayName?.trim() || node.name.trim()
+      if (!agentName) continue
       candidates.push({
         snapshot: {
           agentId: topologyAgentId(topologyRecord.topologyId, node.id),
-          displayName,
+          agentName,
           topologyId: topologyRecord.topologyId,
           executorId: node.id,
           source: "topology",
@@ -188,14 +220,17 @@ function buildSnapshot(input: {
   disabledSubAgentCount?: number
   reasonCode: OrchestrationModeReasonCode
   reason: string
+  mainAgentNameSnapshot?: string | undefined
   generatedAt: number
 }): OrchestrationModeSnapshot {
   const activeSubAgents = input.activeSubAgents ?? []
+  const mainAgentNameSnapshot = normalizedMainAgentNameSnapshot(input.mainAgentNameSnapshot)
   return {
     mode: input.mode,
     status: input.status,
     featureFlagEnabled: input.config.featureFlagEnabled === true,
     requestedMode: requestedModeFromConfig(input.config),
+    mainAgentNameSnapshot,
     activeSubAgentCount: activeSubAgents.length,
     totalSubAgentCount: input.totalSubAgentCount ?? activeSubAgents.length,
     disabledSubAgentCount: input.disabledSubAgentCount ?? 0,
@@ -206,30 +241,46 @@ function buildSnapshot(input: {
   }
 }
 
-function timeoutSnapshot(config: OrchestrationConfig, generatedAt: number): OrchestrationModeSnapshot {
+function timeoutSnapshot(
+  config: OrchestrationConfig,
+  generatedAt: number,
+  mainAgentNameSnapshot: string | undefined,
+): OrchestrationModeSnapshot {
   return buildSnapshot({
     mode: "single_knowbee",
     status: "degraded",
     config,
     reasonCode: "registry_load_timeout",
-    reason: "토폴로지 실행자 조회가 시간 내 완료되지 않아 단일 노비 모드로 fallback했습니다.",
+    reason: `서브 에이전트 설정 조회가 시간 내 완료되지 않아 ${directMainAgentModeLabel(mainAgentNameSnapshot)}로 fallback했습니다.`,
+    mainAgentNameSnapshot,
     generatedAt,
   })
 }
 
-function registryErrorSnapshot(config: OrchestrationConfig, generatedAt: number, error: unknown): OrchestrationModeSnapshot {
-  const detail = error instanceof Error ? error.message : String(error)
+function registryErrorSnapshot(
+  config: OrchestrationConfig,
+  generatedAt: number,
+  error: unknown,
+  mainAgentNameSnapshot: string | undefined,
+): OrchestrationModeSnapshot {
+  const detail = orchestrationModeErrorDetail(error)
   return buildSnapshot({
     mode: "single_knowbee",
     status: "degraded",
     config,
     reasonCode: "registry_load_failed",
-    reason: `토폴로지 실행자 조회에 실패해 단일 노비 모드로 fallback했습니다: ${detail}`,
+    reason: `서브 에이전트 설정 조회에 실패해 ${directMainAgentModeLabel(mainAgentNameSnapshot)}로 fallback했습니다: ${detail}`,
+    mainAgentNameSnapshot,
     generatedAt,
   })
 }
 
-function snapshotFromRegistry(config: OrchestrationConfig, generatedAt: number, registry: RegistryLoadResult): OrchestrationModeSnapshot {
+function snapshotFromRegistry(
+  config: OrchestrationConfig,
+  generatedAt: number,
+  registry: RegistryLoadResult,
+  mainAgentNameSnapshot: string | undefined,
+): OrchestrationModeSnapshot {
   if (registry.activeSubAgents.length === 0) {
     return buildSnapshot({
       mode: "single_knowbee",
@@ -240,8 +291,9 @@ function snapshotFromRegistry(config: OrchestrationConfig, generatedAt: number, 
       disabledSubAgentCount: registry.disabledSubAgentCount,
       reasonCode: "no_active_sub_agents",
       reason: registry.totalSubAgentCount > 0
-        ? "활성화된 토폴로지 실행자 노드가 없어 단일 노비 모드로 동작합니다."
-        : "저장된 토폴로지 실행자 노드가 없어 단일 노비 모드로 동작합니다.",
+        ? `활성화된 서브 에이전트가 없어 ${directMainAgentModeLabel(mainAgentNameSnapshot)}로 동작합니다.`
+        : `저장된 서브 에이전트가 없어 ${directMainAgentModeLabel(mainAgentNameSnapshot)}로 동작합니다.`,
+      mainAgentNameSnapshot,
       generatedAt,
     })
   }
@@ -254,12 +306,17 @@ function snapshotFromRegistry(config: OrchestrationConfig, generatedAt: number, 
     totalSubAgentCount: registry.totalSubAgentCount,
     disabledSubAgentCount: registry.disabledSubAgentCount,
     reasonCode: "orchestration_ready",
-    reason: `토폴로지 실행자 ${registry.activeSubAgents.length}개가 준비되어 orchestration 모드로 동작할 수 있습니다.`,
+    reason: `서브 에이전트 ${registry.activeSubAgents.length}개가 준비되어 위임 실행 모드로 동작할 수 있습니다.`,
+    mainAgentNameSnapshot,
     generatedAt,
   })
 }
 
-function snapshotBeforeRegistry(config: OrchestrationConfig, generatedAt: number): OrchestrationModeSnapshot | undefined {
+function snapshotBeforeRegistry(
+  config: OrchestrationConfig,
+  generatedAt: number,
+  mainAgentNameSnapshot: string | undefined,
+): OrchestrationModeSnapshot | undefined {
   const requestedMode = requestedModeFromConfig(config)
 
   if (requestedMode !== "orchestration") {
@@ -268,7 +325,8 @@ function snapshotBeforeRegistry(config: OrchestrationConfig, generatedAt: number
       status: "ready",
       config,
       reasonCode: "mode_single_knowbee",
-      reason: "설정 모드가 single_knowbee이므로 기존 단일 노비 경로로 동작합니다.",
+      reason: `설정 모드가 single_knowbee이므로 ${directMainAgentModeLabel(mainAgentNameSnapshot)}로 동작합니다.`,
+      mainAgentNameSnapshot,
       generatedAt,
     })
   }
@@ -279,7 +337,8 @@ function snapshotBeforeRegistry(config: OrchestrationConfig, generatedAt: number
       status: "ready",
       config,
       reasonCode: "feature_flag_off",
-      reason: "orchestration feature flag가 꺼져 있어 기존 단일 노비 경로로 동작합니다.",
+      reason: `orchestration feature flag가 꺼져 있어 ${directMainAgentModeLabel(mainAgentNameSnapshot)}로 동작합니다.`,
+      mainAgentNameSnapshot,
       generatedAt,
     })
   }
@@ -288,29 +347,27 @@ function snapshotBeforeRegistry(config: OrchestrationConfig, generatedAt: number
 }
 
 export function resolveOrchestrationModeSnapshotSync(
-  dependencies: ResolveOrchestrationModeSyncDependencies = {},
+  dependencies: ResolveOrchestrationModeSyncDependencies,
 ): OrchestrationModeSnapshot {
-  const cfg = dependencies.getConfig?.() ?? getConfig()
-  const config = cfg.orchestration
+  const config = dependencies.config.orchestration
   const generatedAt = dependencies.now?.() ?? Date.now()
-  const preRegistrySnapshot = snapshotBeforeRegistry(config, generatedAt)
+  const preRegistrySnapshot = snapshotBeforeRegistry(config, generatedAt, dependencies.mainAgentNameSnapshot)
   if (preRegistrySnapshot) return preRegistrySnapshot
 
   try {
     const loadRegistry = dependencies.loadRegistry ?? (() => defaultRegistryLoad(config))
-    return snapshotFromRegistry(config, generatedAt, loadRegistry())
+    return snapshotFromRegistry(config, generatedAt, loadRegistry(), dependencies.mainAgentNameSnapshot)
   } catch (error) {
-    return registryErrorSnapshot(config, generatedAt, error)
+    return registryErrorSnapshot(config, generatedAt, error, dependencies.mainAgentNameSnapshot)
   }
 }
 
 export async function resolveOrchestrationModeSnapshot(
-  dependencies: ResolveOrchestrationModeDependencies = {},
+  dependencies: ResolveOrchestrationModeDependencies,
 ): Promise<OrchestrationModeSnapshot> {
-  const cfg = dependencies.getConfig?.() ?? getConfig()
-  const config = cfg.orchestration
+  const config = dependencies.config.orchestration
   const generatedAt = dependencies.now?.() ?? Date.now()
-  const preRegistrySnapshot = snapshotBeforeRegistry(config, generatedAt)
+  const preRegistrySnapshot = snapshotBeforeRegistry(config, generatedAt, dependencies.mainAgentNameSnapshot)
   if (preRegistrySnapshot) return preRegistrySnapshot
 
   try {
@@ -321,10 +378,10 @@ export async function resolveOrchestrationModeSnapshot(
       setTimeout(() => resolve("timeout"), timeoutMs)
     })
     const result = await Promise.race([registryPromise, timeoutPromise])
-    if (result === "timeout") return timeoutSnapshot(config, generatedAt)
-    return snapshotFromRegistry(config, generatedAt, result)
+    if (result === "timeout") return timeoutSnapshot(config, generatedAt, dependencies.mainAgentNameSnapshot)
+    return snapshotFromRegistry(config, generatedAt, result, dependencies.mainAgentNameSnapshot)
   } catch (error) {
-    return registryErrorSnapshot(config, generatedAt, error)
+    return registryErrorSnapshot(config, generatedAt, error, dependencies.mainAgentNameSnapshot)
   }
 }
 

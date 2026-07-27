@@ -1,7 +1,9 @@
 import { redactUiValue } from "../ui/redaction.js";
 import { createAgentHierarchyService, } from "./hierarchy.js";
 import { createAgentRegistryService, } from "./registry.js";
+import { DEFAULT_MAIN_AGENT_NAME_EN } from "../agent/main-agent-identity.js";
 const PRIVATE_MEMORY_PATTERN = /[^\n.]*private raw memory[^\n.]*/giu;
+const UNNAMED_TOPOLOGY_SUB_AGENT_LABEL = "Unnamed sub-agent";
 function safeJsonValue(value) {
     if (value == null)
         return null;
@@ -25,6 +27,12 @@ function redactedText(value, fallback = "") {
 }
 function redactedStrings(values) {
     return (values ?? []).map((value) => redactedText(value)).filter((value) => value.length > 0);
+}
+function agentProjectionLabel(agentName, kind) {
+    const trimmed = agentName?.trim();
+    if (trimmed)
+        return trimmed;
+    return kind === "knowbee" ? DEFAULT_MAIN_AGENT_NAME_EN : UNNAMED_TOPOLOGY_SUB_AGENT_LABEL;
 }
 function scopeLabel(scope) {
     if (!scope)
@@ -120,7 +128,7 @@ function defaultAgentPosition(node, index) {
 function agentTopologyNode(input) {
     const kind = input.node.entityType === "knowbee" ? "knowbee" : "sub_agent";
     const metadata = nodeMetadata(input.node);
-    const badges = [kind === "knowbee" ? "Knowbee" : "SubAgent"];
+    const badges = [kind === "knowbee" ? "MainAgent" : "SubAgent"];
     if (metadata.topLevel === true)
         badges.push("top-level");
     if (metadata.executionCandidate === true)
@@ -136,7 +144,7 @@ function agentTopologyNode(input) {
         id,
         kind,
         entityId: input.node.entityId,
-        label: redactedText(input.node.label, input.node.entityId),
+        label: redactedText(agentProjectionLabel(input.agent?.agentName, kind), input.node.entityId),
         ...(status ? { status: String(status) } : {}),
         position: nodePosition(id, defaultAgentPosition(input.node, input.index), input.layout),
         badges,
@@ -189,12 +197,14 @@ function buildAgentInspector(input) {
     const delegation = config?.delegationPolicy ?? config?.delegation;
     const permission = agent?.permissionProfile;
     const modelProfile = config?.modelProfile;
+    const kind = input.node.entityType === "knowbee" ? "knowbee" : "sub_agent";
+    const agentName = agentProjectionLabel(agent?.agentName, kind);
     return {
         agentId: input.node.entityId,
         nodeId: input.node.nodeId,
-        kind: input.node.entityType === "knowbee" ? "knowbee" : "sub_agent",
-        displayName: redactedText(agent?.displayName ?? input.node.label, input.node.entityId),
-        ...(agent?.nickname ? { nickname: redactedText(agent.nickname) } : {}),
+        kind,
+        agentName: redactedText(agentName, input.node.entityId),
+        displayName: redactedText(agentName, input.node.entityId),
         status: redactedText(agent?.status ?? input.node.status ?? "unknown"),
         role: redactedText(agent?.role ?? "coordinator"),
         specialtyTags: redactedStrings(agent?.specialtyTags),
@@ -263,9 +273,11 @@ function buildTeamMemberInspectors(input) {
     return teamMemberships(input.team.config).map((membership) => {
         const coverage = coverageByAgent.get(membership.agentId);
         const agent = input.agentsById.get(membership.agentId);
+        const agentName = agentProjectionLabel(agent?.agentName, "sub_agent");
         return {
             agentId: membership.agentId,
-            label: redactedText(agent?.nickname ?? agent?.displayName ?? membership.agentId),
+            label: redactedText(agentName, membership.agentId),
+            agentName: redactedText(agentName, membership.agentId),
             membershipId: membership.membershipId,
             primaryRole: redactedText(coverage?.primaryRole ?? membership.primaryRole),
             teamRoles: redactedStrings(coverage?.teamRoles ?? membership.teamRoles),
@@ -292,6 +304,7 @@ function buildTeamBuilderCandidates(input) {
         const membership = memberships.get(agent.agentId);
         const coverage = coverageByAgent.get(agent.agentId);
         const directChild = directChildren.has(agent.agentId);
+        const agentName = agentProjectionLabel(agent.agentName, "sub_agent");
         const membershipStatus = membership?.status ?? "unconfigured";
         const active = membershipStatus === "active";
         const reasonCodes = uniqueSorted([
@@ -300,7 +313,8 @@ function buildTeamBuilderCandidates(input) {
         ]);
         return {
             agentId: agent.agentId,
-            label: redactedText(agent.nickname ?? agent.displayName, agent.agentId),
+            label: redactedText(agentName, agent.agentId),
+            agentName: redactedText(agentName, agent.agentId),
             directChild,
             configuredMember: Boolean(membership),
             active,
@@ -327,7 +341,6 @@ function buildTeamInspector(input) {
         teamId: input.team.teamId,
         nodeId: teamNodeId(input.team.teamId),
         displayName: redactedText(input.team.displayName, input.team.teamId),
-        ...(input.team.nickname ? { nickname: redactedText(input.team.nickname) } : {}),
         status: redactedText(input.team.status),
         purpose: redactedText(input.team.purpose),
         ownerAgentId,
@@ -371,7 +384,7 @@ function teamTopologyNode(input) {
         id,
         kind: "team",
         entityId: input.team.teamId,
-        label: redactedText(input.team.nickname ?? input.team.displayName, input.team.teamId),
+        label: redactedText(input.team.displayName, input.team.teamId),
         status: input.team.status,
         position: nodePosition(id, { x: 80, y: input.yOffset + input.index * 172 }, input.layout),
         badges,
@@ -461,9 +474,10 @@ function directChildDiagnostic(input) {
         childAgentId: input.agentId,
     };
 }
-export function createAgentTopologyService(dependencies = {}) {
-    const hierarchy = () => createAgentHierarchyService(dependencies);
-    const registry = () => createAgentRegistryService(dependencies);
+export function createAgentTopologyService(dependencies) {
+    const config = dependencies.config;
+    const hierarchy = () => createAgentHierarchyService({ ...dependencies, config });
+    const registry = () => createAgentRegistryService({ ...dependencies, config });
     function buildProjection() {
         const hierarchyService = hierarchy();
         const tree = hierarchyService.buildProjection();
@@ -495,6 +509,7 @@ export function createAgentTopologyService(dependencies = {}) {
         }
         const agentNodes = tree.nodes.map((node, index) => agentTopologyNode({
             node,
+            ...(agentsById.get(node.entityId) ? { agent: agentsById.get(node.entityId) } : {}),
             index,
             layout,
             diagnostics: diagnosticsByAgentId.get(node.entityId) ?? [],

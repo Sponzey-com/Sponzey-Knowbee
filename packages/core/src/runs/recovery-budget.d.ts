@@ -5,10 +5,12 @@ export interface RecoveryBudgetState {
     used: number;
     limit: number;
     remaining: number;
+    policy: AttemptLimitPolicy;
 }
 export type RecoveryBudgetUsage = Record<RecoveryBudgetKind, number>;
 export declare function createRecoveryBudgetUsage(): RecoveryBudgetUsage;
 export declare function getRecoveryBudgetLimit(kind: RecoveryBudgetKind, maxDelegationTurns: number): number;
+export declare function resolveRecoveryBudgetPolicy(maxDelegationTurns: number): AttemptLimitPolicy;
 export declare function getRecoveryBudgetState(params: {
     usage: RecoveryBudgetUsage;
     kind: RecoveryBudgetKind;
@@ -30,4 +32,5 @@ export declare function canRetrySubSessionRevision(params: {
     budgetClass?: SubSessionRevisionBudgetClass;
     repeatedFailure?: boolean;
 }): boolean;
+import { type AttemptLimitPolicy } from "../contracts/stop-report-decision.js";
 //# sourceMappingURL=recovery-budget.d.ts.map

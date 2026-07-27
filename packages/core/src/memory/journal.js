@@ -1,20 +1,28 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
-import { PATHS } from "../config/index.js";
+import { loadPromptValue } from "./prompt-fragments.js";
 const MAX_STORED_CONTENT_CHARS = 4_000;
 const MAX_SUMMARY_CHARS = 320;
 const ERROR_LINE_PATTERN = /(error|failed?|exception|invalid|timeout|timed out|not found|permission|unauthorized|forbidden|refused|disconnect|offline|denied|cannot|unable|권한|실패|오류|예외|끊김|중단|거부|찾을 수 없|시간 초과|연결)/i;
-let _memoryDb = null;
-function getMemoryJournalDb() {
-    if (_memoryDb)
-        return _memoryDb;
-    mkdirSync(dirname(PATHS.memoryDbFile), { recursive: true });
-    _memoryDb = new BetterSqlite3(PATHS.memoryDbFile);
-    _memoryDb.pragma("journal_mode = WAL");
-    _memoryDb.pragma("synchronous = NORMAL");
-    _memoryDb.pragma("foreign_keys = ON");
-    _memoryDb.exec(`
+const MEMORY_RESTORE_PROMPT_CONTEXT_LABELS_SOURCE_ID = "memory_restore_prompt_context_labels_user";
+function memoryRestorePromptContextLabel(key) {
+    const value = loadPromptValue(MEMORY_RESTORE_PROMPT_CONTEXT_LABELS_SOURCE_ID, {}, { required: true })
+        .split(/\r?\n/u)
+        .find((line) => line.startsWith(`${key}=`))
+        ?.slice(key.length + 1)
+        .trim();
+    return value ?? key;
+}
+export const NODE_MEMORY_JOURNAL_STORAGE = Object.freeze({
+    makeDirectory: (path) => { mkdirSync(path, { recursive: true }); },
+    openDatabase: (path) => new BetterSqlite3(path),
+});
+function initializeMemoryJournalDb(db) {
+    db.pragma("journal_mode = WAL");
+    db.pragma("synchronous = NORMAL");
+    db.pragma("foreign_keys = ON");
+    db.exec(`
     CREATE TABLE IF NOT EXISTS memory_records (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -40,11 +48,11 @@ function getMemoryJournalDb() {
     CREATE VIRTUAL TABLE IF NOT EXISTS memory_records_fts
       USING fts5(title, content, summary, tags, content='memory_records', content_rowid='rowid');
   `);
-    const columns = _memoryDb.prepare(`PRAGMA table_info(memory_records)`).all();
+    const columns = db.prepare(`PRAGMA table_info(memory_records)`).all();
     if (!columns.some((column) => column.name === "scope")) {
-        _memoryDb.exec(`ALTER TABLE memory_records ADD COLUMN scope TEXT DEFAULT 'session'`);
+        db.exec(`ALTER TABLE memory_records ADD COLUMN scope TEXT DEFAULT 'session'`);
     }
-    _memoryDb.exec(`
+    db.exec(`
     UPDATE memory_records
     SET scope = CASE
       WHEN session_id IS NULL OR session_id = '' THEN 'global'
@@ -53,11 +61,6 @@ function getMemoryJournalDb() {
     END
     WHERE scope IS NULL OR scope = ''
   `);
-    return _memoryDb;
-}
-export function closeMemoryJournalDb() {
-    _memoryDb?.close();
-    _memoryDb = null;
 }
 function normalizeWhitespace(text) {
     return text
@@ -111,8 +114,7 @@ function defaultTitle(kind, summary) {
     const condensed = condenseMemoryText(summary, 72);
     return condensed ? `${prefix}: ${condensed}` : prefix;
 }
-export function insertMemoryJournalRecord(input) {
-    const db = getMemoryJournalDb();
+function insertMemoryJournalRecordWithDb(db, input) {
     const id = crypto.randomUUID();
     const now = Date.now();
     const content = buildStoredContent(input.content);
@@ -120,13 +122,15 @@ export function insertMemoryJournalRecord(input) {
         || (input.kind === "failure" ? extractFocusedErrorMessage(content) : condenseMemoryText(content))) || defaultTitle(input.kind, content);
     const title = input.title?.trim() || defaultTitle(input.kind, summary);
     const tags = JSON.stringify(input.tags ?? []);
-    db.prepare(`INSERT INTO memory_records
-      (id, kind, scope, session_id, run_id, request_group_id, title, content, summary, tags, source, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, input.kind, input.scope ?? (input.runId ? "task" : input.sessionId ? "session" : "global"), input.sessionId ?? null, input.runId ?? null, input.requestGroupId ?? null, title, content, summary, tags, input.source ?? "knowbee", now, now);
-    db.prepare(`INSERT INTO memory_records_fts(rowid, title, content, summary, tags)
-     SELECT rowid, title, content, summary, tags
-     FROM memory_records
-     WHERE id = ?`).run(id);
+    db.transaction(() => {
+        db.prepare(`INSERT INTO memory_records
+        (id, kind, scope, session_id, run_id, request_group_id, title, content, summary, tags, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, input.kind, input.scope ?? (input.runId ? "task" : input.sessionId ? "session" : "global"), input.sessionId ?? null, input.runId ?? null, input.requestGroupId ?? null, title, content, summary, tags, input.source ?? "knowbee", now, now);
+        db.prepare(`INSERT INTO memory_records_fts(rowid, title, content, summary, tags)
+       SELECT rowid, title, content, summary, tags
+       FROM memory_records
+       WHERE id = ?`).run(id);
+    })();
     return id;
 }
 function buildFtsQuery(query) {
@@ -145,14 +149,13 @@ function buildFtsQuery(query) {
     const condensed = condenseMemoryText(sanitized, 48).replace(/"/g, "").trim();
     return condensed ? condensed.split(/\s+/).map((token) => `${token}*`).join(" OR ") : "";
 }
-export function searchMemoryJournal(query, options) {
+function searchMemoryJournalWithDb(db, query, options) {
     try {
         const ftsQuery = buildFtsQuery(query);
         if (!ftsQuery)
             return [];
         const limit = options?.limit ?? 6;
         const kinds = options?.kinds ?? [];
-        const db = getMemoryJournalDb();
         const whereKind = kinds.length > 0 ? `AND m.kind IN (${kinds.map(() => "?").join(", ")})` : "";
         const scopeClauses = [`m.scope = 'global'`];
         const scopeValues = [];
@@ -196,9 +199,9 @@ function kindLabel(kind) {
             return "memory";
     }
 }
-export function buildMemoryJournalContext(query, options) {
+function buildMemoryJournalContextWithDb(db, query, options) {
     try {
-        const records = searchMemoryJournal(query, {
+        const records = searchMemoryJournalWithDb(db, query, {
             limit: options?.limit ?? 6,
             kinds: ["instruction", "failure", "success", "response"],
             ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
@@ -208,10 +211,48 @@ export function buildMemoryJournalContext(query, options) {
         if (!records.length)
             return "";
         const lines = records.map((record) => `- [${kindLabel(record.kind)}] ${record.summary}`);
-        return `[Execution Reference Memory]\n${lines.join("\n")}`;
+        return `${memoryRestorePromptContextLabel("execution_reference_memory_header")}\n${lines.join("\n")}`;
     }
     catch {
         return "";
     }
+}
+export function createMemoryJournalRepository(paths, dependencies = NODE_MEMORY_JOURNAL_STORAGE) {
+    const memoryDbFile = paths.memoryDbFile;
+    let db = null;
+    const database = () => {
+        if (db)
+            return db;
+        dependencies.makeDirectory(dirname(memoryDbFile));
+        const opened = dependencies.openDatabase(memoryDbFile);
+        try {
+            initializeMemoryJournalDb(opened);
+            db = opened;
+            return opened;
+        }
+        catch (error) {
+            opened.close();
+            throw error;
+        }
+    };
+    return Object.freeze({
+        memoryDbFile,
+        insert: (input) => insertMemoryJournalRecordWithDb(database(), input),
+        search: (query, options) => searchMemoryJournalWithDb(database(), query, options),
+        buildContext: (query, options) => buildMemoryJournalContextWithDb(database(), query, options),
+        close: () => {
+            db?.close();
+            db = null;
+        },
+    });
+}
+export function insertMemoryJournalRecord(input, repository) {
+    return repository.insert(input);
+}
+export function searchMemoryJournal(query, options, repository) {
+    return repository.search(query, options);
+}
+export function buildMemoryJournalContext(query, options, repository) {
+    return repository.buildContext(query, options);
 }
 //# sourceMappingURL=journal.js.map

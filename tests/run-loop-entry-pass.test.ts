@@ -26,6 +26,34 @@ function createFinalizationDependencies() {
 }
 
 describe("run loop entry pass", () => {
+  it("passes an LLM intake execution contract into the execution loop", async () => {
+    const dependencies = createDependencies()
+    dependencies.tryHandleIntakeBridge.mockResolvedValue({
+      kind: "execute",
+      message: "structured execution brief",
+      requiredToolNames: ["web_search", "web_fetch"],
+    })
+
+    const result = await runLoopEntryPass({
+      runId: "run-execute",
+      sessionId: "session-execute",
+      source: "telegram",
+      onChunk: undefined,
+      pendingLoopDirective: null,
+      intakeProcessed: false,
+      recoveryBudgetUsage: createRecoveryUsage(),
+      finalizationDependencies: createFinalizationDependencies(),
+    }, dependencies)
+
+    expect(result).toEqual({
+      kind: "execute",
+      nextMessage: "structured execution brief",
+      requiredToolNames: ["web_search", "web_fetch"],
+      intakeProcessed: true,
+    })
+    expect(dependencies.executeLoopDirective).not.toHaveBeenCalled()
+  })
+
   it("retries intake directives through intake retry application", async () => {
     const dependencies = createDependencies()
     const result = await runLoopEntryPass({
@@ -38,6 +66,11 @@ describe("run loop entry pass", () => {
         summary: "일정 재분석",
         reason: "run_at missing",
         message: "retry prompt",
+        recoveryAdmission: {
+          previousStrategyFingerprint: `sha256:${"a".repeat(64)}`,
+          nextStrategyFingerprint: `sha256:${"b".repeat(64)}`,
+          changedDimensions: ["strategy"],
+        },
       },
       intakeProcessed: true,
       recoveryBudgetUsage: {
@@ -66,6 +99,7 @@ describe("run loop entry pass", () => {
       pendingLoopDirective: {
         kind: "complete",
         text: "done",
+        textSource: "llm_generated",
       },
       intakeProcessed: true,
       recoveryBudgetUsage: {
@@ -116,3 +150,12 @@ describe("run loop entry pass", () => {
     })
   })
 })
+
+function createRecoveryUsage() {
+  return {
+    interpretation: 0,
+    execution: 0,
+    delivery: 0,
+    external: 0,
+  }
+}

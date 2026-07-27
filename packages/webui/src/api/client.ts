@@ -20,7 +20,13 @@ import type { DoctorMode, DoctorResponse } from "../contracts/doctor"
 import type { ActiveInstructionsResponse } from "../contracts/instructions"
 import type { OperationsSummary, StaleRunCleanupResult } from "../contracts/operations"
 import type { TopologyRelationTemplateCatalogResponse } from "../contracts/relation-templates"
-import type { RootRun, RunEvent, RunRuntimeInspectorProjection, RunStep } from "../contracts/runs"
+import type {
+  RequestExecutionOutcome,
+  RootRun,
+  RunEvent,
+  RunRuntimeInspectorProjection,
+  RunStep,
+} from "../contracts/runs"
 import type { SetupDraft, SetupMcpServerDraft, SetupState } from "../contracts/setup"
 import type { TaskModel } from "../contracts/tasks"
 import type {
@@ -35,16 +41,16 @@ import type { UpdateSnapshot } from "../contracts/update"
 import type {
   AgentTeamImportMode,
   AgentTeamTopologyImportPreviewResponse,
-  EnterpriseTopologyGuiDraftIssuesResponse,
+  EnterpriseTopologyExportResponse,
   EnterpriseTopologyGuiDraftCompiledPreviewResponse,
-  EnterpriseTopologyGuiDraftRunRequest,
-  EnterpriseTopologyGuiDraftRunResponse,
+  EnterpriseTopologyGuiDraftIssuesResponse,
   EnterpriseTopologyGuiDraftOperationsRequest,
   EnterpriseTopologyGuiDraftOperationsResponse,
   EnterpriseTopologyGuiDraftResponse,
+  EnterpriseTopologyGuiDraftRunRequest,
+  EnterpriseTopologyGuiDraftRunResponse,
   EnterpriseTopologyGuiDraftStartRequest,
   EnterpriseTopologyGuiDraftValidateResponse,
-  EnterpriseTopologyExportResponse,
   EnterpriseTopologyImportRequest,
   EnterpriseTopologyImportResponse,
   EnterpriseTopologyRunFailureReportsResponse,
@@ -55,15 +61,15 @@ import type {
   TopologyImportExportFormat,
   WorkOrderTemplateCatalogResponse,
 } from "../lib/enterprise-topology-operations"
-import {
-  buildTopologyWorkspaceSnapshot,
-  type TopologyWorkspaceSnapshot,
-  type TopologyWorkspaceSnapshotLoadRequest,
-} from "../lib/topology-workspace"
 import type {
   NodeDefinitionSuggestionRequest,
   NodeDefinitionSuggestionResult,
 } from "../lib/node-definition-suggestion"
+import {
+  type TopologyWorkspaceSnapshot,
+  type TopologyWorkspaceSnapshotLoadRequest,
+  buildTopologyWorkspaceSnapshot,
+} from "../lib/topology-workspace"
 import { localAdapter } from "./adapters/local"
 import type {
   ControlPlaneAdapter,
@@ -73,13 +79,15 @@ import type {
   StatusResponse,
   TestBackendResponse,
   TestMcpServerResponse,
+  TestSkillPathResponse,
+  TestTelegramResponse,
+  YeonjangBrowserActiveTabInfoPublicReadinessSummary,
   YeonjangDefaultTargetSelection,
   YeonjangFleetResponse,
   YeonjangLocalRemoteDiffSummary,
   YeonjangProjectedInstance,
-  TestSkillPathResponse,
-  TestTelegramResponse,
 } from "./adapters/types"
+import { buildUiRequestFailure, normalizeFetchFailure } from "./request-failure"
 
 const BASE = ""
 const UI_MODE_FALLBACK_KEY = "knowbee_preferred_ui_mode"
@@ -96,7 +104,12 @@ export interface UiModeState {
   schemaVersion: 1
 }
 
-export type UiModeSaveResponse = UiModeState & { ok: boolean; fallback?: "browser" }
+export type UiModeSaveResponse = UiModeState & {
+  ok: boolean
+  fallback?: "browser"
+  restartRequired?: true
+  appliesOn?: "next_start"
+}
 
 export interface UiShellResponse {
   generatedAt: number
@@ -345,23 +358,13 @@ export interface AdminToolLabResponse {
       sessions: number
       attempts: number
       degraded: number
-      answerable: number
+      diagnosed: number
     }
     sessions: Array<{
       id: string
       requestGroupId: string | null
       runId: string | null
       sessionKey: string | null
-      target: unknown
-      sourceLadder: Array<{
-        method: string
-        url: string
-        sourceDomain: string
-        sourceKind: string
-        reliability: string
-        sourceLabel: string
-        expectedTargetBinding: string
-      }>
       queryVariants: string[]
       fetchAttempts: Array<{
         id: string
@@ -378,45 +381,17 @@ export interface AdminToolLabResponse {
         durationMs: number | null
         signalCount: number
       }>
-      candidateExtraction: {
-        eventCount: number
-        candidateCount: number
-        lastSummary: string | null
+      resultDiagnosis: {
+        status: "complete" | "followup" | "ask_user" | null
+        contextFingerprint: string | null
+        criterionKeys: string[]
+        conditionCount: number | null
+        evidenceRefs: string[]
+        receiptPresent: boolean
       }
-      verification: {
-        canAnswer: boolean | null
-        evidenceSufficiency: string | null
-        acceptedValue: string | null
-        rejectionReason: string | null
-        mustAvoidGuessing: boolean | null
-        policy: string | null
-        completionStrict: boolean
-        semanticComparisonAllowed: boolean
-        verificationMode: string
-      }
-      conflictResolver: { status: string | null; conflicts: string[] }
-      cache: {
-        status: string
-        entryCount: number
-        entries: Array<{
-          status: string
-          reason: string
-          value: string | null
-          unit: string | null
-          sourceDomain: string | null
-        }>
-      }
-      adapterMetadata: Array<{
-        adapterId: string
-        adapterVersion: string
-        parserVersion: string
-        checksum: string
-        status: string
-        degradedReason?: string | null
-      }>
       degradedState: { degraded: boolean; reasons: string[] }
       policySeparation: {
-        discovery: string
+        evidence: string
         completion: string
         semanticComparisonAllowed: boolean
       }
@@ -442,10 +417,14 @@ export interface AdminFixtureReplayResponse {
     title: string
     status: string
     attempts: number
-    candidateCount: number
-    canAnswer: boolean
-    acceptedValue: string | null
-    evidenceSufficiency: string
+    successfulSourceCount: number
+    evidenceSourceIds: string[]
+    llmDiagnosisExpectation: {
+      status: "complete" | "followup" | "ask_user"
+      requiredEvidenceSourceIds: string[]
+      requiredConditionVerdicts: string[]
+      changedStrategyRequired: boolean
+    }
     failures: string[]
   }>
 }
@@ -672,6 +651,7 @@ export interface AdminDiagnosticExportJob {
   includeTimeline: boolean
   includeReport: boolean
   bundlePath: string | null
+  bundleUrl: string | null
   bundleFile: string | null
   bundleBytes: number | null
   error: string | null
@@ -818,6 +798,58 @@ export interface AdminDiagnosticExportGetResponse {
   job: AdminDiagnosticExportJob
 }
 
+export interface AdminArtifactCleanupTargetDisplay {
+  kind: "admin_diagnostic_export" | "live_acceptance_signing_request" | "release_package_output"
+  label: string
+  status: "empty" | "ready" | "cleaned" | "attention_required"
+  deletedLabel: string
+  verifiedLabel: string
+  skippedLabel: string
+  attentionLabel: string
+  deleteEligibleFiles: number
+  deletedFiles: number
+  verifiedDeletedFiles: number
+  skippedFiles: number
+  attentionCount: number
+}
+
+export interface AdminArtifactCleanupDisplay {
+  kind: "knowbee.artifact_cleanup.user_projection"
+  generatedAt: number
+  confirmed: boolean | null
+  targets: AdminArtifactCleanupTargetDisplay[]
+}
+
+export interface AdminArtifactCleanupPreviewResponse {
+  ok: boolean
+  preview: {
+    kind: "knowbee.artifact_cleanup.preview"
+    generatedAt: number
+    maxAgeMs: number
+    confirmation: "CONFIRM ARTIFACT CLEANUP"
+    targets: unknown[]
+  }
+  display: AdminArtifactCleanupDisplay
+}
+
+export interface AdminArtifactCleanupResponse {
+  ok: boolean
+  error?: string
+  execution: {
+    kind: "knowbee.artifact_cleanup.execution"
+    generatedAt: number
+    maxAgeMs: number
+    confirmed: boolean
+    targets: unknown[]
+  }
+  display: AdminArtifactCleanupDisplay
+}
+
+export interface AdminArtifactCleanupParams {
+  maxAgeMs?: number
+  releaseOutputDir?: string
+}
+
 function buildAdminLiveQuery(params: Record<string, unknown> = {}): string {
   const search = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
@@ -920,40 +952,22 @@ function authHeaders(): Record<string, string> {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const hasBody = init?.body !== undefined
-  const res = await fetch(`${BASE}${path}`, {
-    headers: {
-      ...(hasBody ? { "Content-Type": "application/json" } : {}),
-      ...authHeaders(),
-      ...init?.headers,
-    },
-    ...init,
-  })
+  let res: Response
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: {
+        ...(hasBody ? { "Content-Type": "application/json" } : {}),
+        ...authHeaders(),
+        ...init?.headers,
+      },
+    })
+  } catch (cause) {
+    throw normalizeFetchFailure(cause)
+  }
   if (!res.ok) {
     const bodyText = await res.text().catch(() => "")
-    let detail = bodyText.trim()
-    if (detail) {
-      try {
-        const parsed = JSON.parse(detail) as {
-          error?: string
-          message?: string
-          safeMessage?: string
-          issues?: Array<{ message?: string }>
-        }
-        const issueMessages = Array.isArray(parsed.issues)
-          ? parsed.issues
-              .map((issue) => issue.message?.trim())
-              .filter((message): message is string => Boolean(message))
-          : []
-        const summary =
-          parsed.safeMessage?.trim() || parsed.message?.trim() || parsed.error?.trim() || ""
-        detail = [summary, ...issueMessages.slice(0, 3)].filter(Boolean).join(" / ") || detail
-      } catch {
-        // keep raw text
-      }
-    }
-    throw new Error(
-      detail ? `${res.status} ${res.statusText}: ${detail}` : `${res.status} ${res.statusText}`,
-    )
+    throw buildUiRequestFailure({ status: res.status, statusText: res.statusText, bodyText })
   }
   return res.json() as Promise<T>
 }
@@ -967,9 +981,198 @@ export function getControlPlaneAdapterName(): "local" {
 }
 
 export const api = {
+  getAgentWorkspace: (
+    query: { search?: string; status?: string; cursor?: string; limit?: number } = {},
+    signal?: AbortSignal,
+  ) => {
+    const params = new URLSearchParams()
+    if (query.search) params.set("search", query.search)
+    if (query.status) params.set("status", query.status)
+    if (query.cursor) params.set("cursor", query.cursor)
+    if (query.limit) params.set("limit", String(query.limit))
+    const suffix = params.toString()
+    return request<import("../contracts/agents").AgentWorkspacePageResponse>(
+      `/api/agent-workspace${suffix ? `?${suffix}` : ""}`,
+      { signal },
+    )
+  },
+  getAgentWorkspaceDetail: (agentRef: string, signal?: AbortSignal) =>
+    request<import("../contracts/agents").AgentWorkspaceDetail>(
+      `/api/agent-workspace/${encodeURIComponent(agentRef)}`,
+      { signal },
+    ),
+  getAgentOperationalSettings: (agentRef: string, signal?: AbortSignal) =>
+    request<import("../contracts/agents").AgentOperationalSettingsProjection>(
+      `/api/agent-workspace/${encodeURIComponent(agentRef)}/settings`,
+      { signal },
+    ),
+  updateAgentOperationalSettings: (
+    agentRef: string,
+    input: import("../contracts/agents").AgentOperationalSettingsMutationRequest,
+    idempotencyKey: string,
+  ) =>
+    request<import("../contracts/agents").AgentOperationalSettingsMutationResponse>(
+      `/api/agent-workspace/${encodeURIComponent(agentRef)}/settings`,
+      {
+        method: "PATCH",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify(input),
+      },
+    ),
+  getAgentCapabilityBindings: (
+    agentRef: string,
+    query: {
+      search?: string
+      kind?: import("../contracts/agents").AgentCapabilityKind
+      limit?: number
+    } = {},
+    signal?: AbortSignal,
+  ) => {
+    const params = new URLSearchParams()
+    if (query.search) params.set("search", query.search)
+    if (query.kind) params.set("kind", query.kind)
+    if (query.limit) params.set("limit", String(query.limit))
+    const suffix = params.toString()
+    return request<import("../contracts/agents").AgentCapabilityBindingProjection>(
+      `/api/agent-workspace/${encodeURIComponent(agentRef)}/capabilities${suffix ? `?${suffix}` : ""}`,
+      { signal },
+    )
+  },
+  updateAgentCapabilityBinding: (
+    agentRef: string,
+    capabilityRef: string,
+    input: {
+      kind: import("../contracts/agents").AgentCapabilityKind
+      bound: boolean
+      mutation: import("../contracts/agents").AgentCapabilityMutationEnvelope
+    },
+  ) =>
+    request<import("../contracts/agents").AgentCapabilityBindingResponse>(
+      `/api/agent-workspace/${encodeURIComponent(agentRef)}/capabilities/${encodeURIComponent(capabilityRef)}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    ),
+  getAgentRelationships: (query: { limit?: number } = {}, signal?: AbortSignal) => {
+    const params = new URLSearchParams()
+    if (query.limit) params.set("limit", String(query.limit))
+    const suffix = params.toString()
+    return request<import("../contracts/agents").AgentRelationshipProjection>(
+      `/api/agent-workspace/relationships${suffix ? `?${suffix}` : ""}`,
+      { signal },
+    )
+  },
+  updateAgentParent: (
+    childRef: string,
+    input: {
+      kind: import("../contracts/agents").AgentRelationshipMutationKind
+      parentRef: string | null
+      mutation: import("../contracts/agents").AgentRelationshipMutationEnvelope
+    },
+  ) =>
+    request<import("../contracts/agents").AgentRelationshipMutationResponse>(
+      `/api/agent-workspace/${encodeURIComponent(childRef)}/parent`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    ),
+  createAgentIdentity: (input: {
+    mutation: import("../contracts/agents").AgentIdentityMutationEnvelope
+    name: string
+    role: string
+  }) =>
+    request<import("../contracts/agents").AgentIdentityMutationResponse>("/api/agent-workspace", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateAgentIdentity: (
+    agentRef: string,
+    input: {
+      mutation: import("../contracts/agents").AgentIdentityMutationEnvelope
+      baseRevision: number
+      name: string
+      role: string
+    },
+  ) =>
+    request<import("../contracts/agents").AgentIdentityMutationResponse>(
+      `/api/agent-workspace/${encodeURIComponent(agentRef)}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    ),
+  archiveAgentIdentity: (
+    agentRef: string,
+    input: {
+      mutation: import("../contracts/agents").AgentIdentityMutationEnvelope
+      baseRevision: number
+      confirmed: boolean
+    },
+  ) =>
+    request<import("../contracts/agents").AgentIdentityMutationResponse>(
+      `/api/agent-workspace/${encodeURIComponent(agentRef)}/archive`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
   status: () => getControlPlaneAdapter().getStatus(),
   capabilities: () => getControlPlaneAdapter().getCapabilities(),
   capability: (key: string) => getControlPlaneAdapter().getCapability(key),
+  skillCatalog: (
+    query: import("../contracts/skills").SkillCatalogQueryInput,
+    signal?: AbortSignal,
+  ) => getControlPlaneAdapter().getSkillCatalog(query, signal),
+  skillDetail: (skillRef: string, signal?: AbortSignal) =>
+    getControlPlaneAdapter().getSkillDetail(skillRef, signal),
+  validateSkillSource: (
+    input: import("../contracts/skills").SkillSourceValidationRequest,
+    signal?: AbortSignal,
+  ) => getControlPlaneAdapter().validateSkillSource(input, signal),
+  createSkill: (input: import("../contracts/skills").SkillCreateRequest, signal?: AbortSignal) =>
+    getControlPlaneAdapter().createSkill(input, signal),
+  updateSkill: (
+    skillRef: string,
+    input: import("../contracts/skills").SkillUpdateRequest,
+    signal?: AbortSignal,
+  ) => getControlPlaneAdapter().updateSkill(skillRef, input, signal),
+  updateSkillBinding: (
+    skillRef: string,
+    agentRef: string,
+    input: import("../contracts/skills").SkillBindingRequest,
+    signal?: AbortSignal,
+  ) => getControlPlaneAdapter().updateSkillBinding(skillRef, agentRef, input, signal),
+  deleteSkill: (
+    skillRef: string,
+    input: import("../contracts/skills").SkillDeleteRequest,
+    signal?: AbortSignal,
+  ) => getControlPlaneAdapter().deleteSkill(skillRef, input, signal),
+  mcpCatalog: (query: import("../contracts/mcp").McpCatalogQueryInput, signal?: AbortSignal) =>
+    getControlPlaneAdapter().getMcpCatalog(query, signal),
+  mcpCatalogDetail: (mcpRef: string, signal?: AbortSignal) =>
+    getControlPlaneAdapter().getMcpCatalogDetail(mcpRef, signal),
+  probeMcpDraft: (draft: import("../contracts/mcp").McpConnectionDraft, signal?: AbortSignal) =>
+    getControlPlaneAdapter().probeMcpDraft(draft, signal),
+  probeExistingMcp: (mcpRef: string, signal?: AbortSignal) =>
+    getControlPlaneAdapter().probeExistingMcp(mcpRef, signal),
+  createMcp: (input: import("../contracts/mcp").McpCreateRequest, signal?: AbortSignal) =>
+    getControlPlaneAdapter().createMcp(input, signal),
+  updateMcp: (
+    mcpRef: string,
+    input: import("../contracts/mcp").McpProtectedUpdateRequest,
+    signal?: AbortSignal,
+  ) => getControlPlaneAdapter().updateMcp(mcpRef, input, signal),
+  updateMcpBinding: (
+    mcpRef: string,
+    agentRef: string,
+    input: import("../contracts/mcp").McpBindingRequest,
+    signal?: AbortSignal,
+  ) => getControlPlaneAdapter().updateMcpBinding(mcpRef, agentRef, input, signal),
+  updateMcpStatus: (
+    mcpRef: string,
+    input: import("../contracts/mcp").McpStatusRequest,
+    signal?: AbortSignal,
+  ) => getControlPlaneAdapter().updateMcpStatus(mcpRef, input, signal),
+  deleteMcp: (
+    mcpRef: string,
+    input: import("../contracts/mcp").McpDeleteRequest,
+    signal?: AbortSignal,
+  ) => getControlPlaneAdapter().deleteMcp(mcpRef, input, signal),
+  recoverMcp: (
+    mcpRef: string,
+    input: import("../contracts/mcp").McpRecoveryRequest,
+    signal?: AbortSignal,
+  ) => getControlPlaneAdapter().recoverMcp(mcpRef, input, signal),
   setupStatus: () => getControlPlaneAdapter().getSetupStatus(),
   setupChecks: () => getControlPlaneAdapter().getSetupChecks(),
   setupDraft: () => getControlPlaneAdapter().getSetupDraft(),
@@ -993,12 +1196,51 @@ export const api = {
   reloadMcpServers: () => getControlPlaneAdapter().reloadMcpServers(),
   mqttRuntime: () => getControlPlaneAdapter().getMqttRuntime(),
   yeonjangFleet: () => getControlPlaneAdapter().getYeonjangFleet(),
-  approveYeonjangPairing: (instanceId: string, payload: { pairingSecret: string; actor?: string; ownerUserId?: string; workspaceScopeId?: string; reason?: string }) =>
-    getControlPlaneAdapter().approveYeonjangPairing(instanceId, payload),
-  updateYeonjangTrust: (instanceId: string, payload: { trustState: "pending" | "trusted" | "revoked" | "quarantined"; actor?: string; reason?: string }) =>
-    getControlPlaneAdapter().updateYeonjangTrust(instanceId, payload),
-  renameYeonjangInstance: (instanceId: string, payload: { instanceAlias?: string; displayName?: string; actor?: string; reason?: string }) =>
-    getControlPlaneAdapter().renameYeonjangInstance(instanceId, payload),
+  yeonjangBrowserActiveTabInfoReadiness: (signal?: AbortSignal) =>
+    getControlPlaneAdapter().getYeonjangBrowserActiveTabInfoReadiness(signal),
+  yeonjangBrowserActiveTabInfoDiagnostics: (signal?: AbortSignal) =>
+    getControlPlaneAdapter().getYeonjangBrowserActiveTabInfoDiagnostics(signal),
+  previewYeonjangBrowserActiveTabInfoPreDispatch: (input: unknown, signal?: AbortSignal) =>
+    getControlPlaneAdapter().previewYeonjangBrowserActiveTabInfoPreDispatch(input, signal),
+  yeonjangCapabilities: (
+    query: import("../contracts/yeonjang").YeonjangCapabilityQueryInput,
+    signal?: AbortSignal,
+  ) => getControlPlaneAdapter().getYeonjangCapabilities(query, signal),
+  yeonjangCapabilityDetail: (yeonjangRef: string, signal?: AbortSignal) =>
+    getControlPlaneAdapter().getYeonjangCapabilityDetail(yeonjangRef, signal),
+  recoverYeonjang: (
+    yeonjangRef: string,
+    input: import("../contracts/yeonjang").YeonjangRecoveryRequest,
+    signal?: AbortSignal,
+  ) => getControlPlaneAdapter().recoverYeonjang(yeonjangRef, input, signal),
+  updateYeonjangBinding: (
+    yeonjangRef: string,
+    agentRef: string,
+    input: import("../contracts/yeonjang").YeonjangBindingRequest,
+    signal?: AbortSignal,
+  ) => getControlPlaneAdapter().updateYeonjangBinding(yeonjangRef, agentRef, input, signal),
+  approveYeonjangPairing: (
+    instanceId: string,
+    payload: {
+      pairingSecret: string
+      actor?: string
+      ownerUserId?: string
+      workspaceScopeId?: string
+      reason?: string
+    },
+  ) => getControlPlaneAdapter().approveYeonjangPairing(instanceId, payload),
+  updateYeonjangTrust: (
+    instanceId: string,
+    payload: {
+      trustState: "pending" | "trusted" | "revoked" | "quarantined"
+      actor?: string
+      reason?: string
+    },
+  ) => getControlPlaneAdapter().updateYeonjangTrust(instanceId, payload),
+  renameYeonjangInstance: (
+    instanceId: string,
+    payload: { instanceAlias?: string; displayName?: string; actor?: string; reason?: string },
+  ) => getControlPlaneAdapter().renameYeonjangInstance(instanceId, payload),
   assignYeonjangLocalMarker: (instanceId: string, payload: { actor?: string; reason?: string }) =>
     getControlPlaneAdapter().assignYeonjangLocalMarker(instanceId, payload),
   disconnectMqttExtension: (extensionId: string) =>
@@ -1118,6 +1360,17 @@ export const api = {
       `/api/admin/diagnostic-exports/${encodeURIComponent(id)}`,
     ),
 
+  adminArtifactCleanupPreview: (params: AdminArtifactCleanupParams = {}) =>
+    request<AdminArtifactCleanupPreviewResponse>(
+      `/api/admin/artifact-cleanup/preview${buildAdminLiveQuery(params)}`,
+    ),
+
+  adminArtifactCleanup: (body: AdminArtifactCleanupParams & { confirmation: string }) =>
+    request<AdminArtifactCleanupResponse>("/api/admin/artifact-cleanup", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   startAdminDiagnosticExport: (
     body: {
       runId?: string
@@ -1152,40 +1405,155 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  instructionsActive: (workDir?: string) =>
-    request<ActiveInstructionsResponse>(
-      `/api/instructions/active${workDir ? `?workDir=${encodeURIComponent(workDir)}` : ""}`,
-    ),
+  instructionsActive: (workDir?: string) => {
+    const query = new URLSearchParams({
+      purpose: "audit",
+      actor: "webui-active-instructions-panel",
+      audience: "ordinary-user",
+      redactionMode: "redacted",
+    })
+    if (workDir) query.set("workDir", workDir)
+    return request<ActiveInstructionsResponse>(`/api/instructions/active?${query.toString()}`)
+  },
 
-  promptSources: (workDir?: string) =>
-    request<{ workDir: string; sources: PromptSourceMetadata[] }>(
-      `/api/prompt-sources${workDir ? `?workDir=${encodeURIComponent(workDir)}` : ""}`,
-    ),
+  instructionsActiveRaw: (workDir?: string) => {
+    const query = new URLSearchParams({
+      purpose: "prompt_review",
+      actor: "webui-active-instructions-panel",
+      target: "active-instructions",
+      audience: "authorized-user",
+      redactionMode: "raw_authorized",
+    })
+    if (workDir) query.set("workDir", workDir)
+    return request<ActiveInstructionsResponse>(`/api/instructions/active?${query.toString()}`)
+  },
 
-  promptSource: (sourceId: string, locale: "ko" | "en", workDir?: string) =>
-    request<{ workDir: string; source: PromptSourceDocument }>(
-      `/api/prompt-sources/${encodeURIComponent(sourceId)}/${encodeURIComponent(locale)}${workDir ? `?workDir=${encodeURIComponent(workDir)}` : ""}`,
-    ),
+  promptSources: (workDir?: string) => {
+    const query = new URLSearchParams({
+      purpose: "audit",
+      actor: "webui-active-instructions-panel",
+      audience: "ordinary-user",
+      redactionMode: "redacted",
+    })
+    if (workDir) query.set("workDir", workDir)
+    return request<PromptSourceMetadataDisclosureResponse>(
+      `/api/prompt-sources?${query.toString()}`,
+    )
+  },
 
-  promptSourcesDryRun: (workDir?: string, locale: "ko" | "en" = "en") =>
-    request<{ workDir: string; locale: "ko" | "en"; dryRun: PromptSourceDryRunResult }>(
-      `/api/prompt-sources/dry-run?locale=${encodeURIComponent(locale)}${workDir ? `&workDir=${encodeURIComponent(workDir)}` : ""}`,
-    ),
+  promptSourcesRaw: (workDir?: string) => {
+    const query = new URLSearchParams({
+      purpose: "prompt_improvement",
+      actor: "webui-active-instructions-panel",
+      target: "prompt-source-registry",
+      audience: "authorized-user",
+      redactionMode: "raw_authorized",
+    })
+    if (workDir) query.set("workDir", workDir)
+    return request<PromptSourceMetadataDisclosureResponse>(
+      `/api/prompt-sources?${query.toString()}`,
+    )
+  },
+
+  promptSource: (sourceId: string, locale: "ko" | "en", workDir?: string) => {
+    const query = new URLSearchParams({
+      purpose: "audit",
+      actor: "webui-active-instructions-panel",
+      audience: "ordinary-user",
+      redactionMode: "redacted",
+    })
+    if (workDir) query.set("workDir", workDir)
+    return request<PromptSourceDisclosureResponse>(
+      `/api/prompt-sources/${encodeURIComponent(sourceId)}/${encodeURIComponent(locale)}?${query.toString()}`,
+    )
+  },
+
+  promptSourceRaw: (sourceId: string, locale: "ko" | "en", workDir?: string) => {
+    const query = new URLSearchParams({
+      purpose: "prompt_improvement",
+      actor: "webui-active-instructions-panel",
+      target: `prompt-source:${sourceId}:${locale}`,
+      audience: "authorized-user",
+      redactionMode: "raw_authorized",
+    })
+    if (workDir) query.set("workDir", workDir)
+    return request<PromptSourceDisclosureResponse>(
+      `/api/prompt-sources/${encodeURIComponent(sourceId)}/${encodeURIComponent(locale)}?${query.toString()}`,
+    )
+  },
+
+  promptSourcesDryRun: (workDir?: string, locale: "ko" | "en" = "en") => {
+    const query = new URLSearchParams({
+      locale,
+      purpose: "audit",
+      actor: "webui-active-instructions-panel",
+      audience: "ordinary-user",
+      redactionMode: "redacted",
+    })
+    if (workDir) query.set("workDir", workDir)
+    return request<PromptSourceDryRunDisclosureResponse>(
+      `/api/prompt-sources/dry-run?${query.toString()}`,
+    )
+  },
+
+  promptSourcesDryRunRaw: (workDir?: string, locale: "ko" | "en" = "en") => {
+    const query = new URLSearchParams({
+      locale,
+      purpose: "prompt_review",
+      actor: "webui-active-instructions-panel",
+      target: `prompt-assembly:${locale}`,
+      audience: "authorized-user",
+      redactionMode: "raw_authorized",
+    })
+    if (workDir) query.set("workDir", workDir)
+    return request<PromptSourceDryRunDisclosureResponse>(
+      `/api/prompt-sources/dry-run?${query.toString()}`,
+    )
+  },
 
   promptSourcesParity: (workDir?: string) =>
     request<{ workDir: string; parity: PromptSourceLocaleParityResult }>(
       `/api/prompt-sources/parity${workDir ? `?workDir=${encodeURIComponent(workDir)}` : ""}`,
     ),
 
-  promptSourcesRegression: (workDir?: string, locale: "ko" | "en" | "all" = "all") =>
-    request<{ workDir: string; regression: PromptSourceRegressionResult }>(
-      `/api/prompt-sources/regression?locale=${encodeURIComponent(locale)}${workDir ? `&workDir=${encodeURIComponent(workDir)}` : ""}`,
-    ),
+  promptSourcesRegression: (workDir?: string, locale: "ko" | "en" | "all" = "all") => {
+    const query = new URLSearchParams({
+      locale,
+      purpose: "audit",
+      actor: "webui-active-instructions-panel",
+      audience: "ordinary-user",
+      redactionMode: "redacted",
+    })
+    if (workDir) query.set("workDir", workDir)
+    return request<PromptSourceRegressionDisclosureResponse>(
+      `/api/prompt-sources/regression?${query.toString()}`,
+    )
+  },
+
+  promptSourcesRegressionRaw: (workDir?: string, locale: "ko" | "en" | "all" = "all") => {
+    const query = new URLSearchParams({
+      locale,
+      purpose: "prompt_review",
+      actor: "webui-active-instructions-panel",
+      target: `prompt-regression:${locale}`,
+      audience: "authorized-user",
+      redactionMode: "raw_authorized",
+    })
+    if (workDir) query.set("workDir", workDir)
+    return request<PromptSourceRegressionDisclosureResponse>(
+      `/api/prompt-sources/regression?${query.toString()}`,
+    )
+  },
 
   writePromptSource: (
     sourceId: string,
     locale: "ko" | "en",
-    body: { workDir?: string; content: string; createBackup?: boolean },
+    body: {
+      workDir?: string
+      content: string
+      createBackup?: boolean
+      harnessInput: PromptImprovementHarnessInput
+    },
   ) =>
     request<PromptSourceWriteResult>(
       `/api/prompt-sources/${encodeURIComponent(sourceId)}/${encodeURIComponent(locale)}/write`,
@@ -1195,7 +1563,13 @@ export const api = {
       },
     ),
 
-  rollbackPromptSource: (body: { sourcePath: string; backupPath: string }) =>
+  rollbackPromptSource: (body: {
+    workDir?: string
+    sourceId: string
+    locale: "ko" | "en"
+    backupId: string
+    reason?: string
+  }) =>
     request<PromptSourceRollbackResult>("/api/prompt-sources/rollback", {
       method: "POST",
       body: JSON.stringify(body),
@@ -1223,7 +1597,7 @@ export const api = {
       snapshot: ConfigurationOperationsSnapshot
     }>("/api/config/db/export", { method: "POST" }),
 
-  importDatabase: (backupPath: string) =>
+  importDatabase: (backupId: string) =>
     request<{
       ok: boolean
       import: {
@@ -1234,7 +1608,7 @@ export const api = {
       snapshot: ConfigurationOperationsSnapshot
     }>("/api/config/db/import", {
       method: "POST",
-      body: JSON.stringify({ backupPath }),
+      body: JSON.stringify({ backupId }),
     }),
 
   exportMaskedConfig: () =>
@@ -1250,7 +1624,12 @@ export const api = {
       body: JSON.stringify({ ...(workDir ? { workDir } : {}) }),
     }),
 
-  importPromptSourcesOps: (body: { exportPath: string; workDir?: string; overwrite?: boolean }) =>
+  importPromptSourcesOps: (body: {
+    exportId?: string
+    exportPath?: string
+    workDir?: string
+    overwrite?: boolean
+  }) =>
     request<{
       ok: boolean
       import: PromptSourceImportResult
@@ -1270,7 +1649,11 @@ export const api = {
       body: JSON.stringify({ ...(workDir ? { workDir } : {}) }),
     }),
 
-  runs: () => request<{ runs: RootRun[] }>("/api/runs"),
+  runs: () =>
+    request<{
+      runs: RootRun[]
+      executionOutcomes: Record<string, RequestExecutionOutcome>
+    }>("/api/runs"),
 
   agentTopology: () => request<AgentTopologyResponse>("/api/agent-topology"),
 
@@ -1298,18 +1681,29 @@ export const api = {
       recentRuns: input.recentRuns ?? [],
       featureFlags: input.featureFlags ?? [],
       capabilities: capabilitiesResult.status === "fulfilled" ? capabilitiesResult.value.items : [],
-      runtimeResources: runtimeResourcesResult.status === "fulfilled" ? runtimeResourcesResult.value : null,
+      runtimeResources:
+        runtimeResourcesResult.status === "fulfilled" ? runtimeResourcesResult.value : null,
       catalogs: {
-        topologyTemplates: topologyTemplatesResult.status === "fulfilled" ? topologyTemplatesResult.value.catalog : null,
-        relationTemplates: relationTemplatesResult.status === "fulfilled" ? relationTemplatesResult.value.catalog : null,
-        workOrderTemplates: workOrderTemplatesResult.status === "fulfilled" ? workOrderTemplatesResult.value.catalog : null,
+        topologyTemplates:
+          topologyTemplatesResult.status === "fulfilled"
+            ? topologyTemplatesResult.value.catalog
+            : null,
+        relationTemplates:
+          relationTemplatesResult.status === "fulfilled"
+            ? relationTemplatesResult.value.catalog
+            : null,
+        workOrderTemplates:
+          workOrderTemplatesResult.status === "fulfilled"
+            ? workOrderTemplatesResult.value.catalog
+            : null,
       },
     })
   },
 
   topologyTemplates: () => request<TopologyTemplateCatalogResponse>("/api/topology-templates"),
 
-  relationTemplates: () => request<TopologyRelationTemplateCatalogResponse>("/api/relation-templates"),
+  relationTemplates: () =>
+    request<TopologyRelationTemplateCatalogResponse>("/api/relation-templates"),
 
   workOrderTemplates: () => request<WorkOrderTemplateCatalogResponse>("/api/work-order-templates"),
 
@@ -1498,10 +1892,10 @@ export const api = {
       },
     ),
 
-  topologyRuns: (params: { topologyId?: string; rootRunId?: string; status?: string; limit?: number } = {}) =>
-    request<EnterpriseTopologyRunListResponse>(
-      `/api/topology-runs${buildAdminLiveQuery(params)}`,
-    ),
+  topologyRuns: (
+    params: { topologyId?: string; rootRunId?: string; status?: string; limit?: number } = {},
+  ) =>
+    request<EnterpriseTopologyRunListResponse>(`/api/topology-runs${buildAdminLiveQuery(params)}`),
 
   topologyRun: (topologyRunId: string, params: { limit?: number } = {}) =>
     request<EnterpriseTopologyRunProjectionResponse>(
@@ -1525,6 +1919,16 @@ export const api = {
     }),
 
   tasks: () => request<{ tasks: TaskModel[] }>("/api/tasks"),
+
+  workSnapshot: () =>
+    request<{
+      observedAt: number
+      runs: RootRun[]
+      executionOutcomes: Record<string, RequestExecutionOutcome>
+      activeRunProjections: unknown[]
+      tasks: TaskModel[]
+      operationsSummary: OperationsSummary
+    }>("/api/work/snapshot"),
 
   runOperationsSummary: () =>
     request<{ summary: OperationsSummary }>("/api/runs/operations/summary"),
@@ -1567,7 +1971,9 @@ export const api = {
     request<ChannelHealthResponse>(`/api/channels/${encodeURIComponent(channelId)}/health`),
 
   channelCapabilities: (channelId: string) =>
-    request<ChannelCapabilitiesResponse>(`/api/channels/${encodeURIComponent(channelId)}/capabilities`),
+    request<ChannelCapabilitiesResponse>(
+      `/api/channels/${encodeURIComponent(channelId)}/capabilities`,
+    ),
 
   enableChannel: (channelId: string, body: { acknowledgeRisk?: boolean } = {}) =>
     request<ChannelActionResponse>(`/api/channels/${encodeURIComponent(channelId)}/enable`, {
@@ -1624,7 +2030,8 @@ export const api = {
       },
     ),
 
-  run: (runId: string) => request<{ run: RootRun }>(`/api/runs/${runId}`),
+  run: (runId: string) =>
+    request<{ run: RootRun; outcome?: RequestExecutionOutcome }>(`/api/runs/${runId}`),
 
   runSteps: (runId: string) => request<{ steps: RunStep[] }>(`/api/runs/${runId}/steps`),
 
@@ -1735,14 +2142,26 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  createRun: (message: string, sessionId?: string, focusThreadId?: string) =>
+  createRun: (
+    message: string,
+    sessionId?: string,
+    focusThreadId?: string,
+    clientRequestId = crypto.randomUUID(),
+  ) =>
     request<{
       requestId: string
       runId: string
       sessionId: string
       source: string
       status: string
-      receipt?: string
+      acknowledgement: {
+        kind: "intake_acknowledgement"
+        state: "request_received"
+        language: "ko" | "en" | "unknown"
+        deliveryMode: "interactive_control"
+        finalAnswer: false
+        assistantIdentityClaim: false
+      }
       focus?: {
         binding: FocusBinding
         plannerTarget: FocusResolveSuccess["plannerTarget"]
@@ -1750,7 +2169,12 @@ export const api = {
       }
     }>("/api/runs", {
       method: "POST",
-      body: JSON.stringify({ message, sessionId, ...(focusThreadId ? { focusThreadId } : {}) }),
+      body: JSON.stringify({
+        message,
+        sessionId,
+        clientRequestId,
+        ...(focusThreadId ? { focusThreadId } : {}),
+      }),
     }),
 
   cancelRun: (runId: string) =>
@@ -1850,7 +2274,7 @@ export const api = {
     if (params.severity) q.set("severity", params.severity)
     if (params.limit) q.set("limit", String(params.limit))
     if (params.audience) q.set("audience", params.audience)
-    return request<ControlTimelineResponse>(`/api/control/timeline?${q.toString()}`)
+    return request<ControlTimelineResponse>(`/api/audit/control/timeline?${q.toString()}`)
   },
 
   controlTimelineExport: (
@@ -1870,7 +2294,9 @@ export const api = {
     if (params.audience) q.set("audience", params.audience)
     if (params.format) q.set("format", params.format)
     if (params.limit) q.set("limit", String(params.limit))
-    return request<ControlTimelineExportResponse>(`/api/control/timeline/export?${q.toString()}`)
+    return request<ControlTimelineExportResponse>(
+      `/api/audit/control/timeline/export?${q.toString()}`,
+    )
   },
 
   promoteAuditEventToErrorCorpus: (eventId: string, note?: string) =>
@@ -1882,10 +2308,18 @@ export const api = {
       },
     ),
 
-  cleanupAudit: (params: { before?: number; all?: boolean }) => {
+  previewAuditCleanup: (params: { before?: number; all?: boolean }) => {
     const q = new URLSearchParams()
     if (params.before) q.set("before", String(params.before))
     if (params.all) q.set("all", "true")
+    return request<AuditCleanupPreviewResponse>(`/api/audit/cleanup-preview?${q.toString()}`)
+  },
+
+  cleanupAudit: (params: { before?: number; all?: boolean; confirm: string }) => {
+    const q = new URLSearchParams()
+    if (params.before) q.set("before", String(params.before))
+    if (params.all) q.set("all", "true")
+    q.set("confirm", params.confirm)
     return request<AuditCleanupResponse>(`/api/audit?${q.toString()}`, { method: "DELETE" })
   },
 
@@ -1909,10 +2343,19 @@ export const api = {
       method: "POST",
     }),
 
-  testAi: () =>
+  testAi: (input?: {
+    providerType: AIProviderType
+    authMode: AIAuthMode
+    endpoint: string
+    defaultModel: string
+    credentials: AIBackendCredentials
+  }) =>
     request<{ ok: boolean; response?: string; model?: string; error?: string }>(
       "/api/settings/test-ai",
-      { method: "POST" },
+      {
+        method: "POST",
+        ...(input ? { body: JSON.stringify(input) } : {}),
+      },
     ),
 
   schedules: () => request<{ schedules: Schedule[] }>("/api/schedules"),
@@ -1984,13 +2427,16 @@ export const api = {
 
   memoryQuality: () => request<{ snapshot: MemoryQualitySnapshot }>("/api/memory/quality"),
 
-  memoryInspector: (params: {
-    ownerType?: "main_agent" | "sub_agent"
-    ownerId?: string
-    sessionId?: string
-    requestGroupId?: string
-    limit?: number
-  } = {}) => {
+  memoryInspector: (
+    params: {
+      ownerType?: "main_agent" | "sub_agent"
+      ownerId?: string
+      sessionId?: string
+      requestGroupId?: string
+      limit?: number
+    } = {},
+    signal?: AbortSignal,
+  ) => {
     const search = new URLSearchParams()
     if (params.ownerType) search.set("ownerType", params.ownerType)
     if (params.ownerId) search.set("ownerId", params.ownerId)
@@ -1998,7 +2444,10 @@ export const api = {
     if (params.requestGroupId) search.set("requestGroupId", params.requestGroupId)
     if (typeof params.limit === "number") search.set("limit", String(params.limit))
     const query = search.toString()
-    return request<{ snapshot: MemoryInspectorSnapshot }>(`/api/memory/inspector${query ? `?${query}` : ""}`)
+    return request<{ snapshot: MemoryInspectorSnapshot }>(
+      `/api/memory/inspector${query ? `?${query}` : ""}`,
+      { signal },
+    )
   },
 
   memoryInspectorControl: (body: {
@@ -2055,6 +2504,7 @@ export type {
   ResetSetupResponse,
   FeatureCapability,
   MqttRuntimeResponse,
+  YeonjangBrowserActiveTabInfoPublicReadinessSummary,
   YeonjangDefaultTargetSelection,
   YeonjangFleetResponse,
   YeonjangLocalRemoteDiffSummary,
@@ -2161,8 +2611,7 @@ export type RetrievalTimelineEventKind =
   | "session"
   | "attempt"
   | "source"
-  | "candidate"
-  | "verdict"
+  | "diagnosis"
   | "planner"
   | "delivery"
   | "dedupe"
@@ -2184,13 +2633,6 @@ export interface RetrievalTimelineEvent {
     url: string | null
     domain: string | null
   }
-  verdict: {
-    canAnswer: boolean | null
-    acceptedValue: string | null
-    sufficiency: string | null
-    rejectionReason: string | null
-    conflicts: string[]
-  }
   diagnosticRef: {
     controlEventId: string
     eventType: string
@@ -2204,13 +2646,11 @@ export interface RetrievalTimelineSummary {
   sessionEvents: number
   attempts: number
   sources: number
-  candidates: number
-  verdicts: number
+  diagnoses: number
   plannerActions: number
   deliveryEvents: number
   dedupeSuppressed: number
   stops: number
-  conflicts: number
   finalDeliveryStatus: string | null
   stopReason: string | null
   severityCounts: Record<ControlEventSeverity, number>
@@ -2223,9 +2663,28 @@ export interface RetrievalTimeline {
 
 export interface AuditCleanupResponse {
   ok: boolean
-  deleted: { auditLogs: number; diagnosticEvents: number; decisionTraces?: number }
+  deleted: {
+    auditLogs: number
+    diagnosticEvents: number
+    decisionTraces?: number
+    messageLedger?: number
+  }
   before?: number
   message?: string
+}
+
+export interface AuditCleanupPreviewResponse {
+  ok: boolean
+  preview: {
+    before: number
+    auditLogs: number
+    diagnosticEvents: number
+    decisionTraces: number
+    messageLedger: number
+    protectedCount: number
+    deletableCount: number
+    confirmationToken: string
+  }
 }
 
 export interface AuditPromotionResponse {
@@ -2454,6 +2913,7 @@ export interface ChannelSmokeRunDetailResponse {
 
 export interface ChannelSmokeStartResponse {
   ok: boolean
+  mode: ChannelSmokeRunMode
   runId: string
   status: Exclude<ChannelSmokeStatus, "running">
   counts: ChannelSmokeCounts
@@ -2634,6 +3094,7 @@ export interface MemoryInspectorOwnerCard {
   lineageId?: string
   channelKey?: string
   threadKey?: string
+  agentNameSnapshot?: string
   nicknameSnapshot?: string
   latestCapsuleId?: string
   currentRawTokenEstimate: number
@@ -2814,10 +3275,38 @@ export interface PromptSourceDocument extends PromptSourceMetadata {
   content: string
 }
 
+export interface PromptSourceDisclosureMetadata {
+  purpose:
+    | "prompt_review"
+    | "prompt_improvement"
+    | "administration"
+    | "security_review"
+    | "debugging"
+    | "audit"
+  actor: string
+  target: string
+  audience: string
+  redactionMode: "redacted" | "raw_authorized"
+  state: "redacted" | "raw_authorized"
+}
+
+export interface PromptSourceMetadataDisclosureResponse {
+  workDir: string
+  disclosure: PromptSourceDisclosureMetadata
+  sources: PromptSourceMetadata[]
+}
+
+export interface PromptSourceDisclosureResponse {
+  workDir: string
+  disclosure: PromptSourceDisclosureMetadata
+  source: PromptSourceDocument
+}
+
 export interface PromptSourceDryRunResult {
   assembly: {
     text: string
     snapshot: {
+      sources?: PromptSourceMetadata[]
       diagnostics: Array<{
         severity: string
         code: string
@@ -2842,6 +3331,13 @@ export interface PromptSourceDryRunResult {
     locale: "ko" | "en"
     message: string
   }>
+}
+
+export interface PromptSourceDryRunDisclosureResponse {
+  workDir: string
+  locale: "ko" | "en"
+  disclosure: PromptSourceDisclosureMetadata
+  dryRun: PromptSourceDryRunResult
 }
 
 export interface PromptSourceLocaleParityIssue {
@@ -2904,6 +3400,12 @@ export interface PromptSourceRegressionResult {
   issues: PromptRegressionIssue[]
 }
 
+export interface PromptSourceRegressionDisclosureResponse {
+  workDir: string
+  disclosure: PromptSourceDisclosureMetadata
+  regression: PromptSourceRegressionResult
+}
+
 export interface PromptSourceWriteResult {
   backup: {
     backupId: string
@@ -2915,6 +3417,51 @@ export interface PromptSourceWriteResult {
     createdAt: number
   } | null
   source: PromptSourceMetadata
+  harnessValidation: {
+    ok: boolean
+    risk: "medium" | "high"
+    issues: Array<{
+      code: string
+      path: string
+      message: string
+    }>
+  }
+  sourceWriteState: "unchanged" | "written"
+  activationState: "unchanged" | "activation_pending" | "activated" | "rolled_back"
+  harnessReport: {
+    runId: string
+    startedAt: number
+    finishedAt: number
+    actor: string
+    triggerSource:
+      | "user_request"
+      | "admin_request"
+      | "regression_failure"
+      | "safety_review"
+      | "product_gap"
+    state: "completed" | "activation_pending" | "blocked" | "rolled_back"
+    targetPromptSources: string[]
+    changedPromptSources: string[]
+    riskLevel: "medium" | "high"
+    approvalRecord: {
+      mode: "none" | "user_required" | "admin_required"
+      required: boolean
+      granted: boolean
+      approvedBy?: string
+      approvedAt?: string
+      approvalScope: Array<"draft" | "apply_change" | "activation">
+      targetPromptSources: string[]
+      targetHarnessSources: string[]
+      riskAccepted?: "medium" | "high"
+    }
+    testsRequested: string[]
+    testsPassed: string[]
+    testsFailed: string[]
+    activationState: "unchanged" | "activation_pending" | "activated" | "rolled_back"
+    rollbackState: "not_required" | "backup_available" | "source_control_required"
+    rollbackPlan: string
+    summary: string
+  }
   diff: {
     beforeChecksum: string
     afterChecksum: string
@@ -2929,9 +3476,57 @@ export interface PromptSourceWriteResult {
   }
 }
 
+export interface PromptImprovementHarnessInput {
+  improvementGoal: string
+  improvementKind:
+    | "prompt_source"
+    | "harness_rule"
+    | "harness_state_machine"
+    | "harness_test_fixture"
+    | "prompt_metadata"
+  improvingAgentName: string
+  improvingAgentType: "main" | "sub_agent"
+  parentReviewerAgentName?: string
+  triggerSource:
+    | "user_request"
+    | "admin_request"
+    | "regression_failure"
+    | "safety_review"
+    | "product_gap"
+  targetPromptSources: string[]
+  activeHarnessVersion: string
+  targetHarnessSources: string[]
+  agentOwnedPromptScope: string[]
+  currentBehavior: string
+  desiredBehavior: string
+  userReactionEvidence: string[]
+  responseStrategyTarget: string
+  harnessChangeScope: string[]
+  harnessGuardrailsToPreserve: string[]
+  nonGoals: string[]
+  allowedChangeScope: string[]
+  requiredInvariants: string[]
+  requiredTests: string[]
+  approvalMode: "none" | "user_required" | "admin_required"
+  approvalRecord?: {
+    approvedBy: string
+    approvedAt: string
+    approvalScope: Array<"draft" | "apply_change" | "activation">
+    targetPromptSources: string[]
+    targetHarnessSources: string[]
+    riskAccepted: "medium" | "high"
+  }
+  rollbackPlan: string
+}
+
 export interface PromptSourceRollbackResult {
   sourcePath: string
   backupPath: string
   restoredChecksum: string
   previousChecksum: string
+  rolledBackFiles: Array<{ sourcePath: string; backupPath: string }>
+  reason: string
+  activationStateAfterRollback: "rolled_back"
+  remainingRisk: string
+  nextRecommendedAction: string
 }

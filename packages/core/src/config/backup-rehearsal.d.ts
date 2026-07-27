@@ -1,5 +1,6 @@
 import { type PromptSourceMetadata } from "../memory/knowbee-md.js";
 import { type MigrationVersionStatus } from "./operations.js";
+import type { RuntimePaths } from "./paths.js";
 export type BackupTargetKind = "config" | "prompt_source" | "sqlite_db" | "sqlite_sidecar" | "vector_db" | "setup_state" | "logical_sqlite_table" | "excluded_path";
 export type BackupTargetReason = "required" | "optional_missing" | "secret_reentry_required" | "large_retention_binary" | "cache_or_build_output" | "transient_runtime" | "logical_coverage";
 export interface BackupInventoryTarget {
@@ -111,11 +112,8 @@ export interface MigrationRollbackRunbook {
     restoreTargets: string[];
 }
 export interface BackupSnapshotOptions {
-    stateDir?: string;
-    workDir?: string;
-    configPath?: string;
-    dbPath?: string;
-    memoryDbPath?: string;
+    paths: BackupRehearsalPaths;
+    workDir: string;
     snapshotDir?: string;
     appVersion?: string;
     gitTag?: string;
@@ -129,7 +127,7 @@ export interface RestoreRehearsalOptions {
     writeReport?: boolean;
 }
 export interface MigrationPreflightOptions {
-    dbPath?: string;
+    dbPath: string;
     manifest?: BackupSnapshotManifest;
     diskFreeBytes?: number;
     requiredFreeBytes?: number;
@@ -137,11 +135,12 @@ export interface MigrationPreflightOptions {
     canWrite?: boolean;
     providerConfigSane?: boolean;
 }
+export type BackupRehearsalPaths = Pick<RuntimePaths, "stateDir" | "configFile" | "dbFile" | "memoryDbFile" | "setupStateFile">;
 export declare const MIGRATION_ROLLBACK_RUNBOOK: MigrationRollbackRunbook;
-export declare function buildBackupTargetInventory(options?: BackupSnapshotOptions): BackupTargetInventory;
-export declare function createBackupSnapshot(options?: BackupSnapshotOptions): BackupSnapshotManifest;
+export declare function buildBackupTargetInventory(options: BackupSnapshotOptions): BackupTargetInventory;
+export declare function createBackupSnapshot(options: BackupSnapshotOptions): BackupSnapshotManifest;
 export declare function verifyBackupSnapshotManifest(manifest: BackupSnapshotManifest): SnapshotVerificationResult;
 export declare function runRestoreRehearsal(options: RestoreRehearsalOptions): RestoreRehearsalReport;
-export declare function buildMigrationPreflightReport(options?: MigrationPreflightOptions): MigrationPreflightReport;
+export declare function buildMigrationPreflightReport(options: MigrationPreflightOptions): MigrationPreflightReport;
 export declare function formatInventoryPathForDisplay(path: string, baseDir: string): string;
 //# sourceMappingURL=backup-rehearsal.d.ts.map

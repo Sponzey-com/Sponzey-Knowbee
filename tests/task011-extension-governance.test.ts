@@ -1,14 +1,17 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig, type KnowbeeConfig } from "../packages/core/src/config/index.js"
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+import type { KnowbeeConfig } from "../packages/core/src/config/types.ts"
 import { closeDb, getDb } from "../packages/core/src/db/index.js"
 import { runDoctor } from "../packages/core/src/diagnostics/doctor.js"
 import {
   activateExtensionWithTrustPolicy,
   buildExtensionRegistrySnapshot,
   createExtensionRollbackPoint,
+  createExtensionGovernanceStorage,
   getExtensionFailureState,
   recordExtensionFailure,
   recordExtensionToolFailure,
@@ -17,10 +20,15 @@ import {
   runExtensionHookSafely,
 } from "../packages/core/src/security/extension-governance.js"
 import { ToolDispatcher } from "../packages/core/src/tools/dispatcher.js"
+import { initializeToolDispatcher } from "../packages/core/src/tools/index.js"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.js"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let runtimeFixture: TestRuntimeConfigFixture
+
+beforeAll(() => {
+  initializeToolDispatcher(DEFAULT_CONFIG)
+})
 
 function baseConfig(overrides = ""): string {
   return `{
@@ -38,24 +46,16 @@ function baseConfig(overrides = ""): string {
 function useTempConfig(configText = baseConfig()): string {
   closeDb()
   resetExtensionFailureState()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task011-ext-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, configText, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
-  return stateDir
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task011-ext-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir, configText })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
+  return runtimeFixture.paths.stateDir
 }
 
 afterEach(() => {
   resetExtensionFailureState()
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -68,7 +68,7 @@ beforeEach(() => {
 
 describe("task011 extension governance", () => {
   it("builds a registry contract with MCP, skill, and tool entries", () => {
-    const skillPath = join(process.env["KNOWBEE_STATE_DIR"] ?? tmpdir(), "local-skill.md")
+    const skillPath = join(runtimeFixture.paths.stateDir, "local-skill.md")
     writeFileSync(skillPath, "# local skill", "utf-8")
     const config: KnowbeeConfig = {
       ...JSON.parse(JSON.stringify({
@@ -87,6 +87,7 @@ describe("task011 extension governance", () => {
     }
     const snapshot = buildExtensionRegistrySnapshot({
       config,
+      storage: createExtensionGovernanceStorage(runtimeFixture.paths),
       tools: [{
         name: "internal_test",
         description: "internal",
@@ -106,7 +107,7 @@ describe("task011 extension governance", () => {
   })
 
   it("excludes degraded extension tools from candidates and dispatch", async () => {
-    const dispatcher = new ToolDispatcher()
+    const dispatcher = new ToolDispatcher({ config: runtimeFixture.config })
     dispatcher.register({
       name: "mcp__mock__danger",
       description: "mock MCP tool",
@@ -153,15 +154,34 @@ describe("task011 extension governance", () => {
   it("records MCP timeout diagnostics and surfaces degraded status in doctor", () => {
     recordExtensionFailure({ extensionId: "mcp:timeout", kind: "mcp_server", error: new Error("MCP timeout server timed out after 1ms") })
     recordExtensionFailure({ extensionId: "mcp:timeout", kind: "mcp_server", error: new Error("MCP timeout server timed out after 1ms") })
-    const report = runDoctor({ mode: "quick", includeEnvironment: false, includeReleasePackage: false })
+    const report = runDoctor({ config: runtimeFixture.config, paths: runtimeFixture.paths, mode: "quick", includeEnvironment: false, includeReleasePackage: false })
     const check = report.checks.find((item) => item.name === "extension.registry")
 
     expect(check?.status).toBe("warning")
     expect(JSON.stringify(check?.detail)).toContain("degradedCount")
   })
 
+  it("redacts extension failure state and diagnostics before persistence", () => {
+    const secret = "sk-task0645-secret-1234567890"
+    const localPath = "/Users/me/private/extension-hook.js"
+    const error = new Error(`extension failed token=${secret} path=${localPath} <html><body>403 Forbidden</body></html>`)
+
+    const state = recordExtensionFailure({ extensionId: "hook:redacted", kind: "hook", error })
+    const diagnostic = getDb()
+      .prepare<[], { summary: string; detail_json: string }>("SELECT summary, detail_json FROM diagnostic_events ORDER BY created_at DESC LIMIT 1")
+      .get()
+    const serialized = JSON.stringify({ state, diagnostic })
+
+    expect(state.lastError).toBe("인증 또는 접근 차단 문제로 서버가 HTML 오류 페이지를 반환했습니다.")
+    expect(serialized).not.toContain(secret)
+    expect(serialized).not.toContain(localPath)
+    expect(serialized).not.toContain("<html>")
+  })
+
   it("requires approval for dangerous extension activation", () => {
     const entry = buildExtensionRegistrySnapshot({
+      config: runtimeFixture.config,
+      storage: createExtensionGovernanceStorage(runtimeFixture.paths),
       tools: [{
         name: "dangerous_plugin_tool",
         description: "dangerous",
@@ -181,11 +201,12 @@ describe("task011 extension governance", () => {
   })
 
   it("creates rollback points and restores extension source checksum", () => {
-    const sourcePath = join(process.env["KNOWBEE_STATE_DIR"] ?? tmpdir(), "plugin-entry.js")
+    const sourcePath = join(runtimeFixture.paths.stateDir, "plugin-entry.js")
     writeFileSync(sourcePath, "export default { name: 'demo', version: '1.0.0' }\n", "utf-8")
-    const rollback = createExtensionRollbackPoint({ extensionId: "plugin:demo", sourcePath })
+    const storage = createExtensionGovernanceStorage(runtimeFixture.paths)
+    const rollback = createExtensionRollbackPoint({ extensionId: "plugin:demo", sourcePath, storage })
     writeFileSync(sourcePath, "export default { name: 'demo', version: '2.0.0' }\n", "utf-8")
-    rollbackExtensionToPoint("plugin:demo")
+    rollbackExtensionToPoint("plugin:demo", storage)
 
     expect(readFileSync(sourcePath, "utf-8")).toContain("1.0.0")
     expect(rollback.checksum).toHaveLength(64)

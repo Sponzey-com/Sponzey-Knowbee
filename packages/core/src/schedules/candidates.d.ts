@@ -1,7 +1,7 @@
 import { type ScheduleContract } from "../contracts/index.js";
 import { type DbSchedule } from "../db/index.js";
-export type ScheduleCandidateReason = "explicit_id" | "identity_key" | "delivery_time" | "payload_destination" | "semantic_candidate";
-export type ScheduleCandidateConfidence = "exact" | "strong" | "weak" | "semantic";
+export type ScheduleCandidateReason = "explicit_id" | "identity_key" | "delivery_time" | "payload_destination";
+export type ScheduleCandidateConfidence = "exact" | "strong" | "weak";
 export interface ScheduleCandidate {
     schedule: DbSchedule;
     contract: ScheduleContract | null;
@@ -16,7 +16,6 @@ export interface FindScheduleCandidatesByContractInput {
     sessionId?: string | null | undefined | undefined;
     includeDisabled?: boolean;
     limit?: number;
-    semanticCandidates?: DbSchedule[];
 }
 export declare function parseScheduleContractJson(value: string | null | undefined): ScheduleContract | null;
 export declare function scheduleContractTimeEquals(a: ScheduleContract, b: ScheduleContract): boolean;

@@ -1,5 +1,6 @@
 import type { TaskExecutionSemantics } from "../agent/intake.js";
 import type { FailedCommandTool, SuccessfulToolEvidence } from "./recovery.js";
+import type { ToolEvidenceSourceReceipt } from "../tools/types.js";
 export type ToolExecutionExecutor = "yeonjang" | "local" | "file_tool" | "core";
 export interface ToolExecutionReceipt {
     toolName: string;
@@ -42,6 +43,7 @@ export declare function buildToolExecutionReceipt(params: {
     output: string;
     toolParams: unknown;
     toolDetails?: unknown;
+    evidenceSource?: Readonly<ToolEvidenceSourceReceipt>;
     workDir: string;
     commandFailureSeen: boolean;
 }): ToolExecutionReceipt;

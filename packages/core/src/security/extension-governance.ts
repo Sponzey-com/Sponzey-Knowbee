@@ -1,10 +1,16 @@
 import crypto from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { basename, join, resolve } from "node:path"
-import { PATHS, getConfig, type McpServerConfig, type KnowbeeConfig } from "../config/index.js"
-import type { SkillConfigItem } from "../config/types.js"
+import type { RuntimePaths } from "../config/paths.js"
+import {
+  NODE_PERSISTED_FILE_SYSTEM,
+  writeAtomicTextFile,
+  type PersistedConfigFileSystem,
+} from "../config/persisted-file.js"
+import type { KnowbeeConfig, McpServerConfig, SkillConfigItem } from "../config/types.js"
 import { insertAuditLog, insertDiagnosticEvent } from "../db/index.js"
-import { sanitizeUserFacingError } from "../runs/error-sanitizer.js"
+import { redactLogText } from "../logger/index.js"
+import { sanitizeUserFacingError, type SanitizedErrorSummary } from "../runs/error-sanitizer.js"
 import type { AnyTool, RiskLevel } from "../tools/types.js"
 
 export type ExtensionKind = "mcp_server" | "mcp_tool" | "skill" | "hook" | "yeonjang_tool" | "internal_tool" | "plugin"
@@ -70,6 +76,21 @@ export interface ExtensionRollbackPoint {
   createdAt: number
 }
 
+export interface ExtensionGovernanceStorage {
+  readonly rollbackDir: string
+  readonly fileSystem: PersistedConfigFileSystem
+}
+
+export function createExtensionGovernanceStorage(
+  paths: Pick<RuntimePaths, "stateDir">,
+  fileSystem: PersistedConfigFileSystem = NODE_PERSISTED_FILE_SYSTEM,
+): ExtensionGovernanceStorage {
+  return Object.freeze({
+    rollbackDir: resolve(paths.stateDir, "extensions", "rollback"),
+    fileSystem,
+  })
+}
+
 export interface ExtensionActivationResult {
   ok: boolean
   entry: ExtensionRegistryEntry
@@ -96,6 +117,17 @@ export interface MinimalMcpServerStatus {
 const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_FAILURE_DEGRADE_THRESHOLD = 2
 const failureStates = new Map<string, ExtensionFailureState>()
+
+function extensionFailureSummary(error: unknown): SanitizedErrorSummary {
+  const rawMessage = error instanceof Error ? error.message : String(error)
+  const sanitized = sanitizeUserFacingError(rawMessage)
+  return {
+    ...sanitized,
+    userMessage: redactLogText(sanitized.userMessage),
+    reason: redactLogText(sanitized.reason),
+    ...(sanitized.actionHint ? { actionHint: redactLogText(sanitized.actionHint) } : {}),
+  }
+}
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value)
@@ -151,13 +183,13 @@ function trustPolicyFor(input: { trustLevel: ExtensionTrustLevel; permissionScop
   }
 }
 
-function rollbackPath(extensionId: string): string {
+function rollbackPath(extensionId: string, storage: ExtensionGovernanceStorage): string {
   const safeId = extensionId.replace(/[^a-zA-Z0-9_.-]+/g, "_")
-  return join(PATHS.stateDir, "extensions", "rollback", `${safeId}.json`)
+  return join(storage.rollbackDir, `${safeId}.json`)
 }
 
-function hasRollbackPoint(extensionId: string): boolean {
-  return existsSync(rollbackPath(extensionId))
+function hasRollbackPoint(extensionId: string, storage: ExtensionGovernanceStorage): boolean {
+  return storage.fileSystem.exists(rollbackPath(extensionId, storage))
 }
 
 function statusFor(enabled: boolean, ready: boolean | null, error: string | null, extensionId: string): ExtensionStatus {
@@ -207,7 +239,7 @@ function makeEntry(input: Omit<ExtensionRegistryEntry, "checksum" | "trustPolicy
     failureCount: 0,
     degradedReason: null,
     sourcePath: input.sourcePath,
-    rollbackAvailable: hasRollbackPoint(input.id),
+    rollbackAvailable: false,
     metadata: input.metadata,
   })
 }
@@ -327,12 +359,13 @@ function skillEntry(skill: SkillConfigItem): ExtensionRegistryEntry {
 }
 
 export function buildExtensionRegistrySnapshot(input: {
-  config?: KnowbeeConfig
+  config: KnowbeeConfig
+  storage: ExtensionGovernanceStorage
   tools?: AnyTool[]
   mcpStatuses?: MinimalMcpServerStatus[]
   now?: Date
-} = {}): ExtensionRegistrySnapshot {
-  const config = input.config ?? getConfig()
+}): ExtensionRegistrySnapshot {
+  const config = input.config
   const mcpStatuses = new Map((input.mcpStatuses ?? []).map((status) => [status.name, status]))
   const entries = new Map<string, ExtensionRegistryEntry>()
 
@@ -375,7 +408,12 @@ export function buildExtensionRegistrySnapshot(input: {
     }))
   }
 
-  const ordered = [...entries.values()].sort((left, right) => {
+  const ordered = [...entries.values()]
+    .map((entry) => ({
+      ...entry,
+      rollbackAvailable: hasRollbackPoint(entry.id, input.storage),
+    }))
+    .sort((left, right) => {
     if (left.priority !== right.priority) return (right.priority ?? -Infinity) - (left.priority ?? -Infinity)
     return left.id.localeCompare(right.id)
   })
@@ -465,7 +503,7 @@ export function recordExtensionFailure(input: {
   degradeAfter?: number
   detail?: Record<string, unknown>
 }): ExtensionFailureState {
-  const sanitized = sanitizeUserFacingError(input.error instanceof Error ? input.error.message : String(input.error))
+  const sanitized = extensionFailureSummary(input.error)
   const current = failureStates.get(input.extensionId)
   const failureCount = (current?.failureCount ?? 0) + 1
   const degraded = failureCount >= (input.degradeAfter ?? DEFAULT_FAILURE_DEGRADE_THRESHOLD)
@@ -552,7 +590,11 @@ export async function runExtensionHookSafely<T>(input: {
   }
 }
 
-export function createExtensionRollbackPoint(input: { extensionId: string; sourcePath: string }): ExtensionRollbackPoint {
+export function createExtensionRollbackPoint(input: {
+  extensionId: string
+  sourcePath: string
+  storage: ExtensionGovernanceStorage
+}): ExtensionRollbackPoint {
   const sourcePath = resolve(input.sourcePath)
   const content = readFileSync(sourcePath)
   const point: ExtensionRollbackPoint = {
@@ -563,14 +605,20 @@ export function createExtensionRollbackPoint(input: { extensionId: string; sourc
     contentBase64: content.toString("base64"),
     createdAt: Date.now(),
   }
-  mkdirSync(join(PATHS.stateDir, "extensions", "rollback"), { recursive: true })
-  writeFileSync(rollbackPath(input.extensionId), JSON.stringify(point, null, 2), "utf-8")
+  writeAtomicTextFile(
+    rollbackPath(input.extensionId, input.storage),
+    JSON.stringify(point, null, 2),
+    input.storage.fileSystem,
+  )
   recordExtensionRegistryChange({ action: "rollback_point_created", extensionId: input.extensionId, result: "success", detail: { source: basename(sourcePath), checksum: point.checksum } })
   return point
 }
 
-export function rollbackExtensionToPoint(extensionId: string): ExtensionRollbackPoint {
-  const point = JSON.parse(readFileSync(rollbackPath(extensionId), "utf-8")) as ExtensionRollbackPoint
+export function rollbackExtensionToPoint(
+  extensionId: string,
+  storage: ExtensionGovernanceStorage,
+): ExtensionRollbackPoint {
+  const point = JSON.parse(storage.fileSystem.readText(rollbackPath(extensionId, storage))) as ExtensionRollbackPoint
   writeFileSync(point.sourcePath, Buffer.from(point.contentBase64, "base64"))
   const checksum = safeFileChecksum(point.sourcePath)
   recordExtensionRegistryChange({ action: "rollback_applied", extensionId, result: checksum === point.checksum ? "success" : "failure", detail: { checksum, expectedChecksum: point.checksum } })

@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { getConfig } from "../config/index.js";
 import { getDb } from "../db/index.js";
 import { hashApprovalParams } from "../runs/approval-registry.js";
 import { evaluateAgentToolCapabilityPolicy } from "./capability-isolation.js";
@@ -64,7 +63,7 @@ export function evaluateToolPolicy(input) {
             },
         };
     }
-    const permission = resolvePermissionScope(input.toolName, input.params);
+    const permission = resolvePermissionScope(input.toolName, input.params, input.security);
     if (!permission.allowed) {
         return {
             ...base,
@@ -143,14 +142,14 @@ export function sanitizePolicyDenialForUser(record) {
             return "보안 정책에 따라 요청한 도구 실행을 진행하지 않았습니다.";
     }
 }
-function resolvePermissionScope(toolName, params) {
+function resolvePermissionScope(toolName, params, security) {
     if (toolName.startsWith("file_")) {
         const path = typeof params.path === "string" ? params.path : undefined;
         if (!path && typeof params.patch !== "string")
             return { allowed: true, scope: "file:patch", reasonCode: "file_patch_scope" };
         if (!path)
             return { allowed: true, scope: "file:unspecified", reasonCode: "file_scope_unknown" };
-        const allowed = isPathAllowed(path);
+        const allowed = isPathAllowed(path, security);
         return allowed.allowed
             ? { allowed: true, scope: `file:${allowed.scope}`, reasonCode: "path_allowed" }
             : {
@@ -163,7 +162,7 @@ function resolvePermissionScope(toolName, params) {
     }
     if (toolName === "shell_exec") {
         const command = typeof params.command === "string" ? params.command.trim() : "";
-        const configured = getConfig().security.allowedCommands.map((item) => item.trim()).filter(Boolean);
+        const configured = security.allowedCommands.map((item) => item.trim()).filter(Boolean);
         if (configured.length === 0)
             return { allowed: true, scope: "shell:approval_only", reasonCode: "command_allowlist_empty" };
         const firstToken = command.split(/\s+/)[0] ?? "";
@@ -180,10 +179,10 @@ function resolvePermissionScope(toolName, params) {
     }
     return { allowed: true, scope: LOCAL_MUTATION_TOOLS.has(toolName) ? "local:approval_only" : "safe:default", reasonCode: "default_scope" };
 }
-function isPathAllowed(filePath) {
+function isPathAllowed(filePath, security) {
     const home = homedir();
     const resolved = resolve(filePath.replace(/^~/, home));
-    const configured = getConfig().security.allowedPaths;
+    const configured = security.allowedPaths;
     const roots = configured.length > 0
         ? configured.map((item) => resolve(item.replace(/^~/, home)))
         : [home];

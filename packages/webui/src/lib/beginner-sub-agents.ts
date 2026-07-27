@@ -17,8 +17,7 @@ import { pickUiText } from "../stores/uiLanguage"
 const CONTRACT_SCHEMA_VERSION = 1 as const
 
 export interface BeginnerSubAgentCreateInput {
-  displayName: string
-  nickname: string
+  agentName: string
   role: string
   description: string
 }
@@ -45,7 +44,7 @@ export interface BeginnerSubAgentReadinessPanelView {
   }
   cards: Array<{
     id: string
-    displayName: string
+    agentName: string
     displayLabel: string
     role: string
     readinessState: string
@@ -60,10 +59,13 @@ export interface BeginnerSubAgentReadinessPanelView {
   }>
 }
 
-const rootAgent = {
-  agentId: "agent:knowbee",
-  displayName: "Knowbee",
-  nickname: "Knowbee",
+const ROOT_AGENT_ID = "agent:knowbee"
+
+function rootAgentForDraft(draft: SetupDraft, language: UiLanguage = "ko") {
+  return {
+    agentId: ROOT_AGENT_ID,
+    agentName: draft.mainAgent?.name.trim() || pickUiText(language, "메인 에이전트", "Main agent"),
+  }
 }
 
 const safePermissionProfile: PermissionProfile = {
@@ -120,7 +122,7 @@ function normalizeSlug(value: string): string {
 }
 
 function createAgentId(input: BeginnerSubAgentCreateInput, existingIds: string[]): string {
-  const base = `agent:${normalizeSlug(input.nickname || input.displayName)}`
+  const base = `agent:${normalizeSlug(input.agentName)}`
   if (!existingIds.includes(base)) return base
   let index = 2
   while (existingIds.includes(`${base}_${index}`)) {
@@ -135,8 +137,7 @@ function itemToSubAgentConfig(item: SetupSubAgentDraftItem): SubAgentConfig {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     agentType: "sub_agent",
     agentId: item.agentId,
-    displayName: item.displayName,
-    nickname: item.nickname,
+    agentName: item.agentName,
     status: item.status,
     role: item.role,
     personality: item.description || item.role,
@@ -182,12 +183,12 @@ function itemToSubAgentConfig(item: SetupSubAgentDraftItem): SubAgentConfig {
   }
 }
 
-function relationshipsFor(items: SetupSubAgentDraftItem[]): AgentRelationship[] {
+function relationshipsFor(items: SetupSubAgentDraftItem[], rootAgentId = ROOT_AGENT_ID): AgentRelationship[] {
   return items
     .filter((item) => item.status !== "archived")
     .map((item, index) => ({
       edgeId: `edge:knowbee:${item.agentId}`,
-      parentAgentId: rootAgent.agentId,
+      parentAgentId: rootAgentId,
       childAgentId: item.agentId,
       relationshipType: "parent_child",
       status: "active",
@@ -217,12 +218,12 @@ function catalogsFromDraft(draft: SetupDraft) {
 
 function validationMessage(issue: SubAgentSettingsValidationIssue, language: UiLanguage): string {
   switch (issue.code) {
-    case "display_name_required":
+    case "agent_name_required":
       return pickUiText(language, "이름을 입력해야 합니다.", "Enter a name.")
-    case "nickname_duplicate":
-      return pickUiText(language, "이미 사용 중인 별명입니다.", "That nickname is already in use.")
+    case "agent_name_duplicate":
+      return pickUiText(language, "이미 사용 중인 이름입니다.", "That name is already in use.")
     case "reserved_knowbee_name":
-      return pickUiText(language, "노비 이름은 메인 에이전트만 사용할 수 있습니다.", "Only the main agent can use the Knowbee name.")
+      return pickUiText(language, "메인 에이전트 예약 이름은 서브 에이전트가 사용할 수 없습니다.", "Reserved main-agent names cannot be used by sub-agents.")
     case "parent_missing":
       return pickUiText(language, "상위 에이전트를 찾을 수 없습니다.", "The parent agent is missing.")
     default:
@@ -242,12 +243,13 @@ export function createBeginnerSubAgent(
 ): BeginnerSubAgentCreateResult {
   const subAgents = ensureSubAgentSetupDraft(draft)
   const agents = subAgents.items.map(itemToSubAgentConfig)
+  const agentName = input.agentName.trim()
+  const rootAgent = rootAgentForDraft(draft, language)
   const command = {
     kind: "create_basic" as const,
     source: "beginner" as const,
     parentAgentId: rootAgent.agentId,
-    displayName: input.displayName.trim(),
-    nickname: input.nickname.trim(),
+    agentName,
     role: input.role.trim(),
     description: input.description.trim(),
     initialLifecycleState: "saved" as const,
@@ -256,24 +258,27 @@ export function createBeginnerSubAgent(
   const validation = validateSubAgentSettingsCommand(command, {
     rootAgent,
     agents,
-    relationships: relationshipsFor(subAgents.items),
+    relationships: relationshipsFor(subAgents.items, rootAgent.agentId),
     catalogs: catalogsFromDraft(draft),
   })
   const fieldErrors: BeginnerSubAgentCreateResult["fieldErrors"] = {}
   const messages = validation.issues.map((issue) => validationMessage(issue, language))
 
-  if (!input.displayName.trim()) {
-    fieldErrors.displayName = pickUiText(language, "이름을 입력해야 합니다.", "Enter a name.")
+  if (!agentName) {
+    fieldErrors.agentName = pickUiText(language, "이름을 입력해야 합니다.", "Enter a name.")
   }
   if (!input.role.trim()) {
     fieldErrors.role = pickUiText(language, "하는 일을 한 문장으로 입력해야 합니다.", "Enter one sentence about the agent's work.")
   }
   for (const issue of validation.issues) {
-    if (issue.code === "display_name_required") fieldErrors.displayName = validationMessage(issue, language)
-    if (issue.code === "nickname_duplicate") fieldErrors.nickname = validationMessage(issue, language)
+    if (issue.code === "agent_name_required") {
+      fieldErrors.agentName = validationMessage(issue, language)
+    }
+    if (issue.code === "agent_name_duplicate") {
+      fieldErrors.agentName = validationMessage(issue, language)
+    }
     if (issue.code === "reserved_knowbee_name") {
-      fieldErrors.displayName = validationMessage(issue, language)
-      fieldErrors.nickname = validationMessage(issue, language)
+      fieldErrors.agentName = validationMessage(issue, language)
     }
   }
 
@@ -291,8 +296,7 @@ export function createBeginnerSubAgent(
   const existingIds = subAgents.items.map((item) => item.agentId)
   const item: SetupSubAgentDraftItem = {
     agentId: createAgentId(input, existingIds),
-    displayName: input.displayName.trim(),
-    nickname: input.nickname.trim() || input.displayName.trim(),
+    agentName,
     role: input.role.trim(),
     description: input.description.trim(),
     status: "enabled",
@@ -319,10 +323,9 @@ export function createDefaultBeginnerSubAgent(
   now = Date.now(),
   language: UiLanguage = "ko",
 ): BeginnerSubAgentCreateResult {
-  const displayName = nextDefaultSubAgentDisplayName(draft)
+  const agentName = nextDefaultSubAgentDisplayName(draft)
   return createBeginnerSubAgent(draft, {
-    displayName,
-    nickname: displayName,
+    agentName,
     role: pickUiText(language, "서브 에이전트", "Sub-agent"),
     description: pickUiText(
       language,
@@ -337,7 +340,7 @@ export function nextDefaultSubAgentDisplayName(draft: SetupDraft): string {
   const usedNames = new Set(
     subAgents.items
       .filter((item) => item.status !== "archived")
-      .flatMap((item) => [item.displayName, item.nickname])
+      .map((item) => item.agentName)
       .map((name) => normalizeDefaultName(name))
       .filter((name) => name.length > 0),
   )
@@ -361,10 +364,12 @@ export function buildBeginnerSubAgentReadinessPanel(input: {
     activeAgentIds: subAgents.runtimeActiveAgentIds,
     lastSeenAtByAgentId: subAgents.lastRuntimeSeenAtByAgentId,
   }
+  const rootAgent = rootAgentForDraft(input.draft, input.language)
+  const relationships = relationshipsFor(subAgents.items, rootAgent.agentId)
   const beginner = buildBeginnerSubAgentSetupView({
     rootAgent,
     savedAgents: agents,
-    relationships: relationshipsFor(subAgents.items),
+    relationships,
     catalogs: catalogsFromDraft(input.draft),
     runtime,
     now: input.now,
@@ -372,7 +377,7 @@ export function buildBeginnerSubAgentReadinessPanel(input: {
   const advanced = buildAdvancedSubAgentSettingsView({
     rootAgent,
     savedAgents: agents,
-    relationships: relationshipsFor(subAgents.items),
+    relationships,
     catalogs: catalogsFromDraft(input.draft),
     runtime,
     now: input.now,
@@ -396,7 +401,11 @@ export function buildBeginnerSubAgentReadinessPanel(input: {
   const title = pickUiText(input.language, "서브 에이전트 팀", "Sub-agent team")
   const summary =
     status === "empty"
-      ? pickUiText(input.language, "지금은 노비 혼자 처리합니다. 필요할 때 서브 에이전트를 추가하세요.", "Knowbee works alone for now. Add sub-agents when needed.")
+      ? pickUiText(
+          input.language,
+          `지금은 ${rootAgent.agentName} 직접 처리 모드입니다. 필요할 때 서브 에이전트를 추가하세요.`,
+          `${rootAgent.agentName} handles requests directly for now. Add sub-agents when needed.`,
+        )
       : status === "needs_attention" && subAgents.items.length === 0
         ? pickUiText(input.language, "오케스트레이션을 쓰려면 서브 에이전트를 먼저 추가해야 합니다.", "Add a sub-agent before using orchestration.")
         : status === "pending_runtime"
@@ -421,7 +430,7 @@ export function buildBeginnerSubAgentReadinessPanel(input: {
     },
     cards: beginner.cards.map((card) => ({
       id: card.id,
-      displayName: card.displayName,
+      agentName: card.agentName,
       displayLabel: card.displayLabel,
       role: card.role,
       readinessState: card.readinessState,

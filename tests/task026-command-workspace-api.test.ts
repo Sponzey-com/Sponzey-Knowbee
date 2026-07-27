@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerCommandPaletteRoutes } from "../packages/core/src/api/routes/command-palette.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type {
   AgentPromptBundle,
@@ -30,10 +30,21 @@ import {
   clearFocusBinding,
   createAgentRegistryService,
   createTeamRegistryService,
+  importExternalAgentProfileDraft,
+  instantiateAgentTemplate,
   resolveFocusBinding,
   searchCommandPalette,
   setFocusBinding,
 } from "../packages/core/src/index.ts"
+import {
+  createCommandWorkspaceStorage,
+  type CommandWorkspaceStorage,
+} from "../packages/core/src/orchestration/command-workspace.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: {
@@ -50,8 +61,13 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let focusStorage: CommandWorkspaceStorage | undefined
+let runtimeFixture: TestRuntimeConfigFixture
+
+function getFocusStorage(): CommandWorkspaceStorage {
+  if (!focusStorage) throw new Error("focus storage fixture is not initialized")
+  return focusStorage
+}
 
 const permissionProfile: PermissionProfile = {
   profileId: "profile:safe",
@@ -107,15 +123,16 @@ function memoryPolicy(agentId: string): MemoryPolicy {
   }
 }
 
-function subAgentConfig(agentId: string, nickname: string): SubAgentConfig {
+function subAgentConfig(agentId: string, agentName: string): SubAgentConfig {
   return {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     agentType: "sub_agent",
     agentId,
-    displayName: nickname,
-    nickname,
+    agentName,
+    displayName: `Legacy ${agentName} Display`,
+    nickname: `Legacy ${agentName} Nick`,
     status: "enabled",
-    role: `${nickname} research worker`,
+    role: `${agentName} research worker`,
     personality: "Precise and scoped.",
     specialtyTags: ["research", "review"],
     avoidTasks: ["Do not bypass parent synthesis."],
@@ -159,7 +176,6 @@ function teamConfig(): TeamConfig {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     teamId: "team:alpha",
     displayName: "Alpha Team",
-    nickname: "Alpha Team",
     status: "enabled",
     purpose: "Task026 direct child team.",
     ownerAgentId: "agent:knowbee",
@@ -201,7 +217,7 @@ function command(id: string): CommandRequest {
     parentRunId: "run:task026",
     subSessionId: `sub:${id}`,
     targetAgentId: "agent:alpha",
-    targetNicknameSnapshot: "Alpha",
+    targetAgentNameSnapshot: "Alpha",
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
@@ -215,8 +231,6 @@ function promptBundle(): AgentPromptBundle {
     agentId: "agent:alpha",
     agentType: "sub_agent",
     role: "research worker",
-    displayNameSnapshot: "Alpha",
-    nicknameSnapshot: "Alpha",
     personalitySnapshot: "Precise",
     teamContext: [],
     memoryPolicy: memoryPolicy("agent:alpha"),
@@ -240,10 +254,10 @@ function subSessionContract(id: string): SubSessionContract {
     parentSessionId: "session:task026",
     parentRunId: "run:task026",
     parentAgentId: "agent:knowbee",
-    parentAgentDisplayName: "Knowbee",
+    parentAgentName: "Knowbee",
     agentId: "agent:alpha",
-    agentDisplayName: "Alpha",
-    agentNickname: "Alpha",
+    agentName: "Alpha",
+    agentNameSnapshot: "Alpha",
     commandRequestId: command(id).commandRequestId,
     status: "running",
     promptBundleId: "prompt-bundle:task026",
@@ -252,20 +266,25 @@ function subSessionContract(id: string): SubSessionContract {
   }
 }
 
+function legacySubSessionContract(id: string): SubSessionContract {
+  const contract = subSessionContract(id)
+  delete (contract as Partial<SubSessionContract>).agentNameSnapshot
+  contract.agentDisplayName = "Legacy Session Display"
+  return contract
+}
+
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task026-command-"))
   tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir: stateDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
+  focusStorage = createCommandWorkspaceStorage({ stateDir: runtimeFixture.paths.stateDir })
 }
 
 function restoreState(): void {
   closeDb()
-  process.env.KNOWBEE_STATE_DIR = previousStateDir
-  process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
+  focusStorage = undefined
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -273,10 +292,11 @@ function restoreState(): void {
 }
 
 function seedRegistry(): void {
-  const agents = createAgentRegistryService()
+  const config = runtimeFixture.config
+  const agents = createAgentRegistryService({ config })
   agents.createOrUpdate(subAgentConfig("agent:alpha", "Alpha"), { now })
   agents.createOrUpdate(subAgentConfig("agent:gamma", "Gamma"), { now })
-  createTeamRegistryService().createOrUpdate(teamConfig(), { now })
+  createTeamRegistryService({ config }).createOrUpdate(teamConfig(), { now })
   upsertAgentRelationship({
     edgeId: "edge:knowbee-alpha",
     parentAgentId: "agent:knowbee",
@@ -301,6 +321,7 @@ function seedRegistry(): void {
 
 async function withApp(run: (app: ReturnType<typeof Fastify>) => Promise<void>): Promise<void> {
   const app = Fastify({ logger: false })
+  installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
   registerCommandPaletteRoutes(app)
   await app.ready()
   try {
@@ -316,7 +337,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  clearFocusBinding("thread:task026")
+  clearFocusBinding("thread:task026", getFocusStorage())
   restoreState()
 })
 
@@ -324,10 +345,22 @@ describe("task026 command workspace API", () => {
   it("searches agents, teams, commands, templates, and sub-sessions", async () => {
     insertRunSubSession(subSessionContract("search"), { now })
 
-    const direct = searchCommandPalette({ query: "Alpha", limit: 20 })
+    const direct = searchCommandPalette({ config: runtimeFixture.config, query: "Alpha", limit: 20 })
     expect(direct.results.map((item) => item.kind)).toEqual(
       expect.arrayContaining(["agent", "team", "sub_session"]),
     )
+    const agent = direct.results.find((item) => item.kind === "agent" && item.id === "agent:alpha")
+    expect(agent).toMatchObject({
+      title: "Alpha",
+      target: { kind: "agent", id: "agent:alpha", label: "Alpha" },
+    })
+    expect(JSON.stringify(agent)).not.toContain("Legacy Alpha")
+    const team = direct.results.find((item) => item.kind === "team" && item.id === "team:alpha")
+    expect(team).toMatchObject({
+      title: "Alpha Team",
+      target: { kind: "team", id: "team:alpha", label: "Alpha Team" },
+    })
+    expect(JSON.stringify(team)).not.toContain("@")
 
     await withApp(async (app) => {
       const response = await app.inject({
@@ -343,6 +376,69 @@ describe("task026 command workspace API", () => {
         ]),
       )
     })
+  })
+
+  it("does not expose legacy sub-session displayName or nickname as command labels", () => {
+    insertRunSubSession(legacySubSessionContract("legacy-label"), { now })
+
+    const result = searchCommandPalette({
+      config: runtimeFixture.config,
+      query: "sub:legacy-label",
+      limit: 20,
+    })
+    const subSession = result.results.find((item) => item.kind === "sub_session" && item.id === "sub:legacy-label")
+
+    expect(subSession).toMatchObject({
+      title: "sub:legacy-label -> Unnamed sub-agent",
+      target: { kind: "sub_session", id: "sub:legacy-label", label: "Unnamed sub-agent" },
+    })
+    expect(JSON.stringify(subSession)).not.toContain("Legacy Session Display")
+  })
+
+  it("creates agent template and imported drafts with agentName only", () => {
+    const template = instantiateAgentTemplate({
+      templateId: "coding",
+      overrides: {
+        agentId: "agent:template:agent-name-only",
+        displayName: "Template Display Alias",
+        nickname: "Template Legacy Nick",
+      },
+      persist: false,
+    })
+    expect(template.ok).toBe(true)
+    if (!template.ok) throw new Error(template.reasonCode)
+    expect(template.draft.agent).toEqual(expect.objectContaining({
+      agentId: "agent:template:agent-name-only",
+      agentName: "Template Display Alias",
+    }))
+    expect(template.draft.agent).not.toHaveProperty("displayName")
+    expect(template.draft.agent).not.toHaveProperty("nickname")
+    expect(template.draft.agent).not.toHaveProperty("normalizedNickname")
+
+    const imported = importExternalAgentProfileDraft({
+      source: "legacy",
+      profile: {
+        displayName: "External Legacy Display",
+        name: "External Name",
+        systemPrompt: "Draft instructions.",
+      },
+      overrides: {
+        agentId: "agent:import:agent-name-only",
+        agentName: "Imported Agent Name",
+        displayName: "Imported Legacy Display",
+        nickname: "Imported Legacy Nick",
+      },
+      persist: false,
+    })
+    expect(imported.ok).toBe(true)
+    if (!imported.ok) throw new Error(imported.reasonCode)
+    expect(imported.draft.agent).toEqual(expect.objectContaining({
+      agentId: "agent:import:agent-name-only",
+      agentName: "Imported Agent Name",
+    }))
+    expect(imported.draft.agent).not.toHaveProperty("displayName")
+    expect(imported.draft.agent).not.toHaveProperty("nickname")
+    expect(imported.draft.agent).not.toHaveProperty("normalizedNickname")
   })
 
   it("maps sub-session slash aliases to existing control operations", async () => {
@@ -378,9 +474,10 @@ describe("task026 command workspace API", () => {
 
   it("binds focus only as a validated explicit planner target", async () => {
     const focus = setFocusBinding({
+      config: runtimeFixture.config,
       threadId: "thread:task026",
       target: { kind: "agent", id: "agent:alpha", label: "Alpha" },
-    })
+    }, getFocusStorage())
     expect(focus.ok).toBe(true)
     if (!focus.ok) throw new Error(focus.reasonCode)
     expect(focus.plannerIntent).toEqual({ explicitAgentId: "agent:alpha" })
@@ -390,22 +487,29 @@ describe("task026 command workspace API", () => {
       memoryIsolationUnchanged: true,
     })
 
-    const resolved = resolveFocusBinding({ threadId: "thread:task026" })
+    const resolved = resolveFocusBinding(
+      { config: runtimeFixture.config, threadId: "thread:task026" },
+      getFocusStorage(),
+    )
     expect(resolved.ok).toBe(true)
     if (!resolved.ok) throw new Error(resolved.reasonCode)
     expect(resolved.plannerTarget).toMatchObject({ kind: "explicit_agent", id: "agent:alpha" })
 
     const hidden = setFocusBinding({
+      config: runtimeFixture.config,
       threadId: "thread:task026",
       target: { kind: "agent", id: "agent:gamma" },
-    })
+    }, getFocusStorage())
     expect(hidden.ok).toBe(false)
     if (hidden.ok) throw new Error("expected direct child rejection")
     expect(hidden.reasonCode).toBe("focus_target_not_direct_child")
 
-    const cleared = clearFocusBinding("thread:task026")
+    const cleared = clearFocusBinding("thread:task026", getFocusStorage())
     expect(cleared.cleared).toBe(true)
-    expect(resolveFocusBinding({ threadId: "thread:task026" }).ok).toBe(false)
+    expect(resolveFocusBinding(
+      { config: runtimeFixture.config, threadId: "thread:task026" },
+      getFocusStorage(),
+    ).ok).toBe(false)
   })
 
   it("supports focus/unfocus, templates, imports, lint, and background drafts through API", async () => {
@@ -449,6 +553,11 @@ describe("task026 command workspace API", () => {
         ok: true,
         draft: { disabled: true, reviewRequired: true, executionCandidate: false },
       })
+      expect(teamTemplate.json().draft.team).toEqual(expect.objectContaining({
+        teamId: "team:template:review-task026",
+        displayName: "Review Team",
+      }))
+      expect(teamTemplate.json().draft.team).not.toHaveProperty("nickname")
 
       const imported = await app.inject({
         method: "POST",

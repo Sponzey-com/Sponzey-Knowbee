@@ -1,71 +1,92 @@
 import { describe, expect, it } from "vitest"
-import { buildTaskIntakeSystemPrompt } from "../packages/core/src/agent/intake-prompt.ts"
+import {
+  buildTaskIntakeFirstResponseSystemPrompt,
+  buildTaskIntakeSystemPrompt,
+} from "../packages/core/src/agent/intake-prompt.ts"
 
 describe("buildTaskIntakeSystemPrompt", () => {
-  it("includes the required JSON-only output contract", () => {
+  it("requires exactly one typed response-tool result", () => {
     const prompt = buildTaskIntakeSystemPrompt()
 
-    expect(prompt).toContain("Always output valid JSON only.")
-    expect(prompt).toContain('"action_items": [')
-    expect(prompt).toContain('"scheduling": {')
-    expect(prompt).toContain('"execution": {')
-    expect(prompt).toContain('"needs_web": false')
+    expect(prompt).toContain("Call `submit_task_intake` exactly once")
+    expect(prompt).not.toContain("Return valid JSON only.")
+    expect(prompt).not.toContain("```json")
   })
 
-  it("requires explicit scheduling receipts and statuses", () => {
+  it("assembles only the basic first-response owners in canonical order", () => {
+    const prompt = buildTaskIntakeFirstResponseSystemPrompt({
+      mainAgentName: "Knowbee",
+      productName: "Sponzey Knowbee",
+      productNameKo: "스폰지 노비",
+    })
+    const systemAt = prompt.indexOf("# Root Runtime System Prompt")
+    const identityAt = prompt.indexOf("# Identity")
+    const intakeAt = prompt.indexOf("# Task Intake")
+    const finalAt = prompt.indexOf("# Final Response Policy")
+
+    expect(systemAt).toBeGreaterThanOrEqual(0)
+    expect(identityAt).toBeGreaterThan(systemAt)
+    expect(intakeAt).toBeGreaterThan(identityAt)
+    expect(finalAt).toBeGreaterThan(intakeAt)
+    expect(prompt).not.toContain("# Bootstrap")
+  })
+
+  it("keeps scheduling classification in the minimal output without owning scheduling procedures", () => {
     const prompt = buildTaskIntakeSystemPrompt()
 
-    expect(prompt).toContain("Scheduling requests must have explicit intake status")
-    expect(prompt).toContain("accepted_receipt")
-    expect(prompt).toContain("failed_receipt")
-    expect(prompt).toContain("clarification_receipt")
-    expect(prompt).toContain('"status": "accepted | failed | needs_clarification | not_applicable"')
+    expect(prompt).toContain("response-tool schema is the only output shape")
+    expect(prompt).toContain("scheduling procedures")
+    expect(prompt).not.toContain("schedule_kind")
+    expect(prompt).toContain("does not own detailed action payload schemas")
   })
 
-  it("includes run_task and delegate_agent action item rules", () => {
+  it("leaves action payload schemas to downstream typed contracts", () => {
     const prompt = buildTaskIntakeSystemPrompt()
 
-    expect(prompt).toContain("### type = run_task")
-    expect(prompt).toContain("### type = delegate_agent")
-    expect(prompt).toContain("task_profile")
-    expect(prompt).toContain("review_required")
+    expect(prompt).toContain("downstream typed contracts own each action payload")
+    expect(prompt).not.toContain("### type = run_task")
+    expect(prompt).not.toContain("### type = delegate_agent")
+    expect(prompt).not.toContain("review_required")
   })
 
-  it("documents the default execution decision order", () => {
+  it("references canonical execution owners without duplicating route policy", () => {
     const prompt = buildTaskIntakeSystemPrompt()
 
-    expect(prompt).toContain("sub_agent/delegate_to_child -> yeonjang -> self_solve")
-    expect(prompt).toContain("root_knowbee_direct")
-    expect(prompt).toContain("not as a delegation trigger by itself")
-    expect(prompt).toContain("small clearly scoped change")
+    expect(prompt).toContain("request_diagnosis.md")
+    expect(prompt).toContain("work_record.md")
+    expect(prompt).toContain("knowbee-execution.md")
+    expect(prompt).not.toContain("sub_agent/delegate_to_child -> yeonjang -> self_solve")
+    expect(prompt).not.toContain("root_knowbee_direct")
   })
 
-  it("uses unbounded delegation turns by default", () => {
+  it("treats depth wording as a quality signal rather than a route", () => {
     const prompt = buildTaskIntakeSystemPrompt()
 
-    expect(prompt).toContain("max_delegation_turns = 0")
-    expect(prompt).toContain('"max_delegation_turns": 0')
-    expect(prompt).toContain("signals to search for a different method")
+    expect(prompt).toContain("depth and verification requirements, not delegation commands")
+    expect(prompt).toContain("Preserve exact user-specified names")
   })
 
-  it("allows delegation turn override in the generated prompt", () => {
+  it("uses unbounded delegation turns as the default serialized value", () => {
+    const prompt = buildTaskIntakeSystemPrompt()
+
+    expect(prompt).toContain("maximum delegation turns is `0`")
+  })
+
+  it("renders an explicit delegation-turn override into the output contract", () => {
     const prompt = buildTaskIntakeSystemPrompt({ maxDelegationTurns: 6 })
 
-    expect(prompt).toContain("max_delegation_turns = 6")
-    expect(prompt).toContain('"max_delegation_turns": 6')
+    expect(prompt).toContain("maximum delegation turns is `6`")
+    expect(prompt).not.toContain("{{maxDelegationTurns}}")
   })
 
-  it("documents that 0 means unlimited delegation turns", () => {
-    const prompt = buildTaskIntakeSystemPrompt({ maxDelegationTurns: 0 })
-
-    expect(prompt).toContain("max_delegation_turns = 0")
-    expect(prompt).toContain("If max_delegation_turns is 0, treat it as unlimited")
-  })
-
-  it("makes web usage conditional rather than default", () => {
+  it("diagnoses the need for web evidence without owning web tool procedure", () => {
     const prompt = buildTaskIntakeSystemPrompt()
 
-    expect(prompt).toContain("Set needs_web = true only if")
-    expect(prompt).toContain("Do not force web access for ordinary task extraction.")
+    expect(prompt).toContain("execution.needs_web=true")
+    expect(prompt).toContain("does not own detailed action payload schemas")
+    expect(prompt).toContain("web tool selection or retrieval procedure")
+    expect(prompt).toContain("execution.needs_web=true")
+    expect(prompt).toContain("Current prices")
+    expect(prompt).toContain("Do not ask the user to provide the requested external result")
   })
 })

@@ -1,29 +1,64 @@
 import { createHash } from "node:crypto"
 import type { FastifyInstance } from "fastify"
-import { getConfig, PATHS } from "../../config/index.js"
+import { detectAvailableProvider, getDefaultModel } from "../../ai/index.js"
 import {
+  type CapabilityProjectionOptions,
+  SETUP_INTERNAL_PATH_MASK,
   createCapabilities,
   createCapabilityCounts,
   getPrimaryAiTarget,
   readSetupState,
 } from "../../control-plane/index.js"
-import { getDefaultModel, detectAvailableProvider } from "../../ai/index.js"
 import { mcpRegistry } from "../../mcp/registry.js"
-import { getMqttBrokerSnapshot, getMqttExtensionSnapshots } from "../../mqtt/broker.js"
-import { toolDispatcher } from "../../tools/index.js"
-import { authMiddleware } from "../middleware/auth.js"
-import { getCurrentAppVersion, getUpdateSnapshot } from "../../update/service.js"
-import { getCurrentDisplayVersion, getWorkspaceRootPath } from "../../version.js"
-import { getLastStartupRecoverySummary } from "../../runs/startup-recovery.js"
-import { getFastResponseHealthSnapshot } from "../../observability/latency.js"
 import { loadPromptSourceRegistry } from "../../memory/knowbee-md.js"
+import { getMqttBrokerSnapshot, getMqttExtensionSnapshots } from "../../mqtt/broker.js"
+import { getFastResponseHealthSnapshot } from "../../observability/latency.js"
 import { resolveOrchestrationModeSnapshotSync } from "../../orchestration/mode.js"
+import { getLastStartupRecoverySummary } from "../../runs/startup-recovery.js"
 import { getGatewayProcessStartTimeMs, getRuntimeBuildStatus } from "../../runtime/build-status.js"
-import { buildYeonjangFleetProjection } from "../../yeonjang/topology.js"
+import { getGatewayReadinessSnapshot } from "../../runtime/gateway-readiness.js"
+import { toolDispatcher } from "../../tools/index.js"
+import {
+  type UpdateRuntimeContext,
+  getCurrentAppVersion,
+  getUpdateSnapshot,
+} from "../../update/service.js"
+import { getCurrentDisplayVersion, getWorkspaceRootPath } from "../../version.js"
 import { buildYeonjangBroadcastPolicyProjection } from "../../yeonjang/broadcast-policy.js"
+import { buildYeonjangFleetProjection } from "../../yeonjang/topology.js"
+import { authMiddleware } from "../middleware/auth.js"
+import { getApiRuntimeConfig, getApiRuntimePaths } from "../runtime-context.js"
 
 const startTime = getGatewayProcessStartTimeMs()
 const startedAt = new Date(startTime).toISOString()
+
+export interface StatusRouteOptions extends Omit<CapabilityProjectionOptions, "config"> {
+  updateRuntime: UpdateRuntimeContext
+}
+
+function redactRuntimeBuildStatusForApi(
+  status: ReturnType<typeof getRuntimeBuildStatus>,
+): ReturnType<typeof getRuntimeBuildStatus> {
+  return {
+    ...status,
+    workspaceRoot: SETUP_INTERNAL_PATH_MASK,
+    packages: status.packages.map((pkg) => ({
+      ...pkg,
+      sourceDir: SETUP_INTERNAL_PATH_MASK,
+      distDir: SETUP_INTERNAL_PATH_MASK,
+      sourceNewest: pkg.sourceNewest
+        ? { ...pkg.sourceNewest, path: SETUP_INTERNAL_PATH_MASK }
+        : null,
+      distNewest: pkg.distNewest ? { ...pkg.distNewest, path: SETUP_INTERNAL_PATH_MASK } : null,
+      missingOutputs: pkg.missingOutputs.map(() => SETUP_INTERNAL_PATH_MASK),
+      staleOutputs: pkg.staleOutputs.map((item) => ({
+        ...item,
+        sourcePath: SETUP_INTERNAL_PATH_MASK,
+        outputPath: SETUP_INTERNAL_PATH_MASK,
+      })),
+    })),
+  }
+}
 
 function getPromptSourceSnapshot(): { count: number; checksum: string | null } {
   try {
@@ -44,13 +79,40 @@ function getPromptSourceSnapshot(): { count: number; checksum: string | null } {
   }
 }
 
-export function registerStatusRoute(app: FastifyInstance): void {
-  app.get("/api/status", { preHandler: authMiddleware }, async () => {
-    const cfg = getConfig()
-    const setupState = readSetupState()
-    const capabilities = createCapabilities()
+export function registerStatusRoute(app: FastifyInstance, options: StatusRouteOptions): void {
+  const { updateRuntime, ...capabilityOptions } = options
+  app.get("/api/health", async () => ({
+    ok: true,
+    service: "knowbee-gateway",
+    status: "live",
+    runtime: {
+      pid: process.pid,
+    },
+  }))
+
+  app.get("/api/ready", async (_req, reply) => {
+    const readiness = getGatewayReadinessSnapshot()
+    const body = {
+      ok: readiness.status === "ready",
+      service: "knowbee-gateway",
+      status: readiness.status,
+      reasonCode: readiness.reasonCode,
+      changedAt: readiness.changedAt,
+      runtime: {
+        pid: process.pid,
+      },
+    }
+    return readiness.status === "ready"
+      ? body
+      : reply.status(503).send(body)
+  })
+
+  app.get("/api/status", { preHandler: authMiddleware }, async (req) => {
+    const cfg = getApiRuntimeConfig(req)
+    const setupState = readSetupState(getApiRuntimePaths(req))
+    const capabilities = createCapabilities({ ...capabilityOptions, config: cfg })
     const orchestrator = capabilities.find((item) => item.key === "gateway.orchestrator")
-    const orchestration = resolveOrchestrationModeSnapshotSync()
+    const orchestration = resolveOrchestrationModeSnapshotSync({ config: cfg })
     const runtimeBuild = getRuntimeBuildStatus()
     const yeonjangFleet = buildYeonjangFleetProjection()
     const yeonjangBroadcastPolicies = buildYeonjangBroadcastPolicyProjection()
@@ -58,13 +120,13 @@ export function registerStatusRoute(app: FastifyInstance): void {
     return {
       version: getCurrentAppVersion(),
       displayVersion: getCurrentDisplayVersion(),
-      provider: detectAvailableProvider(),
-      model: getDefaultModel(),
+      provider: detectAvailableProvider(cfg),
+      model: getDefaultModel(cfg),
       uptime,
       runtime: {
         pid: process.pid,
         ppid: process.ppid,
-        cwd: process.cwd(),
+        cwd: SETUP_INTERNAL_PATH_MASK,
         node: process.version,
         platform: process.platform,
         arch: process.arch,
@@ -72,11 +134,11 @@ export function registerStatusRoute(app: FastifyInstance): void {
         startTimeMs: startTime,
         uptimeSeconds: uptime,
       },
-      runtimeBuild,
+      runtimeBuild: redactRuntimeBuildStatusForApi(runtimeBuild),
       toolCount: toolDispatcher.getAll().length,
       setupCompleted: setupState.completed,
-      capabilityCounts: createCapabilityCounts(),
-      primaryAiTarget: getPrimaryAiTarget(),
+      capabilityCounts: createCapabilityCounts({ ...capabilityOptions, config: cfg }),
+      primaryAiTarget: getPrimaryAiTarget(cfg),
       orchestratorStatus: orchestrator
         ? {
             status: orchestrator.status,
@@ -119,10 +181,10 @@ export function registerStatusRoute(app: FastifyInstance): void {
         },
       },
       paths: {
-        stateDir: PATHS.stateDir,
-        configFile: PATHS.configFile,
-        dbFile: PATHS.dbFile,
-        setupStateFile: PATHS.setupStateFile,
+        stateDir: SETUP_INTERNAL_PATH_MASK,
+        configFile: SETUP_INTERNAL_PATH_MASK,
+        dbFile: SETUP_INTERNAL_PATH_MASK,
+        setupStateFile: SETUP_INTERNAL_PATH_MASK,
       },
       webui: {
         port: cfg.webui.port,
@@ -130,7 +192,7 @@ export function registerStatusRoute(app: FastifyInstance): void {
         authEnabled: cfg.webui.auth.enabled,
       },
       update: (() => {
-        const update = getUpdateSnapshot()
+        const update = getUpdateSnapshot(updateRuntime)
         return {
           status: update.status,
           latestVersion: update.latestVersion,

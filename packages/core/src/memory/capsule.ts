@@ -85,7 +85,7 @@ export interface MemoryCapsule {
   capsuleVersion: number
   parentCapsuleId?: string
   ownerScope: MemoryCapsuleOwnerScope
-  nicknameSnapshot?: string
+  agentNameSnapshot?: string
   capsuleKind: MemoryCapsuleKind
   summary: string
   activeObjectives: string[]
@@ -187,7 +187,7 @@ function normalizeArtifactRefs(values: MemoryCapsuleArtifactRef[] = []): MemoryC
 function collectCapsuleStrings(capsule: MemoryCapsule): string[] {
   const values = [
     capsule.summary,
-    capsule.nicknameSnapshot,
+    capsule.agentNameSnapshot,
     ...capsule.activeObjectives,
     ...capsule.confirmedFacts,
     ...capsule.decisions,
@@ -256,9 +256,9 @@ export function normalizeMemoryCapsule(input: MemoryCapsule): MemoryCapsule {
     createdAt: Number.isFinite(input.createdAt) ? Math.floor(input.createdAt) : Date.now(),
   }
   const parentCapsuleId = normalizeString(input.parentCapsuleId)
-  const nicknameSnapshot = normalizeString(input.nicknameSnapshot)
+  const agentNameSnapshot = normalizeString(input.agentNameSnapshot)
   if (parentCapsuleId) normalized.parentCapsuleId = parentCapsuleId
-  if (nicknameSnapshot) normalized.nicknameSnapshot = nicknameSnapshot
+  if (agentNameSnapshot) normalized.agentNameSnapshot = agentNameSnapshot
   return normalized
 }
 

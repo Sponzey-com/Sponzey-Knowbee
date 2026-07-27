@@ -10,7 +10,97 @@ const baseExecutionSemantics = {
 } as const
 
 describe("review gate", () => {
-  it("skips completion review when direct delivery is already satisfied", () => {
+  it("runs LLM review after verified camera capture even when direct delivery is already satisfied", () => {
+    const decision = decideReviewGate({
+      executionSemantics: {
+        filesystemEffect: "create_or_modify",
+        artifactDelivery: "direct",
+        approvalRequired: true,
+        approvalTool: "yeonjang_camera_capture",
+        privilegedOperation: "camera_capture",
+      },
+      preview: "",
+      deliveryOutcome: {
+        mode: "direct_artifact",
+        directArtifactDeliveryRequested: true,
+        hasSuccessfulArtifactDelivery: true,
+        deliverySatisfied: true,
+        requiresDirectArtifactRecovery: false,
+      },
+      successfulTools: [{
+        toolName: "yeonjang_camera_capture",
+        output: "camera artifact captured",
+        details: {
+          via: "yeonjang",
+          evidence: {
+            schemaVersion: "yeonjang-evidence-v1",
+            postCheck: { kind: "verified", verified: true },
+          },
+        },
+      }],
+      sawRealFilesystemMutation: false,
+      requiresFilesystemMutation: false,
+      truncatedOutputRecoveryAttempted: false,
+    })
+
+    expect(decision).toMatchObject({
+      kind: "run",
+      reason: "successful_tool_result_requires_llm_result_diagnosis",
+      state: {
+        executionSatisfied: true,
+        deliverySatisfied: true,
+        completionSatisfied: false,
+        interpretationStatus: "followup_required",
+      },
+    })
+  })
+
+  it("keeps verified capture and failed direct delivery as separate completion evidence", () => {
+    const decision = decideReviewGate({
+      executionSemantics: {
+        filesystemEffect: "create_or_modify",
+        artifactDelivery: "direct",
+        approvalRequired: true,
+        approvalTool: "yeonjang_camera_capture",
+        privilegedOperation: "camera_capture",
+      },
+      preview: "",
+      deliveryOutcome: {
+        mode: "direct_artifact",
+        directArtifactDeliveryRequested: true,
+        hasSuccessfulArtifactDelivery: false,
+        deliverySatisfied: false,
+        requiresDirectArtifactRecovery: true,
+      },
+      successfulTools: [{
+        toolName: "yeonjang_camera_capture",
+        output: "camera artifact captured",
+        details: {
+          via: "yeonjang",
+          evidence: {
+            schemaVersion: "yeonjang-evidence-v1",
+            postCheck: { kind: "verified", verified: true },
+          },
+        },
+      }],
+      sawRealFilesystemMutation: false,
+      requiresFilesystemMutation: false,
+      truncatedOutputRecoveryAttempted: false,
+    })
+
+    expect(decision).toMatchObject({
+      kind: "run",
+      state: {
+        executionSatisfied: true,
+        deliveryRequired: true,
+        deliverySatisfied: false,
+        completionSatisfied: false,
+        recoveryStatus: "required",
+      },
+    })
+  })
+
+  it("reviews direct delivery because transport success does not prove the user goal", () => {
     const decision = decideReviewGate({
       executionSemantics: baseExecutionSemantics,
       preview: "스크린샷을 전송했습니다.",
@@ -26,8 +116,9 @@ describe("review gate", () => {
       truncatedOutputRecoveryAttempted: false,
     })
 
-    expect(decision.kind).toBe("skip")
-    expect(decision.state.completionSatisfied).toBe(true)
+    expect(decision.kind).toBe("run")
+    expect(decision.reason).toBe("successful_tool_result_requires_llm_result_diagnosis")
+    expect(decision.state.completionSatisfied).toBe(false)
   })
 
   it("keeps completion review when direct delivery is not yet satisfied", () => {
@@ -50,7 +141,7 @@ describe("review gate", () => {
     expect(decision.state.deliveryStatus).toBe("missing")
   })
 
-  it("skips completion review for read-only successful executions when checklist is already settled", () => {
+  it("reviews read-only tool results because tool success does not prove the user goal", () => {
     const decision = decideReviewGate({
       executionSemantics: {
         ...baseExecutionSemantics,
@@ -69,8 +160,8 @@ describe("review gate", () => {
       truncatedOutputRecoveryAttempted: false,
     })
 
-    expect(decision.kind).toBe("skip")
-    expect(decision.state.completionSatisfied).toBe(true)
+    expect(decision.kind).toBe("run")
+    expect(decision.state.completionSatisfied).toBe(false)
   })
 
   it("skips completion review when a reply text receipt already exists", () => {

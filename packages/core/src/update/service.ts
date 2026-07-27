@@ -1,11 +1,21 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { dirname } from "node:path"
+import { existsSync, readFileSync } from "node:fs"
+import { join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { PATHS } from "../config/paths.js"
-import { createLogger } from "../logger/index.js"
+import type { RuntimePaths } from "../config/paths.js"
+import {
+  NODE_PERSISTED_FILE_SYSTEM,
+  writeAtomicTextFile,
+  type PersistedConfigFileSystem,
+} from "../config/persisted-file.js"
+import { createLogger, redactLogText } from "../logger/index.js"
 
 const log = createLogger("update:service")
 const DEFAULT_GITHUB_REPOSITORY_URL = "https://github.com/Sponzey-com/Sponzey-Knowbee"
+
+function updateServiceErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 
 type UpdateStatus = "idle" | "latest" | "update_available" | "unsupported" | "error"
 
@@ -21,6 +31,34 @@ export interface UpdateSnapshot {
   releaseUrl: string | null
 }
 
+export interface UpdateRepositoryOptions {
+  repositoryUrl?: string | null
+}
+
+export type UpdateRuntimeEnvironment = Readonly<Record<string, string | undefined>>
+
+export interface UpdateRuntimeContext {
+  readonly stateFilePath: string
+  readonly repositoryUrl: string | null
+  readonly fileSystem: PersistedConfigFileSystem
+}
+
+export function createUpdateRuntimeContext(
+  paths: Pick<RuntimePaths, "stateDir">,
+  env: UpdateRuntimeEnvironment,
+  fileSystem: PersistedConfigFileSystem = NODE_PERSISTED_FILE_SYSTEM,
+): UpdateRuntimeContext {
+  return Object.freeze({
+    stateFilePath: join(paths.stateDir, "update-state.json"),
+    repositoryUrl: sanitizeRepositoryUrl(
+      env["KNOWBEE_UPDATE_REPOSITORY"]
+      ?? env["WIZBY_UPDATE_REPOSITORY"]
+      ?? env["HOWIE_UPDATE_REPOSITORY"],
+    ),
+    fileSystem,
+  })
+}
+
 interface GithubRepoRef {
   owner: string
   repo: string
@@ -32,14 +70,6 @@ function getWorkspacePackageJsonPath(): string {
 
 function getGitConfigPath(): string {
   return fileURLToPath(new URL("../../../.git/config", import.meta.url))
-}
-
-function getUpdateStateFilePath(): string {
-  return `${PATHS.stateDir}/update-state.json`
-}
-
-function ensureParentDir(filePath: string): void {
-  mkdirSync(dirname(filePath), { recursive: true })
 }
 
 function normalizeVersion(value: string | null | undefined): string | null {
@@ -94,11 +124,11 @@ function buildSnapshot(partial: Partial<UpdateSnapshot>): UpdateSnapshot {
   }
 }
 
-function readStoredSnapshot(): UpdateSnapshot | null {
-  const path = getUpdateStateFilePath()
-  if (!existsSync(path)) return null
+function readStoredSnapshot(context: UpdateRuntimeContext): UpdateSnapshot | null {
+  const path = context.stateFilePath
+  if (!context.fileSystem.exists(path)) return null
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8")) as Partial<UpdateSnapshot>
+    const parsed = JSON.parse(context.fileSystem.readText(path)) as Partial<UpdateSnapshot>
     return buildSnapshot({
       currentVersion: typeof parsed.currentVersion === "string" ? parsed.currentVersion : getCurrentAppVersion(),
       latestVersion: typeof parsed.latestVersion === "string" ? parsed.latestVersion : null,
@@ -115,10 +145,9 @@ function readStoredSnapshot(): UpdateSnapshot | null {
   }
 }
 
-function writeStoredSnapshot(snapshot: UpdateSnapshot): UpdateSnapshot {
-  const path = getUpdateStateFilePath()
-  ensureParentDir(path)
-  writeFileSync(path, JSON.stringify(snapshot, null, 2), "utf-8")
+function writeStoredSnapshot(snapshot: UpdateSnapshot, context: UpdateRuntimeContext): UpdateSnapshot {
+  const path = context.stateFilePath
+  writeAtomicTextFile(path, JSON.stringify(snapshot, null, 2), context.fileSystem)
   return snapshot
 }
 
@@ -136,9 +165,11 @@ function sanitizeRepositoryUrl(value: string | null | undefined): string | null 
   }
 }
 
-function getConfiguredRepositoryUrl(): string {
-  const explicit = process.env["KNOWBEE_UPDATE_REPOSITORY"] ?? process.env["WIZBY_UPDATE_REPOSITORY"] ?? process.env["HOWIE_UPDATE_REPOSITORY"]
-  const explicitRepository = sanitizeRepositoryUrl(explicit)
+function getConfiguredRepositoryUrl(
+  context: UpdateRuntimeContext,
+  options: UpdateRepositoryOptions = {},
+): string {
+  const explicitRepository = sanitizeRepositoryUrl(options.repositoryUrl) ?? context.repositoryUrl
   if (explicitRepository) return explicitRepository
 
   const gitConfigPath = getGitConfigPath()
@@ -253,22 +284,28 @@ async function fetchGithubLatestRelease(ref: GithubRepoRef, currentVersion: stri
   })
 }
 
-export function getUpdateSnapshot(): UpdateSnapshot {
+export function getUpdateSnapshot(
+  context: UpdateRuntimeContext,
+  options: UpdateRepositoryOptions = {},
+): UpdateSnapshot {
   const currentVersion = getCurrentAppVersion()
-  const stored = readStoredSnapshot()
+  const stored = readStoredSnapshot(context)
   if (!stored) {
     return buildSnapshot({
       currentVersion,
-      repositoryUrl: getConfiguredRepositoryUrl(),
+      repositoryUrl: getConfiguredRepositoryUrl(context, options),
       message: "아직 업데이트 확인을 실행하지 않았습니다.",
     })
   }
   return buildSnapshot({ ...stored, currentVersion })
 }
 
-export async function checkForUpdates(): Promise<UpdateSnapshot> {
+export async function checkForUpdates(
+  context: UpdateRuntimeContext,
+  options: UpdateRepositoryOptions = {},
+): Promise<UpdateSnapshot> {
   const currentVersion = getCurrentAppVersion()
-  const repositoryUrl = getConfiguredRepositoryUrl()
+  const repositoryUrl = getConfiguredRepositoryUrl(context, options)
   const githubRef = parseGithubRepository(repositoryUrl)
 
   if (!githubRef) {
@@ -280,23 +317,24 @@ export async function checkForUpdates(): Promise<UpdateSnapshot> {
       repositoryUrl,
       message: "GitHub 저장소 정보를 해석하지 못했습니다. 업데이트 대상 저장소 설정을 확인해 주세요.",
     })
-    return writeStoredSnapshot(snapshot)
+    return writeStoredSnapshot(snapshot, context)
   }
 
   try {
     const snapshot = await fetchGithubLatestRelease(githubRef, currentVersion, repositoryUrl)
-    return writeStoredSnapshot(snapshot)
+    return writeStoredSnapshot(snapshot, context)
   } catch (error) {
     log.error("update check failed", error)
+    const message = updateServiceErrorMessage(error)
     const snapshot = buildSnapshot({
       currentVersion,
       checkedAt: Date.now(),
       status: "error",
       updateAvailable: false,
       repositoryUrl,
-      message: error instanceof Error ? error.message : String(error),
+      message,
       source: "github_release",
     })
-    return writeStoredSnapshot(snapshot)
+    return writeStoredSnapshot(snapshot, context)
   }
 }

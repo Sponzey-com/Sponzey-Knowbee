@@ -1,26 +1,32 @@
 import {
-  runSubAgentBenchmarkSuite,
   type SubAgentBenchmarkSuiteResult,
+  runSubAgentBenchmarkSuite,
 } from "../benchmarks/sub-agent-benchmarks.js"
 import type { MigrationPreflightRisk } from "../config/backup-rehearsal.js"
 import type { FeatureFlagMode } from "../runtime/rollout-safety.js"
 import {
-  buildReleasePerformanceSummary,
   type ReleasePerformanceSummary,
+  buildReleasePerformanceSummary,
 } from "./performance-gate.js"
+import {
+  type ActiveSubAgentRolloutThresholdPolicy,
+  type SubAgentReleaseThresholds,
+  type SubAgentRolloutThresholdAuthorizationPort,
+  type SubAgentRolloutThresholdPolicyCandidate,
+  activateSubAgentRolloutThresholdPolicy,
+} from "./sub-agent-rollout-threshold-policy.js"
 import type { UiModeReleaseGateSummary } from "./ui-mode-gate.js"
 
-export type SubAgentReleaseModeId =
-  | "flag_off"
-  | "dry_run_only"
-  | "limited_beta"
-  | "full_enable"
+export type { SubAgentReleaseThresholds } from "./sub-agent-rollout-threshold-policy.js"
+
+export type SubAgentReleaseModeId = "flag_off" | "dry_run_only" | "limited_beta" | "full_enable"
 
 export type SubAgentReleaseGateStatus = "passed" | "warning" | "failed"
 
 export type SubAgentReleaseGateCheckId =
   | "release_mode_sequence"
   | "release_dry_run_summary"
+  | "performance_acceptance"
   | "migration_rehearsal"
   | "feature_flag_off_rollback"
   | "no_sub_agent_fallback"
@@ -53,18 +59,13 @@ export interface SubAgentReleaseModeDefinition {
   title: string
   featureFlagMode: FeatureFlagMode
   compatibilityMode: boolean
-  trafficPolicy: "single_knowbee_only" | "shadow_dry_run" | "limited_operator_beta" | "public_default"
+  trafficPolicy:
+    | "single_knowbee_only"
+    | "shadow_dry_run"
+    | "limited_operator_beta"
+    | "public_default"
   promotionCriteria: string[]
   rollbackAction: string
-}
-
-export interface SubAgentReleaseThresholds {
-  duplicateFinalAnswerCount: 0
-  spawnAckP95Ms: number
-  hotRegistrySnapshotP95Ms: number
-  plannerHotPathP95Ms: number
-  firstProgressP95Ms: number
-  restartRecoveryP95Ms: number
 }
 
 export interface SubAgentRestartResumeSoakResult {
@@ -162,7 +163,7 @@ export interface SubAgentReleaseReadinessSummary {
   requestedMode: SubAgentReleaseModeId
   gateStatus: SubAgentReleaseGateStatus
   modes: SubAgentReleaseModeDefinition[]
-  defaultThresholds: SubAgentReleaseThresholds
+  operationalReferenceThresholds: SubAgentReleaseThresholds
   dryRunSummary: SubAgentReleaseDryRunSummary
   soak: SubAgentRestartResumeSoakResult
   rollback: SubAgentRollbackEvidence
@@ -198,7 +199,10 @@ export interface SubAgentReleaseReadinessOptions {
   uiModeEvidence?: Pick<UiModeReleaseGateSummary, "gateStatus" | "blockingFailures">
   soak?: SubAgentRestartResumeSoakResult
   rollback?: SubAgentRollbackEvidence
-  thresholds?: Partial<SubAgentReleaseThresholds>
+  rolloutThresholdPolicy?: {
+    candidate: SubAgentRolloutThresholdPolicyCandidate
+    authorizationPort: SubAgentRolloutThresholdAuthorizationPort
+  }
 }
 
 export const SUB_AGENT_RELEASE_MODE_SEQUENCE: SubAgentReleaseModeDefinition[] = [
@@ -210,10 +214,10 @@ export const SUB_AGENT_RELEASE_MODE_SEQUENCE: SubAgentReleaseModeDefinition[] = 
     compatibilityMode: true,
     trafficPolicy: "single_knowbee_only",
     promotionCriteria: [
-      "Single Knowbee run creation and final-answer smoke pass.",
+      "Single main-agent run creation and final-answer smoke pass.",
       "Registry is not touched when orchestration is disabled.",
     ],
-    rollbackAction: "Keep sub_agent_orchestration=off and continue on the single Knowbee path.",
+    rollbackAction: "Keep sub_agent_orchestration=off and continue on the single main-agent path.",
   },
   {
     id: "dry_run_only",
@@ -226,7 +230,8 @@ export const SUB_AGENT_RELEASE_MODE_SEQUENCE: SubAgentReleaseModeDefinition[] = 
       "Release dry-run summary includes orchestration, registry, planner, event, delivery, and migration evidence.",
       "No user-facing final answer is produced by a sub-agent path.",
     ],
-    rollbackAction: "Set sub_agent_orchestration=off; discard dry-run projections without deleting data.",
+    rollbackAction:
+      "Set sub_agent_orchestration=off; discard dry-run projections without deleting data.",
   },
   {
     id: "limited_beta",
@@ -240,7 +245,8 @@ export const SUB_AGENT_RELEASE_MODE_SEQUENCE: SubAgentReleaseModeDefinition[] = 
       "Spawn ack, hot registry, planner hot path, first progress, and restart recovery stay within beta thresholds.",
       "Rollback to feature flag off is verified without data deletion.",
     ],
-    rollbackAction: "Switch sub_agent_orchestration=off and keep beta evidence for post-incident review.",
+    rollbackAction:
+      "Switch sub_agent_orchestration=off and keep beta evidence for post-incident review.",
   },
   {
     id: "full_enable",
@@ -253,11 +259,12 @@ export const SUB_AGENT_RELEASE_MODE_SEQUENCE: SubAgentReleaseModeDefinition[] = 
       "Limited beta gates pass for the full release window.",
       "Operator can trace failure reason, memory impact scope, and channel delivery state.",
     ],
-    rollbackAction: "Switch sub_agent_orchestration=off before restoring any binary or state payload.",
+    rollbackAction:
+      "Switch sub_agent_orchestration=off before restoring any binary or state payload.",
   },
 ]
 
-export const DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS: SubAgentReleaseThresholds = {
+export const SUB_AGENT_OPERATIONAL_REFERENCE_THRESHOLDS: SubAgentReleaseThresholds = {
   duplicateFinalAnswerCount: 0,
   spawnAckP95Ms: 300,
   hotRegistrySnapshotP95Ms: 100,
@@ -265,6 +272,9 @@ export const DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS: SubAgentReleaseThresholds = {
   firstProgressP95Ms: 1_500,
   restartRecoveryP95Ms: 3_000,
 }
+
+/** @deprecated Use SUB_AGENT_OPERATIONAL_REFERENCE_THRESHOLDS for diagnostics only. */
+export const DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS = SUB_AGENT_OPERATIONAL_REFERENCE_THRESHOLDS
 
 function statusFromFailures(
   blockingFailures: string[],
@@ -337,10 +347,6 @@ export function runSubAgentRestartResumeSoak(
   if (base.duplicateFinalAnswerCount > 0) {
     blockingFailures.push(`duplicate_final_answer_count:${base.duplicateFinalAnswerCount}`)
   }
-  if (base.restartRecoveryP95Ms > DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS.restartRecoveryP95Ms) {
-    blockingFailures.push(`restart_recovery_p95:${base.restartRecoveryP95Ms}ms`)
-  }
-
   return {
     kind: "knowbee.sub_agent.restart_resume_soak",
     profileId: "release-short",
@@ -424,12 +430,16 @@ function buildDryRunSummary(input: {
     input.benchmarkSuite.aggregate.hotRegistrySnapshotP95Ms <=
       input.thresholds.hotRegistrySnapshotP95Ms
       ? "passed"
-      : "failed"
+      : input.benchmarkSuite.aggregate.hotRegistrySnapshotP95Ms == null
+        ? "failed"
+        : "warning"
   const plannerStatus =
     input.benchmarkSuite.aggregate.plannerHotPathP95Ms != null &&
     input.benchmarkSuite.aggregate.plannerHotPathP95Ms <= input.thresholds.plannerHotPathP95Ms
       ? "passed"
-      : "failed"
+      : input.benchmarkSuite.aggregate.plannerHotPathP95Ms == null
+        ? "failed"
+        : "warning"
   const migrationStatus =
     input.migrationPreflight.currentSchemaVersion <= input.migrationPreflight.latestSchemaVersion
       ? "passed"
@@ -505,14 +515,19 @@ function benchmarkThresholdFailures(
   if (suite.aggregate.duplicateFinalAnswerCount !== thresholds.duplicateFinalAnswerCount) {
     failures.push(`duplicate_final_answer_count:${suite.aggregate.duplicateFinalAnswerCount}`)
   }
-  if (suite.aggregate.spawnAckP95Ms == null || suite.aggregate.spawnAckP95Ms > thresholds.spawnAckP95Ms) {
+  if (
+    suite.aggregate.spawnAckP95Ms == null ||
+    suite.aggregate.spawnAckP95Ms > thresholds.spawnAckP95Ms
+  ) {
     failures.push(`spawn_ack_p95:${suite.aggregate.spawnAckP95Ms ?? "missing"}ms`)
   }
   if (
     suite.aggregate.hotRegistrySnapshotP95Ms == null ||
     suite.aggregate.hotRegistrySnapshotP95Ms > thresholds.hotRegistrySnapshotP95Ms
   ) {
-    failures.push(`hot_registry_snapshot_p95:${suite.aggregate.hotRegistrySnapshotP95Ms ?? "missing"}ms`)
+    failures.push(
+      `hot_registry_snapshot_p95:${suite.aggregate.hotRegistrySnapshotP95Ms ?? "missing"}ms`,
+    )
   }
   if (
     suite.aggregate.plannerHotPathP95Ms == null ||
@@ -558,14 +573,9 @@ export function buildSubAgentReleaseReadinessSummary(
   const now = options.now ?? new Date()
   const requestedMode = options.requestedMode ?? "limited_beta"
   const requestedModeDefinition = releaseModeFor(requestedMode)
-  const thresholds: SubAgentReleaseThresholds = {
-    ...DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS,
-    ...options.thresholds,
-    duplicateFinalAnswerCount: 0,
-  }
+  const operationalReferenceThresholds = SUB_AGENT_OPERATIONAL_REFERENCE_THRESHOLDS
   const benchmarkSuite = options.benchmarkSuite ?? runSubAgentBenchmarkSuite({ now })
-  const performanceEvidence =
-    options.performanceEvidence ?? buildReleasePerformanceSummary({ now })
+  const performanceEvidence = options.performanceEvidence ?? buildReleasePerformanceSummary({ now })
   const migrationPreflight = options.migrationPreflight ?? defaultMigrationPreflight()
   const subAgentFlag = options.featureFlags?.find(
     (flag) => flag.featureKey === "sub_agent_orchestration",
@@ -588,12 +598,31 @@ export function buildSubAgentReleaseReadinessSummary(
     migrationPreflight,
     performanceEvidence,
     soak,
-    thresholds,
+    thresholds: operationalReferenceThresholds,
     currentFeatureFlagMode,
     currentCompatibilityMode,
     orchestrationGateStatus,
   })
-  const thresholdFailures = benchmarkThresholdFailures(benchmarkSuite, soak, thresholds)
+  const publicRollout = requestedMode === "limited_beta" || requestedMode === "full_enable"
+  let activeRolloutPolicy: ActiveSubAgentRolloutThresholdPolicy | null = null
+  let rolloutPolicyReasonCodes: string[] = []
+  if (publicRollout) {
+    if (!options.rolloutThresholdPolicy) {
+      rolloutPolicyReasonCodes = ["rollout_threshold_policy_missing"]
+    } else {
+      const activation = activateSubAgentRolloutThresholdPolicy(options.rolloutThresholdPolicy)
+      if (activation.status === "baseline_only") {
+        rolloutPolicyReasonCodes = activation.reasonCodes
+      } else if (activation.policy.candidate.releaseMode !== requestedMode) {
+        rolloutPolicyReasonCodes = ["rollout_threshold_release_mode_mismatch"]
+      } else {
+        activeRolloutPolicy = activation.policy
+      }
+    }
+  }
+  const thresholdFailures = activeRolloutPolicy
+    ? benchmarkThresholdFailures(benchmarkSuite, soak, activeRolloutPolicy.candidate.thresholds)
+    : []
   const orchestrationChecks = new Map(
     (options.orchestrationEvidence?.checks ?? []).map((check) => [check.id, check]),
   )
@@ -618,8 +647,8 @@ export function buildSubAgentReleaseReadinessSummary(
       id: "release_dry_run_summary",
       title: "Release dry-run summary",
       pass:
-        dryRunSummary.registry.status === "passed" &&
-        dryRunSummary.planner.status === "passed" &&
+        dryRunSummary.registry.status !== "failed" &&
+        dryRunSummary.planner.status !== "failed" &&
         dryRunSummary.eventStream.status === "passed" &&
         dryRunSummary.delivery.status === "passed" &&
         dryRunSummary.migration.status === "passed",
@@ -627,6 +656,25 @@ export function buildSubAgentReleaseReadinessSummary(
       summary:
         "Dry-run summary includes orchestration mode, registry, planner, event stream, delivery, and migration evidence.",
       evidence: dryRunSummary,
+    }),
+    gate({
+      id: "performance_acceptance",
+      title: "Approved performance acceptance",
+      required: requestedMode === "limited_beta" || requestedMode === "full_enable",
+      pass:
+        (requestedMode !== "limited_beta" && requestedMode !== "full_enable") ||
+        performanceEvidence.acceptance.status === "accepted",
+      releaseModes: ["limited_beta", "full_enable"],
+      summary:
+        "Limited beta and full enable require performance evidence bound to an approved acceptance matrix.",
+      evidence: {
+        gateStatus: performanceEvidence.gateStatus,
+        acceptanceStatus: performanceEvidence.acceptance.status,
+        matrixId: performanceEvidence.acceptance.matrixId,
+        matrixVersion: performanceEvidence.acceptance.matrixVersion,
+        baselineVersion: performanceEvidence.acceptance.baselineVersion,
+        reasonCodes: performanceEvidence.acceptance.reasonCodes,
+      },
     }),
     gate({
       id: "migration_rehearsal",
@@ -643,7 +691,7 @@ export function buildSubAgentReleaseReadinessSummary(
         rollback.status === "passed" &&
         (featureFlagOffParity ? featureFlagOffParity.status === "passed" : true),
       releaseModes: ["flag_off", "dry_run_only", "limited_beta", "full_enable"],
-      summary: "Feature flag off returns to single Knowbee mode without deleting runtime data.",
+      summary: "Feature flag off returns to single main-agent mode without deleting runtime data.",
       evidence: {
         rollback,
         orchestrationCheck: featureFlagOffParity ?? null,
@@ -654,7 +702,7 @@ export function buildSubAgentReleaseReadinessSummary(
       title: "No sub-agent fallback",
       pass: noAgentFallback ? noAgentFallback.status === "passed" : true,
       releaseModes: ["flag_off", "dry_run_only", "limited_beta", "full_enable"],
-      summary: "No active sub-agent state falls back to the single Knowbee path.",
+      summary: "No active sub-agent state falls back to the single main-agent path.",
       evidence: { orchestrationCheck: noAgentFallback ?? null },
     }),
     gate({
@@ -662,7 +710,8 @@ export function buildSubAgentReleaseReadinessSummary(
       title: "Disabled agent fallback",
       pass: true,
       releaseModes: ["flag_off", "dry_run_only", "limited_beta", "full_enable"],
-      summary: "Disabled or archived agents are excluded before delegation and retain fallback reasons.",
+      summary:
+        "Disabled or archived agents are excluded before delegation and retain fallback reasons.",
       evidence: {
         regression: "tests/task009-registry-capability-index.test.ts",
         reasonCode: "disabled_sub_agent_excluded",
@@ -717,7 +766,9 @@ export function buildSubAgentReleaseReadinessSummary(
     gate({
       id: "memory_isolation",
       title: "Memory isolation",
-      pass: benchmarkSuite.scenarios.every((scenario) => scenario.metrics.memoryIsolationMaintained),
+      pass: benchmarkSuite.scenarios.every(
+        (scenario) => scenario.metrics.memoryIsolationMaintained,
+      ),
       summary: "Sub-agent memory remains owner-scoped across release scenarios.",
       evidence: { regression: "tests/task019-memory-isolation-writeback.test.ts" },
     }),
@@ -756,7 +807,8 @@ export function buildSubAgentReleaseReadinessSummary(
       title: "Fallback reason audit",
       pass: true,
       releaseModes: ["flag_off", "dry_run_only", "limited_beta", "full_enable"],
-      summary: "Fallback reasons remain explicit for off, no-agent, disabled-agent, and model fallback paths.",
+      summary:
+        "Fallback reasons remain explicit for off, no-agent, disabled-agent, and model fallback paths.",
       evidence: {
         reasonCodes: [
           "feature_flag_off",
@@ -784,7 +836,8 @@ export function buildSubAgentReleaseReadinessSummary(
       id: "react_flow_graph_validation",
       title: "React Flow graph validation",
       pass: true,
-      summary: "Topology graph validation and WebUI graph regressions are part of the release gate.",
+      summary:
+        "Topology graph validation and WebUI graph regressions are part of the release gate.",
       evidence: {
         regressions: [
           "tests/task025-topology-projection.test.ts",
@@ -796,7 +849,8 @@ export function buildSubAgentReleaseReadinessSummary(
       id: "webui_runtime_projection",
       title: "WebUI runtime projection",
       pass: options.uiModeEvidence ? options.uiModeEvidence.gateStatus !== "failed" : true,
-      summary: "Runtime inspector projection exposes operator traceability for failures and delivery state.",
+      summary:
+        "Runtime inspector projection exposes operator traceability for failures and delivery state.",
       evidence: {
         uiModeGateStatus: options.uiModeEvidence?.gateStatus ?? "not_supplied",
         regression: "tests/task024-runtime-inspector-projection.test.ts",
@@ -806,7 +860,8 @@ export function buildSubAgentReleaseReadinessSummary(
       id: "focus_template_import_safety",
       title: "Focus, template, and import safety",
       pass: hasScenario(benchmarkSuite, "bench.focus_thread_followup"),
-      summary: "Focused follow-up routing keeps memory isolation and import/template safety boundaries.",
+      summary:
+        "Focused follow-up routing keeps memory isolation and import/template safety boundaries.",
       evidence: {
         scenarioId: "bench.focus_thread_followup",
         regression: "tests/task026-command-workspace-api.test.ts",
@@ -821,12 +876,23 @@ export function buildSubAgentReleaseReadinessSummary(
     }),
     gate({
       id: "benchmark_threshold",
-      title: "Benchmark thresholds",
-      pass: thresholdFailures.length === 0,
+      title: "Authorized benchmark thresholds",
+      required: publicRollout,
+      pass: !publicRollout || (activeRolloutPolicy !== null && thresholdFailures.length === 0),
       summary:
-        "Limited beta thresholds require duplicate final 0, spawn ack <=300ms, hot registry <=100ms, planner <=700ms, first progress <=1.5s, restart recovery <=3s.",
+        "Limited beta and full enable require benchmark evidence evaluated against an exactly bound administrator-authorized threshold policy.",
       evidence: {
-        thresholds,
+        policyStatus: !publicRollout
+          ? "not_required"
+          : activeRolloutPolicy
+            ? "active"
+            : "baseline_only",
+        policyId: activeRolloutPolicy?.candidate.policyId ?? null,
+        policyVersion: activeRolloutPolicy?.candidate.policyVersion ?? null,
+        authorizationId: activeRolloutPolicy?.authorization.authorizationId ?? null,
+        releaseMode: activeRolloutPolicy?.candidate.releaseMode ?? null,
+        reasonCodes: rolloutPolicyReasonCodes,
+        thresholds: activeRolloutPolicy?.candidate.thresholds ?? null,
         aggregate: benchmarkSuite.aggregate,
         soakRestartRecoveryP95Ms: soak.restartRecoveryP95Ms,
         thresholdFailures,
@@ -851,7 +917,8 @@ export function buildSubAgentReleaseReadinessSummary(
       title: "Restart resume soak",
       pass: soak.status === "passed",
       releaseModes: ["limited_beta", "full_enable"],
-      summary: "Short release soak simulates gateway restart and verifies projection/finalizer recovery.",
+      summary:
+        "Short release soak simulates gateway restart and verifies projection/finalizer recovery.",
       evidence: soak,
     }),
     gate({
@@ -872,7 +939,8 @@ export function buildSubAgentReleaseReadinessSummary(
       title: "Rollback by feature flag off",
       pass: rollback.status === "passed" && rollback.dataDeletionRequired === false,
       releaseModes: ["flag_off", "dry_run_only", "limited_beta", "full_enable"],
-      summary: "Rollback returns to single Knowbee mode by disabling the feature flag without deleting data.",
+      summary:
+        "Rollback returns to single main-agent mode by disabling the feature flag without deleting data.",
       evidence: rollback,
     }),
   ]
@@ -880,6 +948,9 @@ export function buildSubAgentReleaseReadinessSummary(
   const warnings = [
     ...(options.orchestrationEvidence?.warnings ?? []).map((warning) => `orchestration:${warning}`),
     ...(options.uiModeEvidence?.gateStatus === "warning" ? ["ui_mode_release_gate_warning"] : []),
+    ...(performanceEvidence.operationalStatus === "warning"
+      ? ["performance_operational_health_warning"]
+      : []),
   ]
   const blockingFailures = [
     ...(options.orchestrationEvidence?.blockingFailures ?? []).map(
@@ -900,7 +971,7 @@ export function buildSubAgentReleaseReadinessSummary(
     requestedMode,
     gateStatus: statusFromFailures(blockingFailures, warnings),
     modes: SUB_AGENT_RELEASE_MODE_SEQUENCE,
-    defaultThresholds: thresholds,
+    operationalReferenceThresholds,
     dryRunSummary,
     soak,
     rollback,

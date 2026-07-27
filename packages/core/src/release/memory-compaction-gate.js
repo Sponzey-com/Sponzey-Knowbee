@@ -88,10 +88,10 @@ function checkHeuristicFallback(runs) {
         },
     };
 }
-export function buildMemoryCompactionReleaseGateSummary(input = {}) {
+export function buildMemoryCompactionReleaseGateSummary(input) {
     const now = input.now ?? new Date();
     const quality = buildMemoryQualitySnapshot({ now: now.getTime() });
-    const inspector = buildMemoryInspectorSnapshot({ now: now.getTime(), limit: 12 });
+    const inspector = buildMemoryInspectorSnapshot({ now: now.getTime(), limit: 12, config: input.config });
     const runs = listMemoryCompactionRuns({ limit: 200 });
     const checks = [
         checkQualitySnapshot(quality),

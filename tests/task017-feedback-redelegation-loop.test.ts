@@ -5,7 +5,6 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { reviewSubAgentResult } from "../packages/core/src/agent/sub-agent-result-review.ts"
 import { registerSubSessionRoutes } from "../packages/core/src/api/routes/subsessions.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.ts"
 import type {
   AgentPromptBundle,
@@ -29,10 +28,12 @@ import {
 } from "../packages/core/src/db/index.js"
 import {
   buildFeedbackLoopPackage,
+  buildRedelegatedSubSessionInput,
   decideFeedbackLoopContinuation,
   validateRedelegationTarget,
 } from "../packages/core/src/orchestration/feedback-loop.ts"
 import type { RunSubSessionInput } from "../packages/core/src/orchestration/sub-session-runner.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: {
@@ -51,8 +52,6 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 
 const evidenceOutput: ExpectedOutputContract = {
   outputId: "answer",
@@ -106,18 +105,11 @@ function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task017-feedback-"))
   tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 function restoreState(): void {
   closeDb()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -169,7 +161,7 @@ function command(id = "feedback", targetAgentId = "agent:researcher"): CommandRe
     parentRunId: "run:task017",
     subSessionId: `sub:${id}`,
     targetAgentId,
-    targetNicknameSnapshot: targetAgentId === "agent:researcher" ? "Res" : "Alt",
+    targetAgentNameSnapshot: targetAgentId === "agent:researcher" ? "Res" : "Alt",
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [evidenceOutput],
@@ -183,8 +175,7 @@ function promptBundle(agentId = "agent:researcher", nickname = "Res"): AgentProm
     agentId,
     agentType: "sub_agent",
     role: "feedback worker",
-    displayNameSnapshot: nickname,
-    nicknameSnapshot: nickname,
+    agentNameSnapshot: nickname,
     personalitySnapshot: "Precise",
     teamContext: [],
     memoryPolicy: {
@@ -211,13 +202,11 @@ function runInput(id = "feedback"): RunSubSessionInput {
     command: command(id),
     parentAgent: {
       agentId: "agent:knowbee",
-      displayName: "Knowbee",
-      nickname: "노비",
+      agentName: "노비",
     },
     agent: {
       agentId: "agent:researcher",
-      displayName: "Researcher",
-      nickname: "Res",
+      agentName: "Res",
     },
     parentSessionId: "session:task017",
     promptBundle: promptBundle(),
@@ -308,7 +297,7 @@ describe("task017 feedback request and redelegation loop", () => {
     expect(pkg.directive.followupPrompt).toContain("Missing items")
   })
 
-  it("guards repeated failures and limited success without numeric budget stop", () => {
+  it("guards repeated failures and limited success without treating retry counts as terminal", () => {
     const missingEvidence = reviewSubAgentResult({
       resultReport: resultReport(),
       expectedOutputs: [evidenceOutput],
@@ -324,19 +313,111 @@ describe("task017 feedback request and redelegation loop", () => {
     expect(
       decideFeedbackLoopContinuation({
         review: missingEvidence,
+        retryCount: 1,
+        retryLimit: 3,
         previousFailureKeys: [missingEvidence.normalizedFailureKey ?? ""],
+        currentStrategyFingerprint: "strategy:web-search-v1",
+        previousAttempts: [{
+          normalizedFailureKey: missingEvidence.normalizedFailureKey ?? "",
+          strategyFingerprint: "strategy:web-search-v1",
+        }],
       }),
     ).toMatchObject({ action: "blocked_repeated_failure" })
     expect(
       decideFeedbackLoopContinuation({
         review: missingEvidence,
+        retryCount: 0,
+        retryLimit: 3,
+        previousFailureKeys: [missingEvidence.normalizedFailureKey ?? ""],
+        currentStrategyFingerprint: "strategy:direct-source-v2",
+        previousAttempts: [{
+          normalizedFailureKey: missingEvidence.normalizedFailureKey ?? "",
+          strategyFingerprint: "strategy:web-search-v1",
+        }],
       }),
     ).toMatchObject({ action: "feedback_request" })
     expect(
       decideFeedbackLoopContinuation({
+        review: missingEvidence,
+        retryCount: 3,
+        retryLimit: 3,
+      }),
+    ).toMatchObject({
+      action: "feedback_request",
+      reasonCode: missingEvidence.normalizedFailureKey,
+    })
+    expect(
+      decideFeedbackLoopContinuation({
         review: limited,
+        retryCount: 3,
+        retryLimit: 3,
       }),
     ).toMatchObject({ action: "limited_success_finalized" })
+
+    expect(() => decideFeedbackLoopContinuation({
+      review: missingEvidence,
+      retryCount: -1,
+      retryLimit: 3,
+    })).toThrow("feedback retry_count")
+  })
+
+  it("does not promote legacy parent display name during feedback redelegation", () => {
+    const feedbackRequest = buildFeedbackLoopPackage({
+      resultReports: [resultReport()],
+      review: reviewSubAgentResult({
+        resultReport: resultReport(),
+        expectedOutputs: [evidenceOutput],
+        idProvider: () => "feedback-inner",
+        now: () => now,
+      }),
+      expectedOutputs: [evidenceOutput],
+      targetAgentPolicy: "same_agent",
+      targetAgentId: "agent:researcher",
+      requestingAgentId: "agent:knowbee",
+      parentRunId: "run:task017",
+      parentSessionId: "session:task017",
+      persistSynthesizedContext: false,
+      idProvider: () => "feedback-display",
+      now: () => now,
+    }).feedbackRequest
+    const source: SubSessionContract = {
+      identity: identity("sub_session", "sub:legacy-parent-display"),
+      subSessionId: "sub:legacy-parent-display",
+      parentSessionId: "session:task017",
+      parentRunId: "run:task017",
+      parentAgentId: "agent:knowbee",
+      parentAgentDisplayName: "Legacy Parent Display",
+      agentId: "agent:researcher",
+      agentName: "Res",
+      agentNameSnapshot: "Res",
+      commandRequestId: "command:legacy-parent-display",
+      status: "needs_revision",
+      promptBundleId: "prompt-bundle:agent:researcher",
+      promptBundleSnapshot: promptBundle(),
+    }
+
+    const fallback = buildRedelegatedSubSessionInput({
+      sourceSubSession: source,
+      feedbackRequest,
+      targetAgentId: "agent:researcher",
+      targetAgentNameSnapshot: "Res",
+      subSessionId: "sub:redelegated:display-fallback",
+      commandRequestId: "command:redelegated:display-fallback",
+      redelegationAuthorizationReceiptId: `redelegation:${"a".repeat(64)}`,
+    })
+    const snapshot = buildRedelegatedSubSessionInput({
+      sourceSubSession: { ...source, parentAgentNameSnapshot: "노비" },
+      feedbackRequest,
+      targetAgentId: "agent:researcher",
+      targetAgentNameSnapshot: "Res",
+      subSessionId: "sub:redelegated:snapshot",
+      commandRequestId: "command:redelegated:snapshot",
+      redelegationAuthorizationReceiptId: `redelegation:${"b".repeat(64)}`,
+    })
+
+    expect(fallback.parentAgent?.agentName).toBe("Knowbee")
+    expect(fallback.parentAgent?.agentName).not.toBe("Legacy Parent Display")
+    expect(snapshot.parentAgent?.agentName).toBe("노비")
   })
 
   it("validates alternative redelegation target boundaries and runtime checks", () => {
@@ -385,16 +466,22 @@ describe("task017 feedback request and redelegation loop", () => {
         },
       })
 
-      expect(response.statusCode).toBe(202)
+      expect(response.statusCode, response.body).toBe(202)
       expect(response.json()).toMatchObject({
         reasonCode: "feedback_request_created",
         feedbackRequest: {
           feedbackRequestId: "api-feedback",
           targetAgentPolicy: "same_agent",
+          targetAgentName: "Res",
+          targetAgentNameSnapshot: "Res",
+          requestingAgentName: "노비",
+          requestingAgentNameSnapshot: "노비",
           missingItems: ["missing_evidence:answer:source"],
         },
         synthesizedContextExchangeId: "exchange:feedback:api-feedback",
       })
+      expect(response.json().feedbackRequest).not.toHaveProperty("targetAgentNicknameSnapshot")
+      expect(response.json().feedbackRequest).not.toHaveProperty("requestingAgentNicknameSnapshot")
       const exchange = getAgentDataExchange("exchange:feedback:api-feedback")
       expect(exchange?.allowed_use).toBe("temporary_context")
       expect(listRunSubSessionsForParentRun("run:task017")).toHaveLength(1)
@@ -410,6 +497,7 @@ describe("task017 feedback request and redelegation loop", () => {
       })
       markNeedsRevision()
       upsertAgentRelationship({
+        schemaVersion: 1,
         edgeId: "relationship:agent:knowbee->agent:alternate",
         parentAgentId: "agent:knowbee",
         childAgentId: "agent:alternate",
@@ -420,6 +508,22 @@ describe("task017 feedback request and redelegation loop", () => {
         updatedAt: now,
       })
 
+      const missingReason = await app.inject({
+        method: "POST",
+        url: "/api/subsessions/sub:feedback/redelegate",
+        payload: {
+          parentRunId: "run:task017",
+          message: "delegate without evidence-backed reason",
+          resultReport: resultReport(),
+          feedbackRequestId: "api-redelegate-missing-reason",
+          targetAgentId: "agent:alternate",
+          targetAgentNameSnapshot: "Alt",
+        },
+      })
+      expect(missingReason.statusCode).toBe(409)
+      expect(missingReason.json().reasonCode).toBe("redelegation_reason_required")
+      expect(listRunSubSessionsForParentRun("run:task017")).toHaveLength(1)
+
       const response = await app.inject({
         method: "POST",
         url: "/api/subsessions/sub:feedback/redelegate",
@@ -429,19 +533,23 @@ describe("task017 feedback request and redelegation loop", () => {
           resultReport: resultReport(),
           feedbackRequestId: "api-redelegate",
           targetAgentId: "agent:alternate",
-          targetAgentDisplayName: "Alternate",
-          targetAgentNickname: "Alt",
+          targetAgentNameSnapshot: "Alt",
           redelegatedSubSessionId: "sub:redelegated",
+          redelegationReasonCode: "missing_evidence",
+          redelegationReasonDetail: "The first result did not include the required evidence.",
+          redelegationReasonEvidenceRefs: ["evidence:review:api-redelegate"],
         },
       })
 
-      expect(response.statusCode).toBe(202)
+      expect(response.statusCode, response.body).toBe(202)
       expect(response.json()).toMatchObject({
         reasonCode: "redelegation_queued",
         redelegatedSubSessionId: "sub:redelegated",
         feedbackRequest: {
           targetAgentPolicy: "alternative_direct_child",
           targetAgentId: "agent:alternate",
+          targetAgentName: "Alt",
+          targetAgentNameSnapshot: "Alt",
         },
       })
       const redelegated = parseSubSession("sub:redelegated")
@@ -450,6 +558,10 @@ describe("task017 feedback request and redelegation loop", () => {
         agentId: "agent:alternate",
       })
       expect(redelegated.promptBundleSnapshot?.completionCriteria?.[0]?.outputId).toBe("answer")
+      expect(redelegated.promptBundleSnapshot?.agentName).toBe("Alt")
+      expect(redelegated.promptBundleSnapshot?.agentNameSnapshot).toBe("Alt")
+      expect(redelegated.promptBundleSnapshot).not.toHaveProperty("displayNameSnapshot")
+      expect(redelegated.promptBundleSnapshot).not.toHaveProperty("nicknameSnapshot")
       expect(redelegated.memoryBootstrap).toMatchObject({
         rawTranscriptIncluded: false,
         feedbackExchangeId: "exchange:feedback:api-redelegate",

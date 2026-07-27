@@ -46,5 +46,8 @@ export function getBackendDisplayLabel(backendId: string | undefined, fallbackLa
   if (backendId && BACKEND_LABELS[backendId]) {
     return language === "en" ? BACKEND_LABELS[backendId].en : BACKEND_LABELS[backendId].ko
   }
-  return (fallbackLabel ?? backendId ?? "").trim()
+  const label = fallbackLabel?.trim()
+  if (label && label !== backendId) return label
+  if (backendId?.trim().startsWith("provider:")) return language === "en" ? "AI connection" : "AI 연결"
+  return ""
 }

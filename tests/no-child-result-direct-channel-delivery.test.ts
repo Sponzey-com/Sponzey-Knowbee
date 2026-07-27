@@ -1,31 +1,30 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, listMessageLedgerEvents } from "../packages/core/src/db/index.js"
 import { completeRunWithAssistantMessage } from "../packages/core/src/runs/finalization.ts"
 import { applyLoopDirective } from "../packages/core/src/runs/loop-directive-application.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempConfig(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-no-child-direct-delivery-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-no-child-direct-delivery-"))
+  tempDirs.push(rootDir)
+  const fixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: `{
     ai: { connection: { provider: "ollama", endpoint: "http://127.0.0.1:11434", model: "llama3.2" } },
     webui: { enabled: true, host: "127.0.0.1", port: 18181, auth: { enabled: false } },
     security: { approvalMode: "off" },
     memory: { searchMode: "fts", sessionRetentionDays: 30 },
     scheduler: { enabled: false, timezone: "Asia/Seoul" }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  }`,
+  })
+  initializeTestDbRuntime(fixture.paths.stateDir)
 }
 
 function createFinalizationDependencies() {
@@ -54,11 +53,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -119,7 +113,7 @@ describe("task008 no child result direct channel delivery", () => {
       sessionId: "session-child-loop",
       source: "telegram",
       onChunk: undefined,
-      directive: { kind: "complete", text: "child final text" },
+      directive: { kind: "complete", text: "child final text", textSource: "llm_generated" },
       finalizationDependencies,
       suppressFinalDelivery: true,
       suppressFinalDeliveryReasonCode: "child_result_parent_aggregation_required",

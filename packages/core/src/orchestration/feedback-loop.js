@@ -4,7 +4,40 @@ import { buildChildOwnMemoryBootstrap } from "../memory/agent-state.js";
 import { buildSubSessionFeedbackCapsulePayload, buildSubSessionFeedbackPinnedItems, } from "../memory/flow-capsules.js";
 import { createDataExchangePackage, persistDataExchangePackage } from "../memory/isolation.js";
 import { buildSubSessionFeedbackCycleDirective, } from "../runs/review-cycle-pass.js";
+export function buildRedelegatedTaskScope(input) {
+    const basePrompt = input.sourceSubSession.promptBundleSnapshot;
+    const expectedOutputs = input.feedbackRequest.expectedRevisionOutputs;
+    return {
+        ...(basePrompt?.taskScope ?? {
+            goal: "Revise delegated sub-session result.",
+            intentType: "review",
+            actionType: "sub_agent_feedback_revision",
+            constraints: [],
+            expectedOutputs,
+            reasonCodes: [],
+        }),
+        constraints: unique([
+            ...(basePrompt?.taskScope.constraints ?? []),
+            ...input.feedbackRequest.requiredChanges,
+            ...input.feedbackRequest.additionalConstraints,
+        ]),
+        expectedOutputs,
+        reasonCodes: unique([
+            ...(basePrompt?.taskScope.reasonCodes ?? []),
+            input.feedbackRequest.reasonCode,
+            "feedback_redelegation",
+            "redelegation_authorized",
+        ]),
+    };
+}
+function chooseAgentNameSnapshot(agentNameSnapshot) {
+    return agentNameSnapshot?.trim() || undefined;
+}
+function chooseFeedbackAgentName(agentName, agentNameSnapshot) {
+    return chooseAgentNameSnapshot(agentName) ?? chooseAgentNameSnapshot(agentNameSnapshot);
+}
 export function decideFeedbackLoopContinuation(input) {
+    assertRetryBudget(input.retryCount, input.retryLimit);
     if (input.review.verdict === "limited_success" ||
         input.review.parentIntegrationStatus === "limited_parent_integration") {
         return {
@@ -13,7 +46,11 @@ export function decideFeedbackLoopContinuation(input) {
         };
     }
     const normalizedFailureKey = input.review.normalizedFailureKey;
-    if (normalizedFailureKey && (input.previousFailureKeys ?? []).includes(normalizedFailureKey)) {
+    const currentStrategyFingerprint = input.currentStrategyFingerprint?.trim();
+    if (normalizedFailureKey &&
+        currentStrategyFingerprint &&
+        (input.previousAttempts ?? []).some((attempt) => attempt.normalizedFailureKey === normalizedFailureKey &&
+            attempt.strategyFingerprint === currentStrategyFingerprint)) {
         return {
             action: "blocked_repeated_failure",
             reasonCode: "same_sub_agent_result_review_failure_repeated",
@@ -32,6 +69,14 @@ export function decideFeedbackLoopContinuation(input) {
         reasonCode: normalizedFailureKey ?? "sub_agent_result_review_feedback_required",
         ...(normalizedFailureKey ? { normalizedFailureKey } : {}),
     };
+}
+function assertRetryBudget(retryCount, retryLimit) {
+    if (!Number.isInteger(retryCount) || retryCount < 0) {
+        throw new Error("feedback retry_count must be a non-negative integer");
+    }
+    if (!Number.isInteger(retryLimit) || retryLimit < 0) {
+        throw new Error("feedback retry_limit must be a non-negative integer");
+    }
 }
 export function validateRedelegationTarget(input) {
     const reasonCodes = [];
@@ -84,6 +129,10 @@ export function buildFeedbackLoopPackage(input) {
     const targetAgentId = input.targetAgentId ??
         (primary.identity.owner.ownerType === "sub_agent" ? primary.identity.owner.ownerId : undefined);
     const recipientOwner = ownerForAgent(targetAgentId) ?? primary.identity.owner;
+    const requestingAgentName = chooseFeedbackAgentName(input.requestingAgentName, input.requestingAgentNameSnapshot);
+    const requestingAgentNameSnapshot = chooseAgentNameSnapshot(input.requestingAgentNameSnapshot) ?? requestingAgentName;
+    const targetAgentName = chooseFeedbackAgentName(input.targetAgentName, input.targetAgentNameSnapshot);
+    const targetAgentNameSnapshot = chooseAgentNameSnapshot(input.targetAgentNameSnapshot) ?? targetAgentName;
     const reasonCode = input.review.normalizedFailureKey ?? "sub_agent_result_review_feedback_required";
     const exchangeId = `exchange:feedback:${feedbackRequestId}`;
     const additionalContextRefs = unique([...(input.additionalContextRefs ?? []), exchangeId]);
@@ -99,11 +148,11 @@ export function buildFeedbackLoopPackage(input) {
     const synthesizedContext = createDataExchangePackage({
         sourceOwner,
         recipientOwner,
-        ...(input.requestingAgentNicknameSnapshot
-            ? { sourceNicknameSnapshot: input.requestingAgentNicknameSnapshot }
+        ...(requestingAgentNameSnapshot
+            ? { sourceAgentNameSnapshot: requestingAgentNameSnapshot }
             : {}),
-        ...(input.targetAgentNicknameSnapshot
-            ? { recipientNicknameSnapshot: input.targetAgentNicknameSnapshot }
+        ...(targetAgentNameSnapshot
+            ? { recipientAgentNameSnapshot: targetAgentNameSnapshot }
             : {}),
         purpose: "Structured feedback context for sub-session revision.",
         allowedUse: "temporary_context",
@@ -174,11 +223,25 @@ export function buildFeedbackLoopPackage(input) {
         previousSubSessionIds,
         targetAgentPolicy: input.targetAgentPolicy,
         ...(targetAgentId ? { targetAgentId } : {}),
-        ...(input.targetAgentNicknameSnapshot
-            ? { targetAgentNicknameSnapshot: input.targetAgentNicknameSnapshot }
+        ...(targetAgentName
+            ? {
+                targetAgentName,
+            }
             : {}),
-        ...(input.requestingAgentNicknameSnapshot
-            ? { requestingAgentNicknameSnapshot: input.requestingAgentNicknameSnapshot }
+        ...(targetAgentNameSnapshot
+            ? {
+                targetAgentNameSnapshot,
+            }
+            : {}),
+        ...(requestingAgentName
+            ? {
+                requestingAgentName,
+            }
+            : {}),
+        ...(requestingAgentNameSnapshot
+            ? {
+                requestingAgentNameSnapshot,
+            }
             : {}),
         synthesizedContextExchangeId: synthesizedContext.exchangeId,
         carryForwardOutputs,
@@ -204,27 +267,16 @@ export function buildRedelegatedSubSessionInput(input) {
     const subSessionId = input.subSessionId ?? `sub:redelegated:${source.subSessionId}:${idProvider()}`;
     const commandRequestId = input.commandRequestId ?? `command:${subSessionId}`;
     const expectedOutputs = input.feedbackRequest.expectedRevisionOutputs;
-    const taskScope = {
-        ...(basePrompt?.taskScope ?? {
-            goal: "Revise delegated sub-session result.",
-            intentType: "review",
-            actionType: "sub_agent_feedback_revision",
-            constraints: [],
-            expectedOutputs,
-            reasonCodes: [],
-        }),
-        constraints: unique([
-            ...(basePrompt?.taskScope.constraints ?? []),
-            ...input.feedbackRequest.requiredChanges,
-            ...input.feedbackRequest.additionalConstraints,
-        ]),
-        expectedOutputs,
-        reasonCodes: unique([
-            ...(basePrompt?.taskScope.reasonCodes ?? []),
-            input.feedbackRequest.reasonCode,
-            "feedback_redelegation",
-        ]),
-    };
+    const authorizationReceiptId = input.redelegationAuthorizationReceiptId.trim();
+    if (!/^redelegation:[a-f0-9]{64}$/.test(authorizationReceiptId)) {
+        throw new Error("A valid redelegation authorization receipt is required.");
+    }
+    const targetAgentName = chooseFeedbackAgentName(input.targetAgentName, input.targetAgentNameSnapshot);
+    const targetAgentNameSnapshot = chooseAgentNameSnapshot(input.targetAgentNameSnapshot) ?? targetAgentName;
+    const taskScope = buildRedelegatedTaskScope({
+        sourceSubSession: source,
+        feedbackRequest: input.feedbackRequest,
+    });
     const command = {
         identity: {
             schemaVersion: CONTRACT_SCHEMA_VERSION,
@@ -246,9 +298,15 @@ export function buildRedelegatedSubSessionInput(input) {
         parentRunId: source.parentRunId,
         subSessionId,
         targetAgentId: input.targetAgentId,
-        ...(input.targetAgentNickname ? { targetNicknameSnapshot: input.targetAgentNickname } : {}),
+        ...(targetAgentName
+            ? { targetAgentName }
+            : {}),
+        ...(targetAgentNameSnapshot
+            ? { targetAgentNameSnapshot }
+            : {}),
         taskScope,
         contextPackageIds: unique([
+            authorizationReceiptId,
             ...input.feedbackRequest.additionalContextRefs,
             ...(input.feedbackRequest.synthesizedContextExchangeId
                 ? [input.feedbackRequest.synthesizedContextExchangeId]
@@ -262,32 +320,30 @@ export function buildRedelegatedSubSessionInput(input) {
         feedbackRequest: input.feedbackRequest,
         taskScope,
         ...(basePrompt ? { basePrompt } : {}),
-        ...(input.targetAgentDisplayName
-            ? { targetAgentDisplayName: input.targetAgentDisplayName }
+        ...(targetAgentName
+            ? { targetAgentName }
             : {}),
-        ...(input.targetAgentNickname ? { targetAgentNickname: input.targetAgentNickname } : {}),
+        ...(targetAgentNameSnapshot
+            ? { targetAgentNameSnapshot }
+            : {}),
     });
     return {
         command,
         parentAgent: {
             agentId: source.parentAgentId ?? "agent:knowbee",
-            ...(source.parentAgentDisplayName
-                ? { displayName: source.parentAgentDisplayName }
-                : {
-                    displayName: source.parentAgentId ?? "Knowbee",
-                }),
-            ...(source.parentAgentNickname ? { nickname: source.parentAgentNickname } : {}),
+            agentName: source.parentAgentNameSnapshot ?? "Knowbee",
         },
         agent: {
             agentId: input.targetAgentId,
-            displayName: input.targetAgentDisplayName ?? input.targetAgentId,
-            ...(input.targetAgentNickname ? { nickname: input.targetAgentNickname } : {}),
+            agentName: targetAgentName ?? targetAgentNameSnapshot ?? "Unnamed sub-agent",
         },
         parentSessionId: source.parentSessionId,
         promptBundle,
         memoryBootstrap: buildChildOwnMemoryBootstrap({
             agentId: input.targetAgentId,
-            ...(input.targetAgentNickname ? { nicknameSnapshot: input.targetAgentNickname } : {}),
+            ...(targetAgentNameSnapshot
+                ? { agentNameSnapshot: targetAgentNameSnapshot }
+                : {}),
             sessionId: source.parentSessionId,
             requestGroupId: commandRequestId,
             lineageId: subSessionId,
@@ -325,13 +381,17 @@ export function buildRedelegatedSubSessionInput(input) {
 function buildRedelegatedPromptBundle(input) {
     const base = input.basePrompt;
     const owner = { ownerType: "sub_agent", ownerId: input.targetAgentId };
+    const targetAgentName = chooseFeedbackAgentName(input.targetAgentName, input.targetAgentNameSnapshot) ??
+        "Unnamed sub-agent";
+    const targetAgentNameSnapshot = chooseAgentNameSnapshot(input.targetAgentNameSnapshot) ?? targetAgentName;
     const fallback = {
         identity: input.source.identity,
         bundleId: `prompt-bundle:${input.targetAgentId}:${input.feedbackRequest.feedbackRequestId}`,
         agentId: input.targetAgentId,
         agentType: "sub_agent",
         role: "feedback revision worker",
-        displayNameSnapshot: input.targetAgentDisplayName ?? input.targetAgentId,
+        agentName: targetAgentName,
+        agentNameSnapshot: targetAgentNameSnapshot,
         personalitySnapshot: "Precise",
         teamContext: [],
         memoryPolicy: {
@@ -381,8 +441,9 @@ function buildRedelegatedPromptBundle(input) {
             retentionPolicy: "short_term",
             writebackReviewRequired: true,
         };
+    const sourceBundle = base ?? fallback;
     return {
-        ...(base ?? fallback),
+        ...sourceBundle,
         identity: {
             ...(base?.identity ?? input.source.identity),
             entityType: "capability",
@@ -391,8 +452,8 @@ function buildRedelegatedPromptBundle(input) {
         },
         bundleId: `prompt-bundle:${input.targetAgentId}:${input.feedbackRequest.feedbackRequestId}`,
         agentId: input.targetAgentId,
-        displayNameSnapshot: input.targetAgentDisplayName ?? input.targetAgentId,
-        ...(input.targetAgentNickname ? { nicknameSnapshot: input.targetAgentNickname } : {}),
+        agentName: targetAgentName,
+        agentNameSnapshot: targetAgentNameSnapshot,
         memoryPolicy,
         taskScope: input.taskScope,
         completionCriteria: input.feedbackRequest.expectedRevisionOutputs,

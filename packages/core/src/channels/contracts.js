@@ -62,6 +62,7 @@ export function buildUnsupportedCapabilityReceipt(params) {
         timestamp: params.timestamp ?? Date.now(),
         idempotencyKey: params.idempotencyKey,
         capability: params.capability,
+        ...(params.userFacingLanguage ? { userFacingLanguage: params.userFacingLanguage } : {}),
     };
 }
 export function createRawPayloadRef(input) {

@@ -9,6 +9,8 @@ export interface CommandPaletteGroup {
   items: CommandPaletteSearchResult[]
 }
 
+export type CommandPaletteGroupLabels = Partial<Record<CommandPaletteResultKind, string>>
+
 export interface CommandPaletteInputState {
   mode: "slash_command" | "search"
   command?: string
@@ -19,7 +21,7 @@ const GROUP_LABELS: Record<CommandPaletteResultKind, string> = {
   command: "Commands",
   agent: "Agents",
   team: "Teams",
-  sub_session: "Sub-sessions",
+  sub_session: "Sub-agent runs",
   agent_template: "Agent templates",
   team_template: "Team templates",
 }
@@ -34,6 +36,7 @@ export function parseCommandPaletteInput(value: string): CommandPaletteInputStat
 
 export function groupCommandPaletteResults(
   results: CommandPaletteSearchResult[],
+  labels: CommandPaletteGroupLabels = {},
 ): CommandPaletteGroup[] {
   const groups = new Map<CommandPaletteResultKind, CommandPaletteSearchResult[]>()
   for (const result of results) {
@@ -42,7 +45,7 @@ export function groupCommandPaletteResults(
   return (Object.keys(GROUP_LABELS) as CommandPaletteResultKind[])
     .map((kind) => ({
       kind,
-      label: GROUP_LABELS[kind],
+      label: labels[kind] ?? GROUP_LABELS[kind],
       items: groups.get(kind) ?? [],
     }))
     .filter((group) => group.items.length > 0)

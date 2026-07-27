@@ -79,7 +79,7 @@ describe("run completion flow", () => {
     }
   })
 
-  it("completes when execution and direct delivery are both satisfied", () => {
+  it("requires result diagnosis even when execution and direct delivery are satisfied", () => {
     const decision = decideCompletionFlow({
       review: null,
       executionSemantics: {
@@ -94,7 +94,10 @@ describe("run completion flow", () => {
       truncatedOutputRecoveryAttempted: false,
     })
 
-    expect(decision.kind).toBe("complete")
+    expect(decision.kind).toBe("recover_empty_result")
+    if (decision.kind === "recover_empty_result") {
+      expect(decision.reason).toContain("LLM 결과 진단 receipt가 없습니다")
+    }
   })
 
   it("returns followup or invalid_followup based on prompt presence", () => {
@@ -181,6 +184,51 @@ describe("run completion flow", () => {
     expect(decision.kind).toBe("ask_user")
     if (decision.kind === "ask_user") {
       expect(decision.userMessage).toBe("어느 파일을 수정해야 하나요?")
+    }
+  })
+
+  it("returns terminal blocked instead of retrying without a materially different path", () => {
+    const decision = decideCompletionFlow({
+      review: {
+        status: "blocked",
+        summary: "확인 가능한 범위까지 조사했습니다.",
+        reason: "현재 증거에는 검증 가능한 직접 출처가 없습니다.",
+        remainingItems: ["직접 출처의 기준 시각 확인"],
+      },
+      executionSemantics: baseExecutionSemantics,
+      preview: "검색 결과와 한계를 함께 정리했습니다.",
+      deliverySatisfied: false,
+      successfulTools: [],
+      sawRealFilesystemMutation: false,
+      requiresFilesystemMutation: false,
+      truncatedOutputRecoveryAttempted: false,
+    })
+
+    expect(decision).toMatchObject({
+      kind: "blocked",
+      reason: "현재 증거에는 검증 가능한 직접 출처가 없습니다.",
+    })
+  })
+
+  it("blocks on a technical review failure without re-running successful tools", () => {
+    const decision = decideCompletionFlow({
+      review: null,
+      reviewFailureReasonCode: "completion_review_provider_failed",
+      executionSemantics: baseExecutionSemantics,
+      preview: "검색 결과",
+      deliverySatisfied: false,
+      successfulTools: [{ toolName: "web_search", output: "bounded evidence" }],
+      sawRealFilesystemMutation: false,
+      requiresFilesystemMutation: false,
+      truncatedOutputRecoveryAttempted: false,
+    })
+
+    expect(decision).toMatchObject({
+      kind: "blocked",
+    })
+    if (decision.kind === "blocked") {
+      expect(decision.reason).toContain("같은 도구 실행을 반복하지 않았습니다")
+      expect(decision.reason).not.toContain("completion_review_provider_failed")
     }
   })
 })

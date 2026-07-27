@@ -5,6 +5,12 @@ import { fileURLToPath } from "node:url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const rootDir = resolve(__dirname, "..")
+const YEONJANG_PACKAGE_ENV = Object.freeze({
+  targetDir: process.env.YEONJANG_TARGET_DIR,
+  localAppData: process.env.LOCALAPPDATA,
+  profile: process.env.YEONJANG_PROFILE || "release",
+  binaryPath: process.env.YEONJANG_BINARY_PATH,
+})
 
 const TARGETS = {
   "darwin-arm64": { os: "darwin", cpu: "arm64", binaryName: "knowbee-yeonjang" },
@@ -46,9 +52,9 @@ function uniquePaths(paths) {
 }
 
 function defaultTargetDirs(target) {
-  const dirs = [process.env.YEONJANG_TARGET_DIR]
-  if (target === "win32-x64" && process.env.LOCALAPPDATA) {
-    dirs.push(join(process.env.LOCALAPPDATA, "Yeonjang", "target"))
+  const dirs = [YEONJANG_PACKAGE_ENV.targetDir]
+  if (target === "win32-x64" && YEONJANG_PACKAGE_ENV.localAppData) {
+    dirs.push(join(YEONJANG_PACKAGE_ENV.localAppData, "Yeonjang", "target"))
   }
   dirs.push(join(rootDir, "Yeonjang", "target"))
   return uniquePaths(dirs.map((dir) => (dir ? resolve(dir) : null)))
@@ -56,10 +62,10 @@ function defaultTargetDirs(target) {
 
 function binaryCandidates(targetKey, explicitBinary) {
   const target = TARGETS[targetKey]
-  const profile = process.env.YEONJANG_PROFILE || "release"
+  const profile = YEONJANG_PACKAGE_ENV.profile
   return uniquePaths([
     explicitBinary ? resolve(explicitBinary) : null,
-    process.env.YEONJANG_BINARY_PATH ? resolve(process.env.YEONJANG_BINARY_PATH) : null,
+    YEONJANG_PACKAGE_ENV.binaryPath ? resolve(YEONJANG_PACKAGE_ENV.binaryPath) : null,
     ...defaultTargetDirs(targetKey).map((targetDir) => join(targetDir, profile, target.binaryName)),
   ])
 }

@@ -2,28 +2,31 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { closeDb, getDb, getSchedule, getScheduleRuns, insertSchedule } from "../packages/core/src/db/index.js"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
+import { CONTRACT_SCHEMA_VERSION, toCanonicalJson, type ScheduleContract } from "../packages/core/src/contracts/index.ts"
+import { closeDb, getSchedule, getScheduleRuns, insertSchedule } from "../packages/core/src/db/index.js"
 import { storeMemory } from "../packages/core/src/memory/store.ts"
 import { searchMemoryChunks } from "../packages/core/src/memory/search.ts"
 import { createDefaultScheduleActionDependencies } from "../packages/core/src/runs/action-execution.ts"
 import { getNextRunForTimezone, getNextRunInTimezone } from "../packages/core/src/scheduler/cron.ts"
 import { computeScheduleRetryDelayMs, normalizeScheduleMaxRetries } from "../packages/core/src/scheduler/retry.ts"
 import { runScheduleAndWait } from "../packages/core/src/scheduler/index.ts"
+import { createMemoryJournalRepository } from "../packages/core/src/memory/journal.ts"
+import { createAgentHierarchyStorage } from "../packages/core/src/orchestration/hierarchy.ts"
 import { resolveScheduleTickDirective } from "../packages/core/src/scheduler/tick-policy.ts"
 import { buildScheduleMemoryContext } from "../packages/core/src/schedules/context.ts"
+import { createTestArtifactStorage } from "./fixtures/artifact-storage.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
+let runtimeDb: ReturnType<typeof initializeTestDbRuntime>
+let stateDir = ""
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task007-schedule-"))
+  stateDir = mkdtempSync(join(tmpdir(), "knowbee-task007-schedule-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  runtimeDb = initializeTestDbRuntime(stateDir)
 }
 
 beforeEach(() => {
@@ -32,11 +35,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -109,7 +107,11 @@ describe("task007 schedule stability", () => {
   })
 
   it("stores recurring schedule timezone and exposes it in schedule memory context", () => {
-    const dependencies = createDefaultScheduleActionDependencies({ scheduleDelayedRun: vi.fn() })
+    const dependencies = createDefaultScheduleActionDependencies({
+      artifactStorage: createTestArtifactStorage(stateDir),
+      scheduleDelayedRun: vi.fn(),
+      config: structuredClone(DEFAULT_CONFIG),
+    })
     const created = dependencies.createRecurringSchedule({
       title: "TASK007 KST 보고",
       task: "TASK007_TIMEZONE_PAYLOAD",
@@ -131,6 +133,21 @@ describe("task007 schedule stability", () => {
 
   it("completes direct agent notification schedules without re-entering the agent loop", async () => {
     const now = Date.parse("2026-04-15T00:00:00.000Z")
+    const contract: ScheduleContract = {
+      schemaVersion: CONTRACT_SCHEMA_VERSION,
+      kind: "recurring",
+      time: { cron: "* * * * *", timezone: "Asia/Seoul", missedPolicy: "next_only" },
+      payload: { kind: "literal_message", literalText: "알림" },
+      delivery: {
+        schemaVersion: CONTRACT_SCHEMA_VERSION,
+        mode: "channel_message",
+        channel: "agent",
+        sessionId: null,
+      },
+      source: { originRunId: "run-origin-task007", originRequestGroupId: "group-origin-task007" },
+      displayName: "TASK007 직접 알림",
+      rawText: "매 1분마다 사용자에게 '알림' 메시지로 알려주기",
+    }
     insertSchedule({
       id: "schedule-direct-agent-task007",
       name: "TASK007 직접 알림",
@@ -146,11 +163,27 @@ describe("task007 schedule stability", () => {
       model: null,
       max_retries: 0,
       timeout_sec: 300,
+      contract_json: toCanonicalJson(contract),
+      contract_schema_version: CONTRACT_SCHEMA_VERSION,
       created_at: now,
       updated_at: now,
     })
 
-    await runScheduleAndWait("schedule-direct-agent-task007", "manual")
+    const memoryJournal = createMemoryJournalRepository({
+      memoryDbFile: join(stateDir, "memory.db3"),
+    })
+    try {
+      await runScheduleAndWait(
+        "schedule-direct-agent-task007",
+        "manual",
+        DEFAULT_CONFIG,
+        createTestArtifactStorage(stateDir),
+        memoryJournal,
+        createAgentHierarchyStorage({ stateDir }),
+      )
+    } finally {
+      memoryJournal.close()
+    }
 
     const [run] = getScheduleRuns("schedule-direct-agent-task007", 1, 0)
     expect(run).toMatchObject({
@@ -159,15 +192,15 @@ describe("task007 schedule stability", () => {
       summary: "알림",
       error: null,
     })
-    const messageCount = getDb()
+    const messageCount = runtimeDb
       .prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM messages WHERE session_id LIKE 'schedule:%'")
       .get()?.n ?? 0
     expect(messageCount).toBe(0)
 
-    const legacyAuditCount = getDb()
+    const contractMissingAuditCount = runtimeDb
       .prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM audit_logs WHERE tool_name = 'legacy_schedule_contract_missing'")
       .get()?.n ?? 0
-    expect(legacyAuditCount).toBe(1)
+    expect(contractMissingAuditCount).toBe(0)
   })
 
   it("applies scheduleId retry budget and exponential backoff", () => {

@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { closeDb, getCapabilityDelegation } from "../packages/core/src/db/index.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+import { closeDb, getCapabilityDelegation } from "../packages/core/src/db/index.js"
 import {
   type CapabilityPolicy,
   type McpServerStatus,
@@ -26,28 +26,19 @@ import { buildMcpToolCallPayload } from "../packages/core/src/mcp/client.ts"
 import { filterMcpStatusesForAgentAllowlist } from "../packages/core/src/mcp/registry.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task009-capability-isolation-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
   resetAgentCapabilityRateLimitsForTest()
 }
 
 afterEach(() => {
   closeDb()
   resetAgentCapabilityRateLimitsForTest()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -80,7 +71,7 @@ function allowlist(overrides: Partial<SkillMcpAllowlist> = {}): SkillMcpAllowlis
   return {
     enabledSkillIds: ["research"],
     enabledMcpServerIds: ["browser"],
-    enabledToolNames: ["web_search", "mcp__browser__search", "search"],
+    enabledToolNames: ["web_fetch", "mcp__browser__search", "search"],
     disabledToolNames: ["shell_exec"],
     secretScopeId: "secret:agent:researcher",
     ...overrides,
@@ -141,7 +132,7 @@ function legacyToolContext(): ToolContext {
 describe("task009 capability isolation", () => {
   it("resolves permission profile policy without semantic comparison", () => {
     const allowed = evaluateAgentToolCapabilityPolicy({
-      toolName: "web_search",
+      toolName: "web_fetch",
       riskLevel: "safe",
       ctx: toolContext(),
     })
@@ -165,6 +156,30 @@ describe("task009 capability isolation", () => {
     })
     expect(denied.allowed).toBe(false)
     expect(denied.reasonCode).toBe("risk_exceeds_profile")
+  })
+
+  it("allows camera capture through explicit Yeonjang tool permission without granting screen control", () => {
+    const decision = evaluateAgentToolCapabilityPolicy({
+      toolName: "yeonjang_camera_capture",
+      riskLevel: "moderate",
+      ctx: toolContext(
+        capabilityPolicy({
+          permissionProfile: permissionProfile({
+            riskCeiling: "moderate",
+            approvalRequiredFrom: "moderate",
+            allowScreenControl: false,
+          }),
+          skillMcpAllowlist: allowlist({
+            enabledToolNames: ["yeonjang_camera_capture"],
+            disabledToolNames: [],
+          }),
+        }),
+      ),
+    })
+
+    expect(decision.allowed).toBe(true)
+    expect(decision.approvalRequired).toBe(true)
+    expect(decision.reasonCode).toBe("capability_approval_required")
   })
 
   it("blocks cross-agent MCP use and requires agent-scoped context", () => {

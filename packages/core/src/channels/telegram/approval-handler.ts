@@ -1,7 +1,7 @@
 import type { Bot } from "grammy"
 import { eventBus } from "../../events/index.js"
 import type { ApprovalDecision } from "../../events/index.js"
-import { createLogger } from "../../logger/index.js"
+import { createLogger, redactLogText } from "../../logger/index.js"
 import { getRootRun } from "../../runs/store.js"
 import { attachApprovalChannelMessage, describeLateApproval, getLatestApprovalForRun } from "../../runs/approval-registry.js"
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js"
@@ -11,16 +11,28 @@ import {
   buildApprovalAggregateText,
   resolveApprovalAggregate,
   type ApprovalAggregateContext,
+  type ApprovalAggregateTextLanguage,
 } from "../approval-aggregation.js"
+import {
+  buildTelegramApprovalCallbackNotice,
+  buildTelegramApprovalResultLabel,
+  resolveTelegramApprovalCallbackLanguage,
+} from "./approval-callback-notice.js"
 import { buildApprovalKeyboard, buildResultKeyboard } from "./keyboards.js"
 
 const log = createLogger("channel:telegram:approval")
+
+function telegramApprovalErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 
 interface PendingApproval {
   context: ApprovalAggregateContext
   chatId: number
   messageId: number
   requesterId: number
+  language: ApprovalAggregateTextLanguage
   timeout?: ReturnType<typeof setTimeout> | null
 }
 
@@ -28,10 +40,12 @@ interface ActiveChat {
   chatId: number
   userId: number
   threadId?: number | undefined
+  language?: ApprovalAggregateTextLanguage | undefined
 }
 
 // Map from runId → pending approval data
 const pending = new Map<string, PendingApproval>()
+const resolvedApprovalLanguages = new Map<string, ApprovalAggregateTextLanguage>()
 
 // Map from sessionId → active chat info (set by bot.ts before runAgent)
 export const activeChats = new Map<string, ActiveChat>()
@@ -46,8 +60,14 @@ export function setActiveChatForSession(
   chatId: number,
   userId: number,
   threadId?: number | undefined,
+  language?: ApprovalAggregateTextLanguage | undefined,
 ): void {
-  const chat: ActiveChat = { chatId, userId, ...(threadId !== undefined ? { threadId } : {}) }
+  const chat: ActiveChat = {
+    chatId,
+    userId,
+    ...(threadId !== undefined ? { threadId } : {}),
+    ...(language ? { language } : {}),
+  }
   activeChats.set(sessionId, chat)
   activeChatRefs.set(sessionId, (activeChatRefs.get(sessionId) ?? 0) + 1)
   latestActiveChat = chat
@@ -81,6 +101,7 @@ export function registerApprovalHandler(bot: Bot): void {
     const observedAt = Date.now()
     const paramsStr = JSON.stringify(params, null, 2).slice(0, 300)
     const existing = pending.get(runId)
+    const language = existing?.language ?? target.language ?? "ko"
     const aggregated = appendApprovalAggregateItem(existing?.context, {
       ...(approvalId ? { approvalId } : {}),
       runId,
@@ -95,12 +116,12 @@ export function registerApprovalHandler(bot: Bot): void {
       paramsPreview: paramsStr,
       resolve,
     }, target.userId, observedAt)
-    const text = buildApprovalAggregateText({ context: aggregated.context, channel: "telegram" })
+    const text = buildApprovalAggregateText({ context: aggregated.context, channel: "telegram", language })
 
     let sentMsgId = existing?.messageId
 
     try {
-      const keyboard = buildApprovalKeyboard(runId)
+      const keyboard = buildApprovalKeyboard(runId, language)
       const sendOpts =
         target.threadId !== undefined
           ? { reply_markup: keyboard, message_thread_id: target.threadId }
@@ -113,7 +134,7 @@ export function registerApprovalHandler(bot: Bot): void {
         sentMsgId = msg.message_id
       }
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err)
+      const errMsg = telegramApprovalErrorMessage(err)
       log.error(`Failed to send approval message: ${errMsg}`)
       return
     }
@@ -127,6 +148,7 @@ export function registerApprovalHandler(bot: Bot): void {
       : setTimeout(() => {
         const entry = pending.get(runId)
         if (!entry) return
+        resolvedApprovalLanguages.set(runId, entry.language)
         pending.delete(runId)
         const resolvedItems = resolveApprovalAggregate(entry.context, "deny", "timeout")
         for (const item of resolvedItems) {
@@ -139,6 +161,7 @@ export function registerApprovalHandler(bot: Bot): void {
       chatId: target.chatId,
       messageId: sentMsgId ?? 0,
       requesterId: target.userId,
+      language,
       timeout,
     })
     if (existing && aggregated.appended && aggregated.aggregationLatencyMs !== null) {
@@ -180,6 +203,7 @@ export function registerApprovalHandler(bot: Bot): void {
   const detachResolved = eventBus.on("approval.resolved", ({ runId }) => {
     const entry = pending.get(runId)
     if (entry?.timeout) clearTimeout(entry.timeout)
+    if (entry?.language) resolvedApprovalLanguages.set(runId, entry.language)
     pending.delete(runId)
   })
   detachTelegramApprovalRequestListener = () => {
@@ -190,6 +214,7 @@ export function registerApprovalHandler(bot: Bot): void {
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data
     const from = ctx.from
+    const callbackLanguage = resolveTelegramApprovalCallbackLanguage(ctx.from?.language_code)
 
     if (data === "noop") {
       await ctx.answerCallbackQuery()
@@ -208,17 +233,28 @@ export function registerApprovalHandler(bot: Bot): void {
 
     const entry = pending.get(runId)
     if (entry === undefined) {
-      const lateMessage = describeLateApproval(getLatestApprovalForRun(runId))
-      await ctx.answerCallbackQuery(lateMessage.startsWith("처리할 승인 요청을 찾을 수 없습니다.") ? "이미 처리된 요청입니다." : lateMessage)
+      const language = resolvedApprovalLanguages.get(runId) ?? callbackLanguage
+      const lateMessage = describeLateApproval(getLatestApprovalForRun(runId), language)
+      const notFoundMessage = describeLateApproval(undefined, language)
+      await ctx.answerCallbackQuery(buildTelegramApprovalCallbackNotice({
+        language,
+        reason: "late",
+        text: lateMessage === notFoundMessage
+          ? buildTelegramApprovalCallbackNotice({ language, reason: "late" }).text
+          : lateMessage,
+      }).text)
       return
     }
 
     if (from.id !== entry.requesterId) {
-      await ctx.answerCallbackQuery("⚠️ 권한 없음: 요청자만 응답할 수 있습니다.")
+      await ctx.answerCallbackQuery(buildTelegramApprovalCallbackNotice({ language: callbackLanguage, reason: "unauthorized" }).text)
       return
     }
 
+    const language = entry.language
+
     if (entry.timeout) clearTimeout(entry.timeout)
+    resolvedApprovalLanguages.set(runId, entry.language)
     pending.delete(runId)
 
     const decision: ApprovalDecision =
@@ -230,18 +266,12 @@ export function registerApprovalHandler(bot: Bot): void {
     const primary = entry.context.items[0]
     const primaryKind = primary?.kind ?? "approval"
     const username = from.first_name ?? from.username ?? String(from.id)
-    const resultLabel =
-      primaryKind === "screen_confirmation"
-        ? decision === "allow_run"
-          ? `✅ ${username}이 준비 완료 후 전체 진행`
-          : decision === "allow_once"
-            ? `🔹 ${username}이 이번 단계 진행 확인`
-            : `❌ ${username}이 준비 미완료로 요청 취소`
-        : decision === "allow_run"
-          ? `✅ ${username}이 이 요청 전체를 승인함`
-          : decision === "allow_once"
-            ? `🔹 ${username}이 이번 단계만 승인함`
-            : `❌ ${username}이 거부하고 요청을 취소함`
+    const resultLabel = buildTelegramApprovalResultLabel({
+      language,
+      approvalKind: primaryKind,
+      decision,
+      username,
+    })
 
     try {
       await bot.api.editMessageReplyMarkup(entry.chatId, entry.messageId, {
@@ -251,19 +281,12 @@ export function registerApprovalHandler(bot: Bot): void {
       // best-effort
     }
 
-    await ctx.answerCallbackQuery(
-      primaryKind === "screen_confirmation"
-        ? decision === "allow_run"
-          ? "✅ 준비 완료 후 전체 진행"
-          : decision === "allow_once"
-            ? "🔹 이번 단계 진행"
-            : "❌ 준비 미완료, 취소"
-        : decision === "allow_run"
-          ? "✅ 이 요청 전체 승인"
-          : decision === "allow_once"
-            ? "🔹 이번 단계 승인"
-            : "❌ 거부 후 취소",
-    )
+    await ctx.answerCallbackQuery(buildTelegramApprovalCallbackNotice({
+      language,
+      reason: "decision",
+      approvalKind: primaryKind,
+      decision,
+    }).text)
     const resolvedItems = resolveApprovalAggregate(entry.context, decision, "user")
     for (const item of resolvedItems) {
       eventBus.emit("approval.resolved", { ...(item.approvalId ? { approvalId: item.approvalId } : {}), runId, decision, toolName: item.toolName, kind: item.kind, reason: "user" })
@@ -278,6 +301,7 @@ export function resetTelegramApprovalStateForTest(): void {
     if (entry.timeout) clearTimeout(entry.timeout)
   }
   pending.clear()
+  resolvedApprovalLanguages.clear()
   activeChats.clear()
   activeChatRefs.clear()
   latestActiveChat = undefined

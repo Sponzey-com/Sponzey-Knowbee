@@ -13,23 +13,19 @@ import {
   parseNamespacedChannelIdentity,
   resolveChannelContinuation,
 } from "../packages/core/src/channels/index.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import {
   closeDb,
   insertChannelMessageRef,
 } from "../packages/core/src/db/index.js"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task012-channel-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 beforeEach(() => {
@@ -38,11 +34,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -235,7 +226,14 @@ describe("task012 channel continuation, identity, and policy", () => {
 
     expect(result.allowed).toBe(false)
     expect(result.policy.reasonCode).toBe("blocked_user")
-    expect(result.responseText).toContain("not allowed")
+    expect(result.responseText).toBeUndefined()
+    expect(result.notice).toMatchObject({
+      kind: "channel_access_policy_blocked",
+      reasonCode: "blocked_user",
+      blockedScope: "user",
+      renderingRequired: "llm_final_response",
+      fallbackDelivery: "block_without_llm_rendering",
+    })
     expect(result.envelope.accessPolicy).toMatchObject({
       decision: "blocked",
       reasonCode: "blocked_user",

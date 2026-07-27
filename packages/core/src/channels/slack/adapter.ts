@@ -1,4 +1,8 @@
-import type { SlackConfig } from "../../config/types.js"
+import type { KnowbeeConfig, SlackConfig } from "../../config/types.js"
+import type { ArtifactStorageContext } from "../../artifacts/lifecycle.js"
+import type { MemoryJournalRepository } from "../../memory/journal.js"
+import type { AgentHierarchyStorage } from "../../orchestration/hierarchy.js"
+import { redactLogText } from "../../logger/index.js"
 import {
   buildUnsupportedCapabilityReceipt,
   createRawPayloadRef,
@@ -17,12 +21,14 @@ import {
   type InteractionEnvelope,
   type OutboundMessage,
 } from "../contracts.js"
+import { resolveUserFacingMessageLanguage } from "../language.js"
 import {
   buildSlackFailedDeliveryReceipt,
   buildSlackSentDeliveryReceipt,
   type SlackDeliveryTarget,
 } from "./message-delivery.js"
 import { SlackChannel } from "./bot.js"
+import type { ChannelPendingResponseDeliveryInput } from "../pending-response-delivery.js"
 import {
   getActiveSlackChannel,
   getSlackRuntimeStatus,
@@ -32,6 +38,11 @@ import {
 } from "./runtime.js"
 
 export type SlackConnectionMode = "socket" | "events_api"
+
+function slackAdapterErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 
 export interface SlackConnectionPolicy {
   mode: SlackConnectionMode
@@ -54,7 +65,11 @@ export interface SlackAdapterTransport {
 }
 
 export interface SlackChannelAdapterOptions {
+  artifactStorage?: ArtifactStorageContext | undefined
+  memoryJournal?: MemoryJournalRepository | undefined
+  hierarchyStorage?: AgentHierarchyStorage | undefined
   config?: SlackConfig | undefined
+  runtimeConfig?: KnowbeeConfig | undefined
   channelId?: string
   connectionId?: string
   connectionMode?: SlackConnectionMode
@@ -270,6 +285,7 @@ export function normalizeSlackInboundEvent(
   if (!text && !event.files?.length) return []
 
   const threadId = event.thread_ts?.trim() || (eventType === "app_mention" ? messageId : "")
+  const replyToMessageId = threadId && threadId !== messageId ? threadId : undefined
   const timestamp = parseSlackTimestamp(event.event_ts ?? event.ts, options.now)
 
   return [{
@@ -278,6 +294,15 @@ export function normalizeSlackInboundEvent(
     connectionId: options.connectionId ?? DEFAULT_CONNECTION_ID,
     messageId,
     ...(threadId ? { threadId } : {}),
+    ...(replyToMessageId
+      ? {
+          replyToMessageId,
+          continuationContext: {
+            parentMessageId: replyToMessageId,
+            source: "thread" as const,
+          },
+        }
+      : {}),
     sender: {
       id: userId,
       providerType: "user",
@@ -289,6 +314,7 @@ export function normalizeSlackInboundEvent(
     mentions,
     timestamp,
     rawPayloadRef: createRawPayloadRef({ provider: "slack", payload: rawPayload, createdAt: timestamp }),
+    userFacingLanguage: resolveUserFacingMessageLanguage(text),
     dedupeKey: `slack:${roomId}:${messageId}`,
   }]
 }
@@ -361,6 +387,10 @@ export class SlackChannelAdapter implements ChannelAdapter {
   readonly connectionId: string
 
   private readonly config: SlackConfig | undefined
+  private readonly runtimeConfig: KnowbeeConfig | undefined
+  private readonly artifactStorage: ArtifactStorageContext | undefined
+  private readonly memoryJournal: MemoryJournalRepository | undefined
+  private readonly hierarchyStorage: AgentHierarchyStorage | undefined
   private readonly connectionMode: SlackConnectionMode
   private readonly transport: SlackAdapterTransport | undefined
   private readonly now: () => number
@@ -374,6 +404,10 @@ export class SlackChannelAdapter implements ChannelAdapter {
     this.channelId = options.channelId ?? DEFAULT_CHANNEL_ID
     this.connectionId = options.connectionId ?? DEFAULT_CONNECTION_ID
     this.config = options.config
+    this.runtimeConfig = options.runtimeConfig
+    this.artifactStorage = options.artifactStorage
+    this.memoryJournal = options.memoryJournal
+    this.hierarchyStorage = options.hierarchyStorage
     this.connectionMode = options.connectionMode ?? "socket"
     this.transport = options.transport
     this.now = options.now ?? Date.now
@@ -400,14 +434,21 @@ export class SlackChannelAdapter implements ChannelAdapter {
     }
 
     if (!this.config) throw new Error("Slack config is missing.")
-    const channel = new SlackChannel(this.config)
+    if (!this.runtimeConfig) throw new Error("Slack runtime config snapshot is missing.")
+    if (!this.artifactStorage) throw new Error("Slack artifact storage context is missing.")
+    if (!this.memoryJournal) throw new Error("Slack memory journal context is missing.")
+    if (!this.hierarchyStorage) throw new Error("Slack hierarchy storage context is missing.")
+    const channel = new SlackChannel(this.config, this.artifactStorage, {
+      config: this.runtimeConfig,
+      workDir: this.runtimeConfig.profile.workspace,
+    }, this.memoryJournal, this.hierarchyStorage)
     try {
       await channel.start()
       this.channel = channel
       setActiveSlackChannel(channel)
       setSlackRuntimeError(null)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = slackAdapterErrorMessage(error)
       setSlackRuntimeError(message)
       throw error
     }
@@ -425,6 +466,10 @@ export class SlackChannelAdapter implements ChannelAdapter {
       this.channel?.stop()
     }
     this.channel = null
+  }
+
+  createPendingResponseDeliveryHandler(input: ChannelPendingResponseDeliveryInput) {
+    return this.channel?.createPendingResponseDeliveryHandler(input)
   }
 
   async healthCheck(): Promise<ChannelHealthCheck> {
@@ -483,6 +528,7 @@ export class SlackChannelAdapter implements ChannelAdapter {
         capability: unsupportedCapability,
         idempotencyKey: message.idempotencyKey,
         timestamp: this.now(),
+        userFacingLanguage: message.userFacingLanguage,
       })
     }
 

@@ -1,5 +1,4 @@
 import { buildDeliveryKey, buildPayloadHash, buildScheduleIdentityKey, CONTRACT_SCHEMA_VERSION, formatContractValidationFailureForUser, toCanonicalJson, validateScheduleContract, } from "../contracts/index.js";
-import { getConfig } from "../config/index.js";
 import { getSchedule, getSchedules, insertAuditLog, isLegacySchedule, updateSchedule, } from "../db/index.js";
 import { isValidCron, normalizeScheduleTimezone } from "../scheduler/cron.js";
 import { extractDirectChannelDeliveryText } from "../runs/scheduled.js";
@@ -72,7 +71,7 @@ function auditLegacyMigration(params) {
         // Migration diagnostics must not break schedule management APIs.
     }
 }
-export function buildLegacyScheduleMigrationReport(schedule) {
+export function buildLegacyScheduleMigrationReport(schedule, config) {
     const legacy = isLegacySchedule(schedule);
     if (!legacy) {
         return {
@@ -106,7 +105,6 @@ export function buildLegacyScheduleMigrationReport(schedule) {
             persistence: null,
         };
     }
-    const config = getConfig();
     const timezone = normalizeScheduleTimezone(schedule.timezone, config.scheduler.timezone || config.profile.timezone);
     if (!schedule.timezone)
         warnings.push("Legacy schedule did not store a timezone; current default timezone will be used.");
@@ -165,11 +163,11 @@ export function buildLegacyScheduleMigrationReport(schedule) {
         persistence,
     };
 }
-export function dryRunLegacyScheduleMigration(scheduleId, options = {}) {
+export function dryRunLegacyScheduleMigration(scheduleId, options) {
     const schedule = getSchedule(scheduleId);
     if (!schedule)
         return null;
-    const report = buildLegacyScheduleMigrationReport(schedule);
+    const report = buildLegacyScheduleMigrationReport(schedule, options.config);
     if (options.audit === true) {
         auditLegacyMigration({
             schedule,
@@ -181,11 +179,11 @@ export function dryRunLegacyScheduleMigration(scheduleId, options = {}) {
     }
     return report;
 }
-export function applyLegacyScheduleMigration(scheduleId) {
+export function applyLegacyScheduleMigration(scheduleId, options) {
     const schedule = getSchedule(scheduleId);
     if (!schedule)
         return { ok: false, report: null, error: "schedule_not_found" };
-    const report = buildLegacyScheduleMigrationReport(schedule);
+    const report = buildLegacyScheduleMigrationReport(schedule, options.config);
     if (!report.convertible || !report.contract) {
         const error = report.reasons[0] ?? "legacy migration is not convertible";
         auditLegacyMigration({ schedule, action: "convert", result: "failed", report, error });
@@ -202,19 +200,19 @@ export function applyLegacyScheduleMigration(scheduleId) {
     auditLegacyMigration({ schedule, action: "convert", result: "success", report });
     return { ok: true, report };
 }
-export function keepLegacySchedule(scheduleId) {
+export function keepLegacySchedule(scheduleId, options) {
     const schedule = getSchedule(scheduleId);
     if (!schedule)
         return { ok: false, report: null, error: "schedule_not_found" };
-    const report = buildLegacyScheduleMigrationReport(schedule);
+    const report = buildLegacyScheduleMigrationReport(schedule, options.config);
     auditLegacyMigration({ schedule, action: "keep", result: "success", report });
     return { ok: true, report };
 }
-export function listLegacyScheduleMigrationItems() {
+export function listLegacyScheduleMigrationItems(config) {
     return getSchedules()
         .filter((schedule) => isLegacySchedule(schedule))
         .map((schedule) => {
-        const report = buildLegacyScheduleMigrationReport(schedule);
+        const report = buildLegacyScheduleMigrationReport(schedule, config);
         return {
             scheduleId: schedule.id,
             name: schedule.name,

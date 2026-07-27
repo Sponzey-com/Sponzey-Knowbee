@@ -6,10 +6,10 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
-use rumqttc::{Client, Event, Incoming, LastWill, MqttOptions, Outgoing, QoS};
+use rumqttc::{Client, Event, Incoming, LastWill, MqttOptions, Outgoing, QoS, RecvTimeoutError};
 use serde::Serialize;
 use serde_json::json;
 
@@ -18,15 +18,19 @@ use crate::lifecycle::{
     LifecycleRegistrationState, SharedLifecycleState, read_shared_lifecycle_state,
     runtime_support_profile,
 };
-use crate::node::{build_target, capabilities_payload, git_commit, git_tag, spawn_request_task};
+use crate::node::{
+    build_target, capabilities_payload, git_commit, git_tag, spawn_request_task_with_settings,
+};
 use crate::platform::current_backend;
 use crate::protocol::{Request, Response};
-use crate::settings::{YeonjangSettings, load_settings};
+use crate::settings::YeonjangSettings;
 
 const RESPONSE_CHUNK_BYTES: usize = 48 * 1024;
 const MQTT_MAX_PACKET_BYTES: usize = 8 * 1024 * 1024;
 const MQTT_REQUEST_CHANNEL_CAPACITY: usize = 256;
 const MQTT_RECONNECT_DELAY: Duration = Duration::from_secs(5);
+const MQTT_EVENT_POLL_INTERVAL: Duration = Duration::from_secs(5);
+const MQTT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const PROCESSED_REQUEST_TTL_MS: i64 = 5 * 60 * 1000;
 const MAX_PROCESSED_REQUESTS: usize = 512;
 
@@ -247,6 +251,10 @@ fn sleep_with_stop_check(duration: Duration, stop_requested: &AtomicBool) -> boo
     true
 }
 
+fn heartbeat_due(last_presence: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(last_presence) >= MQTT_HEARTBEAT_INTERVAL
+}
+
 fn run_connection_loop(
     client: &Client,
     connection: &mut rumqttc::Connection,
@@ -258,8 +266,33 @@ fn run_connection_loop(
     processed_requests: &SharedProcessedRequests,
 ) -> bool {
     let mut announced_connected = false;
+    let mut last_presence = Instant::now();
 
-    for notification in connection.iter() {
+    loop {
+        let notification = match connection.recv_timeout(MQTT_EVENT_POLL_INTERVAL) {
+            Ok(notification) => notification,
+            Err(RecvTimeoutError::Timeout) => {
+                if announced_connected && heartbeat_due(last_presence, Instant::now()) {
+                    if let Err(error) = publish_runtime_state(
+                        client,
+                        settings,
+                        session_id,
+                        "ready",
+                        true,
+                        lifecycle_state,
+                    ) {
+                        let _ = event_tx.send(RuntimeEvent::Reconnecting(format!(
+                            "{error}. Retrying in {} seconds.",
+                            MQTT_RECONNECT_DELAY.as_secs()
+                        )));
+                        return sleep_with_stop_check(MQTT_RECONNECT_DELAY, stop_requested);
+                    }
+                    last_presence = Instant::now();
+                }
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
         if stop_requested.load(Ordering::SeqCst) {
             let _ = event_tx.send(RuntimeEvent::Disconnected(
                 "requested disconnect".to_string(),
@@ -270,6 +303,7 @@ fn run_connection_loop(
         match notification {
             Ok(Event::Incoming(Incoming::ConnAck(_))) => {
                 announced_connected = true;
+                last_presence = Instant::now();
                 let _ = event_tx.send(RuntimeEvent::Connected);
             }
             Ok(Event::Incoming(Incoming::Publish(publish))) => {
@@ -307,7 +341,10 @@ fn run_connection_loop(
                             {
                                 cached
                             } else {
-                                let response = spawn_request_task(request.clone())
+                                let response = spawn_request_task_with_settings(
+                                    request.clone(),
+                                    response_settings.clone(),
+                                )
                                     .join()
                                     .unwrap_or_else(|_| {
                                         Response::error(
@@ -642,12 +679,11 @@ fn publish_runtime_state(
     retained: bool,
     lifecycle_state: &SharedLifecycleState,
 ) -> Result<()> {
-    let runtime_settings = refresh_runtime_settings(settings);
     let lifecycle = read_shared_lifecycle_state(lifecycle_state);
-    publish_capabilities(client, &runtime_settings, session_id, &lifecycle)?;
+    publish_capabilities(client, settings, session_id, &lifecycle)?;
     publish_status(
         client,
-        &runtime_settings,
+        settings,
         session_id,
         "online",
         message,
@@ -655,18 +691,6 @@ fn publish_runtime_state(
         &lifecycle,
     )?;
     Ok(())
-}
-
-fn refresh_runtime_settings(fallback: &YeonjangSettings) -> YeonjangSettings {
-    load_settings()
-        .map(normalize_settings)
-        .map(|mut refreshed| {
-            // Keep publishing on the runtime's active topics even if the persisted
-            // node id/topics changed while the current session is connected.
-            refreshed.mqtt = fallback.mqtt.clone();
-            refreshed
-        })
-        .unwrap_or_else(|_| fallback.clone())
 }
 
 fn publish_status(
@@ -779,7 +803,7 @@ fn runtime_capabilities_payload(
     lifecycle: &LifecycleRegistrationState,
 ) -> serde_json::Value {
     let support_profile = runtime_support_profile(settings, Some(lifecycle));
-    let mut payload = capabilities_payload();
+    let mut payload = capabilities_payload(settings);
     if let Some(object) = payload.as_object_mut() {
         object.insert("session_id".to_string(), json!(session_id));
         object.insert(
@@ -1080,5 +1104,17 @@ mod tests {
             Some("desktop_interactive"),
         );
         assert!(object.get("support_profile_reason_codes").is_some());
+    }
+
+    #[test]
+    fn idle_runtime_heartbeat_is_due_before_registry_stale_window() {
+        let base = Instant::now();
+
+        assert!(!heartbeat_due(
+            base,
+            base + MQTT_HEARTBEAT_INTERVAL.saturating_sub(Duration::from_millis(1)),
+        ));
+        assert!(heartbeat_due(base, base + MQTT_HEARTBEAT_INTERVAL));
+        assert!(MQTT_HEARTBEAT_INTERVAL < Duration::from_secs(90));
     }
 }

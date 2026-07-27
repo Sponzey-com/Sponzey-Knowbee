@@ -1,6 +1,6 @@
-export type CandidateKind = "schedule" | "run" | "artifact" | "memory";
-export type CandidateReason = "explicit_id" | "structured_key" | "schedule_identity_key" | "schedule_delivery_key" | "schedule_payload_hash" | "run_contract_projection" | "artifact_id" | "artifact_path" | "semantic_candidate";
-export type CandidateSource = "explicit_id" | "structured_key" | "schedule_store" | "run_store" | "artifact_store" | "memory_vector";
+export type CandidateKind = "schedule" | "run" | "artifact";
+export type CandidateReason = "explicit_id" | "structured_key" | "schedule_identity_key" | "schedule_delivery_key" | "schedule_payload_hash" | "run_contract_projection" | "artifact_id" | "artifact_path";
+export type CandidateSource = "explicit_id" | "structured_key" | "schedule_store" | "run_store" | "artifact_store";
 export type CandidateProviderStage = "fast" | "store" | "slow";
 export interface CandidateScore {
     kind: "candidate_score";
@@ -31,7 +31,6 @@ export interface CandidateSearchInput {
         artifactId?: string;
     };
     structuredKeys?: Record<string, string | null | undefined>;
-    semanticQuery?: string;
     sessionId?: string;
     requestGroupId?: string;
     source?: string;
@@ -96,21 +95,12 @@ export declare function createStructuredKeyProvider<TInput extends CandidateSear
 export declare function createStoreCandidateProvider<TInput extends CandidateSearchInput, TPayload>(params: {
     id: string;
     source: "schedule_store" | "run_store" | "artifact_store";
-    candidateKind: Exclude<CandidateKind, "memory">;
-    candidateReason: Exclude<CandidateReason, "explicit_id" | "structured_key" | "semantic_candidate">;
+    candidateKind: CandidateKind;
+    candidateReason: Exclude<CandidateReason, "explicit_id" | "structured_key">;
     find: (input: TInput) => Array<TPayload> | Promise<Array<TPayload>>;
     candidateId: (payload: TPayload) => string;
     matchedKeys?: (payload: TPayload) => string[];
     requiresFinalDecision?: boolean;
-}): CandidateProvider<TInput, TPayload>;
-export declare function createMemoryVectorProvider<TInput extends CandidateSearchInput, TPayload>(params: {
-    id?: string;
-    enabled?: boolean;
-    search: (input: TInput, signal: AbortSignal) => Promise<Array<{
-        id: string;
-        payload: TPayload;
-        score?: number;
-    }>>;
 }): CandidateProvider<TInput, TPayload>;
 export declare function decideCandidateFinal<TPayload>(params: {
     requested: Exclude<CandidateFinalDecisionKind, "new" | "clarify">;

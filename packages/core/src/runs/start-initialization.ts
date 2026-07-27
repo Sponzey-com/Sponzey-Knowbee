@@ -1,7 +1,9 @@
 import type { FinalizationSource } from "./finalization.js"
+import type { MemoryJournalRepository } from "../memory/journal.js"
 
 interface StartInitializationDependencies {
   rememberRunInstruction: (params: {
+    memoryJournal: MemoryJournalRepository
     runId: string
     sessionId: string
     requestGroupId: string
@@ -33,6 +35,7 @@ interface StartInitializationDependencies {
 
 export function applyStartInitialization(
   params: {
+    memoryJournal: MemoryJournalRepository
     runId: string
     sessionId: string
     requestGroupId: string
@@ -57,6 +60,7 @@ export function applyStartInitialization(
   interruptedWorkerRunCount: number
 } {
   dependencies.rememberRunInstruction({
+    memoryJournal: params.memoryJournal,
     runId: params.runId,
     sessionId: params.sessionId,
     requestGroupId: params.requestGroupId,

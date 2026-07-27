@@ -31,6 +31,7 @@ describe("start bridges", () => {
     const runIntakeBridgePassMock = vi.fn(async () => ({
       kind: "complete" as const,
       text: "ok",
+      textSource: "llm_generated" as const,
       eventLabel: "done",
     }))
     const finalizationDependencies = buildStartFinalizationDependencies({
@@ -41,41 +42,52 @@ describe("start bridges", () => {
       rememberRunFailure: vi.fn(),
     })
 
-    const loopResult = await executeStartLoopDirective({
-      runId: "run-1",
-      sessionId: "session-1",
-      source: "webui",
-      onChunk: undefined,
-      directive: { kind: "complete", text: "ok" },
-      finalizationDependencies,
-    }, {
-      applyLoopDirective: applyLoopDirectiveMock as never,
-      runIntakeBridgePass: runIntakeBridgePassMock as never,
-    })
+    const loopResult = await executeStartLoopDirective(
+      {
+        runId: "run-1",
+        sessionId: "session-1",
+        source: "webui",
+        onChunk: undefined,
+        directive: { kind: "complete", text: "ok", textSource: "llm_generated" },
+        finalizationDependencies,
+      },
+      {
+        applyLoopDirective: applyLoopDirectiveMock as never,
+        runIntakeBridgePass: runIntakeBridgePassMock as never,
+      },
+    )
 
-    const intakeResult = await runStartIntakeBridge({
-      message: "hello",
-      originalRequest: "hello",
-      sessionId: "session-1",
-      requestGroupId: "group-1",
-      model: "gpt-test",
-      workDir: "/tmp",
-      source: "webui",
-      runId: "run-1",
-      onChunk: undefined,
-      reuseConversationContext: false,
-      scheduleDelayedRun: vi.fn(),
-      startDelegatedRun: vi.fn(),
-    }, {
-      appendRunEvent: vi.fn(),
-      updateRunSummary: vi.fn(),
-      incrementDelegationTurnCount: vi.fn(),
-      normalizeTaskProfile: (taskProfile) => (taskProfile ?? "general_chat"),
-      logInfo: vi.fn(),
-    }, {
-      applyLoopDirective: applyLoopDirectiveMock as never,
-      runIntakeBridgePass: runIntakeBridgePassMock as never,
-    })
+    const intakeResult = await runStartIntakeBridge(
+      {
+        message: "hello",
+        originalRequest: "hello",
+        sessionId: "session-1",
+        requestGroupId: "group-1",
+        model: "gpt-test",
+        workDir: "/tmp",
+        source: "webui",
+        runId: "run-1",
+        onChunk: undefined,
+        reuseConversationContext: false,
+        scheduleDelayedRun: vi.fn(),
+        startDelegatedRun: vi.fn(),
+      },
+      {
+        appendRunEvent: vi.fn(),
+        updateRunSummary: vi.fn(),
+        incrementDelegationTurnCount: vi.fn(),
+        normalizeTaskProfile: (taskProfile) => taskProfile ?? "general_chat",
+        logInfo: vi.fn(),
+        recordCanonicalIntakeDiagnosis: vi.fn(async () => ({ ok: true as const })),
+        authorizeCanonicalIntakePlan: vi.fn(async () => ({ ok: true as const })),
+        recordCanonicalExecutionStart: vi.fn(async () => ({ ok: true as const })),
+        releaseCanonicalSimplePath: vi.fn(async () => ({ ok: true as const })),
+      },
+      {
+        applyLoopDirective: applyLoopDirectiveMock as never,
+        runIntakeBridgePass: runIntakeBridgePassMock as never,
+      },
+    )
 
     expect(loopResult).toBe("break")
     expect(applyLoopDirectiveMock).toHaveBeenCalledTimes(1)
@@ -83,6 +95,7 @@ describe("start bridges", () => {
     expect(intakeResult).toEqual({
       kind: "complete",
       text: "ok",
+      textSource: "llm_generated",
       eventLabel: "done",
     })
   })

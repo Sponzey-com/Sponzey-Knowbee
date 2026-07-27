@@ -3,7 +3,6 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
-import { getConfig, PATHS } from "../config/index.js";
 import { getDatabaseMigrationStatus } from "../config/operations.js";
 import { getMqttBrokerSnapshot, getMqttExtensionSnapshots } from "../mqtt/broker.js";
 import { checkPromptSourceLocaleParity, loadPromptSourceRegistry } from "../memory/knowbee-md.js";
@@ -14,7 +13,14 @@ import { buildRolloutSafetySnapshot } from "./rollout-safety.js";
 import { resolveAdminUiActivation } from "../ui/mode.js";
 import { getWebUiWsClientCount } from "../api/ws/stream.js";
 import { listYeonjangRegistryInstances } from "../yeonjang/registry.js";
+import { redactLogText } from "../logger/index.js";
+import { hasOpenAICodexAuthFile } from "../auth/openai-codex-oauth.js";
+function runtimeManifestErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 let lastRuntimeManifest = null;
+const RELEASE_PACKAGE_YEONJANG_CAPABILITY_METHODS = ["clipboard.read", "clipboard.write"];
 function commandOutput(command, args, cwd = getWorkspaceRootPath()) {
     try {
         const value = execFileSync(command, args, {
@@ -73,6 +79,7 @@ function readPromptSources(workDir) {
         };
     }
     catch (error) {
+        const message = runtimeManifestErrorMessage(error);
         return {
             workDir,
             count: 0,
@@ -80,7 +87,7 @@ function readPromptSources(workDir) {
             requiredCount: 0,
             enabledCount: 0,
             localeParityOk: false,
-            diagnostics: [{ severity: "error", code: "prompt_registry_unreadable", message: error instanceof Error ? error.message : String(error) }],
+            diagnostics: [{ severity: "error", code: "prompt_registry_unreadable", message }],
         };
     }
 }
@@ -100,22 +107,21 @@ function readLatestTimestamp(db, tableName, column = "created_at") {
     const row = db.prepare(`SELECT MAX(${column}) AS value FROM ${tableName}`).get();
     return row?.value ?? null;
 }
-function readMemoryState() {
-    const cfg = getConfig();
+function readMemoryState(config, paths) {
     const base = {
-        dbPath: PATHS.dbFile,
-        dbExists: existsSync(PATHS.dbFile),
-        searchMode: cfg.memory.searchMode ?? null,
+        dbPath: paths.dbFile,
+        dbExists: existsSync(paths.dbFile),
+        searchMode: config.memory.searchMode ?? null,
         ftsAvailable: null,
         vectorTableAvailable: null,
         embeddingRows: null,
-        embeddingProvider: cfg.memory.embedding?.provider ?? null,
-        embeddingModel: cfg.memory.embedding?.model ?? null,
+        embeddingProvider: config.memory.embedding?.provider ?? null,
+        embeddingModel: config.memory.embedding?.model ?? null,
     };
     if (!base.dbExists)
         return base;
     try {
-        const db = new BetterSqlite3(PATHS.dbFile, { readonly: true, fileMustExist: true });
+        const db = new BetterSqlite3(paths.dbFile, { readonly: true, fileMustExist: true });
         try {
             const ftsAvailable = tableExists(db, "memory_chunks_fts") || tableExists(db, "memory_fts");
             const vectorTableAvailable = tableExists(db, "memory_embeddings");
@@ -138,18 +144,22 @@ function readMemoryState() {
         return base;
     }
 }
-function buildProviderProfile() {
-    const cfg = getConfig();
-    const connection = cfg.ai.connection;
+function buildProviderProfile(config) {
+    const connection = config.ai.connection;
     const auth = connection.auth;
-    const embedding = cfg.memory.embedding;
-    const capabilityMatrix = getProviderCapabilityMatrix({ connection, memory: cfg.memory });
+    const embedding = config.memory.embedding;
+    const capabilityMatrix = getProviderCapabilityMatrix({ connection, memory: config.memory });
     const normalized = {
         provider: connection.provider,
         model: connection.model,
         endpointConfigured: Boolean(connection.endpoint?.trim()),
         authMode: auth?.mode ?? null,
-        credentialConfigured: Boolean(auth?.apiKey || auth?.oauthAuthFilePath || auth?.username || auth?.password),
+        credentialConfigured: auth?.mode === "chatgpt_oauth"
+            ? hasOpenAICodexAuthFile({
+                authFilePath: auth.oauthAuthFilePath,
+                clientId: auth.clientId,
+            })
+            : Boolean(auth?.apiKey || auth?.username || auth?.password),
         embeddingProvider: embedding?.provider ?? null,
         embeddingModel: embedding?.model ?? null,
     };
@@ -169,17 +179,16 @@ function buildProviderProfile() {
         resolverPath: connection.provider ? `ai.connection.${connection.provider}` : "ai.connection.unconfigured",
     };
 }
-function buildChannels() {
-    const cfg = getConfig();
+function buildChannels(config) {
     const mqtt = getMqttBrokerSnapshot();
-    const telegram = cfg.telegram;
-    const slack = cfg.slack;
+    const telegram = config.telegram;
+    const slack = config.slack;
     return {
         webui: {
-            enabled: cfg.webui.enabled,
-            host: cfg.webui.host,
-            port: cfg.webui.port,
-            authEnabled: cfg.webui.auth.enabled,
+            enabled: config.webui.enabled,
+            host: config.webui.host,
+            port: config.webui.port,
+            authEnabled: config.webui.auth.enabled,
         },
         telegram: {
             enabled: telegram?.enabled ?? false,
@@ -208,7 +217,7 @@ function buildYeonjang() {
         const live = liveSnapshots.get(node.nodeId);
         return {
             extensionId: node.nodeId,
-            instanceId: node.instanceId,
+            instanceId: null,
             instanceAlias: node.instanceAlias,
             state: node.state,
             version: node.version,
@@ -231,7 +240,7 @@ function buildYeonjang() {
         ? registryNodes
         : getMqttExtensionSnapshots().map((node) => ({
             extensionId: node.extensionId,
-            instanceId: node.instanceId ?? null,
+            instanceId: null,
             instanceAlias: node.instanceAlias ?? null,
             state: node.state,
             version: node.version,
@@ -254,24 +263,51 @@ function buildYeonjang() {
         nodes,
     };
 }
-function buildReleasePackageState(includeReleasePackage) {
+function buildReleasePackageState(includeReleasePackage, config, paths) {
     if (!includeReleasePackage) {
-        return { manifestId: null, releaseVersion: null, requiredMissingCount: null };
+        return {
+            manifestId: null,
+            releaseVersion: null,
+            requiredMissingCount: null,
+            yeonjangPlatformCapabilityReady: null,
+            yeonjangPlatformCapabilityRequiredMethods: [],
+            yeonjangPlatformCapabilityEvidenceCount: null,
+            yeonjangPlatformCapabilityFailureCount: null,
+        };
     }
     try {
-        const manifest = buildReleaseManifest({ rootDir: getWorkspaceRootPath() });
+        const manifest = buildReleaseManifest({
+            rootDir: getWorkspaceRootPath(),
+            config,
+            runtimePaths: paths,
+            yeonjangPlatformRequiredCapabilityMethods: RELEASE_PACKAGE_YEONJANG_CAPABILITY_METHODS,
+            yeonjangAutoCollectPlatformCapabilityReadiness: true,
+        });
+        const capabilityRows = manifest.yeonjangPlatformAcceptance.platforms.flatMap((platform) => platform.capabilityReadiness);
         return {
             manifestId: hashObject({ releaseVersion: manifest.releaseVersion, artifacts: manifest.checksums, missing: manifest.requiredMissing }).slice(0, 16),
             releaseVersion: manifest.releaseVersion,
             requiredMissingCount: manifest.requiredMissing.length,
+            yeonjangPlatformCapabilityReady: manifest.yeonjangPlatformAcceptance.capabilityReady,
+            yeonjangPlatformCapabilityRequiredMethods: [...RELEASE_PACKAGE_YEONJANG_CAPABILITY_METHODS],
+            yeonjangPlatformCapabilityEvidenceCount: capabilityRows.filter((row) => Boolean(row.evidenceRef)).length,
+            yeonjangPlatformCapabilityFailureCount: capabilityRows.filter((row) => row.status !== "passed").length,
         };
     }
     catch {
-        return { manifestId: null, releaseVersion: null, requiredMissingCount: null };
+        return {
+            manifestId: null,
+            releaseVersion: null,
+            requiredMissingCount: null,
+            yeonjangPlatformCapabilityReady: null,
+            yeonjangPlatformCapabilityRequiredMethods: [...RELEASE_PACKAGE_YEONJANG_CAPABILITY_METHODS],
+            yeonjangPlatformCapabilityEvidenceCount: null,
+            yeonjangPlatformCapabilityFailureCount: null,
+        };
     }
 }
-function buildAdminUiState() {
-    const activation = resolveAdminUiActivation();
+function buildAdminUiState(input) {
+    const activation = resolveAdminUiActivation(input);
     return {
         enabled: activation.enabled,
         configEnabled: activation.configEnabled,
@@ -294,8 +330,8 @@ function buildEnvironment(includeEnvironment) {
         arch: process.arch,
     };
 }
-function buildDatabase() {
-    const status = getDatabaseMigrationStatus(PATHS.dbFile);
+function buildDatabase(paths) {
+    const status = getDatabaseMigrationStatus(paths.dbFile);
     return {
         path: status.databasePath,
         exists: status.exists,
@@ -306,8 +342,10 @@ function buildDatabase() {
         upToDate: status.upToDate,
     };
 }
-export function buildRuntimeManifest(options = {}) {
-    mkdirSync(dirname(PATHS.dbFile), { recursive: true });
+export function buildRuntimeManifest(options) {
+    const paths = options.paths;
+    mkdirSync(dirname(paths.dbFile), { recursive: true });
+    const config = options.config;
     const now = options.now ?? new Date();
     const includeEnvironment = options.includeEnvironment ?? true;
     const includeReleasePackage = options.includeReleasePackage ?? true;
@@ -327,24 +365,24 @@ export function buildRuntimeManifest(options = {}) {
         },
         process: {
             pid: process.pid,
-            cwd: process.cwd(),
+            cwd: options.processCwd ?? config.profile.workspace,
             startedAt: null,
         },
         environment: buildEnvironment(includeEnvironment),
-        database: buildDatabase(),
+        database: buildDatabase(paths),
         promptSources: readPromptSources(workspaceRoot),
-        provider: buildProviderProfile(),
-        channels: buildChannels(),
+        provider: buildProviderProfile(config),
+        channels: buildChannels(config),
         yeonjang: buildYeonjang(),
-        memory: readMemoryState(),
-        releasePackage: buildReleasePackageState(includeReleasePackage),
-        adminUi: buildAdminUiState(),
-        rollout: buildRolloutSafetySnapshot(PATHS.dbFile),
+        memory: readMemoryState(config, paths),
+        releasePackage: buildReleasePackageState(includeReleasePackage, config, paths),
+        adminUi: buildAdminUiState(options.adminActivation),
+        rollout: buildRolloutSafetySnapshot(paths.dbFile),
         paths: {
-            stateDir: PATHS.stateDir,
-            configFile: PATHS.configFile,
-            dbFile: PATHS.dbFile,
-            memoryDbFile: PATHS.memoryDbFile,
+            stateDir: paths.stateDir,
+            configFile: paths.configFile,
+            dbFile: paths.dbFile,
+            memoryDbFile: paths.memoryDbFile,
         },
     };
     const id = hashObject({ ...base, createdAt: undefined }).slice(0, 24);
@@ -354,7 +392,7 @@ export function buildRuntimeManifest(options = {}) {
 export function getLastRuntimeManifest() {
     return lastRuntimeManifest;
 }
-export function refreshRuntimeManifest(options = {}) {
+export function refreshRuntimeManifest(options) {
     return buildRuntimeManifest(options);
 }
 //# sourceMappingURL=manifest.js.map

@@ -39,14 +39,14 @@ function contextFor(overrides: Partial<AgentExecutionContext> = {}): AgentExecut
     },
     current_executor: {
       executor_id: "node:worker",
-      display_name: "작업자",
+      agent_name: "작업자",
       role_name: "Worker",
       can_delegate: false,
       available: true,
     },
     parent_executor: {
       executor_id: "agent:knowbee",
-      display_name: "노비",
+      agent_name: "노비",
       role_name: "Root",
       can_delegate: true,
       available: true,
@@ -139,7 +139,7 @@ describe("current-agent fallback contract", () => {
             ? {
                 current_executor: {
                   executor_id: "agent:knowbee",
-                  display_name: "노비",
+                  agent_name: "노비",
                   can_delegate: true,
                   available: true,
                 },
@@ -155,7 +155,7 @@ describe("current-agent fallback contract", () => {
     }
   })
 
-  it("rejects root_knowbee_direct when the current executor is not root Knowbee", () => {
+  it("rejects root_knowbee_direct when the current executor is not the root main agent", () => {
     const validation = validateAgentExecutionDecisionAgainstContext({
       context: contextFor(),
       decision: decision({
@@ -189,7 +189,7 @@ describe("current-agent fallback contract", () => {
       context: contextFor({
         current_executor: {
           executor_id: "agent:knowbee",
-          display_name: "노비",
+          agent_name: "노비",
           can_delegate: true,
           available: true,
         },
@@ -232,4 +232,3 @@ describe("current-agent fallback contract", () => {
     expect(validateOrchestrationPlan(legacyPlan).ok).toBe(true)
   })
 })
-

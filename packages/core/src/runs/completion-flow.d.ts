@@ -22,6 +22,11 @@ export type CompletionFlowDecision = {
     reason: string;
     remainingItems: string[];
     followupPrompt: string;
+    followupEvidenceRefs: string[];
+    evidenceRevisionRefs?: string[];
+    followupExecutionMode?: "tool" | "response_only";
+    followupRequiredToolNames?: string[];
+    followupTargetRefs?: string[];
 } | {
     kind: "retry_truncated";
     summary: string;
@@ -33,9 +38,15 @@ export type CompletionFlowDecision = {
     reason?: string;
     remainingItems?: string[];
     userMessage?: string;
+} | {
+    kind: "blocked";
+    summary: string;
+    reason: string;
+    remainingItems: string[];
 };
 export declare function decideCompletionFlow(params: {
     review: CompletionReviewResult | null;
+    reviewFailureReasonCode?: "completion_review_provider_failed" | "completion_review_contract_invalid";
     executionSemantics: TaskExecutionSemantics;
     preview: string;
     deliverySatisfied: boolean;

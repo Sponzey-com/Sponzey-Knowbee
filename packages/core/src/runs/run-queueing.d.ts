@@ -2,7 +2,7 @@ import type { AgentContextMode } from "../agent/index.js";
 import type { ChannelSource } from "../channels/contracts.js";
 import type { TaskExecutionSemantics, TaskIntentEnvelope, TaskStructuredRequest } from "../agent/intake.js";
 import type { AIProvider } from "../ai/index.js";
-import { resolveRunRoute } from "./routing.js";
+import { resolveRunRoute, type ResolvedRunRoute } from "./routing.js";
 import type { RunChunkDeliveryHandler } from "./delivery.js";
 import type { RootRun, TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
@@ -40,7 +40,7 @@ interface DelayedRunDependencies extends QueueLoggingDependencies {
         finished: Promise<RootRun | undefined>;
     };
     now?: () => number;
-    resolveRoute?: typeof resolveRunRoute;
+    resolveRoute: (input: Parameters<typeof resolveRunRoute>[0]) => ResolvedRunRoute;
     setTimer?: typeof setTimeout;
 }
 export declare function scheduleDelayedRootRun(params: {

@@ -15,14 +15,14 @@ export const AgentExecutionFallbackReason = {
   SelfSolve: "self_solve",
   DirectCurrentAgent: "direct_current_agent",
   DelegateToChild: "delegate_to_child",
-  // Direct requester or parent executor, not root Knowbee unless that executor requested the work.
+  // Direct requester or parent executor, not the root main agent unless that executor requested the work.
   ReturnToParent: "return_to_parent",
   RootKnowbeeDirect: "root_knowbee_direct",
   ExplicitProvider: "explicit_provider",
   ExplicitProviderTarget: "explicit_provider_target",
   BoundaryFailure: "boundary_failure",
   // Legacy alias accepted for stored phase022 decisions. New decisions should
-  // use root_knowbee_direct when the current executor is root Knowbee.
+  // use root_knowbee_direct when the current executor is the root main agent.
   KnowbeeDirect: "knowbee_direct",
   AskParent: "ask_parent",
   AskUser: "ask_user",
@@ -171,7 +171,7 @@ export interface AgentExecutionContextRequest {
 
 export interface AgentExecutionExecutorProfile {
   executor_id: string
-  display_name: string
+  agent_name: string
   role_name?: string
   definition?: string
   can_delegate: boolean
@@ -188,7 +188,7 @@ export interface AgentExecutionDiagnosticExecutorProfile extends AgentExecutionE
 export interface AgentExecutionRequester {
   requester_id: string
   requester_type: "user" | "executor" | "channel" | "system"
-  display_name?: string
+  agent_name?: string
 }
 
 export interface AgentExecutionConnection {

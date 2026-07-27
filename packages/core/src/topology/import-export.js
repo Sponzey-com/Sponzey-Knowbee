@@ -1,4 +1,5 @@
 import JSON5 from "json5";
+import { sanitizeUserFacingError } from "../runs/error-sanitizer.js";
 import { validateEnterpriseTopology, } from "../contracts/enterprise-topology.js";
 function importIssue(path, reasonCode, message) {
     return {
@@ -28,7 +29,7 @@ export function parseTopologyImportDocument(input) {
             return {
                 ok: false,
                 format,
-                issues: [importIssue("$", "topology_import_parse_failed", error instanceof Error ? error.message : "Import document could not be parsed.")],
+                issues: [importIssue("$", "topology_import_parse_failed", sanitizeUserFacingError(error instanceof Error ? error.message : "Import document could not be parsed.").userMessage)],
             };
         }
     }

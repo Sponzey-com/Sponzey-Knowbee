@@ -1,3 +1,5 @@
+import { redactLogText } from "../logger/index.js"
+
 interface ScheduleQueueLoggingDependencies {
   logInfo: (message: string, payload?: Record<string, unknown>) => void
   logWarn: (message: string) => void
@@ -5,6 +7,11 @@ interface ScheduleQueueLoggingDependencies {
 }
 
 const scheduleExecutionQueues = new Map<string, Promise<unknown>>()
+
+function scheduleQueueErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 
 export function hasScheduleExecutionQueue(scheduleId: string): boolean {
   return scheduleExecutionQueues.has(scheduleId)
@@ -34,17 +41,19 @@ export function enqueueScheduleExecution<T>(
 
   const next = (previous ?? Promise.resolve())
     .catch((error) => {
+      const message = scheduleQueueErrorMessage(error)
       dependencies.logWarn(
-        `previous schedule queue recovered: ${error instanceof Error ? error.message : String(error)}`,
+        `previous schedule queue recovered: ${message}`,
       )
     })
     .then(() => params.task())
     .catch((error) => {
+      const message = scheduleQueueErrorMessage(error)
       dependencies.logError("schedule queue task failed", {
         scheduleId: params.scheduleId,
         scheduleName: params.scheduleName ?? null,
         trigger: params.trigger ?? null,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
       })
       throw error
     })

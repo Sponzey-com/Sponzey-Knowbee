@@ -1,14 +1,17 @@
 import { createRequire } from "node:module"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import type { AIChunk, AIProvider, ChatParams } from "../packages/core/src/ai/types.js"
 import { registerMemoryRoute } from "../packages/core/src/api/routes/memory.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, insertSession } from "../packages/core/src/db/index.js"
-import { closeMemoryJournalDb } from "../packages/core/src/memory/journal.js"
 import { executeRootSessionCompaction } from "../packages/core/src/memory/compaction.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: { logger: boolean }) => {
@@ -17,9 +20,8 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
   inject(options: { method: string; url: string; payload?: unknown }): Promise<{ statusCode: number; json(): any }>
 }
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let runtimeFixture: TestRuntimeConfigFixture
 
 class InspectorProvider implements AIProvider {
   readonly id = "task006-inspector"
@@ -50,11 +52,9 @@ class InspectorProvider implements AIProvider {
 
 function useTempState(): void {
   closeDb()
-  closeMemoryJournalDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task006-memory-inspector-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task006-memory-inspector-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir, configText: `{
     memory: {
       compaction: {
         modelId: "compact-inspector",
@@ -62,10 +62,8 @@ function useTempState(): void {
         minContextTokens: 3000
       }
     }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  }` })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 async function seedCompaction(): Promise<void> {
@@ -82,6 +80,7 @@ async function seedCompaction(): Promise<void> {
     provider,
     model: "compact-inspector",
     sessionId: "session-task006-memory-inspector",
+    agentNameSnapshot: "노비",
     requestGroupId: "group-task006-memory-inspector",
     messages: [
       {
@@ -104,12 +103,6 @@ async function seedCompaction(): Promise<void> {
 
 afterEach(() => {
   closeDb()
-  closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -122,7 +115,7 @@ describe("task006 memory inspector api", () => {
     await seedCompaction()
 
     const app = Fastify({ logger: false })
-    registerMemoryRoute(app)
+    registerMemoryRoute(app, runtimeFixture.config)
     await app.ready()
     try {
       const response = await app.inject({

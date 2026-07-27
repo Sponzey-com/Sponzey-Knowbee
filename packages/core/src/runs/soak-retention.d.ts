@@ -1,4 +1,5 @@
 import { type SanitizedErrorKind } from "./error-sanitizer.js";
+import { type CleanupCandidateEvidence, type CleanupDecision } from "../maintenance/cleanup-decision.js";
 export type SoakProfileId = "short" | "one_hour" | "eight_hour" | "twenty_four_hour";
 export type SoakOperationKind = "model_call" | "safe_tool" | "approval_tool" | "artifact_tool" | "memory_write" | "memory_read" | "schedule_tick" | "yeonjang_status";
 export interface SoakOperationWeight {
@@ -150,6 +151,7 @@ export interface RetentionItem {
     path?: string;
     runId?: string;
     active?: boolean;
+    cleanupProtection?: Omit<CleanupCandidateEvidence, "candidateId" | "dataKind" | "retentionClass">;
 }
 export interface RetentionCleanupCandidate extends RetentionItem {
     reasons: RetentionCleanupReason[];
@@ -177,6 +179,12 @@ export interface RetentionCleanupResult {
     plan: RetentionCleanupPlan;
     deleted: RetentionCleanupCandidate[];
     failures: RetentionCleanupFailure[];
+    retained: Array<{
+        candidate: RetentionCleanupCandidate;
+        decision: Extract<CleanupDecision, {
+            decision: "retain";
+        }>;
+    }>;
     auditRecorded: boolean;
 }
 export interface RetentionCleanupOptions {

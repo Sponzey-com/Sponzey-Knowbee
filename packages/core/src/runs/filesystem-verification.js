@@ -3,17 +3,34 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { displayHomePath } from "./delivery.js";
 import { inferFilesystemKindFromPath, normalizeFilesystemPath } from "./execution.js";
+import { loadPromptTemplate } from "../memory/knowbee-md.js";
+import { loadPromptValue } from "../memory/prompt-fragments.js";
+const FILESYSTEM_VERIFICATION_CONTEXT_LABELS_SOURCE_ID = "filesystem_verification_context_labels_user";
+function filesystemVerificationContextLabel(key, variables = {}) {
+    const value = loadPromptValue(FILESYSTEM_VERIFICATION_CONTEXT_LABELS_SOURCE_ID, variables, { required: true })
+        .split(/\r?\n/u)
+        .find((line) => line.startsWith(`${key}=`))
+        ?.slice(key.length + 1)
+        .trim();
+    return value ?? key;
+}
 export function buildFilesystemVerificationPrompt(originalRequest, mutationPaths) {
-    const lines = [
-        "[Filesystem Verification]",
-        `원래 사용자 요청: ${originalRequest}`,
-    ];
-    if (mutationPaths.length > 0) {
-        lines.push("검증 대상 경로:");
-        for (const mutationPath of mutationPaths)
-            lines.push(`- ${mutationPath}`);
-    }
-    return lines.join("\n");
+    return loadPromptTemplate({
+        sourceId: "filesystem_verification_user",
+        variables: {
+            originalRequest: originalRequest.trim(),
+            mutationPathsBlock: buildMutationPathsBlock(mutationPaths),
+        },
+    }).replace(/\n{3,}/g, "\n\n").trim();
+}
+function buildMutationPathsBlock(mutationPaths) {
+    const normalizedPaths = mutationPaths.map((item) => item.trim()).filter(Boolean);
+    if (normalizedPaths.length === 0)
+        return "";
+    return [
+        filesystemVerificationContextLabel("mutation_paths_header"),
+        ...normalizedPaths.map((mutationPath) => `- ${mutationPath}`),
+    ].join("\n");
 }
 export function verifyFilesystemTargets(params) {
     const targets = inferFilesystemVerificationTargets(params.originalRequest, params.mutationPaths, params.workDir);

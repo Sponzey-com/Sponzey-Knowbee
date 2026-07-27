@@ -10,6 +10,7 @@ export interface ResolvedExecutionProfile {
     wantsDirectArtifactDelivery: boolean;
     approvalRequired: boolean;
     approvalTool: string;
+    requiredToolNames: string[];
 }
 export interface ExecutionLoopRuntimeState {
     executionProfile: ResolvedExecutionProfile;

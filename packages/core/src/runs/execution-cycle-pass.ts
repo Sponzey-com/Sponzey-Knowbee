@@ -1,36 +1,50 @@
 import type { AgentContextMode } from "../agent/index.js"
-import type { TaskExecutionSemantics } from "../agent/intake.js"
-import { insertMessage } from "../db/index.js"
+import type { ResponseLanguageMode, TaskExecutionSemantics } from "../agent/intake.js"
+import type { insertMessage } from "../db/index.js"
 import type { AIProvider } from "../ai/index.js"
-import { applyPostExecutionPassResult, applyRecoveryEntryPassResult, applyReviewCyclePassResult } from "./loop-pass-application.js"
+import type { KnowbeeConfig } from "../config/types.js"
+import type { ArtifactStorageContext } from "../artifacts/lifecycle.js"
+import type { MemoryJournalRepository } from "../memory/journal.js"
+import { dirname } from "node:path"
+import { createInstructionRuntimeContext } from "../instructions/merge.js"
+import {
+  applyPostExecutionPassResult,
+  applyRecoveryEntryPassResult,
+  applyReviewCyclePassResult,
+} from "./loop-pass-application.js"
 import {
   runExecutionAttemptPass,
   type ExecutionAttemptPassResult,
 } from "./execution-attempt-pass.js"
-import {
-  runRecoveryEntryPass,
-  type RecoveryEntryPassResult,
-} from "./recovery-entry-pass.js"
-import {
-  runPostExecutionPass,
-  type PostExecutionPassResult,
-} from "./post-execution-pass.js"
-import {
-  runReviewCyclePass,
-} from "./review-cycle-pass.js"
-import {
+import { runRecoveryEntryPass, type RecoveryEntryPassResult } from "./recovery-entry-pass.js"
+import { runPostExecutionPass, type PostExecutionPassResult } from "./post-execution-pass.js"
+import { runReviewCyclePass } from "./review-cycle-pass.js"
+import type {
   logAssistantReply,
-  type RunChunkDeliveryHandler,
-  type SuccessfulFileDelivery,
-  type SuccessfulTextDelivery,
+  RunChunkDeliveryHandler,
+  SuccessfulFileDelivery,
+  SuccessfulTextDelivery,
 } from "./delivery.js"
-import type { FinalizationDependencies, FinalizationSource } from "./finalization.js"
+import type {
+  CanonicalPendingResponseConsumer,
+  CanonicalPendingResponseStager,
+  FinalizationDependencies,
+  FinalizationSource,
+} from "./finalization.js"
 import type { RecoveryBudgetUsage } from "./recovery-budget.js"
 import type { FailedCommandTool, SuccessfulToolEvidence } from "./recovery.js"
 import type { TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js"
+import { CanonicalExecutionFailure } from "./canonical-execution-failure.js"
 import type { ReviewOutcomePassResult } from "./review-outcome-pass.js"
+import type { CanonicalCompletionOutcomeRecorder } from "./review-outcome-pass.js"
+import type { CanonicalDeliveryRecorder } from "./finalization.js"
+import type { FinalResponseIdentityContext } from "./final-response-renderer.js"
+import type { YeonjangSideEffectGoalValidationCandidate } from "../yeonjang/side-effect-goal-validation-review.js"
+import type { AdmittedCapabilityExecutionScope } from "./run-scoped-tool-admission.js"
+import type { WebExecutionState } from "../contracts/web-execution-state.js"
+import type { NextAttemptToolPolicy } from "./next-attempt-tool-policy.js"
 
 type RecoveryLimitStop = {
   summary: string
@@ -40,6 +54,8 @@ type RecoveryLimitStop = {
 
 export interface ExecutionCycleState {
   currentMessage: string
+  requiredToolNames: string[]
+  nextAttemptToolPolicy?: NextAttemptToolPolicy
   currentModel: string | undefined
   currentProviderId: string | undefined
   currentProvider: AIProvider | undefined
@@ -51,11 +67,30 @@ export interface ExecutionCycleState {
   sawRealFilesystemMutation: boolean
   filesystemMutationRecoveryAttempted: boolean
   truncatedOutputRecoveryAttempted: boolean
+  successfulTools: SuccessfulToolEvidence[]
+  webExecutionState: WebExecutionState
 }
 
 export type ExecutionCyclePassResult =
   | { kind: "break" }
   | { kind: "retry"; state: ExecutionCycleState }
+
+export interface CanonicalRecoveryReentryInput {
+  runId: string
+  previousResult: string
+  strategy: {
+    message: string
+    model?: string | undefined
+    providerId?: string | undefined
+    targetId?: string | undefined
+    targetLabel?: string | undefined
+    workerRuntimeKind?: string | undefined
+  }
+}
+
+export type CanonicalRecoveryReentryRecorder = (
+  input: CanonicalRecoveryReentryInput,
+) => Promise<{ ok: true } | { ok: false; reasonCode: string }>
 
 interface ExecutionCyclePassDependencies {
   rememberRunFailure: (params: {
@@ -77,7 +112,15 @@ interface ExecutionCyclePassDependencies {
   ) => void
   updateRunStatus: (
     runId: string,
-    status: "queued" | "running" | "awaiting_approval" | "awaiting_user" | "completed" | "failed" | "cancelled" | "interrupted",
+    status:
+      | "queued"
+      | "running"
+      | "awaiting_approval"
+      | "awaiting_user"
+      | "completed"
+      | "failed"
+      | "cancelled"
+      | "interrupted",
     summary: string,
     active: boolean,
   ) => void
@@ -88,11 +131,26 @@ interface ExecutionCyclePassDependencies {
   writeReplyLog: typeof logAssistantReply
   createId: () => string
   now: () => number
-  runVerificationSubtask: () => Promise<{ ok: boolean; summary: string; reason?: string; remainingItems?: string[] }>
-  rememberRunApprovalScope: (runId: string) => void
-  grantRunApprovalScope: (runId: string) => void
-  grantRunSingleApproval: (runId: string) => void
+  runVerificationSubtask: () => Promise<{
+    ok: boolean
+    summary: string
+    reason?: string
+    remainingItems?: string[]
+  }>
+  rememberRunApprovalScope: (runId: string, toolName: string) => void
+  grantRunApprovalScope: (runId: string, toolName: string) => void
+  grantRunSingleApproval: (runId: string, toolName: string) => void
   onReviewError?: (message: string) => void
+  recordCanonicalAttempt: (input: {
+    runId: string
+    attempt: ExecutionAttemptPassResult
+    successfulToolNames: string[]
+  }) => Promise<{ ok: true; evidenceRefs?: string[] } | { ok: false; reasonCode: string }>
+  recordCanonicalRecoveryReentry: CanonicalRecoveryReentryRecorder
+  recordCanonicalCompletionOutcome: CanonicalCompletionOutcomeRecorder
+  recordCanonicalDelivery: CanonicalDeliveryRecorder
+  stageCanonicalPendingResponse: CanonicalPendingResponseStager
+  consumeCanonicalPendingResponse: CanonicalPendingResponseConsumer
 }
 
 interface ExecutionCyclePassModuleDependencies {
@@ -117,6 +175,8 @@ const defaultModuleDependencies: ExecutionCyclePassModuleDependencies = {
 
 export async function runExecutionCyclePass(
   params: {
+    artifactStorage: ArtifactStorageContext
+    memoryJournal: MemoryJournalRepository
     runId: string
     sessionId: string
     requestGroupId: string
@@ -126,9 +186,15 @@ export async function runExecutionCyclePass(
     state: ExecutionCycleState
     executionSemantics: TaskExecutionSemantics
     originalRequest: string
+    responseLanguageMode?: ResponseLanguageMode | undefined
     memorySearchQuery: string
+    admittedCapabilityExecutionScope?: AdmittedCapabilityExecutionScope | undefined
+    scheduleId?: string
+    includeScheduleMemory?: boolean
+    config: KnowbeeConfig
     verificationRequest: string
     workDir: string
+    finalResponseIdentityContext?: FinalResponseIdentityContext | undefined
     toolsEnabled?: boolean
     onDeliveryError?: (message: string) => void
     abortExecutionStream: () => void
@@ -142,6 +208,7 @@ export async function runExecutionCyclePass(
     pendingToolParams: Map<string, unknown>
     filesystemMutationPaths: Set<string>
     successfulTools: SuccessfulToolEvidence[]
+    completionConditions: string[]
     seenFollowupPrompts: Set<string>
     seenCommandFailureRecoveryKeys: Set<string>
     seenExecutionRecoveryKeys: Set<string>
@@ -166,47 +233,96 @@ export async function runExecutionCyclePass(
   const successfulTextDeliveries: SuccessfulTextDelivery[] = []
   let commandFailureSeen = false
   let commandRecoveredWithinSamePass = false
+  let canonicalAttemptEvidenceRefs: string[] = []
+  const yeonjangSideEffectGoalValidationCandidates: YeonjangSideEffectGoalValidationCandidate[] = []
+  const webExecutionState = params.state.webExecutionState ?? {
+    discovery: { status: "not_attempted" as const },
+    validatedEvidence: { status: "none" as const },
+    observedFetchCandidates: [],
+    observedSearchResults: [],
+  }
 
-  const executionAttemptPass = await moduleDependencies.runExecutionAttemptPass({
-    runId: params.runId,
-    sessionId: params.sessionId,
-    source: params.source,
-    onChunk: params.onChunk,
-    ...(params.onDeliveryError ? { onDeliveryError: params.onDeliveryError } : {}),
-    currentMessage: params.state.currentMessage,
-    memorySearchQuery: params.memorySearchQuery,
-    ...(params.state.currentModel ? { model: params.state.currentModel } : {}),
-    ...(params.state.currentProviderId ? { providerId: params.state.currentProviderId } : {}),
-    ...(params.state.currentProvider ? { provider: params.state.currentProvider } : {}),
-    workDir: params.workDir,
-    signal: params.signal,
-    ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
-    isRootRequest: params.isRootRequest,
-    requestGroupId: params.requestGroupId,
-    contextMode: params.contextMode,
-    preview,
-    ...(params.state.activeWorkerRuntime ? { activeWorkerRuntime: params.state.activeWorkerRuntime } : {}),
-    ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
-    pendingToolParams: params.pendingToolParams,
-    successfulTools: params.successfulTools,
-    filesystemMutationPaths: params.filesystemMutationPaths,
-    failedCommandTools,
-    successfulFileDeliveries,
-    successfulTextDeliveries,
-    commandFailureSeen,
-    recoveryBudgetUsage: params.recoveryBudgetUsage,
-    executionRecoveryLimitStop: params.state.executionRecoveryLimitStop,
-    stopAfterDirectArtifactDeliverySuccess: params.wantsDirectArtifactDelivery,
-    abortExecutionStream: () => {},
-  }, {
-    rememberRunFailure: dependencies.rememberRunFailure,
-    incrementDelegationTurnCount: dependencies.incrementDelegationTurnCount,
-    appendRunEvent: dependencies.appendRunEvent,
-    updateRunSummary: dependencies.updateRunSummary,
-    setRunStepStatus: dependencies.setRunStepStatus,
-    updateRunStatus: dependencies.updateRunStatus,
-    markAbortedRunCancelledIfActive: dependencies.markAbortedRunCancelledIfActive,
-  })
+  const executionAttemptPass = await moduleDependencies.runExecutionAttemptPass(
+    {
+      artifactStorage: params.artifactStorage,
+      memoryJournal: params.memoryJournal,
+      config: params.config,
+      runId: params.runId,
+      sessionId: params.sessionId,
+      source: params.source,
+      onChunk: params.onChunk,
+      ...(params.onDeliveryError ? { onDeliveryError: params.onDeliveryError } : {}),
+      currentMessage: params.state.currentMessage,
+      requiredToolNames: params.admittedCapabilityExecutionScope
+        ? params.state.requiredToolNames.filter((toolName) =>
+            params.admittedCapabilityExecutionScope?.toolNames.includes(toolName),
+          )
+        : params.state.requiredToolNames,
+      completionConditions: params.completionConditions,
+      ...(params.admittedCapabilityExecutionScope
+        ? { admittedCapabilityExecutionScope: params.admittedCapabilityExecutionScope }
+        : {}),
+      webExecutionState,
+      memorySearchQuery: params.memorySearchQuery,
+      ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
+      ...(params.includeScheduleMemory ? { includeScheduleMemory: true } : {}),
+      ...(params.state.currentModel ? { model: params.state.currentModel } : {}),
+      ...(params.state.currentProviderId ? { providerId: params.state.currentProviderId } : {}),
+      ...(params.state.currentProvider ? { provider: params.state.currentProvider } : {}),
+      workDir: params.workDir,
+      signal: params.signal,
+      ...(params.toolsEnabled === false
+        || params.state.nextAttemptToolPolicy?.mode === "forbidden"
+        ? { toolsEnabled: false }
+        : {}),
+      isRootRequest: params.isRootRequest,
+      requestGroupId: params.requestGroupId,
+      contextMode: params.contextMode,
+      preview,
+      ...(params.state.activeWorkerRuntime
+        ? { activeWorkerRuntime: params.state.activeWorkerRuntime }
+        : {}),
+      ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
+      pendingToolParams: params.pendingToolParams,
+      successfulTools: params.successfulTools,
+      filesystemMutationPaths: params.filesystemMutationPaths,
+      failedCommandTools,
+      yeonjangSideEffectGoalValidationCandidates,
+      successfulFileDeliveries,
+      successfulTextDeliveries,
+      commandFailureSeen,
+      recoveryBudgetUsage: params.recoveryBudgetUsage,
+      defaultMaxDelegationTurns: params.defaultMaxDelegationTurns,
+      executionRecoveryLimitStop: params.state.executionRecoveryLimitStop,
+      stopAfterDirectArtifactDeliverySuccess: params.wantsDirectArtifactDelivery,
+      abortExecutionStream: () => {},
+    },
+    {
+      rememberRunFailure: dependencies.rememberRunFailure,
+      incrementDelegationTurnCount: dependencies.incrementDelegationTurnCount,
+      appendRunEvent: dependencies.appendRunEvent,
+      updateRunSummary: dependencies.updateRunSummary,
+      setRunStepStatus: dependencies.setRunStepStatus,
+      updateRunStatus: dependencies.updateRunStatus,
+      markAbortedRunCancelledIfActive: dependencies.markAbortedRunCancelledIfActive,
+    },
+  )
+
+  if (params.isRootRequest) {
+    const canonicalAttempt = await dependencies.recordCanonicalAttempt({
+      runId: params.runId,
+      attempt: executionAttemptPass,
+      successfulToolNames: params.successfulTools.map((tool) => tool.toolName),
+    })
+    if (!canonicalAttempt.ok) {
+      throw new CanonicalExecutionFailure({
+        phase: "execution",
+        reasonCode: canonicalAttempt.reasonCode,
+        retryable: false,
+      })
+    }
+    canonicalAttemptEvidenceRefs = canonicalAttempt.evidenceRefs ?? []
+  }
 
   preview = executionAttemptPass.preview
   failed = executionAttemptPass.failed
@@ -218,41 +334,46 @@ export async function runExecutionCyclePass(
 
   const nextStateFromAttempt: ExecutionCycleState = {
     ...params.state,
+    webExecutionState,
     executionRecoveryLimitStop: executionAttemptPass.executionRecoveryLimitStop,
     aiRecoveryLimitStop: executionAttemptPass.aiRecoveryLimitStop,
-    sawRealFilesystemMutation: params.state.sawRealFilesystemMutation || executionAttemptPass.sawRealFilesystemMutation,
+    sawRealFilesystemMutation:
+      params.state.sawRealFilesystemMutation || executionAttemptPass.sawRealFilesystemMutation,
   }
 
-  const recoveryEntryPass: RecoveryEntryPassResult = await moduleDependencies.runRecoveryEntryPass({
-    runId: params.runId,
-    sessionId: params.sessionId,
-    source: params.source,
-    onChunk: params.onChunk,
-    preview,
-    executionRecoveryLimitStop: nextStateFromAttempt.executionRecoveryLimitStop,
-    aiRecoveryLimitStop: nextStateFromAttempt.aiRecoveryLimitStop,
-    recoveries: [
-      { kind: "ai", payload: aiRecovery },
-      { kind: "worker_runtime", payload: workerRuntimeRecovery },
-    ],
-    aborted: params.signal.aborted,
-    failed,
-    taskProfile: params.taskProfile,
-    current: {
-      model: nextStateFromAttempt.currentModel,
-      providerId: nextStateFromAttempt.currentProviderId,
-      provider: nextStateFromAttempt.currentProvider,
-      targetId: nextStateFromAttempt.currentTargetId,
-      targetLabel: nextStateFromAttempt.currentTargetLabel,
-      workerRuntime: nextStateFromAttempt.activeWorkerRuntime,
+  const recoveryEntryPass: RecoveryEntryPassResult = await moduleDependencies.runRecoveryEntryPass(
+    {
+      runId: params.runId,
+      sessionId: params.sessionId,
+      source: params.source,
+      onChunk: params.onChunk,
+      preview,
+      executionRecoveryLimitStop: nextStateFromAttempt.executionRecoveryLimitStop,
+      aiRecoveryLimitStop: nextStateFromAttempt.aiRecoveryLimitStop,
+      recoveries: [
+        { kind: "ai", payload: aiRecovery },
+        { kind: "worker_runtime", payload: workerRuntimeRecovery },
+      ],
+      aborted: params.signal.aborted,
+      failed,
+      taskProfile: params.taskProfile,
+      current: {
+        model: nextStateFromAttempt.currentModel,
+        providerId: nextStateFromAttempt.currentProviderId,
+        provider: nextStateFromAttempt.currentProvider,
+        targetId: nextStateFromAttempt.currentTargetId,
+        targetLabel: nextStateFromAttempt.currentTargetLabel,
+        workerRuntime: nextStateFromAttempt.activeWorkerRuntime,
+      },
+      seenKeys: params.seenAiRecoveryKeys,
+      originalRequest: params.originalRequest,
+      previousResult: preview,
+      finalizationDependencies: dependencies.getFinalizationDependencies(),
     },
-    seenKeys: params.seenAiRecoveryKeys,
-    originalRequest: params.originalRequest,
-    previousResult: preview,
-    finalizationDependencies: dependencies.getFinalizationDependencies(),
-  }, {
-    appendRunEvent: dependencies.appendRunEvent,
-  })
+    {
+      appendRunEvent: dependencies.appendRunEvent,
+    },
+  )
 
   const recoveryEntryApplication = moduleDependencies.applyRecoveryEntryPassResult({
     result: recoveryEntryPass,
@@ -264,6 +385,37 @@ export async function runExecutionCyclePass(
   }
 
   if (recoveryEntryApplication.kind === "retry") {
+    if (params.isRootRequest) {
+      const canonicalRecovery = await dependencies.recordCanonicalRecoveryReentry({
+        runId: params.runId,
+        previousResult: preview,
+        strategy: {
+          message: recoveryEntryApplication.state.currentMessage,
+          ...(recoveryEntryApplication.state.currentModel
+            ? { model: recoveryEntryApplication.state.currentModel }
+            : {}),
+          ...(recoveryEntryApplication.state.currentProviderId
+            ? { providerId: recoveryEntryApplication.state.currentProviderId }
+            : {}),
+          ...(recoveryEntryApplication.state.currentTargetId
+            ? { targetId: recoveryEntryApplication.state.currentTargetId }
+            : {}),
+          ...(recoveryEntryApplication.state.currentTargetLabel
+            ? { targetLabel: recoveryEntryApplication.state.currentTargetLabel }
+            : {}),
+          ...(recoveryEntryApplication.state.activeWorkerRuntime?.kind
+            ? { workerRuntimeKind: recoveryEntryApplication.state.activeWorkerRuntime.kind }
+            : {}),
+        },
+      })
+      if (!canonicalRecovery.ok) {
+        throw new CanonicalExecutionFailure({
+          phase: "recovery",
+          reasonCode: canonicalRecovery.reasonCode,
+          retryable: true,
+        })
+      }
+    }
     return {
       kind: "retry",
       state: {
@@ -274,48 +426,55 @@ export async function runExecutionCyclePass(
   }
 
   const { usedTurns, maxTurns } = dependencies.getDelegationTurnState()
-  const postExecutionPass: PostExecutionPassResult = await moduleDependencies.runPostExecutionPass({
-    runId: params.runId,
-    sessionId: params.sessionId,
-    source: params.source,
-    onChunk: params.onChunk,
-    preview,
-    originalRequest: params.originalRequest,
-    verificationRequest: params.verificationRequest,
-    wantsDirectArtifactDelivery: params.wantsDirectArtifactDelivery,
-    requiresFilesystemMutation: params.requiresFilesystemMutation,
-    activeWorkerRuntime: Boolean(nextStateFromAttempt.activeWorkerRuntime),
-    ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
-    successfulFileDeliveries,
-    successfulTextDeliveries,
-    successfulTools: params.successfulTools,
-    sawRealFilesystemMutation: nextStateFromAttempt.sawRealFilesystemMutation,
-    filesystemMutationRecoveryAttempted: nextStateFromAttempt.filesystemMutationRecoveryAttempted,
-    mutationPaths: [...params.filesystemMutationPaths],
-    failedCommandTools,
-    commandFailureSeen,
-    commandRecoveredWithinSamePass,
-    executionRecovery,
-    seenCommandFailureRecoveryKeys: params.seenCommandFailureRecoveryKeys,
-    seenExecutionRecoveryKeys: params.seenExecutionRecoveryKeys,
-    seenDeliveryRecoveryKeys: params.seenDeliveryRecoveryKeys,
-    recoveryBudgetUsage: params.recoveryBudgetUsage,
-    usedTurns,
-    maxDelegationTurns: maxTurns,
-  }, {
-    rememberRunFailure: dependencies.rememberRunFailure,
-    incrementDelegationTurnCount: dependencies.incrementDelegationTurnCount,
-    appendRunEvent: dependencies.appendRunEvent,
-    updateRunSummary: dependencies.updateRunSummary,
-    setRunStepStatus: dependencies.setRunStepStatus,
-    updateRunStatus: dependencies.updateRunStatus,
-    getFinalizationDependencies: dependencies.getFinalizationDependencies,
-    insertMessage: dependencies.insertMessage,
-    writeReplyLog: dependencies.writeReplyLog,
-    createId: dependencies.createId,
-    now: dependencies.now,
-    runVerificationSubtask: dependencies.runVerificationSubtask,
-  })
+  const postExecutionPass: PostExecutionPassResult = await moduleDependencies.runPostExecutionPass(
+    {
+      runId: params.runId,
+      sessionId: params.sessionId,
+      source: params.source,
+      onChunk: params.onChunk,
+      preview,
+      ...(executionAttemptPass.previewSource
+        ? { previewSource: executionAttemptPass.previewSource }
+        : {}),
+      ...(executionAttemptPass.deferredPreviewDelivery ? { deferredPreviewDelivery: true } : {}),
+      originalRequest: params.originalRequest,
+      verificationRequest: params.verificationRequest,
+      wantsDirectArtifactDelivery: params.wantsDirectArtifactDelivery,
+      requiresFilesystemMutation: params.requiresFilesystemMutation,
+      activeWorkerRuntime: Boolean(nextStateFromAttempt.activeWorkerRuntime),
+      ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
+      successfulFileDeliveries,
+      successfulTextDeliveries,
+      successfulTools: params.successfulTools,
+      sawRealFilesystemMutation: nextStateFromAttempt.sawRealFilesystemMutation,
+      filesystemMutationRecoveryAttempted: nextStateFromAttempt.filesystemMutationRecoveryAttempted,
+      mutationPaths: [...params.filesystemMutationPaths],
+      failedCommandTools,
+      commandFailureSeen,
+      commandRecoveredWithinSamePass,
+      executionRecovery,
+      seenCommandFailureRecoveryKeys: params.seenCommandFailureRecoveryKeys,
+      seenExecutionRecoveryKeys: params.seenExecutionRecoveryKeys,
+      seenDeliveryRecoveryKeys: params.seenDeliveryRecoveryKeys,
+      recoveryBudgetUsage: params.recoveryBudgetUsage,
+      usedTurns,
+      maxDelegationTurns: maxTurns,
+    },
+    {
+      rememberRunFailure: dependencies.rememberRunFailure,
+      incrementDelegationTurnCount: dependencies.incrementDelegationTurnCount,
+      appendRunEvent: dependencies.appendRunEvent,
+      updateRunSummary: dependencies.updateRunSummary,
+      setRunStepStatus: dependencies.setRunStepStatus,
+      updateRunStatus: dependencies.updateRunStatus,
+      getFinalizationDependencies: dependencies.getFinalizationDependencies,
+      insertMessage: dependencies.insertMessage,
+      writeReplyLog: dependencies.writeReplyLog,
+      createId: dependencies.createId,
+      now: dependencies.now,
+      runVerificationSubtask: dependencies.runVerificationSubtask,
+    },
+  )
 
   const postExecutionApplication = moduleDependencies.applyPostExecutionPassResult({
     result: postExecutionPass,
@@ -332,62 +491,131 @@ export async function runExecutionCyclePass(
   }
 
   if (postExecutionApplication.kind === "retry") {
+    if (params.isRootRequest) {
+      const canonicalRecovery = await dependencies.recordCanonicalRecoveryReentry({
+        runId: params.runId,
+        previousResult: preview,
+        strategy: {
+          message: postExecutionApplication.state.currentMessage,
+          ...(nextStateFromAttempt.currentModel
+            ? { model: nextStateFromAttempt.currentModel }
+            : {}),
+          ...(nextStateFromAttempt.currentProviderId
+            ? { providerId: nextStateFromAttempt.currentProviderId }
+            : {}),
+          ...(nextStateFromAttempt.currentTargetId
+            ? { targetId: nextStateFromAttempt.currentTargetId }
+            : {}),
+          ...(nextStateFromAttempt.currentTargetLabel
+            ? { targetLabel: nextStateFromAttempt.currentTargetLabel }
+            : {}),
+          ...(postExecutionApplication.state.activeWorkerRuntime?.kind
+            ? { workerRuntimeKind: postExecutionApplication.state.activeWorkerRuntime.kind }
+            : {}),
+        },
+      })
+      if (!canonicalRecovery.ok) {
+        throw new CanonicalExecutionFailure({
+          phase: "recovery",
+          reasonCode: canonicalRecovery.reasonCode,
+          retryable: true,
+        })
+      }
+    }
     return {
       kind: "retry",
       state: {
         ...nextStateFromAttempt,
         currentMessage: postExecutionApplication.state.currentMessage,
-        filesystemMutationRecoveryAttempted: postExecutionApplication.state.filesystemMutationRecoveryAttempted,
+        filesystemMutationRecoveryAttempted:
+          postExecutionApplication.state.filesystemMutationRecoveryAttempted,
         activeWorkerRuntime: postExecutionApplication.state.activeWorkerRuntime,
       },
     }
   }
 
-  const reviewOutcomePass: ReviewOutcomePassResult = await moduleDependencies.runReviewCyclePass({
-    runId: params.runId,
-    sessionId: params.sessionId,
-    source: params.source,
-    onChunk: params.onChunk,
-    signal: params.signal,
-    preview: postExecutionApplication.preview,
-    priorAssistantMessages: params.priorAssistantMessages,
-    executionSemantics: params.executionSemantics,
-    requiresFilesystemMutation: params.requiresFilesystemMutation,
-    originalRequest: params.originalRequest,
-    ...(nextStateFromAttempt.currentModel ? { model: nextStateFromAttempt.currentModel } : {}),
-    ...(nextStateFromAttempt.currentProviderId ? { providerId: nextStateFromAttempt.currentProviderId } : {}),
-    ...(nextStateFromAttempt.currentProvider ? { provider: nextStateFromAttempt.currentProvider } : {}),
-    workDir: params.workDir,
-    usesWorkerRuntime: Boolean(postExecutionApplication.state.activeWorkerRuntime),
-    ...(postExecutionApplication.state.activeWorkerRuntime?.kind
-      ? { workerRuntimeKind: postExecutionApplication.state.activeWorkerRuntime.kind }
-      : {}),
-    requiresPrivilegedToolExecution: params.requiresPrivilegedToolExecution,
-    deliveryOutcome: postExecutionApplication.deliveryOutcome,
-    successfulTools: params.successfulTools,
-    successfulFileDeliveries,
-    sawRealFilesystemMutation: nextStateFromAttempt.sawRealFilesystemMutation,
-    truncatedOutputRecoveryAttempted: nextStateFromAttempt.truncatedOutputRecoveryAttempted,
-    recoveryBudgetUsage: params.recoveryBudgetUsage,
-    defaultMaxDelegationTurns: params.defaultMaxDelegationTurns,
-    seenFollowupPrompts: params.seenFollowupPrompts,
-    syntheticApprovalAlreadyApproved: params.syntheticApprovalAlreadyApproved,
-    approvalRequired: params.executionSemantics.approvalRequired,
-    approvalTool: params.executionSemantics.approvalTool,
-    syntheticApprovalRuntimeDependencies: params.syntheticApprovalRuntimeDependencies,
-    finalizationDependencies: dependencies.getFinalizationDependencies(),
-  }, {
-    rememberRunApprovalScope: dependencies.rememberRunApprovalScope,
-    grantRunApprovalScope: dependencies.grantRunApprovalScope,
-    grantRunSingleApproval: dependencies.grantRunSingleApproval,
-    rememberRunFailure: dependencies.rememberRunFailure,
-    incrementDelegationTurnCount: dependencies.incrementDelegationTurnCount,
-    appendRunEvent: dependencies.appendRunEvent,
-    updateRunSummary: dependencies.updateRunSummary,
-    setRunStepStatus: dependencies.setRunStepStatus,
-    updateRunStatus: dependencies.updateRunStatus,
-    ...(dependencies.onReviewError ? { onReviewError: dependencies.onReviewError } : {}),
-  })
+  const reviewOutcomePass: ReviewOutcomePassResult = await moduleDependencies.runReviewCyclePass(
+    {
+      instructionRuntime: createInstructionRuntimeContext(
+        dirname(params.memoryJournal.memoryDbFile),
+      ),
+      runId: params.runId,
+      sessionId: params.sessionId,
+      source: params.source,
+      onChunk: params.onChunk,
+      signal: params.signal,
+      preview: postExecutionApplication.preview,
+      ...(postExecutionApplication.previewSource
+        ? { previewSource: postExecutionApplication.previewSource }
+        : {}),
+      ...(postExecutionApplication.deferredPreviewDelivery
+        ? { deferredPreviewDelivery: true }
+        : {}),
+      priorAssistantMessages: params.priorAssistantMessages,
+      executionSemantics: params.executionSemantics,
+      requiresFilesystemMutation: params.requiresFilesystemMutation,
+      originalRequest: params.originalRequest,
+      ...(params.responseLanguageMode ? { responseLanguageMode: params.responseLanguageMode } : {}),
+      ...(nextStateFromAttempt.currentModel ? { model: nextStateFromAttempt.currentModel } : {}),
+      ...(nextStateFromAttempt.currentProviderId
+        ? { providerId: nextStateFromAttempt.currentProviderId }
+        : {}),
+      ...(nextStateFromAttempt.currentProvider
+        ? { provider: nextStateFromAttempt.currentProvider }
+        : {}),
+      config: params.config,
+      workDir: params.workDir,
+      ...(params.finalResponseIdentityContext
+        ? { finalResponseIdentityContext: params.finalResponseIdentityContext }
+        : {}),
+      usesWorkerRuntime: Boolean(postExecutionApplication.state.activeWorkerRuntime),
+      ...(postExecutionApplication.state.activeWorkerRuntime?.kind
+        ? { workerRuntimeKind: postExecutionApplication.state.activeWorkerRuntime.kind }
+        : {}),
+      requiresPrivilegedToolExecution: params.requiresPrivilegedToolExecution,
+      deliveryOutcome: postExecutionApplication.deliveryOutcome,
+      successfulTools: params.successfulTools,
+      ...((nextStateFromAttempt.requiredToolNames ?? []).length > 0
+        ? { requiresSuccessfulToolEvidence: true }
+        : {}),
+      yeonjangSideEffectGoalValidationCandidates,
+      completionConditions: params.completionConditions,
+      ...(canonicalAttemptEvidenceRefs.length > 0
+        ? { canonicalAttemptEvidenceRefs }
+        : {}),
+      successfulFileDeliveries,
+      sawRealFilesystemMutation: nextStateFromAttempt.sawRealFilesystemMutation,
+      truncatedOutputRecoveryAttempted: nextStateFromAttempt.truncatedOutputRecoveryAttempted,
+      recoveryBudgetUsage: params.recoveryBudgetUsage,
+      defaultMaxDelegationTurns: params.defaultMaxDelegationTurns,
+      seenFollowupPrompts: params.seenFollowupPrompts,
+      syntheticApprovalAlreadyApproved: params.syntheticApprovalAlreadyApproved,
+      approvalRequired: params.executionSemantics.approvalRequired,
+      approvalTool: params.executionSemantics.approvalTool,
+      syntheticApprovalRuntimeDependencies: params.syntheticApprovalRuntimeDependencies,
+      finalizationDependencies: dependencies.getFinalizationDependencies(),
+      ...(params.isRootRequest
+        ? {
+            recordCanonicalCompletionOutcome: dependencies.recordCanonicalCompletionOutcome,
+            recordCanonicalDelivery: dependencies.recordCanonicalDelivery,
+            stageCanonicalPendingResponse: dependencies.stageCanonicalPendingResponse,
+            consumeCanonicalPendingResponse: dependencies.consumeCanonicalPendingResponse,
+          }
+        : {}),
+    },
+    {
+      rememberRunApprovalScope: dependencies.rememberRunApprovalScope,
+      grantRunApprovalScope: dependencies.grantRunApprovalScope,
+      grantRunSingleApproval: dependencies.grantRunSingleApproval,
+      rememberRunFailure: dependencies.rememberRunFailure,
+      incrementDelegationTurnCount: dependencies.incrementDelegationTurnCount,
+      appendRunEvent: dependencies.appendRunEvent,
+      updateRunSummary: dependencies.updateRunSummary,
+      setRunStepStatus: dependencies.setRunStepStatus,
+      updateRunStatus: dependencies.updateRunStatus,
+      ...(dependencies.onReviewError ? { onReviewError: dependencies.onReviewError } : {}),
+    },
+  )
 
   const reviewCycleApplication = moduleDependencies.applyReviewCyclePassResult({
     result: reviewOutcomePass,
@@ -399,15 +627,54 @@ export async function runExecutionCyclePass(
   })
 
   if (reviewCycleApplication.kind === "retry") {
+    if (params.isRootRequest) {
+      const canonicalRecovery = await dependencies.recordCanonicalRecoveryReentry({
+        runId: params.runId,
+        previousResult: postExecutionApplication.preview,
+        strategy: {
+          message: reviewCycleApplication.state.currentMessage,
+          ...(nextStateFromAttempt.currentModel
+            ? { model: nextStateFromAttempt.currentModel }
+            : {}),
+          ...(nextStateFromAttempt.currentProviderId
+            ? { providerId: nextStateFromAttempt.currentProviderId }
+            : {}),
+          ...(nextStateFromAttempt.currentTargetId
+            ? { targetId: nextStateFromAttempt.currentTargetId }
+            : {}),
+          ...(nextStateFromAttempt.currentTargetLabel
+            ? { targetLabel: nextStateFromAttempt.currentTargetLabel }
+            : {}),
+          ...(reviewCycleApplication.state.activeWorkerRuntime?.kind
+            ? { workerRuntimeKind: reviewCycleApplication.state.activeWorkerRuntime.kind }
+            : {}),
+        },
+      })
+      if (!canonicalRecovery.ok) {
+        throw new CanonicalExecutionFailure({
+          phase: "recovery",
+          reasonCode: canonicalRecovery.reasonCode,
+          retryable: true,
+        })
+      }
+    }
     return {
       kind: "retry",
       state: {
         ...nextStateFromAttempt,
         currentMessage: reviewCycleApplication.state.currentMessage,
+        requiredToolNames:
+          reviewCycleApplication.state.requiredToolNames
+          ?? nextStateFromAttempt.requiredToolNames,
+        ...(reviewCycleApplication.state.nextAttemptToolPolicy
+          ? { nextAttemptToolPolicy: reviewCycleApplication.state.nextAttemptToolPolicy }
+          : {}),
         activeWorkerRuntime: reviewCycleApplication.state.activeWorkerRuntime,
         currentProvider: reviewCycleApplication.state.currentProvider,
-        filesystemMutationRecoveryAttempted: postExecutionApplication.state.filesystemMutationRecoveryAttempted,
-        truncatedOutputRecoveryAttempted: reviewCycleApplication.state.truncatedOutputRecoveryAttempted,
+        filesystemMutationRecoveryAttempted:
+          postExecutionApplication.state.filesystemMutationRecoveryAttempted,
+        truncatedOutputRecoveryAttempted:
+          reviewCycleApplication.state.truncatedOutputRecoveryAttempted,
       },
     }
   }

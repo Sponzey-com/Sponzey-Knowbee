@@ -6,7 +6,10 @@ import {
   type DelegatedTaskDispatchResult,
   validateDispatchToChildExecutorInput,
 } from "../packages/core/src/runs/orchestration-dispatch.ts"
-import { resolveTopologyDispatchFollowupDecision } from "../packages/core/src/runs/topology-dispatch-fallback.ts"
+import {
+  buildTopologyDispatchFollowupDirective,
+  resolveTopologyDispatchFollowupDecision,
+} from "../packages/core/src/runs/topology-dispatch-fallback.ts"
 
 function orchestrationPlan(agentIds = ["workspace:draft:node:finance"]): OrchestrationPlan {
   return {
@@ -73,7 +76,7 @@ function failedDispatch(agentId = "workspace:draft:node:finance"): DelegatedTask
       taskId: "task:1",
       subSessionId: "sub-session:1",
       agentId,
-      agentDisplayName: "행랑아범",
+      agentName: "현장 금융 담당",
       agentSource: "topology",
       topologyId: "workspace:draft",
       topologyExecutorId: "node:finance",
@@ -150,7 +153,11 @@ describe("topology dispatch failure follow-up", () => {
       blockedByPreflight: true,
       rootLoopContinuation: "allowed_with_trace",
     })
+    expect(decision?.summary).toContain("현재 에이전트")
+    expect(decision?.summary).not.toContain("현재 실행자")
     expect(decision?.failedExecutorIds).toEqual(["workspace:draft:node:finance"])
+    expect(decision?.failedExecutorNames).toEqual(["현장 금융 담당"])
+    expect(decision ? buildTopologyDispatchFollowupDirective(decision) : null).toBeNull()
   })
 
   it("blocks root-loop fallback when a direct child alternative can be evaluated for redelegation", () => {
@@ -169,6 +176,40 @@ describe("topology dispatch failure follow-up", () => {
       reasonCode: "redelegate_after_delegation_failure",
       rootLoopContinuation: "blocked",
       alternativeExecutorIds: ["workspace:draft:node:research"],
+    })
+    expect(decision?.summary).toContain("직속 하위 서브 에이전트")
+    expect(decision?.summary).not.toContain("direct child 실행자")
+    expect(decision ? buildTopologyDispatchFollowupDirective(decision) : null).toEqual({
+      kind: "awaiting_user",
+      preview: "",
+      summary: "서브 에이전트 위임 실패 후 대체 가능한 직속 하위 서브 에이전트 후보가 있어 재위임 판단이 필요합니다.",
+      userMessage: "서브 에이전트 위임 실패 후 대체 가능한 직속 하위 서브 에이전트 후보가 있어 재위임 판단이 필요합니다.",
+      userMessageSource: "runtime_deterministic",
+      reason: "서브 에이전트 위임 실패 후 대체 직속 하위 서브 에이전트 후보 검토가 필요합니다.",
+      eventLabel: "topology dispatch follow-up terminal directive:redelegate",
+    })
+  })
+
+  it("turns exhausted topology dispatch failure into a stop directive", () => {
+    const decision = resolveTopologyDispatchFollowupDecision({
+      dispatchResult: failedDispatch("workspace:draft:node:finance"),
+      plan: orchestrationPlan(["workspace:draft:node:finance"]),
+      availableDirectChildExecutorIds: ["workspace:draft:node:finance"],
+    })
+
+    expect(decision).toMatchObject({
+      action: "fail_with_reason",
+      reasonCode: "final_failure_after_exhaustion",
+      rootLoopContinuation: "blocked",
+    })
+    expect(decision ? buildTopologyDispatchFollowupDirective(decision) : null).toEqual({
+      kind: "stop",
+      preview: "",
+      summary: "서브 에이전트 위임이 실패했고 대체 위임이나 자체 처리 경로가 없습니다.",
+      userMessage: "서브 에이전트 위임이 실패했고 대체 위임이나 자체 처리 경로가 없습니다.",
+      userMessageSource: "runtime_deterministic",
+      reason: "서브 에이전트 위임 실패 후 대체 위임이나 자체 처리 경로가 없습니다.",
+      eventLabel: "topology dispatch follow-up terminal directive:fail_with_reason",
     })
   })
 })

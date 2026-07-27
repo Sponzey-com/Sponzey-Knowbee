@@ -1,4 +1,5 @@
 import type { AIProvider, ProviderAuditTrace } from "../ai/index.js"
+import { resolveAgentConfigAgentName } from "../contracts/sub-agent-orchestration.js"
 import {
   buildAgentExecutionContextFromGraphSnapshot,
   type BuildAgentExecutionContextFromGraphInput,
@@ -9,11 +10,13 @@ import type {
   AgentExecutionDecision,
   AgentExecutionDecisionTraceSnapshot,
   AgentExecutionRequester,
+  AgentExecutionToolBinding,
 } from "./execution-decision-contract.js"
 import {
   buildExecutionGraphSnapshot,
   EXECUTION_GRAPH_ROOT_AGENT_ID,
   type BuildExecutionGraphSnapshotInput,
+  type ExecutionGraphConfigSnapshot,
   type ExecutionGraphSnapshot,
 } from "./execution-graph-snapshot.js"
 import {
@@ -58,10 +61,12 @@ export interface DecideExecutionRouteInput {
   preferredTarget?: string | undefined
   fallbackModel?: string | undefined
   currentExecutorId?: string | undefined
-  buildExecutionGraphSnapshot?: ((input?: BuildExecutionGraphSnapshotInput) => ExecutionGraphSnapshot) | undefined
+  config: ExecutionGraphConfigSnapshot
+  buildExecutionGraphSnapshot?: ((input: BuildExecutionGraphSnapshotInput) => ExecutionGraphSnapshot) | undefined
   buildExecutionContext?: ((input: BuildAgentExecutionContextFromGraphInput) => AgentExecutionContext) | undefined
   runAgentExecutionHarness?: typeof runAgentExecutionHarness | undefined
   callModel?: AgentExecutionModelCaller | undefined
+  availableTools?: AgentExecutionToolBinding[] | undefined
   resolveExplicitProviderTarget?: ((input: ResolveExplicitProviderTargetInput) => DecideExecutionResolvedTarget | undefined) | undefined
 }
 
@@ -129,6 +134,7 @@ export async function decideExecutionRoute(
   const executionGraph = buildGraph({
     mode: "active_deployment",
     currentExecutorId: input.currentExecutorId ?? EXECUTION_GRAPH_ROOT_AGENT_ID,
+    config: input.config,
   })
   const buildContext = input.buildExecutionContext ?? buildAgentExecutionContextFromGraphSnapshot
   const explicitTarget = normalizeExplicitExecutionTarget(input.preferredTarget)
@@ -140,6 +146,7 @@ export async function decideExecutionRoute(
     request: buildDecisionRequest(input),
     requester: buildDecisionRequester(input),
     directExecutionRequested: false,
+    ...(input.availableTools ? { availableTools: input.availableTools } : {}),
     ...(explicitTarget ? { explicitTargetExecutorId: explicitTarget } : {}),
     ...(explicitProviderTarget ? { explicitProviderTargetId: explicitProviderTarget } : {}),
   })
@@ -208,7 +215,7 @@ function buildDecisionRequester(input: DecideExecutionRouteInput): AgentExecutio
   return {
     requester_id: input.sessionId,
     requester_type: "channel",
-    display_name: input.source,
+    agent_name: input.source,
   }
 }
 
@@ -231,5 +238,10 @@ function fallbackRouteKind(decision: AgentExecutionDecision): "self_solve" | "as
 }
 
 function executorLabel(graph: ExecutionGraphSnapshot, executorId: string): string {
-  return graph.agentsById[executorId]?.displayName?.trim() || executorId
+  const agent = graph.agentsById[executorId]
+  if (!agent) return executorId
+  return resolveAgentConfigAgentName({
+    agentType: executorId === graph.rootAgentId ? "knowbee" : "sub_agent",
+    agentName: agent.agentName ?? "",
+  })
 }

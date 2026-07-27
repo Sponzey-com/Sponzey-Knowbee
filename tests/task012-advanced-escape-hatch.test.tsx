@@ -123,8 +123,7 @@ describe("task012 removed advanced topology surfaces", () => {
     )
 
     expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/sub-agents")
-    expect(fallbackHtml).toContain("기능 플래그")
-    expect(fallbackHtml).toContain("관리자 설정")
+    expect(fallbackHtml).toContain("기능 상태를 확인할 수 없습니다")
     expect(fallbackHtml).not.toContain("workspace body")
   })
 
@@ -133,7 +132,7 @@ describe("task012 removed advanced topology surfaces", () => {
 
     expect(runbook).toContain("Removed surface rollback check")
     expect(runbook).toContain("/advanced/topology?ux=developer&mode=build")
-    expect(runbook).toContain("must stay on the simple Executor Graph surface")
+    expect(runbook).toContain("must stay on the simple sub-agent settings surface")
     expect(runbook).not.toContain("Advanced escape hatch regression")
   })
 })

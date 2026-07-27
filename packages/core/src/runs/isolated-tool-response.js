@@ -1,13 +1,4 @@
-function isArtifactDeliveryDetails(value) {
-    if (!value || typeof value !== "object")
-        return false;
-    const candidate = value;
-    return candidate.kind === "artifact_delivery"
-        && (candidate.channel === "telegram" || candidate.channel === "webui" || candidate.channel === "slack")
-        && typeof candidate.filePath === "string"
-        && typeof candidate.size === "number"
-        && typeof candidate.source === "string";
-}
+import { isArtifactDeliveryResultDetails } from "../tools/types.js";
 function hasExplicitFinalTextOwnership(value) {
     if (!value || typeof value !== "object")
         return false;
@@ -18,7 +9,7 @@ export function decideIsolatedToolResponse(chunk) {
     if (chunk.type !== "tool_end" || !chunk.success) {
         return { kind: "none" };
     }
-    if (isArtifactDeliveryDetails(chunk.details)) {
+    if (isArtifactDeliveryResultDetails(chunk.details)) {
         return { kind: "artifact" };
     }
     if (hasExplicitFinalTextOwnership(chunk.details)) {

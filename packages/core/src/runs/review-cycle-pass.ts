@@ -1,20 +1,50 @@
 import type { AIProvider } from "../ai/index.js"
+import type { KnowbeeConfig } from "../config/types.js"
+import { getDb } from "../db/index.js"
+import type { LlmDiagnosisProvider } from "../contracts/llm-diagnosis-provider.js"
+import { createFileBackedDiagnosisProvider } from "../orchestration/prompt-policy-adapter.js"
 import { getRootRun } from "./store.js"
-import { defaultReviewPassDependencies, runReviewPass } from "./review-pass.js"
-import { runReviewOutcomePass, type ReviewOutcomePassResult } from "./review-outcome-pass.js"
+import {
+  buildCompletionReviewOperationalEvidence,
+  defaultReviewPassDependencies,
+  runReviewPass,
+} from "./review-pass.js"
+import type { CompletionReviewOperationalEvidence } from "../agent/completion-review.js"
+import {
+  runReviewOutcomePass,
+  type CanonicalCompletionOutcomeRecorder,
+  type ReviewOutcomePassResult,
+} from "./review-outcome-pass.js"
 import type { RunChunkDeliveryHandler, DeliveryOutcome, SuccessfulFileDelivery } from "./delivery.js"
 import type { SuccessfulToolEvidence } from "./recovery.js"
-import type { TaskExecutionSemantics } from "../agent/intake.js"
-import type { FinalizationDependencies, FinalizationSource } from "./finalization.js"
+import type { ResponseLanguageMode, TaskExecutionSemantics } from "../agent/intake.js"
+import type {
+  CanonicalDeliveryRecorder,
+  CanonicalPendingResponseConsumer,
+  CanonicalPendingResponseStager,
+  FinalizationDependencies,
+  FinalizationSource,
+  StandaloneAssistantMessageResponseContext,
+} from "./finalization.js"
+import type { UserFacingTextSource } from "./loop-directive.js"
 import type { RecoveryBudgetUsage } from "./recovery-budget.js"
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js"
 import { decideReviewGate } from "./review-gate.js"
 import type { FeedbackRequest } from "../contracts/sub-agent-orchestration.js"
+import { loadPromptValue } from "../memory/prompt-fragments.js"
+import { buildStructuredFollowupKey } from "./completion-application.js"
+import type { FinalResponseIdentityContext } from "./final-response-renderer.js"
+import type { InstructionRuntimeContext } from "../instructions/merge.js"
+import {
+  resolveRuntimeToolMetadataFromDispatcher,
+  validateAndAppendYeonjangSideEffectGoalValidationEvidence,
+  type YeonjangSideEffectGoalValidationCandidate,
+} from "../yeonjang/side-effect-goal-validation-review.js"
 
 interface ReviewCyclePassDependencies {
-  rememberRunApprovalScope: (runId: string) => void
-  grantRunApprovalScope: (runId: string) => void
-  grantRunSingleApproval: (runId: string) => void
+  rememberRunApprovalScope: (runId: string, toolName: string) => void
+  grantRunApprovalScope: (runId: string, toolName: string) => void
+  grantRunSingleApproval: (runId: string, toolName: string) => void
   rememberRunFailure: (params: {
     runId: string
     sessionId: string
@@ -46,6 +76,10 @@ interface ReviewCyclePassModuleDependencies {
   runReviewPass: typeof runReviewPass
   runReviewOutcomePass: typeof runReviewOutcomePass
   getRootRun: typeof getRootRun
+  getDb?: typeof getDb
+  createFileBackedDiagnosisProvider?: typeof createFileBackedDiagnosisProvider
+  validateAndAppendYeonjangSideEffectGoalValidationEvidence?: typeof validateAndAppendYeonjangSideEffectGoalValidationEvidence
+  resolveRuntimeToolMetadataFromDispatcher?: typeof resolveRuntimeToolMetadataFromDispatcher
 }
 
 const defaultModuleDependencies: ReviewCyclePassModuleDependencies = {
@@ -53,6 +87,38 @@ const defaultModuleDependencies: ReviewCyclePassModuleDependencies = {
   runReviewPass,
   runReviewOutcomePass,
   getRootRun,
+  getDb,
+  createFileBackedDiagnosisProvider,
+  validateAndAppendYeonjangSideEffectGoalValidationEvidence,
+  resolveRuntimeToolMetadataFromDispatcher,
+}
+
+function buildReviewResponseContext(params: {
+  originalRequest: string
+  responseLanguageMode?: ResponseLanguageMode | undefined
+  model?: string | undefined
+  providerId?: string | undefined
+  provider?: AIProvider | undefined
+  config: KnowbeeConfig
+  workDir?: string | undefined
+  finalResponseIdentityContext?: FinalResponseIdentityContext | undefined
+}): StandaloneAssistantMessageResponseContext | undefined {
+  if (!params.originalRequest.trim() || !params.model?.trim() || !params.workDir?.trim()) return undefined
+  if (!params.provider && !params.providerId?.trim()) return undefined
+  return {
+    originalRequest: params.originalRequest,
+    ...(params.responseLanguageMode
+      ? { responseLanguageMode: params.responseLanguageMode }
+      : {}),
+    model: params.model,
+    ...(params.providerId ? { providerId: params.providerId } : {}),
+    ...(params.provider ? { provider: params.provider } : {}),
+    config: params.config,
+    workDir: params.workDir,
+    ...(params.finalResponseIdentityContext
+      ? { identityContext: params.finalResponseIdentityContext }
+      : {}),
+  }
 }
 
 export interface SubSessionFeedbackCycleDirective {
@@ -79,40 +145,88 @@ export function buildSubSessionFeedbackCycleDirective(
       feedback.missingItems.length ? `Missing items:\n- ${feedback.missingItems.join("\n- ")}` : "",
       feedback.requiredChanges.length ? `Required changes:\n- ${feedback.requiredChanges.join("\n- ")}` : "",
       feedback.additionalContextRefs.length ? `Additional context refs:\n- ${feedback.additionalContextRefs.join("\n- ")}` : "",
-      "Return a new ResultReport. Do not deliver directly to the user.",
+      loadPromptValue("review_cycle_followup_result_report_instruction_user", {}, { required: true }),
     ].filter(Boolean).join("\n\n"),
+  }
+}
+
+function resolveReviewCycleDiagnosisProvider(
+  params: {
+    runId: string
+    requestGroupId?: string | undefined
+    sessionId: string
+    provider?: AIProvider | undefined
+    model?: string | undefined
+    workDir?: string | undefined
+    finalResponseIdentityContext?: FinalResponseIdentityContext | undefined
+    diagnosisProvider?: LlmDiagnosisProvider | undefined
+  },
+  moduleDependencies: Pick<ReviewCyclePassModuleDependencies, "createFileBackedDiagnosisProvider">,
+): LlmDiagnosisProvider | undefined {
+  if (params.diagnosisProvider) return params.diagnosisProvider
+  if (!params.provider || !params.model?.trim() || !params.workDir?.trim()) return undefined
+
+  try {
+    return (moduleDependencies.createFileBackedDiagnosisProvider ?? createFileBackedDiagnosisProvider)({
+      provider: params.provider,
+      model: params.model,
+      workDir: params.workDir,
+      locale: params.finalResponseIdentityContext?.promptLocale ?? "en",
+      observabilityContext: {
+        runId: params.runId,
+        ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
+        sessionId: params.sessionId,
+      },
+    })
+  } catch {
+    return undefined
   }
 }
 
 export async function runReviewCyclePass(
   params: {
+    instructionRuntime: InstructionRuntimeContext
     runId: string
     sessionId: string
     source: FinalizationSource
     onChunk: RunChunkDeliveryHandler | undefined
     signal: AbortSignal
     preview: string
+    previewSource?: UserFacingTextSource
+    deferredPreviewDelivery?: boolean
     priorAssistantMessages: string[]
     executionSemantics: TaskExecutionSemantics
     requiresFilesystemMutation: boolean
     originalRequest: string
+    responseLanguageMode?: ResponseLanguageMode | undefined
     model?: string
     providerId?: string
     provider?: AIProvider
+    diagnosisProvider?: LlmDiagnosisProvider
+    config: KnowbeeConfig
     workDir?: string
+    finalResponseIdentityContext?: FinalResponseIdentityContext | undefined
     usesWorkerRuntime: boolean
     workerRuntimeKind?: string
     requiresPrivilegedToolExecution: boolean
     successfulTools: SuccessfulToolEvidence[]
+    requiresSuccessfulToolEvidence?: boolean
+    canonicalAttemptEvidenceRefs?: string[] | undefined
+    completionConditions: string[]
     successfulFileDeliveries: SuccessfulFileDelivery[]
     sawRealFilesystemMutation: boolean
     deliveryOutcome: DeliveryOutcome
+    yeonjangSideEffectGoalValidationCandidates?: YeonjangSideEffectGoalValidationCandidate[]
     truncatedOutputRecoveryAttempted: boolean
     recoveryBudgetUsage: RecoveryBudgetUsage
     seenFollowupPrompts: Set<string>
     syntheticApprovalAlreadyApproved: boolean
     syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies
     finalizationDependencies: FinalizationDependencies
+    recordCanonicalCompletionOutcome?: CanonicalCompletionOutcomeRecorder | undefined
+    recordCanonicalDelivery?: CanonicalDeliveryRecorder | undefined
+    stageCanonicalPendingResponse?: CanonicalPendingResponseStager | undefined
+    consumeCanonicalPendingResponse?: CanonicalPendingResponseConsumer | undefined
     approvalRequired: boolean
     approvalTool: string
     defaultMaxDelegationTurns: number
@@ -120,6 +234,68 @@ export async function runReviewCyclePass(
   dependencies: ReviewCyclePassDependencies,
   moduleDependencies: ReviewCyclePassModuleDependencies = defaultModuleDependencies,
 ): Promise<ReviewOutcomePassResult> {
+  const goalValidationCandidates = params.yeonjangSideEffectGoalValidationCandidates ?? []
+  const yeonjangGoalValidationStateChanges: CompletionReviewOperationalEvidence["stateChanges"] = []
+  if (goalValidationCandidates.length > 0) {
+    const diagnosisProvider = resolveReviewCycleDiagnosisProvider(params, moduleDependencies)
+    const appendValidation =
+      moduleDependencies.validateAndAppendYeonjangSideEffectGoalValidationEvidence
+        ?? validateAndAppendYeonjangSideEffectGoalValidationEvidence
+    const resolveToolMetadata =
+      moduleDependencies.resolveRuntimeToolMetadataFromDispatcher
+        ?? resolveRuntimeToolMetadataFromDispatcher
+    const validation = await appendValidation({
+      db: (moduleDependencies.getDb ?? getDb)(),
+      ...(diagnosisProvider ? { provider: diagnosisProvider } : {}),
+      runId: params.runId,
+      ownerAgentName: params.finalResponseIdentityContext?.mainAgentSelfName ?? "Knowbee (노비)",
+      originalRequest: params.originalRequest,
+      completionConditions: params.completionConditions,
+      candidates: goalValidationCandidates,
+      successfulTools: params.successfulTools,
+      resolveToolMetadata,
+    })
+    if (validation.added > 0) {
+      dependencies.appendRunEvent(
+        params.runId,
+        `yeonjang_side_effect_goal_validation_added:${validation.added}`,
+      )
+    }
+    for (const skipped of validation.skipped) {
+      yeonjangGoalValidationStateChanges.push({
+        stateRef: [
+          "yeonjang-goal-validation",
+          skipped.toolName,
+          skipped.reasonCode,
+          skipped.detail,
+        ].filter(Boolean).join(":"),
+        targetRef: `tool:${skipped.toolName}:side-effect-goal`,
+        status: "not_observed",
+      })
+      dependencies.appendRunEvent(
+        params.runId,
+        `yeonjang_side_effect_goal_validation_skipped:${skipped.toolName}:${skipped.reasonCode}`,
+      )
+    }
+  }
+
+  const baseOperationalEvidence = buildCompletionReviewOperationalEvidence({
+    successfulFileDeliveries: params.successfulFileDeliveries,
+    sawRealFilesystemMutation: params.sawRealFilesystemMutation,
+    deliveryOutcome: params.deliveryOutcome,
+  })
+  const operationalEvidence = {
+    ...baseOperationalEvidence,
+    stateChanges: [
+      ...baseOperationalEvidence.stateChanges,
+      ...(params.canonicalAttemptEvidenceRefs ?? []).map((stateRef) => ({
+        stateRef,
+        targetRef: `run:${params.runId}:attempt`,
+        status: "observed" as const,
+      })),
+      ...yeonjangGoalValidationStateChanges,
+    ],
+  }
   const reviewGate = moduleDependencies.decideReviewGate({
     executionSemantics: params.executionSemantics,
     preview: params.preview,
@@ -136,6 +312,9 @@ export async function runReviewCyclePass(
         syntheticApproval: null,
       }
     : await moduleDependencies.runReviewPass({
+        instructionRuntime: params.instructionRuntime,
+        runId: params.runId,
+        sessionId: params.sessionId,
         executionProfile: {
           approvalRequired: params.approvalRequired,
           approvalTool: params.approvalTool,
@@ -146,21 +325,61 @@ export async function runReviewCyclePass(
         ...(params.model ? { model: params.model } : {}),
         ...(params.providerId ? { providerId: params.providerId } : {}),
         ...(params.provider ? { provider: params.provider } : {}),
+        config: params.config,
         ...(params.workDir ? { workDir: params.workDir } : {}),
         usesWorkerRuntime: params.usesWorkerRuntime,
         requiresPrivilegedToolExecution: params.requiresPrivilegedToolExecution,
         successfulTools: params.successfulTools,
+        ...(params.requiresSuccessfulToolEvidence
+          ? { requiresSuccessfulToolEvidence: true }
+          : {}),
+        completionConditions: params.completionConditions,
+        seenFollowupTransitionKeys: params.seenFollowupPrompts,
+        operationalEvidence,
         successfulFileDeliveries: params.successfulFileDeliveries,
         sawRealFilesystemMutation: params.sawRealFilesystemMutation,
+        deliveryOutcome: params.deliveryOutcome,
       }, {
         ...defaultReviewPassDependencies,
         ...(dependencies.onReviewError ? { onReviewError: dependencies.onReviewError } : {}),
+        onReviewRejected: (reasonCode, attempt) => {
+          dependencies.appendRunEvent(
+            params.runId,
+            `completion_review_rejected:${reasonCode}:attempt_${attempt}`,
+          )
+        },
       })
 
   params.priorAssistantMessages.push(params.preview)
+  if (reviewPass.reviewFailureReasonCode) {
+    dependencies.appendRunEvent(
+      params.runId,
+      `completion_review_terminal_failure:${reviewPass.reviewFailureReasonCode}`,
+    )
+  }
   const currentRun = moduleDependencies.getRootRun(params.runId)
-  const normalizedFollowupPrompt = reviewPass.review?.status === "followup"
-    ? reviewPass.review.followupPrompt?.replace(/\s+/g, " ").trim().toLowerCase()
+  const structuredFollowupKey = reviewPass.review?.status === "followup" && reviewPass.review.followupPrompt?.trim()
+    ? buildStructuredFollowupKey({
+        kind: "followup",
+        summary: reviewPass.review.summary || "Follow-up required.",
+        reason: reviewPass.review.reason || "",
+        remainingItems: reviewPass.review.remainingItems ?? [],
+        followupPrompt: reviewPass.review.followupPrompt,
+        followupEvidenceRefs: reviewPass.review.followupEvidenceRefs ?? [],
+        evidenceRevisionRefs:
+          reviewPass.review.contextReceipt?.evidenceRefs
+          ?? reviewPass.review.followupEvidenceRefs
+          ?? [],
+        ...(reviewPass.review.followupExecutionMode
+          ? { followupExecutionMode: reviewPass.review.followupExecutionMode }
+          : {}),
+        ...(reviewPass.review.followupRequiredToolNames?.length
+          ? { followupRequiredToolNames: reviewPass.review.followupRequiredToolNames }
+          : {}),
+        ...(reviewPass.review.followupTargetRefs?.length
+          ? { followupTargetRefs: reviewPass.review.followupTargetRefs }
+          : {}),
+      }, reviewPass.review.contextReceipt?.evidenceRefs)
     : undefined
 
   return moduleDependencies.runReviewOutcomePass({
@@ -170,16 +389,24 @@ export async function runReviewCyclePass(
     onChunk: params.onChunk,
     signal: params.signal,
     preview: params.preview,
+    ...(params.previewSource ? { previewSource: params.previewSource } : {}),
+    ...(params.deferredPreviewDelivery ? { deferredPreviewDelivery: true } : {}),
     review: reviewPass.review,
+    ...(reviewPass.reviewFailureReasonCode
+      ? { reviewFailureReasonCode: reviewPass.reviewFailureReasonCode }
+      : {}),
     syntheticApproval: reviewPass.syntheticApproval,
     executionSemantics: params.executionSemantics,
     deliveryOutcome: params.deliveryOutcome,
     successfulTools: params.successfulTools,
+    completionConditions: params.completionConditions,
+    operationalEvidence,
     sawRealFilesystemMutation: params.sawRealFilesystemMutation,
     requiresFilesystemMutation: params.requiresFilesystemMutation,
     truncatedOutputRecoveryAttempted: params.truncatedOutputRecoveryAttempted,
     originalRequest: params.originalRequest,
     recoveryBudgetUsage: params.recoveryBudgetUsage,
+    ...(buildReviewResponseContext(params) ? { responseContext: buildReviewResponseContext(params) } : {}),
     ...(typeof currentRun?.delegationTurnCount === "number"
       ? { delegationTurnCount: currentRun.delegationTurnCount }
       : {}),
@@ -187,11 +414,23 @@ export async function runReviewCyclePass(
       ? { maxDelegationTurns: currentRun.maxDelegationTurns }
       : {}),
     defaultMaxDelegationTurns: params.defaultMaxDelegationTurns,
-    followupPromptSeen: Boolean(normalizedFollowupPrompt && params.seenFollowupPrompts.has(normalizedFollowupPrompt)),
+    followupPromptSeen: Boolean(structuredFollowupKey && params.seenFollowupPrompts.has(structuredFollowupKey)),
     syntheticApprovalAlreadyApproved: params.syntheticApprovalAlreadyApproved,
     syntheticApprovalSourceLabel: params.workerRuntimeKind ?? "agent_reply",
     syntheticApprovalRuntimeDependencies: params.syntheticApprovalRuntimeDependencies,
     finalizationDependencies: params.finalizationDependencies,
+    ...(params.recordCanonicalCompletionOutcome
+      ? { recordCanonicalCompletionOutcome: params.recordCanonicalCompletionOutcome }
+      : {}),
+    ...(params.recordCanonicalDelivery
+      ? { recordCanonicalDelivery: params.recordCanonicalDelivery }
+      : {}),
+    ...(params.stageCanonicalPendingResponse
+      ? { stageCanonicalPendingResponse: params.stageCanonicalPendingResponse }
+      : {}),
+    ...(params.consumeCanonicalPendingResponse
+      ? { consumeCanonicalPendingResponse: params.consumeCanonicalPendingResponse }
+      : {}),
   }, {
     rememberRunApprovalScope: dependencies.rememberRunApprovalScope,
     grantRunApprovalScope: dependencies.grantRunApprovalScope,

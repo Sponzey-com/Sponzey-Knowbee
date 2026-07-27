@@ -33,6 +33,7 @@ pub struct YeonjangSettings {
     pub connection: BrokerConnectionSettings,
     pub mqtt: MqttTopicSettings,
     pub permissions: PermissionSettings,
+    pub path_access: PathAccessSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -58,13 +59,61 @@ pub struct MqttTopicSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+pub struct PathAccessSettings {
+    pub allowed_read_paths: Vec<String>,
+    pub allowed_write_paths: Vec<String>,
+    pub denied_paths: Vec<String>,
+    pub max_read_bytes: u64,
+    pub max_write_bytes: u64,
+    pub allow_hidden_files: bool,
+    pub follow_symlinks: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct PermissionSettings {
+    #[serde(default)]
+    pub allow_file_read: bool,
+    #[serde(default)]
+    pub allow_file_write: bool,
+    #[serde(default)]
+    pub allow_file_delete: bool,
+    #[serde(default)]
+    pub allow_disk_read: bool,
+    #[serde(default = "default_enabled_permission")]
+    pub allow_camera_access: bool,
+    #[serde(default)]
+    pub allow_clipboard_read: bool,
+    #[serde(default)]
+    pub allow_clipboard_write: bool,
+    #[serde(default)]
+    pub allow_process_read: bool,
+    #[serde(default)]
+    pub allow_process_control: bool,
+    #[serde(default)]
+    pub allow_browser_read: bool,
+    #[serde(default)]
+    pub allow_browser_control: bool,
+    #[serde(default)]
+    pub allow_network_read: bool,
+    #[serde(default)]
+    pub allow_device_status: bool,
+    #[serde(default = "default_enabled_permission")]
     pub allow_system_control: bool,
+    #[serde(default = "default_enabled_permission")]
     pub allow_shell_exec: bool,
+    #[serde(default = "default_enabled_permission")]
     pub allow_application_launch: bool,
+    #[serde(default = "default_enabled_permission")]
     pub allow_screen_capture: bool,
+    #[serde(default = "default_enabled_permission")]
     pub allow_keyboard_control: bool,
+    #[serde(default = "default_enabled_permission")]
     pub allow_mouse_control: bool,
+}
+
+fn default_enabled_permission() -> bool {
+    true
 }
 
 impl Default for YeonjangSettings {
@@ -84,6 +133,7 @@ impl Default for YeonjangSettings {
             connection: BrokerConnectionSettings::default(),
             mqtt: MqttTopicSettings::default(),
             permissions: PermissionSettings::default(),
+            path_access: PathAccessSettings::default(),
         };
         settings.apply_identity_defaults();
         settings.reset_topics_from_node_id();
@@ -116,9 +166,36 @@ impl Default for MqttTopicSettings {
     }
 }
 
+impl Default for PathAccessSettings {
+    fn default() -> Self {
+        Self {
+            allowed_read_paths: Vec::new(),
+            allowed_write_paths: Vec::new(),
+            denied_paths: Vec::new(),
+            max_read_bytes: 1_048_576,
+            max_write_bytes: 1_048_576,
+            allow_hidden_files: false,
+            follow_symlinks: false,
+        }
+    }
+}
+
 impl Default for PermissionSettings {
     fn default() -> Self {
         Self {
+            allow_file_read: false,
+            allow_file_write: false,
+            allow_file_delete: false,
+            allow_disk_read: false,
+            allow_camera_access: true,
+            allow_clipboard_read: false,
+            allow_clipboard_write: false,
+            allow_process_read: false,
+            allow_process_control: false,
+            allow_browser_read: false,
+            allow_browser_control: false,
+            allow_network_read: false,
+            allow_device_status: false,
             allow_system_control: true,
             allow_shell_exec: true,
             allow_application_launch: true,
@@ -191,6 +268,13 @@ pub fn settings_path() -> PathBuf {
     }
 
     PathBuf::from("Yeonjang").join("settings.json")
+}
+
+pub fn browser_focus_nonce_state_path() -> PathBuf {
+    settings_path()
+        .parent()
+        .map(|parent| parent.join("browser-focus-consumed-nonces.json"))
+        .unwrap_or_else(|| PathBuf::from("Yeonjang").join("browser-focus-consumed-nonces.json"))
 }
 
 pub fn load_settings() -> Result<YeonjangSettings> {
@@ -333,5 +417,37 @@ mod tests {
 
         assert_ne!(first.instance_id, second.instance_id);
         assert_ne!(first.install_fingerprint, second.install_fingerprint);
+    }
+
+    #[test]
+    fn legacy_permission_settings_keep_existing_enabled_permissions() {
+        let permissions = serde_json::from_str::<PermissionSettings>(
+            r#"{
+              "allow_shell_exec": true,
+              "allow_screen_capture": true
+            }"#,
+        )
+        .expect("legacy permissions should deserialize with defaults");
+
+        assert!(permissions.allow_camera_access);
+        assert!(permissions.allow_system_control);
+        assert!(permissions.allow_application_launch);
+        assert!(permissions.allow_keyboard_control);
+        assert!(permissions.allow_mouse_control);
+        assert!(!permissions.allow_file_write);
+        assert!(!permissions.allow_process_control);
+    }
+
+    #[test]
+    fn default_path_access_is_fail_closed() {
+        let path_access = PathAccessSettings::default();
+
+        assert!(path_access.allowed_read_paths.is_empty());
+        assert!(path_access.allowed_write_paths.is_empty());
+        assert!(path_access.denied_paths.is_empty());
+        assert!(!path_access.allow_hidden_files);
+        assert!(!path_access.follow_symlinks);
+        assert_eq!(path_access.max_read_bytes, 1_048_576);
+        assert_eq!(path_access.max_write_bytes, 1_048_576);
     }
 }

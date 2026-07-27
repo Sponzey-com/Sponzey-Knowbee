@@ -1,168 +1,97 @@
-import { getConfig } from "../../config/index.js"
 import {
-  buildWebRetrievalPolicyDecision,
-  evaluateSourceReliabilityGuard,
-  type SourceEvidence,
-} from "../../runs/web-retrieval-policy.js"
-import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js"
-import { BraveSearchProvider } from "./search-providers/brave.js"
-import { DuckDuckGoSearchProvider } from "./search-providers/duckduckgo.js"
-import type { SearchResult } from "./search-providers/brave.js"
+  createDuckDuckGoHtmlSearchAdapter,
+  type DuckDuckGoHtmlSearchDependencies,
+} from "../../adapters/duckduckgo-html-search.js"
+import type { SourceFreshnessPolicy } from "../../contracts/web-retrieval.js"
+import { createLogger } from "../../logger/index.js"
 import type { AgentTool, ToolContext, ToolResult } from "../types.js"
+
+const log = createLogger("tools:web-search")
 
 interface WebSearchParams {
   query: string
-  maxResults?: number | undefined
-  dateRange?: "day" | "week" | "month" | "year" | undefined
+  maxResults?: number
+  locale?: string
+  safeSearch?: "strict" | "moderate"
+  freshnessPolicy?: SourceFreshnessPolicy
 }
 
-function dateRangeToBraveFreshness(dateRange: "day" | "week" | "month" | "year"): string {
-  switch (dateRange) {
-    case "day": return "pd"
-    case "week": return "pw"
-    case "month": return "pm"
-    case "year": return "py"
-  }
-}
-
-function formatResults(results: SearchResult[]): string {
-  if (results.length === 0) {
-    return "(검색 결과 없음)"
-  }
-  return results
-    .map((r, i) => {
-      const lines = [
-        `${i + 1}. **${r.title}**`,
-        `   URL: ${r.url}`,
-        `   요약: ${r.snippet}`,
-      ]
-      if (r.publishedDate) {
-        lines.push(`   날짜: ${r.publishedDate}`)
-      }
-      return lines.join("\n")
-    })
-    .join("\n\n")
-}
-
-function domainFromUrl(url: string): string | null {
-  try {
-    return new URL(url).hostname.toLowerCase()
-  } catch {
-    return null
-  }
-}
-
-function buildPolicyFooter(policy: ReturnType<typeof buildWebRetrievalPolicyDecision>, guard: ReturnType<typeof evaluateSourceReliabilityGuard> | null): string {
-  if (!policy) return ""
-  const lines = [
-    `[검색 수집: ${policy.fetchTimestamp}]`,
-    `[검색 방식: ${policy.method}]`,
-    `[최신성 정책: ${policy.freshnessPolicy}]`,
-    `[출처 성격: ${policy.sourceKind}/${policy.reliability}]`,
-    `[응답 지침: ${policy.answerDirective}]`,
-  ]
-  if (guard && guard.status !== "ready") {
-    lines.push(`[확정성: ${guard.status} - ${guard.userMessage}]`)
-  }
-  if (policy.freshnessPolicy === "latest_approximate") {
-    lines.push("[후속 조치: web_search 결과에 요청 값이 직접 보이지 않으면, 값 미추출로 답하지 말고 결과 URL, 직접 시세 URL, 브라우저 근거, 어댑터/API 등 다른 안전한 확인 경로를 사용하세요. 같은 검색어 반복과 file_search 우회는 금지합니다. 모든 안전한 대안이 소진된 경우에만 미확인 항목과 시도한 출처를 명시해 제한적으로 종료하세요.]")
-  }
-  return `\n\n${lines.join("\n")}`
-}
-
-export const webSearchTool: AgentTool<WebSearchParams> = {
-  name: "web_search",
-  description: "인터넷에서 정보를 검색합니다.",
-  parameters: {
-    type: "object",
-    properties: {
-      query: { type: "string", description: "검색 쿼리" },
-      maxResults: { type: "number", description: "최대 결과 수. 기본: 공급자 설정값" },
-      dateRange: {
-        type: "string",
-        enum: ["day", "week", "month", "year"],
-        description: "날짜 범위 필터 (brave만 지원)",
+export function createWebSearchTool(
+  dependencies: DuckDuckGoHtmlSearchDependencies = {},
+): AgentTool<WebSearchParams> {
+  const search = createDuckDuckGoHtmlSearchAdapter(dependencies)
+  return {
+    name: "web_search",
+    evidenceSourceKind: "web",
+    description: "Search the public web with DuckDuckGo and return Markdown evidence.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query" },
+        maxResults: { type: "number", description: "Result limit from 1 to 16" },
+        locale: { type: "string", description: "Search locale such as ko-KR" },
+        safeSearch: {
+          type: "string",
+          enum: ["strict", "moderate"],
+          description: "Safe-search level",
+        },
+        freshnessPolicy: {
+          type: "string",
+          enum: ["normal", "latest_approximate", "strict_timestamp"],
+          description: "Evidence freshness requirement for later LLM diagnosis",
+        },
       },
+      required: ["query"],
     },
-    required: ["query"],
-  },
-  riskLevel: "safe",
-  requiresApproval: false,
-
-  async execute(params: WebSearchParams, ctx: ToolContext): Promise<ToolResult> {
-    const config = getConfig()
-    // 설정 없으면 DuckDuckGo로 폴백
-    const searchCfg = config.search.web ?? { provider: "duckduckgo" as const, maxResults: 5 }
-    const webRetrievalPolicy = buildWebRetrievalPolicyDecision({
-      toolName: "web_search",
-      params: params as unknown as Record<string, unknown>,
-      userMessage: ctx.userMessage,
-    })
-
-    const maxResults = params.maxResults ?? searchCfg.maxResults ?? 5
-    let results: SearchResult[]
-
-    try {
-      if (searchCfg.provider === "brave") {
-        if (!searchCfg.apiKey) {
-          return {
-            success: false,
-            output: "Brave Search API 키가 설정되지 않았습니다. config.json5의 search.web.apiKey를 설정하세요.",
-          }
-        }
-        const provider = new BraveSearchProvider(searchCfg.apiKey)
-        const freshness = params.dateRange ? dateRangeToBraveFreshness(params.dateRange) : undefined
-        results = await provider.search(params.query, { maxResults, dateRange: freshness })
-      } else if (searchCfg.provider === "duckduckgo") {
-        const provider = new DuckDuckGoSearchProvider({
+    riskLevel: "safe",
+    requiresApproval: false,
+    async execute(params: WebSearchParams, ctx: ToolContext): Promise<ToolResult> {
+      const startedAt = Date.now()
+      log.product("web_search_started", { runId: ctx.runId })
+      const outcome = await search({
+        query: params.query,
+        locale: params.locale ?? "en-US",
+        safeSearch: params.safeSearch ?? "moderate",
+        maxResults: params.maxResults ?? 8,
+        signal: ctx.signal,
+      })
+      if (!outcome.ok) {
+        log.product("web_search_finished", {
           runId: ctx.runId,
-          ...(ctx.requestGroupId ? { requestGroupId: ctx.requestGroupId } : {}),
+          status: "failed",
+          durationMs: Date.now() - startedAt,
         })
-        results = await provider.search(params.query, { maxResults })
-      } else {
+        log.fieldDebug("web_search_failed", {
+          reasonCode: outcome.reasonCode,
+          retryable: outcome.retryable,
+        })
         return {
           success: false,
-          output: `지원되지 않는 검색 공급자: "${searchCfg.provider}". 지원: brave, duckduckgo`,
+          output: "공개 웹 검색 결과를 가져오지 못했습니다.",
+          error: outcome.reasonCode,
+          details: { reasonCode: outcome.reasonCode, retryable: outcome.retryable },
         }
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      const sanitized = sanitizeUserFacingError(msg)
-      return { success: false, output: `검색 오류: ${sanitized.userMessage}`, error: sanitized.userMessage, details: { errorKind: sanitized.kind } }
-    }
-
-    const sourceEvidence: SourceEvidence[] = results.map((result) => ({
-      method: webRetrievalPolicy?.method ?? "fast_text_search",
-      sourceKind: webRetrievalPolicy?.sourceKind ?? "search_index",
-      reliability: webRetrievalPolicy?.reliability ?? "medium",
-      sourceUrl: result.url,
-      sourceDomain: domainFromUrl(result.url),
-      sourceTimestamp: result.publishedDate ?? null,
-      fetchTimestamp: webRetrievalPolicy?.fetchTimestamp ?? new Date().toISOString(),
-      freshnessPolicy: webRetrievalPolicy?.freshnessPolicy ?? "normal",
-    }))
-    const sourceGuard = evaluateSourceReliabilityGuard(sourceEvidence[0] ?? {
-      method: webRetrievalPolicy?.method ?? "fast_text_search",
-      sourceKind: webRetrievalPolicy?.sourceKind ?? "search_index",
-      reliability: results.length > 0 ? (webRetrievalPolicy?.reliability ?? "medium") : "unknown",
-      sourceUrl: null,
-      sourceDomain: null,
-      sourceTimestamp: null,
-      fetchTimestamp: webRetrievalPolicy?.fetchTimestamp ?? new Date().toISOString(),
-      freshnessPolicy: webRetrievalPolicy?.freshnessPolicy ?? "normal",
-    })
-
-    return {
-      success: true,
-      output: `${formatResults(results)}${buildPolicyFooter(webRetrievalPolicy, sourceGuard)}`,
-      details: {
-        query: params.query,
-        provider: searchCfg.provider,
-        count: results.length,
-        sourceEvidence,
-        sourceGuard,
-        ...(webRetrievalPolicy ? { webRetrievalPolicy } : {}),
-      },
-    }
-  },
+      log.product("web_search_finished", {
+        runId: ctx.runId,
+        status: "succeeded",
+        resultCount: outcome.results.length,
+        durationMs: Date.now() - startedAt,
+      })
+      log.development("web_search_projection_created", {
+        resultCount: outcome.results.length,
+      })
+      return {
+        success: true,
+        output: outcome.markdown,
+        details: {
+          provider: outcome.provider,
+          retrievedAt: outcome.retrievedAt,
+          results: outcome.results,
+        },
+      }
+    },
+  }
 }
+
+export const webSearchTool = createWebSearchTool()

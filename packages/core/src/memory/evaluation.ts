@@ -6,6 +6,7 @@ import {
   vectorChunkSearch,
   type MemoryChunkSearchResult,
 } from "./search.js"
+import type { LongTermMemoryWriteGateInput } from "./long-term-write-gate.js"
 
 export type MemoryRetrievalEvaluationMode = "fts" | "vector" | "hybrid"
 
@@ -55,10 +56,27 @@ export interface MemoryRetrievalEvaluationReport {
   }
 }
 
+function buildEvaluationLongTermWriteGate(
+  document: MemoryRetrievalEvaluationDocument,
+): LongTermMemoryWriteGateInput | undefined {
+  if (document.scope !== "long-term") return undefined
+  const ownerId = document.ownerId?.trim() || "global"
+  return {
+    targetOwner: { ownerType: "knowbee", ownerId },
+    category: "approved_work_context",
+    storageNeed: "project_fact",
+    sensitivity: "not_sensitive",
+    userIntent: "admin_review_approved",
+    sourceEvidenceRefs: [`retrieval_evaluation:${document.id}`],
+    retentionPurpose: "memory retrieval evaluation fixture",
+  }
+}
+
 export async function seedMemoryRetrievalEvaluationFixture(
   fixture: MemoryRetrievalEvaluationFixture,
 ): Promise<void> {
   for (const document of fixture.documents) {
+    const longTermWriteGate = buildEvaluationLongTermWriteGate(document)
     await storeMemoryDocument({
       rawText: document.text,
       scope: document.scope,
@@ -67,6 +85,7 @@ export async function seedMemoryRetrievalEvaluationFixture(
       sourceType: document.sourceType ?? "retrieval_evaluation",
       sourceRef: document.id,
       title: document.title ?? document.id,
+      ...(longTermWriteGate ? { longTermWriteGate } : {}),
       metadata: {
         ...(document.metadata ?? {}),
         evaluationDocumentId: document.id,

@@ -3,10 +3,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { basename, join, resolve } from "node:path";
 import { getMqttBrokerSnapshot, getMqttExchangeLogs, getMqttExtensionSnapshots, } from "../mqtt/broker.js";
 import { getDatabaseMigrationStatus } from "../config/operations.js";
-import { PATHS } from "../config/paths.js";
 import { getDb, insertAuditLog, insertDiagnosticEvent, listMessageLedgerEvents, } from "../db/index.js";
 import { getActiveMigrationLock, getLatestMigrationLock, verifyMigrationState, } from "../db/migration-safety.js";
 import { getControlTimeline, } from "../control-plane/timeline.js";
+import { redactLogText } from "../logger/index.js";
+import { containsInternalLlmStructuredDataText, INTERNAL_LLM_DATA_MASK, isInternalLlmStructuredDataKey, } from "../security/internal-llm-data.js";
+import { INTERNAL_EVIDENCE_REDACTION_MASK, isInternalEvidenceKey, redactInternalEvidenceText, } from "../security/internal-evidence-redaction.js";
 const EXPORT_JOBS = new Map();
 const MAX_EXPORT_JOBS = 30;
 const NODE_STALE_MS = 60_000;
@@ -75,7 +77,10 @@ function tableExists(name) {
     return Boolean(row);
 }
 function sanitizeText(value) {
+    if (containsInternalLlmStructuredDataText(value))
+        return INTERNAL_LLM_DATA_MASK;
     let next = value;
+    next = redactInternalEvidenceText(next);
     for (const [pattern, replacement] of TEXT_SECRET_PATTERNS)
         next = next.replace(pattern, replacement);
     if (HTML_PATTERN.test(next))
@@ -88,6 +93,10 @@ function sanitizeExportValue(value, parentKey = "", depth = 0) {
         return value;
     if (depth > 8)
         return "[truncated]";
+    if (isInternalLlmStructuredDataKey(parentKey))
+        return INTERNAL_LLM_DATA_MASK;
+    if (isInternalEvidenceKey(parentKey))
+        return INTERNAL_EVIDENCE_REDACTION_MASK;
     if (SECRET_KEY_PATTERN.test(parentKey))
         return "[redacted]";
     if (typeof value === "string")
@@ -96,7 +105,10 @@ function sanitizeExportValue(value, parentKey = "", depth = 0) {
         return value;
     if (Array.isArray(value))
         return value.slice(0, 100).map((item) => sanitizeExportValue(item, parentKey, depth + 1));
-    return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, sanitizeExportValue(nested, key, depth + 1)]));
+    return Object.fromEntries(Object.entries(value).map(([key, nested]) => {
+        const outputKey = isInternalEvidenceKey(key) ? "internalEvidence" : key;
+        return [outputKey, sanitizeExportValue(nested, key, depth + 1)];
+    }));
 }
 function normalizeFilters(input) {
     const filters = {};
@@ -261,8 +273,8 @@ function buildYeonjangInspector(timeline) {
         degradedReasons,
     };
 }
-function listBackupSnapshots(limit) {
-    const root = join(PATHS.stateDir, "backups", "snapshots");
+function listBackupSnapshots(limit, paths) {
+    const root = join(paths.stateDir, "backups", "snapshots");
     const degradedReasons = [];
     if (!existsSync(root))
         return { snapshots: [], degradedReasons };
@@ -289,7 +301,7 @@ function listBackupSnapshots(limit) {
         return { snapshots, degradedReasons };
     }
     catch (error) {
-        degradedReasons.push(error instanceof Error ? error.message : String(error));
+        degradedReasons.push(adminInspectorErrorMessage(error));
         return { snapshots: [], degradedReasons };
     }
 }
@@ -312,16 +324,20 @@ function listMigrationDiagnostics(limit) {
         detail: sanitizeExportValue(parseJson(row.detail_json)),
     }));
 }
-function buildDatabaseInspector(limit) {
+function adminInspectorErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
+function buildDatabaseInspector(limit, paths) {
     const degradedReasons = [];
     let migrations;
     try {
-        migrations = getDatabaseMigrationStatus();
+        migrations = getDatabaseMigrationStatus(paths.dbFile);
     }
     catch (error) {
-        degradedReasons.push(`migration_status_failed:${error instanceof Error ? error.message : String(error)}`);
+        degradedReasons.push(`migration_status_failed:${adminInspectorErrorMessage(error)}`);
         migrations = {
-            databasePath: resolve(PATHS.dbFile),
+            databasePath: resolve(paths.dbFile),
             exists: false,
             currentVersion: 0,
             latestVersion: 0,
@@ -335,15 +351,15 @@ function buildDatabaseInspector(limit) {
     let active = null;
     let latest = null;
     try {
-        const db = getDb();
+        const db = getDb({ paths });
         integrity = verifyMigrationState(db);
         active = getActiveMigrationLock(db);
         latest = getLatestMigrationLock(db);
     }
     catch (error) {
-        degradedReasons.push(`migration_verification_failed:${error instanceof Error ? error.message : String(error)}`);
+        degradedReasons.push(`migration_verification_failed:${adminInspectorErrorMessage(error)}`);
     }
-    const backups = listBackupSnapshots(limit);
+    const backups = listBackupSnapshots(limit, paths);
     const diagnostics = listMigrationDiagnostics(limit);
     return {
         summary: {
@@ -511,7 +527,7 @@ function listAuditForExport(filters, limit) {
     const sql = `SELECT * FROM audit_logs ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY timestamp DESC LIMIT ?`;
     return getDb().prepare(sql).all(...params, limit);
 }
-function buildExportBundle(input) {
+function buildExportBundle(input, paths) {
     const filters = normalizeFilters(input);
     const limit = Math.max(1, Math.min(input.limit ?? 500, 1_000));
     const timeline = input.includeTimeline === false
@@ -529,6 +545,7 @@ function buildExportBundle(input) {
         : buildAdminPlatformInspectors({
             timeline: timeline ?? getControlTimeline(buildTimelineQuery(filters, limit), "user"),
             ledgerEvents,
+            paths,
             limit: Math.min(limit, 200),
             filters,
         });
@@ -590,12 +607,12 @@ function buildExportBundle(input) {
         report,
     });
 }
-async function runExportJob(id, input) {
+async function runExportJob(id, input, paths) {
     updateJob(id, { status: "running", progress: 10 });
     try {
-        const bundle = buildExportBundle(input);
+        const bundle = buildExportBundle(input, paths);
         updateJob(id, { progress: 70 });
-        const outputDir = join(PATHS.stateDir, "admin-exports");
+        const outputDir = join(paths.stateDir, "admin-exports");
         mkdirSync(outputDir, { recursive: true });
         const bundleFile = `admin-export-${new Date().toISOString().replace(/[:.]/g, "-")}-${id}.json`;
         const bundlePath = join(outputDir, bundleFile);
@@ -616,7 +633,7 @@ async function runExportJob(id, input) {
         });
     }
     catch (error) {
-        const message = sanitizeText(error instanceof Error ? error.message : String(error));
+        const message = adminInspectorErrorMessage(error);
         updateJob(id, { status: "failed", progress: 100, error: message });
         insertDiagnosticEvent({
             kind: "admin.diagnostic_export.failed",
@@ -629,7 +646,7 @@ export function buildAdminPlatformInspectors(input) {
     const limit = Math.max(1, Math.min(input.limit ?? 120, 500));
     return {
         yeonjang: buildYeonjangInspector(input.timeline),
-        database: buildDatabaseInspector(limit),
+        database: buildDatabaseInspector(limit, input.paths),
         orchestration: buildPlatformOrchestrationInspector(input),
         exports: {
             jobs: listAdminDiagnosticExportJobs().slice(0, limit),
@@ -641,7 +658,7 @@ export function buildAdminPlatformInspectors(input) {
         },
     };
 }
-export function startAdminDiagnosticExport(input = {}) {
+export function startAdminDiagnosticExport(input, paths) {
     const now = Date.now();
     const job = {
         id: `admin-export-${randomUUID()}`,
@@ -658,8 +675,9 @@ export function startAdminDiagnosticExport(input = {}) {
         error: null,
     };
     rememberJob(job);
+    const jobPaths = Object.freeze({ stateDir: paths.stateDir, dbFile: paths.dbFile });
     queueMicrotask(() => {
-        void runExportJob(job.id, { ...input, ...job.filters });
+        void runExportJob(job.id, { ...input, ...job.filters }, jobPaths);
     });
     return cloneJob(job);
 }

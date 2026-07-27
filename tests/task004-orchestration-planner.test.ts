@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import { validateOrchestrationPlan } from "../packages/core/src/contracts/sub-agent-orchestration.js"
 import type {
@@ -23,6 +23,7 @@ import {
 } from "../packages/core/src/orchestration/execution-decision-contract.ts"
 import type { OrchestrationModeSnapshot } from "../packages/core/src/orchestration/mode.ts"
 import { buildOrchestrationPlan } from "../packages/core/src/orchestration/planner.ts"
+import { authorWorkflowFromExecutionDecision } from "../packages/core/src/orchestration/workflow-authoring.ts"
 import {
   type AgentRegistryEntry,
   type OrchestrationRegistrySnapshot,
@@ -30,17 +31,13 @@ import {
 } from "../packages/core/src/orchestration/registry.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task004-orchestration-planner-"))
   tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 beforeEach(() => {
@@ -49,11 +46,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -95,6 +87,7 @@ function memoryPolicy(agentId: string): MemoryPolicy {
 
 function subAgent(input: {
   agentId: string
+  agentName?: string
   displayName?: string
   status?: SubAgentConfig["status"]
   teamIds?: string[]
@@ -108,6 +101,7 @@ function subAgent(input: {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     agentType: "sub_agent",
     agentId: input.agentId,
+    ...(input.agentName !== undefined ? { agentName: input.agentName } : {}),
     displayName: input.displayName ?? input.agentId,
     nickname: input.displayName ?? input.agentId,
     status: input.status ?? "enabled",
@@ -318,7 +312,7 @@ describe("task004 orchestration registry and planner", () => {
     const researchTeam = team("team:research", ["agent:researcher"])
 
     const snapshot = buildOrchestrationRegistrySnapshot({
-      getConfig: () => ({
+      config: {
         orchestration: {
           maxDelegationTurns: 5,
           mode: "orchestration",
@@ -326,7 +320,7 @@ describe("task004 orchestration registry and planner", () => {
           subAgents: [agent],
           teams: [researchTeam],
         },
-      }),
+      },
       now: () => now,
     })
 
@@ -351,7 +345,7 @@ describe("task004 orchestration registry and planner", () => {
     })
 
     const snapshot = buildOrchestrationRegistrySnapshot({
-      getConfig: () => ({
+      config: {
         orchestration: {
           maxDelegationTurns: 5,
           mode: "orchestration",
@@ -359,7 +353,7 @@ describe("task004 orchestration registry and planner", () => {
           subAgents: [agent],
           teams: [],
         },
-      }),
+      },
       now: () => now,
     })
 
@@ -377,7 +371,7 @@ describe("task004 orchestration registry and planner", () => {
     upsertTeamConfig({ ...configTeam, status: "archived" }, { source: "manual", now })
 
     const snapshot = buildOrchestrationRegistrySnapshot({
-      getConfig: () => ({
+      config: {
         orchestration: {
           maxDelegationTurns: 5,
           mode: "orchestration",
@@ -385,12 +379,32 @@ describe("task004 orchestration registry and planner", () => {
           subAgents: [configAgent],
           teams: [configTeam],
         },
-      }),
+      },
       now: () => now,
     })
 
     expect(snapshot.agents.some((agent) => agent.agentId === configAgent.agentId)).toBe(false)
     expect(snapshot.teams.some((team) => team.teamId === configTeam.teamId)).toBe(false)
+  })
+
+  it("uses the main agent name snapshot in direct fallback task explanations", () => {
+    const result = buildOrchestrationPlan({
+      parentRunId: "run:direct-name",
+      parentRequestId: "request:direct-name",
+      userRequest: "직접 처리해줘",
+      modeSnapshot: {
+        ...modeSnapshot(),
+        mode: "single_knowbee",
+        reasonCode: "feature_flag_off",
+        mainAgentNameSnapshot: "마당쇠",
+      },
+      now: () => now,
+      idProvider: () => "plan:direct-name",
+    })
+
+    expect(result.plan.directKnowbeeTasks[0]?.planningTrace.explanation)
+      .toBe("마당쇠가 직접 후속 처리를 맡는 계획입니다.")
+    expect(result.plan.directKnowbeeTasks[0]?.planningTrace.explanation).not.toContain("노비가 직접")
   })
 
   it("excludes disabled agents and honors an explicit eligible target", () => {
@@ -440,6 +454,58 @@ describe("task004 orchestration registry and planner", () => {
       result.candidateScores.find((candidate) => candidate.agentId === "agent:preferred")
         ?.reasonCodes,
     ).toContain("explicit_agent_target")
+  })
+
+  it("uses canonical agentName in candidate explanations", () => {
+    const agent = subAgent({
+      agentId: "agent:named",
+      agentName: "현장 담당",
+      displayName: "Legacy Display",
+      specialtyTags: ["ops"],
+    })
+    const result = buildOrchestrationPlan({
+      parentRunId: "run:agent-name",
+      parentRequestId: "request:agent-name",
+      userRequest: "delegate explicitly",
+      modeSnapshot: modeSnapshot(),
+      registrySnapshot: registry([agent]),
+      intent: { explicitAgentId: "agent:named", specialtyTags: ["ops"] },
+      agentExecutionDecision: executionDecision("agent:named"),
+      now: () => now,
+      idProvider: () => "plan:agent-name",
+    })
+
+    const explanation = result.candidateScores.find((candidate) => candidate.agentId === "agent:named")?.explanation
+
+    expect(explanation).toContain("현장 담당은")
+    expect(explanation).not.toContain("Legacy Display")
+    expect(explanation).not.toContain("agent:named")
+  })
+
+  it("does not expose legacy names in candidate explanations when agentName is missing", () => {
+    const agent = subAgent({
+      agentId: "agent:legacy-only",
+      agentName: "",
+      displayName: "Legacy Display",
+      specialtyTags: ["ops"],
+    })
+    const result = buildOrchestrationPlan({
+      parentRunId: "run:legacy-name",
+      parentRequestId: "request:legacy-name",
+      userRequest: "delegate explicitly",
+      modeSnapshot: modeSnapshot(),
+      registrySnapshot: registry([agent]),
+      intent: { explicitAgentId: "agent:legacy-only", specialtyTags: ["ops"] },
+      agentExecutionDecision: executionDecision("agent:legacy-only"),
+      now: () => now,
+      idProvider: () => "plan:legacy-name",
+    })
+
+    const explanation = result.candidateScores.find((candidate) => candidate.agentId === "agent:legacy-only")?.explanation
+
+    expect(explanation).toContain("Unnamed sub-agent은")
+    expect(explanation).not.toContain("Legacy Display")
+    expect(explanation).not.toContain("agent:legacy-only")
   })
 
   it("does not substitute another agent when an explicit target is unavailable", () => {
@@ -648,5 +714,76 @@ describe("task004 orchestration registry and planner", () => {
     expect(result.plan.fallbackStrategy.reasonCode).toBe("execution_decision_required")
     expect(result.plan.plannerMetadata?.semanticComparisonUsed).toBe(false)
     expect(validateOrchestrationPlan(result.plan).ok).toBe(true)
+  })
+
+  it("converts an LLM-authored workflow into ordered executable plan tasks", () => {
+    const agent = subAgent({ agentId: "agent:workflow" })
+    const workflowDecision = executionDecision("agent:workflow")
+    workflowDecision.task_profile.task_units = [
+      {
+        id: "collect",
+        title: "collect",
+        goal: "Collect evidence.",
+        required_outputs: [{ id: "evidence", label: "Evidence" }],
+      },
+      {
+        id: "report",
+        title: "report",
+        goal: "Write the report.",
+        depends_on_unit_ids: ["collect"],
+        required_outputs: [{ id: "report", label: "Report" }],
+      },
+    ]
+    const workflowDraft = authorWorkflowFromExecutionDecision(workflowDecision)
+    expect(workflowDraft?.state).toBe("ready")
+
+    const result = buildOrchestrationPlan({
+      parentRunId: "run:workflow-authored",
+      parentRequestId: "request:workflow-authored",
+      userRequest: "Collect evidence and write a report.",
+      modeSnapshot: modeSnapshot(),
+      registrySnapshot: registry([agent]),
+      intent: { explicitAgentId: agent.agentId },
+      agentExecutionDecision: workflowDecision,
+      ...(workflowDraft ? { workflowDraft } : {}),
+      now: () => now,
+      idProvider: () => "plan:workflow-authored",
+    })
+
+    expect(result.plan.delegatedTasks.map((task) => task.scope.goal)).toEqual([
+      "Collect evidence.",
+      "Write the report.",
+    ])
+    expect(result.plan.dependencyEdges).toEqual([{
+      fromTaskId: "plan:workflow-authored:delegated:0",
+      toTaskId: "plan:workflow-authored:delegated:1",
+      reasonCode: "workflow_unit_dependency",
+    }])
+    expect(result.plan.plannerMetadata?.reasonCodes).toContain("llm_workflow_authored")
+    expect(validateOrchestrationPlan(result.plan).ok).toBe(true)
+  })
+
+  it("does not execute a rejected LLM-authored workflow", () => {
+    const workflowDecision = executionDecision("agent:workflow")
+    workflowDecision.task_profile.task_units = [
+      { id: "first", title: "first", goal: "First", depends_on_unit_ids: ["missing"] },
+      { id: "second", title: "second", goal: "Second" },
+    ]
+    const workflowDraft = authorWorkflowFromExecutionDecision(workflowDecision)
+    const result = buildOrchestrationPlan({
+      parentRunId: "run:workflow-rejected",
+      parentRequestId: "request:workflow-rejected",
+      userRequest: "Run invalid workflow.",
+      modeSnapshot: modeSnapshot(),
+      registrySnapshot: registry([subAgent({ agentId: "agent:workflow" })]),
+      agentExecutionDecision: workflowDecision,
+      ...(workflowDraft ? { workflowDraft } : {}),
+      now: () => now,
+      idProvider: () => "plan:workflow-rejected",
+    })
+
+    expect(result.plan.directKnowbeeTasks).toEqual([])
+    expect(result.plan.delegatedTasks).toEqual([])
+    expect(result.plan.fallbackStrategy.reasonCode).toBe("dependency_missing")
   })
 })

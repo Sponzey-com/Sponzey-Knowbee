@@ -4,7 +4,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerAgentRoutes } from "../packages/core/src/api/routes/agent.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import { validateTeamExecutionPlan } from "../packages/core/src/contracts/sub-agent-orchestration.js"
 import {
   closeDb,
@@ -47,17 +49,15 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task011-team-plan-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task011-team-plan-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function owner(agentId = "agent:knowbee"): RuntimeIdentity["owner"] {
@@ -110,8 +110,7 @@ function subAgent(
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     agentType: "sub_agent",
     agentId,
-    displayName: agentId.replace("agent:", ""),
-    nickname: agentId.replace("agent:", ""),
+    agentName: agentId.replace("agent:", ""),
     status: "enabled",
     role: specialtyTags[0] ?? "member",
     personality: "Precise",
@@ -195,7 +194,6 @@ function teamConfig(overrides: Partial<TeamConfig> = {}): TeamConfig {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     teamId,
     displayName: "Execution Team",
-    nickname: "Execution Team",
     status: "enabled",
     purpose: "Expand team target into member execution tasks.",
     ownerAgentId: "agent:knowbee",
@@ -234,8 +232,8 @@ function subSession(agentId: string): SubSessionContract {
     parentSessionId: "session:task011",
     parentRunId: "run:task011-overload",
     agentId,
-    agentDisplayName: agentId,
-    agentNickname: agentId.replace("agent:", ""),
+    agentName: agentId.replace("agent:", ""),
+    agentNameSnapshot: agentId.replace("agent:", ""),
     commandRequestId: "command:task011",
     status: "running",
     promptBundleId: "prompt:task011",
@@ -299,9 +297,9 @@ function buildPlan(teamId = "team:execution"): TeamExecutionPlan {
       persist: true,
       auditId: "audit:task011",
     },
-    { now: () => now, idProvider: (prefix) => `${prefix}:task011` },
+    { config: runtimeFixture.config, now: () => now, idProvider: (prefix) => `${prefix}:task011` },
   )
-  expect(result.ok).toBe(true)
+  expect(result.ok, JSON.stringify(result, null, 2)).toBe(true)
   return expectPresent(result.plan, "team execution plan should exist")
 }
 
@@ -311,11 +309,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -351,7 +344,8 @@ describe("task011 team execution plan", () => {
 
     const plan = buildPlan()
     expect(validateTeamExecutionPlan(plan).ok).toBe(true)
-    expect(plan.teamNicknameSnapshot).toBe("Execution Team")
+    expect(plan.teamNameSnapshot).toBe("Execution Team")
+    expect(plan).not.toHaveProperty("teamNicknameSnapshot")
     expect(plan.ownerAgentId).toBe("agent:knowbee")
     expect(plan.leadAgentId).toBe("agent:lead")
     expect(plan.conflictPolicySnapshot).toBe("reviewer_decides")
@@ -372,9 +366,11 @@ describe("task011 team execution plan", () => {
     expect(writer.inputContext).toEqual(
       expect.objectContaining({
         teamId: "team:execution",
+        teamDisplayName: "Execution Team",
         userRequest: "팀 실행 계획을 작성해줘",
       }),
     )
+    expect(writer.inputContext).not.toHaveProperty("teamNickname")
     expect(writer.expectedOutputs?.[0]).toEqual(
       expect.objectContaining({ required: false, description: "Output for writer." }),
     )
@@ -410,7 +406,10 @@ describe("task011 team execution plan", () => {
       ]),
     )
     expect(getTeamExecutionPlan("team-plan:team:execution")?.contract_json).toContain(
-      '"teamNicknameSnapshot":"Execution Team"',
+      '"teamNameSnapshot":"Execution Team"',
+    )
+    expect(getTeamExecutionPlan("team-plan:team:execution")?.contract_json).not.toContain(
+      "teamNicknameSnapshot",
     )
   })
 
@@ -468,7 +467,7 @@ describe("task011 team execution plan", () => {
         parentRunId: "run:task011",
         persist: false,
       },
-      { now: () => now },
+      { config: runtimeFixture.config, now: () => now },
     )
     expect(result.ok).toBe(true)
     const plan = expectPresent(result.plan, "owner synthesis plan should exist")
@@ -521,7 +520,6 @@ describe("task011 team execution plan", () => {
       teamConfig({
         teamId: "team:fallback-missing-primary",
         displayName: "Fallback Missing Primary Team",
-        nickname: "Fallback Missing Primary Team",
         leadAgentId: "agent:lead",
         memberAgentIds: ["agent:lead", "agent:missing-primary", "agent:fallback"],
         roleHints: ["lead", "writer", "writer"],
@@ -559,6 +557,7 @@ describe("task011 team execution plan", () => {
     seedAgents()
     seedTeam()
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -581,13 +580,14 @@ describe("task011 team execution plan", () => {
         expect.objectContaining({
           teamExecutionPlanId: "team-plan:api",
           parentRunId: "run:api",
-          teamNicknameSnapshot: "Execution Team",
+          teamNameSnapshot: "Execution Team",
         }),
       )
+      expect(body.plan).not.toHaveProperty("teamNicknameSnapshot")
       expect(getTeamExecutionPlan("team-plan:api")).toEqual(
         expect.objectContaining({
           parent_run_id: "run:api",
-          team_nickname_snapshot: "Execution Team",
+          team_name_snapshot: "Execution Team",
           audit_id: "audit:api",
         }),
       )

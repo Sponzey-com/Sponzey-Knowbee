@@ -1,5 +1,9 @@
-import type { SlackConfig } from "../../config/types.js";
+import type { KnowbeeConfig, SlackConfig } from "../../config/types.js";
+import type { ArtifactStorageContext } from "../../artifacts/lifecycle.js";
+import type { MemoryJournalRepository } from "../../memory/journal.js";
+import type { AgentHierarchyStorage } from "../../orchestration/hierarchy.js";
 import { type ChannelAdapter, type ChannelCapabilities, type ChannelHealthCheck, type DeliveryReceipt, type InboundEnvelope, type InteractionEnvelope, type OutboundMessage } from "../contracts.js";
+import type { ChannelPendingResponseDeliveryInput } from "../pending-response-delivery.js";
 export type SlackConnectionMode = "socket" | "events_api";
 export interface SlackConnectionPolicy {
     mode: SlackConnectionMode;
@@ -20,7 +24,11 @@ export interface SlackAdapterTransport {
     }>;
 }
 export interface SlackChannelAdapterOptions {
+    artifactStorage?: ArtifactStorageContext | undefined;
+    memoryJournal?: MemoryJournalRepository | undefined;
+    hierarchyStorage?: AgentHierarchyStorage | undefined;
     config?: SlackConfig | undefined;
+    runtimeConfig?: KnowbeeConfig | undefined;
     channelId?: string;
     connectionId?: string;
     connectionMode?: SlackConnectionMode;
@@ -68,6 +76,10 @@ export declare class SlackChannelAdapter implements ChannelAdapter {
     readonly provider: "slack";
     readonly connectionId: string;
     private readonly config;
+    private readonly runtimeConfig;
+    private readonly artifactStorage;
+    private readonly memoryJournal;
+    private readonly hierarchyStorage;
     private readonly connectionMode;
     private readonly transport;
     private readonly now;
@@ -79,6 +91,7 @@ export declare class SlackChannelAdapter implements ChannelAdapter {
     constructor(options?: SlackChannelAdapterOptions);
     start(): Promise<void>;
     stop(): Promise<void>;
+    createPendingResponseDeliveryHandler(input: ChannelPendingResponseDeliveryInput): import("../../runs/delivery.js").RunChunkDeliveryHandler;
     healthCheck(): Promise<ChannelHealthCheck>;
     getCapabilities(): ChannelCapabilities;
     normalizeInbound(rawPayload: unknown): Promise<InboundEnvelope[]>;

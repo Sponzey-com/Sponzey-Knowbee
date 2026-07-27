@@ -1,5 +1,6 @@
 export function applyStartInitialization(params, dependencies) {
     dependencies.rememberRunInstruction({
+        memoryJournal: params.memoryJournal,
         runId: params.runId,
         sessionId: params.sessionId,
         requestGroupId: params.requestGroupId,

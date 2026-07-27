@@ -234,8 +234,7 @@ export interface SetupSubAgentMonitoringDraft {
 export interface SetupSubAgentDraftItem {
   agentId: string
   parentAgentId?: string
-  displayName: string
-  nickname: string
+  agentName?: string
   role: string
   description: string
   skillMcpBindings?: {

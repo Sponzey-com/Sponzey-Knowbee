@@ -1,26 +1,45 @@
 import type { SubAgentResultReview } from "../agent/sub-agent-result-review.js"
+import { DEFAULT_MAIN_AGENT_NAME_KO } from "../agent/main-agent-identity.js"
 import { decideSubSessionCompletionIntegration } from "../agent/sub-agent-result-review.js"
-import type { ChannelSource } from "../channels/contracts.js"
+import { isExternalChannelProvider, type ChannelSource } from "../channels/contracts.js"
 import { CONTRACT_SCHEMA_VERSION, type JsonValue } from "../contracts/index.js"
+import type { EvidencePreservingResultAggregate } from "../contracts/result-review-decision.js"
 import {
+  type AgentAttributionSnapshot,
+  type AgentNameSnapshot,
   type NamedDeliveryEvent,
-  type NicknameSnapshot,
   type ResultReport,
   type RuntimeIdentity,
   type UserVisibleAgentMessage,
-  normalizeNicknameSnapshot,
+  normalizeAgentNameSnapshot,
   validateNamedDeliveryEvent,
   validateUserVisibleAgentMessage,
 } from "../contracts/sub-agent-orchestration.js"
+import { projectUserFacingAgentMessage } from "../contracts/user-facing-agent-identity.js"
 import { type DbMessageLedgerEvent, listMessageLedgerEvents } from "../db/index.js"
 import { recordOrchestrationEvent } from "../orchestration/event-ledger.js"
 import {
   type AssistantTextDeliveryOutcome,
+  type AssistantTextDeliveryReceipt,
+  type CancellationReportDeliveryAuthorization,
   type RunChunkDeliveryHandler,
   emitAssistantTextDelivery,
   resolveAssistantTextDeliveryOutcome,
 } from "./delivery.js"
-import { hashLedgerValue, recordMessageLedgerEvent } from "./message-ledger.js"
+import { buildFinalAnswerNotice } from "./final-answer-notice.js"
+import {
+  hashLedgerValue,
+  messageLedgerEventHasRequiredDeliveryEvidence,
+  recordMessageLedgerEvent,
+} from "./message-ledger.js"
+import {
+  authorizePersistedUserFacingResponse,
+  authorizeUserFacingResponse,
+  type LlmResponseReviewReceipt,
+  type UserFacingResponseContentKind,
+} from "./user-facing-response-gate.js"
+import type { UserFacingTextSource } from "./loop-directive.js"
+import { sanitizeCompletionAwaitingUserText } from "./completion-application.js"
 
 export type FinalDeliverySource = ChannelSource
 export type FinalDeliveryStatus =
@@ -57,9 +76,21 @@ export interface FinalizerReviewState {
 export interface FinalDeliveryAttribution {
   resultReportId: string
   subSessionId: string
-  source: NicknameSnapshot
+  source: AgentNameSnapshot
   summary: string
 }
+
+interface FinalDeliveryResponseReviewBase {
+  rawTextSource: UserFacingTextSource
+  contentKind: UserFacingResponseContentKind
+  expectedLanguage: "ko" | "en" | "unknown"
+  receipt: LlmResponseReviewReceipt
+}
+
+export type FinalDeliveryResponseReview = FinalDeliveryResponseReviewBase & (
+  | { rawText: string; rawTextSha256?: never }
+  | { rawTextSha256: string; rawText?: never }
+)
 
 export interface FinalDeliveryCommitResult {
   status: FinalDeliveryStatus
@@ -70,6 +101,7 @@ export interface FinalDeliveryCommitResult {
   reasonCodes: string[]
   existingEventId?: string
   deliveryOutcome?: AssistantTextDeliveryOutcome
+  deliveryReceipt?: AssistantTextDeliveryReceipt
 }
 
 export interface PendingFinalizerRestoreItem {
@@ -92,10 +124,22 @@ export interface ApprovalAggregationResult {
   approvedApprovalIds: string[]
 }
 
-const KNOWBEE_SPEAKER: NicknameSnapshot = {
+const FALLBACK_KNOWBEE_ATTRIBUTION_SOURCE: AgentNameSnapshot = {
   entityType: "knowbee",
   entityId: "agent:knowbee",
-  nicknameSnapshot: "노비",
+  agentName: DEFAULT_MAIN_AGENT_NAME_KO,
+  agentNameSnapshot: DEFAULT_MAIN_AGENT_NAME_KO,
+}
+
+function knowbeeAttributionSource(rootAgentNameSnapshot?: string): AgentNameSnapshot {
+  const agentNameSnapshot = normalizeAgentNameSnapshot(rootAgentNameSnapshot ?? "")
+  const agentName = agentNameSnapshot || FALLBACK_KNOWBEE_ATTRIBUTION_SOURCE.agentNameSnapshot
+  return {
+    entityType: "knowbee",
+    entityId: "agent:knowbee",
+    agentName,
+    agentNameSnapshot: agentName,
+  }
 }
 
 function finalDeliveryTargetKey(input: {
@@ -122,10 +166,28 @@ function finalDeliveryIdempotencyKey(input: {
   return `final-delivery:${finalDeliveryTargetKey(input)}`
 }
 
-function normalizeSpeaker(speaker: NicknameSnapshot | undefined): NicknameSnapshot {
-  if (!speaker) return KNOWBEE_SPEAKER
-  const nicknameSnapshot = normalizeNicknameSnapshot(speaker.nicknameSnapshot)
-  return nicknameSnapshot ? { ...speaker, nicknameSnapshot } : KNOWBEE_SPEAKER
+function normalizeAttributionSource(
+  source: AgentAttributionSnapshot,
+  rootAgentNameSnapshot?: string,
+): AgentNameSnapshot {
+  const agentNameSnapshot = normalizeAgentNameSnapshot(source.agentName ?? source.agentNameSnapshot)
+  return agentNameSnapshot
+    ? {
+        entityType: source.entityType,
+        entityId: source.entityId,
+        agentName: agentNameSnapshot,
+        agentNameSnapshot,
+      }
+    : knowbeeAttributionSource(rootAgentNameSnapshot)
+}
+
+function normalizeOptionalAttributionSource(
+  source: AgentAttributionSnapshot | undefined,
+  rootAgentNameSnapshot?: string,
+): AgentNameSnapshot {
+  return source
+    ? normalizeAttributionSource(source, rootAgentNameSnapshot)
+    : knowbeeAttributionSource(rootAgentNameSnapshot)
 }
 
 function recordOrchestrationEventSafely(
@@ -174,13 +236,14 @@ function outputSummary(report: ResultReport): string {
 
 export function buildFinalDeliveryAttributions(
   resultReports: readonly ResultReport[] = [],
+  rootAgentNameSnapshot?: string,
 ): FinalDeliveryAttribution[] {
   const attributions: FinalDeliveryAttribution[] = []
   const seen = new Set<string>()
   for (const report of resultReports) {
     if (!report.source) continue
-    const source = normalizeSpeaker(report.source)
-    const key = `${report.resultReportId}:${source.entityId}:${source.nicknameSnapshot}`
+    const source = normalizeAttributionSource(report.source, rootAgentNameSnapshot)
+    const key = `${report.resultReportId}:${source.entityId}:${source.agentNameSnapshot}`
     if (seen.has(key)) continue
     seen.add(key)
     attributions.push({
@@ -196,11 +259,18 @@ export function buildFinalDeliveryAttributions(
 export function buildKnowbeeFinalAnswer(input: {
   text: string
   resultReports?: readonly ResultReport[]
+  rootAgentNameSnapshot?: string
 }): { text: string; attributions: FinalDeliveryAttribution[] } {
   const text = input.text.trim()
-  const attributions = buildFinalDeliveryAttributions(input.resultReports)
+  const attributions = buildFinalDeliveryAttributions(
+    input.resultReports,
+    input.rootAgentNameSnapshot,
+  )
   if (attributions.length === 0) return { text, attributions }
-  const lines = attributions.map((item) => `- ${item.source.nicknameSnapshot}: ${item.summary}`)
+  const lines = attributions.map((item) => {
+    const agentName = item.source.agentName ?? item.source.agentNameSnapshot
+    return `- ${agentName}: ${item.summary}`
+  })
   return {
     text: [text, `참고한 서브 에이전트 결과:\n${lines.join("\n")}`].filter(Boolean).join("\n\n"),
     attributions,
@@ -218,7 +288,8 @@ export function findCommittedFinalDelivery(
     (event) =>
       event.delivery_key === (scopedDeliveryKey ?? event.delivery_key) &&
       event.event_kind === "final_answer_delivered" &&
-      eventSucceeded(event),
+      eventSucceeded(event) &&
+      messageLedgerEventHasRequiredDeliveryEvidence(event),
   )
 }
 
@@ -243,7 +314,7 @@ function commitBlocked(input: {
   attributions: FinalDeliveryAttribution[]
   reasonCodes: string[]
   summary: string
-  speaker: NicknameSnapshot
+  speaker: AgentNameSnapshot
 }): FinalDeliveryCommitResult {
   const blockedHash = hashLedgerValue({
     parentRunId: input.parentRunId,
@@ -282,19 +353,34 @@ export async function commitFinalDelivery(input: {
   source: FinalDeliverySource
   text: string
   onChunk: RunChunkDeliveryHandler | undefined
-  speaker?: NicknameSnapshot
+  rootAgentNameSnapshot?: string
+  speaker?: AgentAttributionSnapshot
   resultReports?: readonly ResultReport[]
+  resultReviewAggregate?: EvidencePreservingResultAggregate
   reviews?: readonly FinalizerReviewState[]
   approvals?: readonly FinalizerApprovalState[]
+  responseReview?: FinalDeliveryResponseReview
+  cancellationReportAuthorization?: CancellationReportDeliveryAuthorization
   deliveryDependencies?: NonNullable<
     Parameters<typeof emitAssistantTextDelivery>[0]["dependencies"]
   >
+  monotonicNow?: () => number
   onDeliveryError?: (message: string) => void
 }): Promise<FinalDeliveryCommitResult> {
-  const speaker = normalizeSpeaker(input.speaker)
+  const speaker = normalizeOptionalAttributionSource(
+    input.speaker,
+    input.rootAgentNameSnapshot,
+  )
   const answer = buildKnowbeeFinalAnswer({
     text: input.text,
     ...(input.resultReports ? { resultReports: input.resultReports } : {}),
+    ...(input.rootAgentNameSnapshot
+      ? { rootAgentNameSnapshot: input.rootAgentNameSnapshot }
+      : {}),
+  })
+  const finalAnswerNotice = buildFinalAnswerNotice({
+    speaker,
+    attributionCount: answer.attributions.length,
   })
   const deliveryKey = finalDeliveryKey({
     parentRunId: input.parentRunId,
@@ -309,6 +395,51 @@ export async function commitFinalDelivery(input: {
   const reasonCodes: string[] = []
 
   if (!answer.text.trim()) reasonCodes.push("final_answer_empty")
+  if (!input.responseReview) {
+    reasonCodes.push("final_llm_review_receipt_required")
+  } else {
+    const review = input.responseReview
+    const responseAuthorization = "rawText" in review
+      ? authorizeUserFacingResponse({
+          rawText: review.rawText,
+          responseText: input.text,
+          rawTextSource: review.rawTextSource,
+          contentKind: review.contentKind,
+          expectedLanguage: review.expectedLanguage,
+          receipt: review.receipt,
+        })
+      : authorizePersistedUserFacingResponse({
+          rawTextSha256: review.rawTextSha256,
+          responseText: input.text,
+          rawTextSource: review.rawTextSource,
+          contentKind: review.contentKind,
+          expectedLanguage: review.expectedLanguage,
+          receipt: review.receipt,
+        })
+    if (!responseAuthorization.ok) {
+      reasonCodes.push(`final_llm_${responseAuthorization.reasonCode ?? "review_receipt_missing"}`)
+    }
+  }
+
+  if ((input.resultReports?.length ?? 0) > 0) {
+    const aggregate = input.resultReviewAggregate
+    if (!aggregate) {
+      reasonCodes.push("result_review_aggregate_required")
+    } else {
+      const missingReportRefs = input.resultReports
+        ?.map((report) => `report:${report.resultReportId}`)
+        .filter((reference) => !aggregate.sourceRefs.includes(reference)) ?? []
+      if (missingReportRefs.length > 0) reasonCodes.push("result_review_aggregate_source_mismatch")
+      if (aggregate.nextAction === "redelegate" || aggregate.nextAction === "verify_more") {
+        reasonCodes.push(`result_review_action_pending:${aggregate.nextAction}`)
+      }
+      if (!aggregate.finalizationEligible
+        && aggregate.nextAction !== "report_partial"
+        && aggregate.nextAction !== "terminate") {
+        reasonCodes.push("result_review_aggregate_not_deliverable")
+      }
+    }
+  }
 
   const integration = input.reviews
     ? decideSubSessionCompletionIntegration([...input.reviews])
@@ -399,6 +530,8 @@ export async function commitFinalDelivery(input: {
       speaker,
     })
   }
+  const publicMessage = projectUserFacingAgentMessage(visibleValidation.value)
+  const deliveryText = sanitizeCompletionAwaitingUserText(publicMessage.text)
 
   recordMessageLedgerEvent({
     runId: input.parentRunId,
@@ -406,11 +539,13 @@ export async function commitFinalDelivery(input: {
     channel: input.source,
     eventKind: "final_answer_generated",
     deliveryKind: "final",
+    ...(input.monotonicNow ? { monotonicNow: input.monotonicNow } : {}),
     deliveryKey,
     idempotencyKey: `final-answer:${input.parentRunId}:${input.source}:${hashLedgerValue(input.sessionId).slice(0, 16)}`,
     status: "generated",
     summary: "parent finalizer가 최종 응답을 생성했습니다.",
     detail: {
+      finalAnswerNotice,
       textLength: answer.text.length,
       speaker,
       sourceAttributions: answer.attributions,
@@ -421,12 +556,15 @@ export async function commitFinalDelivery(input: {
   const receipt = await emitAssistantTextDelivery({
     runId: input.parentRunId,
     sessionId: input.sessionId,
-    text: answer.text,
+    text: deliveryText,
     source: input.source,
     onChunk: input.onChunk,
     deliveryKind: "final",
     speaker,
     sourceAttributions: answer.attributions,
+    ...(input.cancellationReportAuthorization
+      ? { cancellationReportAuthorization: input.cancellationReportAuthorization }
+      : {}),
     ...(input.onDeliveryError ? { onError: input.onDeliveryError } : {}),
     ...(input.deliveryDependencies ? { dependencies: input.deliveryDependencies } : {}),
   })
@@ -438,7 +576,9 @@ export async function commitFinalDelivery(input: {
       deliveryKey,
       text: answer.text,
       attributions: answer.attributions,
-      reasonCodes: [`delivery_${deliveryOutcome.failureStage}_failed`],
+      reasonCodes: [
+        deliveryOutcome.reasonCode ?? `delivery_${deliveryOutcome.failureStage}_failed`,
+      ],
       deliveryOutcome,
     }
   }
@@ -454,9 +594,11 @@ export async function commitFinalDelivery(input: {
     status: "delivered",
     summary: "parent finalizer가 최종 응답을 한 번 전달했습니다.",
     detail: {
+      finalAnswerNotice,
       speaker,
       sourceAttributions: answer.attributions,
       textLength: answer.text.length,
+      providerEvidence: isExternalChannelProvider(input.source) ? "confirmed" : "not_required",
     },
   })
   recordOrchestrationEventSafely({
@@ -502,13 +644,14 @@ export async function commitFinalDelivery(input: {
     attributions: answer.attributions,
     reasonCodes: ["final_delivery_committed"],
     deliveryOutcome,
+    deliveryReceipt: receipt,
   }
 }
 
 export function buildNamedResultDeliveryEvent(input: {
   parentRunId: string
-  sender: NicknameSnapshot
-  recipient: NicknameSnapshot
+  sender: AgentAttributionSnapshot
+  recipient: AgentAttributionSnapshot
   resultReportId: string
   summary: string
 }): NamedDeliveryEvent {
@@ -522,8 +665,8 @@ export function buildNamedResultDeliveryEvent(input: {
     deliveryId: `named-delivery:${input.resultReportId}`,
     parentRunId: input.parentRunId,
     deliveryKind: "result_report",
-    sender: normalizeSpeaker(input.sender),
-    recipient: normalizeSpeaker(input.recipient),
+    sender: normalizeAttributionSource(input.sender),
+    recipient: normalizeAttributionSource(input.recipient),
     summary: input.summary,
     resultReportId: input.resultReportId,
     createdAt: Date.now(),
@@ -542,9 +685,11 @@ export function recordApprovalAggregation(input: {
   sessionId: string
   source: FinalDeliverySource
   approvals: readonly FinalizerApprovalState[]
-  speaker?: NicknameSnapshot
+  speaker?: AgentAttributionSnapshot
 }): ApprovalAggregationResult {
-  const speaker = normalizeSpeaker(input.speaker)
+  const speaker = input.speaker
+    ? normalizeAttributionSource(input.speaker)
+    : knowbeeAttributionSource()
   const pendingApprovalIds = input.approvals
     .filter((approval) => approval.status === "requested")
     .map((approval) => approval.approvalId)
@@ -566,7 +711,7 @@ export function recordApprovalAggregation(input: {
     )
     .map((approval) => approval.approvalId)
   const text = [
-    `${speaker.nicknameSnapshot} 승인 요청 요약`,
+    `${speaker.agentNameSnapshot} 승인 요청 요약`,
     ...input.approvals.map(
       (approval) =>
         `- ${approval.approvalId}: ${approval.status}${approval.summary ? ` - ${approval.summary}` : ""}`,
@@ -628,7 +773,12 @@ export function listPendingFinalizers(
   })
   const deliveredKeys = new Set(
     events
-      .filter((event) => event.event_kind === "final_answer_delivered" && eventSucceeded(event))
+      .filter(
+        (event) =>
+          event.event_kind === "final_answer_delivered" &&
+          eventSucceeded(event) &&
+          messageLedgerEventHasRequiredDeliveryEvidence(event),
+      )
       .map((event) => event.delivery_key)
       .filter((value): value is string => Boolean(value)),
   )

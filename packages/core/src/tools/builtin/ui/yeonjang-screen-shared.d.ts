@@ -18,7 +18,7 @@ export interface ScreenCaptureFailureDetails {
 }
 export declare const DEFAULT_SCREEN_CAPTURE_TIMEOUT_MS = 60000;
 export declare function extensionFromScreenCaptureMimeType(mimeType?: string): string;
-export declare function saveInlineScreenCapture(base64: string, mimeType?: string, rootDir?: string): string;
+export declare function saveInlineScreenCapture(base64: string, mimeType: string | undefined, rootDir: string): string;
 export declare function validateYeonjangScreenCaptureBinaryResult(remote: YeonjangScreenCaptureResult): string;
 export declare function yeonjangRequiredFailure(method: string): ToolResult;
 export declare function yeonjangCapabilityMatrixRequiredFailure(method: string): ToolResult;

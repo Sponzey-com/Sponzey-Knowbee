@@ -5,20 +5,96 @@ import { stopDiscordRuntime } from "../../channels/discord/runtime.js";
 import { stopGoogleChatRuntime } from "../../channels/google-chat/runtime.js";
 import { testMcpServerConnection, testSkillPath } from "../../control-plane/setup-extensions.js";
 import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js";
+import { redactLogText } from "../../logger/index.js";
 import { resolveAIConnection } from "../../ai/index.js";
-import { buildSetupDraft, completeSetup, createSetupChecks, createTransientAuthToken, discoverModelsFromEndpoint, readSetupState, resetSetupEnvironment, saveSetupDraft, } from "../../control-plane/index.js";
-export function registerSetupRoute(app) {
-    app.get("/api/setup/status", { preHandler: authMiddleware }, async () => {
-        return readSetupState();
+import { buildSetupDraft, completeSetup, createSetupChecks, createTransientAuthToken, discoverModelsFromEndpoint, readSetupState, redactSetupChecksForApi, redactSetupDraftSecrets, resetSetupEnvironment, saveSetupDraft, } from "../../control-plane/index.js";
+import { getApiRuntimeConfig, getApiRuntimePaths } from "../runtime-context.js";
+const CHANNEL_TEST_SECRET_MASK = "***";
+const SETUP_MCP_SECRET_MASK = "***";
+const SETUP_MCP_PATH_MASK = "[internal-path-redacted]";
+function redactChannelTestError(message, secrets, fallback) {
+    let redacted = (message ?? "").trim() || fallback;
+    for (const secret of secrets) {
+        const value = secret?.trim();
+        if (value)
+            redacted = redacted.split(value).join(CHANNEL_TEST_SECRET_MASK);
+    }
+    redacted = redacted
+        .replace(/bot\d+:[^\s"'`<>]+/gi, `bot${CHANNEL_TEST_SECRET_MASK}`)
+        .replace(/\bxox[abprs]-[A-Za-z0-9-]{8,}\b/g, CHANNEL_TEST_SECRET_MASK)
+        .replace(/\bxapp-[A-Za-z0-9-]{8,}\b/g, CHANNEL_TEST_SECRET_MASK)
+        .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, `Bearer ${CHANNEL_TEST_SECRET_MASK}`);
+    return redacted.length > 220 ? `${redacted.slice(0, 217)}...` : redacted;
+}
+function setupChannelTestExceptionMessage(error, secrets, fallback) {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    return redactChannelTestError(rawMessage, secrets, fallback);
+}
+function redactSkillPathTestResult(result) {
+    return {
+        ok: result.ok,
+        message: result.message,
+    };
+}
+function setupRouteErrorSummary(error) {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    return sanitizeUserFacingError(redactLogText(rawMessage));
+}
+function redactSetupMcpTestMessage(message, server) {
+    let redacted = (message ?? "").trim() || "MCP connection test failed.";
+    for (const rawPath of [server.command, server.cwd, server.url]) {
+        const value = rawPath?.trim();
+        if (value)
+            redacted = redacted.split(value).join(SETUP_MCP_PATH_MASK);
+    }
+    const args = server.argsText
+        .split(/\n+/)
+        .map((value) => value.trim())
+        .filter(Boolean);
+    for (const arg of args) {
+        if (/(api[_-]?key|token|secret|password|credential|authorization|bearer)/i.test(arg)) {
+            redacted = redacted.split(arg).join(SETUP_MCP_SECRET_MASK);
+        }
+    }
+    redacted = redacted
+        .replace(/((?:api[_-]?key|token|secret|password|credential|authorization)(?:["'\s:=]+))([^"'\s,}]+)/gi, `$1${SETUP_MCP_SECRET_MASK}`)
+        .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, `Bearer ${SETUP_MCP_SECRET_MASK}`)
+        .replace(/\/(?:private\/)?var\/folders\/[^\s"'`<>]+/gi, SETUP_MCP_PATH_MASK)
+        .replace(/\/tmp\/[^\s"'`<>]+/gi, SETUP_MCP_PATH_MASK)
+        .replace(/\/Users\/[^\s"'`<>]+/gi, SETUP_MCP_PATH_MASK)
+        .replace(/[A-Z]:\\[^\s"'`<>]+/gi, SETUP_MCP_PATH_MASK);
+    return redacted.length > 240 ? `${redacted.slice(0, 237)}...` : redacted;
+}
+function redactSetupMcpTestResult(result, server) {
+    if (result.ok)
+        return result;
+    return {
+        ok: false,
+        message: redactSetupMcpTestMessage(result.message, server),
+        tools: [],
+    };
+}
+export function registerSetupRoute(app, options = {}) {
+    app.get("/api/setup/status", { preHandler: authMiddleware }, async (req) => {
+        return readSetupState(getApiRuntimePaths(req));
     });
-    app.get("/api/setup/checks", { preHandler: authMiddleware }, async () => {
-        return createSetupChecks();
+    app.get("/api/setup/checks", { preHandler: authMiddleware }, async (req) => {
+        const config = getApiRuntimeConfig(req);
+        return redactSetupChecksForApi(createSetupChecks(config, getApiRuntimePaths(req)));
     });
-    app.get("/api/setup/draft", { preHandler: authMiddleware }, async () => {
-        return buildSetupDraft();
+    app.get("/api/setup/draft", { preHandler: authMiddleware }, async (req) => {
+        const config = getApiRuntimeConfig(req);
+        return redactSetupDraftSecrets(buildSetupDraft(config, getApiRuntimePaths(req)));
     });
     app.put("/api/setup/draft", { preHandler: authMiddleware }, async (req) => {
-        return saveSetupDraft(req.body.draft, req.body.state);
+        const config = getApiRuntimeConfig(req);
+        const saved = saveSetupDraft(req.body.draft, req.body.state, config, getApiRuntimePaths(req));
+        return {
+            ...saved,
+            draft: redactSetupDraftSecrets(saved.draft),
+            restartRequired: true,
+            appliesOn: "next_start",
+        };
     });
     app.post("/api/setup/test-backend", { preHandler: authMiddleware }, async (req, reply) => {
         const endpoint = req.body?.endpoint?.trim();
@@ -42,7 +118,8 @@ export function registerSetupRoute(app) {
             return reply.status(400).send({ ok: false, error: "endpoint is required" });
         }
         try {
-            const result = await discoverModelsFromEndpoint(endpoint, providerType, credentials, authMode);
+            const config = getApiRuntimeConfig(req);
+            const result = await discoverModelsFromEndpoint(endpoint, config, providerType, credentials, authMode);
             const providerResolution = resolveAIConnection({
                 provider: providerType,
                 model: result.models[0] ?? "",
@@ -58,7 +135,7 @@ export function registerSetupRoute(app) {
             return { ok: true, ...result, providerResolution, capabilityMatrix: result.capabilityMatrix };
         }
         catch (error) {
-            const sanitized = sanitizeUserFacingError(error instanceof Error ? error.message : String(error));
+            const sanitized = setupRouteErrorSummary(error);
             return reply.status(400).send({
                 ok: false,
                 error: sanitized.userMessage,
@@ -81,7 +158,7 @@ export function registerSetupRoute(app) {
             if (!response.ok || payload.ok !== true) {
                 return reply.status(400).send({
                     ok: false,
-                    message: payload.description ?? "Telegram API 연결에 실패했습니다.",
+                    message: redactChannelTestError(payload.description, [token], "Telegram API 연결에 실패했습니다."),
                 });
             }
             const botName = payload.result?.username ?? payload.result?.first_name ?? "unknown";
@@ -93,7 +170,7 @@ export function registerSetupRoute(app) {
         catch (error) {
             return reply.status(400).send({
                 ok: false,
-                message: error instanceof Error ? error.message : String(error),
+                message: setupChannelTestExceptionMessage(error, [token], "Telegram API 연결에 실패했습니다."),
             });
         }
     });
@@ -115,7 +192,7 @@ export function registerSetupRoute(app) {
             if (!authResponse.ok || authPayload.ok !== true) {
                 return reply.status(400).send({
                     ok: false,
-                    message: authPayload.error ?? "Slack Bot Token 연결에 실패했습니다.",
+                    message: redactChannelTestError(authPayload.error, [botToken, appToken], "Slack Bot Token 연결에 실패했습니다."),
                 });
             }
             const socketResponse = await fetch("https://slack.com/api/apps.connections.open", {
@@ -126,7 +203,7 @@ export function registerSetupRoute(app) {
             if (!socketResponse.ok || socketPayload.ok !== true || !socketPayload.url) {
                 return reply.status(400).send({
                     ok: false,
-                    message: socketPayload.error ?? "Slack App Token 연결에 실패했습니다.",
+                    message: redactChannelTestError(socketPayload.error, [botToken, appToken], "Slack App Token 연결에 실패했습니다."),
                 });
             }
             const label = authPayload.team || authPayload.user || "Slack";
@@ -138,7 +215,7 @@ export function registerSetupRoute(app) {
         catch (error) {
             return reply.status(400).send({
                 ok: false,
-                message: error instanceof Error ? error.message : String(error),
+                message: setupChannelTestExceptionMessage(error, [botToken, appToken], "Slack 연결 테스트에 실패했습니다."),
             });
         }
     });
@@ -147,7 +224,9 @@ export function registerSetupRoute(app) {
         if (!server || typeof server !== "object") {
             return reply.status(400).send({ ok: false, message: "MCP 서버 설정이 비어 있습니다.", tools: [] });
         }
-        const result = await testMcpServerConnection(server);
+        const result = redactSetupMcpTestResult(await testMcpServerConnection(server, getApiRuntimeConfig(req).profile.workspace, {
+            ...(options.mcpProcessEnv ? { baseEnv: options.mcpProcessEnv } : {}),
+        }), server);
         if (!result.ok) {
             return reply.status(400).send(result);
         }
@@ -155,23 +234,31 @@ export function registerSetupRoute(app) {
     });
     app.post("/api/setup/test-skill-path", { preHandler: authMiddleware }, async (req, reply) => {
         const result = testSkillPath(req.body?.path ?? "");
+        const response = redactSkillPathTestResult(result);
         if (!result.ok) {
-            return reply.status(400).send(result);
+            return reply.status(400).send(response);
         }
-        return result;
+        return response;
     });
     app.post("/api/setup/generate-auth-token", { preHandler: authMiddleware }, async () => {
         return { token: createTransientAuthToken() };
     });
-    app.post("/api/setup/reset", { preHandler: authMiddleware }, async () => {
+    app.post("/api/setup/reset", { preHandler: authMiddleware }, async (req) => {
         stopActiveSlackChannel();
         stopActiveTelegramChannel();
         stopDiscordRuntime();
         stopGoogleChatRuntime();
-        return resetSetupEnvironment();
+        const snapshot = resetSetupEnvironment(getApiRuntimePaths(req));
+        return {
+            ...snapshot,
+            draft: redactSetupDraftSecrets(snapshot.draft),
+            checks: redactSetupChecksForApi(snapshot.checks),
+            restartRequired: true,
+            appliesOn: "next_start",
+        };
     });
-    app.post("/api/setup/complete", { preHandler: authMiddleware }, async () => {
-        return completeSetup();
+    app.post("/api/setup/complete", { preHandler: authMiddleware }, async (req) => {
+        return completeSetup(getApiRuntimePaths(req));
     });
 }
 //# sourceMappingURL=setup.js.map

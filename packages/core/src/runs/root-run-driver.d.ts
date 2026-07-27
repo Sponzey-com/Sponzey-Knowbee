@@ -4,8 +4,15 @@ import type { insertMessage } from "../db/index.js";
 import type { AIProvider } from "../ai/index.js";
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js";
 import type { RunChunkDeliveryHandler, logAssistantReply } from "./delivery.js";
+import type { AgentAttributionSnapshot } from "../contracts/sub-agent-orchestration.js";
+import type { SolutionPlanCapabilitySelection } from "../contracts/llm-solution-plan-provider.js";
 import { createExecutionLoopRuntimeState } from "./execution-profile.js";
 import { type FinalizationDependencies, type FinalizationSource } from "./finalization.js";
+import type { FinalResponseIdentityContext } from "./final-response-renderer.js";
+import type { CanonicalRecoveryReentryRecorder } from "./execution-cycle-pass.js";
+import type { CanonicalCompletionOutcomeRecorder } from "./review-outcome-pass.js";
+import type { CanonicalDeliveryRecorder } from "./finalization.js";
+import type { CanonicalPendingResponseConsumer, CanonicalPendingResponseStager } from "./finalization.js";
 import type { LoopDirective } from "./loop-directive.js";
 import { applyRootRunDriverFailure } from "./root-run-driver-failure.js";
 import { prepareRootLoopLaunch } from "./root-loop-launch.js";
@@ -13,8 +20,14 @@ import { runRootLoop } from "./root-loop.js";
 import type { ReconnectRequestGroupSelection } from "./store.js";
 import type { TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
-import { runTopologyRootRun, type TopologyRootRunRoutingDecision } from "../topology-runtime/harness.js";
+import type { KnowbeeConfig } from "../config/types.js";
+import type { ArtifactStorageContext } from "../artifacts/lifecycle.js";
+import type { MemoryJournalRepository } from "../memory/journal.js";
+import { runTopologyRootRun, type TopologyRootRunExecutionResult, type TopologyRootRunRoutingDecision } from "../topology-runtime/harness.js";
+import type { CanonicalTerminalEvidenceResult } from "./canonical-terminal-evidence.js";
+import type { AdmittedCapabilityExecutionScope } from "./run-scoped-tool-admission.js";
 export interface RootRunDriverDependencies {
+    getAdmittedCapabilityExecutionScope: () => AdmittedCapabilityExecutionScope | undefined;
     appendRunEvent: (runId: string, message: string) => void;
     updateRunSummary: (runId: string, summary: string) => void;
     setRunStepStatus: (runId: string, step: string, status: "pending" | "running" | "completed" | "failed" | "cancelled", summary: string) => void;
@@ -47,18 +60,73 @@ export interface RootRunDriverDependencies {
         reason?: string;
         remainingItems?: string[];
     }>;
-    rememberRunApprovalScope: (runId: string) => void;
-    grantRunApprovalScope: (runId: string) => void;
-    grantRunSingleApproval: (runId: string) => void;
+    rememberRunApprovalScope: (runId: string, toolName: string) => void;
+    grantRunApprovalScope: (runId: string, toolName: string) => void;
+    grantRunSingleApproval: (runId: string, toolName: string) => void;
     onDeliveryError?: (message: string) => void;
     onReviewError?: (message: string) => void;
+    recordCanonicalAttempt: (input: {
+        runId: string;
+        attempt: import("./execution-attempt-pass.js").ExecutionAttemptPassResult;
+        successfulToolNames: string[];
+    }) => Promise<{
+        ok: true;
+        evidenceRefs?: string[];
+    } | {
+        ok: false;
+        reasonCode: string;
+    }>;
+    recordCanonicalRecoveryReentry: CanonicalRecoveryReentryRecorder;
+    recordCanonicalCompletionOutcome: CanonicalCompletionOutcomeRecorder;
+    recordCanonicalDelivery: CanonicalDeliveryRecorder;
+    stageCanonicalPendingResponse: CanonicalPendingResponseStager;
+    consumeCanonicalPendingResponse: CanonicalPendingResponseConsumer;
+    recordCanonicalCancellation: (input: {
+        runId: string;
+        cancellationKind: "user_requested" | "runtime_abort";
+        signalAborted: boolean;
+    }) => Promise<{
+        ok: true;
+        receiptRef: string;
+    } | {
+        ok: false;
+        reasonCode: string;
+    }>;
+    getCanonicalTerminalOutcome: (runId: string) => "blocked" | "cancelled" | "user_input" | "approval" | null;
+    getCanonicalTerminalEvidence: (runId: string) => CanonicalTerminalEvidenceResult;
+    admitCanonicalTopologyExecution: (input: {
+        runId: string;
+        route: Extract<TopologyRootRunRoutingDecision, {
+            mode: "route";
+        }>;
+        requestDiagnosisReceiptId: string;
+        solutionPlanReceiptId: string;
+        capabilitySelections: SolutionPlanCapabilitySelection[];
+    }) => Promise<{
+        ok: true;
+        capabilityAdmissionReceiptId?: string | undefined;
+    } | {
+        ok: false;
+        reasonCode: string;
+    }>;
+    recordCanonicalTopologyResult: (input: {
+        runId: string;
+        result: TopologyRootRunExecutionResult;
+        resultDiagnosisReceiptId?: string | undefined;
+    }) => Promise<{
+        ok: true;
+        finalOutcome?: "succeeded" | "partial" | "blocked" | "exhausted" | undefined;
+    } | {
+        ok: false;
+        reasonCode: string;
+    }>;
     executeLoopDirective: (directive: LoopDirective) => Promise<"break">;
     tryHandleActiveQueueCancellation: () => Promise<LoopDirective | null>;
     tryHandleIntakeBridge: (params: {
         currentMessage: string;
         originalRequest: string;
     }) => Promise<LoopDirective | null>;
-    getSyntheticApprovalAlreadyApproved: () => boolean;
+    getSyntheticApprovalAlreadyApproved: (toolName: string) => boolean;
     onBootstrapInfo?: (message: string, payload?: Record<string, unknown>) => void;
     onFinally?: () => void;
 }
@@ -70,6 +138,8 @@ interface RootRunDriverModuleDependencies {
     runTopologyRootRun: typeof runTopologyRootRun;
 }
 export declare function executeRootRunDriver(params: {
+    artifactStorage: ArtifactStorageContext;
+    memoryJournal: MemoryJournalRepository;
     runId: string;
     sessionId: string;
     requestGroupId: string;
@@ -87,6 +157,8 @@ export declare function executeRootRunDriver(params: {
     currentTargetId: string | undefined;
     currentTargetLabel: string | undefined;
     workDir: string;
+    config: KnowbeeConfig;
+    finalResponseIdentityContext?: FinalResponseIdentityContext | undefined;
     skipIntake?: boolean;
     immediateCompletionText?: string;
     reconnectNeedsClarification: boolean;
@@ -100,7 +172,11 @@ export declare function executeRootRunDriver(params: {
     suppressFinalDelivery?: boolean;
     contextMode: AgentContextMode;
     taskProfile: TaskProfile;
+    scheduleId?: string;
+    includeScheduleMemory?: boolean;
+    memorySearchQuery?: string;
     topologyRouting?: TopologyRootRunRoutingDecision;
+    speaker?: AgentAttributionSnapshot;
     syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies;
     defaultMaxDelegationTurns: number;
 }, dependencies: RootRunDriverDependencies, moduleDependencies?: RootRunDriverModuleDependencies): Promise<void>;

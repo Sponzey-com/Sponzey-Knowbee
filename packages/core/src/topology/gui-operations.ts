@@ -319,7 +319,7 @@ function defaultNode(operation: EnterpriseTopologyGuiCreateNodeOperation): NodeC
     schemaVersion: ENTERPRISE_TOPOLOGY_SCHEMA_VERSION,
     entityType: "node",
     id: operation.nodeId,
-    name: operation.name ?? "새 업무 노드",
+    name: operation.name ?? "새 서브 에이전트",
     status: "draft",
     createdAt: operation.at,
     updatedAt: operation.at,

@@ -66,7 +66,7 @@ function dispatchResult(reasonCode = "sub_agent_dispatch_failed"): DelegatedTask
     outcomes: [{
       taskId: "task:executor",
       agentId,
-      agentDisplayName: "실행자",
+      agentName: "실행자",
       agentSource: "topology",
       topologyId: "workspace:draft",
       topologyExecutorId: "node:executor",
@@ -89,6 +89,8 @@ describe("self-solve after delegation failure contract", () => {
     expect(decision?.action).toBe("self_solve")
     expect(decision?.reasonCode).toBe("self_solve_after_delegation_failure")
     expect(decision?.reasonCode).not.toBe("delegated_executor_runtime_failure_direct_current_agent")
+    expect(decision?.summary).toContain("현재 에이전트")
+    expect(decision?.summary).not.toContain("현재 실행자")
   })
 
   it("fails structurally when neither redelegation nor current-agent self solve is available", () => {

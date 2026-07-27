@@ -2,16 +2,39 @@ import { authMiddleware } from "../middleware/auth.js";
 import { PluginLoader, pluginLoader } from "../../plugins/loader.js";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { redactUiValue } from "../../ui/redaction.js";
+import { getApiRuntimeConfig } from "../runtime-context.js";
+const INTERNAL_PATH_REDACTION = "[internal-path-redacted]";
+function parsePluginConfig(config) {
+    if (!config)
+        return {};
+    if (typeof config !== "string")
+        return config;
+    try {
+        return JSON.parse(config);
+    }
+    catch {
+        return {};
+    }
+}
+function redactPluginConfigForRoute(config) {
+    return redactUiValue(config, { audience: "advanced" }).value;
+}
+function projectPluginForRoute(plugin, isLoaded) {
+    const config = parsePluginConfig(plugin.config);
+    return {
+        ...plugin,
+        entry_path: INTERNAL_PATH_REDACTION,
+        config: redactPluginConfigForRoute(config),
+        is_loaded: isLoaded,
+    };
+}
 export function registerPluginsRoute(app) {
     // GET /api/plugins — list all plugins
     app.get("/api/plugins", { preHandler: authMiddleware }, async () => {
         const plugins = PluginLoader.list();
         const loaded = new Set(pluginLoader.getLoadedNames());
-        return plugins.map((p) => ({
-            ...p,
-            config: JSON.parse(p.config ?? "{}"),
-            is_loaded: loaded.has(p.name),
-        }));
+        return plugins.map((p) => projectPluginForRoute(p, loaded.has(p.name)));
     });
     // GET /api/plugins/:name — single plugin details
     app.get("/api/plugins/:name", { preHandler: authMiddleware }, async (req, reply) => {
@@ -20,7 +43,7 @@ export function registerPluginsRoute(app) {
         if (!plugin)
             return reply.code(404).send({ error: "Plugin not found" });
         const loaded = pluginLoader.getLoadedNames().includes(plugin.name);
-        return { ...plugin, config: JSON.parse(plugin.config ?? "{}"), is_loaded: loaded };
+        return projectPluginForRoute(plugin, loaded);
     });
     // POST /api/plugins — register/install a plugin
     app.post("/api/plugins", { preHandler: authMiddleware }, async (req, reply) => {
@@ -30,7 +53,7 @@ export function registerPluginsRoute(app) {
         }
         const absPath = resolve(entryPath);
         if (!existsSync(absPath)) {
-            return reply.code(400).send({ error: `Entry path does not exist: ${absPath}` });
+            return reply.code(400).send({ error: "Entry path does not exist." });
         }
         const meta = PluginLoader.register({
             name,
@@ -39,7 +62,7 @@ export function registerPluginsRoute(app) {
             entryPath: absPath,
             ...(config !== undefined && { config }),
         });
-        return meta;
+        return projectPluginForRoute(meta, pluginLoader.getLoadedNames().includes(meta.name));
     });
     // PATCH /api/plugins/:name — enable/disable or update config
     app.patch("/api/plugins/:name", { preHandler: authMiddleware }, async (req, reply) => {
@@ -49,17 +72,25 @@ export function registerPluginsRoute(app) {
         const existing = db.prepare("SELECT id FROM plugins WHERE name = ?").get(name);
         if (!existing)
             return reply.code(404).send({ error: "Plugin not found" });
-        if (enabled === true) {
-            await pluginLoader.enable(name);
+        try {
+            if (enabled === true) {
+                const config = getApiRuntimeConfig(req);
+                await pluginLoader.enable(name, { config });
+            }
+            else if (enabled === false) {
+                await pluginLoader.disable(name);
+            }
         }
-        else if (enabled === false) {
-            await pluginLoader.disable(name);
+        catch {
+            return reply.code(400).send({ error: "Plugin could not be enabled." });
         }
         if (config !== undefined) {
             db.prepare("UPDATE plugins SET config = ?, updated_at = ? WHERE name = ?").run(JSON.stringify(config), Date.now(), name);
         }
         const updated = PluginLoader.list().find((p) => p.name === name);
-        return updated;
+        if (!updated)
+            return reply.code(404).send({ error: "Plugin not found" });
+        return projectPluginForRoute(updated, pluginLoader.getLoadedNames().includes(updated.name));
     });
     // DELETE /api/plugins/:name — uninstall a plugin
     app.delete("/api/plugins/:name", { preHandler: authMiddleware }, async (req, reply) => {

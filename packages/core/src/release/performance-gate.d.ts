@@ -1,6 +1,14 @@
 import { type FastResponseHealthSnapshot, type LatencyMetricName, type LatencyMetricRecord, type LatencyMetricStatus } from "../observability/latency.js";
 export type ReleasePerformanceGateStatus = "passed" | "warning" | "failed";
 export type ReleasePerformanceTargetKind = "latency" | "counter";
+export interface ReleasePerformanceAcceptanceEvidence {
+    status: "baseline_only" | "accepted" | "rejected";
+    matrixId: string | null;
+    matrixVersion: number | null;
+    baselineVersion: string | null;
+    authorizationId: string | null;
+    reasonCodes: string[];
+}
 export interface ReleasePerformanceTarget {
     id: string;
     kind: ReleasePerformanceTargetKind;
@@ -8,6 +16,7 @@ export interface ReleasePerformanceTarget {
     requiredForPublicRelease: boolean;
     metricName?: LatencyMetricName;
     budgetMs?: number;
+    budgetPurpose?: "operational_health";
     targetDescription: string;
 }
 export interface ReleasePerformanceMetricResult {
@@ -33,6 +42,7 @@ export interface ReleasePerformanceSummary {
     generatedAt: string;
     windowMs: number;
     gateStatus: ReleasePerformanceGateStatus;
+    operationalStatus: ReleasePerformanceGateStatus;
     fastResponseHealth: FastResponseHealthSnapshot;
     targets: ReleasePerformanceTarget[];
     metrics: ReleasePerformanceMetricResult[];
@@ -40,6 +50,7 @@ export interface ReleasePerformanceSummary {
     missingRequiredMetrics: string[];
     warnings: string[];
     blockingFailures: string[];
+    acceptance: ReleasePerformanceAcceptanceEvidence;
 }
 export declare const RELEASE_PERFORMANCE_TARGETS: ReleasePerformanceTarget[];
 export declare function buildReleasePerformanceSummary(input?: {
@@ -48,5 +59,6 @@ export declare function buildReleasePerformanceSummary(input?: {
     metrics?: LatencyMetricRecord[];
     deliveryDedupeCount?: number;
     concurrencyBlockedCount?: number;
+    acceptanceEvidence?: ReleasePerformanceAcceptanceEvidence;
 }): ReleasePerformanceSummary;
 //# sourceMappingURL=performance-gate.d.ts.map

@@ -4,11 +4,16 @@
  */
 
 import { searchMemoryItems, getDb, insertDiagnosticEvent, markMemoryIndexJobStale, type DbMemoryChunkSearchRow, type DbMemoryItem, type MemorySearchFilters } from "../db/index.js"
+import type { MemoryConfig } from "../config/types.js"
 import { getEmbeddingProvider, decodeEmbedding, cosineSimilarity, type EmbeddingProvider } from "./embedding.js"
 
 const RRF_K = 60  // RRF constant
 const DEFAULT_VECTOR_SEARCH_TIMEOUT_MS = 750
 const DEFAULT_RETRIEVAL_DEGRADED_THRESHOLD_MS = 500
+type MemoryEmbeddingConfig = Pick<MemoryConfig, "embedding">
+interface MemorySearchOptions {
+  memoryConfig?: MemoryEmbeddingConfig
+}
 
 function rrfScore(rank: number): number {
   return 1 / (RRF_K + rank + 1)
@@ -457,8 +462,8 @@ export async function vectorSearch(query: string, limit: number, filters?: {
   requestGroupId?: string
   scheduleId?: string
   includeSchedule?: boolean
-}): Promise<MemorySearchResult[]> {
-  const provider = getEmbeddingProvider()
+}, options?: MemorySearchOptions): Promise<MemorySearchResult[]> {
+  const provider = getEmbeddingProvider(options?.memoryConfig)
   if (provider.dimensions === 0) return []
 
   let queryVec: number[]
@@ -489,9 +494,9 @@ export async function vectorSearch(query: string, limit: number, filters?: {
     .slice(0, limit)
 }
 
-export async function vectorChunkSearch(query: string, limit: number, filters?: MemorySearchFilters): Promise<MemoryChunkSearchResult[]> {
+export async function vectorChunkSearch(query: string, limit: number, filters?: MemorySearchFilters, options?: MemorySearchOptions): Promise<MemoryChunkSearchResult[]> {
   const startedAt = process.hrtime.bigint()
-  const provider = getEmbeddingProvider()
+  const provider = getEmbeddingProvider(options?.memoryConfig)
   if (provider.dimensions === 0) {
     recordMemoryVectorDiagnostic(filters, {
       reason: "disabled",
@@ -578,10 +583,10 @@ export async function hybridSearch(query: string, limit: number, filters?: {
   requestGroupId?: string
   scheduleId?: string
   includeSchedule?: boolean
-}): Promise<MemorySearchResult[]> {
+}, options?: MemorySearchOptions): Promise<MemorySearchResult[]> {
   const [ftsResults, vecResults] = await Promise.all([
     Promise.resolve(ftsSearch(query, limit * 2, filters)),
-    withVectorTimeout(vectorSearch(query, limit * 2, filters), []),
+    withVectorTimeout(vectorSearch(query, limit * 2, filters, options), []),
   ])
 
   // Build score map
@@ -609,10 +614,10 @@ export async function hybridSearch(query: string, limit: number, filters?: {
     .map(({ item, score }) => ({ item, score, source: "hybrid" as const }))
 }
 
-export async function hybridChunkSearch(query: string, limit: number, filters?: MemorySearchFilters): Promise<MemoryChunkSearchResult[]> {
+export async function hybridChunkSearch(query: string, limit: number, filters?: MemorySearchFilters, options?: MemorySearchOptions): Promise<MemoryChunkSearchResult[]> {
   const [ftsResults, vectorResults] = await Promise.all([
     Promise.resolve(ftsChunkSearch(query, limit * 2, filters)),
-    withVectorTimeout(vectorChunkSearch(query, limit * 2, filters), [], DEFAULT_VECTOR_SEARCH_TIMEOUT_MS, () => {
+    withVectorTimeout(vectorChunkSearch(query, limit * 2, filters, options), [], DEFAULT_VECTOR_SEARCH_TIMEOUT_MS, () => {
       recordMemoryVectorDiagnostic(filters, {
         reason: "timeout",
         summary: "memory vector retrieval timed out and fell back to FTS results",
@@ -661,14 +666,15 @@ export async function searchMemoryItems2(
     scheduleId?: string
     includeSchedule?: boolean
   },
+  options?: MemorySearchOptions,
 ): Promise<MemorySearchResult[]> {
   const resolvedMode = mode ?? "fts"
 
   if (resolvedMode === "vector") {
-    const vectorResults = await vectorSearch(query, limit, filters)
+    const vectorResults = await vectorSearch(query, limit, filters, options)
     return vectorResults.length > 0 ? vectorResults : ftsSearch(query, limit, filters)
   }
-  if (resolvedMode === "hybrid") return hybridSearch(query, limit, filters)
+  if (resolvedMode === "hybrid") return hybridSearch(query, limit, filters, options)
   return ftsSearch(query, limit, filters)
 }
 
@@ -677,12 +683,13 @@ export async function searchMemoryChunks(
   limit = 5,
   mode?: "fts" | "vector" | "hybrid",
   filters?: MemorySearchFilters,
+  options?: MemorySearchOptions,
 ): Promise<MemoryChunkSearchResult[]> {
   const resolvedMode = mode ?? "fts"
   if (resolvedMode === "vector") {
-    const vectorResults = await vectorChunkSearch(query, limit, filters)
+    const vectorResults = await vectorChunkSearch(query, limit, filters, options)
     return vectorResults.length > 0 ? vectorResults : ftsChunkSearch(query, limit, filters)
   }
-  if (resolvedMode === "hybrid") return hybridChunkSearch(query, limit, filters)
+  if (resolvedMode === "hybrid") return hybridChunkSearch(query, limit, filters, options)
   return ftsChunkSearch(query, limit, filters)
 }

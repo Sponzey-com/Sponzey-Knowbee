@@ -1,11 +1,15 @@
-import { getConfig, reloadConfig } from "../config/index.js";
 import { createLogger } from "../logger/index.js";
 import { sanitizeUserFacingError } from "../runs/error-sanitizer.js";
 import { isMcpServerAllowed, isToolAllowedBySkillMcpAllowlist, parseMcpRegisteredToolName, toAgentCapabilityCallContext, } from "../security/capability-isolation.js";
 import { recordExtensionFailure, recordExtensionRegistryChange, recordExtensionToolFailure, } from "../security/extension-governance.js";
 import { toolDispatcher } from "../tools/index.js";
-import { McpStdioClient, } from "./client.js";
+import { McpStdioClient, redactMcpLogText, } from "./client.js";
+import { McpHttpClient } from "./http-client.js";
 const log = createLogger("mcp:registry");
+function mcpRegistryErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactMcpLogText(raw);
+}
 export function filterMcpStatusesForAgentAllowlist(statuses, input) {
     const allowlist = "skillMcpAllowlist" in input ? input.skillMcpAllowlist : input;
     return statuses
@@ -51,16 +55,90 @@ function filterTools(tools, config) {
 }
 class McpRegistry {
     entries = new Map();
-    async loadFromConfig(config = getConfig()) {
-        await this.closeAll();
-        for (const [name, serverConfig] of Object.entries(config.mcp?.servers ?? {})) {
-            await this.loadServer(name, serverConfig);
-        }
+    nextEntryRevision = 0;
+    defaultCwd = "";
+    baseEnv;
+    createEntry(name, config) {
+        const enabled = config.enabled !== false;
+        const transport = config.transport ?? (config.url ? "http" : "stdio");
+        const commandMissing = transport === "stdio" && !config.command?.trim();
+        const connectionState = !enabled
+            ? "cancelled"
+            : commandMissing
+                ? "failed"
+                : "pending";
+        return {
+            revision: ++this.nextEntryRevision,
+            client: null,
+            config,
+            agentClients: new Map(),
+            agentClientInitializations: new Map(),
+            toolNames: [],
+            status: {
+                name,
+                transport,
+                enabled,
+                required: Boolean(config.required),
+                connectionState,
+                ready: false,
+                toolCount: 0,
+                registeredToolCount: 0,
+                ...(config.command?.trim() ? { command: config.command.trim() } : {}),
+                ...(config.url?.trim() ? { url: config.url.trim() } : {}),
+                ...(!enabled
+                    ? { error: "설정에서 비활성화된 외부 기능 연결입니다." }
+                    : commandMissing
+                        ? { error: "실행 명령이 설정되지 않아 외부 기능 연결을 시작할 수 없습니다." }
+                        : {}),
+                tools: [],
+            },
+        };
     }
-    async reloadFromConfig() {
-        reloadConfig();
-        await this.loadFromConfig(getConfig());
+    prepareFromConfig(config, baseEnv) {
+        if (this.entries.size > 0) {
+            return { status: "rejected", reasonCode: "registry_not_empty" };
+        }
+        this.defaultCwd = config.profile.workspace;
+        this.baseEnv = baseEnv ? { ...baseEnv } : undefined;
+        for (const [name, serverConfig] of Object.entries(config.mcp?.servers ?? {})) {
+            this.entries.set(name, this.createEntry(name, serverConfig));
+        }
+        return { status: "prepared", statuses: this.getStatuses() };
+    }
+    async loadFromConfig(config, baseEnv) {
+        await this.closeAll();
+        const prepared = this.prepareFromConfig(config, baseEnv);
+        if (prepared.status === "rejected")
+            throw new Error(prepared.reasonCode);
+        await this.connectConfigured();
+    }
+    async connectConfigured() {
+        const pendingNames = [...this.entries.entries()]
+            .filter(([, entry]) => entry.status.connectionState === "pending")
+            .map(([name]) => name)
+            .sort();
+        for (const name of pendingNames) {
+            const entry = this.entries.get(name);
+            if (!entry || entry.status.connectionState !== "pending")
+                continue;
+            entry.status = { ...entry.status, connectionState: "connecting" };
+            await this.loadServer(name, entry.config);
+        }
         return this.getStatuses();
+    }
+    async reloadFromConfig(config, baseEnv) {
+        await this.loadFromConfig(config, baseEnv);
+        return this.getStatuses();
+    }
+    async reloadServer(name, config, options) {
+        await this.closeServer(name);
+        this.defaultCwd = options.defaultCwd;
+        this.baseEnv = options.baseEnv ? { ...options.baseEnv } : undefined;
+        await this.loadServer(name, config);
+        const status = this.getStatuses().find((entry) => entry.name === name);
+        if (!status)
+            throw new Error("mcp_target_reload_missing");
+        return status;
     }
     getStatuses() {
         return [...this.entries.values()]
@@ -84,131 +162,133 @@ class McpRegistry {
         };
     }
     async closeAll() {
-        for (const [name, entry] of this.entries) {
-            this.unregisterTools(entry.toolNames);
-            for (const agentClient of entry.agentClients.values()) {
-                await agentClient.close();
-            }
-            if (entry.client) {
-                await entry.client.close();
-            }
-            log.info(`closed MCP server ${name}`);
-        }
-        this.entries.clear();
+        for (const name of [...this.entries.keys()])
+            await this.closeServer(name);
+    }
+    async closeServer(name) {
+        const entry = this.entries.get(name);
+        if (!entry)
+            return;
+        this.entries.delete(name);
+        this.unregisterTools(entry.toolNames);
+        entry.toolNames = [];
+        const clients = [...entry.agentClients.values(), ...(entry.client ? [entry.client] : [])];
+        entry.agentClients.clear();
+        entry.agentClientInitializations.clear();
+        const closed = await Promise.allSettled(clients.map((client) => client.close()));
+        log.fieldDebug("external_feature_connection_closed", {
+            revision: entry.revision,
+            clientCount: clients.length,
+            closeFailureCount: closed.filter((result) => result.status === "rejected").length,
+        });
     }
     async loadServer(name, config) {
-        const enabled = config.enabled !== false;
-        const transport = config.transport ?? (config.url ? "http" : "stdio");
-        const baseStatus = {
-            name,
-            transport,
-            enabled,
-            required: Boolean(config.required),
-            ready: false,
-            toolCount: 0,
-            registeredToolCount: 0,
-            ...(config.command?.trim() ? { command: config.command.trim() } : {}),
-            ...(config.url?.trim() ? { url: config.url.trim() } : {}),
-            tools: [],
+        const existing = this.entries.get(name);
+        const entry = existing?.config === config ? existing : this.createEntry(name, config);
+        if (this.entries.get(name) !== entry)
+            this.entries.set(name, entry);
+        const isCurrent = () => this.entries.get(name) === entry;
+        const transport = entry.status.transport;
+        if (!entry.status.enabled || entry.status.connectionState === "failed")
+            return;
+        entry.status = { ...entry.status, connectionState: "connecting" };
+        const onExit = (error) => {
+            if (!isCurrent())
+                return;
+            const safeError = mcpRegistryErrorMessage(error);
+            this.unregisterTools(entry.toolNames);
+            entry.toolNames = [];
+            recordExtensionFailure({
+                extensionId: `mcp:${name}`,
+                kind: "mcp_server",
+                error: safeError,
+                detail: { transport, required: Boolean(config.required) },
+            });
+            entry.status = {
+                ...entry.status,
+                connectionState: "degraded",
+                ready: false,
+                registeredToolCount: 0,
+                error: safeError,
+            };
         };
-        if (!enabled) {
-            this.entries.set(name, {
-                client: null,
+        const client = transport === "http"
+            ? new McpHttpClient({ config, onExit })
+            : new McpStdioClient({
+                name,
                 config,
-                agentClients: new Map(),
-                toolNames: [],
-                status: { ...baseStatus, error: "설정에서 비활성화된 MCP 서버입니다." },
+                defaultCwd: this.defaultCwd,
+                ...(this.baseEnv ? { baseEnv: this.baseEnv } : {}),
+                onExit,
             });
-            return;
-        }
-        if (transport === "http" || config.url?.trim()) {
-            this.entries.set(name, {
-                client: null,
-                config,
-                agentClients: new Map(),
-                toolNames: [],
-                status: {
-                    ...baseStatus,
-                    error: "HTTP MCP transport는 아직 구현되지 않았습니다. stdio 기반 MCP server를 사용하세요.",
-                },
-            });
-            return;
-        }
-        if (!config.command?.trim()) {
-            this.entries.set(name, {
-                client: null,
-                config,
-                agentClients: new Map(),
-                toolNames: [],
-                status: { ...baseStatus, error: "command가 설정되지 않아 MCP 서버를 시작할 수 없습니다." },
-            });
-            return;
-        }
-        const client = new McpStdioClient({
-            name,
-            config,
-            onExit: (error) => {
-                const entry = this.entries.get(name);
-                if (!entry)
-                    return;
-                this.unregisterTools(entry.toolNames);
-                entry.toolNames = [];
-                recordExtensionFailure({
-                    extensionId: `mcp:${name}`,
-                    kind: "mcp_server",
-                    error,
-                    detail: { transport, required: Boolean(config.required) },
-                });
-                entry.status = {
-                    ...entry.status,
-                    ready: false,
-                    registeredToolCount: 0,
-                    error,
-                };
-            },
-        });
+        entry.client = client;
         try {
             await client.initialize();
+            if (!isCurrent()) {
+                await client.close();
+                return;
+            }
             const discovered = filterTools(await client.listTools(), config);
+            if (!isCurrent()) {
+                await client.close();
+                return;
+            }
             const tools = this.registerTools(name, discovered);
-            this.entries.set(name, {
-                client,
-                config,
-                agentClients: new Map(),
-                toolNames: tools.map((tool) => tool.registeredName),
-                status: {
-                    ...baseStatus,
-                    ready: true,
-                    toolCount: discovered.length,
-                    registeredToolCount: tools.length,
-                    tools,
-                },
-            });
+            entry.toolNames = tools.map((tool) => tool.registeredName);
+            entry.status = {
+                ...entry.status,
+                connectionState: "ready",
+                ready: true,
+                toolCount: discovered.length,
+                registeredToolCount: tools.length,
+                tools,
+            };
             recordExtensionRegistryChange({
                 action: "mcp_server_loaded",
                 extensionId: `mcp:${name}`,
                 result: "success",
                 detail: { toolCount: tools.length, transport },
             });
-            log.info(`loaded MCP server ${name} with ${tools.length} tools`);
+            log.fieldDebug("external_feature_connection_ready", {
+                revision: entry.revision,
+                transport,
+                toolCount: tools.length,
+            });
         }
         catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = mcpRegistryErrorMessage(error);
+            if (!isCurrent()) {
+                await client.close();
+                return;
+            }
             recordExtensionFailure({
                 extensionId: `mcp:${name}`,
                 kind: "mcp_server",
                 error: message,
                 detail: { transport, required: Boolean(config.required) },
             });
-            this.entries.set(name, {
-                client,
-                config,
-                agentClients: new Map(),
-                toolNames: [],
-                status: { ...baseStatus, error: message },
-            });
+            this.unregisterTools(entry.toolNames);
+            entry.toolNames = [];
+            entry.status = {
+                ...entry.status,
+                connectionState: "failed",
+                ready: false,
+                toolCount: 0,
+                registeredToolCount: 0,
+                tools: [],
+                error: message,
+            };
             await client.close();
-            log.error(`failed to load MCP server ${name}: ${message}`);
+            log.product("external_feature_connection_failed", {
+                reasonCode: "mcp_connection_failed",
+                required: Boolean(config.required),
+            });
+            log.fieldDebug("external_feature_connection_failure_detail", {
+                revision: entry.revision,
+                transport,
+                target: redactMcpLogText(name),
+                error: message,
+            });
         }
     }
     registerTools(name, tools) {
@@ -217,6 +297,7 @@ class McpRegistry {
             const registeredName = toRegisteredToolName(name, tool.name);
             const bridge = {
                 name: registeredName,
+                evidenceSourceKind: "mcp",
                 description: tool.description
                     ? `[MCP:${name}] ${tool.description}`
                     : `[MCP:${name}] ${tool.name}`,
@@ -229,7 +310,7 @@ class McpRegistry {
                         if (!agentContext) {
                             return {
                                 success: false,
-                                output: "MCP tool error: agent-scoped MCP call context is required.",
+                                output: "External tool error: agent-scoped external feature call context is required.",
                                 error: "agent_mcp_context_required",
                                 details: {
                                     kind: "mcp_context_required",
@@ -247,9 +328,10 @@ class McpRegistry {
                             signal: ctx.signal,
                         });
                         if (result.isError) {
+                            const errorOutput = redactMcpLogText(result.output);
                             recordExtensionToolFailure({
                                 toolName: registeredName,
-                                error: result.output,
+                                error: errorOutput,
                                 runId: ctx.runId,
                                 requestGroupId: ctx.requestGroupId ?? null,
                                 detail: {
@@ -259,16 +341,21 @@ class McpRegistry {
                                     agentId: ctx.agentId ?? null,
                                 },
                             });
+                            return {
+                                success: false,
+                                output: errorOutput,
+                                details: result.details,
+                                error: errorOutput,
+                            };
                         }
                         return {
-                            success: !result.isError,
+                            success: true,
                             output: result.output,
                             details: result.details,
-                            ...(result.isError ? { error: result.output } : {}),
                         };
                     }
                     catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
+                        const message = mcpRegistryErrorMessage(error);
                         const sanitized = sanitizeUserFacingError(message);
                         recordExtensionToolFailure({
                             toolName: registeredName,
@@ -279,7 +366,7 @@ class McpRegistry {
                         });
                         return {
                             success: false,
-                            output: `MCP tool error: ${sanitized.userMessage}`,
+                            output: `External tool error: ${sanitized.userMessage}`,
                             error: sanitized.userMessage,
                         };
                     }
@@ -305,35 +392,73 @@ class McpRegistry {
     async getAgentClient(input) {
         const entry = this.entries.get(input.serverName);
         if (!entry?.client) {
-            throw new Error(`MCP server "${input.serverName}" is not ready.`);
+            throw new Error(`External feature connection "${input.serverName}" is not ready.`);
         }
         const key = this.agentSessionKey(input);
+        const initializing = entry.agentClientInitializations.get(key);
+        if (initializing)
+            return { key, client: await initializing };
         const existing = entry.agentClients.get(key);
         if (existing)
             return { key, client: existing };
-        const client = new McpStdioClient({
-            name: `${input.serverName}:${input.context.agentId}`,
-            config: entry.config,
-            onExit: (error) => {
-                entry.agentClients.delete(key);
-                recordExtensionToolFailure({
-                    toolName: input.registeredName,
-                    error,
-                    ...(input.context.runId ? { runId: input.context.runId } : {}),
-                    requestGroupId: input.context.requestGroupId ?? null,
-                    detail: {
-                        serverName: input.serverName,
-                        agentId: input.context.agentId,
-                        bindingId: input.context.bindingId ?? null,
-                        agentSessionKey: key,
-                    },
+        let client;
+        const onExit = (error) => {
+            if (this.entries.get(input.serverName) !== entry ||
+                entry.agentClients.get(key) !== client)
+                return;
+            entry.agentClients.delete(key);
+            const safeError = mcpRegistryErrorMessage(error);
+            recordExtensionToolFailure({
+                toolName: input.registeredName,
+                error: safeError,
+                ...(input.context.runId ? { runId: input.context.runId } : {}),
+                requestGroupId: input.context.requestGroupId ?? null,
+                detail: {
+                    serverName: input.serverName,
+                    agentId: input.context.agentId,
+                    bindingId: input.context.bindingId ?? null,
+                    agentSessionKey: key,
+                },
+            });
+        };
+        const transport = entry.config.transport ?? (entry.config.url ? "http" : "stdio");
+        client =
+            transport === "http"
+                ? new McpHttpClient({ config: entry.config, onExit })
+                : new McpStdioClient({
+                    name: `${input.serverName}:${input.context.agentId}`,
+                    config: entry.config,
+                    defaultCwd: this.defaultCwd,
+                    ...(this.baseEnv ? { baseEnv: this.baseEnv } : {}),
+                    onExit,
                 });
-            },
-        });
-        await client.initialize();
         entry.agentClients.set(key, client);
-        entry.status = { ...entry.status, agentSessionCount: entry.agentClients.size };
-        return { key, client };
+        let initialization;
+        initialization = (async () => {
+            try {
+                await client.initialize();
+                if (this.entries.get(input.serverName) !== entry ||
+                    entry.agentClients.get(key) !== client) {
+                    await client.close();
+                    throw new Error("agent_mcp_session_cancelled");
+                }
+                entry.status = { ...entry.status, agentSessionCount: entry.agentClients.size };
+                return client;
+            }
+            catch (error) {
+                if (entry.agentClients.get(key) === client)
+                    entry.agentClients.delete(key);
+                await client.close();
+                throw error;
+            }
+            finally {
+                if (entry.agentClientInitializations.get(key) === initialization) {
+                    entry.agentClientInitializations.delete(key);
+                }
+            }
+        })();
+        entry.agentClientInitializations.set(key, initialization);
+        return { key, client: await initialization };
     }
     async callAgentScopedTool(input) {
         const session = await this.getAgentClient({

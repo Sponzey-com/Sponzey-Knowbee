@@ -3,6 +3,7 @@ import type { RootRun } from "../../contracts/runs"
 import { useUiI18n } from "../../lib/ui-i18n"
 import { CollapsibleText } from "./CollapsibleText"
 import { RunTargetSummary } from "./RunTargetSummary"
+import { formatRunTargetLabel } from "./RunTargetBadge"
 import { toContextModeText, toRunStatusText, toTaskProfileText } from "./runLabels"
 
 function describeDiagnosticReason(run: RootRun): string {
@@ -16,25 +17,10 @@ function describeDiagnosticReason(run: RootRun): string {
   return latest || run.summary
 }
 
-function describePromptSourceSnapshot(run: RootRun): string | null {
+function countPromptSourceSnapshot(run: RootRun): number {
   const rawSources = run.promptSourceSnapshot?.sources
-  if (!Array.isArray(rawSources)) return null
-
-  const labels = rawSources
-    .map((source) => {
-      if (!source || typeof source !== "object") return null
-      const item = source as Record<string, unknown>
-      const sourceId = typeof item.sourceId === "string" ? item.sourceId : null
-      const version = typeof item.version === "string" ? item.version : null
-      const checksum = typeof item.checksum === "string" ? item.checksum.slice(0, 8) : null
-      if (!sourceId) return null
-      if (version) return `${sourceId}@${version}`
-      if (checksum) return `${sourceId}#${checksum}`
-      return sourceId
-    })
-    .filter((value): value is string => Boolean(value))
-
-  return labels.length > 0 ? labels.join(", ") : null
+  if (!Array.isArray(rawSources)) return 0
+  return rawSources.filter((source) => Boolean(source && typeof source === "object")).length
 }
 
 function InfoRow({
@@ -54,7 +40,7 @@ function InfoRow({
 
 export function RunSummaryPanel({ run, extraContent, diagnosticMode = false }: { run: RootRun; extraContent?: ReactNode; diagnosticMode?: boolean }) {
   const { text, displayText, formatTime, language } = useUiI18n()
-  const promptSourceSummary = describePromptSourceSnapshot(run)
+  const promptSourceCount = countPromptSourceSnapshot(run)
 
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-5">
@@ -89,18 +75,22 @@ export function RunSummaryPanel({ run, extraContent, diagnosticMode = false }: {
             />
             {diagnosticMode ? (
               <InfoRow
-                label={text("세션 ID", "Session ID")}
-                value={run.workerSessionId || text("기본 세션", "Default session")}
+                label={text("작업 세션", "Worker session")}
+                value={
+                  run.workerSessionId
+                    ? text("작업 세션 연결됨", "Worker session connected")
+                    : text("기본 작업 세션", "Default worker session")
+                }
               />
             ) : null}
             <InfoRow
               label={text("실행 대상", "Execution target")}
-              value={run.targetLabel || run.targetId || text("실행 대상 미선정", "No target selected")}
+              value={formatRunTargetLabel(run.targetId, run.targetLabel, language, text)}
             />
-            {diagnosticMode && promptSourceSummary ? (
+            {diagnosticMode && promptSourceCount > 0 ? (
               <InfoRow
-                label={text("프롬프트 소스", "Prompt sources")}
-                value={promptSourceSummary}
+                label={text("내부 지침 기준", "Instruction baseline")}
+                value={text(`기준 ${promptSourceCount}개 연결됨`, `${promptSourceCount} baselines linked`)}
               />
             ) : null}
           </div>

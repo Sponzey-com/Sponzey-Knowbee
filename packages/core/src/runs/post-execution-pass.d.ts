@@ -10,6 +10,7 @@ import type { RecoveryBudgetUsage } from "./recovery-budget.js";
 import type { FailedCommandTool, SuccessfulToolEvidence } from "./recovery.js";
 import type { RecoveryRetryApplicationDependencies } from "./retry-application.js";
 import type { FinalizationDependencies, FinalizationSource } from "./finalization.js";
+import { type UserFacingTextSource } from "./loop-directive.js";
 export type PostExecutionPassResult = {
     kind: "break";
 } | {
@@ -23,6 +24,8 @@ export type PostExecutionPassResult = {
 } | {
     kind: "continue";
     preview: string;
+    previewSource?: UserFacingTextSource;
+    deferredPreviewDelivery?: boolean;
     deliveryOutcome: DeliveryOutcome;
 };
 interface PostExecutionPassDependencies extends RecoveryRetryApplicationDependencies {
@@ -47,6 +50,8 @@ export declare function runPostExecutionPass(params: {
     source: FinalizationSource;
     onChunk: RunChunkDeliveryHandler | undefined;
     preview: string;
+    previewSource?: UserFacingTextSource;
+    deferredPreviewDelivery?: boolean;
     originalRequest: string;
     verificationRequest: string;
     wantsDirectArtifactDelivery: boolean;

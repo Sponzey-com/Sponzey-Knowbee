@@ -38,6 +38,13 @@ const results: CommandPaletteSearchResult[] = [
     title: "Coding",
     reasonCodes: ["agent_template_result"],
   },
+  {
+    id: "sub:alpha",
+    kind: "sub_session",
+    title: "Alpha run",
+    target: { kind: "sub_session", id: "sub:alpha", label: "Alpha run" },
+    reasonCodes: ["sub_session_result"],
+  },
 ]
 
 describe("task026 webui command palette helpers", () => {
@@ -56,9 +63,20 @@ describe("task026 webui command palette helpers", () => {
       "command",
       "agent",
       "team",
+      "sub_session",
       "agent_template",
     ])
     expect(groups.find((group) => group.kind === "agent")?.items).toHaveLength(1)
+  })
+
+  it("uses caller-provided user-facing group labels without changing internal kinds", () => {
+    const groups = groupCommandPaletteResults(results, {
+      sub_session: "서브 에이전트 실행",
+    })
+    const subSessionGroup = groups.find((group) => group.kind === "sub_session")
+
+    expect(subSessionGroup?.label).toBe("서브 에이전트 실행")
+    expect(subSessionGroup?.kind).toBe("sub_session")
   })
 
   it("wraps keyboard navigation and exposes aria active descendant", () => {

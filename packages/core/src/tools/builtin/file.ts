@@ -1,28 +1,34 @@
-import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from "node:fs"
-import { resolve, join, relative, dirname } from "node:path"
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { getConfig } from "../../config/index.js"
+import { dirname, join, relative, resolve } from "node:path"
+import type { SecurityConfig } from "../../config/types.js"
 import type { AgentTool, ToolContext, ToolResult } from "../types.js"
-import { parsePatch } from "./patch-parser.js"
+import { toolUserFacingErrorMessage } from "./error-redaction.js"
 import { applyPatch } from "./patch-applier.js"
+import { parsePatch } from "./patch-parser.js"
 
 const MAX_FILE_SIZE = 500 * 1024 // 500 KB read limit
+type FileToolSecurityConfig = Pick<SecurityConfig, "allowedPaths">
+const DEFAULT_FILE_TOOL_SECURITY: FileToolSecurityConfig = Object.freeze({ allowedPaths: [] })
 
-export function assertAllowedPath(filePath: string): void {
+export function assertAllowedPath(
+  filePath: string,
+  securityConfig: FileToolSecurityConfig = DEFAULT_FILE_TOOL_SECURITY,
+): void {
   const resolved = resolve(filePath)
-  const config = getConfig()
   const home = homedir()
 
   // Always allow home directory subtree by default
-  const allowed = config.security.allowedPaths.length > 0
-    ? config.security.allowedPaths.map((p) => resolve(p.replace("~", home)))
-    : [home]
+  const allowed =
+    securityConfig.allowedPaths.length > 0
+      ? securityConfig.allowedPaths.map((p) => resolve(p.replace("~", home)))
+      : [home]
 
   const isAllowed = allowed.some((a) => resolved.startsWith(a + "/") || resolved === a)
   if (!isAllowed) {
     throw new Error(
       `Access denied: "${resolved}" is outside the allowed paths.\n` +
-      `Allowed: ${allowed.join(", ")}`,
+        `Allowed: ${allowed.join(", ")}`,
     )
   }
 
@@ -42,6 +48,7 @@ interface FileReadParams {
 
 export const fileReadTool: AgentTool<FileReadParams> = {
   name: "file_read",
+  evidenceSourceKind: "file",
   description:
     "Read the contents of a file. Returns the text content. " +
     "Large files are truncated with a notice.",
@@ -60,10 +67,10 @@ export const fileReadTool: AgentTool<FileReadParams> = {
   riskLevel: "safe",
   requiresApproval: false,
 
-  async execute(params, _ctx: ToolContext): Promise<ToolResult> {
+  async execute(params, ctx: ToolContext): Promise<ToolResult> {
     const filePath = params.path.replace(/^~/, homedir())
     try {
-      assertAllowedPath(filePath)
+      assertAllowedPath(filePath, ctx.securityConfig)
       if (!existsSync(filePath)) {
         return { success: false, output: `File not found: "${filePath}"`, error: "ENOENT" }
       }
@@ -92,7 +99,7 @@ export const fileReadTool: AgentTool<FileReadParams> = {
         details: { path: filePath, size: stat.size },
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toolUserFacingErrorMessage(err)
       return { success: false, output: `Error reading file: ${msg}`, error: msg }
     }
   },
@@ -106,8 +113,28 @@ interface FileWriteParams {
   createDirs?: boolean
 }
 
+async function observeFileWriteState(params: FileWriteParams) {
+  const filePath = resolve(params.path.replace(/^~/, homedir()))
+  try {
+    return {
+      available: existsSync(filePath) && statSync(filePath).isFile(),
+      targetRef: filePath,
+      expectedState: params.content,
+      observedState: readFileSync(filePath, "utf-8"),
+    }
+  } catch {
+    return {
+      available: false,
+      targetRef: filePath,
+      expectedState: params.content,
+      observedState: null,
+    }
+  }
+}
+
 export const fileWriteTool: AgentTool<FileWriteParams> = {
   name: "file_write",
+  evidenceSourceKind: "file",
   description: "Write text content to a file. Creates the file if it does not exist.",
   parameters: {
     type: "object",
@@ -123,11 +150,19 @@ export const fileWriteTool: AgentTool<FileWriteParams> = {
   },
   riskLevel: "moderate",
   requiresApproval: false,
+  sideEffect: {
+    effectClass: "local_write",
+    compensationSupport: "irreversible",
+    targetRef: (params) => resolve(params.path.replace(/^~/, homedir())),
+    expectedState: (params) => params.content,
+    observe: observeFileWriteState,
+    observeCurrent: observeFileWriteState,
+  },
 
-  async execute(params, _ctx: ToolContext): Promise<ToolResult> {
+  async execute(params, ctx: ToolContext): Promise<ToolResult> {
     const filePath = params.path.replace(/^~/, homedir())
     try {
-      assertAllowedPath(filePath)
+      assertAllowedPath(filePath, ctx.securityConfig)
       if (params.createDirs !== false) {
         mkdirSync(dirname(filePath), { recursive: true })
       }
@@ -138,7 +173,7 @@ export const fileWriteTool: AgentTool<FileWriteParams> = {
         details: { path: filePath, bytes: Buffer.byteLength(params.content) },
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toolUserFacingErrorMessage(err)
       return { success: false, output: `Error writing file: ${msg}`, error: msg }
     }
   },
@@ -155,6 +190,7 @@ interface FileListParams {
 
 export const fileListTool: AgentTool<FileListParams> = {
   name: "file_list",
+  evidenceSourceKind: "file",
   description: "List files and directories at a given path.",
   parameters: {
     type: "object",
@@ -171,10 +207,10 @@ export const fileListTool: AgentTool<FileListParams> = {
   riskLevel: "safe",
   requiresApproval: false,
 
-  async execute(params, _ctx: ToolContext): Promise<ToolResult> {
+  async execute(params, ctx: ToolContext): Promise<ToolResult> {
     const dirPath = params.path.replace(/^~/, homedir())
     try {
-      assertAllowedPath(dirPath)
+      assertAllowedPath(dirPath, ctx.securityConfig)
       if (!existsSync(dirPath)) {
         return { success: false, output: `Directory not found: "${dirPath}"`, error: "ENOENT" }
       }
@@ -189,9 +225,7 @@ export const fileListTool: AgentTool<FileListParams> = {
         return `${e.isDir ? "d" : "f"} ${rel}${e.isDir ? "/" : ""}`
       })
 
-      const output = lines.length > 0
-        ? lines.join("\n")
-        : "(empty directory)"
+      const output = lines.length > 0 ? lines.join("\n") : "(empty directory)"
 
       return {
         success: true,
@@ -199,13 +233,16 @@ export const fileListTool: AgentTool<FileListParams> = {
         details: { path: dirPath, count: lines.length },
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toolUserFacingErrorMessage(err)
       return { success: false, output: `Error listing directory: ${msg}`, error: msg }
     }
   },
 }
 
-interface Entry { path: string; isDir: boolean }
+interface Entry {
+  path: string
+  isDir: boolean
+}
 
 function listDir(dir: string, recursive: boolean, showHidden: boolean, depth = 0): Entry[] {
   if (depth > 5) return [] // max depth guard
@@ -236,6 +273,7 @@ interface FilePatchParams {
 
 export const filePatchTool: AgentTool<FilePatchParams> = {
   name: "file_patch",
+  evidenceSourceKind: "file",
   description: "구조화된 패치 형식으로 파일을 편집합니다. Update/Add/Delete 지시어를 지원합니다.",
   parameters: {
     type: "object",
@@ -253,7 +291,7 @@ export const filePatchTool: AgentTool<FilePatchParams> = {
   async execute(params, ctx: ToolContext): Promise<ToolResult> {
     try {
       const parsed = parsePatch(params.patch)
-      const result = applyPatch(parsed, ctx.workDir)
+      const result = applyPatch(parsed, ctx.workDir, ctx.securityConfig)
       if (!result.success) {
         return { success: false, output: result.message, error: result.message }
       }
@@ -263,7 +301,7 @@ export const filePatchTool: AgentTool<FilePatchParams> = {
         details: { filesChanged: result.filesChanged, hasDeletes: parsed.hasDeletes },
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toolUserFacingErrorMessage(err)
       return { success: false, output: `Patch failed: ${msg}`, error: msg }
     }
   },
@@ -277,6 +315,7 @@ interface FileDeleteParams {
 
 export const fileDeleteTool: AgentTool<FileDeleteParams> = {
   name: "file_delete",
+  evidenceSourceKind: "file",
   description: "Delete a file. Requires approval.",
   parameters: {
     type: "object",
@@ -288,10 +327,10 @@ export const fileDeleteTool: AgentTool<FileDeleteParams> = {
   riskLevel: "dangerous",
   requiresApproval: true,
 
-  async execute(params, _ctx: ToolContext): Promise<ToolResult> {
+  async execute(params, ctx: ToolContext): Promise<ToolResult> {
     const filePath = params.path.replace(/^~/, homedir())
     try {
-      assertAllowedPath(filePath)
+      assertAllowedPath(filePath, ctx.securityConfig)
       if (!existsSync(filePath)) {
         return { success: false, output: `File not found: "${filePath}"`, error: "ENOENT" }
       }
@@ -299,7 +338,7 @@ export const fileDeleteTool: AgentTool<FileDeleteParams> = {
       unlinkSync(filePath)
       return { success: true, output: `Deleted: "${filePath}"` }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toolUserFacingErrorMessage(err)
       return { success: false, output: `Error deleting file: ${msg}`, error: msg }
     }
   },

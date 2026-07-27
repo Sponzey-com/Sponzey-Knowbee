@@ -11,17 +11,6 @@ const outputDir = join(coreDir, ".artifact-consistency-sync")
 
 const GENERATED_SUFFIXES = [".d.ts.map", ".js.map", ".d.ts", ".js"]
 
-const JS_ONLY_COMPATIBILITY_STEMS = new Set([
-  "api/routes/oauth",
-  "auth/chatgpt-oauth",
-  "llm/index",
-  "llm/providers/anthropic",
-  "llm/providers/gemini",
-  "llm/providers/openai",
-  "llm/types",
-  "memory/sidekick-md",
-])
-
 function walkFiles(dir) {
   const results = []
   for (const entry of readdirSync(dir)) {
@@ -41,11 +30,6 @@ function isGeneratedArtifact(path) {
   return generatedSuffix(path) !== undefined
 }
 
-function stripGeneratedSuffix(path) {
-  const suffix = generatedSuffix(path)
-  return suffix ? path.slice(0, -suffix.length) : path
-}
-
 function copyGeneratedArtifacts() {
   const generatedFiles = walkFiles(outputDir).filter(isGeneratedArtifact)
   const generatedRelPaths = new Set()
@@ -63,7 +47,7 @@ function copyGeneratedArtifacts() {
     .map((file) => relative(sourceDir, file))
     .filter((relPath) => {
       if (generatedRelPaths.has(relPath)) return false
-      return !JS_ONLY_COMPATIBILITY_STEMS.has(stripGeneratedSuffix(relPath))
+      return true
     })
 
   if (unexpectedStaleFiles.length > 0) {
@@ -76,7 +60,7 @@ function copyGeneratedArtifacts() {
     )
   }
 
-  return { copied: generatedFiles.length, compatibilityOnly: JS_ONLY_COMPATIBILITY_STEMS.size }
+  return { copied: generatedFiles.length }
 }
 
 try {
@@ -98,7 +82,7 @@ try {
   )
   const result = copyGeneratedArtifacts()
   console.log(
-    `Synced ${result.copied} generated core src artifacts. JS-only compatibility stems: ${result.compatibilityOnly}.`,
+    `Synced ${result.copied} generated core src artifacts.`,
   )
 } finally {
   rmSync(outputDir, { recursive: true, force: true })

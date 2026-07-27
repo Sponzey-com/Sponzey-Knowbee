@@ -17,6 +17,7 @@
 - 승인 거부는 `user`, `timeout`, `system` 사유를 분리해서 처리하고, 타임아웃을 사용자 취소로 오인하지 않도록 `runs` 취소 요약에도 그 사유를 전달합니다.
 - 전달형 도구는 성공 여부를 출력 문자열에 숨기지 않고, 가능한 한 구조화된 `details`를 함께 반환해서 채널/실행 루프가 액션 결과를 직접 해석할 수 있어야 합니다.
 - `telegram_send_file`은 이제 `.txt/.md/.json/.csv/.pdf` 같은 문서형 결과를 무조건 허용하지 않고, 사용자가 파일/문서 첨부를 명시적으로 요청한 경우에만 허용합니다. 단순 확인/요약/상태 결과는 일반 메시지 전달이 기본입니다.
+- `telegram_send_file`은 기존 허용 경로와 함께 같은 run/request-group에서 생성된 opaque `artifactRef`를 받을 수 있습니다. ref는 delivery adapter와 artifact metadata 경계에서만 실제 경로로 해석하며, 다른 실행 범위의 ref를 전송 대상으로 사용할 수 없습니다.
 - `keyboard_shortcut`은 Yeonjang이 `keyboard.action`을 지원하면 그 경로를 먼저 사용하고, 전달 계약은 `action=shortcut`, `key`, `modifiers`로 정리합니다.
 - `mouse_action`, `keyboard_action`은 Yeonjang의 action 기반 capability를 직접 노출하는 공통 진입점입니다.
 - `shell_exec`, `app_launch`, `process_kill`, `screen_capture`, `mouse_*`, `keyboard_*`, `window_focus`는 이제 Yeonjang 전용 실행 경계입니다. 연결된 연장이나 capability가 없으면 코어 로컬 fallback 대신 명시적 실패로 끝납니다.

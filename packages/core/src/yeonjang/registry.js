@@ -1,10 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { getDb, insertAuditLog } from "../db/index.js";
+import { getDefaultYeonjangOwnerUserId, getDefaultYeonjangWorkspaceScopeId, getYeonjangGatewayHostFingerprint, } from "./runtime-identity.js";
 const DEFAULT_LOCAL_NODE_ID = "yeonjang-main";
 const CURRENT_YEONJANG_PROTOCOL_VERSION = "2026-04-16.capability-matrix.v1";
 const YEONJANG_SESSION_STALE_MS = 90_000;
-const DEFAULT_WORKSPACE_SCOPE_ID = "workspace:local-default";
-const DEFAULT_OWNER_USER_ID = "local:operator";
 const RESERVED_CALL_NAMES = new Set([
     "local",
     "remote",
@@ -74,9 +73,9 @@ function isConflictSessionState(sessionState) {
     return normalized === "duplicate_instance_conflict" || normalized === "session_replaced";
 }
 function selectPreferredSession(sessions, now) {
-    const preferredLive = sessions.find((session) => isSessionLive(session, now)
-        && !["offline", "disconnected"].includes(normalizeString(session.session_state).toLowerCase())
-        && !isConflictSessionState(session.session_state));
+    const preferredLive = sessions.find((session) => isSessionLive(session, now) &&
+        !["offline", "disconnected"].includes(normalizeString(session.session_state).toLowerCase()) &&
+        !isConflictSessionState(session.session_state));
     if (preferredLive)
         return preferredLive;
     return sessions[0] ?? null;
@@ -84,6 +83,8 @@ function selectPreferredSession(sessions, now) {
 function computePermissionRequired(permissions, capabilityMatrix) {
     if (!permissions || !capabilityMatrix)
         return false;
+    let hasPermissionGatedCapability = false;
+    let hasRunnableCapability = false;
     for (const entry of Object.values(capabilityMatrix)) {
         if (!isRecord(entry))
             continue;
@@ -91,12 +92,19 @@ function computePermissionRequired(permissions, capabilityMatrix) {
         const permissionSetting = entry["permissionSetting"];
         if (supported === false)
             continue;
-        if (typeof permissionSetting !== "string" || permissionSetting.trim().length === 0)
+        if (typeof permissionSetting !== "string" || permissionSetting.trim().length === 0) {
+            hasRunnableCapability = true;
             continue;
-        if (permissions[permissionSetting] === false)
-            return true;
+        }
+        hasPermissionGatedCapability = true;
+        if (permissions[permissionSetting] !== false) {
+            hasRunnableCapability = true;
+        }
     }
-    return false;
+    // An instance-level permission state means that every supported capability
+    // is blocked. Individual disabled capabilities are enforced by their own
+    // capability health and runtime permission gates.
+    return hasPermissionGatedCapability && !hasRunnableCapability;
 }
 function computeDegraded(instance, permissions, toolHealth, capabilityMatrix, duplicateLiveSessionDetected) {
     if (duplicateLiveSessionDetected)
@@ -107,57 +115,26 @@ function computeDegraded(instance, permissions, toolHealth, capabilityMatrix, du
         return true;
     if (!toolHealth)
         return false;
-    return Object.values(toolHealth).some((entry) => {
+    const nonRunnableCapabilityMethods = new Set(Object.entries(capabilityMatrix)
+        .filter(([, capability]) => {
+        if (!isRecord(capability))
+            return false;
+        if (capability["supported"] === false)
+            return true;
+        const permissionSetting = capability["permissionSetting"];
+        return typeof permissionSetting === "string"
+            && permissionSetting.trim().length > 0
+            && permissions[permissionSetting] === false;
+    })
+        .map(([method]) => method));
+    return Object.entries(toolHealth).some(([method, entry]) => {
+        if (nonRunnableCapabilityMethods.has(method))
+            return false;
         if (!isRecord(entry))
             return false;
         const status = sanitizeOptionalString(entry["status"]);
         return Boolean(status) && !["ok", "ready", "healthy", "warning"].includes(status.toLowerCase());
     });
-}
-function normalizeGatewayOs() {
-    switch (process.platform) {
-        case "darwin":
-            return "macos";
-        case "win32":
-            return "windows";
-        default:
-            return process.platform;
-    }
-}
-function normalizeGatewayArch() {
-    switch (process.arch) {
-        case "x64":
-            return "x86_64";
-        case "arm64":
-            return "aarch64";
-        case "ia32":
-            return "x86";
-        default:
-            return process.arch;
-    }
-}
-function hostnameCandidate() {
-    return normalizeString(process.env["KNOWBEE_HOSTNAME"])
-        || normalizeString(process.env["COMPUTERNAME"])
-        || normalizeString(process.env["HOSTNAME"])
-        || "localhost";
-}
-function stableHexHash(value) {
-    let hash = 0xcbf29ce484222325n;
-    for (const byte of Buffer.from(value, "utf-8")) {
-        hash ^= BigInt(byte);
-        hash = BigInt.asUintN(64, hash * 0x100000001b3n);
-    }
-    return hash.toString(16).padStart(16, "0");
-}
-function gatewayHostFingerprint() {
-    return stableHexHash(`${hostnameCandidate()}|${normalizeGatewayOs()}|${normalizeGatewayArch()}`);
-}
-function defaultWorkspaceScopeId() {
-    return normalizeString(process.env["KNOWBEE_YEONJANG_WORKSPACE_SCOPE_ID"]) || DEFAULT_WORKSPACE_SCOPE_ID;
-}
-function defaultOwnerUserId() {
-    return normalizeString(process.env["KNOWBEE_YEONJANG_OWNER_USER_ID"]) || DEFAULT_OWNER_USER_ID;
 }
 export function hashYeonjangPairingSecret(secret) {
     return createHash("sha256").update(secret.trim(), "utf8").digest("hex");
@@ -180,7 +157,7 @@ export function normalizeYeonjangTrustState(value) {
 function isAutoLocalIdentity(input) {
     if (input.nodeId === DEFAULT_LOCAL_NODE_ID)
         return true;
-    return Boolean(input.hostFingerprint && input.hostFingerprint === gatewayHostFingerprint());
+    return Boolean(input.hostFingerprint && input.hostFingerprint === getYeonjangGatewayHostFingerprint());
 }
 export function normalizeYeonjangCallName(value) {
     return value
@@ -197,18 +174,34 @@ function validateObservationIdentity(input) {
     const nodeId = normalizeString(input.nodeId);
     const sessionId = normalizeString(input.sessionId);
     if (!instanceId || !instanceAlias || !displayName || !nodeId || !sessionId) {
-        return { ok: false, code: "invalid_identity", message: "Yeonjang instance identity 필수값이 비어 있습니다." };
+        return {
+            ok: false,
+            code: "invalid_identity",
+            message: "Yeonjang instance identity 필수값이 비어 있습니다.",
+        };
     }
     const normalizedAlias = normalizeYeonjangCallName(instanceAlias);
     const normalizedDisplayName = normalizeYeonjangCallName(displayName);
     if (!normalizedAlias || !normalizedDisplayName) {
-        return { ok: false, code: "invalid_identity", message: "호출명으로 사용할 수 없는 instance alias/display name 입니다." };
+        return {
+            ok: false,
+            code: "invalid_identity",
+            message: "호출명으로 사용할 수 없는 instance alias/display name 입니다.",
+        };
     }
     if (normalizedAlias === normalizedDisplayName) {
-        return { ok: false, code: "call_name_conflict", message: "instance alias와 display name은 같은 호출명 namespace를 공유하므로 중복될 수 없습니다." };
+        return {
+            ok: false,
+            code: "call_name_conflict",
+            message: "instance alias와 display name은 같은 호출명 namespace를 공유하므로 중복될 수 없습니다.",
+        };
     }
     if (RESERVED_CALL_NAMES.has(normalizedAlias) || RESERVED_CALL_NAMES.has(normalizedDisplayName)) {
-        return { ok: false, code: "reserved_call_name", message: "예약어는 instance alias/display name으로 사용할 수 없습니다." };
+        return {
+            ok: false,
+            code: "reserved_call_name",
+            message: "예약어는 instance alias/display name으로 사용할 수 없습니다.",
+        };
     }
     return {
         instanceId,
@@ -245,7 +238,8 @@ function resolveInstanceState(instance, sessions, now) {
         return "discovered";
     if (!instance.protocol_version || instance.protocol_version !== CURRENT_YEONJANG_PROTOCOL_VERSION)
         return "update_required";
-    if (!isSessionLive(latestSession, now) || ["offline", "disconnected"].includes(latestSession.session_state.toLowerCase()))
+    if (!isSessionLive(latestSession, now) ||
+        ["offline", "disconnected"].includes(latestSession.session_state.toLowerCase()))
         return "offline";
     if (computePermissionRequired(permissions, capabilityMatrix))
         return "permission_required";
@@ -273,10 +267,13 @@ function toSessionView(session, now) {
 function resolveActiveWorkspaceScopeId(rows) {
     const candidates = [
         rows.find((row) => row.local_marker === 1 && row.trust_state === "trusted" && row.workspace_scope_id),
-        rows.find((row) => isAutoLocalIdentity({ nodeId: row.node_id, hostFingerprint: row.host_fingerprint }) && row.trust_state === "trusted" && row.workspace_scope_id),
+        rows.find((row) => isAutoLocalIdentity({ nodeId: row.node_id, hostFingerprint: row.host_fingerprint }) &&
+            row.trust_state === "trusted" &&
+            row.workspace_scope_id),
         rows.find((row) => row.workspace_scope_id),
     ].filter(Boolean);
-    return sanitizeOptionalString(candidates[0]?.workspace_scope_id) ?? defaultWorkspaceScopeId();
+    return (sanitizeOptionalString(candidates[0]?.workspace_scope_id) ??
+        getDefaultYeonjangWorkspaceScopeId());
 }
 function resolveScopeAccess(workspaceScopeId, activeWorkspaceScopeId) {
     if (!workspaceScopeId)
@@ -340,24 +337,27 @@ function evaluateYeonjangSessionClaim(params) {
         return { outcome: "accepted" };
     }
     const existing = params.existingInstance;
-    const sameInstallFingerprint = Boolean(params.incomingInstallFingerprint
-        && existing.install_fingerprint
-        && params.incomingInstallFingerprint === existing.install_fingerprint);
-    const sameHostFingerprint = Boolean(params.incomingHostFingerprint
-        && existing.host_fingerprint
-        && params.incomingHostFingerprint === existing.host_fingerprint);
-    const sameWorkspaceScope = params.incomingWorkspaceScopeId == null
-        || existing.workspace_scope_id == null
-        || params.incomingWorkspaceScopeId === existing.workspace_scope_id;
+    const sameInstallFingerprint = Boolean(params.incomingInstallFingerprint &&
+        existing.install_fingerprint &&
+        params.incomingInstallFingerprint === existing.install_fingerprint);
+    const sameHostFingerprint = Boolean(params.incomingHostFingerprint &&
+        existing.host_fingerprint &&
+        params.incomingHostFingerprint === existing.host_fingerprint);
+    const sameWorkspaceScope = params.incomingWorkspaceScopeId == null ||
+        existing.workspace_scope_id == null ||
+        params.incomingWorkspaceScopeId === existing.workspace_scope_id;
     const trustedOwner = existing.trust_state === "trusted" && sanitizeOptionalString(existing.owner_user_id) != null;
-    const validPairingFingerprint = Boolean(params.incomingPairingFingerprint
-        && existing.pairing_fingerprint
-        && params.incomingPairingFingerprint === existing.pairing_fingerprint);
+    const validPairingFingerprint = Boolean(params.incomingPairingFingerprint &&
+        existing.pairing_fingerprint &&
+        params.incomingPairingFingerprint === existing.pairing_fingerprint);
     const existingOrdinal = Math.max(...liveSessions.map((session) => parseSessionOrdinal(session.session_id) ?? 0));
     const incomingOrdinal = parseSessionOrdinal(params.incomingSessionId) ?? params.incomingObservedAt;
-    const newerSession = incomingOrdinal > existingOrdinal
-        || params.incomingObservedAt >= Math.max(...liveSessions.map((session) => session.last_seen_at));
-    if (sameInstallFingerprint && sameWorkspaceScope && newerSession && (trustedOwner || validPairingFingerprint || sameHostFingerprint)) {
+    const newerSession = incomingOrdinal > existingOrdinal ||
+        params.incomingObservedAt >= Math.max(...liveSessions.map((session) => session.last_seen_at));
+    if (sameInstallFingerprint &&
+        sameWorkspaceScope &&
+        newerSession &&
+        (trustedOwner || validPairingFingerprint || sameHostFingerprint)) {
         return {
             outcome: "replaced",
             reasonCode: "session_replaced",
@@ -368,12 +368,18 @@ function evaluateYeonjangSessionClaim(params) {
         return { outcome: "quarantined", reasonCode: "duplicate_instance_conflict:foreign_scope" };
     }
     if (!sameInstallFingerprint) {
-        return { outcome: "quarantined", reasonCode: "duplicate_instance_conflict:install_fingerprint_mismatch" };
+        return {
+            outcome: "quarantined",
+            reasonCode: "duplicate_instance_conflict:install_fingerprint_mismatch",
+        };
     }
     if (!newerSession) {
         return { outcome: "quarantined", reasonCode: "duplicate_instance_conflict:stale_session" };
     }
-    return { outcome: "quarantined", reasonCode: "duplicate_instance_conflict:claim_validation_failed" };
+    return {
+        outcome: "quarantined",
+        reasonCode: "duplicate_instance_conflict:claim_validation_failed",
+    };
 }
 function writeYeonjangSessionRow(db, input) {
     const existingSession = db
@@ -443,7 +449,9 @@ export function recordYeonjangGovernanceAudit(input) {
                 ...(input.instanceId !== undefined ? { instanceId: input.instanceId } : {}),
                 ...(input.instanceAlias !== undefined ? { instanceAlias: input.instanceAlias } : {}),
                 ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
-                ...(input.workspaceScopeId !== undefined ? { workspaceScopeId: input.workspaceScopeId } : {}),
+                ...(input.workspaceScopeId !== undefined
+                    ? { workspaceScopeId: input.workspaceScopeId }
+                    : {}),
                 ...(input.trustState !== undefined ? { trustState: input.trustState } : {}),
                 ...(input.reason !== undefined ? { reason: input.reason } : {}),
                 ...(input.detail ?? {}),
@@ -472,24 +480,38 @@ export function upsertYeonjangRegistryObservation(input, options = {}) {
     const availability = ensureCallNameAvailability(db, validated.instanceId, validated.normalizedCallName, displayNormalized);
     if (availability)
         return availability;
-    const initialLocalIdentity = isAutoLocalIdentity({
-        nodeId: validated.nodeId,
-        hostFingerprint: sanitizeOptionalString(input.hostFingerprint),
-    });
-    const initialTrustState = normalizeYeonjangTrustState(input.trustState ?? (initialLocalIdentity ? "trusted" : "pending"));
-    const initialWorkspaceScopeId = sanitizeOptionalString(input.workspaceScopeId)
-        ?? (initialLocalIdentity ? defaultWorkspaceScopeId() : null);
-    const initialOwnerUserId = initialTrustState === "trusted"
-        ? defaultOwnerUserId()
-        : null;
     const incomingHostFingerprint = sanitizeOptionalString(input.hostFingerprint);
     const incomingInstallFingerprint = sanitizeOptionalString(input.installFingerprint);
     const incomingWorkspaceScopeId = sanitizeOptionalString(input.workspaceScopeId);
     const incomingPairingFingerprint = sanitizeOptionalString(input.pairingFingerprint);
+    const initialLocalIdentity = isAutoLocalIdentity({
+        nodeId: validated.nodeId,
+        hostFingerprint: incomingHostFingerprint,
+    });
+    const initialTrustState = initialLocalIdentity
+        ? "trusted"
+        : incomingInstallFingerprint
+            ? normalizeYeonjangTrustState(input.trustState ?? "pending")
+            : "pending";
+    const initialWorkspaceScopeId = incomingWorkspaceScopeId ?? (initialLocalIdentity ? getDefaultYeonjangWorkspaceScopeId() : null);
+    const initialOwnerUserId = initialTrustState === "trusted" ? getDefaultYeonjangOwnerUserId() : null;
     let claimOutcome = "accepted";
     let claimReasonCode = null;
     let replacedSessionIds = [];
+    const installationConflict = { owner: null };
     const tx = db.transaction(() => {
+        const installationOwner = incomingInstallFingerprint
+            ? db
+                .prepare(`SELECT * FROM yeonjang_instances
+             WHERE install_fingerprint = ? AND instance_id <> ?
+             ORDER BY created_at ASC
+             LIMIT 1`)
+                .get(incomingInstallFingerprint, validated.instanceId)
+            : undefined;
+        if (installationOwner) {
+            installationConflict.owner = installationOwner;
+            return;
+        }
         const existing = db
             .prepare("SELECT * FROM yeonjang_instances WHERE instance_id = ?")
             .get(validated.instanceId);
@@ -516,12 +538,12 @@ export function upsertYeonjangRegistryObservation(input, options = {}) {
         const createdAt = existing?.created_at ?? observedAt;
         const hasLocalMarker = db
             .prepare("SELECT COUNT(1) as count FROM yeonjang_instances WHERE local_marker = 1")
-            .get()
-            ?.count
-            ?? 0;
+            .get()?.count ?? 0;
         const initialLocalMarker = existing
             ? undefined
-            : (initialLocalIdentity && hasLocalMarker === 0 ? 1 : 0);
+            : initialLocalIdentity && hasLocalMarker === 0
+                ? 1
+                : 0;
         const sessionState = sanitizeOptionalString(input.connectionState) ?? "discovered";
         const incomingSessionMessage = sanitizeOptionalString(input.message);
         const transport = asTransport(input.transport);
@@ -630,7 +652,9 @@ export function upsertYeonjangRegistryObservation(input, options = {}) {
                 sessionMessage: incomingSessionMessage,
                 startedAt: observedAt,
                 lastSeenAt: observedAt,
-                endedAt: ["offline", "disconnected"].includes(sessionState.toLowerCase()) ? observedAt : null,
+                endedAt: ["offline", "disconnected"].includes(sessionState.toLowerCase())
+                    ? observedAt
+                    : null,
             });
         }
         else {
@@ -685,6 +709,29 @@ export function upsertYeonjangRegistryObservation(input, options = {}) {
         });
     });
     tx();
+    if (installationConflict.owner) {
+        recordYeonjangGovernanceAudit({
+            action: "yeonjang_installation_identity_conflict_rejected",
+            result: "failure",
+            actor: "system:claim-validation",
+            instanceId: validated.instanceId,
+            instanceAlias: validated.instanceAlias,
+            displayName: validated.displayName,
+            workspaceScopeId: incomingWorkspaceScopeId,
+            trustState: initialTrustState,
+            reason: "installation_identity_conflict",
+            detail: {
+                existingInstanceId: installationConflict.owner.instance_id,
+                rejectedSessionId: validated.sessionId,
+                installFingerprint: previewFingerprint(incomingInstallFingerprint),
+            },
+        });
+        return {
+            ok: false,
+            code: "installation_identity_conflict",
+            message: "동일한 연장 설치 identity가 다른 인스턴스 ID에 이미 등록되어 있습니다.",
+        };
+    }
     return {
         ok: true,
         instanceId: validated.instanceId,
@@ -701,26 +748,22 @@ function getInstanceRow(db, instanceId) {
 }
 export function approveYeonjangInstancePairing(input) {
     const db = input.db ?? getDb();
-    const instance = getInstanceRow(db, normalizeString(input.instanceId));
-    if (!instance) {
+    const verification = verifyYeonjangInstancePairing({
+        instanceId: input.instanceId,
+        pairingSecret: input.pairingSecret,
+        db,
+    });
+    if (!verification.ok)
+        return verification;
+    const instance = getInstanceRow(db, verification.instanceId);
+    if (!instance)
         return { ok: false, code: "instance_not_found", message: "대상 Yeonjang 인스턴스를 찾지 못했습니다." };
-    }
-    const pairingSecret = normalizeString(input.pairingSecret);
-    if (!pairingSecret) {
-        return { ok: false, code: "pairing_secret_required", message: "pairing secret이 필요합니다." };
-    }
     const fingerprint = sanitizeOptionalString(instance.pairing_fingerprint);
-    if (!fingerprint) {
-        return { ok: false, code: "pairing_secret_unavailable", message: "인스턴스가 pairing fingerprint를 아직 보고하지 않았습니다." };
-    }
-    if (hashYeonjangPairingSecret(pairingSecret) !== fingerprint) {
-        return { ok: false, code: "invalid_pairing_secret", message: "pairing secret 검증에 실패했습니다." };
-    }
     const actor = normalizeString(input.actor) || "system:unknown";
     const ownerUserId = sanitizeOptionalString(input.ownerUserId) ?? actor;
-    const workspaceScopeId = sanitizeOptionalString(input.workspaceScopeId)
-        ?? sanitizeOptionalString(instance.workspace_scope_id)
-        ?? defaultWorkspaceScopeId();
+    const workspaceScopeId = sanitizeOptionalString(input.workspaceScopeId) ??
+        sanitizeOptionalString(instance.workspace_scope_id) ??
+        getDefaultYeonjangWorkspaceScopeId();
     const reason = sanitizeOptionalString(input.reason) ?? "pairing_approved";
     const updatedAt = nowMs();
     db.prepare(`UPDATE yeonjang_instances
@@ -747,13 +790,40 @@ export function approveYeonjangInstancePairing(input) {
             pairingFingerprint: previewFingerprint(fingerprint),
         },
     });
-    return { ok: true, instanceId: instance.instance_id, trustState: "trusted" };
+    return { ok: true, instanceId: instance.instance_id, extensionId: instance.node_id, trustState: "trusted" };
+}
+export function verifyYeonjangInstancePairing(input) {
+    const db = input.db ?? getDb();
+    const instance = getInstanceRow(db, normalizeString(input.instanceId));
+    if (!instance) {
+        return { ok: false, code: "instance_not_found", message: "대상 Yeonjang 인스턴스를 찾지 못했습니다." };
+    }
+    const pairingSecret = normalizeString(input.pairingSecret);
+    if (!pairingSecret) {
+        return { ok: false, code: "pairing_secret_required", message: "pairing secret이 필요합니다." };
+    }
+    const fingerprint = sanitizeOptionalString(instance.pairing_fingerprint);
+    if (!fingerprint) {
+        return {
+            ok: false,
+            code: "pairing_secret_unavailable",
+            message: "인스턴스가 pairing fingerprint를 아직 보고하지 않았습니다.",
+        };
+    }
+    if (hashYeonjangPairingSecret(pairingSecret) !== fingerprint) {
+        return { ok: false, code: "invalid_pairing_secret", message: "pairing secret 검증에 실패했습니다." };
+    }
+    return { ok: true, instanceId: instance.instance_id, extensionId: instance.node_id };
 }
 export function updateYeonjangInstanceTrustState(input) {
     const db = input.db ?? getDb();
     const instance = getInstanceRow(db, normalizeString(input.instanceId));
     if (!instance) {
-        return { ok: false, code: "instance_not_found", message: "대상 Yeonjang 인스턴스를 찾지 못했습니다." };
+        return {
+            ok: false,
+            code: "instance_not_found",
+            message: "대상 Yeonjang 인스턴스를 찾지 못했습니다.",
+        };
     }
     const trustState = normalizeYeonjangTrustState(input.trustState);
     if (!trustState) {
@@ -786,7 +856,11 @@ export function renameYeonjangRegistryInstance(input) {
     const db = input.db ?? getDb();
     const instance = getInstanceRow(db, normalizeString(input.instanceId));
     if (!instance) {
-        return { ok: false, code: "instance_not_found", message: "대상 Yeonjang 인스턴스를 찾지 못했습니다." };
+        return {
+            ok: false,
+            code: "instance_not_found",
+            message: "대상 Yeonjang 인스턴스를 찾지 못했습니다.",
+        };
     }
     const nextAlias = normalizeString(input.instanceAlias) || instance.instance_alias;
     const nextDisplayName = normalizeString(input.displayName) || instance.display_name;
@@ -827,13 +901,22 @@ export function renameYeonjangRegistryInstance(input) {
         trustState: instance.trust_state,
         reason: sanitizeOptionalString(input.reason) ?? "rename",
     });
-    return { ok: true, instanceId: instance.instance_id, instanceAlias: nextAlias, displayName: nextDisplayName };
+    return {
+        ok: true,
+        instanceId: instance.instance_id,
+        instanceAlias: nextAlias,
+        displayName: nextDisplayName,
+    };
 }
 export function assignYeonjangLocalMarker(input) {
     const db = input.db ?? getDb();
     const instance = getInstanceRow(db, normalizeString(input.instanceId));
     if (!instance) {
-        return { ok: false, code: "instance_not_found", message: "대상 Yeonjang 인스턴스를 찾지 못했습니다." };
+        return {
+            ok: false,
+            code: "instance_not_found",
+            message: "대상 Yeonjang 인스턴스를 찾지 못했습니다.",
+        };
     }
     const tx = db.transaction(() => {
         db.prepare("UPDATE yeonjang_instances SET local_marker = 0 WHERE local_marker = 1").run();
@@ -904,7 +987,8 @@ export function listYeonjangRegistryInstances(options = {}) {
         const liveSessionCount = instanceSessions.filter((session) => isSessionLive(session, now)).length;
         const state = resolveInstanceState(instance, instanceSessions, now);
         const localMarker = instance.local_marker === 1;
-        const isLocalCandidate = localMarker || isAutoLocalIdentity({ nodeId: instance.node_id, hostFingerprint: instance.host_fingerprint });
+        const isLocalCandidate = localMarker ||
+            isAutoLocalIdentity({ nodeId: instance.node_id, hostFingerprint: instance.host_fingerprint });
         const sessionView = toSessionView(latestSession, now);
         const scopeAccess = resolveScopeAccess(instance.workspace_scope_id, activeWorkspaceScopeId);
         const runnableState = buildRunnableState({
@@ -977,7 +1061,8 @@ export function getYeonjangRegistrySummary(options = {}) {
         permissionRequired: instances.filter((item) => item.state === "permission_required").length,
         updateRequired: instances.filter((item) => item.state === "update_required").length,
         discovered: instances.filter((item) => item.state === "discovered").length,
-        duplicateLiveSessionInstances: instances.filter((item) => item.duplicateLiveSessionDetected).length,
+        duplicateLiveSessionInstances: instances.filter((item) => item.duplicateLiveSessionDetected)
+            .length,
         duplicateConflictCount,
         localCandidates: instances.filter((item) => item.isLocalCandidate).length,
         localInstances: instances.filter((item) => item.isLocalCandidate).length,
@@ -988,7 +1073,8 @@ export function getYeonjangRegistrySummary(options = {}) {
         quarantined: instances.filter((item) => item.trustState === "quarantined").length,
         foreignInstances: instances.filter((item) => item.scopeAccess === "foreign").length,
         unassignedScopeInstances: instances.filter((item) => item.scopeAccess === "unassigned").length,
-        activeWorkspaceScopeId: instances.find((item) => item.scopeAccess === "allowed")?.workspaceScopeId ?? defaultWorkspaceScopeId(),
+        activeWorkspaceScopeId: instances.find((item) => item.scopeAccess === "allowed")?.workspaceScopeId ??
+            getDefaultYeonjangWorkspaceScopeId(),
         localMarkerInstanceId: instances.find((item) => item.localMarker)?.instanceId ?? null,
     };
 }

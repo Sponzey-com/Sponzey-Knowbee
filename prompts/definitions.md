@@ -1,5 +1,9 @@
 # Shared Definitions
 
+## Purpose
+
+Own shared vocabulary, trusted-settings definitions, runtime term meaning, and cross-prompt terminology used by runtime prompts, UI labels, and diagnostics.
+
 This file keeps prompt and runtime documents aligned on the same terminology. Names, voice, and address style belong in `identity.md` and `user.md`. Operating policy belongs in `soul.md`.
 
 ---
@@ -20,10 +24,12 @@ This file keeps prompt and runtime documents aligned on the same terminology. Na
 - Prompt source: a role-specific prompt source file under `prompts/`.
 - Prompt source registry: the list that manages source id, locale, path, version, priority, enabled flag, required flag, and checksum.
 - Bootstrap prompt: an initialization prompt used only for first run or registry repair.
-- Identity prompt: defines the name, display name, and user-facing voice.
+- Identity prompt: defines `agent_name`, user-name separation, and user-facing voice.
 - User prompt: defines user name, address style, language, timezone, and preferences.
-- Soul prompt: defines long-term operating policy, execution rules, recovery rules, and completion rules.
+- Soul prompt: defines long-term operating priorities, recovery standards, and completion standards.
 - Planner prompt: defines intake, structuring, execution brief, scheduling, and completion review rules.
+- Knowbee execution prompt: defines execution route, executor suitability, self-solve fallback, and hierarchy fallback rules.
+- Sub-agent delegation prompt: defines handoff package use, parent-child work linkage, result merge, and redelegation rules.
 - Suitable delegation target: an enabled direct child SubAgent or executable Team member that passes capability, model, permission, and task-constraint preflight for the requested work.
 
 ---
@@ -43,8 +49,9 @@ This file keeps prompt and runtime documents aligned on the same terminology. Na
 
 ## Sub-Agents And Delegation
 
-- Knowbee: the top-level coordinator for user requests. Its default user-facing nickname is `노비`.
-- SubAgent: an execution actor registered as a direct child of Knowbee or another SubAgent, with independent memory, capability, and model policy.
+- Knowbee: the product and platform name. It is also the default main-agent `agent_name` when no user-defined main-agent name exists.
+- MainAgent: the top-level agent for user requests. Its user-facing name is the configured `agent_name`; if none exists, it defaults to `Knowbee` in English and `노비` in Korean.
+- SubAgent: an execution actor registered as a direct child of the MainAgent or another SubAgent, with independent memory, capability, and model policy.
 - ParentAgent: the parent agent that delegates a task to one of its direct child agents.
 - ChildAgent: the direct child agent that receives a `CommandRequest` from a ParentAgent.
 - Team: a planning group of direct child agents owned by the same owner. A Team itself does not own memory, capabilities, tool permissions, or execution sessions.
@@ -54,16 +61,13 @@ This file keeps prompt and runtime documents aligned on the same terminology. Na
 - DataExchangePackage: a package of input, context, evidence, or result data transferred between agents.
 - ResultReport: the result and evidence returned from a ChildAgent to a ParentAgent.
 - FeedbackRequest: the structured instruction used when a ParentAgent requests refinement, rework, or redelegation.
-- Nickname snapshot: the preserved user-facing call name at execution time. Screens, progress reports, and result attribution use nickname snapshots, while storage and permission checks use internal IDs.
+- `agent_name` snapshot: the preserved user-facing agent name at execution time. Screens, progress reports, and result attribution use `agent_name` snapshots, while storage and permission checks use internal IDs.
 
-Delegation always follows hierarchy.
+Delegation hierarchy and route behavior are policy, not glossary terms.
 
-- Knowbee may target only top-level SubAgents or Teams owned by Knowbee.
-- A SubAgent may target only its own direct child SubAgents or Teams in its owner scope.
-- Do not delegate directly to grandchildren, agents in another tree, or Teams owned by another owner.
-- When a Team is targeted, do not execute the Team directly. Expand it into member-level `CommandRequest`s for the owner's direct child members.
+- Follow `knowbee-execution.md` for route ordering, hierarchy fallback, executor selection, and mandatory delegation behavior.
+- Follow `sub_agent_delegation.md` for direct-child handoff package rules, result merge, and redelegation behavior.
 - Team membership does not create or change parent-child hierarchy.
-- If at least one suitable delegation target exists for executable work, the parent must delegate the matching work instead of doing all work directly.
 
 ---
 
@@ -97,3 +101,7 @@ Delegation always follows hierarchy.
 - Local execution extension connection state and capability are judged by runtime preflight.
 - Completion prioritizes receipts and actual results over text claims.
 - Impossible work is completed by returning the reason, not by changing the target.
+
+## Out Of Scope
+
+- This module does not own agent identity values, user profile values, request intake, execution routing, delegation behavior, memory write policy, tool permission, channel delivery, recovery procedure, UI behavior, logging, or final response wording.

@@ -1,20 +1,23 @@
 import { createHash } from "node:crypto";
-import { getConfig } from "../config/index.js";
-import { validateAgentConfig, validateTeamConfig, } from "../contracts/sub-agent-orchestration.js";
+import { resolveAgentConfigAgentName, validateAgentConfig, validateTeamConfig, } from "../contracts/sub-agent-orchestration.js";
+import { assertAgentLifecycleTransition } from "./agent-lifecycle.js";
 import { deleteTeamConfig, disableAgentConfig, getAgentConfig, getDb, getTeamConfig, listAgentConfigs, listAgentRelationships, listAgentTeamMemberships, listTeamConfigs, upsertAgentConfig, upsertTeamConfig, } from "../db/index.js";
 import { resolveAgentCapabilityModelSummary, } from "./capability-model.js";
 import { normalizeLegacyAgentConfigRow, normalizeLegacyTeamConfigRow, } from "./config-normalization.js";
 import { createLegacyTopologyRegistry, legacyTopologyEnvelopeToExecutorCompatibilityEnvelope, } from "../topology/legacy-enterprise-topology-adapter.js";
+import { createLogger, redactLogText } from "../logger/index.js";
 export const EXECUTOR_PROFILE_SCHEMA_VERSION = 1;
 export const EXECUTOR_PROFILE_METADATA_KEY = "executorProfile";
 const DEFAULT_ROOT_AGENT_ID = "agent:knowbee";
 const COLD_REGISTRY_TARGET_P95_MS = 500;
 const HOT_INDEX_TARGET_P95_MS = 100;
+const REGISTRY_LOAD_FAILED_REASON = "Registry snapshot is unavailable. Single main-agent mode is active.";
 const TEAM_RECALCULATION_KEYS = [
     "task008.skill_mcp_binding_recalculated",
     "task009.model_state_recalculated",
 ];
 const HOT_CAPABILITY_INDEX_CACHE = new Map();
+const log = createLogger("orchestration:registry");
 function uniqueStrings(values) {
     return [...new Set(values.filter((value) => Boolean(value?.trim())))];
 }
@@ -44,6 +47,10 @@ function stableStringify(value) {
 function sha256(value) {
     return createHash("sha256").update(value).digest("hex");
 }
+function registryFallbackFailureLogDetail(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 function parseJsonObject(value) {
     try {
         return JSON.parse(value);
@@ -69,7 +76,9 @@ function rootAgentIdFromConfig(config) {
     return config.knowbee?.agentId ?? DEFAULT_ROOT_AGENT_ID;
 }
 function runtimeConfigModelProfile(config) {
-    const connection = config.ai?.connection ?? getConfig().ai.connection;
+    const connection = config.ai?.connection;
+    if (!connection)
+        return undefined;
     const rawProviderId = connection.provider?.trim();
     const modelId = connection.model?.trim();
     if (!rawProviderId || !modelId)
@@ -221,11 +230,11 @@ function topologySubAgentConfigs(now, runtimeModelProfile, rootAgentId) {
             .filter((node) => node.status !== "archived")
             .map((node) => {
             const agentId = topologyAgentId(topologyRecord.topologyId, node.id);
-            const displayName = node.displayName?.trim() || node.name.trim() || node.id;
+            const agentName = node.displayName?.trim() || node.name.trim() || node.id;
             const executorProfile = {
-                ...buildExecutorProfileFromNode(node, { executorId: agentId, displayName }),
+                ...buildExecutorProfileFromNode(node, { executorId: agentId, displayName: agentName }),
                 executorId: agentId,
-                displayName,
+                displayName: agentName,
             };
             const role = executorProfile.roleName;
             const specialtyTags = sortedUniqueStrings([
@@ -237,9 +246,7 @@ function topologySubAgentConfigs(now, runtimeModelProfile, rootAgentId) {
                 schemaVersion: 1,
                 agentType: "sub_agent",
                 agentId,
-                displayName,
-                nickname: displayName,
-                normalizedNickname: displayName.normalize("NFKC").toLowerCase(),
+                agentName,
                 status: "enabled",
                 role,
                 personality: executorProfile.definition,
@@ -675,10 +682,10 @@ function healthFromTeamCoverage(coverage) {
 function agentEntry(config, source, now, failureWindowMs) {
     const capabilityModelSummary = resolveAgentCapabilityModelSummary(config);
     const executorProfile = config.executorProfile;
+    const agentName = resolveAgentConfigAgentName(config);
     return {
         agentId: config.agentId,
-        displayName: config.displayName,
-        ...(config.nickname ? { nickname: config.nickname } : {}),
+        agentName,
         status: config.status,
         role: config.role,
         specialtyTags: [...config.specialtyTags],
@@ -702,7 +709,6 @@ function teamEntry(config, source, activeAgentIds) {
     return {
         teamId: config.teamId,
         displayName: config.displayName,
-        ...(config.nickname ? { nickname: config.nickname } : {}),
         status: config.status,
         purpose: config.purpose,
         roleHints: [...config.roleHints],
@@ -1067,7 +1073,7 @@ function buildAgentCapabilityIndex(input) {
     return index;
 }
 function buildOrchestrationRegistrySnapshotUnsafe(input) {
-    const cfg = input.dependencies.getConfig?.() ?? getConfig();
+    const cfg = input.config;
     const now = input.startedAt;
     const failureWindowMs = input.dependencies.failureWindowMs ?? 7 * 24 * 60 * 60 * 1000;
     const diagnostics = [];
@@ -1201,10 +1207,12 @@ function buildOrchestrationRegistrySnapshotUnsafe(input) {
     };
 }
 function fallbackRegistrySnapshot(input) {
-    const detail = input.error instanceof Error ? input.error.message : String(input.error);
+    const logDetail = registryFallbackFailureLogDetail(input.error);
+    log.fieldDebug(`Registry snapshot fallback activated: ${logDetail}`);
+    const cacheKey = sha256("registry_load_failed");
     const invalidation = {
-        cacheKey: sha256(`registry_load_failed:${detail}`),
-        configHash: sha256("registry_load_failed"),
+        cacheKey,
+        configHash: cacheKey,
         tables: {},
     };
     const hierarchy = {
@@ -1239,14 +1247,14 @@ function fallbackRegistrySnapshot(input) {
         fallback: {
             mode: "single_knowbee",
             reasonCode: "registry_load_failed",
-            reason: `Registry snapshot failed and fell back to single Knowbee mode: ${detail}`,
+            reason: REGISTRY_LOAD_FAILED_REASON,
         },
         membershipEdges: [],
         diagnostics: [
             {
                 code: "registry_load_failed",
                 severity: "invalid",
-                message: `Registry snapshot failed: ${detail}`,
+                message: REGISTRY_LOAD_FAILED_REASON,
             },
         ],
     };
@@ -1254,11 +1262,12 @@ function fallbackRegistrySnapshot(input) {
 export function clearAgentCapabilityIndexCache() {
     HOT_CAPABILITY_INDEX_CACHE.clear();
 }
-export function buildOrchestrationRegistrySnapshot(dependencies = {}) {
+export function buildOrchestrationRegistrySnapshot(dependencies) {
     const clock = dependencies.now ?? (() => Date.now());
     const startedAt = clock();
     try {
-        return buildOrchestrationRegistrySnapshotUnsafe({ dependencies, startedAt, clock });
+        const config = dependencies.config;
+        return buildOrchestrationRegistrySnapshotUnsafe({ config, dependencies, startedAt, clock });
     }
     catch (error) {
         return fallbackRegistrySnapshot({
@@ -1268,7 +1277,8 @@ export function buildOrchestrationRegistrySnapshot(dependencies = {}) {
         });
     }
 }
-export function createAgentRegistryService(dependencies = {}) {
+export function createAgentRegistryService(dependencies) {
+    const config = dependencies.config;
     const now = () => dependencies.now?.() ?? Date.now();
     return {
         get(agentId) {
@@ -1281,9 +1291,16 @@ export function createAgentRegistryService(dependencies = {}) {
                 .filter((config) => config != null);
         },
         snapshot() {
-            return buildOrchestrationRegistrySnapshot(dependencies);
+            return buildOrchestrationRegistrySnapshot({ ...dependencies, config });
         },
         createOrUpdate(input, options = {}) {
+            const current = this.get(input.agentId);
+            if (current) {
+                assertAgentLifecycleTransition({
+                    fromStatus: current.status,
+                    toStatus: input.status,
+                });
+            }
             upsertAgentConfig(input, { ...options, now: options.now ?? now() });
         },
         disable(agentId) {
@@ -1301,7 +1318,8 @@ export function createAgentRegistryService(dependencies = {}) {
         },
     };
 }
-export function createTeamRegistryService(dependencies = {}) {
+export function createTeamRegistryService(dependencies) {
+    const config = dependencies.config;
     const now = () => dependencies.now?.() ?? Date.now();
     return {
         get(teamId) {
@@ -1314,7 +1332,7 @@ export function createTeamRegistryService(dependencies = {}) {
                 .filter((config) => config != null);
         },
         snapshot() {
-            return buildOrchestrationRegistrySnapshot(dependencies);
+            return buildOrchestrationRegistrySnapshot({ ...dependencies, config });
         },
         createOrUpdate(input, options = {}) {
             upsertTeamConfig(input, { ...options, now: options.now ?? now() });

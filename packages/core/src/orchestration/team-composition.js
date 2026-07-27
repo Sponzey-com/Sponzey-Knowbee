@@ -1,7 +1,7 @@
 import { validateTeamConfig, } from "../contracts/sub-agent-orchestration.js";
 import { listAgentTeamMemberships } from "../db/index.js";
 import { CAPABILITY_RISK_ORDER, normalizeSkillMcpAllowlist, } from "../security/capability-isolation.js";
-import { createAgentHierarchyService } from "./hierarchy.js";
+import { createAgentHierarchyService, } from "./hierarchy.js";
 import { createAgentRegistryService, createTeamRegistryService, } from "./registry.js";
 const RECALCULATION_KEYS = [
     "task008.skill_mcp_binding_recalculation_pending",
@@ -163,11 +163,12 @@ function healthFromCoverage(coverage) {
         },
     };
 }
-export function createTeamCompositionService(dependencies = {}) {
+export function createTeamCompositionService(dependencies) {
+    const config = dependencies.config;
     const now = () => dependencies.now?.() ?? Date.now();
-    const agentRegistry = () => createAgentRegistryService(dependencies);
-    const teamRegistry = () => createTeamRegistryService(dependencies);
-    const hierarchy = () => createAgentHierarchyService(dependencies);
+    const agentRegistry = () => createAgentRegistryService({ ...dependencies, config });
+    const teamRegistry = () => createTeamRegistryService({ ...dependencies, config });
+    const hierarchy = () => createAgentHierarchyService({ ...dependencies, config });
     function agentSummaries() {
         const result = new Map();
         const snapshot = agentRegistry().snapshot();

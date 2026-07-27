@@ -64,7 +64,7 @@ export function recommendExecutorConnectionRelations(input) {
             relation: "handoff",
             label: EXECUTOR_CONNECTION_LABELS.handoff,
             confidence: 0.62,
-            reasonKo: "기본 연결은 다음 실행자로 일을 넘기는 의미입니다. 다른 의미가 필요하면 사용자 선택 또는 서버 제안 결과를 저장합니다.",
+            reasonKo: "기본 연결은 다음 서브 에이전트로 일을 넘기는 의미입니다. 다른 의미가 필요하면 사용자 선택 또는 서버 제안 결과를 저장합니다.",
             reasonEn: "The default connection passes work to the next executor.",
             keywordHits: [],
         }];

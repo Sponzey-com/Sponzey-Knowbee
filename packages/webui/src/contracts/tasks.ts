@@ -93,7 +93,6 @@ export interface TaskDeliveryModel {
 }
 
 export interface TaskArtifactModel {
-  filePath?: string
   fileName: string
   url?: string
   previewUrl?: string

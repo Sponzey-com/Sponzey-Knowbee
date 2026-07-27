@@ -2,9 +2,12 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { closeDb, getDb, insertScheduleRun } from "../packages/core/src/db/index.js"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { closeMemoryJournalDb } from "../packages/core/src/memory/journal.js"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
+import { closeDb, insertScheduleRun } from "../packages/core/src/db/index.js"
+import {
+  createMemoryJournalRepository,
+  type MemoryJournalRepository,
+} from "../packages/core/src/memory/journal.js"
 import {
   buildFlashFeedbackContext,
   getActiveFlashFeedback,
@@ -12,19 +15,26 @@ import {
 import { rememberRunInstruction } from "../packages/core/src/runs/start-support.ts"
 import { createDefaultScheduleActionDependencies } from "../packages/core/src/runs/action-execution.ts"
 import { buildScheduleMemoryContext } from "../packages/core/src/schedules/context.ts"
+import { createTestArtifactStorage } from "./fixtures/artifact-storage.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
+let memoryJournal: MemoryJournalRepository | undefined
+let runtimeDb: ReturnType<typeof initializeTestDbRuntime>
+let stateDir = ""
+
+function getMemoryJournal(): MemoryJournalRepository {
+  if (!memoryJournal) throw new Error("memory journal fixture is not initialized")
+  return memoryJournal
+}
 
 function useTempState(): void {
   closeDb()
-  closeMemoryJournalDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task006-flow-"))
+  memoryJournal?.close()
+  stateDir = mkdtempSync(join(tmpdir(), "knowbee-task006-flow-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  runtimeDb = initializeTestDbRuntime(stateDir)
+  memoryJournal = createMemoryJournalRepository({ memoryDbFile: join(stateDir, "memory.db3") })
 }
 
 beforeEach(() => {
@@ -33,12 +43,8 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
+  memoryJournal?.close()
+  memoryJournal = undefined
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -48,6 +54,7 @@ afterEach(() => {
 describe("task006 schedule memory and flash-feedback flow", () => {
   it("records active flash-feedback immediately and hides it after TTL", () => {
     rememberRunInstruction({
+      memoryJournal: getMemoryJournal(),
       runId: "run-feedback",
       sessionId: "session-a",
       requestGroupId: "group-a",
@@ -61,13 +68,17 @@ describe("task006 schedule memory and flash-feedback flow", () => {
     expect(buildFlashFeedbackContext({ sessionId: "session-a" })).toContain("텔레그램 전송하지 마")
     expect(buildFlashFeedbackContext({ sessionId: "session-b" })).toBe("")
 
-    getDb().prepare("UPDATE flash_feedback SET expires_at = ?").run(Date.now() - 1)
+    runtimeDb.prepare("UPDATE flash_feedback SET expires_at = ?").run(Date.now() - 1)
     expect(getActiveFlashFeedback({ sessionId: "session-a" })).toEqual([])
     expect(buildFlashFeedbackContext({ sessionId: "session-a" })).toBe("")
   })
 
   it("stores recurring schedules as schedule memory and includes recent run history", () => {
-    const dependencies = createDefaultScheduleActionDependencies({ scheduleDelayedRun: vi.fn() })
+    const dependencies = createDefaultScheduleActionDependencies({
+      artifactStorage: createTestArtifactStorage(stateDir),
+      scheduleDelayedRun: vi.fn(),
+      config: structuredClone(DEFAULT_CONFIG),
+    })
     const created = dependencies.createRecurringSchedule({
       title: "TASK006 예약 점검",
       task: "TASK006_SCHEDULE_MEMORY_PAYLOAD",

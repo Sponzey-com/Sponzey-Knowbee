@@ -6,10 +6,58 @@ import { mkdirSync } from "node:fs"
 const OPENAI_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 const DEFAULT_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 const REFRESH_HEADROOM_SECONDS = 300
+export interface OpenAICodexOAuthEnvironmentSnapshot {
+  codexHome: string
+  clientId: string
+}
+
+export function createOpenAICodexOAuthEnvironmentSnapshot(
+  env: Readonly<Record<string, string | undefined>>,
+): OpenAICodexOAuthEnvironmentSnapshot {
+  return Object.freeze({
+    codexHome: env["CODEX_HOME"]?.trim() || "",
+    clientId: env["CODEX_CLIENT_ID"]?.trim() || "",
+  })
+}
+
+const OPENAI_CODEX_OAUTH_ENV = createOpenAICodexOAuthEnvironmentSnapshot(process.env)
 export const OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 export const OPENAI_CODEX_RESPONSES_PATH = "/responses"
+export const OPENAI_CODEX_MODELS_PATH = "/models"
 export const OPENAI_CODEX_USER_AGENT = "Codex-Code/1.0.43"
-export const OPENAI_CODEX_KNOWN_MODELS = ["gpt-5.4", "gpt-5"] as const
+export const OPENAI_CODEX_CLIENT_VERSION = OPENAI_CODEX_USER_AGENT.split("/")[1] ?? "1.0.43"
+export const OPENAI_CODEX_KNOWN_MODELS = [
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+] as const
+
+export function buildOpenAICodexModelsUrl(
+  baseUrl: string,
+  clientVersion = OPENAI_CODEX_CLIENT_VERSION,
+): string {
+  const normalized = baseUrl.trim().replace(/\/+$/, "")
+  const query = new URLSearchParams({ client_version: clientVersion })
+  return `${normalized}${OPENAI_CODEX_MODELS_PATH}?${query.toString()}`
+}
+
+export function parseOpenAICodexModels(payload: unknown): string[] {
+  if (!payload || typeof payload !== "object") return []
+  const rows = Array.isArray((payload as { models?: unknown }).models)
+    ? (payload as { models: unknown[] }).models
+    : []
+  const models = rows
+    .map((row) => {
+      if (typeof row === "string") return row.trim()
+      if (!row || typeof row !== "object") return ""
+      const value = (row as { slug?: unknown; id?: unknown; model?: unknown }).slug
+        ?? (row as { id?: unknown }).id
+        ?? (row as { model?: unknown }).model
+      return typeof value === "string" ? value.trim() : ""
+    })
+    .filter((value) => value.length > 0)
+  return [...new Set(models)]
+}
 
 interface DecodedJwtPayload {
   exp?: number
@@ -32,6 +80,7 @@ interface CodexAuthFile {
 export interface OpenAICodexOAuthConfig {
   authFilePath?: string | undefined
   clientId?: string | undefined
+  codexHome?: string | undefined
 }
 
 export interface OpenAICodexAccessToken {
@@ -44,9 +93,18 @@ export function resolveOpenAICodexBaseUrl(baseUrl?: string | undefined): string 
   const normalized = baseUrl?.trim()
   if (!normalized) return OPENAI_CODEX_BASE_URL
   const trimmed = normalized.endsWith("/") ? normalized.slice(0, -1) : normalized
-  return trimmed.endsWith(OPENAI_CODEX_RESPONSES_PATH)
+  const withoutResponses = trimmed.endsWith(OPENAI_CODEX_RESPONSES_PATH)
     ? trimmed.slice(0, -OPENAI_CODEX_RESPONSES_PATH.length)
     : trimmed
+  try {
+    const parsed = new URL(withoutResponses)
+    if (parsed.hostname === "api.openai.com" || parsed.hostname.endsWith(".openai.com")) {
+      return OPENAI_CODEX_BASE_URL
+    }
+  } catch {
+    // Preserve custom non-URL values so the caller can report the configuration error.
+  }
+  return withoutResponses
 }
 
 function expandHome(value: string): string {
@@ -55,11 +113,14 @@ function expandHome(value: string): string {
   return value
 }
 
-export function resolveOpenAICodexAuthFilePath(config?: OpenAICodexOAuthConfig): string {
+export function resolveOpenAICodexAuthFilePath(
+  config?: OpenAICodexOAuthConfig,
+  envSnapshot: OpenAICodexOAuthEnvironmentSnapshot = OPENAI_CODEX_OAUTH_ENV,
+): string {
   const configured = config?.authFilePath?.trim()
   if (configured) return expandHome(configured)
 
-  const codexHome = process.env["CODEX_HOME"]?.trim()
+  const codexHome = config?.codexHome?.trim() || envSnapshot.codexHome
   if (codexHome) return join(expandHome(codexHome), "auth.json")
 
   return join(homedir(), ".codex", "auth.json")
@@ -118,7 +179,7 @@ function inferClientId(config: OpenAICodexOAuthConfig | undefined, authFile: Cod
     return idPayload.aud.trim()
   }
 
-  return process.env["CODEX_CLIENT_ID"]?.trim() || DEFAULT_CODEX_CLIENT_ID
+  return OPENAI_CODEX_OAUTH_ENV.clientId || DEFAULT_CODEX_CLIENT_ID
 }
 
 function readCodexAuthFile(config?: OpenAICodexOAuthConfig): { authFilePath: string; authFile: CodexAuthFile } {

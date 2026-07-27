@@ -9,7 +9,9 @@ import { buildStartPlan, type StartPlan } from "./start-plan.js";
 import { resolveTopologyRootRunRouting } from "../topology-runtime/harness.js";
 import type { OrchestrationPlannerIntent } from "../orchestration/planner.js";
 import type { AgentExecutionDecision, AgentExecutionDecisionTraceSnapshot } from "../orchestration/execution-decision-contract.js";
+import type { OrchestrationModeConfigSnapshot } from "../orchestration/mode.js";
 import { applyStartInitialization } from "./start-initialization.js";
+import type { MemoryJournalRepository } from "../memory/journal.js";
 import { findLatestWorkerSessionRun, getRequestGroupDelegationTurnCount, isReusableRequestGroup, listActiveSessionRequestGroups, createRootRun } from "./store.js";
 interface StartLaunchDependencies {
     buildStartPlan: typeof buildStartPlan;
@@ -49,6 +51,7 @@ export interface PreparedStartLaunch {
     queuedBehindRequestGroupRun: boolean;
 }
 export declare function prepareStartLaunch(params: {
+    memoryJournal: MemoryJournalRepository;
     message: string;
     sessionId: string;
     runId: string;
@@ -70,12 +73,14 @@ export declare function prepareStartLaunch(params: {
     handoffSummary?: string | undefined;
     targetId?: string | undefined;
     targetLabel?: string | undefined;
+    mainAgentNameSnapshot?: string | undefined;
     model?: string | undefined;
     workerRuntime?: WorkerRuntimeTarget | undefined;
     orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined;
     agentExecutionDecision?: AgentExecutionDecision | undefined;
     agentExecutionDecisionTrace?: AgentExecutionDecisionTraceSnapshot | undefined;
     inboundMessage?: InboundMessageRecord | undefined;
+    config: OrchestrationModeConfigSnapshot;
     hasRequestGroupExecutionQueue: (requestGroupId: string) => boolean;
 }, dependencies?: StartLaunchDependencies): Promise<PreparedStartLaunch>;
 export {};

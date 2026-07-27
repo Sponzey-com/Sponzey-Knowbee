@@ -10,6 +10,7 @@ import {
 import { applyTerminalApplication } from "./terminal-application.js"
 import type { DirectArtifactDeliveryApplication } from "./delivery-application.js"
 import type { RecoveryBudgetUsage } from "./recovery-budget.js"
+import type { UserFacingTextSource } from "./loop-directive.js"
 
 interface ReviewEntryPassDependencies extends RecoveryRetryApplicationDependencies {
   getFinalizationDependencies: () => FinalizationDependencies
@@ -41,6 +42,7 @@ export async function runReviewEntryPass(
     source: FinalizationSource
     onChunk: RunChunkDeliveryHandler | undefined
     preview: string
+    previewSource?: UserFacingTextSource
     workerSessionId?: string
     persistRuntimePreview: boolean
     directDeliveryApplication: DirectArtifactDeliveryApplication
@@ -56,6 +58,7 @@ export async function runReviewEntryPass(
     sessionId: params.sessionId,
     source: params.source,
     preview: params.preview,
+    ...(params.previewSource ? { previewSource: params.previewSource } : {}),
     ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
     persistRuntimePreview: params.persistRuntimePreview,
     dependencies: {

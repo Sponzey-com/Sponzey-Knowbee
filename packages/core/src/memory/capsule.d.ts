@@ -25,7 +25,7 @@ export interface MemoryCapsule {
     capsuleVersion: number;
     parentCapsuleId?: string;
     ownerScope: MemoryCapsuleOwnerScope;
-    nicknameSnapshot?: string;
+    agentNameSnapshot?: string;
     capsuleKind: MemoryCapsuleKind;
     summary: string;
     activeObjectives: string[];

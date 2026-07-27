@@ -7,12 +7,12 @@
 ## 현재 정리 기준
 
 - 모든 채널/WebUI/스케줄 진입점은 동일한 실행 결정 계약을 타야 한다.
-- 실행자 선택은 현재 에이전트의 direct child 후보와 execution decision trace를 기준으로 한다.
-- 컴파일된 기본 진입점, first node selection, 일반 요청의 provider direct fallback은 신규 실행 경로에 들어오면 안 된다.
+- 서브 에이전트 선택은 현재 에이전트의 direct child 후보와 execution decision trace를 기준으로 한다.
+- 컴파일된 기본 진입점, first child selection, 일반 요청의 provider direct fallback은 신규 실행 경로에 들어오면 안 된다.
 - child result는 즉시 최종 응답이 아니며 parent aggregation과 final validation을 거쳐야 한다.
 - retry/attempt/count는 실패 한도가 아니라 다른 전략을 찾기 위한 신호이다.
 - 일반 model/sub-session timeout은 업무 실패 조건으로 쓰지 않고, 큐/외부 도구/사용자 승인 timeout은 boundary timeout으로 분리한다.
-- raw user request를 keyword/regex로 읽어 실행자, 도구, 영역을 고르는 코드는 제거 대상이다.
+- raw user request를 keyword/regex로 읽어 서브 에이전트, 도구, 영역을 고르는 코드는 제거 대상이다.
 - 명시 provider target은 `decideExecutionRoute`의 explicit provider branch에서만 처리하며, 일반 root request fallback이나 topology runtime off fallback으로 쓰지 않는다.
 
 ## 검증 게이트
@@ -42,9 +42,11 @@
 - `run-queueing.ts`: delayed session queue, delayed run arm/fire helper, one-time delayed run lifecycle 분리 경계
 - `start-bridges.ts`: finalization dependency 조립, loop directive apply, intake bridge wrapper helper
 - `start-driver-dependencies.ts`: finalization dependency, synthetic approval runtime dependency, root-run driver dependency 조립 helper
+- `canonical-self-solve-capability-planning.ts`: Tool이 필요한 root self-solve intake에 canonical snapshot의 실행 가능한 `capability:*` ref만 제공하고, 기존 LLM solution-plan 선택을 admission과 run scope로 변환하는 Application helper
+- `run-scoped-tool-admission.ts`: solution-plan/policy admission receipt를 immutable 실행 범위로 투영하고, 실행 owner agent와 선택된 외부 exact target을 분리해 보존한 뒤 schema-declared target 필드에 admission target을 결속하는 helper
 - `start-initialization.ts`: instruction journal, active controller binding, 초기 step/status/event 적용 helper
 - `execution-profile.ts`: fallback structured request/intent envelope, execution loop runtime state 초기화 helper
-- `execution-profile.ts`는 capture 계열 요청이 intake semantics에서 `artifactDelivery=none`으로 들어와도, 화면/카메라 캡처처럼 결과물이 곧 사용자 전달물인 요청은 `direct artifact delivery`로 보정해 post-execution/review 경계가 다시 AI completion review를 타지 않도록 유지합니다.
+- `execution-profile.ts`는 capture 계열 요청이 intake semantics에서 `artifactDelivery=none`으로 들어와도, 화면/카메라 캡처처럼 결과물이 곧 사용자 전달물인 요청은 `direct artifact delivery`로 보정합니다. direct delivery receipt가 있어도 successful Tool evidence가 있으면 `review-gate.ts`가 LLM completion review를 실행해 실제 촬영과 사용자 목표 충족을 검증합니다.
 - `request-prompt.ts`: `structured_request`를 단계형 checklist execution brief로 바꾸는 공통 helper
 - `root-loop-launch.ts`: execution loop runtime state를 `runRootLoop` 호출용 params/dependencies로 바꾸는 bridge helper, 죽은 `originalUserRequest` 중간 반환값 없이 root loop 입력만 조립
 - `root-run-driver-failure.ts`: root run driver의 fatal failure 종료와 error chunk 전달 helper
@@ -53,7 +55,6 @@
 - `loop-entry-pass.ts`: pending directive, retry_intake, cancellation/intake bridge를 묶는 loop-entry helper
 - `loop-pass-application.ts`: loop-entry/recovery-entry/post-execution/review-cycle 결과를 다음 loop 상태로 적용하는 helper
 - `intake-bridge-pass.ts`: intake 결과의 즉시 응답, 일정 재분석 directive, delegated follow-up 생성 helper
-- `action-execution.ts`: intake action 실행 경계, 예약 등록/취소 실행, delegated follow-up prompt/receipt 조립
 - `action-execution.ts`: intake action 실행 경계, 예약 등록/취소 실행, delegated follow-up prompt/receipt 조립, `ScheduleActionReceipt`
 - `execution.ts`: 파일 변경 감지, 변경 경로 수집, 암묵적 실행 요약, 완료 근거 판단 helper, `ToolExecutionReceipt.executor`
 - `execution-attempt-pass.ts`: execution stream 생성, chunk loop, error chunk 처리, tracked delivery 적용을 묶는 execution attempt helper
@@ -67,10 +68,8 @@
 - `execution-postpass-application.ts`: execution post-pass의 `retry/stop/continue` 적용 helper
 - `execution-runtime.ts`: 설정된 AI backend로 execution chunk stream 생성
 - `filesystem-verification.ts`: 파일 생성 결과 검증 prompt, 검증 대상 추론, 실제 파일/폴더 존재 확인 helper
-- `analysis-subrun.ts`: 결과 검증 하위 run 생성과 analysis-only subrun 종료 정리 helper
 - `analysis-subrun.ts`: 결과 검증 하위 run 생성과 analysis-only subrun 종료 정리 helper, `lineageRootRunId/parentRunId/runScope`를 가진 child lineage와 `handoff` context mode 적용 경계
-- `external-recovery.ts`: AI/worker runtime 외부 실행 복구 재라우팅, duplicate-stop, recovery prompt 조립 helper
-- `external-recovery.ts`: 외부 복구는 이제 다른 provider/model 전환이 아니라 같은 AI 연결과 같은 대상 유지가 기본입니다. worker runtime 경로가 실패한 경우에만 같은 AI 연결의 기본 추론 경로로 되돌리고, 그 외에는 접근 방식만 바꿔 재시도합니다.
+- `external-recovery.ts`: AI/worker runtime 외부 실행 복구 재라우팅, duplicate-stop, recovery prompt 조립 helper. 외부 복구는 다른 provider/model 전환이 아니라 같은 AI 연결과 같은 대상 유지가 기본이며, worker runtime 경로가 실패한 경우에만 같은 AI 연결의 기본 추론 경로로 되돌립니다.
 - `external-recovery-application.ts`: external recovery plan의 duplicate-stop 적용, recovery key 기록, route event 반영, next state 적용 helper
 - `external-recovery-pass.ts`: external recovery의 `plan -> apply -> next state` pass helper
 - `external-recovery-sequence.ts`: `ai -> worker_runtime` 외부 복구 순회와 next state 적용 helper
@@ -92,16 +91,14 @@
 - `routing.ts`: 대상 선택과 복구 시 재라우팅, 설정된 backend만 후보로 삼는 route resolution
 - `worker-runtime.ts`: 제거된 외부 worker runtime 경로를 더 이상 실행하지 않도록 막는 보호 helper
 - `scheduled.ts`: 예약 후속 실행 프롬프트 생성
-- `delivery.ts`: 채널 전달 receipt, 파일 전달 요약, 청크 전달 helper
-- `delivery.ts`: 채널 전달 receipt, 파일 전달 요약, 청크 전달 helper, assistant 텍스트 송신 경계
 - `delivery.ts`: 채널 전달 receipt, 파일 전달 요약, 청크 전달 helper, assistant 텍스트 송신 경계, tracked chunk 전달/receipt 적용 helper
 - `completion-state.ts`: completion을 `해석/실행/전달/복구 종료` 4축 checklist 상태로 계산하는 helper
 - task projection과 completion checklist는 이제 `lineageRootRunId` 기준 root/child/analysis run 전체를 함께 보며, child run이 남아 있으면 root task를 `completed`로 닫지 않습니다.
 - `terminal-outcome-policy.ts`: `completed/failed/cancelled/awaiting_user` terminal 상태 의미를 판정하는 helper
-- `finalization.ts`: stop/awaiting_user 메시지에서 `중단 사유`와 `원본 오류`를 분리해 사용자에게 안내하는 helper
 - `completion-flow.ts`: completion review 이후 `complete/followup/ask_user/retry_truncated/recover_empty_result` 결정 helper
 - `completion-pass.ts`: completion review 결과를 flow decision과 application decision으로 묶는 completion pass helper
 - `completion-application-pass.ts`: completion application의 `complete/stop/retry/awaiting_user` 적용 helper
+- completion follow-up은 `tool` 또는 `response_only` 실행 모드와 필요한 Tool 이름, 대상 ref, 근거 ref를 구조화 계약으로 전달합니다. 미해결 freshness/accuracy 증거가 있는데 `response_only`를 선택하거나, `tool` 모드에서 Tool 이름을 생략하면 harness가 거절하고 LLM repair를 요청합니다.
 - `intake-retry-application.ts`: `retry_intake`의 failure journal, interpretation budget, retry/stop 적용 helper
 - `running-application.ts`: retry/continuation 공통의 running 상태/event/summary 적용 helper
 - `retry-application.ts`: recovery retry 공통의 실패 기록, budget 소모, recovery event, running 전환 helper
@@ -110,14 +107,13 @@
 - `review-gate.ts`: direct artifact delivery 완료 시 checklist 기준 완료 항목이 모두 충족되면 불필요한 completion review를 생략하는 helper
 - `review-cycle-pass.ts`: review pass와 review outcome pass를 한 번에 묶는 review tail helper
 - `review-outcome-pass.ts`: review 이후 synthetic approval/ completion retry·stop 적용을 묶는 helper
-- `finalization.ts`: assistant 응답 송신, awaiting_user 전환, cancelled-after-stop 전환, completed 전환 helper, `markRunCompleted`
+- `finalization.ts`: assistant 응답 송신, awaiting_user 전환, cancelled-after-stop 전환, completed 전환 helper, stop/awaiting_user 메시지의 `중단 사유`와 `원본 오류` 분리, `markRunCompleted`
 - `journaling.ts`: instruction/success/failure 메모리 기록 입력 조립과 안전한 journal insert helper
 - `recovery.ts`: 실패 유형 분류, 복구 key, 대안 프롬프트, 중간 절단/빈 결과 복구 helper
 - `recovery-budget.ts`: failure kind별 recovery budget 계산 helper
-- `approval.ts`: synthetic approval 필요 여부 판단, 승인 안내 요약, 승인 후 continuation prompt helper
 - `approval.ts`: synthetic approval 필요 여부 판단, 승인 안내 요약, 승인 후 continuation prompt helper, 승인 요청 타임아웃/허용/거부 orchestration
-- `approval-application.ts`: synthetic approval 승인 후 continuation 결정과 `scope grant -> running 전환 -> next message` 적용 helper
-- `approval-pass.ts`: 기승인 scope 재사용, 승인 요청, continuation 적용을 묶는 synthetic approval pass helper
+- `approval-application.ts`: synthetic approval 승인 후 continuation 결정과 `operation-scoped grant -> running 전환 -> next message` 적용 helper
+- `approval-pass.ts`: 같은 run과 tool operation에 결속된 기승인 scope 재사용, 승인 요청, continuation 적용을 묶는 synthetic approval pass helper
 - `types.ts`: run과 task profile 계약
 
 ## 메모
@@ -143,6 +139,8 @@
 - 이 projection은 이제 free-form recent event label과 별개로 `activities`의 표준 kind(`attempt.*`, `recovery.*`, `delivery.*`), `monitor` 관측 포인트(`activeAttemptCount`, `duplicateExecutionRisk`, `deliveryStatus` 등), checklist state(`request / execution / delivery / completion`)를 함께 계산합니다. 따라서 상태 모니터는 문자열 재해석보다 stable signal을 우선 사용할 수 있습니다.
 - `start-bridges.ts`는 시작 bridge 경계입니다. finalization dependency 조립, loop directive apply, intake bridge wrapper를 `start.ts` 밖 helper로 묶어 메인 진입점이 로컬 wrapper 함수 없이 orchestration에 집중하게 정리합니다.
 - `start-driver-dependencies.ts`는 driver wiring 경계입니다. finalization dependency, synthetic approval runtime dependency, root-run driver dependency 조립을 `start.ts` 밖 helper로 묶어 메인 진입점이 runtime wiring 세부를 직접 들고 있지 않게 정리합니다.
+- Tool이 필요한 root self-solve intake에 사용자 method 제약이 없으면 `start-driver-dependencies.ts`는 canonical policy가 허용한 실행 가능한 ref만 기존 solution-plan provider에 전달합니다. 모델이 고른 ref는 별도 solution-plan receipt와 capability admission receipt를 거쳐 scope가 되며, intake payload에 역기록하거나 과거 capability-selection provider를 다시 호출하지 않습니다.
+- solution-plan scope의 `ownerAgentId`는 실행을 소유한 agent이고 `selectedTargetIds`는 admission이 결속한 extension/client 같은 외부 exact target입니다. 두 identity를 같다고 가정하지 않으며, 선택되지 않은 Tool과 `action:*` 메타 capability는 실행 scope에 포함하지 않습니다.
 - `start-initialization.ts`는 run 생성 직후 초기화 경계입니다. instruction journal, active controller binding, orphan worker 정리, 초기 step/status/event 적용을 `start.ts` 밖 helper로 묶어 상단 초기화 glue를 줄입니다.
 - `execution-profile.ts`는 execution profile 초기화 경계입니다. fallback structured request/intent envelope 계산과 recovery/delivery 추적 set 초기화를 `start.ts` 밖 helper로 묶어 상단 setup glue를 줄입니다.
 - `root-run-driver.ts`는 request-group queue 내부 실행 경계입니다. execution profile 초기화, root loop 실행, fatal failure 처리, cleanup을 `start.ts` 밖 helper로 묶어 queue callback glue를 줄입니다.
@@ -189,6 +187,8 @@
 - filesystem post-pass의 `stop / initial_retry / retry / verified` 적용도 `filesystem-postpass-application.ts`로 묶어, `start.ts`는 filesystem decision의 다음 상태 반영에 더 집중하게 정리했습니다.
 - direct delivery retry, synthetic approval continuation, completion retry에 공통으로 쓰이는 running 상태/event/summary 적용도 `running-application.ts`로 분리해, `start.ts`는 message 전환과 clear flag 반영만 맡는 방향으로 더 좁혀졌습니다.
 - command failure, generic execution failure, filesystem mutation/verification retry, direct delivery retry, completion retry에 공통으로 쓰이는 실패 기록, budget 소모, recovery event, running 전환도 `retry-application.ts`로 분리하기 시작했고, `start.ts`는 retry별 고유한 next message와 clear flag 반영에 더 집중합니다.
+- camera recovery에서 같은 request-group의 동일 Tool 이름과 canonical params hash는 dispatcher가 승인이나 remote dispatch 전에 `recovery_strategy_unchanged`로 거부합니다. permission status 조회, 다른 device/target 또는 다른 허용 Tool처럼 구조적으로 달라진 호출은 별도 전략으로 허용합니다. 동일한 deterministic recovery key가 다시 관찰되면 코드가 terminal stop을 만들지 않고 LLM completion review로 돌려 `followup`, `blocked` 또는 evidence-bound `paths_exhausted`를 선택하게 합니다.
+- 실패한 Yeonjang post-check의 recovery projection은 Tool 이름, method, post-check kind/reason code와 해시된 target ref만 포함합니다. raw target, local path, Tool output과 payload는 recovery prompt와 일반 로그로 전달하지 않습니다.
 - direct delivery 완료와 일반 completion 완료에 공통으로 쓰이는 success/status 업데이트도 `finalization.ts`의 `markRunCompleted`로 공통화해, `start.ts`는 완료 결과 선택과 event label 결정에 더 집중하는 방향으로 더 좁혀졌습니다.
 - `stop / awaiting_user` terminal 상태 적용도 `terminal-application.ts`로 분리해, direct delivery stop, completion stop, completion awaiting_user, loop directive awaiting_user가 같은 helper를 타도록 정리했습니다.
 - Telegram 채널의 chunk 텍스트 누적과 파일/tool status 전달은 `channels/telegram/chunk-delivery.ts`로 이동하기 시작했고, `runs`는 그 결과 receipt만 적용하는 쪽으로 더 밀어내고 있습니다.
@@ -253,8 +253,14 @@
 - direct Telegram schedule delivery는 이제 `scheduler/delivery-queue.ts`가 `targetChannel + targetSessionId` 기준으로 직렬화합니다. 즉 run delivery helper와 scheduler delivery queue가 서로 다른 목적 경계를 맡는 방향으로 정리 중입니다.
 - 도구가 실제로 실행된 태스크는 가능하면 `preview` 문구보다 구조화된 액션 결과와 delivery receipt를 완료 근거로 우선 사용합니다.
 - `completion-state.ts`는 completion을 `interpretationStatus`, `executionStatus`, `deliveryStatus`, `recoveryStatus`로 나눠 계산한 뒤, 이를 `request / execution / delivery / completion` checklist 상태로 다시 묶습니다. `completionSatisfied`는 이제 이 checklist의 필수 항목이 모두 완료되었는지로 판정합니다. 따라서 direct artifact delivery가 아직 안 끝났거나 follow-up/truncated recovery가 남았는데 review가 `complete`를 반환해도, `completion-flow.ts`는 checklist 기준으로 남은 항목을 먼저 보고 다시 복구 쪽을 우선 탑니다.
-- `review-gate.ts`는 direct artifact delivery가 이미 성공했고 receipt 기준 completion 4축 상태가 settled인 경우 completion review 호출 자체를 생략합니다. 따라서 전달 성공 뒤 불필요한 재검토를 줄이고, `review-cycle-pass.ts`는 아직 미완료 근거가 남은 경우에만 review pass를 실제로 태웁니다.
+- `review-gate.ts`는 successful Tool evidence가 없는 direct artifact delivery가 이미 성공했고 receipt 기준 completion 4축 상태가 settled인 경우에만 completion review 호출을 생략합니다. successful Tool evidence가 있으면 LLM completion review가 실행 결과와 사용자 목표 충족 여부를 검증합니다.
+- 카메라 캡처는 응답 acknowledgement가 아니라 저장된 이미지의 0보다 큰 크기와 허용된 image MIME post-check를 통과해야 성공 evidence가 됩니다. 실제 저장 경로는 artifact metadata 경계에만 두고, Tool·LLM·channel chunk에는 run/request-group에 결속된 opaque `artifact:<id>` ref와 MIME·크기만 전달합니다.
+- capture 성공과 direct artifact delivery 결과는 completion review에 별도 operational evidence로 들어갑니다. delivery 실패는 `unsatisfied`로 유지해 LLM이 실제 완료 범위를 보고하게 하고, artifact 전송과 검토된 최종 텍스트 전송은 서로 다른 전달 단계와 중복 억제 키를 사용합니다.
+- dispatcher의 `allow_run`/`allow_once` 캐시는 request group 전체의 포괄 승인이 아닙니다. 동일 tool operation과 동일 params hash에만 적용되며 exact target이나 params가 바뀌면 새 approval registry request가 필요합니다. 실제 실행 파라미터가 없는 synthetic 승인은 dispatcher side effect를 우회하지 않습니다.
 - `terminal-outcome-policy.ts`는 terminal 상태 의미를 한곳에 고정합니다. `completion-application-pass.ts`는 이 정책을 통해 receipt 기준 completion state가 만족될 때만 `completed`로 닫고, `failure-application.ts`는 abort만 `cancelled`로 분류하며, `terminal-application.ts`는 `awaiting_user/stop`만 각각 `awaiting_user/cancelled`로 매핑합니다.
+- 사용자가 선호한 method가 전체 capability snapshot에 없으면 특정 target mismatch로 오인하지 않습니다. exclusive method만 입력 요구로 닫고, non-exclusive preference는 빈 model-visible Tool scope를 유지한 채 LLM이 대체 경로 또는 exhaustion을 판단하게 합니다. 실행 scope에 식별자가 남아 있어도 runtime Tool projection은 실제 등록된 이름과 다시 교차해 미등록 Tool을 노출하지 않습니다.
+- 성공한 Tool이 0개여도 canonical attempt receipt가 있으면 그 opaque evidence ref를 completion review의 operational evidence로 전달합니다. 다만 admitted execution에 required Tool이 있으면 attempt 설명문만으로 `complete`를 수락하지 않고 성공 Tool evidence 존재를 구조적으로 요구합니다. LLM이 다른 허용 경로가 없다고 판정하면 evidence-bound `PATHS_EXHAUSTED`로 전이하며, 설명문을 실행 성공으로 승격하지 않습니다.
+- blocked/exhausted terminal report는 canonical facts의 정확한 포함 여부를 finalization 경계에서 검사합니다. verified blocker는 `RESULT_BLOCKED -> BLOCKED`, current-scope candidate exclusion이 완전한 경우만 `PATHS_EXHAUSTED -> EXHAUSTED`로 기록합니다. 첫 LLM 응답이 사실 필드를 누락하면 누락 field 이름과 그 exact required fragment만 포함한 structured feedback으로 한 번 다시 렌더링하고, 두 번째도 실패하면 run을 명시적 finalization failure로 닫고 전달을 막습니다. 원문 prompt나 모델 출력의 문자열 의미 비교로 terminal 상태를 바꾸지 않습니다.
 - 권한이 필요한 작업에서 worker나 AI이 설명문으로만 `허용/승인 필요`를 말하면, 그 문구를 그냥 완료로 닫지 않고 메인 루프에서 synthetic approval 요청으로 승격해 다시 진행합니다.
 - completion review가 실패해도 권한 안내 문구만으로는 완료 근거로 보지 않고, 승인 요청이나 다른 복구 경로를 우선 탑니다.
 - 승인 거부 사유가 `사용자 거부`인지 `시스템 타임아웃`인지 구분해서 취소 요약을 남기며, 타임아웃을 사용자 취소로 기록하지 않습니다.

@@ -80,10 +80,10 @@ export function SetupAssistPanel({
       <section className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
         <div className="text-sm font-semibold text-stone-900">{text("현재 상태", "Current Status")}</div>
         <div className="mt-4 grid gap-3">
-          <StatusRow label={text("설정 완료", "Setup Complete")} value={checks?.setupCompleted ? text("예", "Yes") : text("아니오", "No")} tone={checks?.setupCompleted ? "ready" : "idle"} />
-          <StatusRow label={text("텔레그램 연결 정보", "Telegram Configuration")} value={checks?.telegramConfigured ? text("입력됨", "Configured") : text("없음", "Missing")} tone={checks?.telegramConfigured ? "ready" : "idle"} />
-          <StatusRow label={text("웹 인증", "Web Authentication")} value={checks?.authEnabled ? text("켜짐", "On") : text("꺼짐", "Off")} tone={checks?.authEnabled ? "ready" : "idle"} />
-          <StatusRow label="Scheduler" value={checks?.schedulerEnabled ? text("사용 가능", "Available") : text("준비 안 됨", "Not Ready")} tone={checks?.schedulerEnabled ? "ready" : "idle"} />
+          <StatusRow label={text("초기 설정 완료", "Initial setup complete")} value={checks?.setupCompleted ? text("예", "Yes") : text("아니오", "No")} tone={checks?.setupCompleted ? "ready" : "idle"} />
+          <StatusRow label={text("텔레그램 연결 정보", "Telegram connection")} value={checks?.telegramConfigured ? text("입력됨", "Entered") : text("없음", "Missing")} tone={checks?.telegramConfigured ? "ready" : "idle"} />
+          <StatusRow label={text("화면 접속 보호", "Web app protection")} value={checks?.authEnabled ? text("켜짐", "On") : text("꺼짐", "Off")} tone={checks?.authEnabled ? "ready" : "idle"} />
+          <StatusRow label={text("예약 실행", "Scheduled execution")} value={checks?.schedulerEnabled ? text("사용 가능", "Available") : text("준비 안 됨", "Not ready")} tone={checks?.schedulerEnabled ? "ready" : "idle"} />
         </div>
       </section>
 

@@ -11,11 +11,11 @@ use serde_json::Value;
 use crate::automation::{
     ApplicationLaunchRequest, ApplicationLaunchResult, AutomationBackend, AutomationCapabilities,
     CameraCaptureRequest, CameraCaptureResult, CameraDevice, CommandExecutionRequest,
-    CommandExecutionResult, KeyboardActionKind, KeyboardActionRequest, KeyboardActionResult,
-    KeyboardTypeRequest, KeyboardTypeResult, MouseActionKind, MouseActionRequest,
-    MouseActionResult, MouseClickRequest, MouseClickResult, MouseMoveRequest, MouseMoveResult,
-    PlatformKind, ScreenCaptureRequest, ScreenCaptureResult, SystemControlRequest,
-    SystemControlResult, SystemSnapshot,
+    CommandExecutionResult, FocusedTargetResult, KeyboardActionKind, KeyboardActionRequest,
+    KeyboardActionResult, KeyboardTypeRequest, KeyboardTypeResult, MouseActionKind,
+    MouseActionRequest, MouseActionResult, MouseClickRequest, MouseClickResult, MouseMoveRequest,
+    MouseMoveResult, MousePositionResult, PlatformKind, ScreenCaptureRequest, ScreenCaptureResult,
+    SystemControlRequest, SystemControlResult, SystemSnapshot,
 };
 use crate::platform::shared;
 
@@ -273,6 +273,25 @@ impl AutomationBackend for PlatformBackend {
         })
     }
 
+    fn mouse_position(&self) -> Result<MousePositionResult> {
+        let output = run_powershell_json(WINDOWS_MOUSE_POSITION_SCRIPT, &[], "mouse position")?;
+        let x = output
+            .get("x")
+            .and_then(Value::as_i64)
+            .and_then(|value| i32::try_from(value).ok())
+            .context("mouse position response missing x")?;
+        let y = output
+            .get("y")
+            .and_then(Value::as_i64)
+            .and_then(|value| i32::try_from(value).ok())
+            .context("mouse position response missing y")?;
+        Ok(MousePositionResult {
+            x,
+            y,
+            message: "Mouse position observed.".to_string(),
+        })
+    }
+
     fn click_mouse(&self, request: MouseClickRequest) -> Result<MouseClickResult> {
         shared::validate_mouse_click(&request)?;
         let button = normalize_windows_mouse_button_name(&request.button)?;
@@ -432,6 +451,24 @@ impl AutomationBackend for PlatformBackend {
             text_len: request.text.chars().count(),
             message: "Keyboard text input completed.".to_string(),
         })
+    }
+
+    fn focused_target(&self) -> Result<FocusedTargetResult> {
+        let output = run_powershell_json(WINDOWS_FOCUSED_TARGET_SCRIPT, &[], "focused target")?;
+        let app_name = output
+            .get("appName")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .filter(|value| !value.trim().is_empty());
+        let process_id = output
+            .get("processId")
+            .and_then(Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok());
+        let title = output
+            .get("title")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+        Ok(shared::focused_target_result(app_name, process_id, title))
     }
 
     fn perform_keyboard_action(
@@ -1030,6 +1067,62 @@ if (-not [string]::IsNullOrWhiteSpace($workingDirectory)) {
 $process = Start-Process @startArgs
 [pscustomobject]@{
   pid = if ($null -ne $process) { $process.Id } else { $null }
+} | ConvertTo-Json -Compress
+"#;
+
+const WINDOWS_MOUSE_POSITION_SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class YeonjangMousePositionNative {
+  [StructLayout(LayoutKind.Sequential)]
+  public struct POINT {
+    public int X;
+    public int Y;
+  }
+  [DllImport("user32.dll", SetLastError = true)]
+  public static extern bool GetCursorPos(out POINT point);
+}
+"@
+$point = New-Object YeonjangMousePositionNative+POINT
+if (-not [YeonjangMousePositionNative]::GetCursorPos([ref]$point)) {
+  throw 'GetCursorPos failed.'
+}
+@{
+  x = $point.X
+  y = $point.Y
+} | ConvertTo-Json -Compress
+"#;
+
+const WINDOWS_FOCUSED_TARGET_SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class YeonjangFocusedTargetNative {
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")]
+  public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+"@
+$handle = [YeonjangFocusedTargetNative]::GetForegroundWindow()
+$pid = [uint32]0
+[YeonjangFocusedTargetNative]::GetWindowThreadProcessId($handle, [ref]$pid) | Out-Null
+$builder = New-Object System.Text.StringBuilder 512
+[YeonjangFocusedTargetNative]::GetWindowText($handle, $builder, $builder.Capacity) | Out-Null
+$name = $null
+try {
+  if ($pid -gt 0) { $name = (Get-Process -Id $pid -ErrorAction Stop).ProcessName }
+} catch {}
+@{
+  appName = $name
+  processId = $pid
+  title = $builder.ToString()
 } | ConvertTo-Json -Compress
 "#;
 

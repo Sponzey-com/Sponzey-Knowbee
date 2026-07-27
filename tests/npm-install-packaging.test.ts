@@ -85,6 +85,7 @@ describe("npm install packaging", () => {
     const cli = readJson(join(outputDir, "cli", "package.json"))
     const webui = readJson(join(outputDir, "webui", "package.json"))
     expect(core.name).toBe("@sponzey/core")
+    expect(core.exports).toHaveProperty("./serve")
     expect(cli).toMatchObject({
       name: "@sponzey/cli",
       version: "9.8.7",
@@ -93,9 +94,27 @@ describe("npm install packaging", () => {
       },
     })
     expect(webui.name).toBe("@sponzey/webui")
+    expect(
+      existsSync(
+        join(outputDir, "core", "dist", "prompts", "work_order_template_prompt_text_user.md"),
+      ),
+    ).toBe(true)
+    expect(existsSync(join(outputDir, "core", "dist", "prompts", "system.md"))).toBe(true)
     expect(readFileSync(join(outputDir, "cli", "dist", "index.js"), "utf-8")).toContain(
       "@sponzey/core",
     )
+    expect(readFileSync(join(outputDir, "cli", "dist", "launcher.js"), "utf-8")).toContain(
+      "@sponzey/core/serve",
+    )
+    expect(
+      existsSync(join(outputDir, "core", "dist", "runtime", "serve-bundle.js")),
+    ).toBe(true)
+    expect(
+      existsSync(join(outputDir, "core", "dist", "runtime", "serve-bundle.d.ts")),
+    ).toBe(true)
+    expect(
+      existsSync(join(outputDir, "core", "dist", "runtime", "serve-bundle.manifest.json")),
+    ).toBe(true)
     expect(readFileSync(join(outputDir, "knowbee", "bin", "knowbee.js"), "utf-8")).toContain(
       "@sponzey/cli",
     )
@@ -207,14 +226,16 @@ describe("npm install packaging", () => {
     expect(workflow).toContain("build-yeonjang-linux-package:")
     expect(workflow).toContain("image: ubuntu:20.04")
     expect(workflow).toMatch(/build-yeonjang-linux-package:[\s\S]*runs-on: ubuntu-latest/u)
-    expect(workflow).toMatch(/build-yeonjang-linux-package:[\s\S]*bash scripts\/build-yeonjang-linux\.sh/u)
+    expect(workflow).toMatch(
+      /build-yeonjang-linux-package:[\s\S]*bash scripts\/build-yeonjang-linux\.sh/u,
+    )
     expect(workflow).toContain("windows-latest")
     expect(workflow).toContain("github-release:")
     expect(workflow).toMatch(/github-release:[\s\S]*contents: write/u)
     expect(workflow).toContain("GH_REPO: ${{ github.repository }}")
     expect(workflow).toContain("gh release create")
     expect(workflow).toContain("gh release upload")
-    expect(workflow).toContain("npm view \"$package_spec\" version")
+    expect(workflow).toContain('npm view "$package_spec" version')
     expect(workflow).toContain("Skipping already published package")
     expect(workflow).toContain("NODE_AUTH_TOKEN")
   })

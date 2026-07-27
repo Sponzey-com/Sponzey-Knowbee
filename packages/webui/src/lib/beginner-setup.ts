@@ -6,6 +6,7 @@ import type { UiShellResponse } from "../api/client"
 import type { UiLanguage } from "../stores/uiLanguage"
 import { formatWebUiErrorMessage, uiCatalogText } from "./message-catalog"
 import { getPreferredSingleAiBackendId, setSingleAiBackendEnabled } from "./single-ai"
+import { UiRequestFailure } from "../api/request-failure"
 
 export type BeginnerSetupStepId = "ai" | "channels" | "computer" | "test"
 export type BeginnerSetupStepStatus = "done" | "needs_attention" | "skipped"
@@ -34,6 +35,7 @@ export interface BeginnerAiConnectionInput {
   authMode: AIAuthMode
   endpoint?: string
   defaultModel: string
+  availableModels?: string[]
   credentials: AIBackendCredentials
 }
 
@@ -152,7 +154,7 @@ export function upsertBeginnerAiBackend(draft: SetupDraft, input: BeginnerAiConn
     credentials: { ...input.credentials },
     local: isLocalProviderType(input.providerType),
     enabled: true,
-    availableModels: existing?.availableModels ?? [],
+    availableModels: input.availableModels ?? existing?.availableModels ?? [],
     defaultModel: input.defaultModel.trim(),
     status: input.defaultModel.trim() && endpoint ? "ready" : "disabled",
     summary: existing?.summary || "Primary AI connection",
@@ -191,6 +193,12 @@ export function markBeginnerAiTestResult(draft: SetupDraft, backendId: string, r
 }
 
 export function sanitizeBeginnerSetupError(error: unknown, language: UiLanguage): string {
+  if (error instanceof UiRequestFailure) {
+    const projected = formatWebUiErrorMessage(error.reasonCode, language)
+    return projected.diagnosticCode === "ERR_UNKNOWN" && error.safeMessage
+      ? error.safeMessage
+      : projected.message
+  }
   const raw = error instanceof Error ? error.message : String(error ?? "")
   return formatWebUiErrorMessage(raw, language).message
 }

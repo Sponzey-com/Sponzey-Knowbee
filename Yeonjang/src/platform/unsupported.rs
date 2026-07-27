@@ -3,9 +3,10 @@ use anyhow::{Result, bail};
 use crate::automation::{
     ApplicationLaunchRequest, ApplicationLaunchResult, AutomationBackend, AutomationCapabilities,
     CameraCaptureRequest, CameraCaptureResult, CameraDevice, CommandExecutionRequest,
-    CommandExecutionResult, KeyboardTypeRequest, KeyboardTypeResult, MouseClickRequest,
-    MouseClickResult, MouseMoveRequest, MouseMoveResult, PlatformKind, ScreenCaptureRequest,
-    ScreenCaptureResult, SystemControlRequest, SystemControlResult, SystemSnapshot,
+    CommandExecutionResult, FocusedTargetResult, KeyboardTypeRequest, KeyboardTypeResult,
+    MouseClickRequest, MouseClickResult, MouseMoveRequest, MouseMoveResult, MousePositionResult,
+    PlatformKind, ScreenCaptureRequest, ScreenCaptureResult, SystemControlRequest,
+    SystemControlResult, SystemSnapshot,
 };
 use crate::platform::shared;
 
@@ -82,6 +83,13 @@ impl AutomationBackend for PlatformBackend {
         )
     }
 
+    fn mouse_position(&self) -> Result<MousePositionResult> {
+        bail!(
+            "{}",
+            shared::not_implemented("mouse.position", self.platform_kind())
+        )
+    }
+
     fn move_mouse(&self, request: MouseMoveRequest) -> Result<MouseMoveResult> {
         shared::validate_mouse_move(&request)?;
         bail!(
@@ -105,6 +113,13 @@ impl AutomationBackend for PlatformBackend {
         bail!(
             "{}",
             shared::not_implemented("keyboard.type", self.platform_kind())
+        )
+    }
+
+    fn focused_target(&self) -> Result<FocusedTargetResult> {
+        bail!(
+            "{}",
+            shared::not_implemented("input.focused_target", self.platform_kind())
         )
     }
 }

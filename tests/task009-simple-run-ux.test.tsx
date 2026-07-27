@@ -21,6 +21,10 @@ import type { EnterpriseTopologyRunRecord } from "../packages/webui/src/lib/ente
 const now = Date.UTC(2026, 4, 2, 13, 0, 0)
 const templates = WORK_ORDER_TEMPLATE_CATALOG.templates
 
+function visibleText(markup: string): string {
+  return markup.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+}
+
 describe("task009 simple run UX", () => {
   it("renders simple channel request UI without WorkOrder Template or Context selectors", () => {
     const topology = compileTopology(graph([
@@ -62,6 +66,34 @@ describe("task009 simple run UX", () => {
     expect(resolved.startSource).toBe("single_executor")
     expect(resolved.selectedStartExecutorId).toBe("node:single")
     expect(resolved.requiresStartChoice).toBe(false)
+  })
+
+  it("uses a neutral fallback label instead of raw node ids when topology is unavailable", () => {
+    const targetState = {
+      targetNodeId: "node:intake",
+      source: "auto_entry" as const,
+      entryNodeIds: ["node:intake"],
+      issue: null,
+    }
+    const resolved = resolveExecutorRunState({
+      templates,
+      targetState,
+      runInput: "고객 요청 처리",
+      simulationMode: "success",
+    })
+    const html = renderToStaticMarkup(
+      createElement(ExecutorRunPanel, {
+        templates,
+        targetState,
+        runInput: "고객 요청 처리",
+        simulationMode: "success",
+      }),
+    )
+
+    expect(resolved.selectedStartExecutorId).toBe("node:intake")
+    expect(resolved.candidates[0]?.label).toBe("서브 에이전트 1")
+    expect(visibleText(html)).toContain("서브 에이전트 1")
+    expect(visibleText(html)).not.toContain("node:intake")
   })
 
   it("renders the sidebar request card with a simple request flow preview", () => {
@@ -243,6 +275,8 @@ describe("task009 simple run UX", () => {
     expect(html).toContain('data-testid="topology-run-trace-cta"')
     expect(html).toContain("기록 보기")
     expect(html).toContain('data-testid="topology-run-history-item"')
+    expect(visibleText(html)).toContain("고객 접수 담당자")
+    expect(visibleText(html)).not.toContain("node:intake")
   })
 })
 

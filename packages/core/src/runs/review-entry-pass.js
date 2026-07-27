@@ -18,6 +18,7 @@ export async function runReviewEntryPass(params, dependencies) {
         sessionId: params.sessionId,
         source: params.source,
         preview: params.preview,
+        ...(params.previewSource ? { previewSource: params.previewSource } : {}),
         ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
         persistRuntimePreview: params.persistRuntimePreview,
         dependencies: {

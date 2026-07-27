@@ -10,14 +10,14 @@ const now = 1_780_000_240_000
 
 const rootAgent = {
   id: "agent:knowbee",
-  displayName: "Knowbee",
-  nickname: "노비",
+  agentName: "노비",
 }
 
 function baseAgent(overrides: Partial<SetupSubAgentDraftItem> = {}): SetupSubAgentDraftItem {
   return {
     agentId: "agent:lead",
     parentAgentId: "agent:knowbee",
+    agentName: "Lead",
     displayName: "Lead",
     nickname: "Lead",
     role: "취합 담당",
@@ -45,6 +45,7 @@ function draftWithMonitoring(): SetupDraft {
   const researcher = baseAgent({
     agentId: "agent:research",
     parentAgentId: "agent:lead",
+    agentName: "Researcher",
     displayName: "Researcher",
     nickname: "Researcher",
     role: "조사 담당",
@@ -164,8 +165,7 @@ describe("task008 unified settings runtime monitoring", () => {
       agents: [
         {
           id: "agent:lead",
-          displayName: "Lead",
-          nickname: "Lead",
+          agentName: "Lead",
           role: "취합 담당",
           workDescription: "하위 결과를 검토하고 취합합니다.",
           parentId: "agent:knowbee",
@@ -234,6 +234,31 @@ describe("task008 unified settings runtime monitoring", () => {
     expect(text).not.toContain("sk-task008-secret-should-hide")
     expect(text).not.toContain("raw-secret")
     expect(text).not.toContain("raw payload")
+  })
+
+  it("uses explicit setup agentName for monitoring labels", () => {
+    const draft = draftWithMonitoring()
+    draft.subAgents = {
+      ...draft.subAgents!,
+      items: draft.subAgents!.items.map((item) => {
+        if (item.agentId === "agent:lead") return { ...item, agentName: "총괄" }
+        if (item.agentId === "agent:research") return { ...item, agentName: "조사원" }
+        return item
+      }),
+    }
+    const view = buildUnifiedSettingsViewForSetupDraft({
+      draft,
+      language: "ko",
+      selectedAgentId: "agent:lead",
+      now,
+    })
+    const monitoring = view.selectedAgentDetail?.monitoring
+
+    expect(view.selectedAgent?.label).toBe("총괄")
+    expect(monitoring?.treePaths).toContain("노비 -> 총괄 -> 조사원")
+    expect(monitoring?.traceItems.map((item) => `${item.actorLabel}->${item.targetLabel}:${item.kind}`)).toContain(
+      "총괄->조사원:delegation_planned",
+    )
   })
 
   it("renders monitoring in the unified summary panel without raw ids or debug payloads", () => {

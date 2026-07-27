@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import {
   closeDb,
   getMemoryCapsule,
@@ -15,20 +15,14 @@ import {
   maybeRollupCapsuleChain,
   renderMaintenanceRestorePromptBlock,
 } from "../packages/core/src/memory/retrieval-restore.ts"
-import { closeMemoryJournalDb } from "../packages/core/src/memory/journal.js"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
-  closeMemoryJournalDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task005-rollup-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 function baseCapsule(index: number): MemoryCapsule {
@@ -44,7 +38,7 @@ function baseCapsule(index: number): MemoryCapsule {
       channelKey: "webui",
       threadKey: "thread-rollup",
     },
-    nicknameSnapshot: "노비",
+    agentNameSnapshot: "노비",
     capsuleKind: "session_compaction",
     summary: `capsule summary ${index}`,
     activeObjectives: [`objective-${index}`],
@@ -68,12 +62,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })

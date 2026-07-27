@@ -11,8 +11,6 @@ export function allowsTextOnlyCompletion(params) {
 export function hasMeaningfulCompletionEvidence(params) {
     if (params.deliverySatisfied)
         return true;
-    if (params.successfulTools.length > 0)
-        return true;
     if (params.sawRealFilesystemMutation)
         return true;
     if (!params.preview.trim())
@@ -156,7 +154,16 @@ export function buildToolExecutionReceipt(params) {
         output: params.output,
         summary: params.success ? `${params.toolName} 실행 완료` : `${params.toolName} 실행 실패`,
         executor,
-        ...(params.success ? { successfulTool: { toolName: params.toolName, output: params.output } } : {}),
+        ...(params.success
+            ? {
+                successfulTool: {
+                    toolName: params.toolName,
+                    output: params.output,
+                    ...(params.toolDetails !== undefined ? { details: params.toolDetails } : {}),
+                    ...(params.evidenceSource ? { evidenceSource: params.evidenceSource } : {}),
+                },
+            }
+            : {}),
         filesystemMutation,
         mutationPaths,
         commandFailure,

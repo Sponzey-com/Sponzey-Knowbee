@@ -8,16 +8,21 @@ import {
   type TelegramFileDeliveryResult,
   type TelegramTextPartsDeliveryResult,
 } from "./message-delivery.js"
+import { buildToolStatusControl, renderToolStatusControlText } from "../interactive-control.js"
+import type { IntakeAcknowledgementControlText } from "../intake-acknowledgement-control.js"
+
+export type TelegramResponderLanguage = "ko" | "en"
 
 export class TelegramResponder {
   constructor(
     private bot: Bot,
     private chatId: number,
     private threadId?: number | undefined,
+    private language: TelegramResponderLanguage = "ko",
   ) {}
 
   async sendToolStatus(toolName: string): Promise<number> {
-    const text = `⚙️ Running: \`${toolName}\`...`
+    const text = buildTelegramToolStatusText(toolName, "running", this.language)
     const other =
       this.threadId !== undefined
         ? { parse_mode: "Markdown" as const, message_thread_id: this.threadId }
@@ -27,8 +32,7 @@ export class TelegramResponder {
   }
 
   async updateToolStatus(messageId: number, toolName: string, success: boolean): Promise<void> {
-    const icon = success ? "✅" : "❌"
-    const text = `${icon} \`${toolName}\` ${success ? "done" : "failed"}`
+    const text = buildTelegramToolStatusText(toolName, success ? "done" : "failed", this.language)
     try {
       await this.bot.api.editMessageText(this.chatId, messageId, text, {
         parse_mode: "Markdown",
@@ -70,7 +74,7 @@ export class TelegramResponder {
     return sendTelegramPlainMessage({
       api: this.bot.api,
       target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
-      text: `❌ Error: ${message}`,
+      text: message,
     })
   }
 
@@ -80,6 +84,10 @@ export class TelegramResponder {
       target: { chatId: this.chatId, ...(this.threadId !== undefined ? { threadId: this.threadId } : {}) },
       text,
     })
+  }
+
+  async sendIntakeAcknowledgement(text: IntakeAcknowledgementControlText): Promise<number> {
+    return this.sendReceipt(text)
   }
 
   async sendFile(filePath: string, caption?: string | undefined): Promise<number> {
@@ -104,4 +112,16 @@ export class TelegramResponder {
       ...(caption !== undefined ? { caption } : {}),
     })
   }
+}
+
+function buildTelegramToolStatusText(
+  toolName: string,
+  status: "running" | "done" | "failed",
+  language: TelegramResponderLanguage,
+): string {
+  return renderToolStatusControlText(buildToolStatusControl({
+    toolLabel: toolName,
+    status: status === "done" ? "succeeded" : status,
+    language,
+  }), "telegram")
 }

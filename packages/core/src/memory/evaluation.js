@@ -1,7 +1,22 @@
 import { storeMemoryDocument } from "./store.js";
 import { ftsChunkSearch, hybridChunkSearch, vectorChunkSearch, } from "./search.js";
+function buildEvaluationLongTermWriteGate(document) {
+    if (document.scope !== "long-term")
+        return undefined;
+    const ownerId = document.ownerId?.trim() || "global";
+    return {
+        targetOwner: { ownerType: "knowbee", ownerId },
+        category: "approved_work_context",
+        storageNeed: "project_fact",
+        sensitivity: "not_sensitive",
+        userIntent: "admin_review_approved",
+        sourceEvidenceRefs: [`retrieval_evaluation:${document.id}`],
+        retentionPurpose: "memory retrieval evaluation fixture",
+    };
+}
 export async function seedMemoryRetrievalEvaluationFixture(fixture) {
     for (const document of fixture.documents) {
+        const longTermWriteGate = buildEvaluationLongTermWriteGate(document);
         await storeMemoryDocument({
             rawText: document.text,
             scope: document.scope,
@@ -10,6 +25,7 @@ export async function seedMemoryRetrievalEvaluationFixture(fixture) {
             sourceType: document.sourceType ?? "retrieval_evaluation",
             sourceRef: document.id,
             title: document.title ?? document.id,
+            ...(longTermWriteGate ? { longTermWriteGate } : {}),
             metadata: {
                 ...(document.metadata ?? {}),
                 evaluationDocumentId: document.id,

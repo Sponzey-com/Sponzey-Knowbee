@@ -14,6 +14,14 @@ const CONTEXT_LIMITS: Record<string, number> = {
   "claude-3-opus-20240229": 200_000,
 }
 
+export function toAnthropicToolChoice(
+  toolChoice: ChatParams["toolChoice"],
+  hasTools: boolean,
+): Anthropic.ToolChoice | undefined {
+  if (!hasTools || toolChoice !== "required") return undefined
+  return { type: "any" }
+}
+
 export class AnthropicProvider implements AIProvider {
   readonly id = "anthropic"
   readonly supportedModels = Object.keys(CONTEXT_LIMITS)
@@ -41,6 +49,7 @@ export class AnthropicProvider implements AIProvider {
     log.debug(`chat() model=${params.model} messages=${params.messages.length}`)
 
     const streamEvents: Anthropic.MessageStreamEvent[] = []
+    const toolChoice = toAnthropicToolChoice(params.toolChoice, Boolean(tools?.length))
 
     try {
       const createParams: Anthropic.MessageCreateParamsStreaming = {
@@ -50,6 +59,7 @@ export class AnthropicProvider implements AIProvider {
         stream: true,
         ...(params.system != null ? { system: params.system } : {}),
         ...(tools && tools.length > 0 ? { tools: tools as Anthropic.Tool[] } : {}),
+        ...(toolChoice ? { tool_choice: toolChoice } : {}),
       }
 
       const response = await client.messages.create(createParams, { signal: params.signal })

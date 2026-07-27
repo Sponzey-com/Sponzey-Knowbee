@@ -10,6 +10,7 @@ import { buildOrchestrationPlan } from "../orchestration/planner.js"
 import type { OrchestrationPlannerIntent } from "../orchestration/planner.js"
 import {
   resolveOrchestrationModeSnapshot,
+  type OrchestrationModeConfigSnapshot,
   type OrchestrationModeSnapshot,
 } from "../orchestration/mode.js"
 import {
@@ -44,6 +45,7 @@ import {
   type TopologyRootRunRoutingDecision,
 } from "../topology-runtime/harness.js"
 import type { AgentExecutionDecision } from "../orchestration/execution-decision-contract.js"
+import { authorWorkflowFromExecutionDecision } from "../orchestration/workflow-authoring.js"
 
 export type StartPlanRequestIsolation = "root" | "continuation"
 
@@ -80,7 +82,7 @@ export interface StartPlan {
   latencyEvents: string[]
 }
 
-interface StartPlanDependencies {
+export interface StartPlanDependencies {
   analyzeRequestEntrySemantics: typeof analyzeRequestEntrySemantics
   isReusableRequestGroup: typeof isReusableRequestGroup
   listActiveSessionRequestGroups: typeof listActiveSessionRequestGroups
@@ -101,9 +103,9 @@ interface StartPlanDependencies {
   }) => string | undefined
   normalizeTaskProfile: (taskProfile: TaskProfile | undefined) => TaskProfile
   findLatestWorkerSessionRun: typeof findLatestWorkerSessionRun
-  resolveOrchestrationMode?: typeof resolveOrchestrationModeSnapshot
-  buildOrchestrationPlan?: typeof buildOrchestrationPlan
-  resolveTopologyRootRunRouting?: typeof resolveTopologyRootRunRouting
+  resolveOrchestrationMode: typeof resolveOrchestrationModeSnapshot
+  buildOrchestrationPlan: typeof buildOrchestrationPlan
+  resolveTopologyRootRunRouting: typeof resolveTopologyRootRunRouting
 }
 
 const defaultDependencies: StartPlanDependencies = {
@@ -139,9 +141,11 @@ export async function buildStartPlan(
     taskProfile?: TaskProfile | undefined
     model?: string | undefined
     targetId?: string | undefined
+    mainAgentNameSnapshot?: string | undefined
     workerRuntime?: WorkerRuntimeTarget | undefined
     orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined
     agentExecutionDecision?: AgentExecutionDecision | undefined
+    config: OrchestrationModeConfigSnapshot
   },
   dependencies: StartPlanDependencies,
 ): Promise<StartPlan> {
@@ -156,7 +160,11 @@ export async function buildStartPlan(
     ...(params.source ? { source: params.source } : {}),
   })))
   const orchestrationModeStartedAt = Date.now()
-  const orchestrationRegistrySnapshot = await (dependencies.resolveOrchestrationMode ?? resolveOrchestrationModeSnapshot)()
+  const mainAgentNameSnapshot = params.mainAgentNameSnapshot?.trim() || undefined
+  const orchestrationRegistrySnapshot = await dependencies.resolveOrchestrationMode({
+    config: params.config,
+    ...(mainAgentNameSnapshot ? { mainAgentNameSnapshot } : {}),
+  })
   const orchestrationRegistryLatencyMs = Date.now() - orchestrationModeStartedAt
   recordLatencyMetric({
     name: "registry_lookup_latency_ms",
@@ -332,7 +340,7 @@ export async function buildStartPlan(
   const reusableWorkerSessionRun = workerSessionId
     ? dependencies.findLatestWorkerSessionRun(requestGroupId, workerSessionId)
     : undefined
-  const topologyRouting = (dependencies.resolveTopologyRootRunRouting ?? resolveTopologyRootRunRouting)({
+  const topologyRouting = dependencies.resolveTopologyRootRunRouting({
     message: params.message,
     runId: params.runId,
     sessionId: params.sessionId,
@@ -345,16 +353,20 @@ export async function buildStartPlan(
   })
   latencyEvents.push(`topology_routing:${topologyRouting.mode}:${topologyRouting.reasonCode}`)
   const effectiveAgentExecutionDecision = params.agentExecutionDecision
+  const workflowDraft = authorWorkflowFromExecutionDecision(effectiveAgentExecutionDecision)
   const orchestrationPlanStartedAt = Date.now()
-  const orchestrationPlanSnapshot = (dependencies.buildOrchestrationPlan ?? buildOrchestrationPlan)({
+  const orchestrationPlanSnapshot = dependencies.buildOrchestrationPlan({
+    config: params.config,
     parentRunId: params.runId,
     parentRequestId: params.runId,
     userRequest: params.message,
     modeSnapshot: orchestrationRegistrySnapshot,
+    ...(mainAgentNameSnapshot ? { rootAgentNameSnapshot: mainAgentNameSnapshot } : {}),
     ...(params.orchestrationPlannerIntent ? { intent: params.orchestrationPlannerIntent } : {}),
     ...(effectiveAgentExecutionDecision
       ? { agentExecutionDecision: effectiveAgentExecutionDecision }
       : {}),
+    ...(workflowDraft ? { workflowDraft } : {}),
   }).plan
   latencyEvents.push(`${buildLatencyEventLabel(recordLatencyMetric({
     name: "orchestration_planning_latency_ms",

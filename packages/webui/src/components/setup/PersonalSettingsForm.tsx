@@ -47,9 +47,10 @@ export function PersonalSettingsForm({
     <div className="space-y-5 rounded-2xl border border-stone-200 bg-white p-5">
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <label className="mb-1 block text-sm font-medium text-stone-700">{text("사용자 이름 *", "User name *")}</label>
+          <label htmlFor="settings-user-name" className="mb-1 block text-sm font-medium text-stone-700">{text("사용자 이름 *", "User name *")}</label>
           <input
-            className="input"
+            id="settings-user-name"
+            className="input min-h-11"
             value={userName}
             onChange={(event) => onChange({ profileName: event.target.value, displayName: event.target.value })}
             placeholder={text("사용자를 부를 이름을 적어주세요", "Enter the name used for you")}
@@ -57,9 +58,10 @@ export function PersonalSettingsForm({
           {userNameError ? <p className="mt-2 text-xs leading-5 text-red-600">{userNameError}</p> : null}
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium text-stone-700">{text("메인 에이전트 이름", "Main agent name")}</label>
+          <label htmlFor="settings-main-agent-name" className="mb-1 block text-sm font-medium text-stone-700">{text("메인 에이전트 이름", "Main agent name")}</label>
           <input
-            className="input"
+            id="settings-main-agent-name"
+            className="input min-h-11"
             value={mainAgentName ?? ""}
             onChange={(event) => onMainAgentNameChange?.(event.target.value)}
             placeholder={text("예: 노비", "Example: Knowbee")}
@@ -72,9 +74,10 @@ export function PersonalSettingsForm({
 
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <label className="mb-1 block text-sm font-medium text-stone-700">{text("기본 언어 (Language) *", "Default Language *")}</label>
+          <label htmlFor="settings-language" className="mb-1 block text-sm font-medium text-stone-700">{text("기본 언어 (Language) *", "Default Language *")}</label>
           <select
-            className="input"
+            id="settings-language"
+            className="input min-h-11"
             value={value.language}
             onChange={(event) => onChange({ language: event.target.value })}
           >
@@ -88,9 +91,10 @@ export function PersonalSettingsForm({
           {errors?.language ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.language}</p> : null}
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium text-stone-700">{text("시간대 (Timezone) *", "Timezone *")}</label>
+          <label htmlFor="settings-timezone" className="mb-1 block text-sm font-medium text-stone-700">{text("시간대 (Timezone) *", "Timezone *")}</label>
           <select
-            className="input"
+            id="settings-timezone"
+            className="input min-h-11"
             value={value.timezone}
             onChange={(event) => onChange({ timezone: event.target.value })}
           >
@@ -106,9 +110,10 @@ export function PersonalSettingsForm({
       </div>
 
       <div>
-        <label className="mb-1 block text-sm font-medium text-stone-700">{text("기본 작업 폴더 (Workspace) *", "Default Workspace *")}</label>
+        <label htmlFor="settings-workspace" className="mb-1 block text-sm font-medium text-stone-700">{text("기본 작업 폴더 (Workspace) *", "Default Workspace *")}</label>
         <input
-          className="input font-mono"
+          id="settings-workspace"
+          className="input min-h-11 font-mono"
           value={value.workspace}
           onChange={(event) => onChange({ workspace: event.target.value })}
           placeholder={text("예: ./Work", "Example: ./Work")}

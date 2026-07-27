@@ -17,7 +17,17 @@ GATEWAY_PORT="${KNOWBEE_GATEWAY_PORT:-18888}"
 WEBUI_HOST="${KNOWBEE_WEBUI_HOST:-127.0.0.1}"
 WEBUI_PORT="${KNOWBEE_WEBUI_PORT:-4220}"
 ADMIN_UI="${KNOWBEE_ADMIN_UI:-0}"
+GATEWAY_STATUS_TIMEOUT_SECONDS="10"
+GATEWAY_STARTUP_PERFORMANCE_BUDGET_MS="30000"
+WEBUI_STARTUP_TIMEOUT_SECONDS="60"
 RESTART_LOCAL="0"
+LIVE_ACCEPTANCE="0"
+readonly LIVE_TELEGRAM_CHAT_ID_SNAPSHOT="${KNOWBEE_CHANNEL_SMOKE_TELEGRAM_CHAT_ID:-}"
+readonly LIVE_TELEGRAM_USER_ID_SNAPSHOT="${KNOWBEE_CHANNEL_SMOKE_TELEGRAM_USER_ID:-}"
+readonly LIVE_TELEGRAM_THREAD_ID_SNAPSHOT="${KNOWBEE_CHANNEL_SMOKE_TELEGRAM_THREAD_ID:-}"
+readonly LIVE_SLACK_CHANNEL_ID_SNAPSHOT="${KNOWBEE_CHANNEL_SMOKE_SLACK_CHANNEL_ID:-}"
+readonly LIVE_SLACK_USER_ID_SNAPSHOT="${KNOWBEE_CHANNEL_SMOKE_SLACK_USER_ID:-}"
+readonly LIVE_SLACK_THREAD_TS_SNAPSHOT="${KNOWBEE_CHANNEL_SMOKE_SLACK_THREAD_TS:-}"
 LABEL_SUFFIX="$(printf '%s' "$ROOT_DIR" | cksum | awk '{print $1}')"
 GATEWAY_LAUNCHD_LABEL="com.sponzey.knowbee.${LABEL_SUFFIX}.gateway"
 WEBUI_LAUNCHD_LABEL="com.sponzey.knowbee.${LABEL_SUFFIX}.webui"
@@ -32,15 +42,26 @@ while [[ $# -gt 0 ]]; do
       RESTART_LOCAL="1"
       shift
       ;;
+    --live-acceptance)
+      LIVE_ACCEPTANCE="1"
+      shift
+      ;;
     *)
       echo "알 수 없는 옵션: $1"
-      echo "사용법: bash scripts/knowbee-start.sh [--admin-ui] [--restart]"
+      echo "사용법: bash scripts/knowbee-start.sh [--admin-ui] [--restart] [--live-acceptance]"
       exit 1
       ;;
   esac
 done
 
 mkdir -p "$PIDS_DIR" "$LOGS_DIR"
+
+NODE_RUNTIME_PATH="$(node -p 'process.execPath')"
+if [[ -z "$NODE_RUNTIME_PATH" || ! -x "$NODE_RUNTIME_PATH" ]]; then
+  echo "실제 Node 실행 파일을 확인하지 못했습니다."
+  exit 1
+fi
+readonly NODE_RUNTIME_PATH
 
 read_pid() {
   local pid_file="$1"
@@ -49,15 +70,11 @@ read_pid() {
 
 pid_alive() {
   local pid="$1"
+  local state
   [[ -z "$pid" ]] && return 1
-  kill -0 "$pid" >/dev/null 2>&1 && return 0
-  if command -v lsof >/dev/null 2>&1 && lsof -p "$pid" >/dev/null 2>&1; then
-    return 0
-  fi
-  if ps -p "$pid" >/dev/null 2>&1; then
-    return 0
-  fi
-  return 1
+  state="$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]')"
+  [[ -z "$state" || "$state" == Z* ]] && return 1
+  kill -0 "$pid" >/dev/null 2>&1
 }
 
 pid_command() {
@@ -82,7 +99,7 @@ pid_belongs_to_repo() {
 
   [[ "$cwd" == "$ROOT_DIR"* ]] && return 0
   [[ "$cmd" == *"$ROOT_DIR"* ]] && return 0
-  [[ "$cmd" == *"@knowbee/cli"* || "$cmd" == *"packages/cli/dist/index.js serve"* || "$cmd" == *"@knowbee/webui"* ]] && [[ "$cwd" == "$ROOT_DIR"* ]] && return 0
+  [[ "$cmd" == *"@knowbee/cli"* || "$cmd" == *"packages/core/dist/runtime/serve-bundle.js"* || "$cmd" == *"packages/cli/dist/serve-entry.js"* || "$cmd" == *"packages/cli/dist/index.js serve"* || "$cmd" == *"@knowbee/webui"* ]] && [[ "$cwd" == "$ROOT_DIR"* ]] && return 0
   return 1
 }
 
@@ -90,6 +107,20 @@ can_use_launchctl() {
   [[ "${KNOWBEE_DISABLE_LAUNCHCTL:-0}" != "1" ]] \
     && [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]] \
     && command -v launchctl >/dev/null 2>&1
+}
+
+live_targets_configured() {
+  [[ -n "$LIVE_TELEGRAM_CHAT_ID_SNAPSHOT" ]] \
+    || [[ -n "$LIVE_TELEGRAM_USER_ID_SNAPSHOT" ]] \
+    || [[ -n "$LIVE_TELEGRAM_THREAD_ID_SNAPSHOT" ]] \
+    || [[ -n "$LIVE_SLACK_CHANNEL_ID_SNAPSHOT" ]] \
+    || [[ -n "$LIVE_SLACK_USER_ID_SNAPSHOT" ]] \
+    || [[ -n "$LIVE_SLACK_THREAD_TS_SNAPSHOT" ]]
+}
+
+can_use_gateway_launchctl() {
+  can_use_launchctl || return 1
+  [[ "$LIVE_ACCEPTANCE" != "1" ]] || ! live_targets_configured
 }
 
 launchctl_job_pid() {
@@ -267,6 +298,7 @@ build_workspace() {
     cd "$ROOT_DIR"
     pnpm --filter @knowbee/core build
     pnpm --filter @knowbee/cli build
+    pnpm run gateway:bundle
   )
 }
 
@@ -323,9 +355,9 @@ ensure_core_native_dependencies() {
 extract_status_field() {
   local field="$1"
   local raw="$2"
-  STATUS_JSON="$raw" node -e '
+  node -e '
     const field = process.argv[1]
-    const raw = process.env.STATUS_JSON ?? ""
+    const raw = process.argv[2] ?? ""
     try {
       const data = JSON.parse(raw)
       const value = field.split(".").reduce((current, key) => current?.[key], data)
@@ -334,13 +366,13 @@ extract_status_field() {
     } catch {
       process.exit(1)
     }
-  ' "$field"
+  ' "$field" "$raw"
 }
 
 summarize_status_body() {
   local raw="$1"
-  STATUS_JSON="$raw" node -e '
-    const raw = process.env.STATUS_JSON ?? ""
+  node -e '
+    const raw = process.argv[1] ?? ""
     try {
       const data = JSON.parse(raw)
       const keys = Object.keys(data).slice(0, 20).join(", ")
@@ -352,7 +384,7 @@ summarize_status_body() {
       const compact = raw.replace(/\s+/g, " ").slice(0, 300)
       process.stdout.write(`non-json body=${compact}`)
     }
-  '
+  ' "$raw"
 }
 
 port_has_pid() {
@@ -377,13 +409,52 @@ first_repo_owned_port_pid() {
   return 1
 }
 
+is_redacted_internal_path() {
+  [[ "$1" == "[internal-path-redacted]" ]]
+}
+
 GATEWAY_HEALTH_DIAGNOSTIC_PRINTED="0"
+
+verify_gateway_health() {
+  local expected_pid="$1"
+  local body pid cwd listener_pid
+  body="$(curl -fsS --max-time 2 "http://$GATEWAY_HOST:$GATEWAY_PORT/api/health" 2>/dev/null || true)"
+  [[ -z "$body" ]] && return 1
+
+  pid="$(extract_status_field runtime.pid "$body" || true)"
+  if [[ -z "$pid" || ! "$pid" =~ ^[0-9]+$ ]]; then
+    echo "Gateway health 응답에서 runtime.pid를 확인하지 못했습니다."
+    return 1
+  fi
+
+  listener_pid="$(first_repo_owned_port_pid "$GATEWAY_PORT" || true)"
+  if [[ -z "$listener_pid" || "$listener_pid" != "$pid" ]]; then
+    echo "Gateway health PID와 실제 listener PID가 다릅니다. health=$pid listener=${listener_pid:-unknown}"
+    return 1
+  fi
+  if ! pid_alive "$pid" || ! pid_belongs_to_repo "$pid" || ! port_has_pid "$GATEWAY_PORT" "$pid"; then
+    echo "Gateway health PID가 현재 repo의 활성 listener가 아닙니다. pid=$pid"
+    return 1
+  fi
+
+  cwd="$(pid_cwd "$pid")"
+  if [[ "$cwd" != "$ROOT_DIR"* ]]; then
+    echo "Gateway cwd가 현재 repo가 아닙니다. expected=$ROOT_DIR actual=${cwd:-unknown}"
+    return 1
+  fi
+
+  if [[ "$pid" != "$expected_pid" ]]; then
+    echo "$pid" > "$GATEWAY_PID_FILE"
+    echo "Gateway health 응답 PID를 실제 listener PID로 갱신했습니다. launcher=$expected_pid runtime=$pid"
+  fi
+  echo "Gateway liveness 확인 완료: pid=$pid"
+}
 
 verify_gateway_status() {
   local expected_pid="$1"
   local body pid state_dir cwd display_version prompt_checksum listener_pid
   local pid_from_listener="0"
-  body="$(curl -fsS "http://$GATEWAY_HOST:$GATEWAY_PORT/api/status" 2>/dev/null || true)"
+  body="$(curl --max-time "$GATEWAY_STATUS_TIMEOUT_SECONDS" -fsS "http://$GATEWAY_HOST:$GATEWAY_PORT/api/status" 2>/dev/null || true)"
   [[ -z "$body" ]] && return 1
 
   pid="$(extract_status_field runtime.pid "$body" || true)"
@@ -419,9 +490,12 @@ verify_gateway_status() {
       return 1
     fi
   fi
-  if [[ "$state_dir" != "$STATE_DIR" ]]; then
+  if ! is_redacted_internal_path "$state_dir" && [[ "$state_dir" != "$STATE_DIR" ]]; then
     echo "Gateway stateDir가 예상과 다릅니다. expected=$STATE_DIR actual=${state_dir:-unknown}"
     return 1
+  fi
+  if is_redacted_internal_path "$cwd"; then
+    cwd="$(pid_cwd "$pid")"
   fi
   if [[ "$cwd" != "$ROOT_DIR"* ]]; then
     echo "Gateway cwd가 현재 repo가 아닙니다. expected=$ROOT_DIR actual=${cwd:-unknown}"
@@ -435,24 +509,31 @@ wait_for_http() {
   local name="$1"
   local url="$2"
   local pid_file="$3"
-  local verify_gateway="${4:-false}"
+  local timeout_seconds="$4"
+  local verify_gateway="${5:-false}"
+
+  if [[ ! "$timeout_seconds" =~ ^[0-9]+$ ]] || [[ "$timeout_seconds" -lt 1 ]]; then
+    echo "$name 준비 대기 제한이 올바르지 않습니다."
+    return 1
+  fi
 
   if ! command -v curl >/dev/null 2>&1; then
     sleep 3
     return 0
   fi
 
-  local pid
+  local pid deadline
   pid="$(read_pid "$pid_file")"
+  deadline=$((SECONDS + timeout_seconds))
 
-  for _ in $(seq 1 30); do
-    if curl -fsS "$url" >/dev/null 2>&1; then
+  while [[ "$SECONDS" -lt "$deadline" ]]; do
+    if curl --max-time 2 -fsS "$url" >/dev/null 2>&1; then
       if ! pid_alive "$pid"; then
         echo "$name 프로세스가 시작 중 종료되었습니다. 기존 프로세스나 포트 점유 상태를 확인해 주세요."
         return 1
       fi
       if [[ "$verify_gateway" == "true" ]]; then
-        verify_gateway_status "$pid" && return 0
+        verify_gateway_health "$pid" && return 0
       else
         return 0
       fi
@@ -470,14 +551,99 @@ wait_for_http() {
   return 1
 }
 
+cleanup_terminal_gateway_startup() {
+  local expected_pid="$1"
+  local current_job_pid=""
+
+  if can_use_launchctl; then
+    current_job_pid="$(launchctl_job_pid "$GATEWAY_LAUNCHD_LABEL")"
+    if [[ "$current_job_pid" == "$expected_pid" ]]; then
+      remove_launchctl_job "$GATEWAY_LAUNCHD_LABEL"
+    fi
+  fi
+
+  if pid_alive "$expected_pid" && pid_belongs_to_repo "$expected_pid"; then
+    kill "$expected_pid" >/dev/null 2>&1 || true
+    for _ in $(seq 1 20); do
+      pid_alive "$expected_pid" || break
+      sleep 0.25
+    done
+    if pid_alive "$expected_pid" && pid_belongs_to_repo "$expected_pid"; then
+      kill -9 "$expected_pid" >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if [[ "$(read_pid "$GATEWAY_PID_FILE")" == "$expected_pid" ]]; then
+    rm -f "$GATEWAY_PID_FILE"
+  fi
+  echo "Gateway terminal startup 대상을 정리했습니다: pid=$expected_pid"
+}
+
+wait_for_gateway_startup() {
+  local expected_pid="$1"
+  local minimum_started_at="$2"
+  local last_progress=""
+  local observer_result observer_status observer_state elapsed_ms performance reason_code progress
+
+  while true; do
+    observer_result="$("$NODE_RUNTIME_PATH" "$ROOT_DIR/scripts/observe-gateway-startup.mjs" \
+      --evidence "$STATE_DIR/gateway-startup.json" \
+      --pid "$expected_pid" \
+      --minimum-started-at "$minimum_started_at" \
+      --performance-budget-ms "$GATEWAY_STARTUP_PERFORMANCE_BUDGET_MS" \
+      --repo "$ROOT_DIR" \
+      --port "$GATEWAY_PORT")"
+    observer_status="$(extract_status_field status "$observer_result" || true)"
+    elapsed_ms="$(extract_status_field elapsedMs "$observer_result" || true)"
+
+    case "$observer_status" in
+      ready)
+        if verify_gateway_health "$expected_pid"; then
+          return 0
+        fi
+        observer_state="verifying_health"
+        ;;
+      failed|cancelled)
+        reason_code="$(extract_status_field reasonCode "$observer_result" || true)"
+        echo "Gateway 시작이 종료되었습니다: status=$observer_status reason=${reason_code:-unknown}"
+        cleanup_terminal_gateway_startup "$expected_pid"
+        return 1
+        ;;
+      still_starting)
+        observer_state="$(extract_status_field state "$observer_result" || true)"
+        performance="$(extract_status_field performance "$observer_result" || true)"
+        ;;
+      *)
+        echo "Gateway 시작 관찰 결과가 올바르지 않습니다."
+        return 1
+        ;;
+    esac
+
+    progress="${observer_state:-unknown}:${performance:-within_budget}"
+    if [[ "$progress" != "$last_progress" ]]; then
+      echo "Gateway 시작 단계: ${observer_state:-unknown} elapsedMs=${elapsed_ms:-unknown} performance=${performance:-within_budget}"
+      last_progress="$progress"
+    fi
+    sleep 1
+  done
+}
+
 start_gateway_nohup() {
   (
     cd "$ROOT_DIR"
     export KNOWBEE_STATE_DIR="$STATE_DIR"
-    export KNOWBEE_LOG_LEVEL="${KNOWBEE_LOG_LEVEL:-debug}"
+    export KNOWBEE_LOG_LEVEL="${KNOWBEE_LOG_LEVEL:-info}"
     export KNOWBEE_ADMIN_UI="$ADMIN_UI"
     export KNOWBEE_ADMIN_UI_SOURCE="local-script"
-    exec nohup node packages/cli/dist/index.js serve </dev/null
+    export KNOWBEE_LIVE_ACCEPTANCE="$LIVE_ACCEPTANCE"
+    export KNOWBEE_CHANNEL_SMOKE_LIVE="$LIVE_ACCEPTANCE"
+    export KNOWBEE_CHANNEL_SMOKE_TELEGRAM_CHAT_ID="$LIVE_TELEGRAM_CHAT_ID_SNAPSHOT"
+    export KNOWBEE_CHANNEL_SMOKE_TELEGRAM_USER_ID="$LIVE_TELEGRAM_USER_ID_SNAPSHOT"
+    export KNOWBEE_CHANNEL_SMOKE_TELEGRAM_THREAD_ID="$LIVE_TELEGRAM_THREAD_ID_SNAPSHOT"
+    export KNOWBEE_CHANNEL_SMOKE_SLACK_CHANNEL_ID="$LIVE_SLACK_CHANNEL_ID_SNAPSHOT"
+    export KNOWBEE_CHANNEL_SMOKE_SLACK_USER_ID="$LIVE_SLACK_USER_ID_SNAPSHOT"
+    export KNOWBEE_CHANNEL_SMOKE_SLACK_THREAD_TS="$LIVE_SLACK_THREAD_TS_SNAPSHOT"
+    exec nohup "$NODE_RUNTIME_PATH" packages/core/dist/runtime/serve-bundle.js </dev/null
   ) >>"$GATEWAY_LOG_FILE" 2>&1 &
   echo "$!" > "$GATEWAY_PID_FILE"
 }
@@ -492,12 +658,14 @@ start_gateway() {
   build_workspace
   ensure_core_native_dependencies
 
+  local gateway_started_at_ms
+  gateway_started_at_ms="$("$NODE_RUNTIME_PATH" -e 'process.stdout.write(String(Date.now()))')"
   echo "Gateway를 시작합니다..."
-  if can_use_launchctl; then
+  if can_use_gateway_launchctl; then
     remove_launchctl_job "$GATEWAY_LAUNCHD_LABEL"
     local command
-    printf -v command 'cd %q && export KNOWBEE_STATE_DIR=%q KNOWBEE_LOG_LEVEL=%q KNOWBEE_ADMIN_UI=%q KNOWBEE_ADMIN_UI_SOURCE=%q PATH=%q && exec node packages/cli/dist/index.js serve >>%q 2>&1' \
-      "$ROOT_DIR" "$STATE_DIR" "${KNOWBEE_LOG_LEVEL:-debug}" "$ADMIN_UI" "local-script" "$PATH" "$GATEWAY_LOG_FILE"
+    printf -v command 'cd %q && export KNOWBEE_STATE_DIR=%q KNOWBEE_LOG_LEVEL=%q KNOWBEE_ADMIN_UI=%q KNOWBEE_ADMIN_UI_SOURCE=%q KNOWBEE_LIVE_ACCEPTANCE=%q KNOWBEE_CHANNEL_SMOKE_LIVE=%q PATH=%q && exec %q packages/core/dist/runtime/serve-bundle.js >>%q 2>&1' \
+      "$ROOT_DIR" "$STATE_DIR" "${KNOWBEE_LOG_LEVEL:-info}" "$ADMIN_UI" "local-script" "$LIVE_ACCEPTANCE" "$LIVE_ACCEPTANCE" "$PATH" "$NODE_RUNTIME_PATH" "$GATEWAY_LOG_FILE"
     if launchctl submit -l "$GATEWAY_LAUNCHD_LABEL" -- /bin/bash -lc "$command"; then
       if ! wait_launchctl_pid "Gateway" "$GATEWAY_LAUNCHD_LABEL" "$GATEWAY_PID_FILE"; then
         echo "Gateway launchctl PID 확인에 실패해 nohup 방식으로 전환합니다."
@@ -513,17 +681,25 @@ start_gateway() {
     start_gateway_nohup
   fi
 
-  if ! wait_for_http "Gateway" "http://$GATEWAY_HOST:$GATEWAY_PORT/api/status" "$GATEWAY_PID_FILE" true; then
+  local launched_pid
+  launched_pid="$(read_pid "$GATEWAY_PID_FILE")"
+  if ! wait_for_gateway_startup "$launched_pid" "$gateway_started_at_ms"; then
     echo "Gateway 로그:"
     tail -n 100 "$GATEWAY_LOG_FILE" || true
     return 1
+  fi
+
+  local runtime_pid
+  runtime_pid="$(read_pid "$GATEWAY_PID_FILE")"
+  if ! verify_gateway_status "$runtime_pid"; then
+    echo "Gateway 상세 상태 조회를 건너뜁니다. liveness와 repo 소유권은 확인되었습니다."
   fi
 }
 
 start_webui_nohup() {
   (
     cd "$ROOT_DIR"
-    export KNOWBEE_LOG_LEVEL="${KNOWBEE_LOG_LEVEL:-debug}"
+    export KNOWBEE_LOG_LEVEL="${KNOWBEE_LOG_LEVEL:-info}"
     exec nohup pnpm --filter @knowbee/webui exec vite --host "$WEBUI_HOST" --port "$WEBUI_PORT" --strictPort </dev/null
   ) >>"$WEBUI_LOG_FILE" 2>&1 &
   echo "$!" > "$WEBUI_PID_FILE"
@@ -542,7 +718,7 @@ start_webui() {
     remove_launchctl_job "$WEBUI_LAUNCHD_LABEL"
     local command
     printf -v command 'cd %q && export KNOWBEE_LOG_LEVEL=%q PATH=%q && exec pnpm --filter @knowbee/webui exec vite --host %q --port %q --strictPort >>%q 2>&1' \
-      "$ROOT_DIR" "${KNOWBEE_LOG_LEVEL:-debug}" "$PATH" "$WEBUI_HOST" "$WEBUI_PORT" "$WEBUI_LOG_FILE"
+      "$ROOT_DIR" "${KNOWBEE_LOG_LEVEL:-info}" "$PATH" "$WEBUI_HOST" "$WEBUI_PORT" "$WEBUI_LOG_FILE"
     if launchctl submit -l "$WEBUI_LAUNCHD_LABEL" -- /bin/bash -lc "$command"; then
       if ! wait_launchctl_pid "WebUI" "$WEBUI_LAUNCHD_LABEL" "$WEBUI_PID_FILE"; then
         echo "WebUI launchctl PID 확인에 실패해 nohup 방식으로 전환합니다."
@@ -558,9 +734,21 @@ start_webui() {
     start_webui_nohup
   fi
 
-  if ! wait_for_http "WebUI" "http://$WEBUI_HOST:$WEBUI_PORT" "$WEBUI_PID_FILE" false; then
+  if ! wait_for_http "WebUI" "http://$WEBUI_HOST:$WEBUI_PORT" "$WEBUI_PID_FILE" "$WEBUI_STARTUP_TIMEOUT_SECONDS" false; then
     echo "WebUI 로그:"
     tail -n 100 "$WEBUI_LOG_FILE" || true
+    return 1
+  fi
+}
+
+verify_live_acceptance_readiness() {
+  [[ "$LIVE_ACCEPTANCE" == "1" ]] || return 0
+  echo "Live acceptance 준비 상태를 확인합니다..."
+  if ! (
+    cd "$ROOT_DIR"
+    node packages/cli/dist/index.js smoke acceptance --check --json
+  ); then
+    echo "Live acceptance executor가 준비되지 않았습니다. Gateway는 실행 상태를 유지합니다."
     return 1
   fi
 }
@@ -592,13 +780,25 @@ truncate_logs
 start_gateway
 start_webui
 
+LIVE_ACCEPTANCE_READINESS="disabled"
+if [[ "$LIVE_ACCEPTANCE" == "1" ]]; then
+  if verify_live_acceptance_readiness; then
+    LIVE_ACCEPTANCE_READINESS="ready"
+  else
+    LIVE_ACCEPTANCE_READINESS="unavailable"
+  fi
+fi
+
 echo
 echo "스폰지 노비 · Sponzey Knowbee 로컬 실행이 완료되었습니다."
 echo "  Gateway : http://$GATEWAY_HOST:$GATEWAY_PORT"
 echo "  WebUI   : http://$WEBUI_HOST:$WEBUI_PORT"
 echo "  Admin UI: $([[ "$ADMIN_UI" == "1" ]] && echo enabled || echo disabled)"
+echo "  Live acceptance: $LIVE_ACCEPTANCE_READINESS"
 echo "  State   : $STATE_DIR"
 echo "  Logs    : $GATEWAY_LOG_FILE / $WEBUI_LOG_FILE"
 echo "  Status  : bash scripts/status-local.sh"
 echo "  Restart : bash scripts/knowbee-start.sh --restart"
 echo "  Stop    : bash scripts/stop-local.sh"
+
+[[ "$LIVE_ACCEPTANCE_READINESS" != "unavailable" ]]

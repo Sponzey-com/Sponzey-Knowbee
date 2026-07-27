@@ -1,6 +1,7 @@
 import type { DataExchangePackage, ExpectedOutputContract, OrchestrationMode, SubSessionStatus } from "../contracts/sub-agent-orchestration.js";
 import { type TopologyRunTraceProjection } from "../topology-runtime/trace.js";
 import type { RootRun } from "./types.js";
+import type { RuntimeInspectorTypedTraceProjection } from "./runtime-inspector-typed-trace.js";
 export type RuntimeInspectorControlAction = "send" | "steer" | "retry" | "feedback" | "redelegate" | "cancel" | "kill";
 export type RuntimeInspectorApprovalState = "not_required" | "required" | "approved" | "denied" | "pending";
 export interface RuntimeInspectorAllowedControlAction {
@@ -44,7 +45,7 @@ export interface RunRuntimeInspectorFeedback {
     status: "none" | "requested" | "redelegation_requested";
     feedbackRequestId?: string;
     targetAgentId?: string;
-    targetAgentNickname?: string;
+    targetAgentNameSnapshot?: string;
     reasonCode?: string;
     missingItemCount?: number;
     requiredChangeCount?: number;
@@ -74,8 +75,8 @@ export interface RunRuntimeInspectorSubSession {
     resultReturnTargetAgentId?: string;
     resultReturnTargetSubSessionId?: string;
     agentId: string;
-    agentDisplayName: string;
-    agentNickname?: string;
+    agentName: string;
+    agentNameSnapshot?: string;
     status: SubSessionStatus;
     commandSummary: string;
     expectedOutputs: RunRuntimeInspectorExpectedOutput[];
@@ -93,9 +94,11 @@ export interface RunRuntimeInspectorSubSession {
 export interface RunRuntimeInspectorDataExchangeSummary {
     exchangeId: string;
     sourceOwnerId: string;
-    sourceNickname?: string;
+    sourceAgentName?: string;
+    sourceAgentNameSnapshot?: string;
     recipientOwnerId: string;
-    recipientNickname?: string;
+    recipientAgentName?: string;
+    recipientAgentNameSnapshot?: string;
     purpose: string;
     allowedUse: DataExchangePackage["allowedUse"];
     retentionPolicy: DataExchangePackage["retentionPolicy"];
@@ -249,6 +252,7 @@ export interface RunRuntimeInspectorProjection {
     timeline: RunRuntimeInspectorTimelineEvent[];
     topologyRuns: RunRuntimeInspectorTopologyRun[];
     finalizer: RunRuntimeInspectorFinalizer;
+    typedTrace: RuntimeInspectorTypedTraceProjection;
     redaction: {
         payloadsRedacted: true;
         rawPayloadVisible: false;
@@ -268,6 +272,8 @@ export interface RunRuntimeInspectorRequestIdentity {
 export interface RunRuntimeInspectorProjectionOptions {
     now?: number;
     limit?: number;
+    rootAgentNameSnapshot?: string;
+    typedTrace?: RuntimeInspectorTypedTraceProjection | undefined;
 }
 export declare function buildRunRuntimeInspectorProjection(run: RootRun, options?: RunRuntimeInspectorProjectionOptions): RunRuntimeInspectorProjection;
 //# sourceMappingURL=runtime-inspector-projection.d.ts.map

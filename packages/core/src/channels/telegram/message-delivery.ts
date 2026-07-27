@@ -1,4 +1,5 @@
 import { InputFile } from "grammy"
+import { redactLogText } from "../../logger/index.js"
 import {
   createRawPayloadRef,
   resolveDeliveryReceiptStatus,
@@ -6,6 +7,11 @@ import {
   type DeliveryReceipt,
 } from "../contracts.js"
 import { splitMessage } from "./markdown.js"
+
+function telegramDeliveryErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 
 export interface TelegramMessageDeliveryApi {
   sendMessage: (
@@ -172,7 +178,7 @@ export function buildTelegramFailedDeliveryReceipt(params: {
   error: unknown
   timestamp?: number
 }): DeliveryReceipt {
-  const message = params.error instanceof Error ? params.error.message : String(params.error)
+  const message = telegramDeliveryErrorMessage(params.error)
   return {
     channelId: "telegram:primary",
     provider: "telegram",

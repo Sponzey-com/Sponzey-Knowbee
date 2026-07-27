@@ -42,14 +42,14 @@ function createContext(overrides: Partial<AgentExecutionContext> = {}): AgentExe
     },
     current_executor: {
       executor_id: "node:intake",
-      display_name: "접수",
+      agent_name: "접수",
       role_name: "요청 정리",
       can_delegate: true,
       available: true,
     },
     parent_executor: {
       executor_id: "node:lead",
-      display_name: "상위 실행자",
+      agent_name: "상위 실행자",
       can_delegate: true,
       available: true,
     },
@@ -60,14 +60,14 @@ function createContext(overrides: Partial<AgentExecutionContext> = {}): AgentExe
     accessible_executors: [
       {
         executor_id: "node:planner",
-        display_name: "계획",
+        agent_name: "계획",
         role_name: "계획 담당",
         can_delegate: true,
         available: true,
       },
       {
         executor_id: "node:offline",
-        display_name: "비활성 실행자",
+        agent_name: "비활성 실행자",
         can_delegate: false,
         available: false,
       },
@@ -229,7 +229,7 @@ describe("task023 execution harness", () => {
     expect(result.decisionTrace.selected_executor_id).toBe("node:planner")
   })
 
-  it("normalizes exact direct-child display names and partial task split objects", async () => {
+  it("normalizes exact direct-child agent names and partial task split objects", async () => {
     const result = await runAgentExecutionHarness({
       context: createContext(),
       callModel: async () => JSON.stringify({
@@ -239,10 +239,10 @@ describe("task023 execution harness", () => {
         selected_executor_ids: ["계획"],
         selected_connection_path: ["node:planner"],
         task_split: [{
-          executor: { display_name: "계획" },
+          executor: { agent_name: "계획" },
           goal: "요청을 실행 가능한 계획으로 나눈다.",
         }],
-        reason: "The exact direct-child display name resolves to a visible executor id.",
+        reason: "The exact direct-child agent name resolves to a visible executor id.",
       }),
     })
 

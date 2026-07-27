@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import { closeDb, listQueueBackpressureEvents } from "../packages/core/src/db/index.js"
 import { runDoctor } from "../packages/core/src/diagnostics/doctor.ts"
 import { listAuditEvents } from "../packages/core/src/api/routes/audit.ts"
@@ -16,24 +17,23 @@ import {
 } from "../packages/core/src/runs/queue-backpressure.ts"
 import { deliverChunk } from "../packages/core/src/runs/delivery.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempConfig(): void {
   closeDb()
   resetQueueBackpressureState()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task005-queue-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task005-queue-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: `{
     ai: { connection: { provider: "ollama", model: "llama3.2", endpoint: "http://127.0.0.1:11434" } },
     webui: { enabled: true, host: "127.0.0.1", port: 0, auth: { enabled: false } },
     security: { approvalMode: "off" }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  }`,
+  })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 beforeEach(() => {
@@ -43,11 +43,6 @@ beforeEach(() => {
 afterEach(() => {
   resetQueueBackpressureState()
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -150,7 +145,7 @@ describe("task005 queue backpressure", () => {
   it("surfaces backpressure status through doctor and user messages", () => {
     recordQueueRecoveryAttempt({ queueName: "tool_execution", recoveryKey: "yeonjang:mqtt:disconnect" })
 
-    const report = runDoctor({ mode: "quick", includeEnvironment: false, includeReleasePackage: false })
+    const report = runDoctor({ config: runtimeFixture.config, paths: runtimeFixture.paths, mode: "quick", includeEnvironment: false, includeReleasePackage: false })
     const queueCheck = report.checks.find((check) => check.name === "queue.backpressure")
     expect(queueCheck?.status).toBe("ok")
     expect(buildBackpressureUserMessage("waiting", "web_browser")).toContain("실패가 아니라")

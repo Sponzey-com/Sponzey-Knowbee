@@ -1,4 +1,5 @@
 import type { ChannelSource } from "../channels/contracts.js";
+import type { MqttConfig } from "../config/types.js";
 import { type MqttExtensionSnapshot } from "../mqtt/broker.js";
 export interface YeonjangRequestEnvelope {
     id: string;
@@ -39,6 +40,7 @@ export interface YeonjangClientOptions {
     timeoutMs?: number;
     forceRefresh?: boolean;
     metadata?: YeonjangRequestMetadata;
+    mqttConfig?: MqttConfig;
 }
 export interface YeonjangCommandDispatch {
     requestId: string;

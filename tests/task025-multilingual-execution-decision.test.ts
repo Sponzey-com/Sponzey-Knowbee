@@ -13,7 +13,7 @@ import {
 
 const financeExecutor: AgentExecutionExecutorProfile = {
   executor_id: "node:finance",
-  display_name: "행랑아범",
+  agent_name: "행랑아범",
   role_name: "Financial market analyst",
   definition: [
     "Reads market context, public company facts, portfolio suitability, and investment risk.",
@@ -25,7 +25,7 @@ const financeExecutor: AgentExecutionExecutorProfile = {
 
 const generalExecutor: AgentExecutionExecutorProfile = {
   executor_id: "node:general",
-  display_name: "일반 정리 담당",
+  agent_name: "일반 정리 담당",
   role_name: "General answerer",
   definition: "Handles ordinary answers when no specialized executor definition fits.",
   can_delegate: false,
@@ -61,7 +61,7 @@ function contextFor(message: string, overrides: Partial<AgentExecutionContext> =
     },
     current_executor: {
       executor_id: "agent:knowbee",
-      display_name: "노비",
+      agent_name: "노비",
       role_name: "Root agent",
       definition: "Receives channel requests and delegates to visible executor profiles when useful.",
       can_delegate: true,
@@ -223,12 +223,12 @@ describe("task025 multilingual execution decision", () => {
     ]))
   })
 
-  it("falls back to root Knowbee direct handling when no entry executor or child profile is available", async () => {
+  it("falls back to root main-agent direct handling when no entry executor or child profile is available", async () => {
     const result = await runAgentExecutionHarness({
       context: contextFor("정의되지 않은 요청", {
         current_executor: {
           executor_id: "agent:knowbee",
-          display_name: "노비",
+          agent_name: "노비",
           can_delegate: true,
           available: false,
         },

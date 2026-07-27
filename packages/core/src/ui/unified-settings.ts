@@ -1,4 +1,4 @@
-export type UnifiedSettingsMode = "single_knowbee" | "orchestration"
+export type UnifiedSettingsMode = "direct_main_agent" | "orchestration"
 export type UnifiedSettingsMonitoringState = "idle" | "loaded" | "stale" | "partial" | "failed"
 export type UnifiedSettingsMonitoringTone = "info" | "warning" | "success" | "error"
 
@@ -37,8 +37,7 @@ export interface UnifiedSettingsTransitionResult {
 
 export interface UnifiedSettingsRootAgentInput {
   id: string
-  displayName: string
-  nickname?: string | undefined
+  agentName?: string | undefined
 }
 
 export interface UnifiedSettingsAgentDetailInput {
@@ -103,8 +102,7 @@ export interface UnifiedSettingsMonitoringTraceInput {
 
 export interface UnifiedSettingsAgentInput {
   id: string
-  displayName: string
-  nickname?: string | undefined
+  agentName?: string | undefined
   role?: string | undefined
   workDescription?: string | undefined
   parentId?: string | undefined
@@ -116,18 +114,17 @@ export type UnifiedSettingsReadinessSeverity = "attention" | "blocked"
 
 export type UnifiedSettingsReadinessIssueCode =
   | "sub_agent_required"
-  | "display_name_required"
+  | "agent_name_required"
   | "role_required"
   | "work_description_required"
-  | "display_name_duplicate"
-  | "nickname_duplicate"
+  | "agent_name_duplicate"
   | "reserved_root_name"
 
 export interface UnifiedSettingsReadinessIssue {
   code: UnifiedSettingsReadinessIssueCode
   severity: UnifiedSettingsReadinessSeverity
   agentId?: string | undefined
-  field?: "displayName" | "nickname" | "role" | "workDescription" | undefined
+  field?: "agentName" | "role" | "workDescription" | undefined
 }
 
 export interface EvaluateUnifiedSettingsReadinessInput {
@@ -143,6 +140,10 @@ export interface UnifiedSettingsReadinessResult {
 }
 
 const RESERVED_ROOT_NAMES = new Set(["knowbee", "노비"])
+
+function normalizeUnifiedSettingsMode(value: unknown): UnifiedSettingsMode {
+  return value === "orchestration" ? "orchestration" : "direct_main_agent"
+}
 
 const TRANSITIONS: Record<UnifiedSettingsLifecycleState, Partial<Record<UnifiedSettingsLifecycleEvent["type"], UnifiedSettingsLifecycleState>>> = {
   empty: {
@@ -214,11 +215,13 @@ export function transitionUnifiedSettingsState(
 
 export function evaluateUnifiedSettingsReadiness(input: EvaluateUnifiedSettingsReadinessInput): UnifiedSettingsReadinessResult {
   const issues: UnifiedSettingsReadinessIssue[] = []
-  if (input.mode === "single_knowbee" && input.agents.length === 0) {
-    return { status: "skipped", issues, reasonCodes: ["single_knowbee_without_sub_agents"] }
+  const mode = normalizeUnifiedSettingsMode(input.mode)
+
+  if (mode === "direct_main_agent" && input.agents.length === 0) {
+    return { status: "skipped", issues, reasonCodes: ["direct_main_agent_without_sub_agents"] }
   }
 
-  if (input.mode === "orchestration" && input.agents.length === 0) {
+  if (mode === "orchestration" && input.agents.length === 0) {
     issues.push({ code: "sub_agent_required", severity: "attention" })
   }
 
@@ -234,8 +237,8 @@ export function evaluateUnifiedSettingsReadiness(input: EvaluateUnifiedSettingsR
 
 function pushRequiredFieldIssues(issues: UnifiedSettingsReadinessIssue[], agents: UnifiedSettingsAgentInput[]): void {
   for (const item of agents) {
-    if (!item.displayName.trim()) {
-      issues.push({ code: "display_name_required", severity: "attention", agentId: item.id, field: "displayName" })
+    if (!agentNameForReadiness(item)) {
+      issues.push({ code: "agent_name_required", severity: "attention", agentId: item.id, field: "agentName" })
     }
     if (!item.role?.trim()) {
       issues.push({ code: "role_required", severity: "attention", agentId: item.id, field: "role" })
@@ -251,34 +254,28 @@ function pushReservedNameIssues(
   rootAgent: UnifiedSettingsRootAgentInput,
   agents: UnifiedSettingsAgentInput[],
 ): void {
-  const reserved = new Set([...RESERVED_ROOT_NAMES, normalizeName(rootAgent.displayName), normalizeName(rootAgent.nickname)])
+  const reserved = new Set([
+    ...RESERVED_ROOT_NAMES,
+    normalizeName(rootAgent.agentName),
+  ].filter(Boolean))
   for (const item of agents) {
-    if (reserved.has(normalizeName(item.displayName)) || reserved.has(normalizeName(item.nickname))) {
-      issues.push({ code: "reserved_root_name", severity: "blocked", agentId: item.id })
+    if (reserved.has(normalizeName(agentNameForReadiness(item)))) {
+      issues.push({ code: "reserved_root_name", severity: "blocked", agentId: item.id, field: "agentName" })
     }
   }
 }
 
 function pushDuplicateIssues(issues: UnifiedSettingsReadinessIssue[], agents: UnifiedSettingsAgentInput[]): void {
   const names = new Map<string, UnifiedSettingsAgentInput[]>()
-  const nicknames = new Map<string, UnifiedSettingsAgentInput[]>()
 
   for (const item of agents) {
-    pushGrouped(names, normalizeName(item.displayName), item)
-    pushGrouped(nicknames, normalizeName(item.nickname), item)
+    pushGrouped(names, normalizeName(agentNameForReadiness(item)), item)
   }
 
   for (const items of names.values()) {
     if (items.length < 2) continue
     for (const item of items) {
-      issues.push({ code: "display_name_duplicate", severity: "blocked", agentId: item.id, field: "displayName" })
-    }
-  }
-
-  for (const items of nicknames.values()) {
-    if (items.length < 2) continue
-    for (const item of items) {
-      issues.push({ code: "nickname_duplicate", severity: "blocked", agentId: item.id, field: "nickname" })
+      issues.push({ code: "agent_name_duplicate", severity: "blocked", agentId: item.id, field: "agentName" })
     }
   }
 }
@@ -295,6 +292,10 @@ function pushGrouped(groups: Map<string, UnifiedSettingsAgentInput[]>, key: stri
 
 function normalizeName(value: string | undefined): string {
   return (value ?? "").trim().toLocaleLowerCase()
+}
+
+function agentNameForReadiness(item: UnifiedSettingsAgentInput): string {
+  return item.agentName?.trim() ?? ""
 }
 
 export type UnifiedSettingsLocale = "ko" | "en"
@@ -430,15 +431,19 @@ interface SanitizedText {
   redactedCount: number
 }
 
-export function buildUnifiedSettingsViewModel(input: BuildUnifiedSettingsViewModelInput): UnifiedSettingsViewModel {
+export function buildUnifiedSettingsViewModel(rawInput: BuildUnifiedSettingsViewModelInput): UnifiedSettingsViewModel {
+  const input: BuildUnifiedSettingsViewModelInput = {
+    ...rawInput,
+    mode: normalizeUnifiedSettingsMode(rawInput.mode),
+  }
   const readiness = evaluateUnifiedSettingsReadiness(input)
   const labels = buildUnifiedSettingsLabels(input.locale)
-  const rootLabel = sanitizeText(input.rootAgent.nickname ?? input.rootAgent.displayName, input.productName)
+  const rootLabel = sanitizeText(input.rootAgent.agentName, input.productName)
   const redactionCounter = { count: rootLabel.redactedCount }
   const childCountByParentId = countChildrenByParentId(input)
   const labelByAgentId = new Map<string, string>([[input.rootAgent.id, rootLabel.value]])
   const agents = input.agents.map((item): UnifiedSettingsAgentView => {
-    const label = firstSafeText([item.nickname, item.displayName], labels.fallbackAgentLabel)
+    const label = firstSafeText([item.agentName], labels.fallbackAgentLabel)
     const role = sanitizeText(item.role, labels.fallbackRole)
     const description = sanitizeText(item.workDescription, labels.fallbackDescription)
     const status = readinessStatusForAgent(readiness, item.id)
@@ -529,7 +534,10 @@ function buildUnifiedSettingsLabels(locale: UnifiedSettingsLocale) {
       },
       detail: {
         model: "Model",
-        skillMcp: "Skill/MCP",
+        skillMcp: "Work Abilities / External Features",
+        workAbilityCount: "Work abilities",
+        externalFeatureCount: "External features",
+        toolCount: "Tools",
         memory: "Memory",
         permissions: "Permissions",
         delegation: "Delegation",
@@ -587,7 +595,10 @@ function buildUnifiedSettingsLabels(locale: UnifiedSettingsLocale) {
     },
     detail: {
       model: "모델",
-      skillMcp: "Skill/MCP",
+      skillMcp: "작업 능력/외부 기능",
+      workAbilityCount: "작업 능력",
+      externalFeatureCount: "외부 기능",
+      toolCount: "도구",
       memory: "메모리",
       permissions: "권한",
       delegation: "위임",
@@ -773,7 +784,7 @@ function buildSkillMcpDetailSection(
     id: "skill_mcp",
     title: labels.detail.skillMcp,
     status: total > 0 ? "ready" : "idle",
-    summary: `Skill ${skillCount}, MCP ${mcpCount}, Tool ${toolCount}`,
+    summary: `${labels.detail.workAbilityCount} ${skillCount}, ${labels.detail.externalFeatureCount} ${mcpCount}, ${labels.detail.toolCount} ${toolCount}`,
     itemCount: total,
   }
 }

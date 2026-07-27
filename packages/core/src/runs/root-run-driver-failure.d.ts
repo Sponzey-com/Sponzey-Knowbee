@@ -1,6 +1,6 @@
-import { deliverChunk, type RunChunkDeliveryHandler } from "./delivery.js";
+import type { RunChunkDeliveryHandler } from "./delivery.js";
 import { applyFatalFailure } from "./failure-application.js";
-import type { FinalizationSource } from "./finalization.js";
+import { completeRunWithAssistantMessage, type FinalizationDependencies, type FinalizationSource, type StandaloneAssistantMessageResponseContext } from "./finalization.js";
 interface RootRunDriverFailureDependencies {
     appendRunEvent: (runId: string, message: string) => void;
     setRunStepStatus: (runId: string, step: string, status: "pending" | "running" | "completed" | "failed" | "cancelled", summary: string) => void;
@@ -15,10 +15,11 @@ interface RootRunDriverFailureDependencies {
     }) => void;
     markAbortedRunCancelledIfActive: (runId: string) => void;
     onDeliveryError?: (message: string) => void;
+    finalizationDependencies?: FinalizationDependencies | undefined;
 }
 interface RootRunDriverFailureModuleDependencies {
     applyFatalFailure: typeof applyFatalFailure;
-    deliverChunk: typeof deliverChunk;
+    completeRunWithAssistantMessage: typeof completeRunWithAssistantMessage;
 }
 export declare function applyRootRunDriverFailure(params: {
     runId: string;
@@ -26,7 +27,9 @@ export declare function applyRootRunDriverFailure(params: {
     source: FinalizationSource;
     onChunk: RunChunkDeliveryHandler | undefined;
     aborted: boolean;
-    message: string;
+    failure: unknown;
+    message?: string | undefined;
+    responseContext?: StandaloneAssistantMessageResponseContext | undefined;
 }, dependencies: RootRunDriverFailureDependencies, moduleDependencies?: RootRunDriverFailureModuleDependencies): Promise<void>;
 export {};
 //# sourceMappingURL=root-run-driver-failure.d.ts.map

@@ -1,4 +1,4 @@
-import { type AIProvider } from "../ai/index.js";
+import { type AIProvider, type AIProviderConfigSnapshot } from "../ai/index.js";
 import { type ActiveRunContractProjection } from "./active-run-projection.js";
 import { type IntentContract } from "../contracts/index.js";
 export type RequestContinuationDecisionKind = "same_run" | "new_run" | "clarify" | "cancel_target" | "update_target";
@@ -24,6 +24,7 @@ export declare function compareRequestContinuationWithAI(params: {
     model?: string;
     providerId?: string;
     provider?: AIProvider;
+    config?: AIProviderConfigSnapshot;
     timeoutMs?: number;
 }): Promise<RequestContinuationDecision>;
 export declare function buildRequestContinuationSystemPrompt(options?: {

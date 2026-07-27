@@ -6,8 +6,7 @@ export type SubAgentReadinessDimension = "identity" | "model" | "skill_mcp" | "m
 export type SubAgentStateLabel = "draft_only" | "unsaved_changes" | "pending_runtime_activation" | "runtime_drift" | "running" | "saved" | "archived";
 export interface SubAgentRootRef {
     agentId: string;
-    displayName: string;
-    nickname?: string | undefined;
+    agentName?: string | undefined;
 }
 export interface SubAgentRuntimeProjectionInput {
     activeAgentIds?: string[];
@@ -45,8 +44,7 @@ export interface SubAgentReadinessView {
 }
 export interface SubAgentSummaryView {
     id: string;
-    displayName: string;
-    nickname?: string | undefined;
+    agentName: string;
     displayLabel: string;
     attributionLabel: string;
     role: string;
@@ -66,7 +64,7 @@ export interface BeginnerSubAgentCardView extends SubAgentSummaryView {
     lastStateLabel: SubAgentStateLabel;
 }
 export interface BeginnerSubAgentSetupView {
-    orchestrationMode: "single_knowbee" | "orchestration";
+    orchestrationMode: "direct_main_agent" | "orchestration";
     summary: {
         rootDisplayName: string;
         topLevelAgentCount: number;
@@ -87,8 +85,7 @@ export interface AdvancedSubAgentDetailView {
     summary: SubAgentSummaryView;
     identity: {
         agentId: string;
-        displayName: string;
-        nickname?: string | undefined;
+        agentName: string;
         displayLabel: string;
         attributionLabel: string;
         role: string;
@@ -187,8 +184,7 @@ export interface CreateSubAgentBasicCommand {
     kind: "create_basic";
     source: Extract<SubAgentSettingsSource, "beginner" | "advanced">;
     parentAgentId: string;
-    displayName: string;
-    nickname?: string | undefined;
+    agentName: string;
     role: string;
     description: string;
     initialLifecycleState: "draft" | "saved";
@@ -198,8 +194,7 @@ export interface UpdateSubAgentIdentityCommand {
     kind: "update_identity";
     source: SubAgentSettingsSource;
     agentId: string;
-    displayName: string;
-    nickname?: string | undefined;
+    agentName: string;
     role: string;
     description: string;
     attributionLabel?: string | undefined;
@@ -269,7 +264,7 @@ export interface ArchiveSubAgentCommand {
     replacementAgentId?: string | undefined;
 }
 export type SubAgentSettingsCommand = CreateSubAgentBasicCommand | UpdateSubAgentIdentityCommand | UpdateSubAgentModelPolicyCommand | UpdateSubAgentSkillMcpBindingsCommand | UpdateSubAgentMemoryPolicyCommand | UpdateSubAgentCapabilityPolicyCommand | UpdateSubAgentDelegationPolicyCommand | PublishSubAgentTopologyCommand | ArchiveSubAgentCommand;
-export type SubAgentSettingsValidationCode = "agent_missing" | "parent_missing" | "display_name_required" | "attribution_label_required" | "nickname_duplicate" | "reserved_knowbee_name" | "catalog_id_missing" | "catalog_item_unavailable" | "model_id_missing" | "model_provider_unavailable" | "fallback_model_same_as_primary" | "archived_agent_not_editable" | "memory_owner_scope_mismatch" | "permission_escalation_requires_advanced" | "delegation_target_not_direct_child" | "delegation_target_self" | "delegation_target_unavailable" | "direct_child_only_required" | "invalid_numeric_limit" | "archive_requires_replacement_or_no_children";
+export type SubAgentSettingsValidationCode = "agent_missing" | "parent_missing" | "agent_name_required" | "attribution_label_required" | "agent_name_duplicate" | "reserved_knowbee_name" | "catalog_id_missing" | "catalog_item_unavailable" | "model_id_missing" | "model_provider_unavailable" | "fallback_model_same_as_primary" | "archived_agent_not_editable" | "memory_owner_scope_mismatch" | "permission_escalation_requires_advanced" | "delegation_target_not_direct_child" | "delegation_target_self" | "delegation_target_unavailable" | "direct_child_only_required" | "invalid_numeric_limit" | "archive_requires_replacement_or_no_children";
 export interface SubAgentSettingsValidationIssue {
     path: string;
     code: SubAgentSettingsValidationCode;

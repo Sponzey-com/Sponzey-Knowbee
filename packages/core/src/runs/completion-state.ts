@@ -51,10 +51,12 @@ export function deriveCompletionEvidenceState(params: {
   const textResponseSatisfied =
     params.preview.trim().length > 0
     && allowsTextOnlyCompletion({ executionSemantics: params.executionSemantics })
+  const verifiedToolEvidence = params.successfulTools.some(isVerifiedYeonjangCompletionEvidence)
 
   const executionSatisfied =
-    params.successfulTools.length > 0
+    params.deliverySatisfied
     || params.sawRealFilesystemMutation
+    || verifiedToolEvidence
     || textResponseSatisfied
 
   const deliveryRequired = params.executionSemantics.artifactDelivery === "direct"
@@ -89,6 +91,24 @@ export function deriveCompletionEvidenceState(params: {
   }
 }
 
+function isVerifiedYeonjangCompletionEvidence(tool: SuccessfulToolEvidence): boolean {
+  const details = tool.details
+  if (!details || typeof details !== "object" || Array.isArray(details)) return false
+  const evidence = (details as Record<string, unknown>).evidence
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return false
+  const postCheck = (evidence as Record<string, unknown>).postCheck
+  if (!postCheck || typeof postCheck !== "object" || Array.isArray(postCheck)) return false
+  return (details as Record<string, unknown>).via === "yeonjang"
+    && (evidence as Record<string, unknown>).schemaVersion === "yeonjang-evidence-v1"
+    && (
+      (postCheck as Record<string, unknown>).kind === "goal_validated"
+      || (
+        (postCheck as Record<string, unknown>).kind === "verified"
+        && (postCheck as Record<string, unknown>).verified === true
+      )
+    )
+}
+
 export function deriveCompletionStageState(params: {
   review: CompletionReviewResult | null
   executionSemantics: TaskExecutionSemantics
@@ -108,7 +128,9 @@ export function deriveCompletionStageState(params: {
   })
 
   const interpretationStatus: CompletionInterpretationStatus =
-    params.review?.status === "followup"
+    !params.review && params.successfulTools.length > 0
+      ? "followup_required"
+      : params.review?.status === "followup"
       ? "followup_required"
       : params.review?.status === "ask_user"
         ? "user_input_required"
@@ -140,7 +162,11 @@ export function deriveCompletionStageState(params: {
   const blockingReasons: string[] = []
 
   if (interpretationStatus === "followup_required") {
-    blockingReasons.push("completion review가 추가 follow-up 작업을 요구합니다.")
+    blockingReasons.push(
+      !params.review && params.successfulTools.length > 0
+        ? "도구 실행 결과에 대한 LLM 결과 진단 receipt가 없습니다."
+        : "completion review가 추가 follow-up 작업을 요구합니다.",
+    )
   }
 
   if (interpretationStatus === "user_input_required") {
@@ -151,8 +177,8 @@ export function deriveCompletionStageState(params: {
     blockingReasons.push(evidenceState.conflictReason)
   }
 
-  if (deliveryStatus === "missing" && evidenceState.conflictReason) {
-    blockingReasons.push(evidenceState.conflictReason)
+  if (deliveryStatus === "missing") {
+    blockingReasons.push("요청된 직접 결과 전달이 아직 완료되지 않았습니다.")
   }
 
   if (truncatedRecoveryRequired) {
@@ -192,7 +218,12 @@ export function deriveCompletionStageState(params: {
           ? "completed"
           : "pending",
       ...(interpretationStatus === "followup_required"
-        ? { reason: "completion review가 추가 follow-up 작업을 요구합니다." }
+        ? {
+            reason:
+              !params.review && params.successfulTools.length > 0
+                ? "도구 실행 결과에 대한 LLM 결과 진단 receipt가 필요합니다."
+                : "completion review가 추가 follow-up 작업을 요구합니다.",
+          }
         : interpretationStatus === "user_input_required"
           ? { reason: "completion review가 사용자 추가 입력을 요구합니다." }
           : truncatedRecoveryRequired

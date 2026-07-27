@@ -5,10 +5,11 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
+use sha2::{Digest, Sha256};
 
 use crate::automation::{
     ApplicationLaunchRequest, CameraCaptureRequest, CommandExecutionRequest,
-    CommandExecutionResult, MouseClickRequest, MouseMoveRequest, PlatformKind,
+    CommandExecutionResult, FocusedTargetResult, MouseClickRequest, MouseMoveRequest, PlatformKind,
     ScreenCaptureRequest, SystemSnapshot,
 };
 
@@ -33,6 +34,37 @@ pub fn collect_system_info(platform: PlatformKind) -> SystemSnapshot {
         current_dir,
         executable,
         user: env::var("USER").ok().or_else(|| env::var("USERNAME").ok()),
+    }
+}
+
+pub fn focused_target_result(
+    app_name: Option<String>,
+    process_id: Option<u32>,
+    raw_title: Option<String>,
+) -> FocusedTargetResult {
+    let title = raw_title.unwrap_or_default();
+    let title_length = title.chars().count();
+    let title_hash = if title.is_empty() {
+        None
+    } else {
+        Some(format!("sha256:{:x}", Sha256::digest(title.as_bytes())))
+    };
+    let available = app_name
+        .as_ref()
+        .is_some_and(|value| !value.trim().is_empty())
+        || process_id.is_some()
+        || title_hash.is_some();
+    FocusedTargetResult {
+        available,
+        app_name,
+        process_id,
+        title_hash,
+        title_length,
+        message: if available {
+            "Focused target observed.".to_string()
+        } else {
+            "Focused target is not available.".to_string()
+        },
     }
 }
 

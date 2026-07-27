@@ -1,4 +1,5 @@
 import { getDb, } from "../db/index.js";
+import { redactLogText } from "../logger/index.js";
 import { parseScheduleContractJson } from "../schedules/candidates.js";
 import { buildMemoryInspectorSnapshot } from "../memory/inspector.js";
 const SENSITIVE_KEY_PATTERN = /api[_-]?key|authorization|bearer|cookie|credential|password|refresh[_-]?token|secret|token|html|body|response/i;
@@ -13,12 +14,16 @@ function clampLimit(value, fallback = 100) {
         return fallback;
     return Math.max(1, Math.min(500, Math.floor(value ?? fallback)));
 }
+function adminRuntimeQueryErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactText(raw);
+}
 function queryRows(label, run) {
     try {
         return { rows: run(), degradedReasons: [] };
     }
     catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = adminRuntimeQueryErrorMessage(error);
         return { rows: [], degradedReasons: [`${label}: ${message}`] };
     }
 }
@@ -42,7 +47,7 @@ function asNumber(value) {
     return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 function redactText(value, max = 220) {
-    let next = value;
+    let next = redactLogText(value);
     for (const [pattern, replacement] of SECRET_TEXT_PATTERNS)
         next = next.replace(pattern, replacement);
     if (next.length <= max)
@@ -283,6 +288,7 @@ function buildMemoryInspector(input) {
         ...(input.filters?.sessionKey ? { sessionId: input.filters.sessionKey } : {}),
         ...(input.filters?.requestGroupId ? { requestGroupId: input.filters.requestGroupId } : {}),
         limit: Math.min(limit, 12),
+        config: input.config,
     });
     return {
         summary: {

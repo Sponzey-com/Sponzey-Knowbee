@@ -1,4 +1,8 @@
+import { parseResponseLanguageMode, } from "../agent/intake.js";
+import { detectPrimaryMessageLanguage } from "../channels/language.js";
+import { loadPromptValue } from "../memory/prompt-fragments.js";
 import { createRecoveryBudgetUsage } from "./recovery-budget.js";
+const EXECUTION_FALLBACK_ORIGINAL_REQUEST_CONTEXT_SOURCE_ID = "execution_fallback_original_request_context_user";
 export function buildResolvedExecutionProfile(params) {
     const executionSemantics = resolveExecutionSemantics(params);
     const structuredRequest = params.structuredRequest
@@ -11,14 +15,23 @@ export function buildResolvedExecutionProfile(params) {
     });
     return {
         originalRequest: params.originalRequest?.trim() || params.message,
-        structuredRequest,
-        intentEnvelope,
+        structuredRequest: {
+            ...structuredRequest,
+            response_language_mode: parseResponseLanguageMode(structuredRequest.response_language_mode),
+        },
+        intentEnvelope: {
+            ...intentEnvelope,
+            response_language_mode: parseResponseLanguageMode(intentEnvelope.response_language_mode ?? structuredRequest.response_language_mode),
+        },
         executionSemantics,
         requiresFilesystemMutation: executionSemantics.filesystemEffect === "mutate",
         requiresPrivilegedToolExecution: executionSemantics.privilegedOperation === "required",
         wantsDirectArtifactDelivery: executionSemantics.artifactDelivery === "direct",
         approvalRequired: executionSemantics.approvalRequired,
         approvalTool: executionSemantics.approvalTool,
+        // Tool names are populated only from an admitted capability execution scope.
+        // `needs_web` remains LLM intake evidence and never grants execution authority.
+        requiredToolNames: [],
     };
 }
 export function normalizeDirectArtifactDeliverySemantics(params) {
@@ -53,17 +66,18 @@ export function createExecutionLoopRuntimeState(params) {
 }
 function buildFallbackStructuredRequest(message) {
     const normalized = message.trim();
-    const sourceLanguage = /[가-힣]/u.test(normalized)
-        ? /[A-Za-z]/.test(normalized) ? "mixed" : "ko"
-        : /[A-Za-z]/.test(normalized) ? "en" : "unknown";
+    const sourceLanguage = detectPrimaryMessageLanguage(normalized);
     return {
         ...buildDefaultTaskStructuredRequest(),
         source_language: sourceLanguage,
+        response_language_mode: "same_as_request",
         normalized_english: normalized,
-        target: normalized || "Execute the requested work.",
-        to: "the current channel",
-        context: normalized ? [`Original user request: ${normalized}`] : [],
-        complete_condition: ["The requested work is completed and the result is delivered in the current channel."],
+        target: normalized || loadPromptValue("execution_default_target_user", {}, { required: true }),
+        to: loadPromptValue("execution_default_destination_user", {}, { required: true }),
+        context: normalized
+            ? [loadPromptValue(EXECUTION_FALLBACK_ORIGINAL_REQUEST_CONTEXT_SOURCE_ID, { originalRequest: normalized }, { required: true })]
+            : [],
+        complete_condition: [loadPromptValue("execution_default_complete_condition_user", {}, { required: true })],
     };
 }
 function buildDefaultTaskExecutionSemantics() {
@@ -78,6 +92,7 @@ function buildDefaultTaskExecutionSemantics() {
 function buildDefaultTaskStructuredRequest() {
     return {
         source_language: "unknown",
+        response_language_mode: "same_as_request",
         normalized_english: "",
         target: "",
         to: "",
@@ -88,6 +103,7 @@ function buildDefaultTaskStructuredRequest() {
 function buildStructuredRequestFromEnvelope(envelope) {
     return {
         source_language: envelope.source_language,
+        response_language_mode: parseResponseLanguageMode(envelope.response_language_mode),
         normalized_english: envelope.normalized_english,
         target: envelope.target,
         to: envelope.destination,
@@ -99,6 +115,7 @@ function buildFallbackIntentEnvelope(structuredRequest, executionSemantics) {
     return {
         intent_type: "task_intake",
         source_language: structuredRequest.source_language,
+        response_language_mode: parseResponseLanguageMode(structuredRequest.response_language_mode),
         normalized_english: structuredRequest.normalized_english,
         target: structuredRequest.target,
         destination: structuredRequest.to,

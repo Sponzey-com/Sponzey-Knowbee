@@ -1,3 +1,4 @@
+import { redactLogText } from "../logger/index.js";
 const intakeSessionQueues = new Map();
 function appendIntakeQueueEvent(dependencies, runId, message) {
     try {
@@ -6,6 +7,10 @@ function appendIntakeQueueEvent(dependencies, runId, message) {
     catch {
         // Queue tracing must never block intake execution.
     }
+}
+function safeQueueErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
 }
 export function hasSessionIntakeQueue(sessionId) {
     return intakeSessionQueues.has(sessionId);
@@ -22,18 +27,20 @@ export function enqueueSessionIntake(params, dependencies) {
     }
     const next = (previous ?? Promise.resolve())
         .catch((error) => {
-        dependencies.logWarn(`previous session intake queue recovered: ${error instanceof Error ? error.message : String(error)}`);
+        const message = safeQueueErrorMessage(error);
+        dependencies.logWarn(`previous session intake queue recovered: ${message}`);
     })
         .then(() => {
         appendIntakeQueueEvent(dependencies, params.runId, "intake_queue_running");
         return params.task();
     })
         .catch((error) => {
+        const message = safeQueueErrorMessage(error);
         dependencies.logError("session intake queue task failed", {
             sessionId: params.sessionId,
             runId: params.runId,
             requestGroupId: params.requestGroupId,
-            error: error instanceof Error ? error.message : String(error),
+            error: message,
         });
         throw error;
     })

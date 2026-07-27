@@ -4,13 +4,35 @@ import { recordArtifactMetadata, buildArtifactAccessDescriptor } from "../../art
 import { buildYeonjangBroadcastIntentSchemaProperty, buildYeonjangBroadcastRetryReceiptSchemaProperty, } from "../../contracts/yeonjang-broadcast.js";
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js";
 import { getMqttExtensionSnapshots } from "../../mqtt/broker.js";
-import { PATHS } from "../../config/index.js";
 import { withYeonjangRequestMetadata } from "./yeonjang-request-metadata.js";
 import { buildYeonjangBroadcastAggregateSummary, buildYeonjangBroadcastArtifactPath, planYeonjangBroadcastRun, } from "../../yeonjang/broadcast.js";
 import { recordYeonjangGovernanceAudit } from "../../yeonjang/registry.js";
 import { getYeonjangBroadcastPolicy } from "../../yeonjang/broadcast-policy.js";
 import { captureScreenViaYeonjang, classifyYeonjangScreenCaptureFailure, extensionFromScreenCaptureMimeType, preflightYeonjangScreenCapture, statArtifactSize, } from "./ui/yeonjang-screen-shared.js";
 import { buildYeonjangTargetSelectorSchemaProperty } from "../../contracts/yeonjang-target.js";
+import { toolUserFacingErrorMessage } from "./error-redaction.js";
+import { hashApprovalParams } from "../../runs/approval-registry.js";
+function validateBroadcastAuthorization(params, ctx) {
+    const receipt = ctx.authorizationReceipt;
+    const requestGroupId = ctx.requestGroupId ?? ctx.runId;
+    if (!receipt
+        || receipt.toolName !== "yeonjang_broadcast_run"
+        || receipt.runId !== ctx.runId
+        || receipt.requestGroupId !== requestGroupId
+        || receipt.paramsHash !== hashApprovalParams(params)
+        || (receipt.approvalDecision !== "allow_once" && receipt.approvalDecision !== "allow_run")) {
+        return {
+            success: false,
+            output: "연장 전체 실행에 필요한 현재 요청의 승인을 확인하지 못했습니다.",
+            error: "YEONJANG_BROADCAST_AUTHORIZATION_REQUIRED",
+            details: {
+                kind: "yeonjang_broadcast_authorization_denied",
+                reasonCode: "missing_or_scope_mismatched_authorization_receipt",
+            },
+        };
+    }
+    return undefined;
+}
 function sanitizeFileName(value) {
     return value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "artifact";
 }
@@ -58,7 +80,7 @@ async function executeBroadcastScreenCapture(params, ctx) {
             },
         };
     }
-    const rootDir = join(PATHS.stateDir, "artifacts", "yeonjang", "broadcast");
+    const rootDir = join(ctx.artifactStorage.rootDir, "yeonjang", "broadcast");
     const executionRecords = [];
     recordBroadcastLedgerEvent({
         ctx,
@@ -173,12 +195,12 @@ async function executeBroadcastScreenCapture(params, ctx) {
                     extensionId: target.extensionId,
                     sessionId: target.sessionId,
                 },
-            });
+            }, ctx.artifactStorage);
             const artifact = buildArtifactAccessDescriptor({
                 filePath: artifactPath,
                 mimeType: remote.mime_type ?? "image/png",
                 sizeBytes,
-            });
+            }, ctx.artifactStorage);
             executionRecords.push({
                 status: "succeeded",
                 broadcastIndex: target.broadcastIndex,
@@ -209,7 +231,7 @@ async function executeBroadcastScreenCapture(params, ctx) {
             });
         }
         catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = toolUserFacingErrorMessage(error);
             const classified = classifyYeonjangScreenCaptureFailure(message);
             executionRecords.push({
                 status: "failed",
@@ -271,6 +293,9 @@ async function executeBroadcastScreenCapture(params, ctx) {
     };
 }
 export const yeonjangBroadcastRunTool = {
+    evidenceSourceKind: "yeonjang",
+    runtimeHealthMode: "required",
+    runtimeMethodIds: ["screen.capture", "mouse.action", "keyboard.action", "system.exec"],
     name: "yeonjang_broadcast_run",
     description: "명시적 broadcast intent가 있을 때 같은 Yeonjang 작업을 여러 인스턴스에 fan-out 하고 결과를 취합합니다.",
     parameters: {
@@ -292,9 +317,12 @@ export const yeonjangBroadcastRunTool = {
         },
         required: ["toolName", "targetSelector", "broadcastIntent"],
     },
-    riskLevel: "safe",
-    requiresApproval: false,
+    riskLevel: "moderate",
+    requiresApproval: true,
     async execute(params, ctx) {
+        const authorizationFailure = validateBroadcastAuthorization(params, ctx);
+        if (authorizationFailure)
+            return authorizationFailure;
         const policy = getYeonjangBroadcastPolicy(params.toolName);
         if (policy.defaultDecision === "deny") {
             return {
@@ -312,7 +340,7 @@ export const yeonjangBroadcastRunTool = {
         if (params.toolName !== "screen_capture") {
             return {
                 success: false,
-                output: `${params.toolName} broadcast는 아직 구현되지 않았습니다. task004 baseline에서는 screen_capture만 fan-out 실행합니다.`,
+                output: `${params.toolName} broadcast는 현재 사용할 수 없습니다. 지금은 screen_capture만 전체 실행을 지원합니다.`,
                 error: "YEONJANG_BROADCAST_NOT_IMPLEMENTED",
                 details: {
                     kind: "yeonjang_broadcast_not_implemented",

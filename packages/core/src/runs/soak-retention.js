@@ -1,5 +1,7 @@
 import { readdirSync } from "node:fs";
+import { redactLogText } from "../logger/index.js";
 import { sanitizeUserFacingError } from "./error-sanitizer.js";
+import { decideCleanupCandidate, } from "../maintenance/cleanup-decision.js";
 export const DEFAULT_SOAK_PROFILES = {
     short: {
         id: "short",
@@ -98,6 +100,20 @@ export const DEFAULT_SOAK_HEALTH_THRESHOLDS = {
     artifactCount: 10_000,
     auditRowCount: 100_000,
 };
+function soakOperationErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
+function retentionCleanupFailureSummary(error) {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const sanitized = sanitizeUserFacingError(rawMessage);
+    return {
+        ...sanitized,
+        userMessage: redactLogText(sanitized.userMessage),
+        reason: redactLogText(sanitized.reason),
+        ...(sanitized.actionHint ? { actionHint: redactLogText(sanitized.actionHint) } : {}),
+    };
+}
 export function getSoakProfile(profile) {
     if (typeof profile !== "string")
         return profile;
@@ -168,7 +184,7 @@ export async function runSoakProfile(options) {
         catch (error) {
             execution = buildSoakExecution(operation, iteration, operationStartedAt, now(), {
                 ok: false,
-                errorMessage: error instanceof Error ? error.message : String(error),
+                errorMessage: soakOperationErrorMessage(error),
             });
         }
         executions.push(execution);
@@ -322,8 +338,19 @@ export async function runRetentionCleanup(options) {
     const plan = buildRetentionCleanupPlan(options);
     const deleted = [];
     const failures = [];
+    const retained = [];
     if (!plan.dryRun) {
         for (const candidate of plan.candidates) {
+            const decision = decideCleanupCandidate({
+                candidateId: candidate.id,
+                dataKind: retentionCleanupDataKind(candidate.kind),
+                retentionClass: "expired",
+                ...candidate.cleanupProtection,
+            });
+            if (decision.decision === "retain") {
+                retained.push({ candidate, decision });
+                continue;
+            }
             try {
                 if (!options.deleteCandidate)
                     throw new Error("retention cleanup delete handler is not configured");
@@ -331,17 +358,26 @@ export async function runRetentionCleanup(options) {
                 deleted.push(candidate);
             }
             catch (error) {
-                const sanitized = sanitizeUserFacingError(error instanceof Error ? error.message : String(error));
+                const sanitized = retentionCleanupFailureSummary(error);
                 failures.push({ candidate, errorKind: sanitized.kind, userMessage: sanitized.userMessage });
             }
         }
     }
-    const result = { plan, deleted, failures, auditRecorded: false };
+    const result = { plan, deleted, failures, retained, auditRecorded: false };
     if (options.recordAudit) {
         await options.recordAudit(result);
         result.auditRecorded = true;
     }
     return result;
+}
+function retentionCleanupDataKind(kind) {
+    switch (kind) {
+        case "artifact": return "artifact";
+        case "audit_log": return "audit_log";
+        case "short_term_memory": return "memory";
+        case "temp_file": return "temporary_file";
+        case "schedule_history": return "other";
+    }
 }
 export function buildRetryFailureFingerprint(input) {
     const sanitized = sanitizeUserFacingError(input.errorMessage);

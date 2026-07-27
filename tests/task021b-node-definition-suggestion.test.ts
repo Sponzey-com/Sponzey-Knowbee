@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -21,8 +21,10 @@ import {
   registerTopologyRoutes,
   resetTopologyGuiDraftStoreForTest,
 } from "../packages/core/src/api/routes/topologies.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: {
@@ -37,9 +39,8 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
   }): Promise<{ statusCode: number; json(): Record<string, unknown> }>
 }
 
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 const tempDirs: string[] = []
+let runtimeFixture: TestRuntimeConfigFixture
 
 function draftFixture(overrides: Partial<NodeDefinitionDraft> = {}): NodeDefinitionDraft {
   return {
@@ -56,14 +57,13 @@ function draftFixture(overrides: Partial<NodeDefinitionDraft> = {}): NodeDefinit
   }
 }
 
-function useTempState(): void {
+function useTempState(configText?: string): void {
   closeDb()
   resetTopologyGuiDraftStoreForTest()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task021b-node-definition-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task021b-node-definition-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir, ...(configText ? { configText } : {}) })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 afterEach(() => {
@@ -73,11 +73,6 @@ afterEach(() => {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
 })
 
 describe("task021b node definition suggestion contract", () => {
@@ -113,7 +108,7 @@ describe("task021b node definition suggestion contract", () => {
     expect(normalized.targetFields).toContain("description")
   })
 
-  it("uses the node overview as guidance for detailed description suggestions", async () => {
+  it("uses the sub-agent overview as guidance for detailed description suggestions", async () => {
     const request = normalizeNodeDefinitionSuggestionRequest({
       triggerField: "description",
       targetFields: ["name", "description"],
@@ -129,14 +124,18 @@ describe("task021b node definition suggestion contract", () => {
     })
     const promptInput = buildNodeDefinitionPromptInput(request)
 
-    expect(promptInput).toContain("노드 개요: 백엔드 이슈를 분석하고 작업을 작게 나눠 다음 담당자에게 넘긴다.")
-    expect(promptInput).toContain("선택한 역할: 분석자")
-    expect(promptInput).toContain("선택한 스타일: 꼼꼼하게")
-    expect(promptInput).toContain("역할명 작성 지침")
-    expect(promptInput).toContain("성격과 하는 일 작성 지침")
-    expect(promptInput).toContain("5~8문장")
-    expect(promptInput).toContain("최종 검토 지침")
-    expect(promptInput).toContain("빠진 부분을 보완한 최종 description")
+    expect(promptInput).toContain("Sub-agent overview: 백엔드 이슈를 분석하고 작업을 작게 나눠 다음 담당자에게 넘긴다.")
+    expect(promptInput).toContain("Selected roles: 분석자")
+    expect(promptInput).toContain("Selected styles: 꼼꼼하게")
+    expect(promptInput).toContain("Name writing instruction")
+    expect(promptInput).toContain("Description writing instruction")
+    expect(promptInput).toContain("5 to 8 detailed Korean sentences")
+    expect(promptInput).toContain("Final review instruction")
+    expect(promptInput).toContain("Add missing details to the final patch.description only")
+    expect(promptInput).not.toContain("노드 개요")
+    expect(promptInput).not.toContain("이전 실행자")
+    expect(promptInput).not.toContain("다음 실행자")
+    expect(promptInput).not.toContain("이 실행자")
 
     const result = await createNodeDefinitionSuggestion({
       modelConfig: { provider: "openai", model: "gpt-test" },
@@ -155,7 +154,8 @@ describe("task021b node definition suggestion contract", () => {
     expect(description).toContain("꼼꼼하게")
     expect(description).toContain("한 번 더 검토")
     expect(description.length).toBeGreaterThan(180)
-    expect(description).toContain("다음 실행자")
+    expect(description).toContain("다음 서브 에이전트")
+    expect(description).not.toContain("다음 실행자")
     expect(result.alternatives[0]!.rationale).toContain("검토")
   })
 
@@ -267,7 +267,7 @@ describe("task021b node definition suggestion contract", () => {
     expect(result.suggestionRunId).toBe("suggestion:test")
     expect(result.alternatives).toHaveLength(1)
     expect(result.alternatives[0]!.patch).toEqual({
-      description: "사용자가 이해하기 쉬운 실행자",
+      description: "사용자가 이해하기 쉬운 서브 에이전트",
       expectedOutput: "실행 결과 요약",
     })
     expect(result.alternatives[0]!.title).not.toContain("WorkOrder")
@@ -354,10 +354,9 @@ describe("task021b node definition suggestion contract", () => {
   })
 
   it("returns a friendly API error when no registered LLM is configured", async () => {
-    useTempState()
-    writeFileSync(process.env.KNOWBEE_CONFIG!, JSON.stringify({ ai: { connection: { provider: "", model: "" } } }), "utf-8")
-    reloadConfig()
+    useTempState(JSON.stringify({ ai: { connection: { provider: "", model: "" } } }))
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerTopologyRoutes(app)
     await app.ready()
     try {

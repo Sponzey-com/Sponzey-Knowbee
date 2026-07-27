@@ -1,4 +1,4 @@
-import { type KnowbeeConfig } from "../config/index.js";
+import type { KnowbeeConfig } from "../config/types.js";
 export type SetupCapabilityStatus = "ready" | "disabled" | "planned" | "error";
 export interface SetupMcpServerDraft {
     id: string;
@@ -25,18 +25,21 @@ export interface SetupSkillDraftItem {
     status: SetupCapabilityStatus;
     reason?: string;
 }
-export declare function buildMcpSetupDraft(config?: KnowbeeConfig): {
+export declare function buildMcpSetupDraft(config: KnowbeeConfig): {
     servers: SetupMcpServerDraft[];
 };
 export declare function persistMcpSetupDraft(raw: Record<string, unknown>, draft: {
     servers: SetupMcpServerDraft[];
 }): void;
-export declare function testMcpServerConnection(server: SetupMcpServerDraft): Promise<{
+export declare function testMcpServerConnection(server: SetupMcpServerDraft, defaultCwd: string, options?: {
+    readonly baseEnv?: Readonly<Record<string, string | undefined>>;
+    readonly signal?: AbortSignal;
+}): Promise<{
     ok: boolean;
     message: string;
     tools: string[];
 }>;
-export declare function buildSkillsSetupDraft(config?: KnowbeeConfig): {
+export declare function buildSkillsSetupDraft(config: KnowbeeConfig): {
     items: SetupSkillDraftItem[];
 };
 export declare function persistSkillsSetupDraft(raw: Record<string, unknown>, draft: {

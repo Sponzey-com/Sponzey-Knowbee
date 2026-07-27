@@ -37,6 +37,7 @@ export interface GraphExecutionPlan {
 export declare function buildGraphExecutionPlan(input: {
     workspaceId: string;
     graph: ExecutorGraphWorkspace;
+    rootAgentNameSnapshot?: string;
     now?: string;
 }): GraphExecutionPlan;
 export declare function validateGraphExecutionPlan(input: {

@@ -34,7 +34,7 @@ const now = Date.UTC(2026, 3, 29, 10, 0, 0)
 function selectedData(kind: EnterpriseTopologyCanvasNodeData["kind"]): EnterpriseTopologyCanvasNodeData {
   return {
     kind,
-    label: kind === "team" ? "새 팀 1" : kind === "org_unit" ? "새 조직 1" : "새 업무 노드 1",
+    label: kind === "team" ? "새 팀 1" : kind === "org_unit" ? "새 조직 1" : "새 서브 에이전트 1",
     detail: "draft",
     status: "draft",
     entityId: `${kind}:1`,
@@ -44,8 +44,8 @@ function selectedData(kind: EnterpriseTopologyCanvasNodeData["kind"]): Enterpris
 
 describe("task018 enterprise topology palette and inspector", () => {
   it("generates automatic entity names without typing", () => {
-    expect(nextEnterpriseEntityName("work_node", [])).toBe("새 업무 노드 1")
-    expect(nextEnterpriseEntityName("work_node", ["새 업무 노드 1", "새 업무 노드 2"])).toBe("새 업무 노드 3")
+    expect(nextEnterpriseEntityName("work_node", [])).toBe("새 서브 에이전트 1")
+    expect(nextEnterpriseEntityName("work_node", ["새 서브 에이전트 1", "새 서브 에이전트 2"])).toBe("새 서브 에이전트 3")
     expect(nextEnterpriseEntityName("org_unit", ["새 조직 1"])).toBe("새 조직 2")
     expect(nextEnterpriseEntityName("system", [])).toBe("새 시스템 1")
     expect(nextEnterpriseEntityName("tool", [])).toBe("새 도구 1")
@@ -67,7 +67,7 @@ describe("task018 enterprise topology palette and inspector", () => {
         false,
         false,
       ])
-      expect(body.catalog.nodePresets.map((preset: { labelEn: string }) => preset.labelEn)).toContain("General work")
+      expect(body.catalog.nodePresets.map((preset: { labelEn: string }) => preset.labelEn)).toContain("Sub-agent")
       expect(clientSource).toContain("topologyTemplates")
       expect(clientSource).toContain("/api/topology-templates")
     } finally {
@@ -83,9 +83,9 @@ describe("task018 enterprise topology palette and inspector", () => {
     const withSystem = createEnterpriseTopologyPaletteEntity(withOrg.topology, { kind: "system", now })
     const withTool = createEnterpriseTopologyPaletteEntity(withSystem.topology, { kind: "tool", now })
 
-    expect(withNode.name).toBe("새 업무 노드 1")
+    expect(withNode.name).toBe("새 서브 에이전트 1")
     expect(withNode.topology.nodes[0]).toEqual(expect.objectContaining({
-      name: "새 업무 노드 1",
+      name: "새 서브 에이전트 1",
       nodeType: "function",
       template: expect.objectContaining({ fixedRoleCatalog: false }),
     }))
@@ -128,7 +128,7 @@ describe("task018 enterprise topology palette and inspector", () => {
       }),
     )
 
-    expect(html).toContain("팀 필드")
+    expect(html).toContain("팀 설정")
     expect(html).toContain("논리 그룹")
     expect(html).not.toContain("실행 권한")
     expect(html).not.toMatch(/permission scope/i)
@@ -141,7 +141,7 @@ describe("task018 enterprise topology palette and inspector", () => {
       }),
     )
 
-    expect(html).toContain("조직 필드")
+    expect(html).toContain("조직 설정")
     expect(html).toContain("책임 영역")
     expect(html).toContain("상위 조직")
   })
@@ -155,7 +155,7 @@ describe("task018 enterprise topology palette and inspector", () => {
 
     expect(html).toContain('data-testid="enterprise-inspector-advanced-edit"')
     expect(html).toContain("고급 편집")
-    expect(html).toContain("긴 instruction")
+    expect(html).toContain("상세 지시")
     expect(html).not.toContain("<details open")
   })
 })

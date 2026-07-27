@@ -6,10 +6,14 @@ import {
   upsertScheduleMemoryEntry,
 } from "../../db/index.js"
 import { runSchedule } from "../../scheduler/index.js"
+import { createArtifactStorageContext } from "../../artifacts/lifecycle.js"
+import { createAgentHierarchyStorage } from "../../orchestration/hierarchy.js"
+import type { MemoryJournalRepository } from "../../memory/journal.js"
 import { getNextRunForTimezone, isValidCron, isValidTimeZone, normalizeScheduleTimezone } from "../../scheduler/cron.js"
 import { reconcileScheduleExecution, removeManagedScheduleExecution } from "../../scheduler/system-cron.js"
 import { authMiddleware } from "../middleware/auth.js"
-import { getConfig } from "../../config/index.js"
+import type { KnowbeeConfig } from "../../config/index.js"
+import { getApiRuntimeConfig, getApiRuntimePaths } from "../runtime-context.js"
 import { CONTRACT_SCHEMA_VERSION, type ScheduleContract } from "../../contracts/index.js"
 import {
   applyLegacyScheduleMigration,
@@ -39,13 +43,12 @@ function syncScheduleMemoryEntry(input: {
   })
 }
 
-function resolveDefaultScheduleTimezone(): string {
-  const config = getConfig()
+function resolveDefaultScheduleTimezone(config: Pick<KnowbeeConfig, "scheduler" | "profile">): string {
   return normalizeScheduleTimezone(config.scheduler.timezone, config.profile.timezone)
 }
 
-function resolveBodyTimezone(input: string | undefined): string {
-  const timezone = input?.trim() || resolveDefaultScheduleTimezone()
+function resolveBodyTimezone(input: string | undefined, config: Pick<KnowbeeConfig, "scheduler" | "profile">): string {
+  const timezone = input?.trim() || resolveDefaultScheduleTimezone(config)
   if (!isValidTimeZone(timezone)) throw new Error(`invalid timezone: ${timezone}`)
   return normalizeScheduleTimezone(timezone)
 }
@@ -67,6 +70,7 @@ function buildApiScheduleContract(input: {
   return {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     kind: "recurring",
+    responseLanguageMode: "same_as_request",
     time: {
       cron: input.cron,
       timezone: input.timezone,
@@ -92,7 +96,10 @@ function buildApiScheduleContract(input: {
   }
 }
 
-export function registerSchedulesRoute(app: FastifyInstance): void {
+export function registerSchedulesRoute(
+  app: FastifyInstance,
+  memoryJournal: MemoryJournalRepository,
+): void {
   // GET /api/schedules
   app.get("/api/schedules", { preHandler: authMiddleware }, async () => {
     const rows = getSchedules()
@@ -108,20 +115,23 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
   })
 
   // GET /api/schedules/legacy
-  app.get("/api/schedules/legacy", { preHandler: authMiddleware }, async () => {
-    return { schedules: listLegacyScheduleMigrationItems() }
+  app.get("/api/schedules/legacy", { preHandler: authMiddleware }, async (req) => {
+    const config = getApiRuntimeConfig(req)
+    return { schedules: listLegacyScheduleMigrationItems(config) }
   })
 
   // POST /api/schedules/:id/legacy/dry-run
   app.post<{ Params: { id: string } }>("/api/schedules/:id/legacy/dry-run", { preHandler: authMiddleware }, async (req, reply) => {
-    const report = dryRunLegacyScheduleMigration(req.params.id, { audit: true })
+    const config = getApiRuntimeConfig(req)
+    const report = dryRunLegacyScheduleMigration(req.params.id, { audit: true, config })
     if (!report) return reply.status(404).send({ error: "Not found" })
     return report
   })
 
   // POST /api/schedules/:id/legacy/convert
   app.post<{ Params: { id: string } }>("/api/schedules/:id/legacy/convert", { preHandler: authMiddleware }, async (req, reply) => {
-    const result = applyLegacyScheduleMigration(req.params.id)
+    const config = getApiRuntimeConfig(req)
+    const result = applyLegacyScheduleMigration(req.params.id, { config })
     if (!result.report && result.error === "schedule_not_found") return reply.status(404).send({ error: "Not found" })
     if (!result.ok) return reply.status(409).send({ ok: false, error: result.error ?? "legacy migration failed", report: result.report })
     return { ok: true, report: result.report }
@@ -129,7 +139,8 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
 
   // POST /api/schedules/:id/legacy/keep
   app.post<{ Params: { id: string } }>("/api/schedules/:id/legacy/keep", { preHandler: authMiddleware }, async (req, reply) => {
-    const result = keepLegacySchedule(req.params.id)
+    const config = getApiRuntimeConfig(req)
+    const result = keepLegacySchedule(req.params.id, { config })
     if (!result.report && result.error === "schedule_not_found") return reply.status(404).send({ error: "Not found" })
     return { ok: result.ok, report: result.report }
   })
@@ -143,9 +154,10 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
     if (!prompt?.trim()) return reply.status(400).send({ error: "prompt is required" })
     if (!cron?.trim() || !isValidCron(cron)) return reply.status(400).send({ error: "invalid cron expression" })
 
+    const config = getApiRuntimeConfig(req)
     let timezone: string
     try {
-      timezone = resolveBodyTimezone(req.body.timezone)
+      timezone = resolveBodyTimezone(req.body.timezone, config)
     } catch {
       return reply.status(400).send({ error: "invalid timezone" })
     }
@@ -177,7 +189,7 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
       nextRunAt: resolveNextRunAt(cron, now, timezone),
       metadata: { source: "webui" },
     })
-    reconcileScheduleExecution(id)
+    reconcileScheduleExecution(id, getApiRuntimePaths(req))
     return reply.status(201).send({ id })
   })
 
@@ -198,10 +210,11 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
     if (!s) return reply.status(404).send({ error: "Not found" })
     const { name, cron, prompt, model, enabled } = req.body
     if (cron && !isValidCron(cron)) return reply.status(400).send({ error: "invalid cron expression" })
+    const config = getApiRuntimeConfig(req)
     let timezone: string | undefined
     if (req.body.timezone !== undefined) {
       try {
-        timezone = resolveBodyTimezone(req.body.timezone)
+        timezone = resolveBodyTimezone(req.body.timezone, config)
       } catch {
         return reply.status(400).send({ error: "invalid timezone" })
       }
@@ -227,7 +240,7 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
         metadata: { source: "webui", updatedBy: "api" },
       })
     }
-    reconcileScheduleExecution(id)
+    reconcileScheduleExecution(id, getApiRuntimePaths(req))
     return { ok: true }
   })
 
@@ -235,7 +248,7 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
   app.delete<{ Params: { id: string } }>("/api/schedules/:id", { preHandler: authMiddleware }, async (req, reply) => {
     const s = getSchedule(req.params.id)
     if (!s) return reply.status(404).send({ error: "Not found" })
-    removeManagedScheduleExecution(req.params.id)
+    removeManagedScheduleExecution(req.params.id, getApiRuntimePaths(req))
     syncScheduleMemoryEntry({
       id: s.id,
       name: s.name,
@@ -272,7 +285,15 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
   app.post<{ Params: { id: string } }>("/api/schedules/:id/run", { preHandler: authMiddleware }, async (req, reply) => {
     const s = getSchedule(req.params.id)
     if (!s) return reply.status(404).send({ error: "Not found" })
-    const runId = await runSchedule(req.params.id, "manual")
+    const config = getApiRuntimeConfig(req)
+    const runId = await runSchedule(
+      req.params.id,
+      "manual",
+      config,
+      createArtifactStorageContext(getApiRuntimePaths(req)),
+      memoryJournal,
+      createAgentHierarchyStorage(getApiRuntimePaths(req)),
+    )
     return { runId, status: "started" }
   })
 
@@ -292,7 +313,7 @@ export function registerSchedulesRoute(app: FastifyInstance): void {
       nextRunAt: enabled ? resolveNextRunAt(s.cron_expression, s.last_run_at ?? s.created_at, s.timezone) : null,
       metadata: { source: "webui", toggledAt: Date.now() },
     })
-    reconcileScheduleExecution(req.params.id)
+    reconcileScheduleExecution(req.params.id, getApiRuntimePaths(req))
     return { ok: true, enabled }
   })
 

@@ -50,6 +50,7 @@ enum TrayAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PermissionField {
+    BrowserControl,
     SystemControl,
     ShellExec,
     ApplicationLaunch,
@@ -68,6 +69,7 @@ enum Message {
     PortChanged(String),
     UsernameChanged(String),
     PasswordChanged(String),
+    PairingSecretChanged(String),
     DisplayNameChanged(String),
     ToggleAutoConnect(bool),
     ToggleLaunchOnStartup(bool),
@@ -495,6 +497,10 @@ impl YeonjangGuiApp {
                 self.settings.connection.password = value;
                 Task::none()
             }
+            Message::PairingSecretChanged(value) => {
+                self.settings.pairing_secret = value;
+                Task::none()
+            }
             Message::DisplayNameChanged(value) => {
                 self.settings.display_name = value;
                 Task::none()
@@ -508,26 +514,7 @@ impl YeonjangGuiApp {
                 Task::none()
             }
             Message::TogglePermission(field, value) => {
-                match field {
-                    PermissionField::SystemControl => {
-                        self.settings.permissions.allow_system_control = value;
-                    }
-                    PermissionField::ShellExec => {
-                        self.settings.permissions.allow_shell_exec = value;
-                    }
-                    PermissionField::ApplicationLaunch => {
-                        self.settings.permissions.allow_application_launch = value;
-                    }
-                    PermissionField::ScreenCapture => {
-                        self.settings.permissions.allow_screen_capture = value;
-                    }
-                    PermissionField::KeyboardControl => {
-                        self.settings.permissions.allow_keyboard_control = value;
-                    }
-                    PermissionField::MouseControl => {
-                        self.settings.permissions.allow_mouse_control = value;
-                    }
-                }
+                apply_permission_change(&mut self.settings, field, value);
                 Task::none()
             }
             Message::CheckConnection => {
@@ -776,6 +763,14 @@ impl YeonjangGuiApp {
                         ),
                     ]
                     .spacing(12),
+                    form_field(
+                        t(lang, "연결 승인 코드", "Connection approval code"),
+                        text_input("", &self.settings.pairing_secret)
+                            .secure(true)
+                            .on_input(Message::PairingSecretChanged)
+                            .padding(12)
+                            .style(input_style),
+                    ),
                     row![
                         form_field(
                             t(lang, "아이디 (ID)", "ID"),
@@ -971,6 +966,15 @@ impl YeonjangGuiApp {
             ),
             permission_checkbox(
                 lang,
+                self.settings.permissions.allow_browser_control,
+                PermissionField::BrowserControl,
+                "브라우저 제어",
+                "Browser Control",
+                "브라우저 열기와 포커스 변경",
+                "Open a browser and change browser focus",
+            ),
+            permission_checkbox(
+                lang,
                 self.settings.permissions.allow_screen_capture,
                 PermissionField::ScreenCapture,
                 "화면 캡처",
@@ -1046,8 +1050,8 @@ impl YeonjangGuiApp {
                                 "{}: {}",
                                 t(
                                     self.lang(),
-                                    "현재 설정을 저장했고 자동 시작을 동기화했습니다",
-                                    "Settings saved and launch on startup was synced",
+                                "설정을 저장했습니다. 실행 중인 연장에 적용하려면 다시 시작하세요",
+                                "Settings saved. Restart Yeonjang to apply them to the running extension",
                                 ),
                                 result.entry_path.display()
                             )
@@ -1056,8 +1060,8 @@ impl YeonjangGuiApp {
                                 "{}: {}",
                                 t(
                                     self.lang(),
-                                    "현재 설정을 저장했고 자동 시작 항목을 정리했습니다",
-                                    "Settings saved and launch on startup entry was removed",
+                                "설정을 저장했습니다. 실행 중인 연장에 적용하려면 다시 시작하세요",
+                                "Settings saved. Restart Yeonjang to apply them to the running extension",
                                 ),
                                 result.entry_path.display()
                             )
@@ -1683,6 +1687,32 @@ fn info_block<'a>(title: &'a str, rows: Vec<(String, String)>) -> Element<'a, Me
         .into()
 }
 
+fn apply_permission_change(settings: &mut YeonjangSettings, field: PermissionField, value: bool) {
+    match field {
+        PermissionField::BrowserControl => {
+            settings.permissions.allow_browser_control = value;
+        }
+        PermissionField::SystemControl => {
+            settings.permissions.allow_system_control = value;
+        }
+        PermissionField::ShellExec => {
+            settings.permissions.allow_shell_exec = value;
+        }
+        PermissionField::ApplicationLaunch => {
+            settings.permissions.allow_application_launch = value;
+        }
+        PermissionField::ScreenCapture => {
+            settings.permissions.allow_screen_capture = value;
+        }
+        PermissionField::KeyboardControl => {
+            settings.permissions.allow_keyboard_control = value;
+        }
+        PermissionField::MouseControl => {
+            settings.permissions.allow_mouse_control = value;
+        }
+    }
+}
+
 fn permission_checkbox(
     lang: UiLanguage,
     enabled: bool,
@@ -2202,4 +2232,22 @@ fn load_ui_font() -> Option<(String, Vec<u8>)> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn browser_control_toggle_changes_only_browser_control_permission() {
+        let mut settings = YeonjangSettings::default();
+        let shell_exec = settings.permissions.allow_shell_exec;
+        let screen_capture = settings.permissions.allow_screen_capture;
+
+        apply_permission_change(&mut settings, PermissionField::BrowserControl, true);
+
+        assert!(settings.permissions.allow_browser_control);
+        assert_eq!(settings.permissions.allow_shell_exec, shell_exec);
+        assert_eq!(settings.permissions.allow_screen_capture, screen_capture);
+    }
 }

@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type { OrchestrationPlan } from "../packages/core/src/contracts/sub-agent-orchestration.js"
 import {
@@ -14,27 +13,21 @@ import {
   recordTopologyDispatchFollowupTrace,
   resolveTopologyDispatchFollowupDecision,
 } from "../packages/core/src/runs/topology-dispatch-fallback.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-topology-decision-trace-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-topology-decision-trace-"))
+  tempDirs.push(rootDir)
+  const runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function restoreState(): void {
   closeDb()
-  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_STATE_DIR")
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_CONFIG")
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 }
 
@@ -99,7 +92,7 @@ function dispatchResult(): DelegatedTaskDispatchResult {
       taskId: "task:finance",
       subSessionId: "sub-session:finance",
       agentId: "workspace:draft:node:finance",
-      agentDisplayName: "행랑아범",
+      agentName: "행랑아범",
       agentSource: "topology",
       topologyId: "workspace:draft",
       topologyExecutorId: "node:finance",

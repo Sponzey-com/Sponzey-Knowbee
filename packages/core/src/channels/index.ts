@@ -1,5 +1,12 @@
-import { getConfig } from "../config/index.js"
-import { createLogger } from "../logger/index.js"
+import type { KnowbeeConfig } from "../config/types.js"
+import type { RuntimePaths } from "../config/paths.js"
+import { createArtifactStorageContext } from "../artifacts/lifecycle.js"
+import {
+  createMemoryJournalRepository,
+  type MemoryJournalRepository,
+} from "../memory/journal.js"
+import { createAgentHierarchyStorage } from "../orchestration/hierarchy.js"
+import { createLogger, redactLogText } from "../logger/index.js"
 import { getFeatureFlag } from "../runtime/rollout-safety.js"
 import { buildCompatChannelConnectionsFromConfig, persistChannelConnections } from "./connections.js"
 import { ChannelRegistry, buildChannelRegistryRuntimeDiagnostics, createBuiltInChannelProviderFactories } from "./registry.js"
@@ -12,6 +19,10 @@ import { DiscordChannelAdapter } from "./discord/adapter.js"
 import { setDiscordRuntimeError, stopDiscordRuntime } from "./discord/runtime.js"
 import { GoogleChatChannelAdapter } from "./google-chat/adapter.js"
 import { setGoogleChatRuntimeError, stopGoogleChatRuntime } from "./google-chat/runtime.js"
+import {
+  createStartedChannelRecoveryRuntime,
+  type StartedChannelRecoveryRuntime,
+} from "./pending-response-delivery.js"
 
 export { TelegramChannel } from "./telegram/bot.js"
 export {
@@ -147,10 +158,12 @@ export type {
   ChannelAccessReasonCode,
 } from "./access-policy.js"
 export {
+  buildContinuationConfirmationNotice,
   buildContinuationConfirmationPrompt,
   resolveChannelContinuation,
 } from "./continuation.js"
 export type {
+  ChannelContinuationConfirmationNotice,
   ChannelContinuationCandidateSource,
   ChannelContinuationLookupCandidate,
   ChannelContinuationLookupInput,
@@ -202,7 +215,22 @@ export {
   resolveChannelDeliveryFallbackPlan,
   splitTextForChannel,
 } from "./delivery-fallback.js"
+export {
+  detectPrimaryMessageLanguage,
+  resolveUserFacingMessageLanguage,
+} from "./language.js"
+export {
+  createStartedChannelRecoveryRuntime,
+  type ChannelPendingResponseDeliveryInput,
+  type ChannelPendingResponseDeliveryOwner,
+  type StartedChannelRecoveryRuntime,
+} from "./pending-response-delivery.js"
 export type {
+  ChannelPrimaryMessageLanguage,
+  ChannelUserFacingLanguage,
+} from "./language.js"
+export type {
+  ChannelCapabilityFallbackNotice,
   ChannelArtifactFallbackMode,
   ChannelDeliveryCapability,
   ChannelDeliveryFallbackAction,
@@ -257,6 +285,7 @@ export type {
   DeliveryReceipt,
   DeliveryReceiptPart,
   DeliveryReceiptStatus,
+  DeliveryReceiptUserFacingLanguage,
   InboundEnvelope,
   InteractionEnvelope,
   InteractionKind,
@@ -292,11 +321,14 @@ export {
   type ChannelSmokeChannel,
   type ChannelSmokeCapabilityFallbackTrace,
   type ChannelSmokeCorrelationKey,
+  type ChannelSmokeFinalDeliveryTrace,
+  type ChannelSmokeFinalizationTrace,
   type ChannelSmokeReadiness,
   type ChannelSmokeReleaseGateMode,
   type ChannelSmokeRequestFlowTrace,
   type ChannelSmokeRunMode,
   type ChannelSmokeRunResult,
+  type ChannelSmokeSemanticReviewTrace,
   type ChannelSmokeRunnerOptions,
   type ChannelSmokeScenario,
   type ChannelSmokeScenarioKind,
@@ -307,16 +339,74 @@ export {
   type PersistedChannelSmokeRunnerOptions,
   type PersistedChannelSmokeRunResult,
 } from "./smoke-runner.js"
+export {
+  validateTelegramWebUiSemanticOutcomeMatrix,
+  type ChannelSemanticOutcomeMatrixValidation,
+} from "./semantic-outcome-matrix.js"
+export {
+  VerifyConversationProcessUseCase,
+  type ConversationControlProbePort,
+  type ConversationDecisionReceipts,
+  type ConversationDeliveryEvidence,
+  type ConversationDeliveryPostCheckPort,
+  type ConversationEvidenceMode,
+  type ConversationProbeObservation,
+  type ConversationProbePort,
+  type ConversationProbeResult,
+  type ConversationReleaseReadiness,
+  type ConversationRunBinding,
+  type ConversationVerificationChannel,
+  type ConversationVerificationInput,
+  type ConversationVerificationResult,
+  type ConversationVerificationStatus,
+  type VerifyConversationProcessPorts,
+} from "./conversation-process-verification.js"
+export {
+  projectConversationProcessBaseline,
+  type ConversationBaselineClassification,
+  type ConversationBaselineTestFile,
+  type ConversationProcessBaselineEvidence,
+  type ConversationProcessBaselineInput,
+  type ConversationProcessBaselineProjection,
+} from "./conversation-process-baseline.js"
+export {
+  validateConversationControlRecoveryParity,
+  type ConversationControlRecoveryObservation,
+  type ConversationControlRecoveryValidation,
+  type ConversationInteractionAdmission,
+} from "./conversation-control-recovery.js"
+export {
+  validateConversationDeliveryParity,
+  type ConversationDeliveryObservation,
+  type ConversationDeliveryParityValidation,
+} from "./conversation-delivery-parity.js"
 
 const log = createLogger("channels")
+let activeChannelMemoryJournal: MemoryJournalRepository | null = null
 
-export async function startChannels(): Promise<void> {
-  const config = getConfig()
+export function closeChannelRuntimeStorage(): void {
+  activeChannelMemoryJournal?.close()
+  activeChannelMemoryJournal = null
+}
 
+function channelRuntimeErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
+
+export async function startChannels(
+  config: KnowbeeConfig,
+  paths: RuntimePaths,
+): Promise<StartedChannelRecoveryRuntime> {
+  const artifactStorage = createArtifactStorageContext(paths)
+  closeChannelRuntimeStorage()
+  const memoryJournal = createMemoryJournalRepository(paths)
+  activeChannelMemoryJournal = memoryJournal
+  const hierarchyStorage = createAgentHierarchyStorage(paths)
   try {
     persistChannelConnections(buildCompatChannelConnectionsFromConfig(config))
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err)
+    const message = channelRuntimeErrorMessage(err)
     log.warn(`Failed to sync channel connection compatibility rows: ${message}`)
   }
 
@@ -331,31 +421,51 @@ export async function startChannels(): Promise<void> {
 
   const runtimeFlag = getFeatureFlag(CHANNEL_REGISTRY_RUNTIME_FEATURE_KEY)
   if (resolveChannelRegistryRuntimeMode(runtimeFlag) === "registry") {
-    const registry = new ChannelRegistry({ config })
+    const registry = new ChannelRegistry({
+      config,
+      artifactStorage,
+      memoryJournal,
+      hierarchyStorage,
+    })
     await registry.startEnabled()
-    return
+    const telegram = registry.getPendingResponseDeliveryOwner("telegram")
+    const slack = registry.getPendingResponseDeliveryOwner("slack")
+    return createStartedChannelRecoveryRuntime({
+      ...(telegram ? { telegram } : {}),
+      ...(slack ? { slack } : {}),
+    })
   }
 
+  let startedSlack: SlackChannel | undefined
   if (config.slack?.enabled) {
-    const channel = new SlackChannel(config.slack)
+    const channel = new SlackChannel(config.slack, artifactStorage, {
+      config,
+      workDir: config.profile.workspace,
+    }, memoryJournal, hierarchyStorage)
     try {
       await channel.start()
       setActiveSlackChannel(channel)
+      startedSlack = channel
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = channelRuntimeErrorMessage(err)
       if (getActiveSlackChannel() === channel) setActiveSlackChannel(null)
       setSlackRuntimeError(message)
       log.warn(`Failed to start Slack channel: ${message}`)
     }
   }
 
+  let startedTelegram: TelegramChannel | undefined
   if (config.telegram?.enabled) {
-    const channel = new TelegramChannel(config.telegram)
+    const channel = new TelegramChannel(config.telegram, artifactStorage, {
+      config,
+      workDir: config.profile.workspace,
+    }, memoryJournal, hierarchyStorage)
     try {
       await channel.start()
       setActiveTelegramChannel(channel)
+      startedTelegram = channel
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = channelRuntimeErrorMessage(err)
       if (getActiveTelegramChannel() === channel) setActiveTelegramChannel(null)
       setTelegramRuntimeError(message)
       log.warn(`Failed to start Telegram channel: ${message}`)
@@ -367,7 +477,7 @@ export async function startChannels(): Promise<void> {
     try {
       await adapter.start()
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = channelRuntimeErrorMessage(err)
       setDiscordRuntimeError(message)
       log.warn(`Failed to start Discord channel: ${message}`)
     }
@@ -378,9 +488,14 @@ export async function startChannels(): Promise<void> {
     try {
       await adapter.start()
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = channelRuntimeErrorMessage(err)
       setGoogleChatRuntimeError(message)
       log.warn(`Failed to start Google Chat channel: ${message}`)
     }
   }
+
+  return createStartedChannelRecoveryRuntime({
+    ...(startedTelegram ? { telegram: startedTelegram } : {}),
+    ...(startedSlack ? { slack: startedSlack } : {}),
+  })
 }

@@ -11,15 +11,15 @@ export interface ActiveRunContractProjection {
     source: RootRun["source"];
     displayName: string;
     orchestrationMode?: RootRun["orchestrationMode"];
-    agentDisplayName?: string;
-    agentNickname?: string;
+    agentName?: string;
+    agentNameSnapshot?: string;
     subSessionIds?: string[];
     subSessions?: Array<{
         subSessionId: string;
         parentRunId: string;
         agentId: string;
-        agentDisplayName: string;
-        agentNickname?: string;
+        agentName: string;
+        agentNameSnapshot?: string;
         status: string;
     }>;
     updatedAt: number;

@@ -5,7 +5,7 @@ export interface AgentMemoryState {
     stateId: string;
     ownerScope: SubSessionMemoryOwnerScope;
     ownerScopeKey: string;
-    nicknameSnapshot?: string;
+    agentNameSnapshot?: string;
     latestCapsuleId?: string;
     currentRawTokenEstimate: number;
     currentRawMessageCount: number;
@@ -42,7 +42,7 @@ export declare function buildAgentMemoryStateFromCapsule(input: {
 }): AgentMemoryState | undefined;
 export declare function buildChildOwnMemoryBootstrap(input: {
     agentId: string;
-    nicknameSnapshot?: string;
+    agentNameSnapshot?: string;
     sessionId: string;
     requestGroupId: string;
     lineageId: string;

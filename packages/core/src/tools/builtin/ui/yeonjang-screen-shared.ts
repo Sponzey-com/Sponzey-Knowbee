@@ -1,6 +1,5 @@
 import { mkdirSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { PATHS } from "../../../config/index.js"
 import {
   doesYeonjangCapabilitySupportMethod,
   doesYeonjangCapabilitySupportOutputMode,
@@ -11,6 +10,7 @@ import {
   type YeonjangClientOptions,
 } from "../../../yeonjang/mqtt-client.js"
 import type { ToolResult } from "../../types.js"
+import { buildYeonjangRequiredFailure } from "../yeonjang-required-failure.js"
 
 export interface YeonjangScreenCaptureResult {
   output_path?: string
@@ -45,7 +45,11 @@ export function extensionFromScreenCaptureMimeType(mimeType?: string): string {
   }
 }
 
-export function saveInlineScreenCapture(base64: string, mimeType?: string, rootDir = join(PATHS.stateDir, "artifacts", "screens")): string {
+export function saveInlineScreenCapture(
+  base64: string,
+  mimeType: string | undefined,
+  rootDir: string,
+): string {
   mkdirSync(rootDir, { recursive: true })
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
   const filePath = join(rootDir, `screen-capture-${timestamp}.${extensionFromScreenCaptureMimeType(mimeType)}`)
@@ -64,15 +68,7 @@ export function validateYeonjangScreenCaptureBinaryResult(remote: YeonjangScreen
 }
 
 export function yeonjangRequiredFailure(method: string): ToolResult {
-  return {
-    success: false,
-    output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 현재 연결된 연장이 \`${method}\` 메서드를 지원하지 않거나 연결되어 있지 않습니다.`,
-    error: "YEONJANG_REQUIRED",
-    details: {
-      requiredExecutor: "yeonjang",
-      requiredMethod: method,
-    },
-  }
+  return buildYeonjangRequiredFailure({ method })
 }
 
 export function yeonjangCapabilityMatrixRequiredFailure(method: string): ToolResult {

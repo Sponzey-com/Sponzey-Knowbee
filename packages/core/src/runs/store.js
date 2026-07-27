@@ -1,12 +1,26 @@
-import { getDb, getTaskContinuity, insertAuditLog, insertDiagnosticEvent, interruptUnfinishedScheduleRunsOnStartup, upsertTaskContinuity } from "../db/index.js";
+import { getDb, getTaskContinuity, insertAuditLog, insertDiagnosticEvent, interruptUnfinishedScheduleRunsOnStartup, listMessageLedgerEvents, upsertTaskContinuity } from "../db/index.js";
 import { assertMigrationWriteAllowed } from "../db/migration-safety.js";
 import { eventBus } from "../events/index.js";
-import { getLastRuntimeManifest, refreshRuntimeManifest } from "../runtime/manifest.js";
+import { getLastRuntimeManifest } from "../runtime/manifest.js";
 import { validateOrchestrationPlan } from "../contracts/sub-agent-orchestration.js";
-import { canTransitionRunStatus, resolveRunFlowIdentifiers } from "./flow-contract.js";
-import { finalizeDeliveryForRun, recordMessageLedgerEvent } from "./message-ledger.js";
+import { canTransitionRunStatus, isTerminalRunStatus, projectRequestExecutionOutcome, resolveRunFlowIdentifiers, } from "./flow-contract.js";
+import { finalizeDeliveryForRun, messageLedgerEventHasRequiredDeliveryEvidence, recordMessageLedgerEvent, } from "./message-ledger.js";
 import { buildStartupRecoverySummary, classifyStartupRecovery, setLastStartupRecoverySummary, summarizeInterruptedScheduleRun } from "./startup-recovery.js";
 import { DEFAULT_RUN_STEPS } from "./types.js";
+import { decideCleanupCandidate } from "../maintenance/cleanup-decision.js";
+import { canonicalWorkIdForRootRun, createCanonicalWorkAggregate, } from "../contracts/canonical-work-aggregate.js";
+import { SqliteCanonicalWorkRepository } from "../db/canonical-work-repository.js";
+import { SqliteCanonicalPendingResponseRepository } from "../db/canonical-pending-response-repository.js";
+import { SqliteCanonicalWorkReceiptRepository } from "../db/canonical-work-receipt-repository.js";
+import { SqliteSideEffectOperationRepository } from "../db/side-effect-operation-repository.js";
+import { validateCanonicalWorkReceiptForEvent } from "../contracts/canonical-work-receipt.js";
+import { executeCanonicalWorkTransition, } from "./canonical-work-transition-use-case.js";
+import { classifyCanonicalStartupRecovery } from "./canonical-startup-recovery.js";
+import { buildCanonicalRecoveredDeliveryDescriptor, recordCanonicalFinalizationTransition, } from "./canonical-finalization-lifecycle.js";
+import { SqliteTypedObservabilityEventRepository } from "../db/typed-observability-event-repository.js";
+import { recordCanonicalRequestReceivedObservability, recordCanonicalTransitionObservability, } from "../observability/canonical-transition-events.js";
+import { createLogger, redactLogText } from "../logger/index.js";
+const log = createLogger("runs:store");
 const activeRunControllers = new Map();
 const ACTIVE_WORKER_SESSION_STATUSES = ["queued", "running", "awaiting_approval", "awaiting_user"];
 const ACTIVE_REQUEST_GROUP_STATUSES = ["queued", "running", "awaiting_approval", "awaiting_user"];
@@ -15,70 +29,8 @@ function truncateTitle(prompt) {
     const normalized = prompt.trim().replace(/\s+/g, " ");
     return normalized.length > 72 ? `${normalized.slice(0, 72)}…` : normalized;
 }
-const RECONNECT_STOP_WORDS = new Set([
-    "그", "그거", "그것", "이거", "이것", "저거", "저것", "기존", "이전", "아까", "방금", "전에", "파일", "폴더", "프로그램", "화면", "페이지", "코드", "수정", "고쳐", "바꿔", "추가", "보완", "업데이트",
-    "the", "that", "it", "those", "this", "file", "folder", "program", "page", "screen", "code", "modify", "edit", "fix", "change", "update", "continue", "resume",
-]);
-const CONTINUATION_MESSAGE_PATTERNS = [
-    /(?:그리고|또|그럼|그러면|이어서|계속|다시|방금|이제|근데|그런데|여기|이건|그건|저건|이쪽|그쪽|저쪽|아직|왜\s*안|안\s*돼|안돼|실패|오류|에러|결과)/u,
-    /(?:보여줘|보내줘|고쳐줘|수정해줘|바꿔줘|이어가|계속해|다시\s*해|이어서\s*해|이어서\s*진행)/u,
-    /\b(?:and|also|then|next|continue|resume|again|now|here|this|that|it|but|why|result|failed|error)\b/i,
-    /\b(?:show|send|fix|change|update|continue|resume|again|failed|error|result)\b/i,
-];
 function isActiveRequestGroupStatus(status) {
     return ACTIVE_REQUEST_GROUP_STATUSES.includes(status);
-}
-function looksLikeContinuationMessage(value) {
-    const trimmed = value.trim();
-    if (!trimmed)
-        return false;
-    if (CONTINUATION_MESSAGE_PATTERNS.some((pattern) => pattern.test(trimmed))) {
-        return true;
-    }
-    return false;
-}
-function extractQuotedReconnectTerms(value) {
-    const result = [];
-    const regex = /["'“”‘’]([^"'“”‘’]{2,80})["'“”‘’]/g;
-    for (const match of value.matchAll(regex)) {
-        const token = match[1]?.trim();
-        if (token)
-            result.push(token.toLowerCase());
-    }
-    return result;
-}
-function tokenizeReconnectTerms(value) {
-    const tokens = value
-        .toLowerCase()
-        .match(/[a-z0-9가-힣][a-z0-9가-힣._:-]*/g) ?? [];
-    return [...new Set(tokens.filter((token) => token.length > 1 && !RECONNECT_STOP_WORDS.has(token)))];
-}
-function scoreReconnectCandidate(message, run, recencyIndex) {
-    const haystack = [run.title, run.prompt, run.summary].join("\n").toLowerCase();
-    const quotedTerms = extractQuotedReconnectTerms(message);
-    const tokens = tokenizeReconnectTerms(message);
-    const overlap = tokens.filter((token) => haystack.includes(token));
-    const continuation = looksLikeContinuationMessage(message);
-    let score = 0;
-    for (const quoted of quotedTerms) {
-        if (haystack.includes(quoted))
-            score += 80;
-    }
-    score += overlap.length * 12;
-    if (overlap.length > 0 || quotedTerms.length > 0) {
-        score += Math.max(0, 10 - recencyIndex);
-    }
-    if (continuation) {
-        score += isActiveRequestGroupStatus(run.status) ? 24 : 10;
-        score += Math.max(0, 6 - recencyIndex);
-        if (overlap.length === 0 && quotedTerms.length === 0 && recencyIndex === 0) {
-            score += 8;
-        }
-    }
-    if (isActiveRequestGroupStatus(run.status)) {
-        score += overlap.length > 0 || continuation ? 8 : 0;
-    }
-    return score;
 }
 function mapStep(row) {
     return {
@@ -289,13 +241,261 @@ export function listRunsForRecentRequestGroups(limitGroups = 120, limitRuns = 10
         .all(...groups, limitRuns)
         .map(hydrateRun);
 }
+const terminalCanonicalRecoveryStates = new Set([
+    "SUCCEEDED",
+    "PARTIALLY_SUCCEEDED",
+    "BLOCKED",
+    "EXHAUSTED",
+    "CANCELLED",
+    "USER_REPORT",
+]);
+function recordCanonicalStartupReconciliation(params) {
+    const recoveryKey = [
+        "canonical-startup-reconciliation",
+        params.run.id,
+        params.aggregateWorkId,
+        params.aggregateRevision,
+        params.reasonCode,
+    ].join(":");
+    const existing = getDb()
+        .prepare(`SELECT id
+       FROM diagnostic_events
+       WHERE recovery_key = ?
+       LIMIT 1`)
+        .get(recoveryKey);
+    if (existing)
+        return;
+    insertDiagnosticEvent({
+        kind: "canonical_startup_reconciliation_required",
+        summary: params.reasonCode === "canonical_recovery_manifest_mismatch"
+            ? "현재 runtime manifest와 실행 snapshot이 달라 자동 재실행을 차단했습니다."
+            : "종료된 실행과 미완료 canonical 상태의 불일치를 자동 변경 없이 격리했습니다.",
+        runId: params.run.id,
+        sessionId: params.run.sessionId,
+        requestGroupId: params.run.requestGroupId,
+        recoveryKey,
+        detail: {
+            reasonCode: params.reasonCode,
+            rootRunStatus: params.run.status,
+            aggregateState: params.aggregateState,
+            aggregateRevision: params.aggregateRevision,
+            aggregateWorkId: params.aggregateWorkId,
+            runtimeManifestMatches: runtimeManifestMatches(params.run),
+            storedRuntimeManifestId: params.run.runtimeManifestId,
+            activeRuntimeManifestId: getLastRuntimeManifest()?.id,
+        },
+    });
+}
+function runtimeManifestMatches(run) {
+    return !run.runtimeManifestId || run.runtimeManifestId === getLastRuntimeManifest()?.id;
+}
 export function recoverActiveRunsOnStartup() {
-    const activeRuns = listActiveRootRuns(200);
+    const canonicalRepository = new SqliteCanonicalWorkRepository(getDb(), () => Date.now());
+    const pendingResponseRepository = new SqliteCanonicalPendingResponseRepository(getDb(), () => Date.now());
+    const sideEffectRepository = new SqliteSideEffectOperationRepository(getDb(), () => Date.now());
+    const recoverableAggregates = canonicalRepository.listRecoverable(1_000);
+    const activeById = new Map(listActiveRootRuns(200).map((run) => [run.id, run]));
+    for (const aggregate of recoverableAggregates) {
+        const run = getRootRun(aggregate.rootRunId);
+        if (run)
+            activeById.set(run.id, run);
+    }
+    const activeRuns = [...activeById.values()];
     const recovered = [];
     const runSummaries = [];
     for (const run of activeRuns) {
         const continuity = getTaskContinuity(run.lineageRootRunId);
-        const recovery = classifyStartupRecovery(run, continuity);
+        const aggregate = recoverableAggregates.find((candidate) => candidate.rootRunId === run.id);
+        if (aggregate
+            && isTerminalRunStatus(run.status)
+            && !terminalCanonicalRecoveryStates.has(aggregate.state)) {
+            const reasonCode = runtimeManifestMatches(run)
+                ? "terminal_root_run_with_nonterminal_aggregate"
+                : "canonical_recovery_manifest_mismatch";
+            recordCanonicalStartupReconciliation({
+                run,
+                aggregateState: aggregate.state,
+                aggregateRevision: aggregate.revision,
+                aggregateWorkId: aggregate.workId,
+                reasonCode,
+            });
+            runSummaries.push({
+                runId: run.id,
+                lineageRootRunId: run.lineageRootRunId,
+                previousStatus: run.status,
+                recoveryStatus: "stale",
+                summary: reasonCode === "canonical_recovery_manifest_mismatch"
+                    ? "runtime manifest 불일치를 기존 실행 이력 변경 없이 격리했습니다."
+                    : "종료된 실행의 canonical 상태 불일치를 reconciliation 대상으로 격리했습니다.",
+                pendingApprovals: [],
+                pendingDelivery: [],
+                duplicateRisk: false,
+            });
+            continue;
+        }
+        const responseArtifactAvailable = (() => {
+            if (!aggregate)
+                return false;
+            try {
+                const pending = pendingResponseRepository.loadPending(run.id);
+                if (!pending || pending.workId !== aggregate.workId)
+                    return false;
+                if (!pending.reviewEnvelope || pending.reviewIssue)
+                    return false;
+                const expectedOutcome = aggregate.state === "SUCCEEDED"
+                    ? "succeeded"
+                    : aggregate.state === "PARTIALLY_SUCCEEDED"
+                        ? "partial"
+                        : aggregate.state === "BLOCKED"
+                            ? "blocked"
+                            : aggregate.state === "EXHAUSTED"
+                                ? "exhausted"
+                                : aggregate.state === "CANCELLED"
+                                    ? "cancelled"
+                                    : undefined;
+                return expectedOutcome !== undefined && pending.finalOutcome === expectedOutcome;
+            }
+            catch {
+                return false;
+            }
+        })();
+        const committedDelivery = aggregate && aggregate.revision > 0
+            ? listMessageLedgerEvents({ runId: run.id, limit: 1_000 }).find((event) => event.event_kind === "final_answer_delivered"
+                && (event.status === "delivered" || event.status === "succeeded" || event.status === "sent")
+                && Boolean(event.delivery_key)
+                && Boolean(event.idempotency_key)
+                && messageLedgerEventHasRequiredDeliveryEvidence(event))
+            : undefined;
+        const canonicalDecision = aggregate && aggregate.revision > 0
+            ? classifyCanonicalStartupRecovery({
+                aggregate,
+                rootRunStatus: run.status,
+                committedFinalDelivery: Boolean(committedDelivery),
+                responseArtifactAvailable,
+                sideEffectReceiptAvailable: sideEffectRepository.listByRun(run.id, 1).length > 0,
+                runtimeManifestMatches: runtimeManifestMatches(run),
+            })
+            : undefined;
+        if (aggregate
+            && canonicalDecision?.kind === "manual_intervention"
+            && canonicalDecision.reasonCode === "canonical_recovery_manifest_mismatch") {
+            recordCanonicalStartupReconciliation({
+                run,
+                aggregateState: aggregate.state,
+                aggregateRevision: aggregate.revision,
+                aggregateWorkId: aggregate.workId,
+                reasonCode: canonicalDecision.reasonCode,
+            });
+            runSummaries.push({
+                runId: run.id,
+                lineageRootRunId: run.lineageRootRunId,
+                previousStatus: run.status,
+                recoveryStatus: "interrupted",
+                nextRunStatus: "interrupted",
+                summary: "runtime manifest 불일치로 자동 재실행을 차단하고 별도 진단에 기록했습니다.",
+                pendingApprovals: [],
+                pendingDelivery: [],
+                duplicateRisk: true,
+            });
+            upsertTaskContinuity({
+                lineageRootRunId: run.lineageRootRunId,
+                ...(run.parentRunId ? { parentRunId: run.parentRunId } : {}),
+                ...(run.handoffSummary ? { handoffSummary: run.handoffSummary } : {}),
+                lastGoodState: run.summary,
+                pendingApprovals: [],
+                pendingDelivery: [],
+                status: "interrupted",
+            });
+            const updated = updateRunStatus(run.id, "interrupted", run.summary, false);
+            if (updated)
+                recovered.push(updated);
+            continue;
+        }
+        if (canonicalDecision?.kind === "resume_delivery"
+            && canonicalDecision.deliveryMode === "commit_transition_only"
+            && committedDelivery?.delivery_key
+            && committedDelivery.idempotency_key) {
+            const aggregateRevision = aggregate?.revision;
+            if (aggregateRevision === undefined)
+                continue;
+            const finalOutcome = aggregate?.state === "SUCCEEDED"
+                ? "succeeded"
+                : aggregate?.state === "PARTIALLY_SUCCEEDED"
+                    ? "partial"
+                    : aggregate?.state === "BLOCKED"
+                        ? "blocked"
+                        : aggregate?.state === "EXHAUSTED"
+                            ? "exhausted"
+                            : "cancelled";
+            const built = buildCanonicalRecoveredDeliveryDescriptor({
+                runId: run.id,
+                finalOutcome,
+                committedLedgerEventId: committedDelivery.id,
+                deliveryKey: committedDelivery.delivery_key,
+                idempotencyKey: committedDelivery.idempotency_key,
+            });
+            const receiptRepository = new SqliteCanonicalWorkReceiptRepository(getDb(), () => Date.now());
+            const recorded = built.ok
+                ? recordCanonicalFinalizationTransition(built.descriptor, {
+                    issueReceipt: (receipt) => receiptRepository.issue(receipt),
+                    loadReceipt: (receiptId) => receiptRepository.load(receiptId),
+                    applyTransition: ({ runId, workId, event, receiptRef, finalOutcome }) => applyCanonicalRunTransition({
+                        runId,
+                        workId,
+                        expectedRevision: aggregateRevision,
+                        event,
+                        receiptRef,
+                        ...(finalOutcome ? { finalOutcome } : {}),
+                    }),
+                })
+                : built;
+            const updated = getRootRun(run.id);
+            const summary = recorded.ok
+                ? "재시작 전 커밋된 최종 전달을 재전송하지 않고 canonical 종료 전이만 복구했습니다."
+                : `canonical delivery 복구가 차단되었습니다: ${recorded.reasonCode}`;
+            runSummaries.push({
+                runId: run.id,
+                lineageRootRunId: run.lineageRootRunId,
+                previousStatus: run.status,
+                recoveryStatus: recorded.ok ? "delivered" : "stale",
+                ...(updated ? { nextRunStatus: updated.status } : {}),
+                summary,
+                pendingApprovals: [],
+                pendingDelivery: [],
+                duplicateRisk: false,
+            });
+            appendRunEvent(run.id, summary);
+            if (updated)
+                recovered.push(updated);
+            continue;
+        }
+        const recovery = canonicalDecision
+            ? canonicalDecision.kind === "resume_waiting"
+                ? classifyStartupRecovery({ ...run, status: canonicalDecision.projectionStatus }, continuity)
+                : canonicalDecision.kind === "resume_delivery"
+                    ? {
+                        status: "pending_delivery",
+                        nextRunStatus: "awaiting_user",
+                        summary: "canonical 최종 결과가 있으나 안전하게 복원할 응답 artifact가 없어 자동 전달하지 않습니다.",
+                        pendingApprovals: [],
+                        pendingDelivery: [`canonical-delivery:${run.id}`],
+                        safeToAutoExecute: false,
+                        safeToAutoDeliver: false,
+                        requiresUserConfirmation: true,
+                        duplicateRisk: true,
+                    }
+                    : {
+                        status: "interrupted",
+                        nextRunStatus: "interrupted",
+                        summary: `canonical 재시작 복구가 자동 실행을 차단했습니다: ${canonicalDecision.reasonCode}`,
+                        pendingApprovals: [],
+                        pendingDelivery: [],
+                        safeToAutoExecute: false,
+                        safeToAutoDeliver: false,
+                        requiresUserConfirmation: true,
+                        duplicateRisk: true,
+                    }
+            : classifyStartupRecovery(run, continuity);
         runSummaries.push({
             runId: run.id,
             lineageRootRunId: run.lineageRootRunId,
@@ -362,6 +562,36 @@ export function getRootRun(runId) {
         .get(runId);
     return row ? hydrateRun(row) : undefined;
 }
+function resolveStoredDeliveryOutcome(runId) {
+    const events = listMessageLedgerEvents({ runId, limit: 1_000 });
+    const delivered = events.some((event) => event.event_kind === "final_answer_delivered"
+        && (event.status === "delivered" || event.status === "succeeded" || event.status === "sent")
+        && messageLedgerEventHasRequiredDeliveryEvidence(event));
+    if (delivered)
+        return "delivered";
+    const pendingResponse = new SqliteCanonicalPendingResponseRepository(getDb(), () => Date.now()).loadPending(runId);
+    if (pendingResponse)
+        return "pending";
+    if (events.some((event) => event.event_kind === "text_delivery_failed"
+        || event.event_kind === "final_answer_suppressed"))
+        return "failed";
+    if (events.some((event) => event.event_kind === "final_answer_generated"))
+        return "pending";
+    return "not_started";
+}
+export function getRequestExecutionOutcome(runId) {
+    const run = getRootRun(runId);
+    if (!run)
+        return undefined;
+    const aggregate = new SqliteCanonicalWorkRepository(getDb(), () => Date.now()).load(canonicalWorkIdForRootRun(runId));
+    if (!aggregate)
+        return undefined;
+    return projectRequestExecutionOutcome({
+        aggregate,
+        runStatus: run.status,
+        deliveryStatus: resolveStoredDeliveryOutcome(runId),
+    });
+}
 export function listRequestGroupRuns(requestGroupId) {
     return getDb()
         .prepare(`SELECT *
@@ -409,6 +639,7 @@ export function getRequestGroupDelegationTurnCount(requestGroupId) {
     return row?.max_count ?? 0;
 }
 export function findReconnectRequestGroupSelection(sessionId, message) {
+    void message;
     const runs = getDb()
         .prepare(`SELECT *
        FROM root_runs
@@ -424,20 +655,9 @@ export function findReconnectRequestGroupSelection(sessionId, message) {
         }
     }
     const reusableRuns = [...grouped.values()].filter((run) => isActiveRequestGroupStatus(run.status));
-    const activeGroupCount = reusableRuns.filter((run) => isActiveRequestGroupStatus(run.status)).length;
-    const continuation = looksLikeContinuationMessage(message);
-    const scored = reusableRuns
-        .map((run, index) => ({ run, score: scoreReconnectCandidate(message, run, index) }))
-        .filter((item) => item.score >= 18 || (continuation && activeGroupCount === 1 && item.score >= 14))
-        .sort((a, b) => (b.score - a.score) || (b.run.updatedAt - a.run.updatedAt));
-    const best = scored[0]?.run;
-    const secondScore = scored[1]?.score ?? -1;
-    const bestScore = scored[0]?.score ?? -1;
-    const ambiguous = Boolean(best && secondScore >= 18 && bestScore - secondScore < 12);
     return {
-        ...(best ? { best } : {}),
-        candidates: scored.slice(0, 3).map((item) => item.run),
-        ambiguous,
+        candidates: reusableRuns.slice(0, 3),
+        ambiguous: reusableRuns.length > 1,
     };
 }
 export function findReconnectRequestGroup(sessionId, message) {
@@ -506,12 +726,7 @@ export function createRootRun(params) {
         const current = getLastRuntimeManifest();
         if (current)
             return current.id;
-        try {
-            return refreshRuntimeManifest({ includeEnvironment: false, includeReleasePackage: false }).id;
-        }
-        catch {
-            return null;
-        }
+        return null;
     })();
     const db = getDb();
     const identifiers = resolveRunFlowIdentifiers({
@@ -544,9 +759,20 @@ export function createRootRun(params) {
         });
         db.prepare(`INSERT INTO run_events (id, run_id, at, label)
        VALUES (?, ?, ?, ?)`).run(crypto.randomUUID(), params.id, now, "요청 수신");
+        if (identifiers.runScope === "root") {
+            const canonical = new SqliteCanonicalWorkRepository(db, () => now);
+            const created = canonical.create(createCanonicalWorkAggregate({
+                workId: canonicalWorkIdForRootRun(params.id),
+                rootRunId: params.id,
+            }));
+            if (!created.created)
+                throw new Error("Canonical root work aggregate already exists.");
+        }
     });
     tx();
     const run = getRootRun(params.id);
+    if (!run)
+        throw new Error(`Created root run could not be reloaded: ${params.id}`);
     recordMessageLedgerEvent({
         runId: params.id,
         requestGroupId: run.requestGroupId,
@@ -562,6 +788,21 @@ export function createRootRun(params) {
             taskProfile,
         },
     });
+    if (run.runScope === "root") {
+        recordCanonicalRequestReceivedObservability({
+            repository: new SqliteTypedObservabilityEventRepository(),
+            workId: canonicalWorkIdForRootRun(run.id),
+            context: {
+                requestId: run.id,
+                requestGroupId: run.requestGroupId,
+                rootRunId: run.lineageRootRunId,
+                runId: run.id,
+                ...(run.parentRunId ? { parentRunId: run.parentRunId } : {}),
+                at: run.createdAt,
+            },
+            onDegraded: (error) => log.fieldDebug(`Typed ingress observability write degraded: ${redactLogText(error instanceof Error ? error.message : String(error), "debug")}`),
+        });
+    }
     eventBus.emit("run.created", { run });
     eventBus.emit("run.progress", { run });
     return run;
@@ -569,7 +810,7 @@ export function createRootRun(params) {
 export function appendRunEvent(runId, label) {
     const at = Date.now();
     getDb()
-        .prepare(`INSERT INTO run_events (id, run_id, at, label) VALUES (?, ?, ?, ?)`)
+        .prepare("INSERT INTO run_events (id, run_id, at, label) VALUES (?, ?, ?, ?)")
         .run(crypto.randomUUID(), runId, at, label);
 }
 export function mergeRunPromptSourceSnapshot(runId, patch) {
@@ -582,7 +823,7 @@ export function mergeRunPromptSourceSnapshot(runId, patch) {
     };
     const now = Date.now();
     getDb()
-        .prepare(`UPDATE root_runs SET prompt_source_snapshot = ?, updated_at = ? WHERE id = ?`)
+        .prepare("UPDATE root_runs SET prompt_source_snapshot = ?, updated_at = ? WHERE id = ?")
         .run(JSON.stringify(nextSnapshot), now, runId);
     const updated = getRootRun(runId);
     if (updated)
@@ -592,7 +833,7 @@ export function mergeRunPromptSourceSnapshot(runId, patch) {
 export function updateRunSummary(runId, summary) {
     const now = Date.now();
     getDb()
-        .prepare(`UPDATE root_runs SET summary = ?, updated_at = ? WHERE id = ?`)
+        .prepare("UPDATE root_runs SET summary = ?, updated_at = ? WHERE id = ?")
         .run(summary, now, runId);
     const run = getRootRun(runId);
     if (run) {
@@ -609,6 +850,7 @@ export function updateRunStatus(runId, status, summary, canCancel) {
     let nextStatus = status;
     let nextSummary = summary ?? current.summary;
     let nextCanCancel = canCancel ?? current.canCancel;
+    let deliveredAnswerProtected = false;
     if ((status === "failed" || status === "cancelled" || status === "interrupted") && current.status !== "completed") {
         const finalizer = finalizeDeliveryForRun({
             runId,
@@ -619,6 +861,7 @@ export function updateRunStatus(runId, status, summary, canCancel) {
             nextStatus = finalizer.runStatus;
             nextSummary = finalizer.summary ?? nextSummary;
             nextCanCancel = false;
+            deliveredAnswerProtected = true;
             appendRunEvent(runId, `delivery_finalizer:${finalizer.outcome}`);
         }
     }
@@ -628,8 +871,21 @@ export function updateRunStatus(runId, status, summary, canCancel) {
         return current;
     }
     getDb()
-        .prepare(`UPDATE root_runs SET status = ?, summary = ?, can_cancel = ?, updated_at = ? WHERE id = ?`)
+        .prepare("UPDATE root_runs SET status = ?, summary = ?, can_cancel = ?, updated_at = ? WHERE id = ?")
         .run(nextStatus, nextSummary, nextCanCancel ? 1 : 0, now, runId);
+    if (deliveredAnswerProtected && nextStatus === "completed") {
+        for (const stepKey of [
+            "received",
+            "classified",
+            "target_selected",
+            "executing",
+            "reviewing",
+            "finalizing",
+            "completed",
+        ]) {
+            setRunStepStatus(runId, stepKey, "completed", nextSummary);
+        }
+    }
     const run = getRootRun(runId);
     if (run) {
         eventBus.emit("run.status", { run });
@@ -642,6 +898,87 @@ export function updateRunStatus(runId, status, summary, canCancel) {
             eventBus.emit("run.cancelled", { run });
     }
     return run;
+}
+export function applyCanonicalRunTransition(command) {
+    const db = getDb();
+    let result;
+    try {
+        result = db.transaction(() => {
+            const run = getRootRun(command.runId);
+            if (!run)
+                return { status: "rejected", reasonCode: "aggregate_not_found" };
+            const repository = new SqliteCanonicalWorkRepository(db, () => Date.now());
+            const receiptRepository = new SqliteCanonicalWorkReceiptRepository(db, () => Date.now());
+            const receipt = receiptRepository.load(command.receiptRef);
+            if (!receipt)
+                return { status: "receipt_rejected", reasonCode: "receipt_not_found" };
+            const receiptValidation = validateCanonicalWorkReceiptForEvent({
+                receipt,
+                workId: canonicalWorkIdForRootRun(command.runId),
+                event: command.event,
+            });
+            if (!receiptValidation.ok)
+                return { status: "receipt_rejected", reasonCode: receiptValidation.reasonCode };
+            const decision = executeCanonicalWorkTransition({
+                repository,
+                input: {
+                    workId: canonicalWorkIdForRootRun(command.runId),
+                    expectedRevision: command.expectedRevision,
+                    event: command.event,
+                    receiptRef: command.receiptRef,
+                    ...(command.waitingKind ? { waitingKind: command.waitingKind } : {}),
+                    ...(command.finalOutcome ? { finalOutcome: command.finalOutcome } : {}),
+                },
+            });
+            if (decision.status !== "applied")
+                return decision;
+            const consumed = receiptRepository.consume({
+                receiptId: command.receiptRef,
+                workId: decision.aggregate.workId,
+                revision: decision.aggregate.revision,
+            });
+            if (!consumed.consumed)
+                throw new Error("Canonical transition receipt consumption failed.");
+            const projectedStatus = decision.runProjection.runStatus;
+            const canCancel = !["completed", "failed", "cancelled", "interrupted"].includes(projectedStatus);
+            const update = db.prepare(`
+        UPDATE root_runs SET status = ?, can_cancel = ?, updated_at = ? WHERE id = ?
+      `).run(projectedStatus, canCancel ? 1 : 0, Date.now(), command.runId);
+            if (update.changes !== 1)
+                throw new Error("Canonical RootRun projection target is missing.");
+            const updated = getRootRun(command.runId);
+            if (!updated)
+                throw new Error("Canonical RootRun projection could not be loaded.");
+            return { ...decision, run: updated };
+        })();
+    }
+    catch {
+        return { status: "persistence_failed", reasonCode: "canonical_run_transition_persistence_failed" };
+    }
+    if (result.status === "applied") {
+        recordCanonicalTransitionObservability({
+            repository: new SqliteTypedObservabilityEventRepository(),
+            aggregate: result.aggregate,
+            context: {
+                requestId: result.run.id,
+                requestGroupId: result.run.requestGroupId,
+                rootRunId: result.run.lineageRootRunId,
+                runId: result.run.id,
+                ...(result.run.parentRunId ? { parentRunId: result.run.parentRunId } : {}),
+                at: result.run.updatedAt,
+            },
+            onDegraded: (error) => log.fieldDebug(`Typed observability write degraded: ${redactLogText(error instanceof Error ? error.message : String(error), "debug")}`),
+        });
+        eventBus.emit("run.status", { run: result.run });
+        eventBus.emit("run.progress", { run: result.run });
+        if (result.run.status === "completed")
+            eventBus.emit("run.completed", { run: result.run });
+        if (result.run.status === "failed")
+            eventBus.emit("run.failed", { run: result.run });
+        if (result.run.status === "cancelled")
+            eventBus.emit("run.cancelled", { run: result.run });
+    }
+    return result;
 }
 export function incrementDelegationTurnCount(runId, summary) {
     const now = Date.now();
@@ -832,8 +1169,17 @@ export function deleteRunHistory(runId) {
         return undefined;
     const lineageKey = resolveLineageKey(target);
     const rows = selectRunRowsForLineage(lineageKey);
-    const activeRows = rows.filter((row) => ACTIVE_REQUEST_GROUP_STATUSES.includes(row.status) || activeRunControllers.has(row.id));
-    if (activeRows.length > 0) {
+    const retainedRows = rows.filter((row) => decideCleanupCandidate({
+        candidateId: `run_history:${row.id}`,
+        dataKind: "run_history",
+        retentionClass: "expired",
+        activeReferenceCount: ACTIVE_REQUEST_GROUP_STATUSES.includes(row.status) || activeRunControllers.has(row.id) ? 1 : 0,
+        referenceScanCompleted: true,
+        migrationRequired: false,
+        rollbackRequired: false,
+        deletionApproved: true,
+    }).decision === "retain");
+    if (retainedRows.length > 0) {
         insertDiagnosticEvent({
             kind: "active_run_delete_blocked",
             summary: "진행 중인 실행 기록 삭제 요청을 차단했습니다.",
@@ -842,10 +1188,10 @@ export function deleteRunHistory(runId) {
             sessionId: target.session_id,
             detail: {
                 lineageKey,
-                blockedRunIds: activeRows.map((row) => row.id),
+                blockedRunIds: retainedRows.map((row) => row.id),
             },
         });
-        return { deletedRunCount: 0, blockedRunCount: activeRows.length };
+        return { deletedRunCount: 0, blockedRunCount: retainedRows.length };
     }
     const runIds = rows.map((row) => row.id);
     const requestGroupIds = [...new Set(rows.map((row) => row.request_group_id).filter((value) => typeof value === "string" && value.length > 0))];
@@ -863,8 +1209,18 @@ export function clearHistoricalRunHistory() {
     if (rows.length === 0) {
         return { deletedRunCount: 0 };
     }
-    const runIds = rows.map((row) => row.id);
-    const requestGroupIds = [...new Set(rows.map((row) => row.request_group_id).filter((value) => typeof value === "string" && value.length > 0))];
+    const deletableRows = rows.filter((row) => decideCleanupCandidate({
+        candidateId: `run_history:${row.id}`,
+        dataKind: "run_history",
+        retentionClass: "expired",
+        activeReferenceCount: activeRunControllers.has(row.id) ? 1 : 0,
+        referenceScanCompleted: true,
+        migrationRequired: false,
+        rollbackRequired: false,
+        deletionApproved: true,
+    }).decision === "delete");
+    const runIds = deletableRows.map((row) => row.id);
+    const requestGroupIds = [...new Set(deletableRows.map((row) => row.request_group_id).filter((value) => typeof value === "string" && value.length > 0))];
     return {
         deletedRunCount: deleteRunRows({ runIds, requestGroupIds }),
     };

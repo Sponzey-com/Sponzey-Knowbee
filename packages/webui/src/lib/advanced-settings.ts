@@ -35,14 +35,14 @@ export function buildAdvancedSettingsTabs(language: UiLanguage): AdvancedSetting
     {
       id: "ai",
       label: t("AI 연결", "AI connection"),
-      description: t("단일 AI provider, endpoint, 기본 모델, 인증 상태를 관리합니다.", "Manage the single AI provider, endpoint, default model, and credential state."),
+      description: t("단일 AI 연결 종류, 연결 주소, 기본 모델, 인증 상태를 관리합니다.", "Manage the single AI provider, endpoint, default model, and credential state."),
       capabilityKey: "ai.backends",
       savesDraft: true,
     },
     {
       id: "orchestration",
       label: t("오케스트레이션", "Orchestration"),
-      description: t("마스터 노비와 서브 에이전트 실행 모드를 설정합니다.", "Configure master Knowbee and sub-agent execution mode."),
+      description: t("메인 에이전트와 서브 에이전트 실행 모드를 설정합니다.", "Configure main-agent and sub-agent execution mode."),
       capabilityKey: "settings.control",
       savesDraft: false,
     },
@@ -56,14 +56,14 @@ export function buildAdvancedSettingsTabs(language: UiLanguage): AdvancedSetting
     {
       id: "yeonjang",
       label: t("연장", "Yeonjang"),
-      description: t("MQTT 브로커, 연결 노드, capability, 재연결 상태를 확인합니다.", "Inspect MQTT broker, connected nodes, capabilities, and reconnect state."),
+      description: t("MQTT 브로커, 연결 인스턴스, 사용 가능 기능, 재연결 상태를 확인합니다.", "Inspect MQTT broker, connected instances, capabilities, and reconnect state."),
       capabilityKey: "mqtt.broker",
       savesDraft: true,
     },
     {
       id: "memory",
       label: t("메모리", "Memory"),
-      description: t("메모리 scope, writeback 후보, 검색 품질 상태를 확인합니다.", "Inspect memory scopes, writeback candidates, and retrieval quality."),
+      description: t("메모리 영역, 장기 기억 반영 후보, 검색 품질 상태를 확인합니다.", "Inspect memory scopes, writeback candidates, and retrieval quality."),
       capabilityKey: "settings.control",
       savesDraft: false,
     },

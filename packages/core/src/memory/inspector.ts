@@ -1,6 +1,7 @@
 import { getDefaultModel, getProvider, type AIProvider } from "../ai/index.js"
 import type { Message } from "../ai/types.js"
-import { getConfig } from "../config/index.js"
+import type { KnowbeeConfig } from "../config/types.js"
+import { sanitizeUserFacingError } from "../runs/error-sanitizer.js"
 import {
   clearAgentMemoryStateLatestCapsule,
   getMessages,
@@ -21,6 +22,7 @@ import { buildMemoryQualitySnapshot } from "./quality.js"
 import type { MemoryCapsule } from "./capsule.js"
 import {
   buildRootSessionCompactionReasonCodes,
+  resolveShortTermCompactionPolicy,
   estimateContextTokens,
   executeRootSessionCompaction,
   extractRootSessionDeterministicState,
@@ -28,6 +30,7 @@ import {
 import { buildMaintenanceRestoreContext, renderMaintenanceRestorePromptBlock } from "./retrieval-restore.js"
 
 export type MemoryInspectorDriftState = "ok" | "warning"
+export type MemoryInspectorConfigSnapshot = Pick<KnowbeeConfig, "ai" | "memory">
 export type MemoryInspectorControlAction =
   | "dry_run_compaction"
   | "latest_capsule_inspect"
@@ -45,7 +48,7 @@ export interface MemoryInspectorOwnerCard {
   lineageId?: string
   channelKey?: string
   threadKey?: string
-  nicknameSnapshot?: string
+  agentNameSnapshot?: string
   latestCapsuleId?: string
   currentRawTokenEstimate: number
   currentRawMessageCount: number
@@ -59,6 +62,11 @@ export interface MemoryInspectorOwnerCard {
   driftWarningCodes: string[]
   lastCompactionAt: number | null
   compactionBlockReason: string | null
+}
+
+function memoryInspectorProviderErrorReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : "provider_resolution_failed"
+  return sanitizeUserFacingError(message).reason
 }
 
 export interface MemoryInspectorConfiguredPolicy {
@@ -287,6 +295,7 @@ function buildInspectorSnapshotInput(input: {
   requestGroupId?: string
   limit?: number
   now?: number
+  config: MemoryInspectorConfigSnapshot
 }): Parameters<typeof buildMemoryInspectorSnapshot>[0] {
   return {
     ...(input.ownerType ? { ownerType: input.ownerType } : {}),
@@ -295,6 +304,7 @@ function buildInspectorSnapshotInput(input: {
     ...(input.requestGroupId ? { requestGroupId: input.requestGroupId } : {}),
     ...(input.limit !== undefined ? { limit: input.limit } : {}),
     ...(input.now !== undefined ? { now: input.now } : {}),
+    config: input.config,
   }
 }
 
@@ -305,10 +315,11 @@ export function buildMemoryInspectorSnapshot(input: {
   requestGroupId?: string
   limit?: number
   now?: number
-} = {}): MemoryInspectorSnapshot {
+  config: MemoryInspectorConfigSnapshot
+}): MemoryInspectorSnapshot {
   const now = input.now ?? Date.now()
   const limit = clampLimit(input.limit)
-  const config = getConfig()
+  const config = input.config
   const configuredPolicy: MemoryInspectorConfiguredPolicy = {
     explicitModelId: config.memory.compaction?.modelId?.trim() || null,
     fallbackModelId: config.memory.compaction?.fallbackModelId?.trim() || null,
@@ -356,7 +367,7 @@ export function buildMemoryInspectorSnapshot(input: {
       ...(state.ownerScope.lineageId ? { lineageId: state.ownerScope.lineageId } : {}),
       ...(state.ownerScope.channelKey ? { channelKey: state.ownerScope.channelKey } : {}),
       ...(state.ownerScope.threadKey ? { threadKey: state.ownerScope.threadKey } : {}),
-      ...(state.nicknameSnapshot ? { nicknameSnapshot: state.nicknameSnapshot } : {}),
+      ...(state.agentNameSnapshot ? { agentNameSnapshot: state.agentNameSnapshot } : {}),
       ...(state.latestCapsuleId ? { latestCapsuleId: state.latestCapsuleId } : {}),
       currentRawTokenEstimate: state.currentRawTokenEstimate,
       currentRawMessageCount: state.currentRawMessageCount,
@@ -436,7 +447,7 @@ export function buildMemoryInspectorSnapshot(input: {
     .map((card) => (card.latestRollupAgeMs != null ? now - card.latestRollupAgeMs : null))
     .filter((value): value is number => value != null)
     .sort((left, right) => right - left)[0] ?? null
-  const configuredExecutionModel = getDefaultModel().trim()
+  const configuredExecutionModel = getDefaultModel(config).trim()
   const canForceCompaction = Boolean(
     selectedOwner
       && selectedOwner.ownerType === "main_agent"
@@ -492,9 +503,11 @@ export async function runMemoryInspectorControl(input: {
   limit?: number
   provider?: AIProvider
   model?: string
+  config: MemoryInspectorConfigSnapshot
   now?: number
 }): Promise<MemoryInspectorControlResult> {
-  const snapshot = buildMemoryInspectorSnapshot(buildInspectorSnapshotInput(input))
+  const controlConfig = input.config
+  const snapshot = buildMemoryInspectorSnapshot(buildInspectorSnapshotInput({ ...input, config: controlConfig }))
   const control = snapshot.controls.find((item) => item.action === input.action)
   if (!control) {
     return { action: input.action, enabled: false, reason: "unknown_action" }
@@ -519,7 +532,7 @@ export async function runMemoryInspectorControl(input: {
       if (!selectedOwner || selectedOwner.ownerType !== "main_agent") {
         return { action: input.action, enabled: false, reason: "main_agent_root_session_only" }
       }
-      const model = input.model?.trim() || getDefaultModel().trim()
+      const model = input.model?.trim() || getDefaultModel(controlConfig).trim()
       if (!model) {
         return { action: input.action, enabled: false, reason: "no_configured_compaction_model" }
       }
@@ -529,12 +542,12 @@ export async function runMemoryInspectorControl(input: {
       }
       let provider: AIProvider
       try {
-        provider = input.provider ?? getProvider()
+        provider = input.provider ?? getProvider(undefined, controlConfig)
       } catch (error) {
         return {
           action: input.action,
           enabled: false,
-          reason: error instanceof Error ? error.message : "provider_resolution_failed",
+          reason: memoryInspectorProviderErrorReason(error),
         }
       }
       const sourceTokenEstimate = Math.max(
@@ -549,13 +562,16 @@ export async function runMemoryInspectorControl(input: {
         provider,
         model,
         sessionId: selectedOwner.sessionId,
+        agentNameSnapshot: selectedOwner.agentNameSnapshot ?? "Knowbee",
         ...(selectedOwner.requestGroupId ? { requestGroupId: selectedOwner.requestGroupId } : {}),
         messages,
         sourceTokenEstimate,
+        memoryConfig: controlConfig.memory,
         triggerReasonCodes: buildRootSessionCompactionReasonCodes({
           messages,
           totalTokens: sourceTokenEstimate,
           deterministicState,
+          policy: resolveShortTermCompactionPolicy(controlConfig.memory),
         }),
       })
       insertDiagnosticEvent({
@@ -571,7 +587,7 @@ export async function runMemoryInspectorControl(input: {
           tailMessageCount: result.tailMessageCount,
         },
       })
-      const refreshed = buildMemoryInspectorSnapshot(buildInspectorSnapshotInput(input))
+      const refreshed = buildMemoryInspectorSnapshot(buildInspectorSnapshotInput({ ...input, config: controlConfig }))
       return {
         action: input.action,
         enabled: true,

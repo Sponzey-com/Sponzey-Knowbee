@@ -8,6 +8,22 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./bootstrap": {
+      "import": "./dist/runtime/bootstrap.js",
+      "types": "./dist/runtime/bootstrap.d.ts"
+    },
+    "./errors": {
+      "import": "./dist/runs/error-sanitizer.js",
+      "types": "./dist/runs/error-sanitizer.d.ts"
+    },
+    "./startup": {
+      "import": "./dist/runtime/startup.js",
+      "types": "./dist/runtime/startup.d.ts"
+    },
+    "./serve": {
+      "import": "./dist/runtime/serve-bundle.js",
+      "types": "./dist/runtime/serve-bundle.d.ts"
     }
   },
   "files": [
@@ -23,6 +39,7 @@
     "@fastify/cors": "^11.2.0",
     "@fastify/static": "^9.0.0",
     "@fastify/websocket": "^11.2.0",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@mozilla/readability": "^0.6.0",
     "aedes": "^0.51.3",
     "better-sqlite3": "^11.7.0",
@@ -35,7 +52,8 @@
     "openai": "^6.29.0",
     "playwright": "^1.58.2",
     "selenium-webdriver": "^4.42.0",
-    "turndown": "^7.2.2"
+    "turndown": "^7.2.2",
+    "zod": "^3.25.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

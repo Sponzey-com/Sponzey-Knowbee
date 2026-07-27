@@ -1,7 +1,7 @@
 import type { CommandRequest, OrchestrationPlan, StructuredTaskScope, SubSessionContract } from "../contracts/sub-agent-orchestration.js";
 import type { OrchestrationModeSnapshot } from "./mode.js";
 import type { AgentExecutionDecision } from "./execution-decision-contract.js";
-import { type OrchestrationPlannerIntent } from "./planner.js";
+import { type OrchestrationPlannerInput, type OrchestrationPlannerIntent } from "./planner.js";
 import type { OrchestrationRegistrySnapshot } from "./registry.js";
 export interface NestedCommandValidationResult {
     ok: boolean;
@@ -27,6 +27,7 @@ export interface NestedSpawnBudgetDecision {
     reasonCodes: string[];
 }
 export interface NestedDelegationPlannerInput {
+    config: OrchestrationPlannerInput["config"];
     parentRunId: string;
     parentRequestId: string;
     parentAgentId: string;
@@ -54,6 +55,7 @@ export interface NestedDelegationPlanResult {
     childDepth: number;
     budget: NestedSpawnBudgetDecision;
     reasonCodes: string[];
+    delegationAuthorizationReceiptIds?: string[];
 }
 export declare function validateNestedCommandRequest(input: {
     command: CommandRequest;

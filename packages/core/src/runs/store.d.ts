@@ -1,4 +1,6 @@
+import { type RequestExecutionOutcome } from "./flow-contract.js";
 import type { RootRun, RunContextMode, RunScope, RunStatus, RunStepStatus, TaskProfile } from "./types.js";
+import { type CanonicalWorkTransitionUseCaseInput, type CanonicalWorkTransitionUseCaseResult } from "./canonical-work-transition-use-case.js";
 export interface StaleRunCleanupResult {
     cleanedRunCount: number;
     skippedRunCount: number;
@@ -13,6 +15,7 @@ export declare function listRunsForActiveRequestGroups(limitGroups?: number, lim
 export declare function listRunsForRecentRequestGroups(limitGroups?: number, limitRuns?: number): RootRun[];
 export declare function recoverActiveRunsOnStartup(): RootRun[];
 export declare function getRootRun(runId: string): RootRun | undefined;
+export declare function getRequestExecutionOutcome(runId: string): RequestExecutionOutcome | undefined;
 export declare function listRequestGroupRuns(requestGroupId: string): RootRun[];
 export declare function hasActiveRequestGroupRuns(requestGroupId: string): boolean;
 export declare function isReusableRequestGroup(requestGroupId: string): boolean;
@@ -56,6 +59,22 @@ export declare function appendRunEvent(runId: string, label: string): void;
 export declare function mergeRunPromptSourceSnapshot(runId: string, patch: Record<string, unknown>): RootRun | undefined;
 export declare function updateRunSummary(runId: string, summary: string): RootRun | undefined;
 export declare function updateRunStatus(runId: string, status: RunStatus, summary?: string, canCancel?: boolean): RootRun | undefined;
+export type CanonicalRunTransitionStoreResult = (Extract<CanonicalWorkTransitionUseCaseResult, {
+    status: "applied";
+}> & {
+    run: RootRun;
+}) | Exclude<CanonicalWorkTransitionUseCaseResult, {
+    status: "applied";
+}> | {
+    status: "receipt_rejected";
+    reasonCode: "receipt_not_found" | "receipt_invalid" | "receipt_scope_mismatch" | "receipt_kind_mismatch" | "receipt_already_consumed";
+} | {
+    status: "persistence_failed";
+    reasonCode: "canonical_run_transition_persistence_failed";
+};
+export declare function applyCanonicalRunTransition(command: CanonicalWorkTransitionUseCaseInput & {
+    runId: string;
+}): CanonicalRunTransitionStoreResult;
 export declare function incrementDelegationTurnCount(runId: string, summary?: string): RootRun | undefined;
 export declare function updateActiveRunsMaxDelegationTurns(maxDelegationTurns: number): RootRun[];
 export declare function setRunStepStatus(runId: string, stepKey: string, status: RunStepStatus, summary: string): RootRun | undefined;

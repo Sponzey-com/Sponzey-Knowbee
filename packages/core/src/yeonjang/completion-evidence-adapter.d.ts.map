@@ -1,0 +1,1 @@
+{"version":3,"file":"completion-evidence-adapter.d.ts","sourceRoot":"","sources":["../../src/yeonjang/completion-evidence-adapter.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAAE,sBAAsB,EAAE,MAAM,qBAAqB,CAAA;AACjE,OAAO,KAAK,EAAE,wBAAwB,EAAE,MAAM,eAAe,CAAA;AAE7D,wBAAgB,qDAAqD,CAAC,KAAK,EAAE;IAC3E,QAAQ,EAAE,wBAAwB,CAAA;IAClC,MAAM,EAAE,MAAM,CAAA;CACf,GAAG,sBAAsB,CAgBzB"}

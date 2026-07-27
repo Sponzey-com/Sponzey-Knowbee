@@ -191,8 +191,8 @@ describe("task007 advanced Skill/MCP catalog and bindings", () => {
       language: "ko",
     })
 
-    expect(view.globalPolicy.commonSkillMcpLabel).toBe("Skill 2개 / MCP 1개")
-    expect(view.selectedAgent?.skillMcp.commonCatalogLabel).toBe("공통 catalog Skill 3개 / MCP 2개")
+    expect(view.globalPolicy.commonSkillMcpLabel).toBe("작업 능력 2개 / 외부 기능 1개")
+    expect(view.selectedAgent?.skillMcp.commonCatalogLabel).toBe("공통 목록 작업 능력 3개 / 외부 기능 2개")
     expect(view.selectedAgent?.skillMcp.enabledSkillIds).toEqual(["skill:research"])
     expect(view.selectedAgent?.skillMcp.enabledMcpServerIds).toEqual(["mcp:browser"])
     expect(view.selectedAgent?.skillMcp.recommendedSkillIds).toEqual(["skill:writing"])
@@ -306,10 +306,10 @@ describe("task007 advanced Skill/MCP catalog and bindings", () => {
     const text = visibleText(html)
 
     expect(html).toContain('data-testid="sub-agent-skill-mcp-editor"')
-    expect(text).toContain("Skill/MCP binding")
-    expect(text).toContain("recommended draft")
+    expect(text).toContain("작업 능력/외부 기능 연결")
+    expect(text).toContain("추천 초안")
     expect(text).toContain("Browser MCP")
-    expect(text).toContain("connected")
+    expect(text).toContain("연결됨")
     expect(text).toContain("[secret redacted]")
     expect(text).not.toContain("sk-raw-secret-never-show")
     expect(text).not.toContain("raw-secret-value")

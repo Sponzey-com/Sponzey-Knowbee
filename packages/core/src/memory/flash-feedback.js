@@ -1,4 +1,14 @@
 import { getDb, insertFlashFeedback } from "../db/index.js";
+import { loadPromptValue } from "./prompt-fragments.js";
+const MEMORY_PROMPT_CONTEXT_LABELS_SOURCE_ID = "memory_prompt_context_labels_user";
+function memoryPromptContextLabel(key, variables = {}) {
+    const value = loadPromptValue(MEMORY_PROMPT_CONTEXT_LABELS_SOURCE_ID, variables)
+        .split(/\r?\n/u)
+        .find((line) => line.startsWith(`${key}=`))
+        ?.slice(key.length + 1)
+        .trim();
+    return value ?? key;
+}
 export function recordFlashFeedback(input) {
     const sessionId = input.sessionId.trim();
     const content = input.content.trim();
@@ -58,7 +68,7 @@ export function buildFlashFeedbackContext(input) {
         used += line.length + 1;
     }
     return lines.length > 0
-        ? `[즉시 반영할 사용자 피드백]\n${lines.join("\n")}\n이 피드백은 짧은 TTL을 가진 실행 보정이며, 장기 규칙으로 확정된 것은 아닙니다.`
+        ? `${memoryPromptContextLabel("flash_feedback_header")}\n${lines.join("\n")}\n${memoryPromptContextLabel("flash_feedback_note")}`
         : "";
 }
 //# sourceMappingURL=flash-feedback.js.map

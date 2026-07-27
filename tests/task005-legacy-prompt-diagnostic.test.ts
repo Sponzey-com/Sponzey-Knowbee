@@ -2,6 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.js"
+import { createTestAgentRuntimeDependencies } from "./fixtures/agent-runtime.ts"
 
 const { diagnosticEvents, runEvents } = vi.hoisted(() => ({
   diagnosticEvents: [] as Array<{ kind: string; summary: string; detail?: Record<string, unknown> }>,
@@ -40,10 +42,14 @@ vi.mock("../packages/core/src/schedules/context.js", () => ({
 }))
 
 vi.mock("../packages/core/src/instructions/merge.js", () => ({
+  createInstructionRuntimeContext: vi.fn((stateDir: string) => ({
+    globalStateDir: stateDir,
+    fallbackBoundaryDir: stateDir,
+  })),
   loadMergedInstructions: vi.fn(() => ({ mergedText: "" })),
 }))
 
-vi.mock("../packages/core/src/tools/dispatcher.js", () => ({
+vi.mock("../packages/core/src/tools/runtime-dispatcher.js", () => ({
   toolDispatcher: {
     getAll: vi.fn(() => []),
     isToolAvailableForSource: vi.fn(() => true),
@@ -95,8 +101,11 @@ describe("task005 legacy prompt source diagnostics", () => {
         yield { type: "message_stop", usage: { input_tokens: 1, output_tokens: 1 } } as const
       }),
     }
+    const agentRuntime = createTestAgentRuntimeDependencies(join(workDir, ".state"))
 
     for await (const _chunk of runAgent({
+      ...agentRuntime,
+      config: DEFAULT_CONFIG,
       userMessage: "상태 확인",
       sessionId: "session-legacy",
       runId: "run-legacy",

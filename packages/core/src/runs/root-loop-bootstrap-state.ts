@@ -39,6 +39,7 @@ export function prepareRootLoopBootstrapState(
     pendingLoopDirective: loopBootstrap.pendingLoopDirective,
     state: {
       currentMessage: params.currentMessage,
+      requiredToolNames: params.requiredToolNames,
       currentModel: params.currentModel,
       currentProviderId: params.currentProviderId,
       currentProvider: params.currentProvider,
@@ -50,6 +51,13 @@ export function prepareRootLoopBootstrapState(
       sawRealFilesystemMutation: false,
       filesystemMutationRecoveryAttempted: false,
       truncatedOutputRecoveryAttempted: false,
+      successfulTools: [],
+      webExecutionState: {
+        discovery: { status: "not_attempted" },
+        validatedEvidence: { status: "none" },
+        observedFetchCandidates: [],
+        observedSearchResults: [],
+      },
     },
   }
 }

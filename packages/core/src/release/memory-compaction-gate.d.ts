@@ -1,3 +1,4 @@
+import { type MemoryInspectorConfigSnapshot } from "../memory/inspector.js";
 export type MemoryCompactionReleaseGateStatus = "passed" | "warning" | "failed";
 export interface MemoryCompactionReleaseGateCheck {
     id: "quality_snapshot_guard" | "append_only_archive_guard" | "model_audit_guard" | "drift_warning_guard" | "heuristic_fallback_guard";
@@ -18,7 +19,8 @@ export interface MemoryCompactionReleaseGateSummary {
     warnings: string[];
     blockingFailures: string[];
 }
-export declare function buildMemoryCompactionReleaseGateSummary(input?: {
+export declare function buildMemoryCompactionReleaseGateSummary(input: {
     now?: Date;
+    config: MemoryInspectorConfigSnapshot;
 }): MemoryCompactionReleaseGateSummary;
 //# sourceMappingURL=memory-compaction-gate.d.ts.map

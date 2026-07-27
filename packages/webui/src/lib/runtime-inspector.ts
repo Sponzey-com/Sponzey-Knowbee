@@ -5,6 +5,7 @@ import type {
   RuntimeInspectorApprovalState,
   RuntimeInspectorControlAction,
 } from "../contracts/runs"
+import { DEFAULT_MAIN_AGENT_NAME_EN, DEFAULT_MAIN_AGENT_NAME_KO } from "./main-agent-copy"
 
 export interface RuntimeInspectorSummaryCard {
   id: string
@@ -97,15 +98,53 @@ export function describeRuntimeFinalizerStatus(
 ): string {
   switch (projection?.finalizer.status) {
     case "delivered":
-      return text("parent finalizer 전달 완료", "Parent finalizer delivered")
+      return text("최종 답변 전달 완료", "Final answer delivered")
     case "generated":
-      return text("parent finalizer 생성 완료", "Parent finalizer generated")
+      return text("최종 답변 생성 완료", "Final answer generated")
     case "suppressed":
-      return text("parent finalizer 전달 억제", "Parent finalizer suppressed")
+      return text("최종 답변 전달하지 않음", "Final answer suppressed")
     case "failed":
-      return text("parent finalizer 전달 실패", "Parent finalizer failed")
+      return text("최종 답변 전달 실패", "Final answer failed")
     default:
-      return text("parent finalizer 대기", "Parent finalizer pending")
+      return text("최종 답변 정리 대기", "Final answer pending")
+  }
+}
+
+export function runtimeFinalizerSummary(
+  projection: RunRuntimeInspectorProjection | null,
+  text: (ko: string, en: string) => string,
+): string {
+  const summary = projection?.finalizer.summary?.trim()
+  if (summary && !/parent finalizer/i.test(summary)) return summary
+  switch (projection?.finalizer.status) {
+    case "delivered":
+      return text("최종 답변이 사용자에게 한 번 전달되었습니다.", "The final answer was delivered to the user once.")
+    case "generated":
+      return text("최종 답변이 생성되었고 전달 전 상태입니다.", "The final answer was generated and is waiting for delivery.")
+    case "suppressed":
+      return text("정책 또는 상태 조건 때문에 최종 답변 전달을 막았습니다.", "Final answer delivery was suppressed by policy or state.")
+    case "failed":
+      return text("최종 답변 전달 중 문제가 발생했습니다.", "Final answer delivery failed.")
+    default:
+      return text(
+        "최종 답변은 최종 답변 정리 단계에서만 사용자에게 전달합니다.",
+        "Only the final response step delivers the final answer to the user.",
+      )
+  }
+}
+
+export function runtimeOrchestrationModeLabel(
+  mode: string | undefined,
+  text: (ko: string, en: string) => string,
+): string {
+  switch (mode) {
+    case "orchestration":
+      return text("서브 에이전트 위임", "Sub-agent delegation")
+    case "direct_main_agent":
+    case "single_knowbee":
+      return text("메인 에이전트 직접 처리", "Main-agent direct handling")
+    default:
+      return text("실행 모드 확인 필요", "Execution mode needs review")
   }
 }
 
@@ -140,6 +179,16 @@ export function runtimeControlActionLabels(
   )
 }
 
+export function runtimeSubSessionAgentName(
+  subSession:
+    | (Pick<RunRuntimeInspectorSubSession, "agentId"> &
+        Partial<Pick<RunRuntimeInspectorSubSession, "agentName" | "agentNameSnapshot">>)
+    | null
+    | undefined,
+): string {
+  return subSession?.agentName?.trim() || subSession?.agentNameSnapshot?.trim() || "Unnamed sub-agent"
+}
+
 export function describeRuntimeTopologyRouting(
   routing: RunRuntimeInspectorTopologyRouting | null | undefined,
   text: (ko: string, en: string) => string,
@@ -154,32 +203,29 @@ export function describeRuntimeTopologyRouting(
     const target =
       routing.entryNodeName ??
       selectedExecutorName ??
-      routing.entryNodeId ??
-      routing.executionDecisionSelectedExecutorId ??
       routing.topologyName ??
-      routing.topologyId ??
-      "-"
+      text("선택된 서브 에이전트", "the selected sub-agent")
     return text(
-      `${target} 서브 에이전트로 토폴로지를 실행합니다.`,
-      `Topology execution uses ${target}.`,
+      `서브 에이전트 위임 흐름은 ${target}에서 시작합니다.`,
+      `The sub-agent delegation flow starts with ${target}.`,
     )
   }
   if (routing.reasonCode === "feature_flag_off") {
     return text(
-      "관리자가 토폴로지 실행을 명시적으로 꺼서 직접 실행으로 전환되었습니다.",
-      "Topology execution was explicitly disabled by an administrator, so the run fell back.",
+      "관리자가 저장된 서브 에이전트 위임 흐름을 꺼서 직접 실행으로 전환되었습니다.",
+      "Saved sub-agent delegation was disabled by an administrator, so the run fell back.",
     )
   }
   if (routing.reasonCode === "active_topology_not_found" || routing.reasonCode === "topology_not_found") {
     return text(
-      "저장된 실행 토폴로지를 찾지 못해 직접 실행으로 전환되었습니다.",
-      "No saved executable topology was found, so the run fell back.",
+      "저장된 서브 에이전트 실행 구성을 찾지 못해 직접 실행으로 전환되었습니다.",
+      "No saved sub-agent execution setup was found, so the run fell back.",
     )
   }
   if (routing.reasonCode === "topology_validation_blocked") {
     return text(
-      "토폴로지 검증 문제가 있어 실행 전에 차단되었습니다.",
-      "Topology validation blocked execution before the path was selected.",
+      "서브 에이전트 구성 검증 문제가 있어 실행 전에 차단되었습니다.",
+      "Sub-agent setup validation blocked execution before the path was selected.",
     )
   }
   if (routing.reasonCode === "entry_node_missing") {
@@ -190,8 +236,8 @@ export function describeRuntimeTopologyRouting(
   }
   if (routing.reasonCode === "non_root_request") {
     return text(
-      "이미 진행 중인 하위 요청이라 새 토폴로지 루트 실행을 만들지 않았습니다.",
-      "This was a child request, so no new topology root route was created.",
+      "이미 진행 중인 하위 요청이라 새 최상위 위임 흐름을 만들지 않았습니다.",
+      "This was a child request, so no new top-level delegation flow was created.",
     )
   }
   return text(
@@ -210,12 +256,12 @@ export function runtimeTopologyReasonLabel(
     case "provider_direct_blocked_without_explicit_target":
       return text("명시적 요청 없는 직접 실행 차단", "Direct execution blocked without explicit request")
     case "feature_flag_off":
-      return text("토폴로지 실행 꺼짐", "Topology execution disabled")
+      return text("저장된 위임 흐름 꺼짐", "Saved delegation flow disabled")
     case "active_topology_not_found":
     case "topology_not_found":
-      return text("저장된 실행 토폴로지 없음", "No saved executable topology")
+      return text("저장된 서브 에이전트 구성 없음", "No saved sub-agent setup")
     case "topology_validation_blocked":
-      return text("토폴로지 검증 차단", "Topology validation blocked execution")
+      return text("구성 검증 차단", "Setup validation blocked execution")
     case "entry_node_missing":
       return text("시작 서브 에이전트 없음", "No entry sub-agent")
     case "selected_executor_missing":
@@ -223,7 +269,7 @@ export function runtimeTopologyReasonLabel(
     case "execution_decision_selected_executor":
       return text("검증된 서브 에이전트 선택", "Validated sub-agent selection")
     case "explicit_topology_target":
-      return text("명시된 토폴로지 대상", "Explicit topology target")
+      return text("명시된 실행 구성 대상", "Explicit execution setup target")
     case "non_root_request":
       return text("이미 진행 중인 하위 요청", "Already a child request")
     case "execution_decision_validated":
@@ -245,7 +291,7 @@ export function runtimeExecutorDisplayName(
 ): string {
   const normalized = executorId?.trim()
   if (!normalized) return ""
-  return routing?.executionDecisionExecutorNameById?.[normalized] ?? normalized
+  return routing?.executionDecisionExecutorNameById?.[normalized] ?? ""
 }
 
 export function runtimeExecutorRoleName(
@@ -271,13 +317,14 @@ export function runtimeDecisionSourceLabel(
   text: (ko: string, en: string) => string,
 ): string {
   if (!source) return text("판단 정보 없음", "No decision source")
-  if (source === "knowbee_harness") return text("노비 실행 판단", "Knowbee execution decision")
+  if (source === "knowbee_harness") return text("메인 에이전트 실행 판단", "Main-agent execution decision")
   return text("실행 판단", "Execution decision")
 }
 
 export function runtimeExecutionRouteLabel(
   route: string | undefined,
   text: (ko: string, en: string) => string,
+  rootAgentName?: string,
 ): string {
   switch (route) {
     case "delegate_to_child":
@@ -287,7 +334,9 @@ export function runtimeExecutionRouteLabel(
       return text("현재 서브 에이전트가 직접 처리", "Current sub-agent handles it")
     case "root_knowbee_direct":
     case "knowbee_direct":
-      return text("노비가 직접 처리", "Knowbee handles it")
+      return rootAgentName?.trim()
+        ? text(`${rootAgentName.trim()}가 직접 처리`, `${rootAgentName.trim()} handles it`)
+        : text("메인 에이전트가 직접 처리", "Main agent handles it")
     case "return_to_parent":
       return text("상위 서브 에이전트에게 반환", "Return to parent sub-agent")
     case "ask_parent":
@@ -310,6 +359,7 @@ export function runtimeExecutionRouteLabel(
 export function runtimeFallbackReasonLabel(
   reason: string | undefined,
   text: (ko: string, en: string) => string,
+  rootAgentName?: string,
 ): string {
   switch (reason) {
     case "self_solve":
@@ -325,7 +375,9 @@ export function runtimeFallbackReasonLabel(
       return text("사용자 확인", "Ask user")
     case "root_knowbee_direct":
     case "knowbee_direct":
-      return text("노비가 처리", "Knowbee handles it")
+      return rootAgentName?.trim()
+        ? text(`${rootAgentName.trim()}가 처리`, `${rootAgentName.trim()} handles it`)
+        : text("메인 에이전트가 처리", "Main agent handles it")
     case "explicit_provider":
       return text("명시적 직접 실행", "Explicit direct execution")
     case undefined:
@@ -343,7 +395,7 @@ export function runtimeValidationStatusLabel(
     case "valid":
       return text("검증 통과", "Validation passed")
     case "selected_executor_not_direct_child":
-      return text("선택된 서브 에이전트가 현재 서브 에이전트의 직접 하위가 아님", "Selected sub-agent is not a direct child")
+      return text("선택된 서브 에이전트가 현재 서브 에이전트의 직속 서브 에이전트가 아님", "Selected sub-agent is not an immediate sub-agent")
     case "selected_executor_not_in_graph":
       return text("선택된 서브 에이전트가 그래프에 없음", "Selected sub-agent is not in the graph")
     case "selected_connection_path_invalid":
@@ -397,7 +449,7 @@ export function buildRuntimeInspectorViewModels(
         selectedExecutorName: text("선택 전", "Not selected"),
         selectedPathNames: [],
         delegationStatus: text("실행 판단 정보가 아직 없습니다.", "No execution decision information yet."),
-        aggregationStatus: text("parent finalizer 대기", "Parent finalizer pending"),
+        aggregationStatus: text("최종 답변 정리 대기", "Final response pending"),
         validationStatus: text("검증 정보 없음", "No validation status"),
         warningLabels: [],
       },
@@ -425,18 +477,26 @@ export function buildRuntimeInspectorViewModels(
     ...(routing.executionDecisionValidationIssues ?? []),
   ].map((issue) => runtimeTopologyReasonLabel(issue, text))
   const routingPills = [
-    routing.topologyName ?? routing.topologyId,
+    routing.topologyName ?? (routing.topologyId ? text("저장된 구성", "Saved setup") : undefined),
     routing.entryNodeName ?? runtimeExecutorDisplayName(routing, routing.entryNodeId),
     routing.topologySchemaVersion !== undefined
-      ? text(`스키마 v${routing.topologySchemaVersion}`, `Schema v${routing.topologySchemaVersion}`)
+      ? text(`구성 형식 v${routing.topologySchemaVersion}`, `Setup format v${routing.topologySchemaVersion}`)
       : undefined,
     routing.reasonCode ? runtimeTopologyReasonLabel(routing.reasonCode, text) : undefined,
     routing.executionDecisionSource ? runtimeDecisionSourceLabel(routing.executionDecisionSource, text) : undefined,
     routing.executionDecisionRoute
-      ? `${text("위임 흐름", "Delegation flow")} ${runtimeExecutionRouteLabel(routing.executionDecisionRoute, text)}`
+      ? `${text("위임 흐름", "Delegation flow")} ${runtimeExecutionRouteLabel(
+          routing.executionDecisionRoute,
+          text,
+          runtimeExecutorDisplayName(routing, "agent:knowbee"),
+        )}`
       : undefined,
     routing.executionDecisionFallbackReason
-      ? `${text("대안", "Fallback")} ${runtimeFallbackReasonLabel(routing.executionDecisionFallbackReason, text)}`
+      ? `${text("대안", "Fallback")} ${runtimeFallbackReasonLabel(
+          routing.executionDecisionFallbackReason,
+          text,
+          runtimeExecutorDisplayName(routing, "agent:knowbee"),
+        )}`
       : undefined,
     routing.riskBoundaryRequiresUserApproval !== undefined
       ? routing.riskBoundaryRequiresUserApproval
@@ -468,7 +528,8 @@ export function buildRuntimeInspectorViewModels(
       routingTone: routing.mode === "route" || routing.mode === "fallback" ? routing.mode : "unknown",
       routingSummary: describeRuntimeTopologyRouting(routing, text),
       routingPills,
-      currentExecutorName: runtimeExecutorDisplayName(routing, routing.executionDecisionCurrentExecutorId) || text("노비", "Knowbee"),
+      currentExecutorName: runtimeExecutorDisplayName(routing, routing.executionDecisionCurrentExecutorId) ||
+        text(DEFAULT_MAIN_AGENT_NAME_KO, DEFAULT_MAIN_AGENT_NAME_EN),
       selectedExecutorName:
         runtimeExecutorDisplayName(routing, selectedExecutorId) ||
         routing.entryNodeName ||
@@ -479,7 +540,11 @@ export function buildRuntimeInspectorViewModels(
       selectedPathNames: runtimeExecutorDisplayNames(routing, selectedPath),
       delegationStatus:
         routing.mode === "route"
-          ? runtimeExecutionRouteLabel(routing.executionDecisionRoute, text)
+          ? runtimeExecutionRouteLabel(
+              routing.executionDecisionRoute,
+              text,
+              runtimeExecutorDisplayName(routing, "agent:knowbee"),
+            )
           : describeRuntimeTopologyRouting(routing, text),
       aggregationStatus: describeRuntimeFinalizerStatus(projection, text),
       validationStatus: runtimeValidationStatusLabel(routing.executionDecisionValidationStatus, text),
@@ -487,9 +552,9 @@ export function buildRuntimeInspectorViewModels(
     },
     diagnostic: {
       identity: [
-        { id: "run", label: text("Run", "Run"), value: projection.requestIdentity.runId },
+        { id: "run", label: text("실행", "Run"), value: projection.requestIdentity.runId },
         { id: "request-group", label: text("요청 그룹", "Request group"), value: projection.requestIdentity.requestGroupId },
-        { id: "root-run", label: text("Root run", "Root run"), value: projection.requestIdentity.rootRunId },
+        { id: "root-run", label: text("최상위 실행", "Root run"), value: projection.requestIdentity.rootRunId },
         ...(projection.requestIdentity.userMessageKey
           ? [{ id: "user-message", label: text("사용자 메시지", "User message"), value: projection.requestIdentity.userMessageKey }]
           : []),
@@ -497,37 +562,37 @@ export function buildRuntimeInspectorViewModels(
       routing: [
         ...(routing.reasonCode ? [{ id: "reason", label: text("사유 코드", "Reason code"), value: routing.reasonCode }] : []),
         ...(routing.executionDecisionSource ? [{ id: "source", label: text("판단 출처", "Decision source"), value: routing.executionDecisionSource }] : []),
-        ...(routing.executionDecisionGraphId ? [{ id: "graph", label: text("그래프", "Graph"), value: routing.executionDecisionGraphId }] : []),
-        ...(routing.executionDecisionGraphSource ? [{ id: "graph-source", label: text("그래프 출처", "Graph source"), value: routing.executionDecisionGraphSource }] : []),
+        ...(routing.executionDecisionGraphId ? [{ id: "graph", label: text("위임 구조", "Delegation graph"), value: routing.executionDecisionGraphId }] : []),
+        ...(routing.executionDecisionGraphSource ? [{ id: "graph-source", label: text("위임 구조 출처", "Delegation graph source"), value: routing.executionDecisionGraphSource }] : []),
         ...(routing.executionDecisionRoute ? [{ id: "route", label: text("실행 경로", "Execution route"), value: routing.executionDecisionRoute }] : []),
         ...(routing.executionDecisionFallbackReason ? [{ id: "fallback", label: text("대안", "Fallback"), value: routing.executionDecisionFallbackReason }] : []),
-        ...(routing.topologyId ? [{ id: "topology-id", label: text("토폴로지 ID", "Topology ID"), value: routing.topologyId }] : []),
-        ...(routing.topologyMigrationSource ? [{ id: "migration-source", label: text("토폴로지 출처", "Topology source"), value: routing.topologyMigrationSource }] : []),
+        ...(routing.topologyId ? [{ id: "topology-id", label: text("위임 흐름 ID", "Delegation flow ID"), value: routing.topologyId }] : []),
+        ...(routing.topologyMigrationSource ? [{ id: "migration-source", label: text("위임 흐름 출처", "Delegation flow source"), value: routing.topologyMigrationSource }] : []),
       ],
       executorIds: [
         {
           id: "current",
-          label: text("현재 서브 에이전트 ID", "Current sub-agent ID"),
+          label: text("현재 내부 식별자", "Current internal identifier"),
           values: routing.executionDecisionCurrentExecutorId ? [routing.executionDecisionCurrentExecutorId] : [],
         },
         {
           id: "available",
-          label: text("판단 후보 ID", "Candidate executor IDs"),
+          label: text("판단 후보 내부 식별자", "Candidate internal identifiers"),
           values: routing.executionDecisionAvailableExecutorIds ?? [],
         },
         {
           id: "registered",
-          label: text("전체 등록 서브 에이전트 ID", "All registered sub-agent IDs"),
+          label: text("등록된 내부 식별자", "Registered internal identifiers"),
           values: routing.executionDecisionAllRegisteredExecutorIds ?? routing.executionDecisionAllExecutorIds ?? [],
         },
         {
           id: "selected",
-          label: text("선택 서브 에이전트 ID", "Selected sub-agent ID"),
+          label: text("선택된 내부 식별자", "Selected internal identifier"),
           values: routing.executionDecisionSelectedExecutorId ? [routing.executionDecisionSelectedExecutorId] : [],
         },
         {
           id: "path",
-          label: text("선택 경로 ID", "Selected path IDs"),
+          label: text("선택 경로 내부 식별자", "Selected path internal identifiers"),
           values: selectedPath ?? [],
         },
       ],
@@ -549,7 +614,7 @@ export function buildRuntimeInspectorSummaryCards(
     return [
       {
         id: "runtime",
-        label: text("Runtime", "Runtime"),
+        label: text("실행 상태", "Run state"),
         value: text("불러오는 중", "Loading"),
         tone: "stone",
       },
@@ -562,23 +627,72 @@ export function buildRuntimeInspectorSummaryCards(
   const failedSubSessions = projection.subSessions.filter(
     (item) => item.status === "failed" || item.status === "needs_revision",
   ).length
+  const typedTrace = projection.typedTrace
+  const typedStageBaseLabel = (() => {
+    if (!typedTrace || typedTrace.status === "not_recorded") return text("기록 없음", "Not recorded")
+    if (typedTrace.status === "unavailable") return text("확인 불가", "Unavailable")
+    switch (typedTrace.currentStage) {
+      case "request": return text("요청 접수", "Request received")
+      case "analysis": return text("해결 방법 분석", "Solution analysis")
+      case "execution": return text("실행", "Execution")
+      case "evidence": return text("결과 근거 확인", "Evidence review")
+      case "review": return text("결과 검증", "Result verification")
+      case "recovery": return text("다른 방법 실행", "Recovery")
+      case "finalization": return text("결과 전달", "Result delivery")
+      case "not_started": return text("시작 전", "Not started")
+      default: return text("확인 중", "Checking")
+    }
+  })()
+  const typedStageLabel = typedTrace
+    && typedTrace.status === "ready"
+    && typedTrace.recoveryCount > 0
+    && typedTrace.currentStage !== "recovery"
+    ? `${typedStageBaseLabel} · ${text(`다른 방법 ${typedTrace.recoveryCount}회`, `${typedTrace.recoveryCount} alternative attempt${typedTrace.recoveryCount === 1 ? "" : "s"}`)}`
+    : typedStageBaseLabel
+  const typedVerificationLabel = (() => {
+    if (!typedTrace || typedTrace.status === "not_recorded") return text("기록 없음", "Not recorded")
+    if (typedTrace.status === "unavailable" || typedTrace.verification === "unknown") return text("확인 불가", "Unavailable")
+    if (typedTrace.blocker === "policy") return text("권한 또는 정책 확인 필요", "Permission or policy review needed")
+    if (typedTrace.blocker === "exhausted") return text("다른 해결 방법 없음", "No remaining solution path")
+    if (typedTrace.blocker === "cancelled") return text("사용자 요청으로 중단", "Cancelled by user")
+    if (typedTrace.terminal) return text("검증 및 전달 완료", "Verified and delivered")
+    if (typedTrace.verification === "reviewed") return text("검증 완료", "Verified")
+    if (typedTrace.verification === "evidence_recorded") return text("근거 확인 중", "Reviewing evidence")
+    return text("검증 전", "Not reviewed")
+  })()
 
   return [
     {
+      id: "typed-stage",
+      label: text("현재 처리 단계", "Current stage"),
+      value: typedStageLabel,
+      tone: typedTrace?.status === "unavailable" || (typedTrace?.issueCount ?? 0) > 0 ? "amber" : "blue",
+    },
+    {
+      id: "typed-verification",
+      label: text("결과 확인", "Result verification"),
+      value: typedVerificationLabel,
+      tone: typedTrace?.terminal
+        ? "emerald"
+        : typedTrace?.blocker !== undefined && typedTrace.blocker !== "none"
+          ? "amber"
+          : "stone",
+    },
+    {
       id: "mode",
-      label: text("모드", "Mode"),
-      value: projection.orchestrationMode,
+      label: text("실행 모드", "Execution mode"),
+      value: runtimeOrchestrationModeLabel(projection.orchestrationMode, text),
       tone: projection.orchestrationMode === "orchestration" ? "blue" : "stone",
     },
     {
       id: "subsessions",
-      label: text("Sub-session", "Sub-sessions"),
+      label: text("서브 에이전트 실행", "Sub-agent runs"),
       value: String(projection.subSessions.length),
       tone: failedSubSessions > 0 ? "amber" : "emerald",
     },
     {
       id: "data",
-      label: text("Data exchange", "Data exchange"),
+      label: text("데이터 교환", "Data exchange"),
       value: String(projection.dataExchanges.length),
       tone: projection.dataExchanges.some((item) => item.redactionState === "blocked")
         ? "rose"
@@ -592,12 +706,12 @@ export function buildRuntimeInspectorSummaryCards(
     },
     {
       id: "topology",
-      label: text("토폴로지", "Topology"),
+      label: text("위임 흐름", "Delegation flow"),
       value: projection.topologyRouting.mode === "route"
-        ? projection.topologyRouting.entryNodeName ??
-          projection.topologyRouting.entryNodeId ??
-          projection.topologyRouting.topologyName ??
-          text("route", "route")
+        ? projection.topologyRouting.entryNodeName ||
+          runtimeExecutorDisplayName(projection.topologyRouting, projection.topologyRouting.entryNodeId) ||
+          projection.topologyRouting.topologyName ||
+          text("서브 에이전트 위임", "Sub-agent delegation")
         : runtimeTopologyReasonLabel(projection.topologyRouting.reasonCode, text),
       tone: projection.topologyRouting.mode === "route"
         ? "blue"
@@ -607,7 +721,7 @@ export function buildRuntimeInspectorSummaryCards(
     },
     {
       id: "finalizer",
-      label: text("Finalizer", "Finalizer"),
+      label: text("최종 답변 정리", "Final response"),
       value: describeRuntimeFinalizerStatus(projection, text),
       tone: projection.finalizer.status === "delivered" ? "emerald" : "stone",
     },

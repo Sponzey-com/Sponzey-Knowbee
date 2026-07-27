@@ -4,9 +4,7 @@ import { describe, expect, it } from "vitest"
 
 import { SubAgentAdvancedSettingsPanel } from "../packages/webui/src/components/setup/SubAgentAdvancedSettingsPanel.tsx"
 import type { SetupDraft } from "../packages/webui/src/contracts/setup.ts"
-import {
-  buildSubAgentAdvancedSettingsView,
-} from "../packages/webui/src/lib/advanced-sub-agent-settings.ts"
+import { buildSubAgentAdvancedSettingsView } from "../packages/webui/src/lib/advanced-sub-agent-settings.ts"
 
 function baseDraft(): SetupDraft {
   return {
@@ -35,6 +33,7 @@ function baseDraft(): SetupDraft {
       items: [
         {
           agentId: "agent:lead",
+          agentName: "Lead",
           displayName: "Lead",
           nickname: "Lead",
           role: "취합 담당",
@@ -57,6 +56,7 @@ function baseDraft(): SetupDraft {
         {
           agentId: "agent:research",
           parentAgentId: "agent:lead",
+          agentName: "Researcher",
           displayName: "Researcher",
           nickname: "Researcher",
           role: "조사 담당",
@@ -68,6 +68,7 @@ function baseDraft(): SetupDraft {
         },
         {
           agentId: "agent:writer",
+          agentName: "Writer",
           displayName: "Writer",
           nickname: "Writer",
           role: "작성 담당",
@@ -196,7 +197,10 @@ function baseDraft(): SetupDraft {
 }
 
 function visibleText(markup: string): string {
-  return markup.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+  return markup
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
 }
 
 function monitoringMarkup(markup: string): string {
@@ -218,12 +222,18 @@ describe("task009 sub-agent runtime monitoring", () => {
     expect(view.selectedAgent?.monitoring.activeRuns).toEqual([
       expect.objectContaining({ label: "실행 1", status: "blocked" }),
     ])
-    expect(view.selectedAgent?.monitoring.traceItems.map((item) => `${item.actorLabel}->${item.targetLabel}:${item.kind}`)).toContain(
-      "Lead->Researcher:delegation_planned",
+    expect(
+      view.selectedAgent?.monitoring.traceItems.map(
+        (item) => `${item.actorLabel}->${item.targetLabel}:${item.kind}`,
+      ),
+    ).toContain("Lead->Researcher:delegation_planned")
+    expect(view.selectedAgent?.monitoring.traceItems.map((item) => item.actorLabel)).not.toContain(
+      "agent:lead",
     )
-    expect(view.selectedAgent?.monitoring.traceItems.map((item) => item.actorLabel)).not.toContain("agent:lead")
-    expect(view.selectedAgent?.monitoring.traceItems.map((item) => item.targetLabel)).not.toContain("agent:research")
-    expect(view.selectedAgent?.monitoring.treePaths).toContain("Knowbee -> Lead -> Researcher")
+    expect(view.selectedAgent?.monitoring.traceItems.map((item) => item.targetLabel)).not.toContain(
+      "agent:research",
+    )
+    expect(view.selectedAgent?.monitoring.treePaths).toContain("메인 에이전트 -> Lead -> Researcher")
   })
 
   it("renders review, aggregation, and redelegation state before final delivery", () => {
@@ -233,24 +243,32 @@ describe("task009 sub-agent runtime monitoring", () => {
       language: "ko",
       now: 1_780_000_240_000,
     })
-    const html = renderToStaticMarkup(createElement(SubAgentAdvancedSettingsPanel, {
-      view,
-      saving: false,
-      onSelectAgent: () => undefined,
-      onSave: () => undefined,
-      onCancel: () => undefined,
-      onRefresh: () => undefined,
-    }))
+    const html = renderToStaticMarkup(
+      createElement(SubAgentAdvancedSettingsPanel, {
+        view,
+        saving: false,
+        onSelectAgent: () => undefined,
+        onSave: () => undefined,
+        onCancel: () => undefined,
+        onRefresh: () => undefined,
+      }),
+    )
     const text = visibleText(html)
 
     expect(html).toContain('data-testid="sub-agent-runtime-monitor"')
     expect(text).toContain("Lead가 Researcher에게 자료 조사를 위임했습니다.")
-    expect(text).toContain("reviewing_child_result")
-    expect(text).toContain("aggregated")
-    expect(text).toContain("final_ready")
+    expect(text).toContain("하위 결과 검토")
+    expect(text).toContain("취합됨")
+    expect(text).toContain("최종 전달 준비")
     expect(text).toContain("가격 근거와 날짜를 분리해서 다시 확인합니다.")
-    expect(text).toContain("부모 검토 후 final delivery")
+    expect(text).toContain("상위 검토 후 최종 전달 준비")
     expect(text).not.toContain("child 결과 바로 최종 전달")
+    expect(text).not.toContain("reviewing_child_result")
+    expect(text).not.toContain("aggregated")
+    expect(text).not.toContain("final_ready")
+    expect(text).not.toContain("부모 검토 후 final delivery")
+    expect(text).not.toContain("parent_reviewing")
+    expect(text).not.toContain("final_delivery_prepared")
   })
 
   it("redacts monitoring secrets and hides product-mode internal ids and debug payloads", () => {
@@ -260,14 +278,16 @@ describe("task009 sub-agent runtime monitoring", () => {
       language: "ko",
       now: 1_780_000_240_000,
     })
-    const html = renderToStaticMarkup(createElement(SubAgentAdvancedSettingsPanel, {
-      view,
-      saving: false,
-      onSelectAgent: () => undefined,
-      onSave: () => undefined,
-      onCancel: () => undefined,
-      onRefresh: () => undefined,
-    }))
+    const html = renderToStaticMarkup(
+      createElement(SubAgentAdvancedSettingsPanel, {
+        view,
+        saving: false,
+        onSelectAgent: () => undefined,
+        onSave: () => undefined,
+        onCancel: () => undefined,
+        onRefresh: () => undefined,
+      }),
+    )
     const text = visibleText(monitoringMarkup(html))
 
     expect(text).toContain("[secret redacted]")
@@ -291,16 +311,18 @@ describe("task009 sub-agent runtime monitoring", () => {
       language: "ko",
       now: 1_780_000_240_000,
     })
-    const html = renderToStaticMarkup(createElement(SubAgentAdvancedSettingsPanel, {
-      view,
-      saving: false,
-      onSelectAgent: () => undefined,
-      onSave: () => undefined,
-      onCancel: () => undefined,
-      onRefresh: () => undefined,
-    }))
+    const html = renderToStaticMarkup(
+      createElement(SubAgentAdvancedSettingsPanel, {
+        view,
+        saving: false,
+        onSelectAgent: () => undefined,
+        onSave: () => undefined,
+        onCancel: () => undefined,
+        onRefresh: () => undefined,
+      }),
+    )
 
     expect(view.selectedAgent?.monitoring.traceItems).toEqual([])
-    expect(html).toContain("아직 trace event가 없습니다.")
+    expect(html).toContain("아직 실행 기록이 없습니다.")
   })
 })

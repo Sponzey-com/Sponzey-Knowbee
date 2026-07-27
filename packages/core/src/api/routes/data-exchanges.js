@@ -76,8 +76,10 @@ function normalizeCreateInput(body) {
         ? body.provenanceRefs.filter((item) => typeof item === "string" && item.trim().length > 0)
         : [];
     const expiresAt = optionalNumberOrNull(body.expiresAt);
-    const sourceNicknameSnapshot = optionalString(body.sourceNicknameSnapshot);
-    const recipientNicknameSnapshot = optionalString(body.recipientNicknameSnapshot);
+    const sourceAgentName = optionalString(body.sourceAgentName);
+    const sourceAgentNameSnapshot = optionalString(body.sourceAgentNameSnapshot);
+    const recipientAgentName = optionalString(body.recipientAgentName);
+    const recipientAgentNameSnapshot = optionalString(body.recipientAgentNameSnapshot);
     const parentRunId = optionalString(body.parentRunId);
     const parentSessionId = optionalString(body.parentSessionId);
     const parentSubSessionId = optionalString(body.parentSubSessionId);
@@ -88,8 +90,10 @@ function normalizeCreateInput(body) {
     return {
         sourceOwner,
         recipientOwner,
-        ...(sourceNicknameSnapshot ? { sourceNicknameSnapshot } : {}),
-        ...(recipientNicknameSnapshot ? { recipientNicknameSnapshot } : {}),
+        ...(sourceAgentName ? { sourceAgentName } : {}),
+        ...(sourceAgentNameSnapshot ? { sourceAgentNameSnapshot } : {}),
+        ...(recipientAgentName ? { recipientAgentName } : {}),
+        ...(recipientAgentNameSnapshot ? { recipientAgentNameSnapshot } : {}),
         purpose: optionalString(body.purpose) ?? "",
         allowedUse: body.allowedUse,
         retentionPolicy: body.retentionPolicy,

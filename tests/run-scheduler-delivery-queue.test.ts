@@ -73,4 +73,31 @@ describe("scheduler delivery queue", () => {
     expect(order).toEqual(["first-start", "first-end", "second-start", "second-end"])
     expect(hasScheduleDeliveryQueue(queueId)).toBe(false)
   })
+
+  it("redacts scheduled delivery queue task failure payloads", async () => {
+    const rawToken = "sk-delivery-secret-1234567890"
+    const rawPath = "/Users/example/private/delivery.log"
+    const dependencies = {
+      logInfo: vi.fn(),
+      logWarn: vi.fn(),
+      logError: vi.fn(),
+    }
+
+    const result = enqueueScheduledDelivery({
+      targetChannel: "telegram",
+      targetSessionId: "telegram-session-redaction",
+      scheduleId: "schedule-redaction",
+      scheduleRunId: "schedule-run-redaction",
+      task: async () => {
+        throw new Error(`delivery queue failed token=${rawToken} path=${rawPath}`)
+      },
+    }, dependencies)
+
+    await expect(result).rejects.toThrow("delivery queue failed")
+    const payload = JSON.stringify(dependencies.logError.mock.calls)
+    expect(payload).not.toContain(rawToken)
+    expect(payload).not.toContain(rawPath)
+    expect(payload).toContain("***")
+    expect(payload).toContain("[internal-path-redacted]")
+  })
 })

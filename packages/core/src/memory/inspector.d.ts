@@ -1,8 +1,10 @@
 import { type AIProvider } from "../ai/index.js";
+import type { KnowbeeConfig } from "../config/types.js";
 import { type MemoryCapsuleRollupSnapshot, type MemoryCompactionRunSnapshot, type MemoryRecallEventSnapshot } from "../db/index.js";
 import type { AgentMemoryState } from "./agent-state.js";
 import type { MemoryCapsule } from "./capsule.js";
 export type MemoryInspectorDriftState = "ok" | "warning";
+export type MemoryInspectorConfigSnapshot = Pick<KnowbeeConfig, "ai" | "memory">;
 export type MemoryInspectorControlAction = "dry_run_compaction" | "latest_capsule_inspect" | "rollup_inspect" | "safe_restore" | "force_compaction" | "capsule_invalidate";
 export interface MemoryInspectorOwnerCard {
     ownerScopeKey: string;
@@ -13,7 +15,7 @@ export interface MemoryInspectorOwnerCard {
     lineageId?: string;
     channelKey?: string;
     threadKey?: string;
-    nicknameSnapshot?: string;
+    agentNameSnapshot?: string;
     latestCapsuleId?: string;
     currentRawTokenEstimate: number;
     currentRawMessageCount: number;
@@ -92,13 +94,14 @@ export interface MemoryInspectorControlResult {
     latestRollup?: MemoryCapsuleRollupSnapshot | null;
     maintenanceRestorePromptBlock?: string | null;
 }
-export declare function buildMemoryInspectorSnapshot(input?: {
+export declare function buildMemoryInspectorSnapshot(input: {
     ownerType?: AgentMemoryState["ownerScope"]["ownerType"];
     ownerId?: string;
     sessionId?: string;
     requestGroupId?: string;
     limit?: number;
     now?: number;
+    config: MemoryInspectorConfigSnapshot;
 }): MemoryInspectorSnapshot;
 export declare function runMemoryInspectorControl(input: {
     action: MemoryInspectorControlAction;
@@ -109,6 +112,7 @@ export declare function runMemoryInspectorControl(input: {
     limit?: number;
     provider?: AIProvider;
     model?: string;
+    config: MemoryInspectorConfigSnapshot;
     now?: number;
 }): Promise<MemoryInspectorControlResult>;
 //# sourceMappingURL=inspector.d.ts.map

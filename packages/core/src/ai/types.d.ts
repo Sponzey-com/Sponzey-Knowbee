@@ -26,6 +26,7 @@ export interface ToolDefinition {
         type: "object";
         properties: Record<string, unknown>;
         required?: string[];
+        additionalProperties?: boolean;
     };
 }
 export type AIChunk = {
@@ -48,8 +49,17 @@ export interface ChatParams {
     messages: Message[];
     system?: string;
     tools?: ToolDefinition[];
+    toolChoice?: "auto" | "required";
     maxTokens?: number;
     signal?: AbortSignal;
+    observability?: {
+        invocationId?: string | undefined;
+        runId?: string | undefined;
+        requestGroupId?: string | undefined;
+        sessionId?: string | undefined;
+        stage: import("../observability/llm-invocation-receipt.js").LlmInvocationStage;
+        operationCode: string;
+    } | undefined;
 }
 export interface AIProvider {
     id: string;

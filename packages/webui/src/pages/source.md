@@ -6,8 +6,7 @@
 
 ## 주요 화면
 
-- `SetupPage`: 최초 설정과 수정 가능한 setup 흐름. 현재는 단일 AI 연결 기준으로 위저드를 단순화하고, 구형 `AI 순서` 단계는 숨김 호환만 유지
-- `SettingsPage`: 단일 AI 연결 카드, MQTT 런타임 관리, 고급 설정
+- `SetupPage`: 최초 설정과 이후 설정 변경을 모두 소유하는 단일 설정 화면
 - `ChatPage`: 사용자용 task queue와 승인 UI가 붙는 대화 화면
 - `RunsPage`: task monitor와 내부 디버그 attempt를 함께 보는 실행 모니터링 화면
 - `DashboardPage`, `AuditPage`, `PluginsPage`, `SchedulePage`: 보조 운영 화면

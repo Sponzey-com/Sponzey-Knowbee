@@ -124,9 +124,10 @@ describe("run action execution helpers", () => {
     expect(prompt).toContain("[target]")
     expect(prompt).toContain("[to]")
     expect(prompt).toContain("[checklist]")
-    expect(prompt).toContain("- [ ] 목표 확인:")
-    expect(prompt).toContain("성공 조건:")
-    expect(prompt).toContain("제약 사항:")
+    expect(prompt).toContain("- Confirm goal:")
+    expect(prompt).toContain("[success_criteria]")
+    expect(prompt).toContain("[constraints]")
+    expect(prompt).toContain("Do not send or claim the final user-channel answer yourself.")
   })
 
   it("infers delegated task profile from explicit action payload or schedule context", () => {
@@ -198,6 +199,12 @@ describe("run action execution helpers", () => {
         task: "안녕이라고 해줘",
         run_at: "2026-04-01T00:00:30.000Z",
         schedule_text: "30초 뒤",
+        followup_run_payload: {
+          literal_text: "안녕",
+          destination: "telegram chat 42120565, main thread",
+          task_profile: "general_chat",
+          preferred_target: "auto",
+        },
       },
     }
 
@@ -300,6 +307,7 @@ describe("run action execution helpers", () => {
       sessionId: "telegram-session",
       originRunId: "run-2",
       originRequestGroupId: "rg-2",
+      responseLanguageMode: "same_as_request",
       model: "gpt-test",
     })
     expect(result.message).toContain("실행 방식: 시스템 스케줄러")

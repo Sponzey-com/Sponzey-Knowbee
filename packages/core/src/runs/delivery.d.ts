@@ -1,9 +1,10 @@
 import type { AgentChunk } from "../agent/index.js";
-import { type ArtifactRetentionPolicy } from "../artifacts/lifecycle.js";
-import type { ChannelSource, DeliveryReceipt } from "../channels/contracts.js";
-import type { NicknameSnapshot } from "../contracts/sub-agent-orchestration.js";
+import { type ArtifactRetentionPolicy, type ArtifactStorageContext } from "../artifacts/lifecycle.js";
+import { type ChannelSource, type DeliveryReceipt } from "../channels/contracts.js";
+import type { AgentNameSnapshot } from "../contracts/sub-agent-orchestration.js";
 import { insertMessage } from "../db/index.js";
 import { type MessageLedgerDeliveryKind } from "./message-ledger.js";
+import type { UserFacingTextSource } from "./loop-directive.js";
 export interface SuccessfulFileDelivery {
     toolName: string;
     channel: DeliverySource;
@@ -45,6 +46,7 @@ export interface DeliveryOutcome {
 export type RunChunkDeliveryHandler = ((chunk: AgentChunk) => Promise<ChunkDeliveryReceipt | undefined> | ChunkDeliveryReceipt | undefined) | undefined;
 export type DeliverySource = ChannelSource;
 export interface ArtifactDeliveryOnceParams<T> {
+    artifactStorage: ArtifactStorageContext;
     runId?: string | undefined;
     channel: SuccessfulFileDelivery["channel"];
     filePath: string;
@@ -60,6 +62,10 @@ export interface AssistantTextDeliveryReceipt {
     persisted: boolean;
     textDelivered: boolean;
     doneDelivered: boolean;
+    runId?: string;
+    receiptRef?: string;
+    deliveredAtMs?: number;
+    admissionStatus?: "cancelled" | "in_flight_unknown" | "previous_failed" | "persistence_unavailable" | "provider_evidence_unavailable";
 }
 export interface AssistantTextDeliveryOutcome {
     persisted: boolean;
@@ -68,6 +74,12 @@ export interface AssistantTextDeliveryOutcome {
     hasDeliveryFailure: boolean;
     failureStage: "none" | "text" | "done" | "text_and_done";
     summary: string;
+    reasonCode?: string;
+}
+export interface CancellationReportDeliveryAuthorization {
+    runId: string;
+    finalOutcome: "cancelled";
+    receiptRef: string;
 }
 interface AssistantTextDeliveryDependencies {
     now: () => number;
@@ -115,17 +127,21 @@ export declare function emitAssistantTextDelivery(params: {
     runId: string;
     sessionId: string;
     text: string;
+    textSource?: UserFacingTextSource;
     source: DeliverySource;
     onChunk: RunChunkDeliveryHandler;
+    monotonicNow?: () => number;
     persistMessage?: boolean;
     emitDone?: boolean;
     deliveryKind?: Extract<MessageLedgerDeliveryKind, "progress" | "final">;
     parentRunId?: string;
     subSessionId?: string;
     agentId?: string;
-    speaker?: NicknameSnapshot;
+    speaker?: AgentNameSnapshot;
     sourceAttributions?: unknown[];
     force?: boolean;
+    isCancelled?: () => boolean;
+    cancellationReportAuthorization?: CancellationReportDeliveryAuthorization;
     onError?: (message: string) => void;
     dependencies?: Partial<AssistantTextDeliveryDependencies>;
 }): Promise<AssistantTextDeliveryReceipt>;

@@ -119,7 +119,7 @@ function actionHintForStatus(kind: AdvancedRunStatusKind, text: TextFn): string 
     case "cancelled":
       return text("사용자 또는 시스템에 의해 취소된 항목입니다.", "The item was cancelled by a user or the system.")
     case "interrupted":
-      return text("중단 처리된 항목입니다. 오래된 대기 정리 또는 런타임 종료 가능성을 확인하세요.", "The item was interrupted. Check stale cleanup or runtime shutdown.")
+      return text("중단 처리된 항목입니다. 오래된 대기 정리 또는 런타임 종료 가능성을 확인하세요.", "The item was interrupted. Check old-wait cleanup or runtime shutdown.")
     case "queued":
     case "running":
       return text("현재 처리 중입니다.", "Currently in progress.")
@@ -284,7 +284,7 @@ export function buildAdvancedDiagnosticStatuses(
       label: text("스케줄", "Scheduler"),
       status: summary?.health.schedule.status ?? "idle",
       summary: summary?.health.schedule.reason ?? text("스케줄 상태를 아직 불러오지 않았습니다.", "Scheduler health is not loaded yet."),
-      action: text("오래된 예약 실행과 stale wait를 정리합니다.", "Clean stale scheduled runs and waits."),
+      action: text("오래된 예약 실행과 오래된 대기를 정리합니다.", "Clean old scheduled runs and waits."),
     },
     {
       key: "memory",
@@ -297,10 +297,10 @@ export function buildAdvancedDiagnosticStatuses(
     },
     {
       key: "web_retrieval",
-      label: text("웹 검색", "Web retrieval"),
+      label: text("웹 페이지 조회", "Web page retrieval"),
       status: webStatus,
       summary: webText,
-      action: text("검색은 느슨하게 수집하고 완료 검증은 근거 타임라인에서 확인합니다.", "Collect web evidence leniently and validate completion through the evidence timeline."),
+      action: text("외부 페이지 조회 결과와 완료 검증을 근거 타임라인에서 확인합니다.", "Validate external page retrieval and completion through the evidence timeline."),
     },
     {
       key: "yeonjang",
@@ -343,7 +343,7 @@ export function buildCleanupNoticeFromDeleteResult(deletedRunCount: number, text
 export function buildCleanupNoticeFromStaleResult(result: StaleRunCleanupResult, text: TextFn): AdvancedCleanupNotice {
   return {
     kind: "success",
-    message: text(`오래된 대기 ${result.cleanedRunCount}건을 중단 처리했고 ${result.skippedRunCount}건은 건너뛰었습니다.`, `Interrupted ${result.cleanedRunCount} stale wait(s) and skipped ${result.skippedRunCount}.`),
+    message: text(`오래된 대기 ${result.cleanedRunCount}건을 중단 처리했고 ${result.skippedRunCount}건은 건너뛰었습니다.`, `Interrupted ${result.cleanedRunCount} old wait(s) and skipped ${result.skippedRunCount}.`),
     auditHint: text("중단 처리된 항목은 실행 현황과 감사/진단 로그에서 확인하세요.", "Review interrupted items in activity monitor and audit/diagnostic logs."),
   }
 }

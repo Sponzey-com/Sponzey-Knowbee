@@ -1,15 +1,17 @@
 import { mkdirSync, createWriteStream } from "node:fs"
 import { join } from "node:path"
-import { homedir } from "node:os"
 import { pipeline } from "node:stream/promises"
 import type { Bot } from "grammy"
+import type { ArtifactStorageContext } from "../../artifacts/lifecycle.js"
 import { createLogger } from "../../logger/index.js"
-import { PATHS } from "../../config/index.js"
 
 const log = createLogger("channel:telegram:file-handler")
 
 export class FileHandler {
-  constructor(private bot: Bot) {}
+  constructor(
+    private bot: Bot,
+    private storage: ArtifactStorageContext,
+  ) {}
 
   async downloadFile(
     fileId: string,
@@ -26,7 +28,7 @@ export class FileHandler {
     const token = (this.bot as unknown as { token: string }).token
     const url = `https://api.telegram.org/file/bot${token}/${filePath}`
 
-    const tmpDir = join(PATHS.stateDir, "tmp", sessionId)
+    const tmpDir = join(this.storage.rootDir, "..", "tmp", sessionId)
     mkdirSync(tmpDir, { recursive: true })
 
     const localPath = join(tmpDir, filename)

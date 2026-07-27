@@ -1,9 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import type { AIChunk, AIProvider, ChatParams, Message } from "../packages/core/src/ai/types.js"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import {
   closeDb,
   getAgentMemoryStateByScopeKey,
@@ -17,11 +16,9 @@ import {
   buildMainAgentMemoryStateScope,
   buildSubAgentMemoryStateScope,
 } from "../packages/core/src/memory/agent-state.ts"
-import { closeMemoryJournalDb } from "../packages/core/src/memory/journal.js"
 import { executeRootSessionCompaction } from "../packages/core/src/memory/compaction.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 class CompactionProvider implements AIProvider {
@@ -53,18 +50,9 @@ class CompactionProvider implements AIProvider {
 
 function useTempState(): void {
   closeDb()
-  closeMemoryJournalDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task003-agent-memory-"))
   tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
-    ai: { connection: { provider: "ollama", model: "llama3.2", endpoint: "http://127.0.0.1:11434" } },
-    webui: { enabled: true, host: "127.0.0.1", port: 0, auth: { enabled: false } },
-    security: { approvalMode: "off" }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 beforeEach(() => {
@@ -73,12 +61,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -107,6 +89,7 @@ describe("task003 agent memory state", () => {
       provider: new CompactionProvider(),
       model: "fake-model",
       sessionId: "session-webui",
+      agentNameSnapshot: "노비",
       requestGroupId: "group-webui",
       messages,
       sourceTokenEstimate: 5_500,
@@ -133,9 +116,10 @@ describe("task003 agent memory state", () => {
         threadKey: "session-webui",
       }),
       latestCapsuleId: result.capsuleId,
-      nicknameSnapshot: "노비",
+      agentNameSnapshot: "노비",
       currentRawMessageCount: messages.length,
     }))
+    expect(state).not.toHaveProperty("nicknameSnapshot")
   })
 
   it("keeps ownership stable across rename and separates sibling agent/channel scope keys", () => {
@@ -168,7 +152,7 @@ describe("task003 agent memory state", () => {
       stateId: "state-1",
       ownerScope: subScope,
       ownerScopeKey: buildAgentMemoryStateScopeKey(subScope),
-      nicknameSnapshot: "Researcher",
+      agentNameSnapshot: "Researcher",
       currentRawTokenEstimate: 120,
       currentRawMessageCount: 3,
       createdAt: 10,
@@ -178,7 +162,7 @@ describe("task003 agent memory state", () => {
       stateId: "state-2",
       ownerScope: subScope,
       ownerScopeKey: buildAgentMemoryStateScopeKey(subScope),
-      nicknameSnapshot: "Research Archivist",
+      agentNameSnapshot: "Research Archivist",
       currentRawTokenEstimate: 128,
       currentRawMessageCount: 4,
       createdAt: 11,
@@ -188,7 +172,7 @@ describe("task003 agent memory state", () => {
       stateId: "state-3",
       ownerScope: siblingScope,
       ownerScopeKey: buildAgentMemoryStateScopeKey(siblingScope),
-      nicknameSnapshot: "Writer",
+      agentNameSnapshot: "Writer",
       currentRawTokenEstimate: 32,
       currentRawMessageCount: 1,
       createdAt: 12,
@@ -198,7 +182,7 @@ describe("task003 agent memory state", () => {
       stateId: "state-4",
       ownerScope: channelSplitScope,
       ownerScopeKey: buildAgentMemoryStateScopeKey(channelSplitScope),
-      nicknameSnapshot: "Research Archivist",
+      agentNameSnapshot: "Research Archivist",
       currentRawTokenEstimate: 64,
       currentRawMessageCount: 2,
       createdAt: 13,
@@ -214,7 +198,8 @@ describe("task003 agent memory state", () => {
       .prepare<[], { count: number }>("SELECT count(*) AS count FROM agent_memory_state")
       .get()?.count
 
-    expect(renamed?.nicknameSnapshot).toBe("Research Archivist")
+    expect(renamed?.agentNameSnapshot).toBe("Research Archivist")
+    expect(renamed).not.toHaveProperty("nicknameSnapshot")
     expect(researcherStates).toHaveLength(2)
     expect(buildAgentMemoryStateScopeKey(subScope)).not.toBe(buildAgentMemoryStateScopeKey(siblingScope))
     expect(buildAgentMemoryStateScopeKey(subScope)).not.toBe(buildAgentMemoryStateScopeKey(channelSplitScope))

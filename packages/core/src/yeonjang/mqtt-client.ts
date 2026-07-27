@@ -1,12 +1,17 @@
 import { createHash, randomUUID } from "node:crypto"
 import mqtt, { type MqttClient } from "mqtt"
 import type { ChannelSource } from "../channels/contracts.js"
-import { getConfig } from "../config/index.js"
-import { createLogger } from "../logger/index.js"
+import type { MqttConfig } from "../config/types.js"
+import { createLogger, redactLogText } from "../logger/index.js"
 import { getMqttBrokerSnapshot, getMqttExtensionSnapshots, validateMqttBrokerConfig, type MqttExtensionSnapshot } from "../mqtt/broker.js"
 import { recordMessageLedgerEvent } from "../runs/message-ledger.js"
 
 const log = createLogger("yeonjang:mqtt")
+
+function yeonjangMqttErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 
 export interface YeonjangRequestEnvelope {
   id: string
@@ -62,6 +67,7 @@ export interface YeonjangClientOptions {
   timeoutMs?: number
   forceRefresh?: boolean
   metadata?: YeonjangRequestMetadata
+  mqttConfig?: MqttConfig
 }
 
 export interface YeonjangCommandDispatch {
@@ -172,6 +178,7 @@ export async function invokeYeonjangMethod<T = unknown>(
 ): Promise<T> {
   const extensionId = options.extensionId?.trim() || DEFAULT_YEONJANG_EXTENSION_ID
   const timeoutMs = clampTimeout(options.timeoutMs)
+  const mqttConfig = requireMqttClientConfig(options)
   const normalizedMetadata = normalizeYeonjangRequestMetadata(options.metadata)
   const dispatchBase = createYeonjangCommandDispatch(method, params, {
     extensionId,
@@ -217,7 +224,7 @@ export async function invokeYeonjangMethod<T = unknown>(
           cancelToken: dispatchBase.cancelToken,
         },
       })
-      const client = createClient()
+      const client = createClient(mqttConfig)
 
       log.debug(`invoking ${method} on ${extensionId} (attempt ${attempt}/${maxAttempts})`)
 
@@ -283,7 +290,7 @@ export async function invokeYeonjangMethod<T = unknown>(
               attempt,
               maxAttempts,
               autoRetryEligible,
-              error: error instanceof Error ? error.message : String(error),
+              error: yeonjangMqttErrorMessage(error),
             },
           })
           continue
@@ -304,7 +311,7 @@ export async function invokeYeonjangMethod<T = unknown>(
             attempt,
             maxAttempts,
             autoRetryEligible,
-            error: error instanceof Error ? error.message : String(error),
+            error: yeonjangMqttErrorMessage(error),
           },
         })
       } finally {
@@ -660,7 +667,7 @@ function getFreshCapabilitySnapshot(extensionId: string): MqttExtensionSnapshot 
 }
 
 export function isYeonjangUnavailableError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = yeonjangMqttErrorMessage(error)
   const normalized = message.toLowerCase()
   return [
     "mqtt 브로커가 비활성화되어 있습니다",
@@ -678,8 +685,12 @@ export function isYeonjangUnavailableError(error: unknown): boolean {
   ].some((pattern) => normalized.includes(pattern))
 }
 
-function createClient(): MqttClient {
-  const config = getConfig().mqtt
+function requireMqttClientConfig(options: YeonjangClientOptions): MqttConfig {
+  if (options.mqttConfig) return options.mqttConfig
+  throw new Error("Yeonjang MQTT config snapshot is required.")
+}
+
+function createClient(config: MqttConfig): MqttClient {
   const snapshot = getMqttBrokerSnapshot()
   const validationError = validateMqttBrokerConfig(config)
   if (!config.enabled) {
@@ -807,7 +818,7 @@ async function waitForResponse<T>(
         parsed = JSON.parse(payload.toString("utf8")) as unknown
       } catch (error) {
         cleanup()
-        reject(new Error(`Yeonjang 응답 JSON 파싱 실패: ${error instanceof Error ? error.message : String(error)}`))
+        reject(new Error(`Yeonjang 응답 JSON 파싱 실패: ${yeonjangMqttErrorMessage(error)}`))
         return
       }
 
@@ -839,7 +850,7 @@ async function waitForResponse<T>(
           response = JSON.parse(bytes.toString("utf8")) as YeonjangResponseEnvelope<T>
         } catch (error) {
           cleanup()
-          reject(new Error(`Yeonjang 청크 응답 복원 실패: ${error instanceof Error ? error.message : String(error)}`))
+          reject(new Error(`Yeonjang 청크 응답 복원 실패: ${yeonjangMqttErrorMessage(error)}`))
           return
         }
 
@@ -898,7 +909,7 @@ function isChunkEnvelope(value: unknown): value is YeonjangChunkEnvelope {
 }
 
 function createYeonjangResponseError(error: YeonjangErrorBody | undefined): Error {
-  const instance = new Error(error?.message ?? "Yeonjang 요청이 실패했습니다.")
+  const instance = new Error(yeonjangMqttErrorMessage(error?.message ?? "Yeonjang 요청이 실패했습니다."))
   if (error?.code) {
     ;(instance as Error & { code?: string }).code = error.code
   }

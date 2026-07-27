@@ -13,6 +13,12 @@ export interface SubAgentResultReviewIssue {
 export interface SubAgentResultReviewInput {
     resultReport: ResultReport;
     expectedOutputs: ExpectedOutputContract[];
+    strategyFingerprint?: string;
+    previousAttempts?: Array<{
+        normalizedFailureKey: string;
+        strategyFingerprint: string;
+    }>;
+    /** @deprecated Diagnostic compatibility only; failure identity alone cannot prove repetition. */
     previousFailureKeys?: string[];
     retryClass?: SubAgentRetryClass;
     additionalContextRefs?: string[];

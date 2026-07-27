@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerAgentRoutes } from "../packages/core/src/api/routes/agent.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import {
   CONTRACT_SCHEMA_VERSION,
@@ -20,6 +20,11 @@ import {
   buildTopologyAgentCreatePayload,
   buildTopologyTeamCreatePayload,
 } from "../packages/webui/src/lib/topology.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: {
@@ -37,17 +42,15 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 type FastifyTestApp = ReturnType<typeof Fastify>
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task025-topology-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task025-topology-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function owner(
@@ -96,8 +99,7 @@ function subAgentConfig(
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     agentType: "sub_agent",
     agentId,
-    displayName: nickname,
-    nickname,
+    agentName: nickname,
     status: "enabled",
     role: `${nickname} worker`,
     personality: "Precise",
@@ -148,7 +150,6 @@ function teamConfig(): TeamConfig {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     teamId: "team:topology",
     displayName: "Topology Team",
-    nickname: "Topology Team",
     status: "enabled",
     purpose: "Validate topology overlays without raw memory.",
     ownerAgentId: "agent:alpha",
@@ -171,13 +172,18 @@ function teamConfig(): TeamConfig {
   }
 }
 
-async function createAgent(app: FastifyTestApp, agentId: string, nickname: string): Promise<void> {
+async function createAgent(
+  app: FastifyTestApp,
+  agentId: string,
+  nickname: string,
+  overrides: Partial<SubAgentConfig> = {},
+): Promise<void> {
   const response = await app.inject({
     method: "POST",
     url: "/api/agents",
-    payload: { agent: subAgentConfig(agentId, nickname) },
+    payload: { agent: subAgentConfig(agentId, nickname, overrides) },
   })
-  expect(response.statusCode).toBe(200)
+  expect(response.statusCode, response.body).toBe(200)
 }
 
 async function createRelationship(
@@ -224,11 +230,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -238,6 +239,7 @@ afterEach(() => {
 describe("task025 topology projection", () => {
   it("projects hierarchy, team overlays, badges, inspectors, and redacted summaries", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -282,6 +284,11 @@ describe("task025 topology projection", () => {
       expect(asRecord(alpha.memory).visibility).toBe("private")
       const teams = asRecord(inspectors.teams)
       const team = asRecord(teams["team:topology"])
+      const teamNode = nodes.find((item) => item.entityId === "team:topology")
+      expect(team.displayName).toBe("Topology Team")
+      expect(team).not.toHaveProperty("nickname")
+      expect(teamNode?.label).toBe("Topology Team")
+      expect(teamNode?.label).not.toBe("Legacy Team Nick")
       const builder = asRecord(team.builder)
       const gamma = asRecords(builder.candidates).find(
         (candidate) => candidate.agentId === "agent:gamma",
@@ -302,8 +309,94 @@ describe("task025 topology projection", () => {
     }
   })
 
+  it("projects the canonical agentName", async () => {
+    const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerAgentRoutes(app)
+    await app.ready()
+    try {
+      await createAgent(app, "agent:canonical", "Legacy Display", {
+        agentName: "정식 이름",
+      })
+      await createRelationship(app, "agent:knowbee", "agent:canonical")
+
+      const response = await app.inject({ method: "GET", url: "/api/agent-topology" })
+      expect(response.statusCode).toBe(200)
+      const body = response.json()
+      const nodes = asRecords(body.nodes)
+      const inspectors = asRecord(body.inspectors)
+      const agents = asRecord(inspectors.agents)
+      const canonical = asRecord(agents["agent:canonical"])
+      const node = nodes.find((item) => item.entityId === "agent:canonical")
+
+      expect(canonical.agentName).toBe("정식 이름")
+      expect(canonical.displayName).toBe("정식 이름")
+      expect(canonical).not.toHaveProperty("nickname")
+      expect(node?.label).toBe("정식 이름")
+    } finally {
+      await app.close()
+    }
+  })
+
+  it("uses the canonical agentName in projection member and builder labels", async () => {
+    const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerAgentRoutes(app)
+    await app.ready()
+    try {
+      await createAgent(app, "agent:alpha", "Alpha")
+      await createAgent(app, "agent:legacy", "Legacy Nick", {
+        agentName: "Visible Agent",
+      })
+      await createRelationship(app, "agent:knowbee", "agent:alpha")
+      await createRelationship(app, "agent:alpha", "agent:legacy")
+      const team = await app.inject({
+        method: "POST",
+        url: "/api/teams",
+        payload: {
+          team: {
+            ...teamConfig(),
+            memberAgentIds: ["agent:legacy"],
+            memberships: [membership("team:topology", "agent:legacy", ["member"], 0)],
+            roleHints: ["member"],
+          },
+        },
+      })
+      expect(team.statusCode).toBe(200)
+
+      const response = await app.inject({ method: "GET", url: "/api/agent-topology" })
+      expect(response.statusCode).toBe(200)
+      const body = response.json()
+      const teams = asRecord(asRecord(body.inspectors).teams)
+      const topologyTeam = asRecord(teams["team:topology"])
+      const member = asRecords(topologyTeam.members).find((item) => item.agentId === "agent:legacy")
+      const builder = asRecord(topologyTeam.builder)
+      const candidate = asRecords(builder.candidates).find((item) => item.agentId === "agent:legacy")
+
+      expect(member?.label).toBe("Visible Agent")
+      expect(candidate?.label).toBe("Visible Agent")
+      expect(member?.label).not.toBe("Legacy Display")
+      expect(candidate?.label).not.toBe("Legacy Nick")
+    } finally {
+      await app.close()
+    }
+  })
+
+  it("keeps topology projection source free of legacy agent label fallback chains", () => {
+    const source = readFileSync(
+      new URL("../packages/core/src/orchestration/topology-projection.ts", import.meta.url),
+      "utf-8",
+    )
+
+    expect(source).not.toContain("agent?.agentName ?? agent?.nickname ?? agent?.displayName")
+    expect(source).not.toContain("agent.agentName ?? agent.nickname ?? agent.displayName")
+    expect(source).not.toContain("input.agent?.agentName ?? input.node.label")
+    expect(source).not.toContain("input.team.nickname ?? input.team.displayName")
+  })
+
   it("validates invalid hierarchy edges and blocks non-direct active team member saves", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -363,6 +456,7 @@ describe("task025 topology projection", () => {
 
   it("accepts topology editor create and archive payloads", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {

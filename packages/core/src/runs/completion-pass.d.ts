@@ -1,4 +1,5 @@
 import type { CompletionReviewResult } from "../agent/completion-review.js";
+import { type StopReportDecision } from "../contracts/stop-report-decision.js";
 import { type SubAgentResultReview, type SubSessionCompletionIntegrationDecision } from "../agent/sub-agent-result-review.js";
 import type { TaskExecutionSemantics } from "../agent/intake.js";
 import type { DeliveryOutcome } from "./delivery.js";
@@ -13,6 +14,7 @@ export interface CompletionPassResult {
     application: CompletionApplicationDecision;
     usedTurns: number;
     maxTurns: number;
+    stopDecision: StopReportDecision;
 }
 export declare function decideSubSessionCompletionPass(params: {
     subSessionReviews: Array<{
@@ -21,7 +23,9 @@ export declare function decideSubSessionCompletionPass(params: {
     }>;
 }): SubSessionCompletionIntegrationDecision;
 export declare function runCompletionPass(params: {
+    goalId: string;
     review: CompletionReviewResult | null;
+    reviewFailureReasonCode?: "completion_review_provider_failed" | "completion_review_contract_invalid";
     executionSemantics: TaskExecutionSemantics;
     preview: string;
     deliveryOutcome: DeliveryOutcome;

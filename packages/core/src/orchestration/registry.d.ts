@@ -1,4 +1,4 @@
-import { type KnowbeeConfig } from "../config/index.js";
+import type { KnowbeeConfig } from "../config/types.js";
 import { type AgentConfig, type AgentRelationship, type CapabilityPolicy, type PermissionProfile, type SubAgentConfig, type TeamConfig } from "../contracts/sub-agent-orchestration.js";
 import { type AgentConfigPersistenceOptions, type TeamConfigPersistenceOptions } from "../db/index.js";
 import { type AgentCapabilitySummary, type AgentModelSummary } from "./capability-model.js";
@@ -52,8 +52,7 @@ export interface OrchestrationRegistryDiagnostic {
 }
 export interface AgentRegistryEntry {
     agentId: string;
-    displayName: string;
-    nickname?: string;
+    agentName: string;
     status: SubAgentConfig["status"];
     role: string;
     specialtyTags: string[];
@@ -75,7 +74,6 @@ export interface AgentRegistryEntry {
 export interface TeamRegistryEntry {
     teamId: string;
     displayName: string;
-    nickname?: string;
     status: TeamConfig["status"];
     purpose: string;
     roleHints: string[];
@@ -226,8 +224,9 @@ export interface OrchestrationRegistrySnapshot {
     }>;
     diagnostics: OrchestrationRegistryDiagnostic[];
 }
+export type RegistryConfigSnapshot = Pick<KnowbeeConfig, "orchestration"> & Partial<Pick<KnowbeeConfig, "ai">>;
 export interface RegistryServiceDependencies {
-    getConfig?: () => Pick<KnowbeeConfig, "orchestration"> & Partial<Pick<KnowbeeConfig, "ai">>;
+    config: RegistryConfigSnapshot;
     now?: () => number;
     failureWindowMs?: number;
 }
@@ -248,8 +247,8 @@ export declare function buildExecutorProfileFromNode(node: LegacyNode, overrides
     displayName?: string;
 }): ExecutorProfile;
 export declare function clearAgentCapabilityIndexCache(): void;
-export declare function buildOrchestrationRegistrySnapshot(dependencies?: RegistryServiceDependencies): OrchestrationRegistrySnapshot;
-export declare function createAgentRegistryService(dependencies?: RegistryServiceDependencies): {
+export declare function buildOrchestrationRegistrySnapshot(dependencies: RegistryServiceDependencies): OrchestrationRegistrySnapshot;
+export declare function createAgentRegistryService(dependencies: RegistryServiceDependencies): {
     get(agentId: string): AgentConfig | undefined;
     list(): AgentConfig[];
     snapshot(): OrchestrationRegistrySnapshot;
@@ -257,7 +256,7 @@ export declare function createAgentRegistryService(dependencies?: RegistryServic
     disable(agentId: string): boolean;
     archive(agentId: string): boolean;
 };
-export declare function createTeamRegistryService(dependencies?: RegistryServiceDependencies): {
+export declare function createTeamRegistryService(dependencies: RegistryServiceDependencies): {
     get(teamId: string): TeamConfig | undefined;
     list(): TeamConfig[];
     snapshot(): OrchestrationRegistrySnapshot;

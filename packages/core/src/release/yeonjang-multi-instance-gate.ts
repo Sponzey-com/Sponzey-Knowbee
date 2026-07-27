@@ -30,6 +30,31 @@ export interface YeonjangManualSmokeChecklistItem {
   steps: string[]
 }
 
+export type YeonjangProfileSmokeId = YeonjangManualSmokeChecklistItem["id"]
+export type YeonjangProfileSmokeProfile = YeonjangManualSmokeChecklistItem["profile"]
+export type YeonjangProfileSmokeStatus = "passed" | "failed" | "stale" | "not_run"
+
+export interface YeonjangProfileSmokeEvidence {
+  id: YeonjangProfileSmokeId
+  platform: "macos" | "windows" | "linux"
+  profile: YeonjangProfileSmokeProfile
+  startupMode: "autostart" | "manual" | "managed"
+  windowMode: "hidden" | "visible" | "unavailable"
+  trayState: "visible" | "hidden" | "unsupported" | "unavailable"
+  observedAt: number
+  evidenceRef: string
+}
+
+export interface YeonjangProfileSmokeResult {
+  id: YeonjangProfileSmokeId
+  platform: "macos" | "windows" | "linux"
+  profile: YeonjangProfileSmokeProfile
+  status: YeonjangProfileSmokeStatus
+  reasonCodes: string[]
+  evidenceRefs: string[]
+  observedAt?: number
+}
+
 export interface YeonjangMultiInstanceReleaseGateSummary {
   kind: "knowbee.release.yeonjang_multi_instance"
   generatedAt: string
@@ -38,6 +63,7 @@ export interface YeonjangMultiInstanceReleaseGateSummary {
   liveFleetSummary: YeonjangProjectionSummary
   checks: YeonjangMultiInstanceReleaseGateCheck[]
   manualSmoke: YeonjangManualSmokeChecklistItem[]
+  profileSmoke: YeonjangProfileSmokeResult[]
   warnings: string[]
   blockingFailures: string[]
 }
@@ -399,8 +425,90 @@ function buildManualSmokeChecklist(): YeonjangManualSmokeChecklistItem[] {
   ]
 }
 
+function expectedPlatform(id: YeonjangProfileSmokeId): "macos" | "windows" | "linux" {
+  if (id === "macos") return "macos"
+  if (id === "windows") return "windows"
+  return "linux"
+}
+
+function sanitizeEvidenceRef(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (/session|instance|client|command|private/iu.test(trimmed)) return "profile:evidence-redacted"
+  return trimmed
+}
+
+function buildProfileSmokeResults(input: {
+  checklist: readonly YeonjangManualSmokeChecklistItem[]
+  evidence: readonly YeonjangProfileSmokeEvidence[]
+  now: number
+  maxAgeMs: number
+}): YeonjangProfileSmokeResult[] {
+  return input.checklist.map((item): YeonjangProfileSmokeResult => {
+    const matches = input.evidence.filter((evidence) => evidence.id === item.id)
+    const evidence = matches[0]
+    const reasonCodes: string[] = []
+    let status: YeonjangProfileSmokeStatus = "passed"
+
+    if (!evidence) {
+      status = "not_run"
+      reasonCodes.push("profile_smoke_not_run")
+    } else if (matches.length > 1) {
+      status = "failed"
+      reasonCodes.push("profile_smoke_duplicate")
+    } else if (input.maxAgeMs <= 0 || evidence.observedAt > input.now || input.now - evidence.observedAt > input.maxAgeMs) {
+      status = "stale"
+      reasonCodes.push("profile_smoke_stale")
+    } else {
+      if (evidence.platform !== expectedPlatform(item.id)) reasonCodes.push("profile_platform_mismatch")
+      if (evidence.profile !== item.profile) reasonCodes.push("profile_support_profile_mismatch")
+
+      if (item.id === "linux_headless") {
+        if (evidence.startupMode !== "managed") reasonCodes.push("profile_headless_startup_not_managed")
+        if (evidence.windowMode !== "hidden" && evidence.windowMode !== "unavailable") {
+          reasonCodes.push("profile_headless_window_should_not_be_visible")
+        }
+        if (evidence.trayState !== "unsupported" && evidence.trayState !== "unavailable") {
+          reasonCodes.push("profile_headless_tray_should_be_unsupported")
+        }
+      } else {
+        if (evidence.startupMode !== "autostart") reasonCodes.push("profile_startup_not_autostart")
+        if (evidence.windowMode !== "hidden") reasonCodes.push("profile_window_not_hidden")
+        if (item.id === "linux_desktop") {
+          if (evidence.trayState !== "visible" && evidence.trayState !== "unsupported") {
+            reasonCodes.push("profile_linux_tray_fallback_invalid")
+          }
+        } else if (evidence.trayState !== "visible") {
+          reasonCodes.push("profile_tray_not_visible")
+        }
+      }
+      if (reasonCodes.length > 0) status = "failed"
+    }
+
+    const evidenceRefs = matches
+      .map((candidate) => sanitizeEvidenceRef(candidate.evidenceRef))
+      .filter((ref): ref is string => Boolean(ref))
+      .filter((ref, index, refs) => refs.indexOf(ref) === index)
+
+    return Object.freeze({
+      id: item.id,
+      platform: evidence?.platform ?? expectedPlatform(item.id),
+      profile: item.profile,
+      status,
+      reasonCodes: Object.freeze(reasonCodes) as string[],
+      evidenceRefs: Object.freeze(evidenceRefs) as string[],
+      ...(evidence ? { observedAt: evidence.observedAt } : {}),
+    })
+  })
+}
+
 export function buildYeonjangMultiInstanceReleaseGateSummary(
-  options: { now?: Date; liveFleetProjection?: ReturnType<typeof buildYeonjangFleetProjection> } = {},
+  options: {
+    now?: Date
+    liveFleetProjection?: ReturnType<typeof buildYeonjangFleetProjection>
+    profileSmokeEvidence?: readonly YeonjangProfileSmokeEvidence[]
+    profileSmokeMaxAgeMs?: number
+  } = {},
 ): YeonjangMultiInstanceReleaseGateSummary {
   const syntheticFleet = buildSyntheticFleetProjection()
   const checks = [
@@ -411,19 +519,33 @@ export function buildYeonjangMultiInstanceReleaseGateSummary(
     checkIdempotencyDelivery(),
     checkDuplicateSessionGuard(syntheticFleet.instances),
   ]
-  const blockingFailures = checks
+  const blockingFailures: string[] = checks
     .filter((check) => check.status === "failed")
     .map((check) => check.id)
   const manualSmoke = buildManualSmokeChecklist()
-  const warnings = manualSmoke.length > 0 ? ["manual_smoke_not_run"] : []
+  const profileSmoke = buildProfileSmokeResults({
+    checklist: manualSmoke,
+    evidence: options.profileSmokeEvidence ?? [],
+    now: (options.now ?? new Date()).getTime(),
+    maxAgeMs: Math.max(1, options.profileSmokeMaxAgeMs ?? 24 * 60 * 60 * 1_000),
+  })
+  const hasProfileEvidence = (options.profileSmokeEvidence ?? []).length > 0
+  for (const item of profileSmoke) {
+    if (!hasProfileEvidence || item.status === "passed" || item.status === "not_run") continue
+    blockingFailures.push(`profile_smoke_${item.id}_${item.status}`)
+  }
+  const warnings = !hasProfileEvidence || profileSmoke.some((item) => item.status === "not_run")
+    ? ["manual_smoke_not_run"]
+    : []
   return {
     kind: "knowbee.release.yeonjang_multi_instance",
     generatedAt: (options.now ?? new Date()).toISOString(),
     policyVersion: "2026-05-18.yeonjang-multi-instance.release-gate.v1",
     gateStatus: blockingFailures.length > 0 ? "failed" : warnings.length > 0 ? "warning" : "passed",
-    liveFleetSummary: (options.liveFleetProjection ?? buildYeonjangFleetProjection()).summary,
+    liveFleetSummary: (options.liveFleetProjection ?? syntheticFleet).summary,
     checks,
     manualSmoke,
+    profileSmoke,
     warnings,
     blockingFailures,
   }

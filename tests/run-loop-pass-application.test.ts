@@ -104,7 +104,7 @@ describe("loop pass application helpers", () => {
     })
   })
 
-  it("records normalized followup prompts and clears runtime/provider on review retry", () => {
+  it("records structured followup keys and clears runtime/provider on review retry", () => {
     const seenFollowupPrompts = new Set<string>()
     const activeWorkerRuntime = {
       kind: "internal_ai",
@@ -120,8 +120,9 @@ describe("loop pass application helpers", () => {
         nextMessage: "follow up with more detail",
         clearWorkerRuntime: true,
         clearProvider: true,
-        normalizedFollowupPrompt: "follow up with more detail",
+        structuredFollowupKey: "completion-followup:test-key",
         markTruncatedOutputRecoveryAttempted: true,
+        requiredToolNames: ["web_fetch"],
       },
       currentMessage: "previous message",
       truncatedOutputRecoveryAttempted: false,
@@ -130,14 +131,40 @@ describe("loop pass application helpers", () => {
       seenFollowupPrompts,
     })
 
-    expect([...seenFollowupPrompts]).toEqual(["follow up with more detail"])
+    expect([...seenFollowupPrompts]).toEqual(["completion-followup:test-key"])
     expect(result).toEqual({
       kind: "retry",
       state: {
         currentMessage: "follow up with more detail",
+        requiredToolNames: ["web_fetch"],
         truncatedOutputRecoveryAttempted: true,
         activeWorkerRuntime: undefined,
         currentProvider: undefined,
+      },
+    })
+  })
+
+  it("preserves an explicit empty tool list for a response-only review retry", () => {
+    const result = applyReviewCyclePassResult({
+      result: {
+        kind: "retry",
+        nextMessage: "answer from existing evidence",
+        clearWorkerRuntime: false,
+        requiredToolNames: [],
+        nextAttemptToolPolicy: { mode: "forbidden" },
+      },
+      currentMessage: "previous message",
+      truncatedOutputRecoveryAttempted: false,
+      activeWorkerRuntime: undefined,
+      currentProvider: undefined,
+      seenFollowupPrompts: new Set(),
+    })
+
+    expect(result).toMatchObject({
+      kind: "retry",
+      state: {
+        requiredToolNames: [],
+        nextAttemptToolPolicy: { mode: "forbidden" },
       },
     })
   })

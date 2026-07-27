@@ -11,6 +11,7 @@ export function buildReconnectClarificationDirective(params) {
         userMessage: params.reconnectTarget
             ? "어느 기존 작업을 수정하려는지 더 구체적으로 적어 주세요. 폴더명이나 파일명, 예를 들어 달력 또는 계산기처럼 지정해 주세요."
             : "수정할 기존 작업을 더 구체적으로 적어 주세요. 폴더명, 파일명, 프로그램명 중 하나를 함께 적어 주세요.",
+        userMessageSource: "runtime_deterministic",
         remainingItems: params.reconnectSelection?.candidates?.length
             ? params.reconnectSelection.candidates.map((candidate) => `후보: ${candidate.title}`)
             : ["수정할 대상 작업 이름 또는 경로를 지정해 주세요."],
@@ -23,6 +24,7 @@ export function bootstrapLoopState(params, dependencies) {
         ? {
             kind: "complete",
             text: params.immediateCompletionText.trim(),
+            textSource: "user_supplied_literal",
             eventLabel: "예약 직접 전달 실행",
         }
         : params.reconnectNeedsClarification

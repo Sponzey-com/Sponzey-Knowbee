@@ -1,6 +1,7 @@
 import process from "node:process"
 
 let buffer = Buffer.alloc(0)
+const mode = process.argv[2] ?? "normal"
 
 function send(message) {
   const body = JSON.stringify(message)
@@ -14,6 +15,11 @@ function toObject(value) {
 function handle(message) {
   const method = message.method
   if (method === "initialize") {
+    if (mode === "timeout") return
+    if (mode === "invalid-handshake") {
+      send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 7 } })
+      return
+    }
     send({
       jsonrpc: "2.0",
       id: message.id,
@@ -31,37 +37,14 @@ function handle(message) {
   }
 
   if (method === "tools/list") {
-    send({
-      jsonrpc: "2.0",
-      id: message.id,
-      result: {
-        tools: [
-          {
-            name: "echo",
-            description: "Echoes the given text.",
-            inputSchema: {
-              type: "object",
-              properties: {
-                text: { type: "string" },
-              },
-              required: ["text"],
-            },
-          },
-          {
-            name: "sum",
-            description: "Adds two numbers.",
-            inputSchema: {
-              type: "object",
-              properties: {
-                a: { type: "number" },
-                b: { type: "number" },
-              },
-              required: ["a", "b"],
-            },
-          },
-        ],
-      },
-    })
+    if (mode === "delayed-tools" || mode === "delayed-partial-tools") {
+      setTimeout(() => {
+        const delayedMode = mode === "delayed-partial-tools" ? "partial-tools" : "normal"
+        sendTools(message, delayedMode)
+      }, 120)
+      return
+    }
+    sendTools(message, mode)
     return
   }
 
@@ -75,9 +58,7 @@ function handle(message) {
         jsonrpc: "2.0",
         id: message.id,
         result: {
-          content: [
-            { type: "text", text: String(args.text ?? "") },
-          ],
+          content: [{ type: "text", text: String(args.text ?? "") }],
         },
       })
       return
@@ -90,9 +71,7 @@ function handle(message) {
         jsonrpc: "2.0",
         id: message.id,
         result: {
-          content: [
-            { type: "text", text: String(a + b) },
-          ],
+          content: [{ type: "text", text: String(a + b) }],
         },
       })
       return
@@ -107,6 +86,48 @@ function handle(message) {
       message: `Unsupported method: ${message.method}`,
     },
   })
+}
+
+function sendTools(message, toolsMode) {
+    const tools =
+      toolsMode === "zero-tools"
+        ? []
+        : toolsMode === "partial-tools"
+          ? [
+              {
+                name: "echo",
+                description: "Echoes the given text.",
+                inputSchema: { type: "object", properties: { text: { type: "string" } } },
+              },
+              { name: "", description: "Invalid unnamed tool", inputSchema: {} },
+            ]
+          : [
+              {
+                name: "echo",
+                description: "Echoes the given text.",
+                inputSchema: {
+                  type: "object",
+                  properties: { text: { type: "string" } },
+                  required: ["text"],
+                },
+              },
+              {
+                name: "sum",
+                description: "Adds two numbers.",
+                inputSchema: {
+                  type: "object",
+                  properties: { a: { type: "number" }, b: { type: "number" } },
+                  required: ["a", "b"],
+                },
+              },
+            ]
+    send({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: {
+        tools,
+      },
+    })
 }
 
 function consume() {

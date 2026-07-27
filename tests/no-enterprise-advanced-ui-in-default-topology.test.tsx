@@ -26,7 +26,7 @@ describe("default topology screen excludes enterprise advanced UI", () => {
     expect(appSource).not.toContain("EnterpriseTopologyPage")
     expect(appSource).toContain("TopologyWorkspacePage")
     expect(appSource).toContain('path="/advanced/enterprise-topology"')
-    expect(appSource).toContain('<UnifiedRouteRedirect fallback="/sub-agents" />')
+    expect(appSource).toContain('<UnifiedRouteRedirect fallback="/agents" />')
     expect(legacyPageSource).toContain("export function LegacyEnterpriseTopologyPage")
     expect(legacyPageSource).not.toContain("export const EnterpriseTopologyPage")
   })

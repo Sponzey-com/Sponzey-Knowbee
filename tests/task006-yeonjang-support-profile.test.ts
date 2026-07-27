@@ -2,16 +2,19 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { runDoctor } from "../packages/core/src/diagnostics/doctor.js"
 import { buildReleaseArtifactDefinitions } from "../packages/core/src/release/package.ts"
 import { buildRuntimeManifest } from "../packages/core/src/runtime/manifest.js"
 import { upsertYeonjangRegistryObservation } from "../packages/core/src/yeonjang/registry.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let runtimeFixture: TestRuntimeConfigFixture
 
 function makeTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -38,19 +41,13 @@ function createReleaseFixture(): string {
 
 beforeEach(() => {
   closeDb()
-  const stateDir = makeTempDir("knowbee-task006-yeonjang-profile-")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  const rootDir = makeTempDir("knowbee-task006-yeonjang-profile-")
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -101,13 +98,15 @@ describe("task006 yeonjang support profile and release surface", () => {
       windowMode: "hidden",
       trayState: "unsupported",
       observedAt: Date.now(),
-    })).toEqual({ ok: true, instanceId: "inst-headless-1", sessionId: "sess-headless-1" })
+    })).toEqual({ ok: true, instanceId: "inst-headless-1", sessionId: "sess-headless-1", claimOutcome: "accepted" })
 
     const manifest = buildRuntimeManifest({
       includeEnvironment: false,
       includeReleasePackage: false,
+      config: runtimeFixture.config,
+      paths: runtimeFixture.paths,
     })
-    const report = runDoctor({
+    const report = runDoctor({ config: runtimeFixture.config, paths: runtimeFixture.paths,
       mode: "quick",
       includeEnvironment: false,
       includeReleasePackage: false,
@@ -137,5 +136,7 @@ describe("task006 yeonjang support profile and release surface", () => {
       "yeonjang:linux:stop-script",
       "yeonjang:linux:headless-stop-script",
     ]))
+    expect(definitions.every((item) => item.handling.rawDataAllowed === false)).toBe(true)
+    expect(definitions.every((item) => item.handling.audience === "release_package")).toBe(true)
   })
 })

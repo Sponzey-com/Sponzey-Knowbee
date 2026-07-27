@@ -219,7 +219,6 @@ function taskSnapshot(input: TaskBuildInput): TeamExecutionTaskSnapshot {
   const inputContext = asJsonObject({
     teamId: input.team.teamId,
     teamDisplayName: input.team.displayName,
-    teamNickname: input.team.nickname,
     ownerAgentId: input.coverage.ownerAgentId,
     leadAgentId: input.coverage.leadAgentId,
     agentId: input.agentId,
@@ -449,7 +448,7 @@ function missingRoleDiagnostics(input: {
 
 export function buildTeamExecutionPlan(
   input: TeamExecutionPlanBuildInput,
-  dependencies: TeamExecutionPlanServiceDependencies = {},
+  dependencies: TeamExecutionPlanServiceDependencies,
 ): TeamExecutionPlanBuildResult {
   const generatedAt = nowFrom(dependencies)
   const compositionInput = input.team ?? input.teamId
@@ -596,7 +595,7 @@ export function buildTeamExecutionPlan(
     teamExecutionPlanId: planId,
     parentRunId,
     teamId: team.teamId,
-    ...(team.nickname ? { teamNicknameSnapshot: team.nickname } : {}),
+    teamNameSnapshot: team.displayName,
     ownerAgentId: coverage.ownerAgentId,
     leadAgentId: executableLead?.agentId ?? coverage.ownerAgentId,
     memberTaskAssignments: assignments,
@@ -649,7 +648,7 @@ export function buildTeamExecutionPlan(
 }
 
 export function createTeamExecutionPlanService(
-  dependencies: TeamExecutionPlanServiceDependencies = {},
+  dependencies: TeamExecutionPlanServiceDependencies,
 ) {
   return {
     build(input: TeamExecutionPlanBuildInput): TeamExecutionPlanBuildResult {

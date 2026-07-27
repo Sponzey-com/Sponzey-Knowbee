@@ -4,10 +4,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerUiModeRoute } from "../packages/core/src/api/routes/ui-mode.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { PATHS } from "../packages/core/src/config/paths.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { resolveUiMode } from "../packages/core/src/ui/mode.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: { logger: boolean }) => {
@@ -17,18 +20,13 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
-const previousAdminUi = process.env["KNOWBEE_ADMIN_UI"]
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ui-mode-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  delete process.env["KNOWBEE_ADMIN_UI"]
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-ui-mode-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
 }
 
 beforeEach(() => {
@@ -37,13 +35,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  if (previousAdminUi === undefined) delete process.env["KNOWBEE_ADMIN_UI"]
-  else process.env["KNOWBEE_ADMIN_UI"] = previousAdminUi
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -67,6 +58,16 @@ describe("task001 UI mode contract", () => {
     }))
   })
 
+  it("keeps UI mode policy free of implicit env and argv fallbacks", () => {
+    const tsSource = readFileSync(new URL("../packages/core/src/ui/mode.ts", import.meta.url), "utf-8")
+    const jsSource = readFileSync(new URL("../packages/core/src/ui/mode.js", import.meta.url), "utf-8")
+
+    expect(tsSource).not.toContain("process.env")
+    expect(tsSource).not.toContain("process.argv")
+    expect(jsSource).not.toContain("process.env")
+    expect(jsSource).not.toContain("process.argv")
+  })
+
   it("allows admin as a runtime mode only when the admin flag is enabled", () => {
     expect(resolveUiMode({ preferredUiMode: "beginner", requestedMode: "admin", adminEnabled: true })).toEqual(expect.objectContaining({
       mode: "admin",
@@ -78,6 +79,7 @@ describe("task001 UI mode contract", () => {
 
   it("exposes the default beginner mode without raw diagnostic payloads", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerUiModeRoute(app)
     await app.ready()
     try {
@@ -99,17 +101,24 @@ describe("task001 UI mode contract", () => {
 
   it("persists beginner and advanced modes but rejects admin preference saves", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerUiModeRoute(app)
     await app.ready()
     try {
       const saved = await app.inject({ method: "POST", url: "/api/ui/mode", payload: { mode: "advanced" } })
       expect(saved.statusCode).toBe(200)
-      expect(saved.json()).toEqual(expect.objectContaining({ ok: true, mode: "advanced", preferredUiMode: "advanced" }))
+      expect(saved.json()).toEqual(expect.objectContaining({
+        ok: true,
+        mode: "advanced",
+        preferredUiMode: "advanced",
+        restartRequired: true,
+        appliesOn: "next_start",
+      }))
 
       const reloaded = await app.inject({ method: "GET", url: "/api/ui/mode" })
-      expect(reloaded.json()).toEqual(expect.objectContaining({ mode: "advanced", preferredUiMode: "advanced" }))
-      expect(existsSync(PATHS.configFile)).toBe(true)
-      expect(readFileSync(PATHS.configFile, "utf-8")).toContain("preferredUiMode")
+      expect(reloaded.json()).toEqual(expect.objectContaining({ mode: "beginner", preferredUiMode: "beginner" }))
+      expect(existsSync(runtimeFixture.paths.configFile)).toBe(true)
+      expect(readFileSync(runtimeFixture.paths.configFile, "utf-8")).toContain("preferredUiMode")
 
       const rejected = await app.inject({ method: "POST", url: "/api/ui/mode", payload: { mode: "admin" } })
       expect(rejected.statusCode).toBe(400)
@@ -120,10 +129,12 @@ describe("task001 UI mode contract", () => {
   })
 
   it("reports admin availability from KNOWBEE_ADMIN_UI without saving admin as the preference", async () => {
-    process.env["KNOWBEE_ADMIN_UI"] = "1"
-    reloadConfig()
     const app = Fastify({ logger: false })
-    registerUiModeRoute(app)
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerUiModeRoute(app, {
+      adminActivation: { env: { KNOWBEE_ADMIN_UI: "1" }, argv: [], nodeEnv: "development" },
+      rollbackActivation: { env: {} },
+    })
     await app.ready()
     try {
       const response = await app.inject({ method: "GET", url: "/api/ui/mode" })

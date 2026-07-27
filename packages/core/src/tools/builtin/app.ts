@@ -15,6 +15,10 @@ import {
   type YeonjangTargetedToolParams,
 } from "./yeonjang-target.js"
 import { withYeonjangRequestMetadata } from "./yeonjang-request-metadata.js"
+import { toolUserFacingErrorMessage } from "./error-redaction.js"
+import { buildYeonjangRequiredFailure } from "./yeonjang-required-failure.js"
+import { resolveLocalOrYeonjangEvidenceSourceKind } from "../evidence-source.js"
+import { createYeonjangControlSideEffect, hashSideEffectValue } from "./yeonjang-control-side-effect.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -41,6 +45,42 @@ interface YeonjangApplicationLaunchResult {
   pid?: number
   message: string
 }
+
+interface YeonjangProcessInfoResult {
+  pid?: number
+  name?: string
+  command?: string
+}
+
+const appLaunchSideEffect = createYeonjangControlSideEffect<AppLaunchParams>({
+  method: "application.launch",
+  expectedState: (params) => ({
+    accepted: true,
+    action: "launch",
+    application: params.app.trim(),
+    argCount: params.args?.length ?? 0,
+    argsHash: hashSideEffectValue(params.args ?? []),
+    background: params.background ?? true,
+  }),
+  observeVerifiedState: async (_params, ctx, result) => {
+    const details = result.details && typeof result.details === "object" ? result.details as Record<string, unknown> : {}
+    const pid = typeof details.pid === "number" && Number.isSafeInteger(details.pid) && details.pid > 0
+      ? details.pid
+      : null
+    const extensionId = typeof details.extensionId === "string" ? details.extensionId : DEFAULT_YEONJANG_EXTENSION_ID
+    if (!pid) return false
+    try {
+      const observed = await invokeYeonjangMethod<YeonjangProcessInfoResult>(
+        "process.info",
+        { pid },
+        withYeonjangRequestMetadata(ctx, { extensionId, timeoutMs: 15_000 }),
+      )
+      return observed.pid === pid
+    } catch {
+      return false
+    }
+  },
+})
 
 // ─── App discovery ────────────────────────────────────────────────────────────
 
@@ -99,22 +139,13 @@ async function listApps(filter?: string): Promise<AppInfo[]> {
   }
 }
 
-function yeonjangRequiredFailure(method: string): ToolResult {
-  return {
-    success: false,
-    output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 현재 연결된 연장이 \`${method}\` 메서드를 지원하지 않거나 연결되어 있지 않습니다.`,
-    error: "YEONJANG_REQUIRED",
-    details: {
-      requiredExecutor: "yeonjang",
-      requiredMethod: method,
-    },
-  }
-}
-
 // ─── Tools ────────────────────────────────────────────────────────────────────
 
 export const appLaunchTool: AgentTool<AppLaunchParams> = {
   name: "app_launch",
+  resolveEvidenceSourceKind: resolveLocalOrYeonjangEvidenceSourceKind,
+  runtimeHealthMode: "additional",
+  runtimeMethodIds: ["application.launch"],
   description: "이름이나 경로로 애플리케이션을 실행합니다. (예: \"Chrome\", \"Safari\", \"Visual Studio Code\")",
   parameters: {
     type: "object",
@@ -135,6 +166,7 @@ export const appLaunchTool: AgentTool<AppLaunchParams> = {
   },
   riskLevel: "moderate",
   requiresApproval: true,
+  sideEffect: appLaunchSideEffect,
 
   async execute(params: AppLaunchParams, ctx: ToolContext): Promise<ToolResult> {
     const { app, args = [], background = true } = params
@@ -202,7 +234,7 @@ export const appLaunchTool: AgentTool<AppLaunchParams> = {
       }
     } catch (error) {
       if (!isYeonjangUnavailableError(error)) {
-        const message = error instanceof Error ? error.message : String(error)
+        const message = toolUserFacingErrorMessage(error)
         return {
           success: false,
           output: `Yeonjang 앱 실행 실패: ${message}`,
@@ -214,7 +246,7 @@ export const appLaunchTool: AgentTool<AppLaunchParams> = {
         }
       }
     }
-    const failure = yeonjangRequiredFailure("application.launch")
+    const failure = buildYeonjangRequiredFailure({ method: "application.launch" })
     return {
       ...failure,
       details: {
@@ -261,7 +293,7 @@ export const appListTool: AgentTool<AppListParams> = {
         details: { count: apps.length },
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toolUserFacingErrorMessage(err)
       return { success: false, output: `앱 목록 조회 실패: ${msg}`, error: msg }
     }
   },

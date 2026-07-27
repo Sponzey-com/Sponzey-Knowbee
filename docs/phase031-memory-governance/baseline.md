@@ -19,7 +19,7 @@ It exists because `.tasks/` is gitignored and cannot serve as the only recoverab
 - Feature design
   - `.tasks/phase031/plan.md`
 - Governance / persistence / retention / backup policy
-  - `.tasks/plan.md`
+  - `.tasks/phase002/plan.md`
 
 ## Included Local Baseline Documents
 

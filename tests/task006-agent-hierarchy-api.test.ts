@@ -1,11 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerAgentRoutes } from "../packages/core/src/api/routes/agent.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { PATHS } from "../packages/core/src/config/paths.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import {
   CONTRACT_SCHEMA_VERSION,
@@ -17,6 +16,11 @@ import {
   type TeamConfig,
   type TeamMembership,
 } from "../packages/core/src/index.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: {
@@ -36,23 +40,23 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 type FastifyTestApp = ReturnType<typeof Fastify>
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
+let db: ReturnType<typeof initializeTestDbRuntime>
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task006-hierarchy-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task006-hierarchy-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  db = initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function writeConfig(value: unknown): void {
-  mkdirSync(dirname(PATHS.configFile), { recursive: true })
-  writeFileSync(PATHS.configFile, JSON.stringify(value, null, 2), "utf-8")
-  reloadConfig()
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir: runtimeFixture.rootDir,
+    configText: JSON.stringify(value, null, 2),
+  })
 }
 
 function owner(
@@ -100,8 +104,7 @@ function subAgentConfig(
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     agentType: "sub_agent",
     agentId,
-    displayName: nickname,
-    nickname,
+    agentName: nickname,
     status: "enabled",
     role: `${nickname} worker`,
     personality: "Precise and concise",
@@ -150,7 +153,6 @@ function teamConfig(overrides: Partial<TeamConfig> = {}): TeamConfig {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     teamId,
     displayName: "Default Team",
-    nickname: "Default Team",
     status: "enabled",
     purpose: "Test team membership separation.",
     ownerAgentId: "agent:knowbee",
@@ -209,17 +211,24 @@ async function createRelationship(
   return response.json()
 }
 
+function removeStoredAgentName(agentId: string): void {
+  const row = db
+    .prepare<[string], { config_json: string }>("SELECT config_json FROM agent_configs WHERE agent_id = ?")
+    .get(agentId)
+  expect(row).toBeDefined()
+  const config = JSON.parse(row?.config_json ?? "{}") as Record<string, unknown>
+  delete config.agentName
+  db
+    .prepare<[string, string]>("UPDATE agent_configs SET config_json = ? WHERE agent_id = ?")
+    .run(JSON.stringify(config), agentId)
+}
+
 beforeEach(() => {
   useTempState()
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -229,6 +238,7 @@ afterEach(() => {
 describe("task006 hierarchy relationship API", () => {
   it("creates, projects, queries, and deactivates parent-child relationships without treating team membership as hierarchy", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -242,7 +252,7 @@ describe("task006 hierarchy relationship API", () => {
         method: "POST",
         url: "/api/teams",
         payload: {
-          team: teamConfig({ memberAgentIds: ["agent:gamma"], nickname: "Hierarchy Team" }),
+          team: teamConfig({ memberAgentIds: ["agent:gamma"], displayName: "Hierarchy Team" }),
         },
       })
       expect(team.statusCode).toBe(200)
@@ -264,9 +274,19 @@ describe("task006 hierarchy relationship API", () => {
       const tree = await app.inject({ method: "GET", url: "/api/agent-tree" })
       expect(tree.statusCode).toBe(200)
       const treeBody = tree.json()
-      expect(asRecords(treeBody.topLevelSubAgents)).toEqual([
+      const rootNode = asRecords(treeBody.nodes).find((node) => node.entityId === "agent:knowbee")
+      expect(rootNode?.label).toBe("Knowbee")
+      expect(rootNode?.label).not.toContain(" / ")
+      const topLevelSubAgents = asRecords(treeBody.topLevelSubAgents)
+      expect(topLevelSubAgents).toEqual([
         expect.objectContaining({ agentId: "agent:alpha" }),
       ])
+      expect(topLevelSubAgents[0]).toEqual(expect.objectContaining({
+        agentId: "agent:alpha",
+        agentName: "Alpha",
+      }))
+      expect(topLevelSubAgents[0]).not.toHaveProperty("displayName")
+      expect(topLevelSubAgents[0]).not.toHaveProperty("nickname")
       expect(asRecords(treeBody.edges)).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -312,6 +332,7 @@ describe("task006 hierarchy relationship API", () => {
 
   it("blocks cycles, multi-parent children, self-parenting, and Knowbee-as-child relationships", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -359,6 +380,7 @@ describe("task006 hierarchy relationship API", () => {
 
   it("blocks max depth and max direct child count before persisting", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -397,6 +419,7 @@ describe("task006 hierarchy relationship API", () => {
   it("falls back to the default hierarchy depth when setup config stores maxDelegationTurns as zero", async () => {
     writeConfig({ orchestration: { maxDelegationTurns: 0 } })
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -425,6 +448,7 @@ describe("task006 hierarchy relationship API", () => {
 
   it("keeps enabled sub-agents unassigned when no hierarchy rows exist", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -455,8 +479,57 @@ describe("task006 hierarchy relationship API", () => {
     }
   })
 
+  it("uses canonical agentName for hierarchy node labels", async () => {
+    const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerAgentRoutes(app)
+    await app.ready()
+    try {
+      await createAgent(app, "agent:alpha", "Legacy Alpha", { agentName: "현장 담당" })
+      await createRelationship(app, "agent:knowbee", "agent:alpha")
+
+      const tree = await app.inject({ method: "GET", url: "/api/agent-tree" })
+      expect(tree.statusCode).toBe(200)
+      const alphaNode = asRecords(tree.json().nodes).find((node) => node.entityId === "agent:alpha")
+
+      expect(alphaNode?.label).toBe("현장 담당")
+      expect(alphaNode?.label).not.toBe("Legacy Alpha")
+    } finally {
+      await app.close()
+    }
+  })
+
+  it("rejects corrupted agent rows when the required agentName is missing", async () => {
+    const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerAgentRoutes(app)
+    await app.ready()
+    try {
+      await createAgent(app, "agent:legacy", "Legacy Label")
+      removeStoredAgentName("agent:legacy")
+      const relationship = await app.inject({
+        method: "POST",
+        url: "/api/agent-relationships",
+        payload: {
+          relationship: { parentAgentId: "agent:knowbee", childAgentId: "agent:legacy" },
+        },
+      })
+      expect(relationship.statusCode).toBe(400)
+      expect(reasonCodes(relationship.json())).toContain("unknown_child_agent")
+
+      const tree = await app.inject({ method: "GET", url: "/api/agent-tree" })
+      expect(tree.statusCode).toBe(200)
+      const legacyNode = asRecords(tree.json().nodes).find((node) => node.entityId === "agent:legacy")
+
+      expect(legacyNode).toBeUndefined()
+    } finally {
+      await app.close()
+    }
+  })
+
   it("marks descendants of disabled ancestors as non-executable while preserving direct child visibility", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -489,6 +562,7 @@ describe("task006 hierarchy relationship API", () => {
   it("stores graph layout as UI preference and keeps remote access behind auth", async () => {
     writeConfig({ webui: { auth: { enabled: true, token: "task006-token" } } })
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {

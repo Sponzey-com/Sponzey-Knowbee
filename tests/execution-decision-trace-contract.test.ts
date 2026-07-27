@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, insertSession, updateRunPromptSourceSnapshot } from "../packages/core/src/db/index.js"
 import {
   AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
@@ -19,28 +18,20 @@ import {
 } from "../packages/core/src/orchestration/execution-harness.ts"
 import { buildRunRuntimeInspectorProjection } from "../packages/core/src/runs/runtime-inspector-projection.ts"
 import { appendRunEvent, createRootRun, getRootRun } from "../packages/core/src/runs/store.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const now = Date.UTC(2026, 4, 7, 6, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 
 beforeEach(() => {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-execution-decision-trace-"))
   tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -83,7 +74,7 @@ function context(): AgentExecutionContext {
     },
     current_executor: {
       executor_id: "agent:knowbee",
-      display_name: "노비",
+      agent_name: "노비",
       role_name: "root",
       can_delegate: true,
       available: true,
@@ -95,14 +86,14 @@ function context(): AgentExecutionContext {
     accessible_executors: [
       {
         executor_id: "node:finance",
-        display_name: "행랑아범",
+        agent_name: "행랑아범",
         role_name: "재무 검토",
         can_delegate: false,
         available: true,
       },
       {
         executor_id: "node:lead",
-        display_name: "마당쇠",
+        agent_name: "마당쇠",
         role_name: "개발 리드",
         can_delegate: true,
         available: true,
@@ -111,7 +102,7 @@ function context(): AgentExecutionContext {
     diagnostic_executors: [
       {
         executor_id: "node:backend",
-        display_name: "삼식이",
+        agent_name: "삼식이",
         role_name: "백엔드",
         can_delegate: false,
         available: true,

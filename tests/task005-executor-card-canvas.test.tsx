@@ -157,6 +157,7 @@ describe("task005 executor card canvas", () => {
       relationLabel: leadRelation.relationLabelKo,
       relationDescription: leadRelation.relationDetailKo,
       roleLabel: leadRelation.roleLabel,
+      rootAgentLabel: "마당쇠",
       shortId: leadRelation.shortId,
       duplicateName: leadRelation.duplicateName,
       selectableWithoutPath: leadRelation.selectableWithoutPath,
@@ -175,10 +176,64 @@ describe("task005 executor card canvas", () => {
     expect(leadCardHtml).not.toContain("노비 직속")
     expect(cardHtml).toContain("검토자의 하위")
     expect(cardHtml).not.toContain("경로 필요")
-    expect(cardHtml).toContain("품질 검토")
-    expect(cardHtml).toContain("review-a")
+    const visibleCardText = visibleText(cardHtml)
+    expect(visibleCardText).toContain("품질 검토")
+    expect(visibleCardText).toContain("이름 중복")
+    expect(visibleCardText).not.toMatch(/review-a|node:review-a/)
     expect(cardHtml).toContain('data-testid="executor-card-relation"')
+    expect(cardHtml).toContain('data-testid="executor-card-duplicate-name"')
     expect(cardHtml).toContain('data-selectable-without-path="false"')
+  })
+
+  it("uses the current main-agent label for card understanding copy", () => {
+    const executor = {
+      id: "node:intake",
+      name: "자료 담당",
+      description: "요청을 읽고 자료를 정리한다.",
+      inferredRuntimeMode: "auto" as const,
+      inferredCapabilities: ["자료 정리"],
+      inferredTools: [],
+      inferredOutputs: [],
+      inferredSuccessCriteria: [],
+      confidence: 0.8,
+    }
+    const customHtml = renderToStaticMarkup(createElement(ExecutorCardNode, {
+      executor,
+      rootAgentLabel: "마당쇠",
+    }))
+    const defaultAliasHtml = renderToStaticMarkup(createElement(ExecutorCardNode, {
+      executor,
+      rootAgentLabel: "노비",
+    }))
+
+    expect(customHtml).toContain('aria-label="마당쇠가 이해한 내용"')
+    expect(defaultAliasHtml).toContain('aria-label="메인 에이전트가 이해한 내용"')
+    expect(defaultAliasHtml).not.toContain("노비가 이해한 내용")
+    expect(customHtml).not.toContain("Knowbee understood")
+  })
+
+  it("uses unnamed sub-agent text instead of internal ids in parent relation labels", () => {
+    const topology = resourceTopologyFixture()
+    topology.nodes = [
+      node("node:blank-parent", "", "function", {
+        description: "상위 역할이 아직 이름 없이 저장된 상태입니다.",
+      }),
+      node("node:child", "검토 담당", "function", {
+        description: "상위 서브 에이전트가 넘긴 결과를 검토한다.",
+      }),
+    ]
+    topology.relations = [
+      relation("relation:blank-child", "넘김", "delegates_to", "node", "node:blank-parent", "node", "node:child"),
+    ]
+
+    const model = buildExecutorGraphCanvasModel({ topology })
+    const relationInfo = buildExecutorGraphRelationInfoMap(model?.graph, { rootAgentLabel: "마당쇠" })
+    const childRelation = relationInfo.get("node:child")
+
+    expect(childRelation?.relationLabelKo).toBe("이름 없는 서브 에이전트의 하위")
+    expect(childRelation?.relationLabelEn).toBe("Child of unnamed sub-agent")
+    expect(childRelation?.relationDetailKo).not.toContain("node:blank-parent")
+    expect(childRelation?.relationDetailEn).not.toContain("node:blank-parent")
   })
 
   it("uses a neutral main-agent relation label when the current name is still the default alias", () => {
@@ -504,4 +559,16 @@ function relation(
     from: { entityType: fromType, id: fromId },
     to: { entityType: toType, id: toId },
   }
+}
+
+function visibleText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/g, " ")
+    .replace(/<style[\s\S]*?<\/style>/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#x27;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim()
 }

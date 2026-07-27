@@ -3,8 +3,8 @@ import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { registerTopologyRunRoutes } from "../packages/core/src/api/routes/topology-runs.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { verifyMigrationState } from "../packages/core/src/db/migration-safety.ts"
 import { runMigrations } from "../packages/core/src/db/migrations.ts"
@@ -24,11 +24,32 @@ import {
   type EnterpriseTopology,
   type NodeContract,
   type NodeResultOutput,
+  type SolutionPathReview,
   type ToolContext,
   type ToolResult,
   type WorkOrder,
   type WorkOrderRuntimeEnvelope,
 } from "../packages/core/src/index.ts"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+
+const exhaustionDiagnosisProvider = {
+  diagnoseRequest: () => ({
+    diagnosis_summary: "Execution is required.", intent: "execute", goal: "Complete work.",
+    constraints: [], missing_information: [], risk: "low", confidence: "high",
+    recommended_action: "plan", reason: "Execution planning is required.",
+  }),
+  diagnoseResult: () => ({
+    diagnosis_summary: "All recovery paths are exhausted.", sufficiency: "insufficient",
+    missing_information: [], conflicts: [], risk: "low", risks: [], confidence: "high",
+    recommended_action: "stop_blocked", reason: "No justified recovery path remains.",
+  }),
+  repairDiagnosis: () => ({
+    diagnosis_summary: "All recovery paths are exhausted.", sufficiency: "insufficient",
+    missing_information: [], conflicts: [], risk: "low", risks: [], confidence: "high",
+    recommended_action: "stop_blocked", reason: "No justified recovery path remains.",
+  }),
+}
 
 const require = createRequire(import.meta.url)
 type SqliteStatement = {
@@ -61,9 +82,23 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 }
 
 const now = Date.UTC(2026, 3, 29, 9, 0, 0)
+const exhaustedSolutionPaths: SolutionPathReview[] = [
+  { path: "direct_answer", disposition: "reviewed_unavailable", reasonCode: "execution_required" },
+  { path: "plan", disposition: "attempted", reasonCode: "plan_executed" },
+  { path: "tool", disposition: "attempted", reasonCode: "tool_failed" },
+  { path: "sub_agent", disposition: "reviewed_unavailable", reasonCode: "no_capable_child" },
+  { path: "yeonjang", disposition: "reviewed_unavailable", reasonCode: "not_required" },
+  { path: "ask_clarification", disposition: "reviewed_unavailable", reasonCode: "input_complete" },
+  { path: "partial_completion", disposition: "reviewed_unavailable", reasonCode: "no_partial_output" },
+  {
+    path: "workaround_guidance",
+    disposition: "guidance_ready",
+    reasonCode: "escalation_available",
+    guidance: "Escalate with the failed WorkOrder trace.",
+  },
+]
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 function topologyFixture(): EnterpriseTopology {
   const topology = structuredClone(buildExampleEnterpriseTopology(now))
@@ -211,11 +246,10 @@ function failedSelfExecution() {
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task014-topology-trace-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task014-topology-trace-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function rootRunFixture(id: string): RootRun {
@@ -251,11 +285,6 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
 })
 
 describe("task014 topology trace store and observability API", () => {
@@ -367,6 +396,9 @@ describe("task014 topology trace store and observability API", () => {
           fallbackAttempted: true,
           partialSuccessChecked: true,
           parentRecoveryPossibleChecked: true,
+          solutionPathReviews: exhaustedSolutionPaths,
+          diagnosisProvider: exhaustionDiagnosisProvider,
+          diagnosisRepairProvider: exhaustionDiagnosisProvider,
           recommendedAction: "Escalate with the failed WorkOrder trace.",
         },
       })
@@ -387,6 +419,7 @@ describe("task014 topology trace store and observability API", () => {
       })
 
       expect(result.status).toBe("failed")
+      expect(result.exhaustion?.solutionPathAssessment.missingPaths).toEqual([])
       expect(projection?.failureReports).toEqual([
         expect.objectContaining({
           failureReportId: "failure:work-order:intake",
@@ -437,6 +470,7 @@ describe("task014 topology trace store and observability API", () => {
     })
 
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerTopologyRunRoutes(app)
     await app.ready()
     try {

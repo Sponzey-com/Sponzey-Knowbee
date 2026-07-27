@@ -1,3 +1,4 @@
+import { evaluateStopReportDecision, } from "../contracts/stop-report-decision.js";
 import { decideSubSessionCompletionIntegration, } from "../agent/sub-agent-result-review.js";
 import { deriveCompletionStageState } from "./completion-state.js";
 import { canConsumeRecoveryBudget, getRecoveryBudgetState, } from "./recovery-budget.js";
@@ -19,6 +20,9 @@ export function runCompletionPass(params) {
     });
     const decision = decideCompletionFlow({
         review: params.review,
+        ...(params.reviewFailureReasonCode
+            ? { reviewFailureReasonCode: params.reviewFailureReasonCode }
+            : {}),
         executionSemantics: params.executionSemantics,
         preview: params.preview,
         deliverySatisfied: params.deliveryOutcome.deliverySatisfied,
@@ -60,12 +64,39 @@ export function runCompletionPass(params) {
         }),
         followupAlreadySeen: params.followupAlreadySeen,
     });
+    const checklist = state.checklist?.items.filter((item) => item.status !== "not_required") ?? [];
+    const completionSatisfied = state.completionSatisfied;
+    const stopDecision = evaluateStopReportDecision({
+        completion: {
+            goalId: params.goalId,
+            expectedCriterionIds: checklist.map((item) => item.key),
+            satisfiedCriterionIds: completionSatisfied ? checklist.map((item) => item.key) : [],
+            evidenceRefsByCriterion: completionSatisfied
+                ? Object.fromEntries(checklist.map((item) => [item.key, [`completion-checklist:${item.key}`]]))
+                : {},
+            unresolvedItemIds: checklist.filter((item) => item.status === "pending").map((item) => item.key),
+        },
+        attempts: {
+            currentTurn: usedTurns,
+            currentRetry: params.recoveryBudgetUsage.interpretation + params.recoveryBudgetUsage.execution,
+        },
+        policy: interpretationBudget.policy,
+    });
+    const boundedApplication = application.kind === "retry" && stopDecision.status === "stop_and_report"
+        ? {
+            kind: "stop",
+            summary: "설정된 자동 진행 한도에 도달해 실행을 멈췄습니다.",
+            reason: stopDecision.reasonCode,
+            remainingItems: stopDecision.reportInput.unresolvedItemIds,
+        }
+        : application;
     return {
         state,
         decision,
-        application,
+        application: boundedApplication,
         usedTurns,
         maxTurns,
+        stopDecision,
     };
 }
 //# sourceMappingURL=completion-pass.js.map

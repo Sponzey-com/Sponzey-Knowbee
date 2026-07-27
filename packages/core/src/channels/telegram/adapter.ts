@@ -1,4 +1,8 @@
-import type { TelegramConfig } from "../../config/types.js"
+import type { KnowbeeConfig, TelegramConfig } from "../../config/types.js"
+import type { ArtifactStorageContext } from "../../artifacts/lifecycle.js"
+import type { MemoryJournalRepository } from "../../memory/journal.js"
+import type { AgentHierarchyStorage } from "../../orchestration/hierarchy.js"
+import { redactLogText } from "../../logger/index.js"
 import {
   buildUnsupportedCapabilityReceipt,
   createRawPayloadRef,
@@ -17,7 +21,9 @@ import {
   type InteractionEnvelope,
   type OutboundMessage,
 } from "../contracts.js"
+import { resolveUserFacingMessageLanguage } from "../language.js"
 import { TelegramChannel } from "./bot.js"
+import type { ChannelPendingResponseDeliveryInput } from "../pending-response-delivery.js"
 import {
   getActiveTelegramChannel,
   getTelegramRuntimeStatus,
@@ -27,6 +33,11 @@ import {
 } from "./runtime.js"
 
 export type TelegramConnectionMode = "polling" | "webhook"
+
+function telegramAdapterErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 
 export interface TelegramConnectionPolicy {
   mode: TelegramConnectionMode
@@ -54,7 +65,11 @@ export interface TelegramAdapterTransport {
 }
 
 export interface TelegramChannelAdapterOptions {
+  artifactStorage?: ArtifactStorageContext | undefined
+  memoryJournal?: MemoryJournalRepository | undefined
+  hierarchyStorage?: AgentHierarchyStorage | undefined
   config?: TelegramConfig | undefined
+  runtimeConfig?: KnowbeeConfig | undefined
   channelId?: string
   connectionId?: string
   connectionMode?: TelegramConnectionMode
@@ -271,6 +286,7 @@ export function normalizeTelegramInboundUpdate(
     mentions: normalizeTelegramMentions(text, [...(message.entities ?? []), ...(message.caption_entities ?? [])]),
     timestamp,
     rawPayloadRef: createRawPayloadRef({ provider: "telegram", payload: rawPayload, createdAt: timestamp }),
+    userFacingLanguage: resolveUserFacingMessageLanguage(text),
     ...(replyToMessageId
       ? { continuationContext: { parentMessageId: replyToMessageId, source: "reply" as const } }
       : {}),
@@ -336,6 +352,10 @@ export class TelegramChannelAdapter implements ChannelAdapter {
   readonly connectionId: string
 
   private readonly config: TelegramConfig | undefined
+  private readonly runtimeConfig: KnowbeeConfig | undefined
+  private readonly artifactStorage: ArtifactStorageContext | undefined
+  private readonly memoryJournal: MemoryJournalRepository | undefined
+  private readonly hierarchyStorage: AgentHierarchyStorage | undefined
   private readonly connectionMode: TelegramConnectionMode
   private readonly transport: TelegramAdapterTransport | undefined
   private readonly now: () => number
@@ -345,6 +365,10 @@ export class TelegramChannelAdapter implements ChannelAdapter {
     this.channelId = options.channelId ?? DEFAULT_CHANNEL_ID
     this.connectionId = options.connectionId ?? DEFAULT_CONNECTION_ID
     this.config = options.config
+    this.runtimeConfig = options.runtimeConfig
+    this.artifactStorage = options.artifactStorage
+    this.memoryJournal = options.memoryJournal
+    this.hierarchyStorage = options.hierarchyStorage
     this.connectionMode = options.connectionMode ?? "polling"
     this.transport = options.transport
     this.now = options.now ?? Date.now
@@ -368,14 +392,21 @@ export class TelegramChannelAdapter implements ChannelAdapter {
     }
 
     if (!this.config) throw new Error("Telegram config is missing.")
-    const channel = new TelegramChannel(this.config)
+    if (!this.runtimeConfig) throw new Error("Telegram runtime config snapshot is missing.")
+    if (!this.artifactStorage) throw new Error("Telegram artifact storage context is missing.")
+    if (!this.memoryJournal) throw new Error("Telegram memory journal context is missing.")
+    if (!this.hierarchyStorage) throw new Error("Telegram hierarchy storage context is missing.")
+    const channel = new TelegramChannel(this.config, this.artifactStorage, {
+      config: this.runtimeConfig,
+      workDir: this.runtimeConfig.profile.workspace,
+    }, this.memoryJournal, this.hierarchyStorage)
     try {
       await channel.start()
       this.channel = channel
       setActiveTelegramChannel(channel)
       setTelegramRuntimeError(null)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = telegramAdapterErrorMessage(error)
       setTelegramRuntimeError(message)
       throw error
     }
@@ -393,6 +424,10 @@ export class TelegramChannelAdapter implements ChannelAdapter {
       this.channel?.stop()
     }
     this.channel = null
+  }
+
+  createPendingResponseDeliveryHandler(input: ChannelPendingResponseDeliveryInput) {
+    return this.channel?.createPendingResponseDeliveryHandler(input)
   }
 
   async healthCheck(): Promise<ChannelHealthCheck> {
@@ -446,6 +481,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
         capability: unsupportedCapability,
         idempotencyKey: message.idempotencyKey,
         timestamp: this.now(),
+        userFacingLanguage: message.userFacingLanguage,
       })
     }
 
@@ -503,7 +539,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
           : {}),
       }
     } catch (error) {
-      const messageText = error instanceof Error ? error.message : String(error)
+      const messageText = telegramAdapterErrorMessage(error)
       return {
         channelId: message.channelId,
         provider: message.provider,

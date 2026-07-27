@@ -1,26 +1,29 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, normalize, relative, resolve } from "node:path";
-import { PATHS } from "../config/index.js";
+import { redactLogText } from "../logger/index.js";
 const MAX_INSTRUCTION_FILE_SIZE = 12_000;
 const FALLBACK_FILENAMES = ["CLAUDE.md"];
 const PER_DIR_CANDIDATES = ["AGENTS.override.md", "AGENTS.md", ...FALLBACK_FILENAMES];
-export function discoverInstructionChain(workDir = process.cwd(), options = {}) {
-    const normalizedWorkDir = resolve(workDir);
+function instructionDiscoveryErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
+export function discoverInstructionChain(input) {
+    const normalizedWorkDir = resolve(input.workDir);
     const gitRoot = findGitRoot(normalizedWorkDir);
     const sources = [];
-    const globalSource = pickInstructionFile(PATHS.stateDir, "global", 0);
+    const globalSource = pickInstructionFile(resolve(input.globalStateDir), "global", 0);
     if (globalSource)
         sources.push(globalSource);
     const dirs = gitRoot
         ? buildPathChain(gitRoot, normalizedWorkDir)
-        : buildFallbackPathChain(normalizedWorkDir);
+        : buildFallbackPathChain(normalizedWorkDir, input.fallbackBoundaryDir);
     dirs.forEach((dirPath, index) => {
         const source = pickInstructionFile(dirPath, "project", index + 1);
         if (source)
             sources.push(source);
     });
-    sources.push(...normalizeAgentSources(options.agentSources ?? [], sources.length + 1));
+    sources.push(...normalizeAgentSources(input.agentSources ?? [], sources.length + 1));
     return {
         workDir: normalizedWorkDir,
         ...(gitRoot ? { gitRoot } : {}),
@@ -50,6 +53,7 @@ function pickInstructionFile(dirPath, scope, level) {
             };
         }
         catch (error) {
+            const message = instructionDiscoveryErrorMessage(error);
             return {
                 path: candidate,
                 scope,
@@ -57,7 +61,7 @@ function pickInstructionFile(dirPath, scope, level) {
                 exists: true,
                 loaded: false,
                 size: 0,
-                error: error instanceof Error ? error.message : String(error),
+                error: message,
                 sourceKind: "instruction_file",
             };
         }
@@ -113,10 +117,10 @@ function buildPathChain(rootDir, targetDir) {
     }
     return chain;
 }
-function buildFallbackPathChain(targetDir) {
+function buildFallbackPathChain(targetDir, boundaryDir) {
     const normalizedTarget = normalize(resolve(targetDir));
-    const normalizedHome = normalize(resolve(homedir()));
-    const withinHome = isInside(normalizedHome, normalizedTarget);
+    const normalizedBoundary = normalize(resolve(boundaryDir));
+    const withinBoundary = isInside(normalizedBoundary, normalizedTarget);
     const chain = [normalizedTarget];
     let current = normalizedTarget;
     let depth = 0;
@@ -124,7 +128,7 @@ function buildFallbackPathChain(targetDir) {
         const parent = dirname(current);
         if (parent === current)
             break;
-        if (withinHome && parent === normalizedHome)
+        if (withinBoundary && parent === normalizedBoundary)
             break;
         chain.push(parent);
         current = parent;

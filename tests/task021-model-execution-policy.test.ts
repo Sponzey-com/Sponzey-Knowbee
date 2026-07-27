@@ -29,6 +29,8 @@ import {
   listLatencyMetrics,
   resetLatencyMetrics,
 } from "../packages/core/src/observability/latency.js"
+import { createTestSubSessionMemoryDependencies } from "./fixtures/sub-session-runtime.ts"
+import { createTestResultDiagnosisDependencies } from "./fixtures/agent-runtime.ts"
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
@@ -144,8 +146,6 @@ function promptBundle(profile = modelProfile()): AgentPromptBundle {
     agentId: "agent:model",
     agentType: "sub_agent",
     role: "model worker",
-    displayNameSnapshot: "Model Agent",
-    nicknameSnapshot: "Modeler",
     personalitySnapshot: "Precise",
     teamContext: [],
     memoryPolicy,
@@ -171,7 +171,7 @@ function command(id: string): CommandRequest {
     parentRunId: "run-parent",
     subSessionId: `sub:${id}`,
     targetAgentId: "agent:model",
-    targetNicknameSnapshot: "Modeler",
+    targetAgentNameSnapshot: "Modeler",
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
@@ -185,6 +185,8 @@ function makeMemoryDependencies() {
   let time = now
   const clone = <T>(value: T): T => structuredClone(value)
   const dependencies: SubSessionRuntimeDependencies = {
+    ...createTestSubSessionMemoryDependencies(),
+    ...createTestResultDiagnosisDependencies(),
     now: () => {
       time += 10
       return time
@@ -326,6 +328,8 @@ describe("task021 model execution policy and cost performance audit", () => {
       agent: agentConfig(),
       taskScope,
       now: () => now,
+    }, {
+      resolveCapabilityModelSummary: () => undefined,
     })
     expect(result.bundle.modelProfileSnapshot).toEqual(modelProfile())
     expect(result.bundle.fragments?.find((fragment) => fragment.kind === "model_profile")).toEqual(

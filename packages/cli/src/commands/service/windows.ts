@@ -1,12 +1,12 @@
 import { execSync, spawnSync } from "node:child_process"
 import { readFileSync, existsSync } from "node:fs"
-import { homedir } from "node:os"
 import { join } from "node:path"
+import { getCliStateDir } from "../../runtime-env.js"
 import type { ServiceAction } from "./index.js"
 import { knowbeeBinPath } from "./index.js"
 
 const TASK_NAME = "Sponzey Knowbee"
-const STATE_DIR = process.env["KNOWBEE_STATE_DIR"] ?? process.env["WIZBY_STATE_DIR"] ?? process.env["HOWIE_STATE_DIR"] ?? process.env["KNOWBEE_STATE_DIR"] ?? join(homedir(), ".knowbee")
+const STATE_DIR = getCliStateDir()
 const PID_FILE = join(STATE_DIR, "daemon.pid")
 const LOG_FILE = join(STATE_DIR, "logs", "daemon.log")
 

@@ -1,4 +1,5 @@
-import { AGENT_TEMPLATES, TEAM_TEMPLATES, clearFocusBinding, createOneClickBackgroundTask, executeWorkspaceCommand, getFocusBinding, importExternalAgentProfileDraft, instantiateAgentTemplate, instantiateTeamTemplate, lintAgentDescription, resolveFocusBinding, searchCommandPalette, setFocusBinding, } from "../../orchestration/command-workspace.js";
+import { getApiRuntimeConfig } from "../runtime-context.js";
+import { AGENT_TEMPLATES, TEAM_TEMPLATES, clearFocusBinding, createCommandWorkspaceStorage, createOneClickBackgroundTask, executeWorkspaceCommand, getFocusBinding, importExternalAgentProfileDraft, instantiateAgentTemplate, instantiateTeamTemplate, lintAgentDescription, resolveFocusBinding, searchCommandPalette, setFocusBinding, } from "../../orchestration/command-workspace.js";
 import { authMiddleware } from "../middleware/auth.js";
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -45,9 +46,11 @@ function commandPaletteScope(value) {
     return "all";
 }
 export function registerCommandPaletteRoutes(app) {
+    const storage = createCommandWorkspaceStorage(app.knowbeeRuntimeContext.paths);
     app.get("/api/command-palette/search", { preHandler: authMiddleware }, async (req) => {
         const limit = asNumber(req.query.limit);
         return searchCommandPalette({
+            config: getApiRuntimeConfig(req),
             ...(req.query.q ? { query: req.query.q } : {}),
             scope: commandPaletteScope(req.query.scope),
             ...(limit !== undefined ? { limit } : {}),
@@ -65,11 +68,12 @@ export function registerCommandPaletteRoutes(app) {
         const threadId = asString(record.threadId);
         const parentAgentId = asString(record.parentAgentId);
         const result = executeWorkspaceCommand({
+            config: getApiRuntimeConfig(req),
             command,
             ...(threadId ? { threadId } : {}),
             ...(parentAgentId ? { parentAgentId } : {}),
             payload: record.payload,
-        });
+        }, storage);
         const statusCode = result.statusCode ?? (result.ok ? 200 : 400);
         return reply.status(statusCode).send(result);
     });
@@ -77,7 +81,7 @@ export function registerCommandPaletteRoutes(app) {
         return {
             ok: true,
             threadId: req.params.threadId,
-            binding: getFocusBinding(req.params.threadId) ?? null,
+            binding: getFocusBinding(req.params.threadId, storage) ?? null,
         };
     });
     app.put("/api/focus/:threadId", { preHandler: authMiddleware }, async (req, reply) => {
@@ -91,25 +95,27 @@ export function registerCommandPaletteRoutes(app) {
         const record = isRecord(req.body) ? req.body : {};
         const parentAgentId = asString(record.parentAgentId);
         const result = setFocusBinding({
+            config: getApiRuntimeConfig(req),
             threadId: req.params.threadId,
             ...(parentAgentId ? { parentAgentId } : {}),
             target,
             source: "api",
-        });
+        }, storage);
         if (!result.ok)
             return sendCommandFailure(reply, result);
         return { ok: true, focus: result };
     });
     app.delete("/api/focus/:threadId", { preHandler: authMiddleware }, async (req) => {
-        return clearFocusBinding(req.params.threadId);
+        return clearFocusBinding(req.params.threadId, storage);
     });
     app.post("/api/focus/:threadId/resolve", { preHandler: authMiddleware }, async (req, reply) => {
         const record = isRecord(req.body) ? req.body : {};
         const parentAgentId = asString(record.parentAgentId);
         const result = resolveFocusBinding({
+            config: getApiRuntimeConfig(req),
             threadId: req.params.threadId,
             ...(parentAgentId ? { parentAgentId } : {}),
-        });
+        }, storage);
         if (!result.ok)
             return sendCommandFailure(reply, result);
         return { ok: true, focus: result };
@@ -120,6 +126,7 @@ export function registerCommandPaletteRoutes(app) {
     app.post("/api/templates/agents/:templateId/instantiate", { preHandler: authMiddleware }, async (req, reply) => {
         const record = isRecord(req.body) ? req.body : {};
         const result = instantiateAgentTemplate({
+            config: getApiRuntimeConfig(req),
             templateId: req.params.templateId,
             overrides: record.overrides,
             persist: record.persist !== false,
@@ -139,6 +146,7 @@ export function registerCommandPaletteRoutes(app) {
     app.post("/api/templates/teams/:templateId/instantiate", { preHandler: authMiddleware }, async (req, reply) => {
         const record = isRecord(req.body) ? req.body : {};
         const result = instantiateTeamTemplate({
+            config: getApiRuntimeConfig(req),
             templateId: req.params.templateId,
             overrides: record.overrides,
             persist: record.persist !== false,
@@ -156,6 +164,7 @@ export function registerCommandPaletteRoutes(app) {
         const record = isRecord(req.body) ? req.body : {};
         const source = asString(record.source);
         const result = importExternalAgentProfileDraft({
+            config: getApiRuntimeConfig(req),
             profile: record.profile ?? record,
             ...(source ? { source } : {}),
             overrides: record.overrides,

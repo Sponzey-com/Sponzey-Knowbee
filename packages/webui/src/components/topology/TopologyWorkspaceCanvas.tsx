@@ -33,10 +33,7 @@ import {
   type EnterpriseTopologyCanvasNodeData,
   type EnterpriseTopologyRelationEdgeData,
 } from "./EnterpriseTopologyCanvas"
-import {
-  ExecutorGraphCanvas,
-  type ExecutorFlowEdgeStatus,
-} from "./ExecutorGraphCanvas"
+import { ExecutorGraphCanvas, type ExecutorFlowEdgeStatus } from "./ExecutorGraphCanvas"
 import { buildExecutorGraphCanvasModel } from "../../lib/executor-graph-viewmodel"
 import { ExecutorInspector } from "./ExecutorInspector"
 import type { ExecutorCardExecutionStatus } from "./ExecutorCardNode"
@@ -52,7 +49,11 @@ import {
 } from "./TopologyRunTraceOverlay"
 
 export type TopologyWorkspaceCanvasNodeSource = "declared" | "runtime_resource"
-export type TopologyWorkspaceCanvasEdgeSource = "declared" | "trace" | "observed" | "runtime_resource"
+export type TopologyWorkspaceCanvasEdgeSource =
+  | "declared"
+  | "trace"
+  | "observed"
+  | "runtime_resource"
 
 export interface TopologyWorkspaceCanvasNodeData extends Record<string, unknown> {
   source: TopologyWorkspaceCanvasNodeSource
@@ -262,35 +263,136 @@ function buildTopologyWorkspaceTraceProjection(
   }
 }
 
-export function topologyWorkspaceCanvasLegend(layer: TopologyWorkspaceLayer): TopologyWorkspaceCanvasLegendItem[] {
+export function topologyWorkspaceCanvasLegend(
+  layer: TopologyWorkspaceLayer,
+): TopologyWorkspaceCanvasLegendItem[] {
   if (layer === "resources") {
     return [
-      legendItem("resource-node", "실행 리소스", "Runtime resource", "업무 단계에 연결할 Agent 또는 Team.", "Agent or Team that can execute a work step.", "RS", "resource", "dashed"),
-      legendItem("resource-edge", "리소스 연결", "Resource link", "기존 runtime resource 관계.", "Existing runtime resource relation.", "RL", "resource", "dashed"),
+      legendItem(
+        "resource-node",
+        "실행 리소스",
+        "Runtime resource",
+        "업무 단계에 연결할 서브 에이전트 또는 팀.",
+        "Agent or Team that can execute a work step.",
+        "RS",
+        "resource",
+        "dashed",
+      ),
+      legendItem(
+        "resource-edge",
+        "리소스 연결",
+        "Resource link",
+        "기존 실행 리소스 관계.",
+        "Existing runtime resource relation.",
+        "RL",
+        "resource",
+        "dashed",
+      ),
     ]
   }
   if (layer === "trace") {
     return [
-      legendItem("trace-path", "실행 경로", "Trace path", "실제로 지나간 업무 경로.", "Actual path taken by a run.", "TR", "trace", "solid"),
-      legendItem("trace-failed", "실패 위치", "Failure", "실패가 확정된 업무 단계.", "Confirmed failed work step.", "FL", "failed", "solid"),
-      legendItem("trace-candidate", "실패 후보", "Failure candidate", "실패 가능성이 표시된 업무 단계.", "Work step marked as a failure candidate.", "FC", "failed", "dashed"),
+      legendItem(
+        "trace-path",
+        "실행 경로",
+        "Run path",
+        "실제로 지나간 업무 경로.",
+        "Actual path taken by a run.",
+        "TR",
+        "trace",
+        "solid",
+      ),
+      legendItem(
+        "trace-failed",
+        "실패 위치",
+        "Failure",
+        "실패가 확정된 업무 단계.",
+        "Confirmed failed work step.",
+        "FL",
+        "failed",
+        "solid",
+      ),
+      legendItem(
+        "trace-candidate",
+        "실패 후보",
+        "Failure candidate",
+        "실패 가능성이 표시된 업무 단계.",
+        "Work step marked as a failure candidate.",
+        "FC",
+        "failed",
+        "dashed",
+      ),
     ]
   }
   if (layer === "improve") {
     return [
-      legendItem("declared", "설계된 연결", "Declared connection", "사용자가 설계한 연결.", "Connection designed by the user.", "DC", "neutral", "solid"),
-      legendItem("observed", "실제 실행 연결", "Observed connection", "trace에서 관찰된 연결 후보.", "Connection observed from traces.", "OB", "observed", "dashed"),
+      legendItem(
+        "declared",
+        "설계된 연결",
+        "Declared connection",
+        "사용자가 설계한 연결.",
+        "Connection designed by the user.",
+        "DC",
+        "neutral",
+        "solid",
+      ),
+      legendItem(
+        "observed",
+        "실제 실행 연결",
+        "Observed connection",
+        "trace에서 관찰된 연결 후보.",
+        "Connection observed from traces.",
+        "OB",
+        "observed",
+        "dashed",
+      ),
     ]
   }
   if (layer === "run") {
     return [
-      legendItem("entry", "실행 시작", "Run entry", "실행을 시작할 업무 단계.", "Work step where a run starts.", "EN", "runtime", "solid"),
-      legendItem("runtime-edge", "실행 가능한 연결", "Runnable connection", "실행 경로로 사용할 수 있는 연결.", "Connection usable as a runtime path.", "RN", "runtime", "solid"),
+      legendItem(
+        "entry",
+        "실행 시작",
+        "Run entry",
+        "실행을 시작할 업무 단계.",
+        "Work step where a run starts.",
+        "EN",
+        "runtime",
+        "solid",
+      ),
+      legendItem(
+        "runtime-edge",
+        "실행 가능한 연결",
+        "Runnable connection",
+        "실행 경로로 사용할 수 있는 연결.",
+        "Connection usable as a runtime path.",
+        "RN",
+        "runtime",
+        "solid",
+      ),
     ]
   }
   return [
-    legendItem("declared-node", "업무 항목", "Declared item", "사용자가 설계한 업무 단계와 리소스.", "Work steps and resources designed by the user.", "DN", "neutral", "solid"),
-    legendItem("declared-edge", "연결", "Connection", "사용자가 만든 연결.", "Connection created by the user.", "CE", "neutral", "solid"),
+    legendItem(
+      "declared-node",
+      "업무 항목",
+      "Declared item",
+      "사용자가 설계한 업무 단계와 리소스.",
+      "Work steps and resources designed by the user.",
+      "DN",
+      "neutral",
+      "solid",
+    ),
+    legendItem(
+      "declared-edge",
+      "연결",
+      "Connection",
+      "사용자가 만든 연결.",
+      "Connection created by the user.",
+      "CE",
+      "neutral",
+      "solid",
+    ),
   ]
 }
 
@@ -338,46 +440,84 @@ export function TopologyWorkspaceCanvas({
   onApplyAgentTeamImport,
   onTeamImportModeChange,
 }: TopologyWorkspaceCanvasProps) {
-  const latestTrace = React.useMemo(() => buildTopologyWorkspaceTraceProjection(traceOverlay), [traceOverlay])
-  const effectiveExposureMode: TopologyWorkspaceExposureMode = shouldShowTopologyWorkspaceAdvancedSurface(exposureMode)
-    ? exposureMode
-    : "simple"
-  const effectiveModel = React.useMemo(() => workspaceModel ?? buildTopologyWorkspaceModel({
-    snapshot: buildTopologyWorkspaceSnapshot({
-      topology: topology ?? null,
-      runtimeResources: runtimeResources ?? null,
+  const latestTrace = React.useMemo(
+    () => buildTopologyWorkspaceTraceProjection(traceOverlay),
+    [traceOverlay],
+  )
+  const effectiveExposureMode: TopologyWorkspaceExposureMode =
+    shouldShowTopologyWorkspaceAdvancedSurface(exposureMode) ? exposureMode : "simple"
+  const effectiveModel = React.useMemo(
+    () =>
+      workspaceModel ??
+      buildTopologyWorkspaceModel({
+        snapshot: buildTopologyWorkspaceSnapshot({
+          topology: topology ?? null,
+          runtimeResources: runtimeResources ?? null,
+          latestTrace,
+          gapFindings: traceOverlay?.gapFindings ?? latestTrace?.gapFindings ?? [],
+        }),
+        selectedLayer,
+      }),
+    [
       latestTrace,
-      gapFindings: traceOverlay?.gapFindings ?? latestTrace?.gapFindings ?? [],
-    }),
-    selectedLayer,
-  }), [latestTrace, runtimeResources, selectedLayer, topology, traceOverlay?.gapFindings, workspaceModel])
-  const layerModel = React.useMemo(() => buildTopologyWorkspaceCanvasModel({
-    workspaceModel: effectiveModel,
-    validationIssues,
-    relationCatalog,
-    traceOverlay,
-  }), [effectiveModel, validationIssues, relationCatalog, traceOverlay])
-  const showSimpleExecutorGraph = effectiveExposureMode === "simple" && effectiveModel.selectedLayer !== "resources"
+      runtimeResources,
+      selectedLayer,
+      topology,
+      traceOverlay?.gapFindings,
+      workspaceModel,
+    ],
+  )
+  const layerModel = React.useMemo(
+    () =>
+      buildTopologyWorkspaceCanvasModel({
+        workspaceModel: effectiveModel,
+        validationIssues,
+        relationCatalog,
+        traceOverlay,
+      }),
+    [effectiveModel, validationIssues, relationCatalog, traceOverlay],
+  )
+  const showSimpleExecutorGraph =
+    effectiveExposureMode === "simple" && effectiveModel.selectedLayer !== "resources"
   const effectiveTopologyId = topologyId ?? effectiveModel.topologyId
   const simpleExecutorModel = React.useMemo(
-    () => showSimpleExecutorGraph ? buildExecutorGraphCanvasModel({ topology }) : null,
+    () => (showSimpleExecutorGraph ? buildExecutorGraphCanvasModel({ topology }) : null),
     [showSimpleExecutorGraph, topology],
   )
-  const [internalSelectedExecutorId, setInternalSelectedExecutorId] = React.useState<string | null>(null)
+  const [internalSelectedExecutorId, setInternalSelectedExecutorId] = React.useState<string | null>(
+    null,
+  )
   const hasControlledSelection = selectedExecutorId !== undefined
-  const selectedExecutorState = hasControlledSelection ? selectedExecutorId : internalSelectedExecutorId
-  const setSelectedExecutorState = React.useCallback((executorId: string | null) => {
-    setInternalSelectedExecutorId(executorId)
-    onSelectedExecutorChange?.(executorId)
-  }, [onSelectedExecutorChange])
+  const selectedExecutorState = hasControlledSelection
+    ? selectedExecutorId
+    : internalSelectedExecutorId
+  const setSelectedExecutorState = React.useCallback(
+    (executorId: string | null) => {
+      setInternalSelectedExecutorId(executorId)
+      onSelectedExecutorChange?.(executorId)
+    },
+    [onSelectedExecutorChange],
+  )
   React.useEffect(() => {
     if (!showSimpleExecutorGraph) return
-    const currentExists = simpleExecutorModel?.graph.executors.some((executor) => executor.id === selectedExecutorState) ?? false
+    const currentExists =
+      simpleExecutorModel?.graph.executors.some(
+        (executor) => executor.id === selectedExecutorState,
+      ) ?? false
     if (currentExists) return
     setSelectedExecutorState(simpleExecutorModel?.graph.executors[0]?.id ?? null)
-  }, [selectedExecutorState, setSelectedExecutorState, showSimpleExecutorGraph, simpleExecutorModel])
-  const effectiveSelectedExecutorId = selectedExecutorState ?? simpleExecutorModel?.graph.executors[0]?.id ?? null
-  const selectedExecutor = simpleExecutorModel?.graph.executors.find((executor) => executor.id === effectiveSelectedExecutorId) ?? null
+  }, [
+    selectedExecutorState,
+    setSelectedExecutorState,
+    showSimpleExecutorGraph,
+    simpleExecutorModel,
+  ])
+  const effectiveSelectedExecutorId =
+    selectedExecutorState ?? simpleExecutorModel?.graph.executors[0]?.id ?? null
+  const selectedExecutor =
+    simpleExecutorModel?.graph.executors.find(
+      (executor) => executor.id === effectiveSelectedExecutorId,
+    ) ?? null
   if (showSimpleExecutorGraph) {
     return (
       <section
@@ -397,7 +537,10 @@ export function TopologyWorkspaceCanvas({
           onConnectExecutors={onExecutorConnect}
           onMoveExecutor={onExecutorMove}
         />
-        <aside className="grid min-h-0 max-h-full content-start gap-4 overflow-y-auto overscroll-contain scroll-pb-4 pb-4 pr-1 md:h-full md:pb-0" data-testid="topology-workspace-simple-sidebar">
+        <aside
+          className="grid min-h-0 max-h-full content-start gap-4 overflow-y-auto overscroll-contain scroll-pb-4 pb-4 pr-1 md:h-full md:pb-0"
+          data-testid="topology-workspace-simple-sidebar"
+        >
           {traceOverlay?.run ? (
             <ExecutorRunResultPanel
               topology={topology}
@@ -407,9 +550,7 @@ export function TopologyWorkspaceCanvas({
             />
           ) : null}
           {simpleCreatePanel ? (
-            <div data-testid="topology-workspace-simple-node-card">
-              {simpleCreatePanel}
-            </div>
+            <div data-testid="topology-workspace-simple-node-card">{simpleCreatePanel}</div>
           ) : (
             <ExecutorInspector
               executor={selectedExecutor}
@@ -492,7 +633,9 @@ function TopologyWorkspaceCanvasLegend({ items }: { items: TopologyWorkspaceCanv
           data-testid={`topology-workspace-legend-${item.id}`}
           title={text(item.descriptionKo, item.descriptionEn)}
         >
-          <span className={`h-2.5 w-5 rounded-full ${legendToneClassName(item.tone)} ${item.strokePattern === "dashed" ? "border border-dashed border-current bg-transparent" : ""}`} />
+          <span
+            className={`h-2.5 w-5 rounded-full ${legendToneClassName(item.tone)} ${item.strokePattern === "dashed" ? "border border-dashed border-current bg-transparent" : ""}`}
+          />
           {text(item.labelKo, item.labelEn)}
         </span>
       ))}
@@ -524,9 +667,7 @@ function TopologyWorkspaceResourceLayer({
       data-testid="topology-workspace-resources-layer"
     >
       <section className="rounded-lg border border-stone-200 bg-white p-4">
-        <div className="text-sm font-semibold text-stone-950">
-          {text("리소스", "Resources")}
-        </div>
+        <div className="text-sm font-semibold text-stone-950">{text("리소스", "Resources")}</div>
         <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
           {model.resourceNodes.map((node) => (
             <div
@@ -538,7 +679,9 @@ function TopologyWorkspaceResourceLayer({
               title={node.data.tooltip}
             >
               <div className="flex items-center justify-between gap-2">
-                <div className="text-[11px] font-semibold uppercase text-stone-500">{node.data.iconLabel}</div>
+                <div className="text-[11px] font-semibold uppercase text-stone-500">
+                  {node.data.iconLabel}
+                </div>
                 <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-stone-600">
                   {node.data.runtimeStatus}
                 </span>
@@ -547,11 +690,15 @@ function TopologyWorkspaceResourceLayer({
               <div className="mt-1 text-xs text-stone-500">{node.data.detail}</div>
               <dl className="mt-2 grid gap-1 text-[11px] leading-4 text-stone-600">
                 <div className="flex gap-1.5">
-                  <dt className="shrink-0 font-semibold text-stone-500">{text("상태", "Health")}</dt>
+                  <dt className="shrink-0 font-semibold text-stone-500">
+                    {text("상태", "Health")}
+                  </dt>
                   <dd className="min-w-0 truncate">{node.data.healthSummary}</dd>
                 </div>
                 <div className="flex gap-1.5">
-                  <dt className="shrink-0 font-semibold text-stone-500">{text("권한", "Capability")}</dt>
+                  <dt className="shrink-0 font-semibold text-stone-500">
+                    {text("권한", "Capability")}
+                  </dt>
                   <dd className="min-w-0 truncate">{node.data.capabilitySummary}</dd>
                 </div>
                 <div className="flex gap-1.5">
@@ -563,41 +710,53 @@ function TopologyWorkspaceResourceLayer({
           ))}
           {model.resourceNodes.length === 0 ? (
             <div className="rounded-lg border border-dashed border-stone-200 bg-stone-50 px-3 py-6 text-sm text-stone-500">
-              {text("아직 연결된 실행 리소스가 없습니다.", "No runtime resources are connected yet.")}
+              {text(
+                "아직 연결된 실행 리소스가 없습니다.",
+                "No runtime resources are connected yet.",
+              )}
             </div>
           ) : null}
         </div>
       </section>
       <aside className="rounded-lg border border-stone-200 bg-white p-4 text-xs text-stone-600">
         <div className="text-sm font-semibold text-stone-950">
-          {text("Resource projection", "Resource projection")}
+          {text("실행 리소스 보기", "Resource projection")}
         </div>
         <div className="mt-2">
-          {model.resourceNodes.length} {text("nodes", "nodes")} / {model.resourceEdges.length} {text("edges", "edges")}
+          {model.resourceNodes.length} {text("항목", "items")} / {model.resourceEdges.length}{" "}
+          {text("연결", "links")}
         </div>
         <div className="mt-3 rounded-md border border-stone-200 bg-stone-50 px-2.5 py-2 leading-5">
           {text(
-            "Agent/Team hierarchy는 참고용 projection입니다. Enterprise relation으로 자동 변환하지 않고, 선택한 서브 에이전트의 실행 리소스로만 연결합니다.",
+            "서브 에이전트/팀 계층은 참고용 보기입니다. 업무 연결로 자동 변환하지 않고, 선택한 서브 에이전트의 실행 리소스로만 연결합니다.",
             "Agent/Team hierarchy is a read-only projection. It is not auto-converted into enterprise relations and is linked only as a sub-agent execution resource.",
           )}
         </div>
-        <section className="mt-4 rounded-md border border-stone-200 bg-white p-3" data-testid="topology-workspace-resource-import-action">
+        <section
+          className="mt-4 rounded-md border border-stone-200 bg-white p-3"
+          data-testid="topology-workspace-resource-import-action"
+        >
           <div className="text-xs font-semibold text-stone-950">
-            {text("Agent/Team 가져오기", "Agent/Team import")}
+            {text("서브 에이전트/팀 가져오기", "Agent/Team import")}
           </div>
           <div className="mt-1 text-[11px] leading-4 text-stone-500">
-            {text("필요할 때만 기존 Agent/Team을 Enterprise 초안으로 미리보기합니다.", "Preview existing Agent/Team as an Enterprise draft only when needed.")}
+            {text(
+              "필요할 때만 기존 서브 에이전트/팀을 업무 초안으로 미리보기합니다.",
+              "Preview existing Agent/Team as an Enterprise draft only when needed.",
+            )}
           </div>
           <div className="mt-3 grid gap-2">
             <label className="grid gap-1 text-[11px] font-semibold text-stone-500">
-              <span>{text("TeamConfig 처리", "TeamConfig handling")}</span>
+              <span>{text("팀 설정 처리", "TeamConfig handling")}</span>
               <select
                 value={teamImportMode}
-                onChange={(event) => onTeamImportModeChange?.(event.currentTarget.value as AgentTeamImportMode)}
+                onChange={(event) =>
+                  onTeamImportModeChange?.(event.currentTarget.value as AgentTeamImportMode)
+                }
                 className="h-8 rounded-md border border-stone-200 bg-white px-2 text-xs font-semibold text-stone-800"
                 data-testid="topology-resource-team-import-mode"
               >
-                <option value="team">{text("Team으로 가져오기", "Import as Team")}</option>
+                <option value="team">{text("팀으로 가져오기", "Import as Team")}</option>
                 <option value="skip">{text("건너뛰기", "Skip")}</option>
               </select>
             </label>
@@ -622,19 +781,27 @@ function TopologyWorkspaceResourceLayer({
             </div>
           </div>
           {agentTeamPreview ? (
-            <div className="mt-3 rounded-md border border-stone-200 bg-stone-50 px-2.5 py-2 text-[11px] leading-4 text-stone-600" data-testid="topology-resource-agent-team-preview-summary">
+            <div
+              className="mt-3 rounded-md border border-stone-200 bg-stone-50 px-2.5 py-2 text-[11px] leading-4 text-stone-600"
+              data-testid="topology-resource-agent-team-preview-summary"
+            >
               <div className="font-semibold text-stone-800">
-                {agentTeamPreview.metadata.agentCount} Agents / {agentTeamPreview.metadata.teamCount} Teams
+                {agentTeamPreview.metadata.agentCount} {text("서브 에이전트", "agents")} /{" "}
+                {agentTeamPreview.metadata.teamCount} {text("팀", "teams")}
               </div>
               <div className="mt-1">
-                {agentTeamPreview.metadata.sourceOfTruth} · {agentTeamPreview.metadata.legacySourceRole}
+                {agentTeamPreview.metadata.sourceOfTruth} ·{" "}
+                {agentTeamPreview.metadata.legacySourceRole}
               </div>
             </div>
           ) : null}
         </section>
         {runtimeResources?.generatedAt ? (
-          <div className="mt-3 text-[11px] text-stone-400" data-testid="topology-workspace-resource-generated-at">
-            {text("projection", "projection")} {new Date(runtimeResources.generatedAt).toISOString()}
+          <div
+            className="mt-3 text-[11px] text-stone-400"
+            data-testid="topology-workspace-resource-generated-at"
+          >
+            {text("보기", "projection")} {new Date(runtimeResources.generatedAt).toISOString()}
           </div>
         ) : null}
       </aside>
@@ -687,7 +854,9 @@ function applyTraceStyles(
           : traceState === "delegation_path"
             ? "topology-workspace-trace-edge"
             : undefined,
-      ].filter(Boolean).join(" "),
+      ]
+        .filter(Boolean)
+        .join(" "),
       style: {
         ...edge.style,
         ...(traceState === "failed_path"
@@ -701,9 +870,11 @@ function applyTraceStyles(
 }
 
 export function topologyWorkspaceResourceNodeClassName(kind: string): string {
-  const base = "topology-workspace-resource-node topology-workspace-resource-node--runtime rounded-lg border border-dashed px-3 py-2 text-sm"
+  const base =
+    "topology-workspace-resource-node topology-workspace-resource-node--runtime rounded-lg border border-dashed px-3 py-2 text-sm"
   if (kind === "team") return `${base} border-teal-300 bg-teal-50 text-teal-950`
-  if (kind === "knowbee" || kind === "sub_agent" || kind === "agent") return `${base} border-sky-300 bg-sky-50 text-sky-950`
+  if (kind === "knowbee" || kind === "sub_agent" || kind === "agent")
+    return `${base} border-sky-300 bg-sky-50 text-sky-950`
   return `${base} border-stone-300 bg-stone-50 text-stone-800`
 }
 
@@ -722,69 +893,129 @@ function compactList(values: readonly string[] | undefined, fallback: string, li
   return compacted.length > limit ? `${visible} +${compacted.length - limit}` : visible
 }
 
-function summarizeAgentModel(projection: AgentTopologyProjection, resource: AgentTopologyNode): string {
-  const inspector = projection.inspectors.agents[resource.entityId]
-  if (!inspector) return "model unknown"
-  const model = [inspector.model.providerId, inspector.model.modelId].filter(Boolean).join("/")
-  const availability = inspector.model.availability ?? "unknown"
-  return model ? `${model} (${availability})` : availability
+function runtimeStatusDisplayLabel(status?: string | null): string {
+  if (!status) return "상태 확인 필요"
+  const normalized = status.trim().toLowerCase()
+  if (normalized === "active" || normalized === "available" || normalized === "ready" || normalized === "healthy") return "사용 가능"
+  if (normalized === "running" || normalized === "in_progress") return "실행 중"
+  if (normalized === "completed" || normalized === "done") return "완료"
+  if (normalized === "inactive" || normalized === "disabled") return "사용 안 함"
+  if (normalized === "warning" || normalized === "degraded") return "주의 필요"
+  if (normalized === "error" || normalized === "failed") return "오류"
+  if (normalized === "draft") return "초안"
+  if (normalized === "unknown") return "상태 확인 필요"
+  return "상태 확인 필요"
 }
 
-function summarizeResourceNode(projection: AgentTopologyProjection, resource: AgentTopologyNode): Pick<
+function capabilityAvailabilityDisplayLabel(availability?: string | null): string {
+  if (!availability) return "기능 확인 필요"
+  const normalized = availability.trim().toLowerCase()
+  if (normalized === "available" || normalized === "ready" || normalized === "enabled") return "사용 가능"
+  if (normalized === "limited" || normalized === "partial") return "일부 제한"
+  if (normalized === "unavailable" || normalized === "disabled") return "사용 불가"
+  if (normalized === "unknown") return "기능 확인 필요"
+  return "기능 확인 필요"
+}
+
+function modelAvailabilityDisplayLabel(availability?: string | null): string {
+  if (!availability) return "모델 확인 필요"
+  const normalized = availability.trim().toLowerCase()
+  if (normalized === "available" || normalized === "ready" || normalized === "enabled") return "사용 가능"
+  if (normalized === "limited" || normalized === "partial") return "일부 제한"
+  if (normalized === "unavailable" || normalized === "disabled") return "사용 불가"
+  if (normalized === "unknown") return "모델 확인 필요"
+  return "모델 확인 필요"
+}
+
+function formatResourceTooltip(input: {
+  healthSummary: string
+  capabilitySummary: string
+  modelSummary: string
+}): string {
+  return `상태: ${input.healthSummary}\n기능: ${input.capabilitySummary}\n모델: ${input.modelSummary}`
+}
+
+function summarizeAgentModel(
+  projection: AgentTopologyProjection,
+  resource: AgentTopologyNode,
+): string {
+  const inspector = projection.inspectors.agents[resource.entityId]
+  if (!inspector) return "모델 확인 필요"
+  const hasModel = Boolean(inspector.model.providerId || inspector.model.modelId)
+  const availability = modelAvailabilityDisplayLabel(inspector.model.availability)
+  return hasModel ? `AI 모델 설정됨 (${availability})` : availability
+}
+
+function summarizeResourceNode(
+  projection: AgentTopologyProjection,
+  resource: AgentTopologyNode,
+): Pick<
   TopologyWorkspaceCanvasNodeData,
   "runtimeStatus" | "healthSummary" | "capabilitySummary" | "modelSummary" | "tooltip"
 > {
   const agent = projection.inspectors.agents[resource.entityId]
   const team = projection.inspectors.teams[resource.entityId]
-  const runtimeStatus = resource.status ?? agent?.status ?? team?.status ?? "unknown"
+  const rawRuntimeStatus = resource.status ?? agent?.status ?? team?.status ?? "unknown"
+  const runtimeStatus = runtimeStatusDisplayLabel(rawRuntimeStatus)
 
   if (team) {
-    const healthSummary = `${team.health.status} · ${team.health.activeMemberCount}/${team.health.referenceMemberCount} active`
-    const capabilitySummary = compactList(team.requiredCapabilityTags, "team capability inherited", 3)
-    const availableModels = team.members.filter((member) => member.modelAvailability === "available").length
-    const modelSummary = team.members.length > 0
-      ? `${availableModels}/${team.members.length} member models available`
-      : "no member model"
+    const healthSummary = `${runtimeStatusDisplayLabel(team.health.status)} · 사용 가능 ${team.health.activeMemberCount}/${team.health.referenceMemberCount}`
+    const capabilitySummary = compactList(
+      team.requiredCapabilityTags,
+      "팀 기능 상속",
+      3,
+    )
+    const availableModels = team.members.filter(
+      (member) => member.modelAvailability === "available",
+    ).length
+    const modelSummary =
+      team.members.length > 0
+        ? `사용 가능 모델 ${availableModels}/${team.members.length}`
+        : "연결된 모델 없음"
     return {
       runtimeStatus,
       healthSummary,
       capabilitySummary,
       modelSummary,
-      tooltip: `Health: ${healthSummary}\nCapability: ${capabilitySummary}\nModel: ${modelSummary}`,
+      tooltip: formatResourceTooltip({ healthSummary, capabilitySummary, modelSummary }),
     }
   }
 
   if (agent) {
     const capabilitySummary = [
-      `availability ${agent.capability.availability ?? "unknown"}`,
-      `tools ${agent.tools.enabledCount}`,
-      agent.capability.allowShellExecution ? "shell" : "",
-      agent.capability.allowFilesystemWrite ? "fs-write" : "",
-    ].filter(Boolean).join(" · ")
-    const healthSummary = `${agent.status} · ${compactList(agent.diagnostics, "no diagnostics", 2)}`
+      `기능 상태 ${capabilityAvailabilityDisplayLabel(agent.capability.availability)}`,
+      `외부 도구 ${agent.tools.enabledCount}`,
+      agent.capability.allowShellExecution ? "명령 실행" : "",
+      agent.capability.allowFilesystemWrite ? "파일 쓰기" : "",
+    ]
+      .filter(Boolean)
+      .join(" · ")
+    const healthSummary = `${runtimeStatusDisplayLabel(agent.status)} · ${compactList(agent.diagnostics, "진단 없음", 2)}`
     const modelSummary = summarizeAgentModel(projection, resource)
     return {
       runtimeStatus,
       healthSummary,
       capabilitySummary,
       modelSummary,
-      tooltip: `Health: ${healthSummary}\nCapability: ${capabilitySummary}\nModel: ${modelSummary}`,
+      tooltip: formatResourceTooltip({ healthSummary, capabilitySummary, modelSummary }),
     }
   }
 
-  const healthSummary = `${runtimeStatus} · ${resource.diagnostics.length} diagnostics`
-  const capabilitySummary = compactList(resource.badges, "capability unknown", 3)
-  const modelSummary = "model unknown"
+  const healthSummary = `${runtimeStatus} · 진단 ${resource.diagnostics.length}`
+  const capabilitySummary = compactList(resource.badges, "기능 확인 필요", 3)
+  const modelSummary = "모델 확인 필요"
   return {
     runtimeStatus,
     healthSummary,
     capabilitySummary,
     modelSummary,
-    tooltip: `Health: ${healthSummary}\nCapability: ${capabilitySummary}\nModel: ${modelSummary}`,
+    tooltip: formatResourceTooltip({ healthSummary, capabilitySummary, modelSummary }),
   }
 }
 
-function buildResourceNodes(model: TopologyWorkspaceModel): Array<Node<TopologyWorkspaceCanvasNodeData>> {
+function buildResourceNodes(
+  model: TopologyWorkspaceModel,
+): Array<Node<TopologyWorkspaceCanvasNodeData>> {
   const projection = model.runtimeResources.projection
   const resources = projection?.nodes ?? []
   return resources.map((resource, index) => ({
@@ -797,26 +1028,32 @@ function buildResourceNodes(model: TopologyWorkspaceModel): Array<Node<TopologyW
     data: {
       source: "runtime_resource",
       label: resource.label,
-      detail: `${resource.kind} / ${resource.status ?? "unknown"}`,
+      detail: `${resource.kind} / ${runtimeStatusDisplayLabel(resource.status)}`,
       iconLabel: resourceIconLabel(resource.kind),
       entityId: resource.entityId,
       resourceKind: resource.kind,
       ...(projection
         ? summarizeResourceNode(projection, resource)
         : {
-          runtimeStatus: resource.status ?? "unknown",
-          healthSummary: resource.status ?? "unknown",
-          capabilitySummary: "capability unknown",
-          modelSummary: "model unknown",
-          tooltip: `Health: ${resource.status ?? "unknown"}\nCapability: capability unknown\nModel: model unknown`,
-        }),
+            runtimeStatus: runtimeStatusDisplayLabel(resource.status),
+            healthSummary: runtimeStatusDisplayLabel(resource.status),
+            capabilitySummary: "기능 확인 필요",
+            modelSummary: "모델 확인 필요",
+            tooltip: formatResourceTooltip({
+              healthSummary: runtimeStatusDisplayLabel(resource.status),
+              capabilitySummary: "기능 확인 필요",
+              modelSummary: "모델 확인 필요",
+            }),
+          }),
       muted: true,
       strokePattern: "dashed",
     },
   }))
 }
 
-function buildResourceEdges(model: TopologyWorkspaceModel): Array<Edge<TopologyWorkspaceCanvasEdgeData>> {
+function buildResourceEdges(
+  model: TopologyWorkspaceModel,
+): Array<Edge<TopologyWorkspaceCanvasEdgeData>> {
   const resources = model.runtimeResources.projection?.edges ?? []
   return resources.map((edge) => ({
     id: `resource:${edge.id}`,
@@ -894,7 +1131,7 @@ function relationTypeForGap(value: unknown): EnterpriseRelationType {
     "consults",
     "accountable_for",
   ].includes(relationType)
-    ? relationType as EnterpriseRelationType
+    ? (relationType as EnterpriseRelationType)
     : "delegates_to"
 }
 
@@ -929,24 +1166,32 @@ function buildImproveOverlayEdges(
 
   const candidateEdges = model.gaps
     .map((finding, index) => {
-      const record = finding && typeof finding === "object" && !Array.isArray(finding)
-        ? finding as Record<string, unknown>
-        : {}
-      const detail = record.detail && typeof record.detail === "object" && !Array.isArray(record.detail)
-        ? record.detail as Record<string, unknown>
-        : {}
-      const reasonCode = typeof detail.reasonCode === "string"
-        ? detail.reasonCode
-        : typeof record.reasonCode === "string"
-          ? record.reasonCode
-          : typeof record.findingKind === "string"
-            ? record.findingKind
-            : "gap_finding"
-      if (reasonCode !== "observed_relation_not_declared" && record.findingKind !== "observed_only_relation") {
+      const record =
+        finding && typeof finding === "object" && !Array.isArray(finding)
+          ? (finding as Record<string, unknown>)
+          : {}
+      const detail =
+        record.detail && typeof record.detail === "object" && !Array.isArray(record.detail)
+          ? (record.detail as Record<string, unknown>)
+          : {}
+      const reasonCode =
+        typeof detail.reasonCode === "string"
+          ? detail.reasonCode
+          : typeof record.reasonCode === "string"
+            ? record.reasonCode
+            : typeof record.findingKind === "string"
+              ? record.findingKind
+              : "gap_finding"
+      if (
+        reasonCode !== "observed_relation_not_declared" &&
+        record.findingKind !== "observed_only_relation"
+      ) {
         return null
       }
       const relatedEntities = Array.isArray(record.relatedEntities)
-        ? record.relatedEntities.map(entityRefFromUnknown).filter((ref): ref is { entityType: string; id: string } => Boolean(ref))
+        ? record.relatedEntities
+            .map(entityRefFromUnknown)
+            .filter((ref): ref is { entityType: string; id: string } => Boolean(ref))
         : []
       const [from, to] = relatedEntities
       if (!from || !to) return null

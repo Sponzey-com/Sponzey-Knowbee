@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest"
+import { createArtifactStorageContextFromRoot } from "../packages/core/src/artifacts/lifecycle.js"
 import { buildTaskModels } from "../packages/core/src/runs/task-model.js"
-import { PATHS } from "../packages/core/src/config/paths.js"
 import type { RootRun } from "../packages/core/src/runs/types.js"
 
-function makeRun(overrides: Partial<RootRun> & Pick<RootRun, "id" | "requestGroupId" | "prompt">): RootRun {
+const artifactStorage = createArtifactStorageContextFromRoot("/tmp/knowbee-state/artifacts")
+
+function makeRun(
+  overrides: Partial<RootRun> & Pick<RootRun, "id" | "requestGroupId" | "prompt">,
+): RootRun {
   const now = 1_710_000_000_000
   return {
     id: overrides.id,
@@ -34,8 +38,17 @@ function makeRun(overrides: Partial<RootRun> & Pick<RootRun, "id" | "requestGrou
     ...(overrides.workerSessionId ? { workerSessionId: overrides.workerSessionId } : {}),
     ...(overrides.parentRunId ? { parentRunId: overrides.parentRunId } : {}),
     ...(overrides.handoffSummary ? { handoffSummary: overrides.handoffSummary } : {}),
-    ...(overrides.promptSourceSnapshot ? { promptSourceSnapshot: overrides.promptSourceSnapshot } : {}),
+    ...(overrides.promptSourceSnapshot
+      ? { promptSourceSnapshot: overrides.promptSourceSnapshot }
+      : {}),
   }
+}
+
+function buildTestTaskModels(
+  runs: RootRun[],
+  continuitySnapshots: Parameters<typeof buildTaskModels>[1] = [],
+) {
+  return buildTaskModels(runs, continuitySnapshots, artifactStorage)
 }
 
 describe("buildTaskModels", () => {
@@ -61,7 +74,7 @@ describe("buildTaskModels", () => {
       }),
     ]
 
-    const tasks = buildTaskModels(runs)
+    const tasks = buildTestTaskModels(runs)
 
     expect(tasks).toHaveLength(1)
     expect(tasks[0]?.id).toBe("task-1")
@@ -130,7 +143,7 @@ describe("buildTaskModels", () => {
       }),
     ]
 
-    const task = buildTaskModels(runs)[0]
+    const task = buildTestTaskModels(runs)[0]
 
     expect(task?.attempts.map((attempt) => attempt.kind)).toEqual([
       "primary",
@@ -174,41 +187,47 @@ describe("buildTaskModels", () => {
   })
 
   it("tracks delivery as a separate task state from run terminal status", () => {
-    const deliveredTask = buildTaskModels([
+    const deliveredTask = buildTestTaskModels([
       makeRun({
         id: "run-delivered",
         requestGroupId: "task-3",
         prompt: "Send the screenshot",
         status: "completed",
         summary: "스크린샷을 보냈습니다.",
-        recentEvents: [{ id: "evt-1", at: 1, label: "텔레그램 파일 전달 완료: /tmp/screenshot.png" }],
+        recentEvents: [
+          { id: "evt-1", at: 1, label: "텔레그램 파일 전달 완료: /tmp/screenshot.png" },
+        ],
       }),
     ])[0]
 
-    const failedTask = buildTaskModels([
+    const failedTask = buildTestTaskModels([
       makeRun({
         id: "run-failed-delivery",
         requestGroupId: "task-4",
         prompt: "Send the screenshot",
         status: "failed",
         summary: "텔레그램 전달이 실패했습니다.",
-        recentEvents: [{ id: "evt-2", at: 1, label: "텔레그램 응답 완료 신호 전달에 실패했습니다." }],
+        recentEvents: [
+          { id: "evt-2", at: 1, label: "텔레그램 응답 완료 신호 전달에 실패했습니다." },
+        ],
       }),
     ])[0]
 
-    expect(deliveredTask?.delivery).toEqual(expect.objectContaining({
-      taskId: "task-3",
-      status: "delivered",
-      sourceAttemptId: "run-delivered",
-      channel: "telegram",
-      summary: "텔레그램 파일 전달 완료: /tmp/screenshot.png",
-      artifact: expect.objectContaining({
-        filePath: "/tmp/screenshot.png",
-        fileName: "screenshot.png",
-        mimeType: "image/png",
-        previewable: true,
+    expect(deliveredTask?.delivery).toEqual(
+      expect.objectContaining({
+        taskId: "task-3",
+        status: "delivered",
+        sourceAttemptId: "run-delivered",
+        channel: "telegram",
+        summary: "텔레그램 파일 전달 완료: /tmp/screenshot.png",
+        artifact: expect.objectContaining({
+          fileName: "screenshot.png",
+          mimeType: "image/png",
+          previewable: true,
+        }),
       }),
-    }))
+    )
+    expect(deliveredTask?.delivery.artifact).not.toHaveProperty("filePath")
     expect(failedTask?.delivery).toEqual({
       taskId: "task-4",
       status: "failed",
@@ -224,7 +243,9 @@ describe("buildTaskModels", () => {
       detailLines: [],
       sourceAttemptId: "run-failed-delivery",
     })
-    expect(deliveredTask?.activities.find((activity) => activity.kind === "delivery.delivered")).toEqual({
+    expect(
+      deliveredTask?.activities.find((activity) => activity.kind === "delivery.delivered"),
+    ).toEqual({
       id: "evt-1",
       taskId: "task-3",
       kind: "delivery.delivered",
@@ -244,7 +265,11 @@ describe("buildTaskModels", () => {
       items: [
         { key: "request", status: "completed", summary: "스크린샷을 보냈습니다." },
         { key: "execution", status: "completed", summary: "스크린샷을 보냈습니다." },
-        { key: "delivery", status: "completed", summary: "텔레그램 파일 전달 완료: /tmp/screenshot.png" },
+        {
+          key: "delivery",
+          status: "completed",
+          summary: "텔레그램 파일 전달 완료: /tmp/screenshot.png",
+        },
         { key: "completion", status: "completed", summary: "스크린샷을 보냈습니다." },
       ],
       completedCount: 4,
@@ -255,8 +280,16 @@ describe("buildTaskModels", () => {
       items: [
         { key: "request", status: "completed", summary: "텔레그램 전달이 실패했습니다." },
         { key: "execution", status: "completed", summary: "텔레그램 전달이 실패했습니다." },
-        { key: "delivery", status: "failed", summary: "텔레그램 응답 완료 신호 전달에 실패했습니다." },
-        { key: "completion", status: "failed", summary: "텔레그램 응답 완료 신호 전달에 실패했습니다." },
+        {
+          key: "delivery",
+          status: "failed",
+          summary: "텔레그램 응답 완료 신호 전달에 실패했습니다.",
+        },
+        {
+          key: "completion",
+          status: "failed",
+          summary: "텔레그램 응답 완료 신호 전달에 실패했습니다.",
+        },
       ],
       completedCount: 2,
       actionableCount: 4,
@@ -265,7 +298,7 @@ describe("buildTaskModels", () => {
   })
 
   it("keeps the root task open while a child run in the same lineage is still running", () => {
-    const task = buildTaskModels([
+    const task = buildTestTaskModels([
       makeRun({
         id: "run-root-done",
         requestGroupId: "group-root",
@@ -308,7 +341,7 @@ describe("buildTaskModels", () => {
   })
 
   it("folds sub-agent child runs with separate request groups back into the parent task card", () => {
-    const tasks = buildTaskModels([
+    const tasks = buildTestTaskModels([
       makeRun({
         id: "run-root",
         requestGroupId: "group-root",
@@ -344,31 +377,36 @@ describe("buildTaskModels", () => {
   })
 
   it("derives artifact metadata for deliveries backed by local state artifacts", () => {
-    const artifactPath = `${PATHS.stateDir}/artifacts/screens/screenshot.png`
-    const task = buildTaskModels([
+    const artifactPath = "/tmp/knowbee-state/artifacts/screens/screenshot.png"
+    const task = buildTestTaskModels([
       makeRun({
         id: "run-artifact",
         requestGroupId: "task-artifact",
         prompt: "메인 화면 캡처",
         status: "completed",
         summary: "메인 화면 캡처를 전송했습니다.",
-        recentEvents: [{ id: "evt-artifact", at: 1, label: `WebUI 파일 전달 완료: ${artifactPath}` }],
+        recentEvents: [
+          { id: "evt-artifact", at: 1, label: `WebUI 파일 전달 완료: ${artifactPath}` },
+        ],
       }),
     ])[0]
 
-    expect(task?.delivery.artifact).toEqual(expect.objectContaining({
-      filePath: artifactPath,
-      fileName: "screenshot.png",
-      url: "/api/artifacts/screens/screenshot.png",
-      previewUrl: "/api/artifacts/screens/screenshot.png",
-      downloadUrl: "/api/artifacts/screens/screenshot.png?download=1",
-      mimeType: "image/png",
-      previewable: true,
-    }))
+    expect(task?.delivery.artifact).toEqual(
+      expect.objectContaining({
+        fileName: "screenshot.png",
+        url: "/api/artifacts/screens/screenshot.png",
+        previewUrl: "/api/artifacts/screens/screenshot.png",
+        downloadUrl: "/api/artifacts/screens/screenshot.png?download=1",
+        mimeType: "image/png",
+        previewable: true,
+      }),
+    )
+    expect(task?.delivery.artifact).not.toHaveProperty("filePath")
+    expect(JSON.stringify(task?.delivery.artifact)).not.toContain(artifactPath)
   })
 
   it("marks request confirmation separately while intake bridge is still running", () => {
-    const task = buildTaskModels([
+    const task = buildTestTaskModels([
       makeRun({
         id: "run-intake",
         requestGroupId: "task-intake",
@@ -380,10 +418,18 @@ describe("buildTaskModels", () => {
 
     expect(task?.checklist).toEqual({
       items: [
-        { key: "request", status: "running", summary: "요청을 해석하고 대상과 완료 조건을 정리하는 중입니다." },
+        {
+          key: "request",
+          status: "running",
+          summary: "요청을 해석하고 대상과 완료 조건을 정리하는 중입니다.",
+        },
         { key: "execution", status: "pending" },
         { key: "delivery", status: "not_required" },
-        { key: "completion", status: "running", summary: "요청을 해석하고 대상과 완료 조건을 정리하는 중입니다." },
+        {
+          key: "completion",
+          status: "running",
+          summary: "요청을 해석하고 대상과 완료 조건을 정리하는 중입니다.",
+        },
       ],
       completedCount: 0,
       actionableCount: 3,
@@ -392,7 +438,7 @@ describe("buildTaskModels", () => {
   })
 
   it("surfaces structured execution failure details from the latest failed attempt", () => {
-    const task = buildTaskModels([
+    const task = buildTestTaskModels([
       makeRun({
         id: "run-failed",
         requestGroupId: "task-7",
@@ -421,7 +467,7 @@ describe("buildTaskModels", () => {
   })
 
   it("treats a delivered task as completed even if only an internal attempt is still active", () => {
-    const task = buildTaskModels([
+    const task = buildTestTaskModels([
       makeRun({
         id: "run-user",
         requestGroupId: "task-8",
@@ -439,7 +485,9 @@ describe("buildTaskModels", () => {
         summary: "후속 실행으로 전달되었습니다.",
         createdAt: 3,
         updatedAt: 4,
-        recentEvents: [{ id: "evt-8", at: 5, label: "텔레그램 파일 전달 완료: ~/monitor_status.txt" }],
+        recentEvents: [
+          { id: "evt-8", at: 5, label: "텔레그램 파일 전달 완료: ~/monitor_status.txt" },
+        ],
       }),
     ])[0]
 
@@ -450,7 +498,11 @@ describe("buildTaskModels", () => {
       items: [
         { key: "request", status: "completed", summary: "후속 실행으로 전달되었습니다." },
         { key: "execution", status: "completed", summary: "모니터 수를 확인했습니다." },
-        { key: "delivery", status: "completed", summary: "텔레그램 파일 전달 완료: ~/monitor_status.txt" },
+        {
+          key: "delivery",
+          status: "completed",
+          summary: "텔레그램 파일 전달 완료: ~/monitor_status.txt",
+        },
         { key: "completion", status: "completed", summary: "후속 실행으로 전달되었습니다." },
       ],
       completedCount: 4,
@@ -460,7 +512,7 @@ describe("buildTaskModels", () => {
   })
 
   it("publishes stable activity names and overlap signals for task monitoring", () => {
-    const task = buildTaskModels([
+    const task = buildTestTaskModels([
       makeRun({
         id: "run-a",
         requestGroupId: "task-5",
@@ -502,41 +554,44 @@ describe("buildTaskModels", () => {
   })
 
   it("surfaces continuity and operational diagnostics for a task lineage", () => {
-    const task = buildTaskModels([
-      makeRun({
-        id: "run-diagnostics",
-        requestGroupId: "task-diagnostics",
-        prompt: "외부 모니터 화면 캡처",
-        status: "awaiting_approval",
-        summary: "화면 캡처 승인을 기다리고 있습니다.",
-        recentEvents: [
-          { id: "evt-diagnostics-1", at: 1, label: "prompt_ms=12ms" },
-          { id: "evt-diagnostics-2", at: 2, label: "memory_total_ms=5ms" },
-          { id: "evt-diagnostics-3", at: 3, label: "복구 신호 1" },
-          { id: "evt-diagnostics-4", at: 4, label: "tool receipt: screen_capture ok" },
-          { id: "evt-diagnostics-5", at: 5, label: "Slack 파일 전달 완료: /tmp/screen.png" },
-        ],
-        promptSourceSnapshot: {
-          assemblyVersion: 3,
-          sources: [
-            { sourceId: "identity", locale: "ko", version: "v1", checksum: "1234567890abcdef" },
-            { sourceId: "soul", locale: "ko", version: "v2", checksum: "abcdef1234567890" },
+    const task = buildTestTaskModels(
+      [
+        makeRun({
+          id: "run-diagnostics",
+          requestGroupId: "task-diagnostics",
+          prompt: "외부 모니터 화면 캡처",
+          status: "awaiting_approval",
+          summary: "화면 캡처 승인을 기다리고 있습니다.",
+          recentEvents: [
+            { id: "evt-diagnostics-1", at: 1, label: "prompt_ms=12ms" },
+            { id: "evt-diagnostics-2", at: 2, label: "memory_total_ms=5ms" },
+            { id: "evt-diagnostics-3", at: 3, label: "복구 신호 1" },
+            { id: "evt-diagnostics-4", at: 4, label: "tool receipt: screen_capture ok" },
+            { id: "evt-diagnostics-5", at: 5, label: "Slack 파일 전달 완료: /tmp/screen.png" },
           ],
+          promptSourceSnapshot: {
+            assemblyVersion: 3,
+            sources: [
+              { sourceId: "identity", locale: "ko", version: "v1", checksum: "1234567890abcdef" },
+              { sourceId: "soul", locale: "ko", version: "v2", checksum: "abcdef1234567890" },
+            ],
+          },
+        }),
+      ],
+      [
+        {
+          lineageRootRunId: "task-diagnostics",
+          lastGoodState: "screen_capture 승인 요청",
+          pendingApprovals: ["approval:screen_capture"],
+          pendingDelivery: ["slack:file:/tmp/screen.png"],
+          failedRecoveryKey: "delivery:screen_capture",
+          failureKind: "delivery",
+          recoveryBudget: "delivery 신호 1",
+          status: "awaiting_approval",
+          updatedAt: 20,
         },
-      }),
-    ], [
-      {
-        lineageRootRunId: "task-diagnostics",
-        lastGoodState: "screen_capture 승인 요청",
-        pendingApprovals: ["approval:screen_capture"],
-        pendingDelivery: ["slack:file:/tmp/screen.png"],
-        failedRecoveryKey: "delivery:screen_capture",
-        failureKind: "delivery",
-        recoveryBudget: "delivery 신호 1",
-        status: "awaiting_approval",
-        updatedAt: 20,
-      },
-    ])[0]
+      ],
+    )[0]
 
     expect(task?.continuity).toMatchObject({
       lineageRootRunId: "task-diagnostics",
@@ -566,7 +621,7 @@ describe("buildTaskModels", () => {
   })
 
   it("returns newer requests before old runs that were updated by recovery bookkeeping", () => {
-    const tasks = buildTaskModels([
+    const tasks = buildTestTaskModels([
       makeRun({
         id: "run-old-restored",
         requestGroupId: "old-restored",

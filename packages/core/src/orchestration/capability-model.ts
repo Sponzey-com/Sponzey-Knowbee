@@ -268,9 +268,9 @@ function diagnosticMessage(reasonCode: string, catalogId?: string): string {
     case "skill_catalog_disabled":
       return `Skill catalog item ${catalogId ?? "unknown"} is disabled or archived.`
     case "mcp_server_catalog_disabled":
-      return `MCP server catalog item ${catalogId ?? "unknown"} is disabled or archived.`
+      return `External feature connection catalog item ${catalogId ?? "unknown"} is disabled or archived.`
     case "mcp_secret_scope_missing":
-      return `MCP server ${catalogId ?? "unknown"} has no configured secret scope.`
+      return `External feature connection ${catalogId ?? "unknown"} has no configured secret scope.`
     case "model_profile_missing":
       return "Agent model profile is missing."
     case "model_provider_unknown":

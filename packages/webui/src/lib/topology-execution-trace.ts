@@ -6,6 +6,7 @@ import type {
   EnterpriseTopologyRunTraceProjection,
   EnterpriseTopologyTraceEventRecord,
 } from "./enterprise-topology-operations"
+import { DEFAULT_MAIN_AGENT_NAME_EN, DEFAULT_MAIN_AGENT_NAME_KO } from "./main-agent-copy"
 
 export type TopologyExecutionTraceEventKind =
   | "selected_node"
@@ -380,7 +381,7 @@ function traceEventCopy(kind: TopologyExecutionTraceEventKind): {
     case "completed":
       return { labelKo: "완료", labelEn: "Completed", tone: "emerald" }
     case "trace_missing":
-      return { labelKo: "trace 없음", labelEn: "Trace missing", tone: "amber" }
+      return { labelKo: "기록 없음", labelEn: "History missing", tone: "amber" }
   }
 }
 
@@ -389,20 +390,21 @@ function traceSummaryKo(
   traceEvent: EnterpriseTopologyTraceEventRecord,
   executorName: string | undefined,
 ): string {
-  const target = executorName ?? "노비"
+  const target = executorName ?? DEFAULT_MAIN_AGENT_NAME_KO
+  const reason = traceReasonText(traceEvent.reasonCode)
   if (kind === "prompt_preflight_blocked") {
-    return `${target} 실행이 안전 경계에서 멈췄습니다. 코드: ${traceEvent.reasonCode}`
+    return `${target} 실행이 안전 경계에서 멈췄습니다. ${reason.ko}`
   }
   if (kind === "sub_agent_dispatch") return `${target}에게 작업을 위임했습니다.`
   if (kind === "self_solve_after_delegation_failure") {
-    return `위임 실패 후 현재 에이전트가 자체 처리로 전환했습니다. 코드: ${traceEvent.reasonCode}`
+    return `위임 실패 후 현재 에이전트가 자체 처리로 전환했습니다. ${reason.ko}`
   }
   if (kind === "self_solve") return "현재 에이전트가 직접 처리했습니다."
   if (kind === "redelegation") return `${target} 실행 후 다른 방법을 검토하고 있습니다.`
   if (kind === "user_confirmation") return `${target} 실행에 사용자 확인이 필요합니다.`
-  if (kind === "failed") return `${target} 실행이 실패했습니다. 코드: ${traceEvent.reasonCode}`
+  if (kind === "failed") return `${target} 실행이 실패했습니다. ${reason.ko}`
   if (kind === "completed") return `${target} 실행이 완료되었습니다.`
-  return `${target} 실행이 시작되었습니다. 코드: ${traceEvent.reasonCode}`
+  return `${target} 실행이 시작되었습니다.`
 }
 
 function traceSummaryEn(
@@ -410,20 +412,21 @@ function traceSummaryEn(
   traceEvent: EnterpriseTopologyTraceEventRecord,
   executorName: string | undefined,
 ): string {
-  const target = executorName ?? "Knowbee"
+  const target = executorName ?? DEFAULT_MAIN_AGENT_NAME_EN
+  const reason = traceReasonText(traceEvent.reasonCode)
   if (kind === "prompt_preflight_blocked") {
-    return `${target} stopped at a safety boundary. Code: ${traceEvent.reasonCode}`
+    return `${target} stopped at a safety boundary. ${reason.en}`
   }
   if (kind === "sub_agent_dispatch") return `Work was dispatched to ${target}.`
   if (kind === "self_solve_after_delegation_failure") {
-    return `After delegation failed, the current agent switched to self solving. Code: ${traceEvent.reasonCode}`
+    return `After delegation failed, the current agent switched to self solving. ${reason.en}`
   }
   if (kind === "self_solve") return "The current agent handled the work directly."
   if (kind === "redelegation") return `${target} is checking another execution path.`
   if (kind === "user_confirmation") return `${target} is waiting for user confirmation.`
-  if (kind === "failed") return `${target} failed. Code: ${traceEvent.reasonCode}`
+  if (kind === "failed") return `${target} failed. ${reason.en}`
   if (kind === "completed") return `${target} completed.`
-  return `${target} started execution. Code: ${traceEvent.reasonCode}`
+  return `${target} started execution.`
 }
 
 function failureReportToViewEvent(
@@ -432,13 +435,14 @@ function failureReportToViewEvent(
 ): TopologyExecutionTraceEventViewModel {
   const executorName = executorNameFor(report.nodeId, executorNames)
   const reasonCode = failureReportReasonCode(report)
+  const reason = traceReasonText(reasonCode)
   return {
     id: `failure:${report.failureReportId}`,
     kind: "failed",
     labelKo: "실패",
     labelEn: "Failed",
-    summaryKo: `${executorName} 실행이 실패했습니다. 코드: ${reasonCode}`,
-    summaryEn: `${executorName} failed. Code: ${reasonCode}`,
+    summaryKo: `${executorName} 실행이 실패했습니다. ${reason.ko}`,
+    summaryEn: `${executorName} failed. ${reason.en}`,
     tone: "rose",
     at: report.createdAt,
     reasonCode,
@@ -470,19 +474,61 @@ function failureReportSummary(report: EnterpriseTopologyFailureReportRecord): st
     const recommendedAction = stringValue(report.report.recommendedAction)
     if (recommendedAction) return recommendedAction
     const issueKind = stringValue(report.report.issueKind)
-    if (issueKind) return issueKind
+    if (issueKind) return traceReasonText(issueKind).ko
   }
-  return report.failurePhase
+  return traceReasonText(failureReportReasonCode(report)).ko
+}
+
+function traceReasonText(reasonCode: string): { ko: string; en: string } {
+  switch (reasonCode) {
+    case "exhaustion":
+    case "final_failure_after_exhaustion":
+      return {
+        ko: "가능한 처리 방법을 모두 시도했지만 완료하지 못했습니다.",
+        en: "Available recovery actions were exhausted before completion.",
+      }
+    case "prompt_bundle_preflight_failed":
+      return {
+        ko: "프롬프트 검증에서 차단되었습니다.",
+        en: "Prompt preflight validation blocked the run.",
+      }
+    case "tool_permission_missing":
+    case "permission_or_tool_blocked":
+      return {
+        ko: "필요한 권한이나 도구 조건이 충족되지 않았습니다.",
+        en: "A required permission or tool condition was not satisfied.",
+      }
+    case "success_criteria_unmet":
+      return {
+        ko: "완료 기준을 만족하지 못했습니다.",
+        en: "Success criteria were not met.",
+      }
+    case "runtime_risk":
+      return {
+        ko: "실행 중 남은 위험이나 누락된 조건이 있습니다.",
+        en: "Runtime risk or missing conditions remain.",
+      }
+    case "execution_incomplete":
+      return {
+        ko: "실행을 완료하지 못했습니다.",
+        en: "The run did not complete.",
+      }
+    default:
+      return {
+        ko: "자세한 원인은 실행 기록에서 확인할 수 있습니다.",
+        en: "Details are available in the run history.",
+      }
+  }
 }
 
 function traceMissingEvent(topologyRunId: string, at: number): TopologyExecutionTraceEventViewModel {
   return {
     id: `${topologyRunId}:trace-missing`,
     kind: "trace_missing",
-    labelKo: "trace 없음",
-    labelEn: "Trace missing",
-    summaryKo: "이 실행은 topology trace가 없어 진단 정보로만 표시됩니다.",
-    summaryEn: "This run has no topology trace and is shown only as a diagnostic state.",
+    labelKo: "기록 없음",
+    labelEn: "History missing",
+    summaryKo: "이 실행은 서브 에이전트 실행 기록이 없어 진단 정보로만 표시됩니다.",
+    summaryEn: "This run has no sub-agent execution history and is shown only as a diagnostic state.",
     tone: "amber",
     at,
     reasonCode: "topology_trace_missing",

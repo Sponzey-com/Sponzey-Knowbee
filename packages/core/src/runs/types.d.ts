@@ -28,8 +28,8 @@ export interface RootRun {
     orchestrationPlanSnapshot?: OrchestrationPlan;
     subSessionIds?: string[];
     subSessionsSnapshot?: SubSessionContract[];
-    agentDisplayName?: string;
-    agentNickname?: string;
+    agentName?: string;
+    agentNameSnapshot?: string;
     runtimeManifestId?: string;
     delegationTurnCount: number;
     maxDelegationTurns: number;

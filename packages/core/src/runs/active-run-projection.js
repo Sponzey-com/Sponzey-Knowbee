@@ -5,6 +5,9 @@ function isRecord(value) {
 function textOrUndefined(value) {
     return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
+function agentNameFromSnapshot(agentNameSnapshot, fallback) {
+    return textOrUndefined(agentNameSnapshot) ?? fallback;
+}
 function readContractRecord(snapshot, keys) {
     if (!snapshot)
         return undefined;
@@ -135,6 +138,7 @@ export function buildActiveRunProjection(run) {
     const legacy = !persistedIntent && !persistedTarget && !persistedDelivery;
     const comparisonProjection = buildIntentComparisonProjection(intentContract);
     const approvalId = readApprovalId(run.promptSourceSnapshot);
+    const agentName = agentNameFromSnapshot(run.agentName ?? run.agentNameSnapshot, "");
     return {
         runId: run.id,
         requestGroupId: run.requestGroupId,
@@ -144,19 +148,22 @@ export function buildActiveRunProjection(run) {
         source: run.source,
         displayName: run.title || run.targetLabel || run.id,
         ...(run.orchestrationMode ? { orchestrationMode: run.orchestrationMode } : {}),
-        ...(run.agentDisplayName ? { agentDisplayName: run.agentDisplayName } : {}),
-        ...(run.agentNickname ? { agentNickname: run.agentNickname } : {}),
+        ...(agentName ? { agentName } : {}),
+        ...(run.agentNameSnapshot ? { agentNameSnapshot: run.agentNameSnapshot } : {}),
         ...(run.subSessionIds?.length ? { subSessionIds: [...run.subSessionIds] } : {}),
         ...(run.subSessionsSnapshot?.length
             ? {
-                subSessions: run.subSessionsSnapshot.map((subSession) => ({
-                    subSessionId: subSession.subSessionId,
-                    parentRunId: subSession.parentRunId,
-                    agentId: subSession.agentId,
-                    agentDisplayName: subSession.agentDisplayName,
-                    ...(subSession.agentNickname ? { agentNickname: subSession.agentNickname } : {}),
-                    status: subSession.status,
-                })),
+                subSessions: run.subSessionsSnapshot.map((subSession) => {
+                    const agentName = agentNameFromSnapshot(subSession.agentNameSnapshot ?? subSession.agentName, "Unnamed sub-agent");
+                    return {
+                        subSessionId: subSession.subSessionId,
+                        parentRunId: subSession.parentRunId,
+                        agentId: subSession.agentId,
+                        agentName,
+                        ...(subSession.agentNameSnapshot ? { agentNameSnapshot: subSession.agentNameSnapshot } : {}),
+                        status: subSession.status,
+                    };
+                }),
             }
             : {}),
         updatedAt: run.updatedAt,

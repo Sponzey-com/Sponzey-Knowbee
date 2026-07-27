@@ -1,10 +1,6 @@
 import type { ControlTimeline } from "../control-plane/timeline.js";
 import type { DbMessageLedgerEvent } from "../db/index.js";
 import type { SourceFreshnessPolicy, SourceKind, SourceReliability, WebRetrievalMethod } from "./web-retrieval-policy.js";
-import { type RetrievalCacheStatus } from "./web-retrieval-cache.js";
-import type { RetrievalTargetContract } from "./web-retrieval-session.js";
-import type { RetrievalEvidenceSufficiency } from "./web-retrieval-verification.js";
-import type { WebSourceAdapterMetadata } from "./web-source-adapters/types.js";
 import { type WebRetrievalFixtureRegressionSummary } from "./web-retrieval-smoke.js";
 export type AdminToolCallStatus = "started" | "succeeded" | "failed" | "skipped" | "unknown";
 export type AdminToolApprovalState = "not_required" | "requested" | "approved" | "denied";
@@ -42,15 +38,6 @@ export interface AdminToolCallsInspector {
     };
     calls: AdminToolCallView[];
 }
-export interface AdminWebRetrievalKnownSourceView {
-    method: string;
-    url: string;
-    sourceDomain: string;
-    sourceKind: SourceKind;
-    reliability: SourceReliability;
-    sourceLabel: string;
-    expectedTargetBinding: string;
-}
 export interface AdminWebRetrievalAttemptView {
     id: string;
     toolName: string;
@@ -66,59 +53,29 @@ export interface AdminWebRetrievalAttemptView {
     durationMs: number | null;
     signalCount: number;
 }
-export interface AdminWebRetrievalVerificationView {
-    canAnswer: boolean | null;
-    evidenceSufficiency: RetrievalEvidenceSufficiency | string | null;
-    acceptedValue: string | null;
-    rejectionReason: string | null;
-    mustAvoidGuessing: boolean | null;
-    policy: SourceFreshnessPolicy | string | null;
-    completionStrict: true;
-    semanticComparisonAllowed: false;
-    verificationMode: "contract_fields";
-}
-export interface AdminWebRetrievalCacheView {
-    status: RetrievalCacheStatus | "not_loaded";
-    entryCount: number;
-    entries: Array<{
-        status: RetrievalCacheStatus;
-        canUseForFinalAnswer: boolean;
-        canUseAsDiscoveryHint: boolean;
-        cacheAgeMs: number | null;
-        reason: string;
-        value: string | null;
-        unit: string | null;
-        sourceDomain: string | null;
-    }>;
+export interface AdminWebRetrievalDiagnosisView {
+    status: "complete" | "followup" | "ask_user" | null;
+    contextFingerprint: string | null;
+    criterionKeys: string[];
+    conditionCount: number | null;
+    evidenceRefs: string[];
+    receiptPresent: boolean;
 }
 export interface AdminWebRetrievalSessionView {
     id: string;
     requestGroupId: string | null;
     runId: string | null;
     sessionKey: string | null;
-    target: RetrievalTargetContract | null;
-    sourceLadder: AdminWebRetrievalKnownSourceView[];
     queryVariants: string[];
     fetchAttempts: AdminWebRetrievalAttemptView[];
-    candidateExtraction: {
-        eventCount: number;
-        candidateCount: number;
-        lastSummary: string | null;
-    };
-    verification: AdminWebRetrievalVerificationView;
-    conflictResolver: {
-        status: string | null;
-        conflicts: string[];
-    };
-    cache: AdminWebRetrievalCacheView;
-    adapterMetadata: Array<Pick<WebSourceAdapterMetadata, "adapterId" | "adapterVersion" | "parserVersion" | "checksum" | "status" | "degradedReason">>;
+    resultDiagnosis: AdminWebRetrievalDiagnosisView;
     degradedState: {
         degraded: boolean;
         reasons: string[];
     };
     policySeparation: {
-        discovery: "loose_search";
-        completion: "strict_contract_fields";
+        evidence: "provenance_only";
+        completion: "llm_result_diagnosis";
         semanticComparisonAllowed: false;
     };
 }
@@ -127,7 +84,7 @@ export interface AdminWebRetrievalLab {
         sessions: number;
         attempts: number;
         degraded: number;
-        answerable: number;
+        diagnosed: number;
     };
     sessions: AdminWebRetrievalSessionView[];
 }
@@ -140,10 +97,14 @@ export interface AdminFixtureReplayResultView {
     title: string;
     status: string;
     attempts: number;
-    candidateCount: number;
-    canAnswer: boolean;
-    acceptedValue: string | null;
-    evidenceSufficiency: string;
+    successfulSourceCount: number;
+    evidenceSourceIds: string[];
+    llmDiagnosisExpectation: {
+        status: "complete" | "followup" | "ask_user";
+        requiredEvidenceSourceIds: string[];
+        requiredConditionVerdicts: string[];
+        changedStrategyRequired: boolean;
+    };
     failures: string[];
 }
 export interface AdminFixtureReplayResponse {
@@ -151,7 +112,7 @@ export interface AdminFixtureReplayResponse {
     generatedAt: number;
     networkUsed: false;
     semanticComparisonAllowed: false;
-    verificationMode: "contract_fields";
+    verificationMode: "llm_result_diagnosis_contract";
     fixtureCount: number;
     summary: Pick<WebRetrievalFixtureRegressionSummary, "kind" | "policyVersion" | "status" | "counts">;
     results: AdminFixtureReplayResultView[];

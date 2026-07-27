@@ -1,5 +1,8 @@
 import type { KnowbeeConfig } from "../config/types.js"
-import { createLogger } from "../logger/index.js"
+import type { ArtifactStorageContext } from "../artifacts/lifecycle.js"
+import type { MemoryJournalRepository } from "../memory/journal.js"
+import type { AgentHierarchyStorage } from "../orchestration/hierarchy.js"
+import { createLogger, redactLogText } from "../logger/index.js"
 import { getTelegramRuntimeStatus } from "./telegram/runtime.js"
 import { TelegramChannelAdapter } from "./telegram/adapter.js"
 import { SlackChannelAdapter } from "./slack/adapter.js"
@@ -23,11 +26,23 @@ import {
   type ChannelRuntimeStartResult,
   type ChannelRuntimeSummary,
 } from "./runtime.js"
+import type {
+  ChannelPendingResponseDeliveryInput,
+  ChannelPendingResponseDeliveryOwner,
+} from "./pending-response-delivery.js"
 
 const log = createLogger("channel:registry")
 
+function channelRegistryErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
+
 export interface ChannelRegistryOptions {
   config: KnowbeeConfig
+  artifactStorage?: ArtifactStorageContext | undefined
+  memoryJournal?: MemoryJournalRepository | undefined
+  hierarchyStorage?: AgentHierarchyStorage | undefined
   connections?: ChannelConnectionRecord[]
   factories?: ChannelProviderFactory[]
   now?: () => number
@@ -45,13 +60,22 @@ export class ChannelRegistry {
   private readonly now: () => number
   private readonly factories = new Map<string, ChannelProviderFactory>()
   private readonly adapters = new Map<string, ChannelRuntimeAdapter>()
+  private readonly startedConnectionIds = new Set<string>()
   private readonly fixedConnections: ChannelConnectionRecord[] | undefined
 
   constructor(options: ChannelRegistryOptions) {
     this.config = options.config
     this.now = options.now ?? Date.now
     this.fixedConnections = options.connections
-    for (const factory of options.factories ?? createBuiltInChannelProviderFactories()) {
+    const factories = options.factories
+      ?? (options.artifactStorage && options.memoryJournal && options.hierarchyStorage
+        ? createBuiltInChannelProviderFactories(
+            options.artifactStorage,
+            options.memoryJournal,
+            options.hierarchyStorage,
+          )
+        : [])
+    for (const factory of factories) {
       this.registerFactory(factory)
     }
   }
@@ -136,6 +160,7 @@ export class ChannelRegistry {
       this.adapters.set(item.connection.connectionId, adapter)
       try {
         await adapter.start()
+        this.startedConnectionIds.add(item.connection.connectionId)
         const health = await adapter.healthCheck()
         recordChannelRuntimeEvent({
           connection: item.connection,
@@ -153,7 +178,8 @@ export class ChannelRegistry {
           disposition: "started",
         }))
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
+        this.startedConnectionIds.delete(item.connection.connectionId)
+        const message = channelRegistryErrorMessage(error)
         const health = this.health("failed", message)
         recordChannelRuntimeEvent({
           connection: item.connection,
@@ -217,6 +243,7 @@ export class ChannelRegistry {
           disposition: "skipped_disabled",
         }))
       } finally {
+        this.startedConnectionIds.delete(connection.connectionId)
         this.adapters.delete(connection.connectionId)
       }
     }
@@ -240,6 +267,24 @@ export class ChannelRegistry {
     })
   }
 
+  getPendingResponseDeliveryOwner(
+    provider: string,
+  ): ChannelPendingResponseDeliveryOwner | undefined {
+    const candidates = [...this.adapters.values()].filter(
+      (adapter) =>
+        adapter.provider === provider &&
+        this.startedConnectionIds.has(adapter.connectionId) &&
+        typeof adapter.createPendingResponseDeliveryHandler === "function",
+    )
+    if (candidates.length !== 1) return undefined
+    const adapter = candidates[0]
+    if (!adapter?.createPendingResponseDeliveryHandler) return undefined
+    return Object.freeze({
+      createPendingResponseDeliveryHandler: (input: ChannelPendingResponseDeliveryInput) =>
+        adapter.createPendingResponseDeliveryHandler?.(input),
+    })
+  }
+
   private health(status: ChannelRuntimeHealth["status"], message: string | null): ChannelRuntimeHealth {
     return {
       status,
@@ -249,15 +294,31 @@ export class ChannelRegistry {
   }
 }
 
-export function createBuiltInChannelProviderFactories(): ChannelProviderFactory[] {
+export function createBuiltInChannelProviderFactories(
+  artifactStorage: ArtifactStorageContext,
+  memoryJournal: MemoryJournalRepository,
+  hierarchyStorage: AgentHierarchyStorage,
+): ChannelProviderFactory[] {
   return [
     {
       provider: "telegram",
-      create: ({ config, connection }) => createTelegramRuntimeAdapter(config, connection),
+      create: ({ config, connection }) => createTelegramRuntimeAdapter(
+        config,
+        connection,
+        artifactStorage,
+        memoryJournal,
+        hierarchyStorage,
+      ),
     },
     {
       provider: "slack",
-      create: ({ config, connection }) => createSlackRuntimeAdapter(config, connection),
+      create: ({ config, connection }) => createSlackRuntimeAdapter(
+        config,
+        connection,
+        artifactStorage,
+        memoryJournal,
+        hierarchyStorage,
+      ),
     },
     {
       provider: "discord",
@@ -270,17 +331,27 @@ export function createBuiltInChannelProviderFactories(): ChannelProviderFactory[
   ]
 }
 
-export function buildChannelRegistryRuntimeDiagnostics(config: KnowbeeConfig): ChannelRuntimeSummary[] {
-  return new ChannelRegistry({ config }).getCapabilitySummaries()
+export function buildChannelRegistryRuntimeDiagnostics(
+  config: KnowbeeConfig,
+  artifactStorage: ArtifactStorageContext,
+): ChannelRuntimeSummary[] {
+  return new ChannelRegistry({ config, artifactStorage }).getCapabilitySummaries()
 }
 
 function createTelegramRuntimeAdapter(
   config: KnowbeeConfig,
   connection: ChannelConnectionRecord,
+  artifactStorage: ArtifactStorageContext,
+  memoryJournal: MemoryJournalRepository,
+  hierarchyStorage: AgentHierarchyStorage,
 ): ChannelRuntimeAdapter {
   const adapter = new TelegramChannelAdapter({
     config: config.telegram,
+    runtimeConfig: config,
     connectionId: connection.connectionId,
+    artifactStorage,
+    memoryJournal,
+    hierarchyStorage,
   })
   return {
     provider: "telegram",
@@ -288,6 +359,8 @@ function createTelegramRuntimeAdapter(
     start: () => adapter.start(),
     stop: () => adapter.stop(),
     getCapabilities: () => adapter.getCapabilities(),
+    createPendingResponseDeliveryHandler: (input) =>
+      adapter.createPendingResponseDeliveryHandler(input),
     healthCheck: async () => {
       const health = await adapter.healthCheck()
       const detail = isRecord(health.detail) ? health.detail : undefined
@@ -304,10 +377,17 @@ function createTelegramRuntimeAdapter(
 function createSlackRuntimeAdapter(
   config: KnowbeeConfig,
   connection: ChannelConnectionRecord,
+  artifactStorage: ArtifactStorageContext,
+  memoryJournal: MemoryJournalRepository,
+  hierarchyStorage: AgentHierarchyStorage,
 ): ChannelRuntimeAdapter {
   const adapter = new SlackChannelAdapter({
     config: config.slack,
+    runtimeConfig: config,
     connectionId: connection.connectionId,
+    artifactStorage,
+    memoryJournal,
+    hierarchyStorage,
   })
   return {
     provider: "slack",
@@ -315,6 +395,8 @@ function createSlackRuntimeAdapter(
     start: () => adapter.start(),
     stop: () => adapter.stop(),
     getCapabilities: () => adapter.getCapabilities(),
+    createPendingResponseDeliveryHandler: (input) =>
+      adapter.createPendingResponseDeliveryHandler(input),
     healthCheck: async () => {
       const health = await adapter.healthCheck()
       const detail = isRecord(health.detail) ? health.detail : undefined

@@ -1,5 +1,8 @@
+import { type PersistedConfigFileSystem } from "../config/persisted-file.js";
+import type { RuntimePaths } from "../config/paths.js";
 import type { CapabilityRiskLevel, SubAgentConfig, TeamConfig } from "../contracts/sub-agent-orchestration.js";
 import type { OrchestrationPlannerIntent } from "./planner.js";
+import { type RegistryServiceDependencies } from "./registry.js";
 export type CommandPaletteResultKind = "agent" | "team" | "sub_session" | "command" | "agent_template" | "team_template";
 export type FocusTargetKind = "agent" | "team" | "sub_session";
 export interface FocusTarget {
@@ -84,31 +87,40 @@ export interface AgentDescriptionLintWarning {
     message: string;
     matched?: string;
 }
+export interface CommandWorkspaceStorage {
+    readonly focusBindingsFile: string;
+    readonly fileSystem: PersistedConfigFileSystem;
+}
+export declare function createCommandWorkspaceStorage(paths: Pick<RuntimePaths, "stateDir">, fileSystem?: PersistedConfigFileSystem): CommandWorkspaceStorage;
 export declare const AGENT_TEMPLATES: AgentTemplateDefinition[];
 export declare const TEAM_TEMPLATES: TeamTemplateDefinition[];
-export declare function searchCommandPalette(input?: {
+export declare function searchCommandPalette(input: {
+    config: RegistryServiceDependencies["config"];
     query?: string;
     scope?: CommandPaletteResultKind | "all";
     limit?: number;
 }): CommandPaletteSearchResponse;
 export declare function setFocusBinding(input: {
+    config: RegistryServiceDependencies["config"];
     threadId?: string;
     parentAgentId?: string;
     target: FocusTarget;
     source?: FocusBinding["source"];
-}): FocusResolveResult;
-export declare function getFocusBinding(threadId?: string): FocusBinding | undefined;
-export declare function clearFocusBinding(threadId?: string): {
+}, storage: CommandWorkspaceStorage): FocusResolveResult;
+export declare function getFocusBinding(threadId: string | undefined, storage: CommandWorkspaceStorage): FocusBinding | undefined;
+export declare function clearFocusBinding(threadId: string | undefined, storage: CommandWorkspaceStorage): {
     ok: true;
     threadId: string;
     cleared: boolean;
     reasonCode: "focus_binding_cleared";
 };
 export declare function resolveFocusBinding(input: {
+    config: RegistryServiceDependencies["config"];
     threadId?: string;
     parentAgentId?: string;
-}): FocusResolveResult;
+}, storage: CommandWorkspaceStorage): FocusResolveResult;
 export declare function instantiateAgentTemplate(input: {
+    config: RegistryServiceDependencies["config"];
     templateId: string;
     overrides?: unknown;
     persist?: boolean;
@@ -129,6 +141,7 @@ export declare function instantiateAgentTemplate(input: {
     issues?: unknown;
 };
 export declare function instantiateTeamTemplate(input: {
+    config: RegistryServiceDependencies["config"];
     templateId: string;
     overrides?: unknown;
     persist?: boolean;
@@ -149,6 +162,7 @@ export declare function instantiateTeamTemplate(input: {
     issues?: unknown;
 };
 export declare function importExternalAgentProfileDraft(input: {
+    config: RegistryServiceDependencies["config"];
     profile: unknown;
     source?: string;
     overrides?: unknown;
@@ -181,11 +195,12 @@ export declare function lintAgentDescription(description: string): {
     reasonCodes: string[];
 };
 export declare function executeWorkspaceCommand(input: {
+    config: RegistryServiceDependencies["config"];
     command: string;
     threadId?: string;
     parentAgentId?: string;
     payload?: unknown;
-}): {
+}, storage: CommandWorkspaceStorage): {
     ok: boolean;
     command: string;
     reasonCode: string;

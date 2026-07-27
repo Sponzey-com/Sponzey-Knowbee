@@ -1,0 +1,1 @@
+{"version":3,"file":"semantic-outcome-matrix.d.ts","sourceRoot":"","sources":["../../src/channels/semantic-outcome-matrix.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EACV,qBAAqB,EAEtB,MAAM,mBAAmB,CAAA;AAE1B,MAAM,WAAW,sCAAsC;IACrD,MAAM,EAAE,QAAQ,GAAG,QAAQ,CAAA;IAC3B,QAAQ,EAAE,MAAM,EAAE,CAAA;CACnB;AAsBD,wBAAgB,0CAA0C,CACxD,OAAO,EAAE,SAAS,qBAAqB,EAAE,GACxC,sCAAsC,CA8ExC"}

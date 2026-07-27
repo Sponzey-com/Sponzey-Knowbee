@@ -1,12 +1,5 @@
 import type { DbMessage, DbRequestGroupMessage } from "../db/index.js"
-
-const INTERNAL_WORKER_PROMPT_PREFIXES = [
-  "[Task Intake Bridge]",
-  "[Filesystem Execution Required]",
-  "[Approval Granted Continuation]",
-  "[Scheduled Task]",
-  "[Truncated Output Recovery]",
-]
+import { internalWorkerPromptPrefixes } from "../runs/internal-prompt-prefixes.js"
 
 export function selectRequestGroupContextMessages(messages: DbRequestGroupMessage[]): DbMessage[] {
   const hasChildExecution = messages.some((message) => {
@@ -22,13 +15,14 @@ export function selectRequestGroupContextMessages(messages: DbRequestGroupMessag
       if (message.root_run_id !== message.run_request_group_id) return false
 
       const prompt = message.run_prompt?.trim() ?? ""
-      if (message.role === "user" && !INTERNAL_WORKER_PROMPT_PREFIXES.some((prefix) => prompt.startsWith(prefix))) {
+      const internalWorkerPrefixes = internalWorkerPromptPrefixes()
+      if (message.role === "user" && !internalWorkerPrefixes.some((prefix) => prompt.startsWith(prefix))) {
         return true
       }
       if (message.role === "assistant" && !message.tool_calls) {
         return true
       }
-      return INTERNAL_WORKER_PROMPT_PREFIXES.some((prefix) => prompt.startsWith(prefix))
+      return internalWorkerPrefixes.some((prefix) => prompt.startsWith(prefix))
     })
     .map((message) => ({
       id: message.id,

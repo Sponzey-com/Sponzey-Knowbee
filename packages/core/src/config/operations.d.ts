@@ -1,3 +1,4 @@
+import type { RuntimePaths } from "./paths.js";
 export interface MigrationVersionStatus {
     databasePath: string;
     exists: boolean;
@@ -33,6 +34,13 @@ export interface DatabaseImportResult {
     importedPath: string;
     rollbackBackup: DatabaseBackupResult;
     status: MigrationVersionStatus;
+}
+export interface DatabaseImportLifecycleObserver {
+    onBackedUp(): void;
+    onReplacing(): void;
+    onVerifying(): void;
+    onRollingBack(): void;
+    onRollbackCompleted(): void;
 }
 export interface ConfigExportResult {
     id: string;
@@ -70,25 +78,28 @@ export interface ConfigurationOperationsSnapshot {
         maskingPolicy: ConfigExportResult["masking"]["policy"];
     };
 }
-export declare function getDatabaseMigrationStatus(dbPath?: string): MigrationVersionStatus;
-export declare function dryRunDatabaseMigrations(dbPath?: string): MigrationDryRunResult;
-export declare function createDatabaseBackup(kind?: DatabaseBackupResult["kind"], dbPath?: string): DatabaseBackupResult;
+export type ConfigurationOperationPaths = Pick<RuntimePaths, "stateDir" | "configFile" | "dbFile">;
+export declare function getDatabaseMigrationStatus(dbPath: string): MigrationVersionStatus;
+export declare function dryRunDatabaseMigrations(dbPath: string): MigrationDryRunResult;
+export declare function createDatabaseBackup(kind: DatabaseBackupResult["kind"], paths: ConfigurationOperationPaths, dbPath?: string): DatabaseBackupResult;
 export declare function importDatabaseFromBackup(input: {
     backupPath: string;
     dbPath?: string;
-}): DatabaseImportResult;
+}, paths: ConfigurationOperationPaths, observer?: DatabaseImportLifecycleObserver): DatabaseImportResult;
+export declare function resolveDatabaseBackupPath(backupId: string, paths: ConfigurationOperationPaths): string;
 export declare function maskSecretsDeep(value: unknown): {
     value: unknown;
     maskedCount: number;
 };
-export declare function exportMaskedConfig(): ConfigExportResult;
-export declare function recoverPromptSources(workDir?: string): import("../memory/knowbee-md.js").PromptSourceSeedResult;
-export declare function exportPromptSources(workDir?: string): import("../memory/knowbee-md.js").PromptSourceExportResult;
+export declare function exportMaskedConfig(paths: ConfigurationOperationPaths): ConfigExportResult;
+export declare function recoverPromptSources(workDir: string): import("../memory/knowbee-md.js").PromptSourceSeedResult;
+export declare function exportPromptSources(workDir: string, paths: ConfigurationOperationPaths): import("../memory/knowbee-md.js").PromptSourceExportResult;
+export declare function resolvePromptSourcesExportPath(exportId: string, paths: ConfigurationOperationPaths): string;
 export declare function importPromptSources(input: {
-    workDir?: string;
+    workDir: string;
     exportPath: string;
     overwrite?: boolean;
 }): import("../memory/knowbee-md.js").PromptSourceImportResult;
-export declare function buildConfigurationOperationsSnapshot(workDir?: string): ConfigurationOperationsSnapshot;
+export declare function buildConfigurationOperationsSnapshot(paths: ConfigurationOperationPaths, workDir: string): ConfigurationOperationsSnapshot;
 export declare function replaceFileAtomically(sourcePath: string, targetPath: string): void;
 //# sourceMappingURL=operations.d.ts.map

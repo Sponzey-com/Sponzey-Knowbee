@@ -1,3 +1,4 @@
+import type { ToolEvidenceSourceReceipt } from "../tools/types.js";
 import type { AssistantTextDeliveryOutcome, DeliverySource } from "./delivery.js";
 export interface FailedCommandTool {
     toolName: string;
@@ -7,7 +8,15 @@ export interface FailedCommandTool {
 export interface SuccessfulToolEvidence {
     toolName: string;
     output: string;
+    details?: unknown;
+    evidenceSource?: Readonly<ToolEvidenceSourceReceipt>;
 }
+export type ToolEvidenceTrustReasonCode = "tool_evidence_data_only" | "tool_evidence_source_missing" | "tool_evidence_source_ref_invalid" | "tool_evidence_isolation_invalid";
+export declare function evaluateSuccessfulToolEvidenceTrust(evidence: SuccessfulToolEvidence): {
+    allowed: boolean;
+    reasonCode: ToolEvidenceTrustReasonCode;
+    sourceRef: string;
+};
 export type RecoveryAlternativeKind = "other_tool" | "other_extension" | "other_channel" | "other_schedule" | "same_channel_retry";
 export interface RecoveryAlternative {
     kind: RecoveryAlternativeKind;
@@ -25,6 +34,11 @@ export interface DeliveryRecoveryCandidate extends RecoveryCandidateBase {
 export interface CommandFailureRecoveryCandidate extends RecoveryCandidateBase {
 }
 export interface GenericExecutionRecoveryCandidate extends RecoveryCandidateBase {
+}
+export interface YeonjangFailureEvidenceRecoveryPayload {
+    summary: string;
+    reason: string;
+    toolNames: string[];
 }
 export interface RecoveryKeyParts {
     action: string;
@@ -50,6 +64,7 @@ export declare function selectGenericExecutionRecovery(params: {
     };
     seenKeys: Set<string>;
 }): GenericExecutionRecoveryCandidate | null;
+export declare function buildYeonjangFailureEvidenceRecoveryPayload(evidence: SuccessfulToolEvidence): YeonjangFailureEvidenceRecoveryPayload | null;
 export declare function describeRecoveryAlternatives(alternatives: RecoveryAlternative[]): string | null;
 export declare function buildDirectArtifactDeliveryRecoveryPrompt(params: {
     originalRequest: string;

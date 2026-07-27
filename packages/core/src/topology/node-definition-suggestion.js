@@ -1,5 +1,8 @@
 import { createExecutorDraftFromInference } from "./executor-inference.js";
 import { redactNodeDefinitionSuggestionRequest, } from "./node-definition-redaction.js";
+import { redactLogText } from "../logger/index.js";
+import { sanitizeUserFacingError } from "../runs/error-sanitizer.js";
+import { loadPromptValue } from "../memory/prompt-fragments.js";
 export const NODE_DEFINITION_FIELDS = [
     "name",
     "description",
@@ -9,8 +12,23 @@ export const NODE_DEFINITION_FIELDS = [
     "toolHints",
     "understandingSummary",
 ];
+export function buildNodeDefinitionLlmNotConfiguredResult() {
+    return {
+        ok: false,
+        error: "llm_not_configured",
+        message: "등록된 LLM이 없습니다. 설정에서 기본 모델을 등록한 뒤 다시 시도하세요.",
+        warnings: [{ code: "llm_not_configured", message: "등록된 LLM이 없습니다." }],
+        notice: {
+            kind: "topology_llm_not_configured",
+            textSource: "topology_control_notice",
+            renderingRequired: "llm_final_response",
+            finalAnswer: false,
+            assistantIdentityClaim: false,
+        },
+    };
+}
 export const NODE_DEFINITION_ROLE_CHIPS = [
-    "실행자",
+    "서브 에이전트",
     "분석자",
     "검토자",
     "승인자",
@@ -31,7 +49,7 @@ export const NODE_DEFINITION_OUTPUT_CHIPS = [
     "작업 분할",
     "요약 보고",
     "테스트 결과",
-    "다음 실행자에게 넘길 내용",
+    "다음 서브 에이전트에게 넘길 내용",
 ];
 const INTERNAL_TERMS = [
     "EnterpriseTopology",
@@ -40,6 +58,19 @@ const INTERNAL_TERMS = [
     "GraphExecutionPlan",
     "DelegationResolution",
     "runtime profile",
+];
+const LEGACY_USER_FACING_TERMS = [
+    ["노드 개요", "서브 에이전트 개요"],
+    ["노드 정의", "서브 에이전트 정의"],
+    ["현재 노드", "현재 서브 에이전트"],
+    ["이 노드", "이 서브 에이전트"],
+    ["이전 실행자", "이전 서브 에이전트"],
+    ["다음 실행자", "다음 서브 에이전트"],
+    ["하위 실행자", "하위 서브 에이전트"],
+    ["상위 실행자", "상위 에이전트"],
+    ["부모 실행자", "상위 에이전트"],
+    ["실행자", "서브 에이전트"],
+    ["노드", "서브 에이전트"],
 ];
 export function normalizeNodeDefinitionQuickChips(values) {
     const allowed = new Set([
@@ -204,32 +235,32 @@ export function normalizeNodeDefinitionSuggestionRequest(request) {
 }
 export function buildNodeDefinitionPromptInput(request) {
     const quickChipGroups = splitDefinitionQuickChips(request.quickChips);
-    const promptParts = [
-        request.userPrompt ? `노드 개요: ${request.userPrompt}` : "",
-        quickChipGroups.roles.length > 0 ? `선택한 역할: ${quickChipGroups.roles.join(", ")}` : "",
-        quickChipGroups.styles.length > 0 ? `선택한 스타일: ${quickChipGroups.styles.join(", ")}` : "",
-        quickChipGroups.extra.length > 0 ? `추가 조건: ${quickChipGroups.extra.join(", ")}` : "",
-        `현재 이름: ${request.currentDraft.name || "비어 있음"}`,
-        `현재 설명: ${request.currentDraft.description || "비어 있음"}`,
-        request.graphContext.incomingExecutors.length > 0
-            ? `이전 실행자: ${request.graphContext.incomingExecutors.map((item) => item.name).join(", ")}`
+    const rendered = loadPromptValue("node_definition_input_block_user", {
+        userPrompt: request.userPrompt || "none",
+        selectedRoles: quickChipGroups.roles.join(", ") || "none",
+        selectedStyles: quickChipGroups.styles.join(", ") || "none",
+        extraConditions: quickChipGroups.extra.join(", ") || "none",
+        currentName: request.currentDraft.name || "empty",
+        currentDescription: request.currentDraft.description || "empty",
+        incomingExecutors: request.graphContext.incomingExecutors.map((item) => item.name).join(", ") || "none",
+        outgoingExecutors: request.graphContext.outgoingExecutors.map((item) => item.name).join(", ") || "none",
+        targetFields: request.targetFields.join(", "),
+        lockedFields: NODE_DEFINITION_FIELDS.filter((field) => request.fieldLocks[field]).join(", ") || "none",
+        nameGuidanceBlock: request.targetFields.includes("name")
+            ? loadPromptValue("node_definition_name_guidance_user")
             : "",
-        request.graphContext.outgoingExecutors.length > 0
-            ? `다음 실행자: ${request.graphContext.outgoingExecutors.map((item) => item.name).join(", ")}`
+        descriptionGuidanceBlock: request.targetFields.includes("description")
+            ? loadPromptValue("node_definition_description_guidance_user")
             : "",
-        `갱신 대상: ${request.targetFields.join(", ")}`,
-        `유지할 필드: ${NODE_DEFINITION_FIELDS.filter((field) => request.fieldLocks[field]).join(", ") || "없음"}`,
-        request.targetFields.includes("name")
-            ? "역할명 작성 지침: patch.name에는 사용자가 바로 이해할 수 있는 짧고 명확한 한국어 역할명을 넣는다. 기능명이나 대안명만 쓰지 말고, 노드 개요와 선택한 역할이 드러나는 이름으로 작성한다."
+        descriptionReviewGuidanceBlock: request.targetFields.includes("description")
+            ? loadPromptValue("node_definition_description_review_guidance_user")
             : "",
-        request.targetFields.includes("description")
-            ? "성격과 하는 일 작성 지침: 선택한 역할, 선택한 스타일, 노드 개요를 모두 반영한다. 노드 개요를 그대로 반복하지 말고, 이 실행자가 맡는 책임, 입력을 해석하는 방식, 판단 기준, 실제 처리 순서, 다른 실행자에게 넘기는 내용, 완료 기준을 5~8문장으로 상세하게 풀어쓴다."
-            : "",
-        request.targetFields.includes("description")
-            ? "최종 검토 지침: description 초안을 만든 뒤 책임, 입력 해석, 판단 기준, 처리 순서, 위임/전달 내용, 완료 기준, 리스크 또는 확인 필요 항목이 빠졌는지 한 번 더 검토한다. 빠진 부분을 보완한 최종 description만 patch.description에 넣고, rationale에는 검토 후 보완한 핵심을 짧게 적는다."
-            : "",
-    ].filter(Boolean);
-    return promptParts.join("\n");
+    }, { required: true });
+    return rendered
+        .split("\n")
+        .map((line) => line.trimEnd())
+        .filter((line) => line.trim().length > 0)
+        .join("\n");
 }
 function splitDefinitionQuickChips(chips) {
     const roleSet = new Set(NODE_DEFINITION_ROLE_CHIPS);
@@ -289,12 +320,7 @@ export async function createNodeDefinitionSuggestion(input, dependencies = {}) {
     }
     const modelInfo = resolveSuggestionModelInfo(normalized, input.modelConfig);
     if (!modelInfo) {
-        return {
-            ok: false,
-            error: "llm_not_configured",
-            message: "등록된 LLM이 없습니다. 설정에서 기본 모델을 등록한 뒤 다시 시도하세요.",
-            warnings: [{ code: "llm_not_configured", message: "등록된 LLM이 없습니다." }],
-        };
+        return buildNodeDefinitionLlmNotConfiguredResult();
     }
     const redactionInput = {
         request: normalized,
@@ -323,7 +349,7 @@ export async function createNodeDefinitionSuggestion(input, dependencies = {}) {
         return {
             ok: false,
             error: "llm_response_invalid",
-            message: "AI 제안 생성에 실패했습니다. 현재 노드 내용은 유지됩니다.",
+            message: "AI 제안 생성에 실패했습니다. 현재 서브 에이전트 내용은 유지됩니다.",
             warnings: [{ code: "llm_response_invalid", message: suggestionErrorMessage(error) }],
         };
     }
@@ -405,9 +431,9 @@ function buildDeterministicAlternativePayload(request) {
     const base = request.userPrompt || request.quickChips.join(" ") || request.currentDraft.description || request.currentDraft.name || "업무 처리";
     const quickChipGroups = splitDefinitionQuickChips(request.quickChips);
     const presets = [
-        ["균형형", "요청의 의도를 먼저 확인하고 실행 가능한 계획과 결과를 균형 있게 정리하는 실행자"],
-        ["품질형", "누락과 모호함을 줄이기 위해 기준과 근거를 꼼꼼히 확인하는 실행자"],
-        ["협업형", "다음 실행자가 바로 이어받을 수 있도록 맥락과 결정 이유를 선명하게 남기는 실행자"],
+        ["균형형", "요청의 의도를 먼저 확인하고 실행 가능한 계획과 결과를 균형 있게 정리하는 서브 에이전트"],
+        ["품질형", "누락과 모호함을 줄이기 위해 기준과 근거를 꼼꼼히 확인하는 서브 에이전트"],
+        ["협업형", "다음 서브 에이전트가 바로 이어받을 수 있도록 맥락과 결정 이유를 선명하게 남기는 서브 에이전트"],
     ];
     return {
         alternatives: presets.map(([titlePrefix, summary], index) => {
@@ -435,13 +461,13 @@ function buildDeterministicAlternativePayload(request) {
                     expectedOutput: `${summary}의 결과와 다음 단계에 필요한 요약`,
                     successCriteria: [
                         "요청한 결과가 명확히 정리됨",
-                        "다음 실행자가 바로 이해할 수 있음",
+                        "다음 서브 에이전트가 바로 이해할 수 있음",
                     ],
                     capabilityHints: [titlePrefix, "업무 처리"],
                     toolHints: request.currentDraft.toolHints,
                     understandingSummary: summary,
                 },
-                rationale: "역할명, 스타일, 노드 개요를 반영한 뒤 책임, 판단 기준, 처리 순서, 전달 내용이 빠지지 않았는지 검토해 보완했습니다.",
+                rationale: "역할명, 스타일, 서브 에이전트 개요를 반영한 뒤 책임, 판단 기준, 처리 순서, 전달 내용이 빠지지 않았는지 검토해 보완했습니다.",
                 recommendedConnectionMeaning: request.graphContext.outgoingExecutors.length > 0 ? "넘김" : "참고 요청",
                 riskNotes: request.currentDraft.description.includes("삭제") ? ["삭제나 권한 작업은 실행 전 확인이 필요합니다."] : [],
                 confidence: 0.72 + index * 0.04,
@@ -450,7 +476,7 @@ function buildDeterministicAlternativePayload(request) {
     };
 }
 function deterministicRoleName(input) {
-    const role = input.roles[0] || `${input.titlePrefix} 실행자`;
+    const role = input.roles[0] || `${input.titlePrefix} 서브 에이전트`;
     const topic = input.base
         .replace(/[.,!?。！？]/g, " ")
         .split(/\s+/)
@@ -462,17 +488,17 @@ function deterministicRoleName(input) {
 }
 function detailedDeterministicDescription(input) {
     const incoming = input.hasIncoming
-        ? "이전 실행자가 넘긴 맥락과 요청 배경을 먼저 확인하고, 빠진 정보나 충돌하는 조건이 있는지 점검합니다."
-        : "사용자의 요청과 노드 개요를 먼저 읽고, 이 노드가 맡아야 할 범위와 처리하지 말아야 할 범위를 구분합니다.";
+        ? "이전 서브 에이전트가 넘긴 맥락과 요청 배경을 먼저 확인하고, 빠진 정보나 충돌하는 조건이 있는지 점검합니다."
+        : "사용자의 요청과 서브 에이전트 개요를 먼저 읽고, 이 서브 에이전트가 맡아야 할 범위와 처리하지 말아야 할 범위를 구분합니다.";
     const outgoing = input.hasOutgoing
-        ? "다음 실행자가 바로 이어서 처리할 수 있도록 결정 내용, 남은 이슈, 필요한 후속 조치를 함께 정리해 넘깁니다."
+        ? "다음 서브 에이전트가 바로 이어서 처리할 수 있도록 결정 내용, 남은 이슈, 필요한 후속 조치를 함께 정리해 넘깁니다."
         : "마지막에는 사용자가 바로 확인할 수 있는 핵심 결과와 남은 판단 사항을 분명하게 정리합니다.";
     const roleStyle = [
-        input.roles.length > 0 ? `선택한 역할인 ${input.roles.join(", ")}의 관점` : "이 노드에 필요한 역할의 관점",
+        input.roles.length > 0 ? `선택한 역할인 ${input.roles.join(", ")}의 관점` : "이 서브 에이전트에 필요한 역할의 관점",
         input.styles.length > 0 ? `선택한 스타일인 ${input.styles.join(", ")}의 방식` : "상황에 맞는 처리 방식",
     ].join("과 ");
     return [
-        `${input.roleName}은 ${input.base} 역할을 맡는 ${input.titlePrefix} 실행자입니다.`,
+        `${input.roleName}은 ${input.base} 역할을 맡는 ${input.titlePrefix} 서브 에이전트입니다.`,
         `${roleStyle}을 기준으로 요청을 해석하고, 사용자가 기대한 결과와 실제로 처리해야 할 작업 범위를 분리합니다.`,
         incoming,
         "업무를 시작하면 목적과 성공 기준을 먼저 세우고, 필요한 작업을 작은 단위로 나누어 우선순위와 실행 순서를 정합니다.",
@@ -538,9 +564,10 @@ function normalizeAlternativePatch(patch, request, warnings) {
         if (!request.targetFields.includes(key))
             continue;
         const normalized = normalizePatchField(key, value);
-        if (isEmptyImportantPatch(key, normalized))
+        const cleaned = cleanPatchFieldValue(normalized, warnings);
+        if (isEmptyImportantPatch(key, cleaned))
             continue;
-        output[key] = normalized;
+        output[key] = cleaned;
     }
     return output;
 }
@@ -600,7 +627,7 @@ function normalizeContextSummaries(value, direction) {
         .filter((item) => Boolean(item) && typeof item === "object" && !Array.isArray(item))
         .map((item) => ({
         executorId: nonEmpty(item.executorId) || "node:unknown",
-        name: nonEmpty(item.name) || nonEmpty(item.executorId) || "이전 실행자",
+        name: nonEmpty(item.name) || nonEmpty(item.executorId) || "이전 서브 에이전트",
         description: typeof item.description === "string" ? item.description : "",
         ...(nonEmpty(item.connectionLabel) ? { connectionLabel: nonEmpty(item.connectionLabel) } : {}),
         direction,
@@ -639,6 +666,12 @@ function cleanUserFacingText(value, warnings) {
         current = current.replaceAll(term, "실행 설정");
         warnings.push({ code: "internal_term_removed", message: `${term} 용어를 사용자 표현으로 바꿨습니다.` });
     }
+    for (const [term, replacement] of LEGACY_USER_FACING_TERMS) {
+        if (!current.includes(term))
+            continue;
+        current = current.replaceAll(term, replacement);
+        warnings.push({ code: "internal_term_removed", message: `${term} 용어를 사용자 표현으로 바꿨습니다.` });
+    }
     return current;
 }
 function hasTooSimilarAlternatives(alternatives) {
@@ -666,6 +699,11 @@ function normalizePatchField(field, value) {
     }
     return typeof value === "string" ? value.trim() : "";
 }
+function cleanPatchFieldValue(value, warnings) {
+    if (Array.isArray(value))
+        return value.map((item) => cleanUserFacingText(item, warnings));
+    return cleanUserFacingText(value, warnings);
+}
 function isEmptyImportantPatch(field, value) {
     if (field === "name" || field === "description" || field === "expectedOutput") {
         return typeof value !== "string" || value.trim().length === 0;
@@ -691,7 +729,12 @@ function isRateLimitSuggestionError(error) {
 }
 function suggestionErrorMessage(error) {
     if (error instanceof Error && error.message.trim())
-        return error.message.trim();
+        return suggestionErrorUserMessage(error);
     return "AI provider 응답을 처리할 수 없습니다.";
+}
+function suggestionErrorUserMessage(error) {
+    const rawMessage = error.message;
+    const sanitized = sanitizeUserFacingError(rawMessage);
+    return redactLogText(sanitized.userMessage);
 }
 //# sourceMappingURL=node-definition-suggestion.js.map
