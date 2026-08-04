@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { evaluateLegacyRemovalProof } from "../scripts/lib/legacy-removal-proof.mjs"
+import { evaluateLegacyRemovalProof } from "../scripts/self/lib/legacy-removal-proof.mjs"
 
 const evidence = [{ path: "packages/webui/src/pages/Owner.tsx", line: 10 }]
 const complete = {

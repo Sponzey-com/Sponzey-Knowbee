@@ -6,10 +6,14 @@ import {
   getDefaultYeonjangWorkspaceScopeId,
   getYeonjangGatewayHostFingerprint,
 } from "./runtime-identity.js"
+import { YEONJANG_SESSION_STALE_AFTER_MS } from "../contracts/yeonjang-liveness-contract.js"
 
 const DEFAULT_LOCAL_NODE_ID = "yeonjang-main"
 const CURRENT_YEONJANG_PROTOCOL_VERSION = "2026-04-16.capability-matrix.v1"
-const YEONJANG_SESSION_STALE_MS = 90_000
+const SUPPORTED_YEONJANG_PROTOCOL_VERSIONS = new Set([
+  CURRENT_YEONJANG_PROTOCOL_VERSION,
+  "2",
+])
 const RESERVED_CALL_NAMES = new Set([
   "local",
   "remote",
@@ -259,6 +263,81 @@ export interface YeonjangRegistrySummary {
   localMarkerInstanceId: string | null
 }
 
+export interface YeonjangMqttV2StartupFenceResult {
+  readonly fencedInstanceCount: number
+}
+
+/**
+ * Fails closed any MQTT v2 liveness that survived only in SQLite across a
+ * Gateway restart. A fresh signed status observation is the sole operation
+ * allowed to make the instance live again; capability metadata remains useful
+ * for diagnosis but is not executable while methodCount is zero.
+ */
+export function fencePersistedYeonjangMqttV2LivenessAtStartup(
+  input: { readonly observedAt: number; readonly db?: Database.Database },
+): YeonjangMqttV2StartupFenceResult {
+  if (!Number.isSafeInteger(input.observedAt) || input.observedAt < 0) {
+    throw new Error("yeonjang_mqtt_v2_startup_fence_time_invalid")
+  }
+  const db = input.db ?? getDb()
+  const candidates = db
+    .prepare<[], { instance_id: string; protocol_version: string | null; transport_json: string | null }>(
+      "SELECT instance_id, protocol_version, transport_json FROM yeonjang_instances",
+    )
+    .all()
+    .filter((candidate) => {
+      const transport = parseJson<unknown>(candidate.transport_json)
+      return candidate.protocol_version === "2"
+        || (Array.isArray(transport) && transport.includes("mqtt_v2"))
+    })
+
+  let fencedInstanceCount = 0
+  const transaction = db.transaction(() => {
+    for (const candidate of candidates) {
+      const instanceWrite = db.prepare(
+        `UPDATE yeonjang_instances
+         SET connection_state = 'offline',
+             state_message = 'MQTT v2 fresh status required after broker startup.',
+             capability_hash = NULL,
+             method_count = 0,
+             updated_at = ?
+         WHERE instance_id = ?
+           AND (connection_state <> 'offline'
+             OR state_message <> 'MQTT v2 fresh status required after broker startup.'
+             OR state_message IS NULL
+             OR capability_hash IS NOT NULL
+             OR method_count <> 0)`,
+      ).run(input.observedAt, candidate.instance_id)
+      const sessionWrite = db.prepare(
+        `UPDATE yeonjang_instance_sessions
+         SET client_id = NULL,
+             session_state = 'offline',
+             session_message = 'MQTT v2 fresh status required after broker startup.',
+             last_seen_at = ?,
+             ended_at = COALESCE(ended_at, ?),
+             updated_at = ?
+         WHERE session_id = (
+           SELECT session_id
+           FROM yeonjang_instance_sessions
+           WHERE instance_id = ?
+           ORDER BY last_seen_at DESC, started_at DESC
+           LIMIT 1
+         )
+           AND (client_id IS NOT NULL
+             OR session_state <> 'offline'
+             OR session_message <> 'MQTT v2 fresh status required after broker startup.'
+             OR session_message IS NULL
+             OR ended_at IS NULL)`,
+      ).run(input.observedAt, input.observedAt, input.observedAt, candidate.instance_id)
+      if (instanceWrite.changes > 0 || sessionWrite.changes > 0) {
+        fencedInstanceCount += 1
+      }
+    }
+  })
+  transaction()
+  return Object.freeze({ fencedInstanceCount })
+}
+
 export interface YeonjangGovernanceEventView {
   id: string
   at: number
@@ -326,7 +405,7 @@ function asTransport(value: string[] | undefined): string[] {
 
 function isSessionLive(session: YeonjangSessionRow, now: number): boolean {
   if (session.ended_at != null) return false
-  return now - session.last_seen_at <= YEONJANG_SESSION_STALE_MS
+  return now - session.last_seen_at <= YEONJANG_SESSION_STALE_AFTER_MS
 }
 
 function isConflictSessionState(sessionState: string | null | undefined): boolean {
@@ -540,7 +619,10 @@ function resolveInstanceState(
   const duplicateLiveSessionDetected = liveSessions.length > 1
 
   if (!latestSession) return "discovered"
-  if (!instance.protocol_version || instance.protocol_version !== CURRENT_YEONJANG_PROTOCOL_VERSION)
+  if (
+    !instance.protocol_version
+    || !SUPPORTED_YEONJANG_PROTOCOL_VERSIONS.has(instance.protocol_version)
+  )
     return "update_required"
   if (
     !isSessionLive(latestSession, now) ||

@@ -6,7 +6,7 @@ import {
   buildWebUiLivePerformanceEvidence,
   compareLiveRequestsToStaticBaseline,
   sanitizeBrowserRequest,
-} from "../scripts/lib/webui-live-performance-evidence.mjs"
+} from "../scripts/self/lib/webui-live-performance-evidence.mjs"
 
 function collectedSample(profileId: string) {
   return {
@@ -104,7 +104,7 @@ describe("task004 WebUI live performance evidence", () => {
   })
 
   it("keeps the evidence contract free of environment, network, filesystem, and logging side effects", () => {
-    const source = readFileSync("scripts/lib/webui-live-performance-evidence.mjs", "utf8")
+    const source = readFileSync("scripts/self/lib/webui-live-performance-evidence.mjs", "utf8")
     expect(source).not.toMatch(/process\.env|fetch\(|readFile|writeFile/)
     expect(source).not.toMatch(/console\.|logger\./)
   })

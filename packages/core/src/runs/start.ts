@@ -63,6 +63,10 @@ import {
   projectMcpRuntimeHealthObservations,
   projectYeonjangRuntimeHealthObservations,
 } from "./runtime-capability-health.js"
+import {
+  resolveRunLlmRuntime,
+  toRunLlmRuntimePreflightFailure,
+} from "./run-llm-runtime-resolution.js"
 import { buildStartRootRunDriverDependencies } from "./start-driver-dependencies.js"
 import { createFirstResponseDeadline } from "./first-response-deadline.js"
 import { prepareStartLaunch } from "./start-launch.js"
@@ -84,6 +88,7 @@ import {
 } from "./topology-dispatch-fallback.js"
 import type { RootRun, TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
+import type { RecoveredExecutionAttempt } from "./execution-cycle-pass.js"
 
 const log = createLogger("runs:start")
 const syntheticApprovalScopes = new Set<string>()
@@ -138,6 +143,9 @@ export interface StartRootRunParams {
   includeScheduleMemory?: boolean | undefined
   memorySearchQuery?: string | undefined
   responseLanguageMode?: TaskStructuredRequest["response_language_mode"] | undefined
+  resumeExistingRun?: boolean | undefined
+  recoveredAttempt?: RecoveredExecutionAttempt | undefined
+  signal?: AbortSignal | undefined
 }
 
 export interface StartedRootRun {
@@ -251,6 +259,11 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
   const sessionId = params.sessionId ?? crypto.randomUUID()
   const runId = params.runId ?? crypto.randomUUID()
   const controller = new AbortController()
+  const abortFromParent = () => controller.abort()
+  if (params.signal?.aborted) controller.abort()
+  else params.signal?.addEventListener("abort", abortFromParent, {
+    once: true,
+  })
   const targetId = params.targetId?.trim() ? params.targetId : undefined
   const now = Date.now()
   const workDir = params.workDir ?? params.config.profile.workspace
@@ -278,6 +291,20 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       requestedProviderId: params.providerId,
       providerTrace,
     })
+    const attemptLlmRuntime = resolveRunLlmRuntime({
+      ...(params.provider ? { explicitProvider: params.provider } : {}),
+      ...(responseRuntime.providerId ? { providerId: responseRuntime.providerId } : {}),
+      ...(responseRuntime.model ? { model: responseRuntime.model } : {}),
+      resolver: {
+        resolveConfiguredProvider: ({ providerId }) => ({
+          provider: getProvider(providerId, runtimeConfig),
+          providerId,
+        }),
+      },
+    })
+    const attemptLlmRuntimeFailure = toRunLlmRuntimePreflightFailure(attemptLlmRuntime)
+    const attemptProvider =
+      attemptLlmRuntime.status === "ready" ? attemptLlmRuntime.provider : undefined
     const maxDelegationTurns = runtimeConfig.orchestration.maxDelegationTurns
     const parentAgentName = resolveMainAgentSelfName(
       runtimeConfig,
@@ -328,6 +355,15 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       ...(params.inboundMessage ? { inboundMessage: params.inboundMessage } : {}),
       config: runtimeConfig,
       hasRequestGroupExecutionQueue,
+      ...(params.resumeExistingRun
+        ? {
+            existingRun: (() => {
+              const existing = getRootRun(runId)
+              if (!existing) throw new Error("existing_root_run_resume_not_found")
+              return existing
+            })(),
+          }
+        : {}),
     })
     appendRunEvent(runId, `preflight_ms=${Date.now() - now}`)
     if (providerTrace) appendRunEvent(runId, formatProviderAuditTrace(providerTrace))
@@ -387,6 +423,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
         methodSnapshots: getMqttExtensionSnapshots().map((snapshot) => ({
           instanceId: snapshot.instanceId?.trim() || snapshot.extensionId,
           methods: [...snapshot.methods],
+          ...(snapshot.toolHealth ? { toolHealth: snapshot.toolHealth } : {}),
         })),
         observedAt: canonicalPolicySnapshotAt,
       }),
@@ -431,16 +468,8 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       },
       { readSource: readInstructionSkillSource },
     )
-    let capabilitySelectionAiProvider = params.provider
-    if (!capabilitySelectionAiProvider) {
-      try {
-        capabilitySelectionAiProvider = getProvider(responseRuntime.providerId, runtimeConfig)
-      } catch {
-        capabilitySelectionAiProvider = undefined
-      }
-    }
     const capabilitySelectionProvider = createRuntimeCapabilitySelectionProvider({
-      ...(capabilitySelectionAiProvider ? { provider: capabilitySelectionAiProvider } : {}),
+      ...(attemptProvider ? { provider: attemptProvider } : {}),
       ...(responseRuntime.model ? { model: responseRuntime.model } : {}),
       workDir,
       observabilityContext: { runId, requestGroupId, sessionId },
@@ -466,7 +495,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
           : {}),
         model: responseRuntime.model,
         ...(responseRuntime.providerId ? { providerId: responseRuntime.providerId } : {}),
-        ...(params.provider ? { provider: params.provider } : {}),
+        ...(attemptProvider ? { provider: attemptProvider } : {}),
         workDir,
         config: runtimeConfig,
         canonicalPolicyTools,
@@ -515,7 +544,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       message: params.message,
       ...(responseRuntime.model ? { model: responseRuntime.model } : {}),
       ...(responseRuntime.providerId ? { providerId: responseRuntime.providerId } : {}),
-      ...(params.provider ? { provider: params.provider } : {}),
+      ...(attemptProvider ? { provider: attemptProvider } : {}),
       ...(effectiveOnChunk ? { onChunk: effectiveOnChunk } : {}),
       ...(params.immediateCompletionText
         ? { immediateCompletionText: params.immediateCompletionText }
@@ -534,9 +563,9 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
     })
     appendRunEvent(
       runId,
-      `context_plan: memory=${contextPlan.memoryScopes.join(",")}; tools=${contextPlan.toolPolicy.toolsEnabled ? "enabled" : "disabled"}; yeonjang=${contextPlan.toolPolicy.requiresYeonjang ? "required" : "not_required"}`,
+      `context_plan: memory=${contextPlan.memoryScopes.join(",")}; tools=${contextPlan.toolPolicy.toolsEnabled ? "enabled" : "disabled"}; yeonjang=${contextPlan.toolPolicy.requiresYeonjang}`,
     )
-    const preflightFailure = contextPlan.preflightFailure
+    const preflightFailure = attemptLlmRuntimeFailure ?? contextPlan.preflightFailure
     if (preflightFailure) {
       const preflightResponseContext = buildStartPreflightResponseContext({
         originalRequest: params.message,
@@ -548,7 +577,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
           : {}),
         model: responseRuntime.model,
         ...(responseRuntime.providerId ? { providerId: responseRuntime.providerId } : {}),
-        ...(params.provider ? { provider: params.provider } : {}),
+        ...(attemptProvider ? { provider: attemptProvider } : {}),
         config: runtimeConfig,
         workDir,
         identityContext: finalResponseIdentityContext,
@@ -585,7 +614,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
           )
           try {
             if (shouldDispatchPreAnalyzedRootDelegation({
-              isRootRequest,
+              isRootRequest: isRootRequest && !params.resumeExistingRun,
               hasParentRun: Boolean(params.parentRunId),
               runScope: params.runScope,
               skipIntake: params.skipIntake === true,
@@ -607,7 +636,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
                 )
                 appendRunEvent(runId, "parent_run_awaiting_child_result:sub_agent_dispatch")
                 const diagnosisProviderResolution = createRuntimeDiagnosisProviderPair({
-                  provider: params.provider,
+                  provider: attemptProvider,
                   model: responseRuntime.model,
                   workDir,
                   observabilityContext: { runId, requestGroupId, sessionId },
@@ -769,7 +798,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
                 ...(params.intentEnvelope ? { intentEnvelope: params.intentEnvelope } : {}),
                 currentModel: responseRuntime.model,
                 currentProviderId: responseRuntime.providerId,
-                currentProvider: params.provider,
+                currentProvider: attemptProvider,
                 currentTargetId: targetId,
                 currentTargetLabel: params.targetLabel,
                 workDir,
@@ -797,6 +826,9 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
                 ...(driverTopologyRouting ? { topologyRouting: driverTopologyRouting } : {}),
                 syntheticApprovalRuntimeDependencies,
                 defaultMaxDelegationTurns: maxDelegationTurns,
+                ...(params.recoveredAttempt
+                  ? { recoveredAttempt: params.recoveredAttempt }
+                  : {}),
               },
               driverDependencies,
             )
@@ -841,7 +873,7 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
               : {}),
             model: responseRuntime.model,
             ...(responseRuntime.providerId ? { providerId: responseRuntime.providerId } : {}),
-            ...(params.provider ? { provider: params.provider } : {}),
+            ...(attemptProvider ? { provider: attemptProvider } : {}),
             config: runtimeConfig,
             workDir,
             identityContext: finalResponseIdentityContext,
@@ -870,6 +902,8 @@ export function startRootRun(params: StartRootRunParams): StartedRootRun {
       error: message,
     })
     return undefined
+  }).finally(() => {
+    params.signal?.removeEventListener("abort", abortFromParent)
   })
 
   return {

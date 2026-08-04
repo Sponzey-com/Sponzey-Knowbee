@@ -2,10 +2,36 @@ import { createServer } from "node:net";
 import aedesPackage from "aedes";
 import { createLogger, redactLogText } from "../logger/index.js";
 import { eventBus } from "../events/index.js";
-import { upsertYeonjangRegistryObservation } from "../yeonjang/registry.js";
+import { fencePersistedYeonjangMqttV2LivenessAtStartup, listYeonjangRegistryInstances, upsertYeonjangRegistryObservation, } from "../yeonjang/registry.js";
+import { admitYeonjangMqttV2Observation, deriveYeonjangMqttV2HmacKey, parseYeonjangMqttV2ObservationTopic, } from "../yeonjang/mqtt-v2-contract.js";
+import { projectYeonjangMqttV2CapabilitiesToRegistryObservation, projectYeonjangMqttV2StatusToRegistryObservation, } from "../yeonjang/mqtt-v2-registry-adapter.js";
+import { createMqttClientErrorLogThrottle } from "./client-error-log-throttle.js";
 function mqttBrokerErrorMessage(error) {
     const raw = error instanceof Error ? error.message : String(error);
     return redactLogText(raw);
+}
+/**
+ * Admits requester-scoped v2 routes against the immutable bootstrap identity.
+ * Observation topics are producer-owned and therefore carry no requester.
+ */
+export function admitMqttV2RequesterRoute(topic, configuredRequesterId) {
+    if (typeof topic !== "string")
+        return { ok: true, requesterId: null };
+    const segments = topic.split("/");
+    const isRequesterRoute = segments[0] === "yeonjang"
+        && segments[1] === "v2"
+        && segments[2] === "instances"
+        && segments[4] === "sessions"
+        && segments[6] === "requesters";
+    if (!isRequesterRoute)
+        return { ok: true, requesterId: null };
+    const requesterId = segments[7] ?? "";
+    const expected = configuredRequesterId.trim();
+    if (!expected)
+        return { ok: false, reasonCode: "mqtt_v2_requester_config_required" };
+    if (requesterId !== expected)
+        return { ok: false, reasonCode: "mqtt_v2_requester_mismatch" };
+    return { ok: true, requesterId };
 }
 const log = createLogger("mqtt:broker");
 const MQTT_DISABLED_REASON = "MQTT 브로커가 비활성화되어 있습니다.";
@@ -18,10 +44,32 @@ let server = null;
 const activeClientsById = new Map();
 const claimedExtensionOwners = new Map();
 const claimedExtensionsByClient = new Map();
+// Aedes can authorize initial subscriptions before emitting `clientReady` and
+// can expose different Client wrappers across those callbacks. A monotonic
+// authentication generation binds early route admission to the matching active
+// client lifecycle without trusting the reusable client ID by itself.
+const authenticatedClientGenerationById = new Map();
+const activeClientGenerationById = new Map();
+const admittedMqttV2RequesterGenerationById = new Map();
+let nextMqttClientAuthenticationGeneration = 1;
 const extensionSnapshots = new Map();
+// MQTT v2 sequences are monotonic only within one authenticated publisher
+// connection. A Yeonjang runtime restart can preserve its stable session and
+// client identities while legitimately restarting both sequence streams at 1.
+// Keep the transport generation beside each stream instead of treating a
+// process-local snapshot sequence as durable truth across reconnects.
+const mqttV2StatusGenerationByExtensionId = new Map();
+const mqttV2CapabilitiesGenerationByExtensionId = new Map();
 const exchangeLogs = [];
 const MAX_EXCHANGE_LOGS = 120;
 let exchangeLogSequence = 0;
+let mqttV2ObservationHmacKey = null;
+let mqttV2LivenessSweepTimer = null;
+const MQTT_V2_LIVENESS_SWEEP_INTERVAL_MS = 1_000;
+const clientErrorLogThrottle = createMqttClientErrorLogThrottle({
+    windowMs: 30_000,
+    maxKeys: 64,
+});
 const SNAPSHOT_DEFAULTS = {
     enabled: false,
     running: false,
@@ -47,7 +95,7 @@ function buildSnapshot(overrides) {
         clientCount: overrides.clientCount ?? base.clientCount,
         authEnabled: overrides.authEnabled ?? base.authEnabled,
         allowAnonymous: overrides.allowAnonymous ?? base.allowAnonymous,
-        reason: overrides.reason ?? base.reason,
+        reason: overrides.reason !== undefined ? overrides.reason : base.reason,
     };
 }
 function setSnapshot(overrides) {
@@ -73,6 +121,19 @@ function allowsAnonymousConnections(config) {
 }
 function createAuthError() {
     return Object.assign(new Error("MQTT 인증에 실패했습니다."), { returnCode: 5 });
+}
+function recordAuthenticatedMqttClient(client) {
+    const clientId = client?.id?.trim();
+    if (!clientId)
+        return;
+    const generation = nextMqttClientAuthenticationGeneration;
+    nextMqttClientAuthenticationGeneration += 1;
+    authenticatedClientGenerationById.set(clientId, generation);
+    admittedMqttV2RequesterGenerationById.delete(clientId);
+}
+/** Keeps broker credential failure distinct from exact requester admission. */
+export function createMqttV2RequesterRouteError(reasonCode) {
+    return Object.assign(new Error(`MQTT v2 requester route rejected: ${reasonCode}`), { code: reasonCode, returnCode: 5 });
 }
 function parseExtensionTopic(topic) {
     if (typeof topic !== "string")
@@ -121,10 +182,16 @@ function rememberExtensionClaim(extensionId, clientId) {
         lastSeenAt: Date.now(),
     });
 }
-function releaseExtensionClaimsForClient(clientId) {
+function releaseExtensionClaimsForClient(clientId, client) {
     const normalizedClientId = clientId?.trim();
     if (!normalizedClientId)
         return;
+    if (client && activeClientsById.get(normalizedClientId) !== client)
+        return;
+    authenticatedClientGenerationById.delete(normalizedClientId);
+    activeClientGenerationById.delete(normalizedClientId);
+    admittedMqttV2RequesterGenerationById.delete(normalizedClientId);
+    activeClientsById.delete(normalizedClientId);
     const claimed = claimedExtensionsByClient.get(normalizedClientId);
     if (!claimed)
         return;
@@ -153,7 +220,6 @@ function releaseExtensionClaimsForClient(clientId) {
         }
     }
     claimedExtensionsByClient.delete(normalizedClientId);
-    activeClientsById.delete(normalizedClientId);
 }
 function clearExtensionClaims() {
     const now = Date.now();
@@ -163,11 +229,22 @@ function clearExtensionClaims() {
             clientId: null,
             state: "offline",
             message: "MQTT broker is stopped.",
+            // A broker lifecycle boundary starts a new observation epoch. Durable
+            // observedAt still rejects old status after restart; process-local
+            // sequence projections must not reject a producer's fresh reannounce.
+            v2StatusSequence: null,
+            v2CapabilitiesSequence: null,
+            v2StatusExpiresAt: null,
             lastSeenAt: now,
         });
         persistYeonjangRegistrySnapshot(extensionSnapshots.get(extensionId) ?? current);
     }
     activeClientsById.clear();
+    authenticatedClientGenerationById.clear();
+    activeClientGenerationById.clear();
+    admittedMqttV2RequesterGenerationById.clear();
+    mqttV2StatusGenerationByExtensionId.clear();
+    mqttV2CapabilitiesGenerationByExtensionId.clear();
     claimedExtensionOwners.clear();
     claimedExtensionsByClient.clear();
 }
@@ -431,6 +508,8 @@ function handleBrokerPublish(packet, client) {
     const topic = typeof packet?.topic === "string" ? packet.topic : null;
     if (!topic)
         return;
+    if (handleMqttV2Observation(packet, client, topic))
+        return;
     const ref = parseExtensionTopic(topic);
     if (!ref)
         return;
@@ -447,6 +526,241 @@ function handleBrokerPublish(packet, client) {
     if (ref.kind === "status" || ref.kind === "capabilities") {
         updateExtensionSnapshotFromPayload(ref.extensionId, clientId, ref.kind, payload);
     }
+}
+function handleMqttV2Observation(packet, client, topic) {
+    const topicRef = parseYeonjangMqttV2ObservationTopic(topic);
+    if (!topicRef)
+        return false;
+    const clientId = client?.id?.trim() || null;
+    const activeGeneration = clientId ? activeClientGenerationById.get(clientId) : undefined;
+    if (!clientId
+        || activeClientsById.get(clientId) !== client
+        || activeGeneration === undefined
+        || admittedMqttV2RequesterGenerationById.get(clientId) !== activeGeneration) {
+        log.debug("MQTT v2 observation rejected: requester_route_binding_unavailable");
+        return true;
+    }
+    const key = mqttV2ObservationHmacKey;
+    const payload = Buffer.isBuffer(packet.payload)
+        ? packet.payload
+        : packet.payload instanceof Uint8Array
+            ? Buffer.from(packet.payload)
+            : null;
+    if (!key || !payload) {
+        log.debug("MQTT v2 observation rejected: yeonjang_v2_observation_key_or_payload_unavailable");
+        return true;
+    }
+    const admitted = admitYeonjangMqttV2Observation({
+        topic,
+        payload,
+        retained: packet.retain === true,
+        nowMs: Date.now(),
+        hmacKey: key,
+    });
+    if (!admitted.ok) {
+        log.debug(`MQTT v2 observation rejected: ${admitted.reasonCode}`);
+        return true;
+    }
+    const existing = listYeonjangRegistryInstances().find((instance) => instance.instanceId === admitted.observation.instanceId) ?? null;
+    const previous = extensionSnapshots.get(admitted.observation.instanceId);
+    if (admitted.observation.kind === "capabilities") {
+        if (mqttV2CapabilitiesGenerationByExtensionId.get(admitted.observation.instanceId)
+            === activeGeneration
+            &&
+                previous?.sessionId === admitted.observation.sessionId
+            && previous.v2CapabilitiesSequence != null
+            && admitted.observation.sequence <= previous.v2CapabilitiesSequence) {
+            log.debug("MQTT v2 capabilities rejected: stale_or_duplicate_sequence");
+            return true;
+        }
+        const observation = projectYeonjangMqttV2CapabilitiesToRegistryObservation({
+            capabilities: admitted.observation,
+            clientId,
+            existing,
+        });
+        const written = upsertYeonjangRegistryObservation(observation);
+        if (!written.ok) {
+            log.debug(`MQTT v2 registry projection rejected: ${written.code}`);
+            return true;
+        }
+        mqttV2CapabilitiesGenerationByExtensionId.set(admitted.observation.instanceId, activeGeneration);
+        const capabilityMatrix = observation.capabilityMatrix ?? null;
+        extensionSnapshots.set(admitted.observation.instanceId, {
+            extensionId: admitted.observation.instanceId,
+            clientId,
+            displayName: existing?.displayName ?? admitted.observation.instanceId,
+            instanceId: admitted.observation.instanceId,
+            instanceAlias: existing?.instanceAlias ?? admitted.observation.instanceId,
+            normalizedCallName: existing?.normalizedCallName ?? admitted.observation.instanceId,
+            nodeId: existing?.nodeId ?? admitted.observation.instanceId,
+            supportProfile: existing?.supportProfile ?? "desktop_interactive",
+            configuredSupportProfile: previous?.configuredSupportProfile ?? null,
+            supportProfileReasonCodes: previous?.supportProfileReasonCodes ?? [],
+            interactiveDesktopAvailable: previous?.interactiveDesktopAvailable ?? null,
+            trayRuntimeAvailable: previous?.trayRuntimeAvailable ?? null,
+            state: previous?.state ?? existing?.state ?? "discovered",
+            message: observation.message ?? null,
+            version: existing?.version ?? null,
+            protocolVersion: "2",
+            gitTag: null,
+            gitCommit: null,
+            buildTarget: null,
+            platform: admitted.observation.platform,
+            os: admitted.observation.platform,
+            arch: existing?.arch ?? null,
+            transport: ["mqtt_v2"],
+            capabilityHash: null,
+            methods: [...admitted.observation.advertisedMethods],
+            sessionId: admitted.observation.sessionId,
+            startupMode: null,
+            windowMode: null,
+            trayState: null,
+            trustState: existing?.trustState ?? "pending",
+            workspaceScopeId: existing?.workspaceScopeId ?? null,
+            pairingFingerprint: null,
+            hostFingerprint: null,
+            installFingerprint: null,
+            targetFingerprint: admitted.observation.targetFingerprint,
+            v2StatusSequence: previous?.sessionId === admitted.observation.sessionId
+                ? previous.v2StatusSequence ?? null
+                : null,
+            v2CapabilitiesSequence: admitted.observation.sequence,
+            v2StatusExpiresAt: previous?.sessionId === admitted.observation.sessionId
+                ? previous.v2StatusExpiresAt ?? null
+                : null,
+            ...(capabilityMatrix ? { capabilityMatrix } : {}),
+            lastCapabilityRefreshAt: admitted.observation.observedAt,
+            lastSeenAt: admitted.observation.observedAt,
+        });
+        return true;
+    }
+    if (mqttV2StatusGenerationByExtensionId.get(admitted.observation.instanceId)
+        === activeGeneration
+        &&
+            previous?.sessionId === admitted.observation.sessionId
+        && previous.v2StatusSequence != null
+        && admitted.observation.sequence <= previous.v2StatusSequence) {
+        log.debug("MQTT v2 status rejected: stale_or_duplicate_sequence");
+        return true;
+    }
+    if (existing?.session?.sessionId === admitted.observation.sessionId
+        && admitted.observation.observedAt < existing.session.lastSeenAt) {
+        log.debug("MQTT v2 status rejected: stale_durable_observation");
+        return true;
+    }
+    const observation = projectYeonjangMqttV2StatusToRegistryObservation({
+        status: admitted.observation,
+        clientId,
+        existing,
+    });
+    const written = upsertYeonjangRegistryObservation(observation);
+    if (!written.ok) {
+        log.debug(`MQTT v2 registry projection rejected: ${written.code}`);
+        return true;
+    }
+    mqttV2StatusGenerationByExtensionId.set(admitted.observation.instanceId, activeGeneration);
+    extensionSnapshots.set(admitted.observation.instanceId, {
+        extensionId: admitted.observation.instanceId,
+        clientId,
+        displayName: existing?.displayName ?? admitted.observation.instanceId,
+        instanceId: admitted.observation.instanceId,
+        instanceAlias: existing?.instanceAlias ?? admitted.observation.instanceId,
+        normalizedCallName: existing?.normalizedCallName ?? admitted.observation.instanceId,
+        nodeId: existing?.nodeId ?? admitted.observation.instanceId,
+        supportProfile: existing?.supportProfile ?? "desktop_interactive",
+        configuredSupportProfile: previous?.configuredSupportProfile ?? null,
+        supportProfileReasonCodes: previous?.supportProfileReasonCodes ?? [],
+        interactiveDesktopAvailable: previous?.interactiveDesktopAvailable ?? null,
+        trayRuntimeAvailable: previous?.trayRuntimeAvailable ?? null,
+        state: admitted.observation.state,
+        message: observation.message ?? null,
+        version: existing?.version ?? null,
+        protocolVersion: "2",
+        gitTag: null,
+        gitCommit: null,
+        buildTarget: null,
+        platform: existing?.platform ?? null,
+        os: existing?.platform ?? null,
+        arch: existing?.arch ?? null,
+        transport: ["mqtt_v2"],
+        capabilityHash: null,
+        methods: [],
+        sessionId: admitted.observation.sessionId,
+        startupMode: null,
+        windowMode: null,
+        trayState: null,
+        trustState: existing?.trustState ?? "pending",
+        workspaceScopeId: existing?.workspaceScopeId ?? null,
+        pairingFingerprint: null,
+        hostFingerprint: null,
+        installFingerprint: null,
+        targetFingerprint: admitted.observation.targetFingerprint,
+        v2StatusSequence: admitted.observation.sequence,
+        v2CapabilitiesSequence: previous?.sessionId === admitted.observation.sessionId
+            ? previous.v2CapabilitiesSequence ?? null
+            : null,
+        v2StatusExpiresAt: admitted.observation.expiresAt,
+        lastCapabilityRefreshAt: null,
+        lastSeenAt: admitted.observation.observedAt,
+    });
+    eventBus.emit("yeonjang.heartbeat", {
+        extensionId: admitted.observation.instanceId,
+        state: admitted.observation.state,
+        message: observation.message ?? null,
+        lastSeenAt: admitted.observation.observedAt,
+        methodCount: 0,
+        capabilityHash: null,
+    });
+    return true;
+}
+export function expireMqttV2Observations(nowMs) {
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+        throw new Error("mqtt_v2_liveness_sweep_time_invalid");
+    }
+    let expiredCount = 0;
+    for (const [extensionId, current] of extensionSnapshots) {
+        if (current.protocolVersion !== "2"
+            || current.state === "offline"
+            || current.v2StatusExpiresAt == null
+            || current.v2StatusExpiresAt > nowMs)
+            continue;
+        const next = {
+            ...current,
+            clientId: null,
+            state: "offline",
+            message: "MQTT v2 status expired.",
+            methods: [],
+            lastCapabilityRefreshAt: null,
+            lastSeenAt: nowMs,
+            v2StatusExpiresAt: null,
+        };
+        extensionSnapshots.set(extensionId, next);
+        persistYeonjangRegistrySnapshot(next);
+        eventBus.emit("yeonjang.heartbeat", {
+            extensionId,
+            state: "offline",
+            message: next.message,
+            lastSeenAt: nowMs,
+            methodCount: 0,
+            capabilityHash: next.capabilityHash ?? null,
+        });
+        expiredCount += 1;
+    }
+    return Object.freeze({ expiredCount });
+}
+function startMqttV2LivenessSweep() {
+    if (mqttV2LivenessSweepTimer)
+        return;
+    mqttV2LivenessSweepTimer = setInterval(() => {
+        expireMqttV2Observations(Date.now());
+    }, MQTT_V2_LIVENESS_SWEEP_INTERVAL_MS);
+    mqttV2LivenessSweepTimer.unref?.();
+}
+function stopMqttV2LivenessSweep() {
+    if (!mqttV2LivenessSweepTimer)
+        return;
+    clearInterval(mqttV2LivenessSweepTimer);
+    mqttV2LivenessSweepTimer = null;
 }
 function disconnectClient(client) {
     if (!client)
@@ -509,6 +823,7 @@ function createAedesBroker(config) {
     const options = {
         authenticate(client, username, password, done) {
             if (!authRequired) {
+                recordAuthenticatedMqttClient(client);
                 done(null, true);
                 return;
             }
@@ -517,10 +832,12 @@ function createAedesBroker(config) {
             const matches = providedUsername === config.username &&
                 providedPassword === config.password;
             if (matches) {
+                recordAuthenticatedMqttClient(client);
                 done(null, true);
                 return;
             }
             if (allowAnonymous && providedUsername === "" && providedPassword === "") {
+                recordAuthenticatedMqttClient(client);
                 done(null, true);
                 return;
             }
@@ -529,6 +846,11 @@ function createAedesBroker(config) {
             done(createAuthError(), false);
         },
         authorizePublish(client, packet, done) {
+            const v2Requester = admitMqttV2RequesterRoute(packet?.topic, config.yeonjangV2?.requesterId ?? "");
+            if (!v2Requester.ok) {
+                done(createMqttV2RequesterRouteError(v2Requester.reasonCode));
+                return;
+            }
             const ref = parseExtensionTopic(packet?.topic);
             if (ref && ref.kind !== "request") {
                 const error = enforceUniqueExtensionClaim(client, ref.extensionId, "publish");
@@ -540,6 +862,22 @@ function createAedesBroker(config) {
             done(null);
         },
         authorizeSubscribe(client, subscription, done) {
+            const v2Requester = admitMqttV2RequesterRoute(subscription?.topic, config.yeonjangV2?.requesterId ?? "");
+            if (!v2Requester.ok) {
+                done(createMqttV2RequesterRouteError(v2Requester.reasonCode));
+                return;
+            }
+            if (v2Requester.requesterId) {
+                const clientId = client?.id?.trim();
+                const generation = clientId
+                    ? authenticatedClientGenerationById.get(clientId)
+                    : undefined;
+                if (!clientId || generation === undefined) {
+                    done(createAuthError());
+                    return;
+                }
+                admittedMqttV2RequesterGenerationById.set(clientId, generation);
+            }
             const ref = parseExtensionTopic(subscription?.topic);
             if (ref && ref.kind === "request") {
                 const error = enforceUniqueExtensionClaim(client, ref.extensionId, "subscribe");
@@ -574,12 +912,20 @@ export async function startMqttBroker(config) {
         reason: config.enabled ? validationError : MQTT_DISABLED_REASON,
     });
     if (!config.enabled || validationError) {
+        stopMqttV2LivenessSweep();
+        clearMqttV2ObservationKey();
         return;
     }
+    clearMqttV2ObservationKey();
+    mqttV2ObservationHmacKey = deriveYeonjangMqttV2HmacKey(Buffer.from(config.password, "utf8"));
     if (server && broker) {
         syncClientCount();
         setSnapshot({ running: true, reason: null });
         return;
+    }
+    const startupFence = fencePersistedYeonjangMqttV2LivenessAtStartup({ observedAt: Date.now() });
+    if (startupFence.fencedInstanceCount > 0) {
+        log.info(`MQTT v2 persisted liveness fenced at broker startup (count=${startupFence.fencedInstanceCount})`);
     }
     const brokerInstance = createAedesBroker(config);
     const tcpServer = createServer((socket) => {
@@ -590,11 +936,14 @@ export async function startMqttBroker(config) {
         const clientId = client?.id?.trim();
         if (clientId && client) {
             activeClientsById.set(clientId, client);
+            const generation = authenticatedClientGenerationById.get(clientId);
+            if (generation !== undefined)
+                activeClientGenerationById.set(clientId, generation);
         }
         syncClientCount();
     });
     brokerInstance.on("clientDisconnect", (client) => {
-        releaseExtensionClaimsForClient(client?.id);
+        releaseExtensionClaimsForClient(client?.id, client);
         syncClientCount();
     });
     brokerInstance.on("publish", (packet, client) => {
@@ -603,7 +952,11 @@ export async function startMqttBroker(config) {
     brokerInstance.on("clientError", (client, error) => {
         const clientId = client?.id ?? "unknown";
         const message = mqttBrokerErrorMessage(error);
-        log.warn(`MQTT client error (${clientId}): ${message}`);
+        const decision = clientErrorLogThrottle.admit(`${clientId}:${message}`);
+        if (decision.emit) {
+            const suppression = decision.suppressed > 0 ? ` (suppressed=${decision.suppressed})` : "";
+            log.warn(`MQTT client error (${clientId}): ${message}${suppression}`);
+        }
     });
     brokerInstance.on("connectionError", (client, error) => {
         const clientId = client?.id ?? "unknown";
@@ -611,6 +964,7 @@ export async function startMqttBroker(config) {
         log.warn(`MQTT connection error (${clientId}): ${message}`);
     });
     brokerInstance.on("closed", () => {
+        stopMqttV2LivenessSweep();
         clearExtensionClaims();
         setSnapshot({
             running: false,
@@ -642,6 +996,7 @@ export async function startMqttBroker(config) {
         });
     }
     catch (error) {
+        stopMqttV2LivenessSweep();
         tcpServer.removeAllListeners();
         brokerInstance.close();
         const message = mqttBrokerErrorMessage(error);
@@ -654,18 +1009,22 @@ export async function startMqttBroker(config) {
     }
     broker = brokerInstance;
     server = tcpServer;
+    startMqttV2LivenessSweep();
     syncClientCount();
     setSnapshot({ running: true, reason: null });
     log.info(`MQTT broker listening on mqtt://${config.host}:${config.port}` +
         ` (auth=${authEnabled ? "enabled" : "disabled"}, anonymous=${allowAnonymous ? "allowed" : "disabled"})`);
 }
 export async function stopMqttBroker() {
+    stopMqttV2LivenessSweep();
     const activeServer = server;
     const activeBroker = broker;
     server = null;
     broker = null;
-    if (activeServer) {
-        await new Promise((resolve, reject) => {
+    // Stop accepting new sockets immediately, but let the broker close the
+    // connections it owns before awaiting Node's active-socket drain callback.
+    const serverClosing = activeServer
+        ? new Promise((resolve, reject) => {
             activeServer.close((error) => {
                 if (error) {
                     reject(error);
@@ -673,14 +1032,17 @@ export async function stopMqttBroker() {
                 }
                 resolve();
             });
-        });
-    }
+        })
+        : Promise.resolve();
     if (activeBroker) {
         await new Promise((resolve) => {
             activeBroker.close(resolve);
         });
     }
+    await serverClosing;
     clearExtensionClaims();
+    clearMqttV2ObservationKey();
+    clientErrorLogThrottle.clear();
     setSnapshot({
         running: false,
         clientCount: 0,
@@ -689,6 +1051,10 @@ export async function stopMqttBroker() {
     if (snapshot.enabled) {
         log.info("MQTT broker stopped");
     }
+}
+function clearMqttV2ObservationKey() {
+    mqttV2ObservationHmacKey?.fill(0);
+    mqttV2ObservationHmacKey = null;
 }
 export function getMqttBrokerSnapshot() {
     return { ...snapshot };

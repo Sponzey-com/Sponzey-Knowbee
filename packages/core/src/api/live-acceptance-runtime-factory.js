@@ -114,6 +114,7 @@ export function createLiveAcceptanceRuntimeFactory(input) {
         return createPreflightedLiveAcceptanceExecutor({
             now,
             maxYeonjangAgeMs: policy.maxYeonjangInstanceAgeMs,
+            inspectRuntimeIdentity: input.inspectRuntimeIdentity,
             captureSnapshot: (capturedAt) => captureLiveAcceptanceRuntimeSnapshot({ capturedAt, readers }),
             executeVerified,
         });

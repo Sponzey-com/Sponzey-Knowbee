@@ -249,6 +249,17 @@ function harness(readers = snapshotReaders()) {
   }
   const factory = createLiveAcceptanceRuntimeFactory({
     readers,
+    inspectRuntimeIdentity: () => ({
+      status: "verified",
+      receipt: {
+        buildId: "build:172",
+        bundleSha256: `sha256:${"b".repeat(64)}`,
+        processStartedAt: new Date(NOW - 500).toISOString(),
+        artifactBuiltAt: new Date(NOW - 1_000).toISOString(),
+        buildRequired: false,
+        restartRequired: false,
+      },
+    }),
     dispatcher: { dispatch, dispatchAgentScoped } as never,
     webContextFor: ({ runId, signal }) => ({ ...baseContext, runId, signal }),
     extensionBaseContextFor: ({ runId }) => ({

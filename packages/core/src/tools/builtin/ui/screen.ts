@@ -258,7 +258,7 @@ export const screenCaptureTool: AgentTool<ScreenCaptureParams> = {
     } catch (error) {
       if (!isYeonjangUnavailableError(error)) {
         const message = toolUserFacingErrorMessage(error)
-        const classified = classifyYeonjangScreenCaptureFailure(message)
+        const classified = classifyYeonjangScreenCaptureFailure(error, message)
         return {
           success: false,
           output: classified.output,

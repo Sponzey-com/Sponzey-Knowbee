@@ -128,6 +128,72 @@ function createParams() {
 }
 
 describe("run execution cycle pass", () => {
+  it("enters post-execution review from one recovered canonical attempt without executing it again", async () => {
+    const params = createParams()
+    params.state.recoveredAttempt = {
+      preview: "A verified camera artifact was recovered.",
+      canonicalAttemptEvidenceRefs: [
+        "artifact:11111111-1111-4111-8111-111111111111",
+      ],
+      successfulFileDeliveries: [{
+        toolName: "telegram_send_file",
+        channel: "telegram",
+        filePath: "/tmp/recovered-camera.jpg",
+      }],
+    }
+    params.wantsDirectArtifactDelivery = true
+    params.executionSemantics.artifactDelivery = "direct"
+    const dependencies = createDependencies()
+    const runExecutionAttemptPass = vi.fn()
+    const runPostExecutionPass = vi.fn(async () => ({
+      kind: "retry" as const,
+      nextMessage: "Deliver the verified artifact.",
+      clearWorkerRuntime: false,
+    }))
+
+    const result = await runExecutionCyclePass(params, dependencies, {
+      runExecutionAttemptPass,
+      runRecoveryEntryPass: vi.fn(async () => ({ kind: "continue" as const })),
+      applyRecoveryEntryPassResult: vi.fn(() => ({ kind: "continue" as const })),
+      runPostExecutionPass,
+      applyPostExecutionPassResult: vi.fn(() => ({
+        kind: "retry" as const,
+        state: {
+          currentMessage: "Deliver the verified artifact.",
+          filesystemMutationRecoveryAttempted: false,
+          activeWorkerRuntime: undefined,
+        },
+      })),
+      runReviewCyclePass: vi.fn(),
+      applyReviewCyclePassResult: vi.fn(),
+    } as never)
+
+    expect(runExecutionAttemptPass).not.toHaveBeenCalled()
+    expect(dependencies.recordCanonicalAttempt).not.toHaveBeenCalled()
+    expect(runPostExecutionPass).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preview: "A verified camera artifact was recovered.",
+        wantsDirectArtifactDelivery: true,
+        successfulFileDeliveries: [{
+          toolName: "telegram_send_file",
+          channel: "telegram",
+          filePath: "/tmp/recovered-camera.jpg",
+        }],
+      }),
+      expect.anything(),
+    )
+    expect(dependencies.recordCanonicalRecoveryReentry).toHaveBeenCalledOnce()
+    expect(result).toMatchObject({
+      kind: "retry",
+      state: {
+        currentMessage: "Deliver the verified artifact.",
+      },
+    })
+    expect((result as { state?: ExecutionCycleState }).state).not.toHaveProperty(
+      "recoveredAttempt",
+    )
+  })
+
   it("disables Tool execution for a forbidden next-attempt policy", async () => {
     const params = createParams()
     params.state.nextAttemptToolPolicy = { mode: "forbidden" }
@@ -262,6 +328,18 @@ describe("run execution cycle pass", () => {
     })
     expect(moduleDependencies.runPostExecutionPass).not.toHaveBeenCalled()
     expect(moduleDependencies.runReviewCyclePass).not.toHaveBeenCalled()
+    expect(moduleDependencies.runRecoveryEntryPass).toHaveBeenCalledWith(
+      expect.objectContaining({
+        responseContext: expect.objectContaining({
+          originalRequest: "do work",
+          model: "gpt-5",
+          providerId: "provider:openai",
+          config: DEFAULT_CONFIG,
+          workDir: "/tmp",
+        }),
+      }),
+      expect.anything(),
+    )
   })
 
   it("returns retry when review cycle asks for followup", async () => {

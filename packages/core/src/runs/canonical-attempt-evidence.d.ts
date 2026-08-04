@@ -12,6 +12,15 @@ export declare function buildCanonicalAttemptEvidenceDescriptor(input: {
     attempt: ExecutionAttemptPassResult;
     successfulToolNames: string[];
 }): CanonicalAttemptEvidenceDescriptor;
+export declare function buildCanonicalRecoveredAttemptEvidenceDescriptor(input: {
+    runId: string;
+    continuationId: string;
+    toolName: string;
+    operationId: string;
+    operationBindingHash: `sha256:${string}`;
+    persistedToolResultContent: string;
+    evidenceRefs?: readonly string[];
+}): CanonicalAttemptEvidenceDescriptor;
 interface PersistedAttemptReceipt {
     workId: string;
     kind: string;

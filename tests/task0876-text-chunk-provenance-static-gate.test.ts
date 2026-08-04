@@ -22,7 +22,7 @@ describe("task0876 text chunk provenance static gate", () => {
       expect(textChunkLiterals.length, file).toBeGreaterThan(0)
       for (const literal of textChunkLiterals) {
         expect(literal[0], file).toMatch(
-          /textSource:\s*["'](?:llm_generated|llm_reviewed|runtime_deterministic|user_supplied_literal|mixed)["']/,
+          /textSource:\s*(?:["'](?:llm_generated|llm_reviewed|runtime_deterministic|user_supplied_literal|mixed)["']|params\.textSource\s*\?\?\s*["']llm_reviewed["'])/,
         )
       }
     }

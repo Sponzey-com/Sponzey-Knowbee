@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { evaluateCompletionReviewCriterionGate, evaluateCompletionReviewTerminalGate, } from "../agent/completion-review.js";
 import { canonicalWorkIdForRootRun } from "../contracts/canonical-work-aggregate.js";
+import { parseUserInputRequirement } from "../contracts/user-input-requirement.js";
 export function buildCanonicalPolicyBlockedDescriptor(input) {
     const runId = required(input.runId, "Run ID");
     const reasonCode = required(input.reasonCode, "Policy reason code");
@@ -373,9 +374,16 @@ export function buildCanonicalCompletionOutcomeDescriptor(input) {
         };
     }
     if (input.application.kind === "awaiting_user") {
+        const requirement = parseUserInputRequirement(input.application.inputRequirement);
+        if (!requirement) {
+            return { ok: false, reasonCode: "canonical_user_input_evidence_missing" };
+        }
+        const missingFieldFingerprints = requirement.missingFields
+            .map((field) => `sha256:${hash(field)}`)
+            .sort();
         const requirementFingerprint = `sha256:${hash(JSON.stringify({
-            reason: input.application.reason ?? "",
-            remainingItems: input.application.remainingItems ?? [],
+            resolutionKind: requirement.resolutionKind,
+            missingFieldFingerprints,
         }))}`;
         return {
             ok: true,
@@ -383,13 +391,22 @@ export function buildCanonicalCompletionOutcomeDescriptor(input) {
                 runId,
                 workId,
                 event: "INPUT_REQUIRED",
+                waitingKind: "user_input",
                 receipt: buildReceipt({
                     runId,
                     workId,
                     stage: "input-requirement",
                     kind: "input_requirement",
-                    evidence: { previewFingerprint, requirementFingerprint },
-                    evidenceRefs: [`input-requirement:${runId}:${requirementFingerprint.slice(-24)}`],
+                    evidence: {
+                        previewFingerprint,
+                        requirementFingerprint,
+                        resolutionKind: requirement.resolutionKind,
+                        missingFieldFingerprints,
+                    },
+                    evidenceRefs: [
+                        `input-requirement:${runId}:${requirementFingerprint.slice(-24)}`,
+                        ...missingFieldFingerprints.map((fieldFingerprint) => `missing-field:${fieldFingerprint.slice(-24)}`),
+                    ],
                 }),
             },
         };

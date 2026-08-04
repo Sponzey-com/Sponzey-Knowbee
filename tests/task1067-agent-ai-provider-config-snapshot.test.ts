@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
+import { functionParameterTypes } from "./fixtures/typescript-source-contract.ts"
 
 function source(path: string): string {
   return readFileSync(path, "utf-8")
@@ -11,12 +12,12 @@ describe("task1067 agent AI provider config snapshot", () => {
 
     expect(aiSource).toContain("export type AIProviderConfigSnapshot = Pick<KnowbeeConfig, \"ai\">")
     expect(aiSource).toContain("getActiveAIConnection(config: AIProviderConfigSnapshot)")
-    expect(aiSource).toContain("resolveProviderResolutionSnapshot(providerId: string | undefined, config: AIProviderConfigSnapshot)")
-    expect(aiSource).toContain("detectAvailableProvider(config: AIProviderConfigSnapshot)")
-    expect(aiSource).toContain("getDefaultModel(config: AIProviderConfigSnapshot)")
-    expect(aiSource).toContain("inferProviderId(_model: string, config: AIProviderConfigSnapshot)")
-    expect(aiSource).toContain("getProvider(providerId: string | undefined, config: AIProviderConfigSnapshot)")
-    expect(aiSource).toContain("shouldForceReasoningMode(providerId: string, model: string, config: AIProviderConfigSnapshot)")
+    expect(functionParameterTypes(aiSource, "resolveProviderResolutionSnapshot")[0]).toEqual(["string | undefined", "AIProviderConfigSnapshot"])
+    expect(functionParameterTypes(aiSource, "detectAvailableProvider")[0]).toEqual(["AIProviderConfigSnapshot"])
+    expect(functionParameterTypes(aiSource, "getDefaultModel")[0]).toEqual(["AIProviderConfigSnapshot"])
+    expect(functionParameterTypes(aiSource, "inferProviderId")[0]).toEqual(["string", "AIProviderConfigSnapshot"])
+    expect(functionParameterTypes(aiSource, "getProvider")[0]).toEqual(["string | undefined", "AIProviderConfigSnapshot"])
+    expect(functionParameterTypes(aiSource, "shouldForceReasoningMode")[0]).toEqual(["string", "string", "AIProviderConfigSnapshot"])
     expect(aiSource).not.toContain("getConfig()")
   })
 

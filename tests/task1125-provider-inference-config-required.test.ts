@@ -9,6 +9,7 @@ describe("task1125 provider inference config boundary", () => {
     expect(aiSource).toContain("inferProviderId(_model: string, config: AIProviderConfigSnapshot): string")
     expect(aiSource).toContain("return detectAvailableProvider(config)")
     expect(aiSource).not.toContain("inferProviderId(_model: string, config?: AIProviderConfigSnapshot)")
-    expect(aiRegressionSource).toContain("inferProviderId(_model: string, config: AIProviderConfigSnapshot)")
+    expect(aiRegressionSource).toContain('functionParameterTypes(aiSource, "inferProviderId")')
+    expect(aiRegressionSource).toContain('["string", "AIProviderConfigSnapshot"]')
   })
 })

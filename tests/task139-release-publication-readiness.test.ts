@@ -257,13 +257,15 @@ describe("task139 release publication readiness", () => {
       "release_approval_cli_output",
       "release_prepared_candidate_cli_output",
       "release_manifest_public_fields",
+      "final_response",
+      "product_log",
       "audit_artifact_descriptor",
       "audit_artifact_payload",
     ])
     const publicProjectionEntries = result.activeTabInfoAuditAccessProjection.entries.filter(
       (entry) => entry.audience === "release_operator",
     )
-    expect(publicProjectionEntries).toHaveLength(5)
+    expect(publicProjectionEntries).toHaveLength(7)
     for (const entry of publicProjectionEntries) {
       expect(entry.rawDataAllowed).toBe(false)
       expect(entry.auditDetailPathsIncluded).toBe(false)

@@ -30,7 +30,9 @@ describe("task013 Yeonjang file patch tool", () => {
     const nodeSource = readSource("Yeonjang/src/node.rs")
     const fileSource = readSource("Yeonjang/src/features/file.rs")
 
-    expect(nodeSource).toContain('ensure_permission(permissions.allow_file_write, "file.patch", "allow_file_write")')
+    expect(nodeSource).toMatch(
+      /ensure_permission\(\s*permissions\.allow_file_write,\s*"file\.patch",\s*"allow_file_write",?\s*\)/u,
+    )
     expect(fileSource).toContain("PathOperation::Write")
     expect(fileSource).toContain("expected_text")
     expect(fileSource).not.toMatch(/system\.exec|Command::new|sed\s|perl\s|python\s|powershell|cmd\.exe/u)

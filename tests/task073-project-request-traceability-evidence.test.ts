@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   DEFAULT_PROJECT_EVIDENCE_PATH,
   auditProjectRequirements,
-} from "../scripts/audit-project-requirements.mjs"
+} from "../scripts/self/audit-project-requirements.mjs"
 
 describe("Task 073 PROJECT request traceability evidence", () => {
   it("proves correlated diagnosis, execution, review, recovery, and terminal replay", () => {

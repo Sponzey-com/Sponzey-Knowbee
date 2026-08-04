@@ -10,6 +10,6 @@ describe("task1102 scheduler start requires config", () => {
     expect(schedulerSource).toContain("scheduler.start(config, artifactStorage, memoryJournal, hierarchyStorage)")
     expect(schedulerSource).not.toContain("start(config: KnowbeeConfig = getConfig())")
     expect(schedulerSource).not.toContain("startScheduler(config: KnowbeeConfig = getConfig())")
-    expect(serverSource).toContain("startScheduler(cfg, createArtifactStorageContext(paths), apiMemoryJournal, createAgentHierarchyStorage(paths))")
+    expect(serverSource).toContain("startScheduler(cfg, artifactStorage, memoryJournal, hierarchyStorage)")
   })
 })

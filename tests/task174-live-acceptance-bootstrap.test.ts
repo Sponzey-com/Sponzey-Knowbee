@@ -30,6 +30,17 @@ function ports(): LiveAcceptanceBootstrapPorts {
       listTools: vi.fn(() => []),
       listYeonjangInstances: vi.fn(() => []),
     },
+    inspectRuntimeIdentity: vi.fn(() => ({
+      status: "verified" as const,
+      receipt: Object.freeze({
+        buildId: "build:task174",
+        bundleSha256: `sha256:${"a".repeat(64)}` as const,
+        processStartedAt: "2026-07-17T21:58:00.000Z",
+        artifactBuiltAt: "2026-07-17T21:57:00.000Z",
+        buildRequired: false as const,
+        restartRequired: false as const,
+      }),
+    })),
     llm: {
       webPlan: vi.fn(),
       webDiagnosis: vi.fn(),
@@ -67,14 +78,18 @@ describe("Task 174 live acceptance bootstrap binding", () => {
   })
 
   it("creates one server dependency factory from explicit immutable inputs", () => {
+    const bootstrapPorts = ports()
     const value = createLiveAcceptanceBootstrapDependencies({
       config: DEFAULT_CONFIG,
       dispatcher: { dispatch: vi.fn(), dispatchAgentScoped: vi.fn() } as never,
-      ports: ports(),
+      ports: bootstrapPorts,
     })
 
     expect(value.liveAcceptanceExecutorFactory).toBeTypeOf("function")
     expect(value.liveAcceptanceSelectionAvailabilityInspector).toBeTypeOf("function")
+    expect(value.liveAcceptanceRuntimeIdentityInspector).toBe(
+      bootstrapPorts.inspectRuntimeIdentity,
+    )
     expect(value.liveAcceptanceSelectionAvailabilityInspector?.()).toEqual([
       {
         capability: "skill",

@@ -255,6 +255,14 @@ export function insertMessage(msg) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(msg.id, msg.session_id, msg.root_run_id ?? null, msg.role, msg.content, msg.tool_calls, msg.tool_call_id, msg.created_at);
 }
+export function insertMessageIfAbsent(msg) {
+    const result = getDb()
+        .prepare(`INSERT OR IGNORE INTO messages
+       (id, session_id, root_run_id, role, content, tool_calls, tool_call_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(msg.id, msg.session_id, msg.root_run_id ?? null, msg.role, msg.content, msg.tool_calls, msg.tool_call_id, msg.created_at);
+    return result.changes === 1;
+}
 export function getMessages(sessionId) {
     return getDb()
         .prepare("SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC")
@@ -845,6 +853,22 @@ export function updateChannelSmokeRun(id, fields) {
     getDb()
         .prepare(`UPDATE channel_smoke_runs SET ${sets.join(", ")} WHERE id = ?`)
         .run(...values);
+}
+/**
+ * Finalizes diagnostic runs owned by a previous Gateway process. CLI smoke
+ * runs have a separate process owner and are deliberately excluded.
+ */
+export function interruptGatewayOwnedChannelSmokeRunsStartedBefore(input) {
+    const result = getDb()
+        .prepare(`UPDATE channel_smoke_runs
+       SET status = 'failed',
+           finished_at = ?,
+           summary = 'channel smoke failed: gateway_restart_interrupted'
+       WHERE status = 'running'
+         AND started_at < ?
+         AND initiated_by IN ('webui', 'release-live-acceptance')`)
+        .run(input.finishedAt, input.startedBefore);
+    return result.changes;
 }
 export function insertChannelSmokeStep(input) {
     const id = input.id ?? crypto.randomUUID();
@@ -2400,11 +2424,18 @@ export function insertArtifactReceipt(input) {
     return id;
 }
 export function hasArtifactReceipt(input) {
-    const row = getDb()
-        .prepare(`SELECT id FROM artifact_receipts
-       WHERE run_id = ? AND channel = ? AND artifact_path = ?
-       LIMIT 1`)
-        .get(input.runId, input.channel, input.artifactPath);
+    const row = input.channelTarget
+        ? getDb()
+            .prepare(`SELECT id FROM artifact_receipts
+         WHERE run_id = ? AND channel = ? AND artifact_path = ?
+           AND json_extract(delivery_receipt_json, '$.channelTarget') = ?
+         LIMIT 1`)
+            .get(input.runId, input.channel, input.artifactPath, input.channelTarget)
+        : getDb()
+            .prepare(`SELECT id FROM artifact_receipts
+         WHERE run_id = ? AND channel = ? AND artifact_path = ?
+         LIMIT 1`)
+            .get(input.runId, input.channel, input.artifactPath);
     return Boolean(row);
 }
 export function listArtifactReceiptsForRun(runId) {

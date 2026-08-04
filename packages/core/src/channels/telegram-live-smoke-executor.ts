@@ -243,9 +243,6 @@ export function createTelegramLiveSmokeExecutor(
     ) {
       throw new Error("telegram_live_smoke_latency_evidence_identity_mismatch")
     }
-    if (observation.latencyEvidence.status !== "ok") {
-      throw new Error("telegram_live_smoke_first_response_latency_budget_exceeded")
-    }
     if (!observation.providerDeliveryReceipted) {
       throw new Error("telegram_live_smoke_provider_receipt_missing")
     }

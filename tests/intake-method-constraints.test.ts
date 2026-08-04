@@ -89,12 +89,12 @@ describe("LLM intake method constraints", () => {
     expect(methodItemSchema("preferred_methods")).toMatchObject({
       type: "string",
       pattern: "^[a-z][a-z0-9_.:-]{0,127}$",
-      description: expect.stringContaining("explicitly supplied"),
+      description: expect.stringContaining("runtime capability contract"),
     })
     expect(methodItemSchema("exclusive_methods")).toMatchObject({
       type: "string",
       pattern: "^[a-z][a-z0-9_.:-]{0,127}$",
-      description: expect.stringContaining("explicitly supplied"),
+      description: expect.stringContaining("runtime capability contract"),
     })
     expect(runTaskPayloadProperty("target_instance")).toMatchObject({
       type: ["string", "null"],
@@ -111,13 +111,13 @@ describe("LLM intake method constraints", () => {
     expect(prompt).toContain(
       "only when the user explicitly requires that method and forbids alternatives",
     )
-    expect(prompt).toContain("Do not infer, translate, alias, or invent")
+    expect(prompt).toContain("Do not fuzzy-match, translate, use semantic similarity")
     expect(prompt).toContain("Use stable capability identifiers, not prose or instructions")
     expect(prompt).toContain(
       "Alternative strategy descriptions belong in the goal, context, or constraints",
     )
     expect(prompt).toContain(
-      "never derive `target_instance` from a method name, runtime context, or suggested target",
+      "Never derive it from a method name, an unpaired runtime label, or a suggested target",
     )
   })
 })

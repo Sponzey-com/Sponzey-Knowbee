@@ -1,5 +1,5 @@
 import type { CanonicalWorkEvent } from "./canonical-work-state.js";
-export declare const CANONICAL_WORK_RECEIPT_KINDS: readonly ["diagnosis", "analysis_revision", "policy", "execution", "attempt", "verification", "recovery", "input_requirement", "user_input", "exhaustion", "cancellation", "delivery", "blocker"];
+export declare const CANONICAL_WORK_RECEIPT_KINDS: readonly ["diagnosis", "analysis_revision", "policy", "execution", "attempt", "verification", "recovery", "input_requirement", "user_input", "exhaustion", "cancellation", "delivery", "blocker", "approval"];
 export type CanonicalWorkReceiptKind = typeof CANONICAL_WORK_RECEIPT_KINDS[number];
 export declare const CANONICAL_EVENT_RECEIPT_KINDS: Readonly<Record<CanonicalWorkEvent, CanonicalWorkReceiptKind>>;
 export declare const CANONICAL_TERMINAL_CAUSE_ORIGIN_STAGES: readonly ["ingress", "runtime_configuration", "request_diagnosis", "solution_plan", "policy_admission", "execution", "result_diagnosis", "final_response_rendering", "delivery", "recovery"];

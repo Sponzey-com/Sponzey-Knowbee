@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createYeonjangBrowserFocusExecutionAdmissionIssuer } from "../capabilities/yeonjang-browser-focus-execution-admission-issuer.js";
 import { createYeonjangExecutionAdmissionKeyRegistry, createYeonjangExecutionAdmissionPasswordHandle, } from "./execution-admission-key-port.js";
+import { createYeonjangExecutionAuthorizationIssuer, } from "./execution-authorization-receipt.js";
 const DEFAULT_KEY_ID = "mqtt-connection-password-v1";
 const DEFAULT_TTL_MS = 60_000;
 /**
@@ -45,6 +46,12 @@ export function createBrowserFocusRuntimeBootstrap(input) {
             now: input.now ?? (() => new Date()),
             createNonce: input.createNonce ?? randomUUID,
             ttlMs: DEFAULT_TTL_MS,
+        }),
+        executionAuthorizationIssuer: createYeonjangExecutionAuthorizationIssuer({
+            issuer: "knowbee-core",
+            keyPort: registry.keyPort,
+            createAuthorizationId: input.createNonce ?? randomUUID,
+            now: () => (input.now ?? (() => new Date()))().getTime(),
         }),
         pairingExecutionAdmissionKeyProvisioner: provisioner,
     });

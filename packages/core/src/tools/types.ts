@@ -13,6 +13,9 @@ import type { UntrustedEvidenceSourceKind } from "../security/trust-boundary.js"
 import type {
   YeonjangBrowserFocusExecutionAdmission,
 } from "../capabilities/yeonjang-browser-focus-execution-admission.js"
+import type {
+  YeonjangExecutionAuthorizationIssuerPort,
+} from "../yeonjang/execution-authorization-receipt.js"
 
 export type RiskLevel = "safe" | "moderate" | "dangerous"
 export type ToolEvidenceSourceKind = UntrustedEvidenceSourceKind
@@ -32,8 +35,22 @@ export interface ToolAuthorizationReceipt {
   permissionScope: string
   runId: string
   requestGroupId: string
+  executionTargetFingerprint?: `sha256:${string}`
   approvalDecision?: "allow_once" | "allow_run"
   approvalId?: string
+}
+
+export interface ToolDispatchAuthorizationScope {
+  readonly executionTargetFingerprint: `sha256:${string}`
+}
+
+export interface ToolDispatchOptions {
+  readonly authorizationScope?: ToolDispatchAuthorizationScope
+}
+
+export interface ToolSideEffectOperationBinding {
+  readonly operationId: string
+  readonly targetFingerprint: `sha256:${string}`
 }
 
 export interface YeonjangBrowserFocusExecutionAdmissionIssuerPort {
@@ -79,7 +96,9 @@ export interface ToolContext {
   searchConfig?: SearchConfig
   memoryConfig?: MemoryConfig
   authorizationReceipt?: Readonly<ToolAuthorizationReceipt>
+  sideEffectOperation?: Readonly<ToolSideEffectOperationBinding>
   yeonjangBrowserFocusExecutionAdmissionIssuer?: YeonjangBrowserFocusExecutionAdmissionIssuerPort
+  yeonjangExecutionAuthorizationIssuer?: YeonjangExecutionAuthorizationIssuerPort
 }
 
 interface ArtifactDeliveryResultDetailsBase {
@@ -133,16 +152,52 @@ export interface ToolSideEffectObservation {
   targetRef: string
   expectedState: unknown
   observedState: unknown
+  recoveryEvidence?: Readonly<ToolSideEffectRecoveryEvidence>
 }
+
+export interface ToolSideEffectRecoveryEvidence {
+  kind: "artifact_candidate"
+  artifactRef: string
+  mimeType: string
+  sizeBytes: number
+  reasonCode: string
+  resolvedDevicePresent: boolean
+}
+
+export type ToolSideEffectPreparation<TParams> =
+  | {
+      status: "prepared"
+      executionParams: TParams
+      targetRef: string
+      effectParams: Record<string, unknown>
+      expectedState: unknown
+    }
+  | {
+      status: "rejected"
+      result: ToolResult
+    }
 
 export interface ToolSideEffectContract<TParams = unknown> {
   effectClass: Exclude<SideEffectClass, "read_only">
   compensationSupport: "reversible" | "irreversible"
+  prepareOperation?:
+    | ((params: TParams, ctx: ToolContext) => ToolSideEffectPreparation<TParams>)
+    | undefined
+  canonicalOperation?:
+    | ((params: TParams, ctx: ToolContext) => Record<string, unknown>)
+    | undefined
   targetRef(params: TParams, ctx: ToolContext): string
   expectedState(params: TParams, ctx: ToolContext): unknown
   observe(params: TParams, ctx: ToolContext, result: ToolResult): Promise<ToolSideEffectObservation>
+  effectEvidenceRefs?:
+    | ((params: TParams, ctx: ToolContext, result: ToolResult) => readonly string[])
+    | undefined
   observeCurrent?:
-    | ((params: TParams, ctx: ToolContext) => Promise<ToolSideEffectObservation>)
+    | ((
+        params: TParams,
+        ctx: ToolContext,
+        effectEvidenceRefs: readonly string[],
+      ) => Promise<ToolSideEffectObservation>)
     | undefined
   compensate?:
     | ((
@@ -154,6 +209,14 @@ export interface ToolSideEffectContract<TParams = unknown> {
   verifyCompensation?:
     | ((params: TParams, ctx: ToolContext) => Promise<{ verified: boolean; evidence: unknown }>)
     | undefined
+}
+
+export function canonicalToolOperationParams(input: {
+  contract: ToolSideEffectContract<Record<string, unknown>> | undefined
+  params: Record<string, unknown>
+  ctx: ToolContext
+}): Record<string, unknown> {
+  return input.contract?.canonicalOperation?.(input.params, input.ctx) ?? input.params
 }
 
 // TParams is covariant here — use unknown as the base so any typed tool can be assigned
@@ -168,6 +231,10 @@ export interface AgentTool<TParams = unknown> {
   riskLevel: RiskLevel
   requiresApproval: boolean
   availableSources?: ToolContext["source"][]
+  channelCapability?: {
+    kind: "direct_artifact_delivery"
+    channel: ToolContext["source"]
+  }
   evidenceSourceKind?: ToolEvidenceSourceKind
   resolveEvidenceSourceKind?: (result: Readonly<ToolResult>) => ToolEvidenceSourceKind
   runtimeHealthMode?: "required" | "additional"

@@ -77,8 +77,9 @@ describe("task1043 scheduler final response context", () => {
     const finalResponseSource = readFileSync("packages/core/src/scheduler/final-response.ts", "utf-8")
 
     expect(schedulerSource).not.toContain("workDir: getConfig().profile.workspace")
-    expect(schedulerSource).toContain("identityContext: buildFinalResponseIdentityContext")
-    expect(contractSource).toContain("identityContext: buildFinalResponseIdentityContext")
+    expect(schedulerSource).toContain("executeScheduleContract({")
+    expect(contractSource).toContain("const start = params.dependencies?.startIngressRunImpl ?? startIngressRun")
+    expect(contractSource).toContain("config: params.config")
     expect(finalResponseSource).toContain("scheduled agent result requires final response identity context")
   })
 })

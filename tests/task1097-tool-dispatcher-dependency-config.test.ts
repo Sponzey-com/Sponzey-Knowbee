@@ -24,7 +24,9 @@ describe("task1097 tool dispatcher dependency config", () => {
     const dispatcherSource = readFileSync("packages/core/src/tools/dispatcher.ts", "utf-8")
 
     expect(dispatcherSource).toContain("export interface ToolDispatcherDependencies")
-    expect(dispatcherSource).toContain("function buildRuntimeToolContext(ctx: ToolContext, config: ToolRuntimeConfigSnapshot)")
+    expect(dispatcherSource).toContain("function buildRuntimeToolContext(input: {")
+    expect(dispatcherSource).toContain("ctx: ToolContext")
+    expect(dispatcherSource).toContain("config: ToolRuntimeConfigSnapshot")
     expect(dispatcherSource).toContain("constructor(dependencies: ToolDispatcherDependencies)")
     expect(dispatcherSource).toContain("this.config = dependencies.config")
     expect(dispatcherSource).not.toContain("getConfig")

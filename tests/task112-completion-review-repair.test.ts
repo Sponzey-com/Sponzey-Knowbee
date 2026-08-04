@@ -172,7 +172,7 @@ describe("task112 completion review structured repair", () => {
     expect(prompt).toContain("displayed value, and source basis timestamp is direct proof")
     expect(prompt).toContain("wording-only followup")
     expect(prompt).toContain(
-      "A well-written explanation of non-execution does not satisfy an execution request",
+      "A clear explanation of non-execution does not satisfy an execution request",
     )
     expect(prompt).not.toContain("Always request another search")
     expect(prompt).not.toContain("Return prose only")

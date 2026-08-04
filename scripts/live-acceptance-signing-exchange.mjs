@@ -15,7 +15,7 @@ import {
   assembleLiveAcceptanceBundle,
   createLiveAcceptanceSigningRequest,
 } from "../packages/core/src/release/live-acceptance-signing-exchange.js"
-import { loadTrustedLiveAcceptanceVerifier } from "./lib/live-acceptance-verifier.mjs"
+import { loadTrustedLiveAcceptanceVerifier } from "./self/lib/live-acceptance-verifier.mjs"
 
 function parseOptions(values) {
   const options = new Map()

@@ -22,7 +22,9 @@ export async function runExecutionCyclePass(params, dependencies, moduleDependen
     let workerRuntimeRecovery = null;
     let executionRecovery = null;
     const failedCommandTools = [];
-    const successfulFileDeliveries = [];
+    const successfulFileDeliveries = [
+        ...(params.state.recoveredAttempt?.successfulFileDeliveries ?? []),
+    ];
     const successfulTextDeliveries = [];
     let commandFailureSeen = false;
     let commandRecoveredWithinSamePass = false;
@@ -34,67 +36,82 @@ export async function runExecutionCyclePass(params, dependencies, moduleDependen
         observedFetchCandidates: [],
         observedSearchResults: [],
     };
-    const executionAttemptPass = await moduleDependencies.runExecutionAttemptPass({
-        artifactStorage: params.artifactStorage,
-        memoryJournal: params.memoryJournal,
-        config: params.config,
-        runId: params.runId,
-        sessionId: params.sessionId,
-        source: params.source,
-        onChunk: params.onChunk,
-        ...(params.onDeliveryError ? { onDeliveryError: params.onDeliveryError } : {}),
-        currentMessage: params.state.currentMessage,
-        requiredToolNames: params.admittedCapabilityExecutionScope
-            ? params.state.requiredToolNames.filter((toolName) => params.admittedCapabilityExecutionScope?.toolNames.includes(toolName))
-            : params.state.requiredToolNames,
-        completionConditions: params.completionConditions,
-        ...(params.admittedCapabilityExecutionScope
-            ? { admittedCapabilityExecutionScope: params.admittedCapabilityExecutionScope }
-            : {}),
-        webExecutionState,
-        memorySearchQuery: params.memorySearchQuery,
-        ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
-        ...(params.includeScheduleMemory ? { includeScheduleMemory: true } : {}),
-        ...(params.state.currentModel ? { model: params.state.currentModel } : {}),
-        ...(params.state.currentProviderId ? { providerId: params.state.currentProviderId } : {}),
-        ...(params.state.currentProvider ? { provider: params.state.currentProvider } : {}),
-        workDir: params.workDir,
-        signal: params.signal,
-        ...(params.toolsEnabled === false
-            || params.state.nextAttemptToolPolicy?.mode === "forbidden"
-            ? { toolsEnabled: false }
-            : {}),
-        isRootRequest: params.isRootRequest,
-        requestGroupId: params.requestGroupId,
-        contextMode: params.contextMode,
-        preview,
-        ...(params.state.activeWorkerRuntime
-            ? { activeWorkerRuntime: params.state.activeWorkerRuntime }
-            : {}),
-        ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
-        pendingToolParams: params.pendingToolParams,
-        successfulTools: params.successfulTools,
-        filesystemMutationPaths: params.filesystemMutationPaths,
-        failedCommandTools,
-        yeonjangSideEffectGoalValidationCandidates,
-        successfulFileDeliveries,
-        successfulTextDeliveries,
-        commandFailureSeen,
-        recoveryBudgetUsage: params.recoveryBudgetUsage,
-        defaultMaxDelegationTurns: params.defaultMaxDelegationTurns,
-        executionRecoveryLimitStop: params.state.executionRecoveryLimitStop,
-        stopAfterDirectArtifactDeliverySuccess: params.wantsDirectArtifactDelivery,
-        abortExecutionStream: () => { },
-    }, {
-        rememberRunFailure: dependencies.rememberRunFailure,
-        incrementDelegationTurnCount: dependencies.incrementDelegationTurnCount,
-        appendRunEvent: dependencies.appendRunEvent,
-        updateRunSummary: dependencies.updateRunSummary,
-        setRunStepStatus: dependencies.setRunStepStatus,
-        updateRunStatus: dependencies.updateRunStatus,
-        markAbortedRunCancelledIfActive: dependencies.markAbortedRunCancelledIfActive,
-    });
-    if (params.isRootRequest) {
+    const recoveredAttempt = params.state.recoveredAttempt;
+    const executionAttemptPass = recoveredAttempt
+        ? {
+            preview: recoveredAttempt.preview,
+            previewSource: "runtime_deterministic",
+            failed: false,
+            executionRecoveryLimitStop: null,
+            aiRecoveryLimitStop: null,
+            aiRecovery: null,
+            workerRuntimeRecovery: null,
+            executionRecovery: null,
+            sawRealFilesystemMutation: false,
+            commandFailureSeen: false,
+            commandRecoveredWithinSamePass: false,
+        }
+        : await moduleDependencies.runExecutionAttemptPass({
+            artifactStorage: params.artifactStorage,
+            memoryJournal: params.memoryJournal,
+            config: params.config,
+            runId: params.runId,
+            sessionId: params.sessionId,
+            source: params.source,
+            onChunk: params.onChunk,
+            ...(params.onDeliveryError ? { onDeliveryError: params.onDeliveryError } : {}),
+            currentMessage: params.state.currentMessage,
+            requiredToolNames: params.admittedCapabilityExecutionScope
+                ? params.state.requiredToolNames.filter((toolName) => params.admittedCapabilityExecutionScope?.toolNames.includes(toolName))
+                : params.state.requiredToolNames,
+            completionConditions: params.completionConditions,
+            ...(params.admittedCapabilityExecutionScope
+                ? { admittedCapabilityExecutionScope: params.admittedCapabilityExecutionScope }
+                : {}),
+            webExecutionState,
+            memorySearchQuery: params.memorySearchQuery,
+            ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
+            ...(params.includeScheduleMemory ? { includeScheduleMemory: true } : {}),
+            ...(params.state.currentModel ? { model: params.state.currentModel } : {}),
+            ...(params.state.currentProviderId ? { providerId: params.state.currentProviderId } : {}),
+            ...(params.state.currentProvider ? { provider: params.state.currentProvider } : {}),
+            workDir: params.workDir,
+            signal: params.signal,
+            ...(params.toolsEnabled === false
+                || params.state.nextAttemptToolPolicy?.mode === "forbidden"
+                ? { toolsEnabled: false }
+                : {}),
+            isRootRequest: params.isRootRequest,
+            requestGroupId: params.requestGroupId,
+            contextMode: params.contextMode,
+            preview,
+            ...(params.state.activeWorkerRuntime
+                ? { activeWorkerRuntime: params.state.activeWorkerRuntime }
+                : {}),
+            ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
+            pendingToolParams: params.pendingToolParams,
+            successfulTools: params.successfulTools,
+            filesystemMutationPaths: params.filesystemMutationPaths,
+            failedCommandTools,
+            yeonjangSideEffectGoalValidationCandidates,
+            successfulFileDeliveries,
+            successfulTextDeliveries,
+            commandFailureSeen,
+            recoveryBudgetUsage: params.recoveryBudgetUsage,
+            defaultMaxDelegationTurns: params.defaultMaxDelegationTurns,
+            executionRecoveryLimitStop: params.state.executionRecoveryLimitStop,
+            stopAfterDirectArtifactDeliverySuccess: params.wantsDirectArtifactDelivery,
+            abortExecutionStream: () => { },
+        }, {
+            rememberRunFailure: dependencies.rememberRunFailure,
+            incrementDelegationTurnCount: dependencies.incrementDelegationTurnCount,
+            appendRunEvent: dependencies.appendRunEvent,
+            updateRunSummary: dependencies.updateRunSummary,
+            setRunStepStatus: dependencies.setRunStepStatus,
+            updateRunStatus: dependencies.updateRunStatus,
+            markAbortedRunCancelledIfActive: dependencies.markAbortedRunCancelledIfActive,
+        });
+    if (params.isRootRequest && !recoveredAttempt) {
         const canonicalAttempt = await dependencies.recordCanonicalAttempt({
             runId: params.runId,
             attempt: executionAttemptPass,
@@ -109,6 +126,11 @@ export async function runExecutionCyclePass(params, dependencies, moduleDependen
         }
         canonicalAttemptEvidenceRefs = canonicalAttempt.evidenceRefs ?? [];
     }
+    else if (recoveredAttempt) {
+        canonicalAttemptEvidenceRefs = [
+            ...recoveredAttempt.canonicalAttemptEvidenceRefs,
+        ];
+    }
     preview = executionAttemptPass.preview;
     failed = executionAttemptPass.failed;
     aiRecovery = executionAttemptPass.aiRecovery;
@@ -116,8 +138,9 @@ export async function runExecutionCyclePass(params, dependencies, moduleDependen
     executionRecovery = executionAttemptPass.executionRecovery;
     commandFailureSeen = executionAttemptPass.commandFailureSeen;
     commandRecoveredWithinSamePass = executionAttemptPass.commandRecoveredWithinSamePass;
+    const { recoveredAttempt: _consumedRecoveredAttempt, ...stateAfterRecoveredAttempt } = params.state;
     const nextStateFromAttempt = {
-        ...params.state,
+        ...stateAfterRecoveredAttempt,
         webExecutionState,
         executionRecoveryLimitStop: executionAttemptPass.executionRecoveryLimitStop,
         aiRecoveryLimitStop: executionAttemptPass.aiRecoveryLimitStop,
@@ -149,6 +172,24 @@ export async function runExecutionCyclePass(params, dependencies, moduleDependen
         seenKeys: params.seenAiRecoveryKeys,
         originalRequest: params.originalRequest,
         previousResult: preview,
+        responseContext: {
+            originalRequest: params.originalRequest,
+            ...(params.responseLanguageMode
+                ? { responseLanguageMode: params.responseLanguageMode }
+                : {}),
+            model: nextStateFromAttempt.currentModel,
+            ...(nextStateFromAttempt.currentProviderId
+                ? { providerId: nextStateFromAttempt.currentProviderId }
+                : {}),
+            ...(nextStateFromAttempt.currentProvider
+                ? { provider: nextStateFromAttempt.currentProvider }
+                : {}),
+            config: params.config,
+            workDir: params.workDir,
+            ...(params.finalResponseIdentityContext
+                ? { identityContext: params.finalResponseIdentityContext }
+                : {}),
+        },
         finalizationDependencies: dependencies.getFinalizationDependencies(),
     }, {
         appendRunEvent: dependencies.appendRunEvent,

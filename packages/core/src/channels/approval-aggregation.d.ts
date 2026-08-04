@@ -12,7 +12,7 @@ export interface ApprovalAggregateItem {
     riskSummary?: string;
     guidance?: string;
     paramsPreview: string;
-    resolve: (decision: ApprovalDecision, reason?: ApprovalResolutionReason) => void;
+    resolve?: (decision: ApprovalDecision, reason?: ApprovalResolutionReason) => void;
 }
 export interface ApprovalAggregateContext {
     runId: string;

@@ -12,7 +12,21 @@ export interface LlmSolutionPlanProviderInput {
   goal: string
   constraints: string[]
   capabilityRefs: string[]
+  capabilityOptions?: LlmSolutionPlanCapabilityOption[]
+  requiredCapabilityRefs: string[]
   completionCriteria: string[]
+}
+
+export interface LlmSolutionPlanCapabilityOption {
+  capabilityRef: string
+  description: string
+  risk: "safe" | "approval_required"
+  effectClass:
+    | "read_only"
+    | "local_write"
+    | "external_write"
+    | "destructive"
+    | "financial"
 }
 
 export interface LlmSolutionPlanProvider {
@@ -60,6 +74,7 @@ export type LlmSolutionPlanProviderResult =
         | "solution_plan_capability_ref_missing"
         | "solution_plan_capability_ref_ambiguous"
         | "solution_plan_capability_ref_outside_snapshot"
+        | "solution_plan_required_capability_ref_missing"
       workId: string
       runId: string
     }
@@ -79,6 +94,10 @@ export type LlmSolutionPlanProviderWithRepairResult =
       workId: string
       runId: string
       repairAttempted: boolean
+      repairFailureReasonCode?: Extract<
+        LlmSolutionPlanProviderResult,
+        { status: "blocked" }
+      >["reasonCode"]
       reanalysis?: {
         action: "changed_strategy_reanalysis"
         failedInputRefs: ["llm-output:solution_plan", "llm-output:repaired_solution_plan"]
@@ -93,6 +112,33 @@ const SOLUTION_PLAN_VALIDATION_ISSUES: LlmSolutionPlanValidationIssue[] = [
     message: "Solution plan must match the scoped solution-plan schema.",
   },
 ]
+
+function solutionPlanValidationIssues(
+  reasonCode: Extract<
+    LlmSolutionPlanProviderResult,
+    { status: "blocked" }
+  >["reasonCode"],
+): LlmSolutionPlanValidationIssue[] {
+  const capabilityMessage =
+    reasonCode === "solution_plan_capability_ref_missing"
+      ? "Every use_tool or use_yeonjang step must include exactly one provided capability reference."
+      : reasonCode === "solution_plan_capability_ref_ambiguous"
+        ? "Every use_tool or use_yeonjang step must include only one provided capability reference."
+        : reasonCode === "solution_plan_capability_ref_outside_snapshot"
+          ? "Every capability reference must be copied exactly from the provided capability references."
+          : reasonCode === "solution_plan_required_capability_ref_missing"
+            ? "Every required capability reference selected by prior LLM diagnosis must be used by at least one use_tool or use_yeonjang step."
+          : undefined
+  return capabilityMessage
+    ? [
+        {
+          code: "solution_plan_schema_invalid",
+          path: "$",
+          message: capabilityMessage,
+        },
+      ]
+    : structuredClone(SOLUTION_PLAN_VALIDATION_ISSUES)
+}
 
 function text(value: string, field: string): string {
   const normalized = value.trim()
@@ -123,10 +169,12 @@ type CapabilityRefValidationReason =
   | "solution_plan_capability_ref_missing"
   | "solution_plan_capability_ref_ambiguous"
   | "solution_plan_capability_ref_outside_snapshot"
+  | "solution_plan_required_capability_ref_missing"
 
 function validateActionCapabilityRefs(
   plan: LlmSolutionPlanPayload,
   capabilityRefs: string[],
+  requiredCapabilityRefs: string[],
 ):
   | { ok: true; selections: SolutionPlanCapabilitySelection[] }
   | { ok: false; reasonCode: CapabilityRefValidationReason } {
@@ -153,6 +201,15 @@ function validateActionCapabilityRefs(
     }
     selections.push({ stepId: step.step_id.trim(), capabilityRef: selectedRef })
   }
+  const selectedRefSet = new Set(
+    selections.map((selection) => selection.capabilityRef),
+  )
+  if (requiredCapabilityRefs.some((reference) => !selectedRefSet.has(reference))) {
+    return {
+      ok: false,
+      reasonCode: "solution_plan_required_capability_ref_missing",
+    }
+  }
   return { ok: true, selections }
 }
 
@@ -164,8 +221,65 @@ function normalizeProviderInput(input: {
   goal: string
   constraints: string[]
   capabilityRefs: string[]
+  capabilityOptions?: LlmSolutionPlanCapabilityOption[]
+  requiredCapabilityRefs?: string[]
   completionCriteria: string[]
 }): LlmSolutionPlanProviderInput {
+  const capabilityRefs = textList(
+    input.capabilityRefs,
+    "Capability references",
+  ).map((reference) =>
+    reference.startsWith("capability:") ? reference : `capability:${reference}`,
+  )
+  const requiredCapabilityRefs = textList(
+    input.requiredCapabilityRefs ?? [],
+    "Required capability references",
+  ).map((reference) =>
+    reference.startsWith("capability:") ? reference : `capability:${reference}`,
+  )
+  const capabilityRefSet = new Set(capabilityRefs)
+  if (requiredCapabilityRefs.some((reference) => !capabilityRefSet.has(reference))) {
+    throw new Error(
+      "Required capability references must be present in capability references.",
+    )
+  }
+  const capabilityOptions = input.capabilityOptions?.map((option) => {
+    const capabilityRef = text(option.capabilityRef, "Capability option reference")
+    const normalizedRef = capabilityRef.startsWith("capability:")
+      ? capabilityRef
+      : `capability:${capabilityRef}`
+    if (!capabilityRefSet.has(normalizedRef)) {
+      throw new Error("Capability option references must be present in capability references.")
+    }
+    if (
+      option.risk !== "safe" &&
+      option.risk !== "approval_required"
+    ) {
+      throw new Error("Capability option risk is invalid.")
+    }
+    if (
+      option.effectClass !== "read_only" &&
+      option.effectClass !== "local_write" &&
+      option.effectClass !== "external_write" &&
+      option.effectClass !== "destructive" &&
+      option.effectClass !== "financial"
+    ) {
+      throw new Error("Capability option effect class is invalid.")
+    }
+    return {
+      capabilityRef: normalizedRef,
+      description: text(option.description, "Capability option description"),
+      risk: option.risk,
+      effectClass: option.effectClass,
+    }
+  })
+  if (
+    capabilityOptions &&
+    new Set(capabilityOptions.map((option) => option.capabilityRef)).size !==
+      capabilityOptions.length
+  ) {
+    throw new Error("Capability option references must be unique.")
+  }
   return {
     workId: text(input.workId, "Work ID"),
     runId: text(input.runId, "Run ID"),
@@ -176,9 +290,9 @@ function normalizeProviderInput(input: {
     ),
     goal: text(input.goal, "Goal"),
     constraints: textList(input.constraints, "Constraints"),
-    capabilityRefs: textList(input.capabilityRefs, "Capability references").map((reference) =>
-      reference.startsWith("capability:") ? reference : `capability:${reference}`,
-    ),
+    capabilityRefs,
+    ...(capabilityOptions ? { capabilityOptions } : {}),
+    requiredCapabilityRefs,
     completionCriteria: textList(input.completionCriteria, "Completion criteria", false),
   }
 }
@@ -201,6 +315,7 @@ function resolvePlanOutput(input: {
   const capabilityRefs = validateActionCapabilityRefs(
     plan,
     input.providerInput.capabilityRefs,
+    input.providerInput.requiredCapabilityRefs,
   )
   if (!capabilityRefs.ok) {
     return {
@@ -249,6 +364,7 @@ export async function runLlmSolutionPlanProvider(input: {
   goal: string
   constraints: string[]
   capabilityRefs: string[]
+  requiredCapabilityRefs?: string[]
   completionCriteria: string[]
 }): Promise<LlmSolutionPlanProviderResult> {
   const providerInput = normalizeProviderInput(input)
@@ -275,10 +391,7 @@ export async function runLlmSolutionPlanProviderWithRepair(
     issuedAt: input.issuedAt,
   })
   if (initial.status === "valid") return { ...initial, repairAttempted: false }
-  if (
-    initial.reasonCode === "invalid_solution_plan_receipt" ||
-    initial.reasonCode.startsWith("solution_plan_capability_ref_")
-  ) {
+  if (initial.reasonCode === "invalid_solution_plan_receipt") {
     return { ...initial, repairAttempted: false }
   }
 
@@ -300,7 +413,7 @@ export async function runLlmSolutionPlanProviderWithRepair(
   const repairedRaw = await input.repairProvider.repairSolutionPlan({
     subject: providerInput,
     invalidRawOutput: raw,
-    validationIssues: structuredClone(SOLUTION_PLAN_VALIDATION_ISSUES),
+    validationIssues: solutionPlanValidationIssues(initial.reasonCode),
     failedInputRefs: ["llm-output:solution_plan"],
     failedStrategy: "initial_llm_solution_plan",
     repairAttemptNumber: 1,
@@ -318,6 +431,7 @@ export async function runLlmSolutionPlanProviderWithRepair(
     workId: providerInput.workId,
     runId: providerInput.runId,
     repairAttempted: true,
+    repairFailureReasonCode: repaired.reasonCode,
     reanalysis: {
       action: "changed_strategy_reanalysis",
       failedInputRefs: ["llm-output:solution_plan", "llm-output:repaired_solution_plan"],

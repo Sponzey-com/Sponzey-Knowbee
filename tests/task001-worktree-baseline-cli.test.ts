@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   createWorktreeBaseline,
   parseGitPorcelainV1Z,
-} from "../scripts/audit-worktree-baseline.mjs"
+} from "../scripts/self/audit-worktree-baseline.mjs"
 
 describe("task001 worktree baseline CLI boundary", () => {
   it("parses NUL-delimited porcelain records including spaces and renames", () => {

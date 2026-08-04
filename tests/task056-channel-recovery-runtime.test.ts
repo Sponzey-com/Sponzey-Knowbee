@@ -66,6 +66,18 @@ describe("Task 056 channel recovery runtime", () => {
     })
   })
 
+  it("delegates same-run recovery re-entry to the runtime owner", async () => {
+    const resumeExistingRootRun = vi.fn(async () => true)
+    const runtime = createStartedChannelRecoveryRuntime({
+      resumeExistingRootRun,
+    })
+
+    await expect(runtime.resumeExistingRootRun("run:recovered")).resolves.toBe(
+      true,
+    )
+    expect(resumeExistingRootRun).toHaveBeenCalledWith("run:recovered")
+  })
+
   it("reconstructs handlers only from matching canonical persisted session targets", () => {
     const runtime = createTestDbRuntimeFixture("knowbee-task056-channel-target-")
     try {
@@ -154,7 +166,10 @@ describe("Task 056 channel recovery runtime", () => {
     )
 
     expect(bootstrapSource).toContain(
-      "await activateChannelsAndRecoverPendingResponses(runtimeConfig, runtimePaths)",
+      "const channelActivation = await activateChannelsAndRecoverPendingResponses(",
+    )
+    expect(bootstrapSource).toContain(
+      "channelRecoveryRuntime = channelActivation.channelRuntime",
     )
     expect(activationSource).toContain(
       "resolveDeliveryHandler: channelRuntime.resolveDeliveryHandler",

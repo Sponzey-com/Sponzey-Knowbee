@@ -278,6 +278,7 @@ function readEnvOverrides(env: EnvSnapshot): DeepConfigPartial<KnowbeeConfig> {
   const mqttUsername = env["KNOWBEE_MQTT_USERNAME"]?.trim()
   const mqttPassword = env["KNOWBEE_MQTT_PASSWORD"]
   const mqttAllowAnonymous = parseBooleanEnv(env["KNOWBEE_MQTT_ALLOW_ANONYMOUS"])
+  const mqttV2RequesterId = env["KNOWBEE_MQTT_V2_REQUESTER_ID"]?.trim()
   const overrides: DeepConfigPartial<KnowbeeConfig> = {}
 
   if (
@@ -286,15 +287,19 @@ function readEnvOverrides(env: EnvSnapshot): DeepConfigPartial<KnowbeeConfig> {
     mqttPort != null ||
     mqttUsername != null ||
     mqttPassword != null ||
-    mqttAllowAnonymous != null
+    mqttAllowAnonymous != null ||
+    mqttV2RequesterId != null
   ) {
     overrides.mqtt = {
-      enabled: mqttEnabled ?? DEFAULT_CONFIG.mqtt.enabled,
-      host: mqttHost || DEFAULT_CONFIG.mqtt.host,
-      port: mqttPort ?? DEFAULT_CONFIG.mqtt.port,
-      username: mqttUsername ?? DEFAULT_CONFIG.mqtt.username,
-      password: mqttPassword ?? DEFAULT_CONFIG.mqtt.password,
-      allowAnonymous: mqttAllowAnonymous ?? DEFAULT_CONFIG.mqtt.allowAnonymous,
+      ...(mqttEnabled != null ? { enabled: mqttEnabled } : {}),
+      ...(mqttHost ? { host: mqttHost } : {}),
+      ...(mqttPort != null ? { port: mqttPort } : {}),
+      ...(mqttUsername != null ? { username: mqttUsername } : {}),
+      ...(mqttPassword != null ? { password: mqttPassword } : {}),
+      ...(mqttAllowAnonymous != null ? { allowAnonymous: mqttAllowAnonymous } : {}),
+      ...(mqttV2RequesterId != null
+        ? { yeonjangV2: { requesterId: mqttV2RequesterId } }
+        : {}),
     }
   }
 
@@ -396,15 +401,22 @@ export function loadConfigSnapshot(input: ConfigSnapshotLoadInput): KnowbeeConfi
   const configPath = input.paths.configFile
   const envOverrides = readEnvOverrides(env)
 
-  if (!existsSync(configPath)) {
-    return deepMerge<KnowbeeConfig>(DEFAULT_CONFIG, envOverrides)
-  }
+  const config = (() => {
+    if (!existsSync(configPath)) {
+      return deepMerge<KnowbeeConfig>(DEFAULT_CONFIG, envOverrides)
+    }
 
-  const raw = readFileSync(configPath, "utf-8")
-  const parsed = JSON5.parse(raw) as Partial<KnowbeeConfig>
-  const normalized = normalizeLegacyAiConfig(parsed)
-  const substituted = substituteDeep(normalized, env) as Partial<KnowbeeConfig>
-  return deepMerge<KnowbeeConfig>(deepMerge<KnowbeeConfig>(DEFAULT_CONFIG, substituted), envOverrides)
+    const raw = readFileSync(configPath, "utf-8")
+    const parsed = JSON5.parse(raw) as Partial<KnowbeeConfig>
+    const normalized = normalizeLegacyAiConfig(parsed)
+    const substituted = substituteDeep(normalized, env) as Partial<KnowbeeConfig>
+    return deepMerge<KnowbeeConfig>(deepMerge<KnowbeeConfig>(DEFAULT_CONFIG, substituted), envOverrides)
+  })()
+  const requesterId = config.mqtt.yeonjangV2?.requesterId.trim() ?? ""
+  if (requesterId && (!/^[a-z0-9_-]+$/u.test(requesterId) || Buffer.byteLength(requesterId, "utf8") > 64)) {
+    throw new Error("Invalid MQTT v2 requester ID")
+  }
+  return config
 }
 
 export {

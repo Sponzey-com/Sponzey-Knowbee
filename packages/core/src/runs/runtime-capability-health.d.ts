@@ -12,6 +12,7 @@ export declare function projectYeonjangRuntimeHealthObservations(input: {
     methodSnapshots: Array<{
         instanceId: string;
         methods: string[];
+        toolHealth?: Record<string, unknown>;
     }>;
     observedAt: number;
 }): CapabilityRuntimeHealthObservation[];

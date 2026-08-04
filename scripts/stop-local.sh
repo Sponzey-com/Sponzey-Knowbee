@@ -23,8 +23,10 @@ pid_alive() {
   local state
   [[ -z "$pid" ]] && return 1
   state="$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]')"
-  [[ -z "$state" || "$state" == Z* ]] && return 1
-  kill -0 "$pid" >/dev/null 2>&1
+  [[ "$state" == Z* ]] && return 1
+  kill -0 "$pid" >/dev/null 2>&1 && return 0
+  command -v lsof >/dev/null 2>&1 && lsof -p "$pid" >/dev/null 2>&1 && return 0
+  ps -p "$pid" >/dev/null 2>&1
 }
 
 pid_command() {
@@ -55,10 +57,25 @@ can_use_launchctl() {
     && command -v launchctl >/dev/null 2>&1
 }
 
+wait_launchctl_job_removed() {
+  local label="$1"
+  for _ in $(seq 1 40); do
+    if ! launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "launchctl 작업 제거 완료를 확인하지 못했습니다. label=$label"
+  return 1
+}
+
 remove_launchctl_job() {
   local label="$1"
   can_use_launchctl || return 0
   launchctl remove "$label" >/dev/null 2>&1 || true
+  if ! wait_launchctl_job_removed "$label"; then
+    return 1
+  fi
 }
 
 pids_for_port() {

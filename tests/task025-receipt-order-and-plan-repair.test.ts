@@ -103,6 +103,62 @@ describe("Task 025 receipt order and solution-plan repair", () => {
     })
   })
 
+  it("repairs one Tool step that omitted its scoped capability ref", async () => {
+    const repairSolutionPlan = vi.fn(async () => validPlan)
+    const result = await runLlmSolutionPlanProviderWithRepair({
+      ...input,
+      provider: {
+        planSolution: async () => ({
+          ...validPlan,
+          steps: [
+            {
+              ...validPlan.steps[0],
+              input_refs: ["receipt:request-diagnosis:task025"],
+            },
+          ],
+        }),
+      },
+      repairProvider: { repairSolutionPlan },
+    })
+
+    expect(result).toMatchObject({
+      status: "valid",
+      repairAttempted: true,
+      plan: validPlan,
+    })
+    expect(repairSolutionPlan).toHaveBeenCalledWith(expect.objectContaining({
+      validationIssues: [
+        expect.objectContaining({
+          message: expect.stringContaining("exactly one provided capability reference"),
+        }),
+      ],
+    }))
+  })
+
+  it("reports the bounded reason when capability-ref repair is still invalid", async () => {
+    const invalidPlan = {
+      ...validPlan,
+      steps: [
+        {
+          ...validPlan.steps[0],
+          input_refs: ["receipt:request-diagnosis:task025"],
+        },
+      ],
+    }
+    const result = await runLlmSolutionPlanProviderWithRepair({
+      ...input,
+      provider: { planSolution: async () => invalidPlan },
+      repairProvider: { repairSolutionPlan: async () => invalidPlan },
+    })
+
+    expect(result).toMatchObject({
+      status: "blocked",
+      reasonCode: "invalid_solution_plan_after_schema_repair",
+      repairAttempted: true,
+      repairFailureReasonCode: "solution_plan_capability_ref_missing",
+    })
+  })
+
   it("blocks after one malformed repair without synthesizing a code plan", async () => {
     const result = await runLlmSolutionPlanProviderWithRepair({
       ...input,
@@ -118,6 +174,7 @@ describe("Task 025 receipt order and solution-plan repair", () => {
       workId: input.workId,
       runId: input.runId,
       repairAttempted: true,
+      repairFailureReasonCode: "invalid_solution_plan_output",
       reanalysis: {
         action: "changed_strategy_reanalysis",
         failedInputRefs: ["llm-output:solution_plan", "llm-output:repaired_solution_plan"],
@@ -130,9 +187,10 @@ describe("Task 025 receipt order and solution-plan repair", () => {
 
   it("wires repair into topology admission and changed-strategy root reentry", () => {
     const topologySource = readFileSync("packages/core/src/topology-runtime/harness.ts", "utf8")
+    const planningSource = readFileSync("packages/core/src/runs/canonical-self-solve-capability-planning.ts", "utf8")
     const rootDriverSource = readFileSync("packages/core/src/runs/root-run-driver.ts", "utf8")
 
-    expect(topologySource).toContain("runLlmSolutionPlanProviderWithRepair")
+    expect(planningSource).toContain("runLlmSolutionPlanProviderWithRepair")
     expect(topologySource).toContain("solutionPlanRepairProvider")
     expect(rootDriverSource).toContain('reasonCode === "planning_admission_blocked"')
     expect(rootDriverSource).toContain("topologyFallbackAdmitted = true")

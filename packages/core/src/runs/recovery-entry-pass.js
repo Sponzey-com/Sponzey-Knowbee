@@ -16,6 +16,7 @@ export async function runRecoveryEntryPass(params, dependencies, moduleDependenc
                     sessionId: params.sessionId,
                     source: params.source,
                     onChunk: params.onChunk,
+                    ...(params.responseContext ? { responseContext: params.responseContext } : {}),
                     application: {
                         kind: "stop",
                         preview: params.preview,
@@ -34,6 +35,7 @@ export async function runRecoveryEntryPass(params, dependencies, moduleDependenc
                     sessionId: params.sessionId,
                     source: params.source,
                     onChunk: params.onChunk,
+                    ...(params.responseContext ? { responseContext: params.responseContext } : {}),
                     application: {
                         kind: "stop",
                         preview: params.preview,
@@ -59,12 +61,16 @@ export async function runRecoveryEntryPass(params, dependencies, moduleDependenc
                 source: params.source,
                 onChunk: params.onChunk,
                 preview: params.preview,
+                ...(params.responseContext ? { responseContext: params.responseContext } : {}),
                 finalizationDependencies: params.finalizationDependencies,
             }, {
                 appendRunEvent: dependencies.appendRunEvent,
             });
             if (externalRecoverySequence.kind === "stop") {
                 return { kind: "break" };
+            }
+            if (externalRecoverySequence.kind === "review") {
+                return { kind: "continue" };
             }
             if (externalRecoverySequence.kind === "retry") {
                 return {

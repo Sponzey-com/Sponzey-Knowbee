@@ -32,6 +32,7 @@ pub fn consume_browser_focus_nonce(
         .create(true)
         .read(true)
         .write(true)
+        .truncate(false)
         .open(state_file)
         .context("browser_focus_nonce_store_unavailable")?;
     file.lock_exclusive()
@@ -54,7 +55,8 @@ fn consume_locked(
     let mut entries: Vec<StoredNonce> = if content.trim().is_empty() {
         Vec::new()
     } else {
-        serde_json::from_str(&content).map_err(|_| anyhow::anyhow!("browser_focus_nonce_store_invalid"))?
+        serde_json::from_str(&content)
+            .map_err(|_| anyhow::anyhow!("browser_focus_nonce_store_invalid"))?
     };
     entries.retain(|entry| entry.expires_at_ms > now_ms);
     let nonce_hash = hash_nonce(extension_id, nonce);
@@ -65,7 +67,8 @@ fn consume_locked(
         nonce_hash,
         expires_at_ms,
     });
-    let serialized = serde_json::to_vec(&entries).context("browser_focus_nonce_store_unavailable")?;
+    let serialized =
+        serde_json::to_vec(&entries).context("browser_focus_nonce_store_unavailable")?;
     file.set_len(0)?;
     file.seek(SeekFrom::Start(0))?;
     file.write_all(&serialized)?;
@@ -98,11 +101,14 @@ mod tests {
 
         consume_browser_focus_nonce(&state_file, "studio-mac", "private-nonce", 2_000, 1_000)
             .expect("first nonce should be stored");
-        let replay = consume_browser_focus_nonce(&state_file, "studio-mac", "private-nonce", 2_000, 1_001)
-            .expect_err("nonce must stay consumed after reopening its store");
-        assert!(replay
-            .to_string()
-            .contains("browser_focus_execution_admission_nonce_replayed"));
+        let replay =
+            consume_browser_focus_nonce(&state_file, "studio-mac", "private-nonce", 2_000, 1_001)
+                .expect_err("nonce must stay consumed after reopening its store");
+        assert!(
+            replay
+                .to_string()
+                .contains("browser_focus_execution_admission_nonce_replayed")
+        );
         let stored = fs::read_to_string(&state_file).expect("state should be written");
         assert!(!stored.contains("private-nonce"));
         assert!(!stored.contains("studio-mac"));

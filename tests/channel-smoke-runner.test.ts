@@ -3,11 +3,18 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 import { DEFAULT_CONFIG, type KnowbeeConfig } from "../packages/core/src/config/types.ts"
-import { closeDb, listChannelSmokeRuns, listChannelSmokeSteps } from "../packages/core/src/db/index.js"
+import {
+  closeDb,
+  getChannelSmokeRun,
+  insertChannelSmokeRun,
+  listChannelSmokeRuns,
+  listChannelSmokeSteps,
+} from "../packages/core/src/db/index.js"
 import {
   createDryRunChannelSmokeExecutor,
   getDefaultChannelSmokeScenarios,
   resolveChannelSmokeReadiness,
+  recoverInterruptedGatewayChannelSmokeRuns,
   runChannelSmokeScenarios,
   runPersistedChannelSmokeScenarios,
   validateChannelSmokeTrace,
@@ -197,7 +204,7 @@ describe("channel smoke runner", () => {
     })
   })
 
-  it("requires run-bound first and terminal response latency evidence", () => {
+  it("requires run-bound latency evidence without making the 30-second objective terminal", () => {
     const webui = scenario("webui.basic_query")
     const missing = passingTrace(webui)
     delete missing.latency
@@ -222,9 +229,9 @@ describe("channel smoke runner", () => {
       firstResponseLatencyMs: 30_001,
       firstResponseStatus: "timeout",
     }
-    expect(validateChannelSmokeTrace(webui, late)).toMatchObject({
-      status: "failed",
-      failures: expect.arrayContaining(["first_response_latency_budget_exceeded"]),
+    expect(validateChannelSmokeTrace(webui, late)).toEqual({
+      status: "passed",
+      failures: [],
     })
   })
 
@@ -461,6 +468,68 @@ describe("channel smoke runner", () => {
       expect(steps[0]?.trace_json).not.toContain("42120565")
       expect(steps[0]?.trace_json).not.toContain("abcdefghijklmnop")
       expect(steps[0]?.trace_json).toContain("***")
+    } finally {
+      closeDb()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it("reconciles only prior Gateway-owned smoke runs after restart", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-channel-smoke-recovery-"))
+    closeDb()
+    initializeTestDbRuntime(stateDir)
+
+    try {
+      insertChannelSmokeRun({
+        id: "gateway-webui-old",
+        mode: "live-run",
+        status: "running",
+        startedAt: 1_000,
+        scenarioCount: 3,
+        initiatedBy: "webui",
+      })
+      insertChannelSmokeRun({
+        id: "gateway-release-old",
+        mode: "live-run",
+        status: "running",
+        startedAt: 1_001,
+        scenarioCount: 2,
+        initiatedBy: "release-live-acceptance",
+      })
+      insertChannelSmokeRun({
+        id: "cli-old",
+        mode: "dry-run",
+        status: "running",
+        startedAt: 900,
+        scenarioCount: 1,
+        initiatedBy: "cli",
+      })
+      insertChannelSmokeRun({
+        id: "gateway-current",
+        mode: "live-run",
+        status: "running",
+        startedAt: 2_000,
+        scenarioCount: 1,
+        initiatedBy: "webui",
+      })
+
+      expect(recoverInterruptedGatewayChannelSmokeRuns({
+        gatewayStartedAt: 2_000,
+        recoveredAt: 2_100,
+      })).toEqual({ recoveredCount: 2 })
+      expect(getChannelSmokeRun("gateway-webui-old")).toMatchObject({
+        status: "failed",
+        finished_at: 2_100,
+        scenario_count: 3,
+        summary: "channel smoke failed: gateway_restart_interrupted",
+      })
+      expect(getChannelSmokeRun("gateway-release-old")?.status).toBe("failed")
+      expect(getChannelSmokeRun("cli-old")?.status).toBe("running")
+      expect(getChannelSmokeRun("gateway-current")?.status).toBe("running")
+      expect(recoverInterruptedGatewayChannelSmokeRuns({
+        gatewayStartedAt: 2_000,
+        recoveredAt: 2_200,
+      })).toEqual({ recoveredCount: 0 })
     } finally {
       closeDb()
       rmSync(stateDir, { recursive: true, force: true })

@@ -7,8 +7,8 @@ import {
   WEBUI_BUILD_BUDGET,
   buildWebUiBuildBaseline,
   evaluateWebUiBuildBudget,
-} from "../scripts/lib/webui-build-baseline.mjs"
-import { collectWebUiBuildBaseline } from "../scripts/collect-webui-build-baseline.mjs"
+} from "../scripts/self/lib/webui-build-baseline.mjs"
+import { collectWebUiBuildBaseline } from "../scripts/self/collect-webui-build-baseline.mjs"
 
 const temporaryDirectories: string[] = []
 

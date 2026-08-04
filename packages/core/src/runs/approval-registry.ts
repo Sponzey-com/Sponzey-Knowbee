@@ -32,6 +32,10 @@ export interface ApprovalRegistryRow {
   decision_source: string | null
   superseded_by: string | null
   metadata_json: string | null
+  operation_id: string | null
+  operation_binding_hash: string | null
+  continuation_schema_version: number | null
+  decision_actor_fingerprint: string | null
   created_at: number
   updated_at: number
 }
@@ -45,11 +49,19 @@ export interface CreateApprovalRegistryRequestInput {
   riskLevel: RiskLevel | string
   kind: ApprovalKind
   params: unknown
+  authorizationParams?: unknown
   expiresAt?: number | null
   channelMessageId?: string | null
   metadata?: Record<string, unknown>
+  operationBinding?: ApprovalOperationBinding
   now?: number
   supersedePending?: boolean
+}
+
+export interface ApprovalOperationBinding {
+  operationId: string
+  operationBindingHash: `sha256:${string}`
+  continuationSchemaVersion: number
 }
 
 export interface ApprovalRegistryDecisionResult {
@@ -65,8 +77,23 @@ export interface ApprovalConsumptionScope {
   requestGroupId?: string | null
   toolName: string
   params: unknown
+  authorizationParams?: unknown
   agentId?: string | null
+  operationBinding?: ApprovalOperationBinding
 }
+
+export type ApprovalRegistryGrantAcquisition =
+  | {
+      acquired: true
+      decision: "allow_once" | "allow_run"
+      approvalId: string
+      source: "approved" | "consumed_run"
+      row: ApprovalRegistryRow
+    }
+  | {
+      acquired: false
+      reasonCode: "approval_grant_not_found" | "approval_grant_scope_mismatch"
+    }
 
 const REQUESTED_STATUSES = new Set<ApprovalRegistryStatus>(["requested"])
 const APPROVED_STATUSES = new Set<ApprovalRegistryStatus>(["approved_once", "approved_run"])
@@ -84,10 +111,25 @@ export function hashApprovalParams(params: unknown): string {
   return crypto.createHash("sha256").update(stableStringify(params)).digest("hex")
 }
 
+export function hashApprovalDecisionActor(input: {
+  channel: string
+  actorId: string
+}): `sha256:${string}` {
+  const digest = crypto
+    .createHash("sha256")
+    .update(stableStringify({
+      schemaVersion: 1,
+      channel: input.channel.trim().toLowerCase(),
+      actorId: input.actorId,
+    }))
+    .digest("hex")
+  return `sha256:${digest}`
+}
+
 export function createApprovalRegistryRequest(input: CreateApprovalRegistryRequestInput): ApprovalRegistryRow {
   const now = input.now ?? Date.now()
   const id = input.id ?? crypto.randomUUID()
-  const paramsHash = hashApprovalParams(input.params)
+  const paramsHash = hashApprovalParams(input.authorizationParams ?? input.params)
   const preview = safeJsonPreview(input.params)
   const metadataJson = input.metadata ? JSON.stringify(input.metadata) : null
   const db = getDb()
@@ -106,8 +148,10 @@ export function createApprovalRegistryRequest(input: CreateApprovalRegistryReque
     `INSERT INTO approval_registry
      (id, run_id, request_group_id, channel, channel_message_id, tool_name, risk_level, kind,
       status, params_hash, params_preview_json, requested_at, expires_at, consumed_at,
-      decision_at, decision_by, decision_source, superseded_by, metadata_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?)`,
+      decision_at, decision_by, decision_source, superseded_by, metadata_json,
+      operation_id, operation_binding_hash, continuation_schema_version, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL,
+             ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     input.runId,
@@ -122,6 +166,9 @@ export function createApprovalRegistryRequest(input: CreateApprovalRegistryReque
     now,
     input.expiresAt ?? null,
     metadataJson,
+    input.operationBinding?.operationId ?? null,
+    input.operationBinding?.operationBindingHash ?? null,
+    input.operationBinding?.continuationSchemaVersion ?? null,
     now,
     now,
   )
@@ -187,6 +234,60 @@ export function attachApprovalChannelMessage(approvalId: string, channelMessageI
   return result.changes > 0
 }
 
+export function attachApprovalChannelBinding(input: {
+  approvalId: string
+  channelMessageId: string
+  decisionActorFingerprint: `sha256:${string}`
+  now?: number
+}): boolean {
+  const result = getDb()
+    .prepare<[string, string, number, string]>(
+      `UPDATE approval_registry
+       SET channel_message_id = ?, decision_actor_fingerprint = ?,
+           updated_at = ?
+       WHERE id = ? AND status = 'requested'`,
+    )
+    .run(
+      input.channelMessageId,
+      input.decisionActorFingerprint,
+      input.now ?? Date.now(),
+      input.approvalId,
+    )
+  return result.changes === 1
+}
+
+export function listRequestedApprovalsForChannelCallback(input: {
+  runId: string
+  channel: string
+  channelMessageId: string
+  decisionActorFingerprint: `sha256:${string}`
+  now?: number
+}): ApprovalRegistryRow[] {
+  const now = input.now ?? Date.now()
+  return getDb()
+    .prepare<
+      [string, string, string, string, number],
+      ApprovalRegistryRow
+    >(
+      `SELECT *
+       FROM approval_registry
+       WHERE run_id = ?
+         AND channel = ?
+         AND channel_message_id = ?
+         AND decision_actor_fingerprint = ?
+         AND status = 'requested'
+         AND (expires_at IS NULL OR expires_at > ?)
+       ORDER BY created_at ASC, id ASC`,
+    )
+    .all(
+      input.runId,
+      input.channel,
+      input.channelMessageId,
+      input.decisionActorFingerprint,
+      now,
+    )
+}
+
 export function expireApprovalRegistryRequest(approvalId: string, now = Date.now()): ApprovalRegistryDecisionResult {
   const row = getApprovalRegistryRow(approvalId)
   if (!row) return { accepted: false, status: "missing", reason: "timeout" }
@@ -228,13 +329,27 @@ export function resolveApprovalRegistryDecision(params: {
     : params.decision === "allow_once"
       ? "approved_once"
       : "denied"
+  const metadata = parseApprovalMetadata(row)
+  const metadataJson = JSON.stringify({
+    ...metadata,
+    approvalDecision: params.decision,
+  })
 
   getDb().prepare(
     `UPDATE approval_registry
-     SET status = ?, decision_at = ?, decision_by = ?, decision_source = ?, updated_at = ?
+     SET status = ?, decision_at = ?, decision_by = ?, decision_source = ?,
+         metadata_json = ?, updated_at = ?
      WHERE id = ?
        AND status = 'requested'`,
-  ).run(status, now, params.decisionBy ?? null, params.decisionSource, now, params.approvalId)
+  ).run(
+    status,
+    now,
+    params.decisionBy ?? null,
+    params.decisionSource,
+    metadataJson,
+    now,
+    params.approvalId,
+  )
 
   return { accepted: true, status, decision: params.decision, row: getApprovalRegistryRow(params.approvalId)! }
 }
@@ -279,19 +394,101 @@ export function consumeApprovalRegistryDecision(
   }
 }
 
+export function acquireApprovalRegistryGrant(
+  expected: ApprovalConsumptionScope,
+  now = Date.now(),
+): ApprovalRegistryGrantAcquisition {
+  const paramsHash = hashApprovalParams(
+    expected.authorizationParams ?? expected.params,
+  )
+  const rows = getDb()
+    .prepare<
+      [string | null, string, string],
+      ApprovalRegistryRow
+    >(
+      `SELECT *
+       FROM approval_registry
+       WHERE request_group_id IS ?
+         AND tool_name = ?
+         AND params_hash = ?
+         AND status IN ('approved_once', 'approved_run', 'consumed')
+       ORDER BY updated_at DESC, id DESC`,
+    )
+    .all(expected.requestGroupId ?? null, expected.toolName, paramsHash)
+
+  let scopeMismatch = false
+  for (const row of rows) {
+    if (!approvalScopeMatches(row, expected)) {
+      scopeMismatch = true
+      continue
+    }
+    if (row.expires_at !== null && row.expires_at <= now) continue
+    if (row.status === "consumed") {
+      const metadata = parseApprovalMetadata(row)
+      if (metadata.approvalDecision !== "allow_run") continue
+      return {
+        acquired: true,
+        decision: "allow_run",
+        approvalId: row.id,
+        source: "consumed_run",
+        row,
+      }
+    }
+    const consumed = consumeApprovalRegistryDecision(row.id, now, expected)
+    if (
+      !consumed.accepted
+      || !consumed.row
+      || (consumed.decision !== "allow_once" && consumed.decision !== "allow_run")
+    ) continue
+    return {
+      acquired: true,
+      decision: consumed.decision,
+      approvalId: row.id,
+      source: "approved",
+      row: consumed.row,
+    }
+  }
+  return {
+    acquired: false,
+    reasonCode: scopeMismatch
+      ? "approval_grant_scope_mismatch"
+      : "approval_grant_not_found",
+  }
+}
+
+function parseApprovalMetadata(row: ApprovalRegistryRow): Record<string, unknown> {
+  try {
+    const value = row.metadata_json ? JSON.parse(row.metadata_json) : {}
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {}
+  } catch {
+    return {}
+  }
+}
+
 function approvalScopeMatches(row: ApprovalRegistryRow, expected: ApprovalConsumptionScope): boolean {
   if (row.run_id !== expected.runId || row.tool_name !== expected.toolName) return false
   if (row.request_group_id !== (expected.requestGroupId ?? null)) return false
-  if (row.params_hash !== hashApprovalParams(expected.params)) return false
+  if (
+    row.params_hash !==
+    hashApprovalParams(expected.authorizationParams ?? expected.params)
+  ) return false
 
-  let metadata: Record<string, unknown> = {}
-  try {
-    metadata = row.metadata_json ? JSON.parse(row.metadata_json) as Record<string, unknown> : {}
-  } catch {
+  const metadata = parseApprovalMetadata(row)
+  const approvedAgentId = typeof metadata.agentId === "string" ? metadata.agentId : null
+  if (approvedAgentId !== (expected.agentId?.trim() || null)) return false
+
+  const binding = expected.operationBinding
+  if (
+    row.operation_id !== (binding?.operationId ?? null)
+    || row.operation_binding_hash !== (binding?.operationBindingHash ?? null)
+    || row.continuation_schema_version
+      !== (binding?.continuationSchemaVersion ?? null)
+  ) {
     return false
   }
-  const approvedAgentId = typeof metadata.agentId === "string" ? metadata.agentId : null
-  return approvedAgentId === (expected.agentId?.trim() || null)
+  return true
 }
 
 export type ApprovalNoticeLanguage = "ko" | "en"

@@ -1,6 +1,7 @@
 import type { CanonicalWorkAggregate, CanonicalWorkTransitionReceipt } from "../contracts/canonical-work-aggregate.js";
 import { type CanonicalTerminalCause, type CanonicalWorkReceipt } from "../contracts/canonical-work-receipt.js";
 declare const TERMINAL_CAUSE_EVENT_OUTCOMES: Readonly<{
+    readonly APPROVAL_DENIED_OR_EXPIRED: "blocked";
     readonly INPUT_REQUIRED: "input_required";
     readonly POLICY_BLOCKED: "policy_block";
     readonly RESULT_BLOCKED: "blocked";

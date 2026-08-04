@@ -16,8 +16,8 @@ import { SqliteLivePerformanceEvidenceSource } from "../packages/core/src/mainte
 import { buildBackupRestoreRehearsalReceipt } from "../packages/core/src/release/backup-restore-receipt.js"
 import { parseLiveAcceptanceBundle } from "../packages/core/src/release/live-acceptance-bundle.js"
 import { SqlitePerformanceAcceptanceAuthorizationRepository } from "../packages/core/src/release/sqlite-performance-acceptance-authorization-repository.js"
-import { loadTrustedLiveAcceptanceVerifier } from "./lib/live-acceptance-verifier.mjs"
-import { captureStagedNpmPackageSet, runNpmCleanInstallSmoke } from "./smoke-npm-install.mjs"
+import { loadTrustedLiveAcceptanceVerifier } from "./self/lib/live-acceptance-verifier.mjs"
+import { captureStagedNpmPackageSet, runNpmCleanInstallSmoke } from "./self/smoke-npm-install.mjs"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const rootDir = resolve(__dirname, "..")
@@ -274,7 +274,7 @@ function runReleaseOperationalRehearsals(options) {
       error.stderr = build.stderr
       throw error
     }
-    const smoke = spawnSync(process.execPath, ["scripts/smoke-artifact-cleanup-cli.mjs"], {
+    const smoke = spawnSync(process.execPath, ["scripts/self/smoke-artifact-cleanup-cli.mjs"], {
       cwd: rootDir,
       encoding: "utf8",
       env: { ...RELEASE_PACKAGE_ENV.processEnv, KNOWBEE_LOG_LEVEL: "product" },

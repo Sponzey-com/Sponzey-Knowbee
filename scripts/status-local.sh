@@ -22,15 +22,13 @@ read_pid() {
 
 pid_alive() {
   local pid="$1"
+  local state
   [[ -z "$pid" ]] && return 1
+  state="$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]')"
+  [[ "$state" == Z* ]] && return 1
   kill -0 "$pid" >/dev/null 2>&1 && return 0
-  if command -v lsof >/dev/null 2>&1 && lsof -p "$pid" >/dev/null 2>&1; then
-    return 0
-  fi
-  if ps -p "$pid" >/dev/null 2>&1; then
-    return 0
-  fi
-  return 1
+  command -v lsof >/dev/null 2>&1 && lsof -p "$pid" >/dev/null 2>&1 && return 0
+  ps -p "$pid" >/dev/null 2>&1
 }
 
 pid_command() {

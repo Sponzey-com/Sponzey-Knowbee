@@ -42,6 +42,7 @@ vi.mock("../packages/core/src/memory/store.js", () => ({
 
 vi.mock("../packages/core/src/memory/knowbee-md.js", () => ({
   loadKnowbeeMd: vi.fn(() => ""),
+  loadBundledPromptTemplate: vi.fn(() => ""),
   loadPromptSourceRegistry: vi.fn(() => []),
   loadPromptTemplate: vi.fn((input: { sourceId?: string; variables?: Record<string, unknown> }) => {
     if (input.sourceId === "runtime_identity_context") {

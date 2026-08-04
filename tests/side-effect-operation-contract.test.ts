@@ -40,6 +40,19 @@ describe("side-effect operation contract", () => {
     })).toMatchObject({ accepted: false, reasonCode: "transition_not_allowed" })
   })
 
+  it("records a typed pre-effect rejection as a distinct terminal state", () => {
+    expect(transitionSideEffectOperation({
+      state: "EFFECT_STARTED",
+      event: "RECORD_REJECTION",
+      receiptRef: "receipt:rejection",
+    })).toMatchObject({ accepted: true, nextState: "EFFECT_REJECTED" })
+    expect(transitionSideEffectOperation({
+      state: "EFFECT_REJECTED",
+      event: "REQUEST_CANCEL",
+      receiptRef: "receipt:late",
+    })).toMatchObject({ accepted: false, reasonCode: "terminal_state_locked" })
+  })
+
   it("routes failed verification through compensation or manual intervention", () => {
     expect(transitionSideEffectOperation({ state: "VERIFYING", event: "VERIFICATION_FAILED", receiptRef: "receipt:verify" }))
       .toMatchObject({ accepted: true, nextState: "VERIFY_FAILED" })
@@ -61,7 +74,7 @@ describe("side-effect operation contract", () => {
   })
 
   it("locks terminal states", () => {
-    for (const state of ["VERIFIED", "COMPENSATED", "MANUAL_INTERVENTION"] as const) {
+    for (const state of ["VERIFIED", "COMPENSATED", "MANUAL_INTERVENTION", "EFFECT_REJECTED"] as const) {
       expect(transitionSideEffectOperation({ state, event: "REQUEST_CANCEL", receiptRef: "receipt:late" }))
         .toMatchObject({ accepted: false, reasonCode: "terminal_state_locked" })
     }

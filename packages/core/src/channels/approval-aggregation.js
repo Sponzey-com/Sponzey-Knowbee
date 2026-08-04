@@ -33,7 +33,7 @@ export function buildApprovalAggregateText(params) {
 }
 export function resolveApprovalAggregate(context, decision, reason = "user") {
     for (const item of context.items) {
-        item.resolve(decision, reason);
+        item.resolve?.(decision, reason);
     }
     return [...context.items];
 }

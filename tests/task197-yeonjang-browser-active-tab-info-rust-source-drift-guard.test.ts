@@ -8,8 +8,9 @@ import {
 describe("Task 197 Yeonjang browser.active_tab_info Rust source drift guard", () => {
   it("accepts the current capability-advertised Rust source while dispatch remains closed", () => {
     const source = readFileSync("Yeonjang/src/node.rs", "utf8")
+    const descriptorSource = readFileSync("Yeonjang/src/method_descriptor.rs", "utf8")
 
-    expect(validateYeonjangBrowserActiveTabInfoRustSourceDrift({ source })).toEqual({
+    expect(validateYeonjangBrowserActiveTabInfoRustSourceDrift({ source, descriptorSource })).toEqual({
       status: "inventory_open_dispatch_closed",
       reasonCode: "browser_active_tab_info_inventory_ready_dispatch_not_registered",
       missingSections: ["dispatch"],

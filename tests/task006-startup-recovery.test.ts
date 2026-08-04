@@ -604,4 +604,35 @@ describe("task006 startup recovery chaos fixtures", () => {
     await expect(second).resolves.toBeUndefined()
     expect(deliveryTask).toHaveBeenCalledTimes(1)
   })
+
+  it("does not treat a receipt for another channel target as this target's delivery", async () => {
+    seedSession("session-target-binding", "telegram")
+    createRootRun({
+      id: "run-target-binding",
+      sessionId: "session-target-binding",
+      requestGroupId: "group-target-binding",
+      prompt: "사진 보내줘",
+      source: "telegram",
+    })
+    const firstTarget = vi.fn(async () => "sent-a")
+    const secondTarget = vi.fn(async () => "sent-b")
+
+    await expect(deliverArtifactOnce({
+      runId: "run-target-binding",
+      channel: "telegram",
+      channelTarget: "chat-a",
+      filePath: "/tmp/target-bound.png",
+      task: firstTarget,
+    })).resolves.toBe("sent-a")
+    await expect(deliverArtifactOnce({
+      runId: "run-target-binding",
+      channel: "telegram",
+      channelTarget: "chat-b",
+      filePath: "/tmp/target-bound.png",
+      task: secondTarget,
+    })).resolves.toBe("sent-b")
+
+    expect(firstTarget).toHaveBeenCalledOnce()
+    expect(secondTarget).toHaveBeenCalledOnce()
+  })
 })

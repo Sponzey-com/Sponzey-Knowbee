@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 export function createYeonjangExecutionAdmissionPasswordHandle(input) {
     const extensionId = input.extensionId.trim();
     const sessionId = normalizeOptional(input.sessionId);
@@ -6,14 +6,24 @@ export function createYeonjangExecutionAdmissionPasswordHandle(input) {
     const connectionPassword = input.connectionPassword.trim();
     if (!extensionId || !keyId || !connectionPassword)
         return undefined;
+    const authorizationKey = normalizeManagedAuthorizationSecret(connectionPassword);
     return Object.freeze({
         keyId,
         extensionId,
         ...(sessionId ? { sessionId } : {}),
-        sign: ({ canonicalPayload }) => `hmac-sha256:${createHmac("sha256", connectionPassword)
+        sign: ({ canonicalPayload }) => `hmac-sha256:${createHmac("sha256", authorizationKey)
             .update(canonicalPayload, "utf8")
             .digest("hex")}`,
     });
+}
+function normalizeManagedAuthorizationSecret(connectionPassword) {
+    if (Buffer.byteLength(connectionPassword, "utf8") >= 16) {
+        return connectionPassword;
+    }
+    return createHash("sha256")
+        .update("knowbee.yeonjang.execution-admission.v1\u0000", "utf8")
+        .update(connectionPassword, "utf8")
+        .digest();
 }
 export function createBootstrapYeonjangExecutionAdmissionKeyPort(input) {
     const handles = new Map();

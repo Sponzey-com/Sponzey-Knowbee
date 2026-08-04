@@ -41,6 +41,7 @@ export interface ExecutionAttemptPassResult {
         summary: string;
         reason: string;
         message: string;
+        providerFailureReasonCode?: import("../ai/provider-failure.js").AIProviderFailureReasonCode;
     } | null;
     workerRuntimeRecovery: {
         summary: string;

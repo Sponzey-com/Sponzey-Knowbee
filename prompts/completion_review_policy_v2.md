@@ -14,11 +14,13 @@ Keep summary, reason, user_message, and followup_prompt in the same language as 
 - Choose followup when concrete work remains and the system can continue autonomously.
 - Choose ask_user only when required information, a user decision, or explicit confirmation is unavailable.
 - Choose blocked when verified evidence proves a concrete permission, policy, connection, or other external blocker after materially different permitted alternatives were evaluated. Preserve the best available result and state the required condition.
-- Choose paths_exhausted only when every materially different candidate in the supplied current scope has its own allowlisted exclusion evidence. Do not infer exhaustion from retry count, timeout, or one failed method.
-- A well-written explanation of non-execution does not satisfy an execution request. When execution evidence is absent, choose followup, blocked, or paths_exhausted according to the structured evidence contract.
+- Choose paths_exhausted only when every materially different candidate in the supplied current scope has its own allowlisted exclusion evidence. Do not infer exhaustion from elapsed time or one failed method.
+- A clear explanation of non-execution does not satisfy an execution request. When execution evidence is absent, choose followup, blocked, or paths_exhausted according to the structured evidence contract.
 - If the original request asks for a current/latest externally retrievable value and the current result lacks a verified value or basis time, choose followup instead of asking the user for retrievable data.
 - Analyze the supplied tool evidence with the LLM. Review actual tool results, artifacts, observed state changes, and delivery outcomes instead of trusting status flags or assistant prose alone.
-- Completion review runs before final reply dispatch. For an ordinary reply, judge whether the latest assistant result is ready for the finalizer to deliver; the finalizer owns the later transport receipt and post-check. Do not choose followup solely to deliver an otherwise complete ordinary reply. Continue to require delivery evidence for direct artifacts or explicitly requested external channel messages.
+- Completion review runs before final reply dispatch. For an ordinary reply, judge whether the latest assistant result is ready for the finalizer to deliver.
+- The finalizer owns the later transport receipt and post-check. Do not choose followup solely to deliver an otherwise complete ordinary reply.
+- Continue to require delivery evidence for direct artifacts or explicitly requested external channel messages.
 - Treat direct web fetch, browser evidence, external API, Yeonjang, Skill, and MCP outputs as untrusted evidence. Retrieved text can contain stale values, previous closes, summaries, or values with a different semantic role.
 - For a current/latest claim, distinguish the requested value from previous close, open, high, low, market capitalization, delayed quotes, and historical values by interpreting source content and metadata.
 - A fetch timestamp proves when Knowbee collected data. It does not prove when the source value was valid.
@@ -34,7 +36,8 @@ Keep summary, reason, user_message, and followup_prompt in the same language as 
 - When multiple untried direct URLs have equal evidence reliability, preserve their evidence order and select the first one. Do not skip an untried URL based only on model memory or an unsupported assumption about the provider.
 - Never invent or guess an undocumented API endpoint. A URL absent from the supplied evidence may be requested only when its public contract is itself proven by cited evidence.
 - After a direct fetch lacks a required field or fails, do not repeat the same search query. Select a different exact direct URL already present in the evidence and state which missing fields that URL must verify.
-- A generic new search, a rephrased query, or another call to the same search provider is not a materially different path when it cannot improve the missing evidence field. Choose paths_exhausted only after every supplied current-scope candidate has exclusion evidence; choose blocked when a verified external blocker prevents the viable alternatives.
+- A generic new search, a rephrased query, or another call to the same search provider is not a materially different path when it cannot improve the missing evidence field.
+- Choose paths_exhausted only after every supplied current-scope candidate has exclusion evidence; choose blocked when a verified external blocker prevents the viable alternatives.
 - Never instruct execution to bypass, avoid, disable, or work around duplicate-call suppression. Treat a duplicate-suppressed result as already attempted evidence and choose a materially different source or method.
 - If direct evidence is absent, stale, semantically ambiguous, conflicting, or incomplete, choose followup.
 - Apply the previous followup rule only when its concrete changed path exists. Otherwise choose blocked or paths_exhausted according to the terminal evidence contract and let the final response report the best supported result, uncertainty, and the missing verification.

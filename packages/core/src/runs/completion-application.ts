@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import type { UserInputRequirement } from "../contracts/user-input-requirement.js"
 import { loadBundledPromptTemplate } from "../memory/knowbee-md.js"
 import {
   containsInternalEvidenceText,
@@ -51,6 +52,7 @@ export type CompletionApplicationDecision =
       reason?: string
       remainingItems?: string[]
       userMessage?: string
+      inputRequirement?: UserInputRequirement
     }
 
 export interface CompletionFollowupTransitionIdentity {
@@ -224,6 +226,7 @@ export function decideCompletionApplication(params: {
     ...(decision.reason ? { reason: decision.reason } : {}),
     ...(decision.remainingItems ? { remainingItems: decision.remainingItems } : {}),
     ...(decision.userMessage ? { userMessage: decision.userMessage } : {}),
+    inputRequirement: decision.inputRequirement,
   }
 }
 
@@ -285,6 +288,10 @@ export function buildCompletionFollowupExecutionMessage(
     variables: {
       actionProposalBlock: decision.followupPrompt,
       evidenceRefsBlock,
+      requiredToolNamesBlock: decision.followupExecutionMode === "tool"
+        && (decision.followupRequiredToolNames?.length ?? 0) > 0
+        ? decision.followupRequiredToolNames!.map((name) => `- ${name}`).join("\n")
+        : "",
       remainingItemsBlock: decision.remainingItems.length > 0
         ? decision.remainingItems.map((item) => `- ${item}`).join("\n")
         : "- Re-evaluate the original completion conditions.",

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   DEFAULT_PROJECT_EVIDENCE_PATH,
   auditProjectRequirements,
-} from "../scripts/audit-project-requirements.mjs"
+} from "../scripts/self/audit-project-requirements.mjs"
 
 const requirementIds = ["PRJ-b922ef5b", "PRJ-b124811b", "PRJ-677fc53f"]
 

@@ -16,12 +16,12 @@ function listTypeScriptSourceFiles(dir: string): string[] {
 }
 
 describe("core logger boundary", () => {
-  it("does not use direct console calls in core TypeScript source", () => {
+  it("keeps the non-Node console fallback inside the central logger owner", () => {
     const sourceRoot = fileURLToPath(new URL("../packages/core/src", import.meta.url))
     const offenders = listTypeScriptSourceFiles(sourceRoot)
       .filter((filePath) => /\bconsole\./u.test(readFileSync(filePath, "utf-8")))
       .map((filePath) => relative(sourceRoot, filePath))
 
-    expect(offenders).toEqual([])
+    expect(offenders).toEqual(["logger/index.ts"])
   })
 })

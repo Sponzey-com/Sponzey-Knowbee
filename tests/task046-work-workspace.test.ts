@@ -25,7 +25,7 @@ describe("Task 046 work workspace", () => {
     expect(app).toContain('path="/work/runs"')
     expect(app).toContain('path="/work/schedules"')
     expect(app).toContain('<Navigate to="/work/runs" replace />')
-    expect(app).toContain('<WorkWorkspace activeView="runs">')
+    expect(app).toContain("<RunsPage />")
     expect(app).toContain('<WorkWorkspace activeView="schedules">')
     expect(app).not.toContain("<BeginnerTasksPage />")
   })

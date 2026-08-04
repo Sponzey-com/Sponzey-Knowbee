@@ -148,7 +148,7 @@ describe("Task 157 live bundle signature boundary", () => {
   it("contains no private signing key or private-key loader", () => {
     const coreSource = readFileSync("packages/core/src/release/live-acceptance-bundle.ts", "utf8")
     const cliSource = readFileSync("scripts/release-package.mjs", "utf8")
-    const verifierSource = readFileSync("scripts/lib/live-acceptance-verifier.mjs", "utf8")
+    const verifierSource = readFileSync("scripts/self/lib/live-acceptance-verifier.mjs", "utf8")
     expect(`${coreSource}\n${cliSource}\n${verifierSource}`).not.toMatch(
       /BEGIN (?:RSA |EC )?PRIVATE KEY/u,
     )

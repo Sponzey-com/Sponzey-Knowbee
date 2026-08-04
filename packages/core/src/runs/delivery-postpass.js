@@ -1,6 +1,5 @@
 import { buildImplicitExecutionSummary } from "./execution.js";
 import { buildSuccessfulDeliverySummary, } from "./delivery.js";
-import { buildDirectArtifactDeliveryRecoveryPrompt, selectDirectArtifactDeliveryRecovery, } from "./recovery.js";
 export function buildDeliveryPostPassPreview(params) {
     if (params.deliveryOutcome.hasSuccessfulArtifactDelivery && params.deliveryOutcome.deliverySummary) {
         return {
@@ -43,42 +42,11 @@ export function decideDirectArtifactDeliveryFlow(params) {
             eventLabel: "텍스트 결과 전달 요청 완료",
         };
     }
-    const deliveryRecovery = selectDirectArtifactDeliveryRecovery({
-        source: params.source,
-        successfulFileDeliveries: params.successfulFileDeliveries,
-        seenKeys: params.seenKeys,
-    });
-    if (!deliveryRecovery) {
-        return {
-            kind: "stop",
-            summary: "메신저 결과 전달이 반복 실패하여 자동 진행을 멈췄습니다.",
-            reason: "같은 전달 실패 복구 경로가 이미 시도되어 다른 자동 대안을 찾지 못했습니다.",
-            remainingItems: ["결과물 자체를 전달할 수 있는 다른 전달 경로나 수동 확인이 필요합니다."],
-        };
-    }
-    if (!params.canRetry) {
-        return {
-            kind: "stop",
-            summary: "전달 복구를 자동으로 계속할 수 없습니다.",
-            reason: "사용자는 결과물 자체를 보여주거나 보내달라고 요청했지만 실제 전달이 완료되지 않았습니다.",
-            remainingItems: ["결과물 자체를 전달할 수 있는 안전한 전달 경로나 사용자 확인이 필요합니다."],
-        };
-    }
-    return {
-        kind: "retry",
-        recoveryKey: deliveryRecovery.key,
-        summary: deliveryRecovery.summary,
-        reason: deliveryRecovery.reason,
-        alternatives: deliveryRecovery.alternatives,
-        nextMessage: buildDirectArtifactDeliveryRecoveryPrompt({
-            originalRequest: params.originalRequest,
-            previousResult: params.previousResult,
-            successfulTools: params.successfulTools,
-            successfulFileDeliveries: params.successfulFileDeliveries,
-            alternatives: deliveryRecovery.alternatives,
-        }),
-        eventLabel: "메신저 결과 전달 재시도",
-    };
+    // A missing artifact is unfinished execution, not a delivery failure. Once a
+    // typed artifact exists, review-cycle-pass restricts the next attempt to the
+    // admitted channel delivery Tool. Consuming a generic delivery retry here
+    // used to mark that recovery as spent before capture had even occurred.
+    return { kind: "none" };
 }
 function isPlainTextInformationCompletion(params) {
     if (params.successfulFileDeliveries.length > 0)

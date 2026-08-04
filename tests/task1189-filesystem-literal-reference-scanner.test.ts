@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { scanFilesystemLiteralReferences } from "../scripts/lib/repository-reference-scanner.mjs"
+import { scanFilesystemLiteralReferences } from "../scripts/self/lib/repository-reference-scanner.mjs"
 
 const roots: string[] = []
 const fixture = (): string => {

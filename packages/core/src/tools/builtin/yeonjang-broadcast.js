@@ -232,7 +232,7 @@ async function executeBroadcastScreenCapture(params, ctx) {
         }
         catch (error) {
             const message = toolUserFacingErrorMessage(error);
-            const classified = classifyYeonjangScreenCaptureFailure(message);
+            const classified = classifyYeonjangScreenCaptureFailure(error, message);
             executionRecords.push({
                 status: "failed",
                 broadcastIndex: target.broadcastIndex,

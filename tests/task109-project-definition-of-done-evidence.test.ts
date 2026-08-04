@@ -3,7 +3,7 @@ import { admitProjectDefinitionOfDone } from "../packages/core/src/contracts/pro
 import {
   DEFAULT_PROJECT_EVIDENCE_PATH,
   auditProjectRequirements,
-} from "../scripts/audit-project-requirements.mjs"
+} from "../scripts/self/audit-project-requirements.mjs"
 
 const parentRequirementId = "PRJ-1b687577"
 

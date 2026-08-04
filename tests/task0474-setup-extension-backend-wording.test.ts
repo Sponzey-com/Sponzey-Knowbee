@@ -48,7 +48,7 @@ describe("setup extension backend user-facing wording", () => {
     }
   })
 
-  it("uses external feature connection wording for HTTP setup test messages", async () => {
+  it("uses external feature connection wording for rejected HTTP endpoint protocols", async () => {
     const result = await testMcpServerConnection({
       id: "external:http",
       name: "External HTTP",
@@ -56,7 +56,7 @@ describe("setup extension backend user-facing wording", () => {
       command: "",
       argsText: "",
       cwd: "",
-      url: "https://example.test/mcp",
+      url: "file:///tmp/example-mcp",
       required: false,
       enabled: true,
       status: "planned",
@@ -65,10 +65,10 @@ describe("setup extension backend user-facing wording", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      message: "HTTP 방식 외부 기능 연결은 아직 준비 중입니다. 지금은 stdio 방식만 사용할 수 있습니다.",
+      message: "External feature HTTP endpoint protocol is not supported.",
       tools: [],
     })
-    expect(translateDisplayText("en", result.message)).toBe("HTTP transport external feature connections are not ready yet. Only stdio transport is available right now.")
+    expect(translateDisplayText("en", result.message)).toBe("External feature HTTP endpoint protocol is not supported.")
     expect(result.message).not.toContain("MCP")
   })
 })

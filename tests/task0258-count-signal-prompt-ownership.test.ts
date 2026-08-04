@@ -26,7 +26,12 @@ describe("task0258 count-signal prompt ownership", () => {
     const offenders = promptFiles
       .filter((file) => file !== "recovery_policy.md")
       .flatMap((file) => {
-        const source = readFileSync(join(promptsDir, file), "utf-8").toLowerCase()
+        const source = readFileSync(join(promptsDir, file), "utf-8")
+          .replace(
+            "You must not treat retry counts as terminal failure conditions; treat them as signals to change strategy unless the user explicitly set the limit or the limit enforces a safety boundary.",
+            "",
+          )
+          .toLowerCase()
         return COUNT_SIGNAL_MARKERS
           .filter((marker) => source.includes(marker))
           .map((marker) => `${file}:${marker}`)

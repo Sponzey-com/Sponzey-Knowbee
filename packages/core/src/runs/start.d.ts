@@ -15,6 +15,7 @@ import { type StandaloneAssistantMessageResponseContext } from "./finalization.j
 import type { InboundMessageRecord } from "./request-isolation.js";
 import type { RootRun, TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
+import type { RecoveredExecutionAttempt } from "./execution-cycle-pass.js";
 export interface StartRootRunParams {
     artifactStorage: ArtifactStorageContext;
     memoryJournal: MemoryJournalRepository;
@@ -60,6 +61,9 @@ export interface StartRootRunParams {
     includeScheduleMemory?: boolean | undefined;
     memorySearchQuery?: string | undefined;
     responseLanguageMode?: TaskStructuredRequest["response_language_mode"] | undefined;
+    resumeExistingRun?: boolean | undefined;
+    recoveredAttempt?: RecoveredExecutionAttempt | undefined;
+    signal?: AbortSignal | undefined;
 }
 export interface StartedRootRun {
     runId: string;

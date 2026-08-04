@@ -55,17 +55,13 @@ describe("task0822 schedule notice final rendering event", () => {
       "run-schedule-notice-render",
       "user_facing_loop_directive_notice:schedule_action_result_notice:non_final",
     )
-    expect(renderFinalResponseText).toHaveBeenCalledWith({
-      originalRequest: "매 분 안녕이라고 해줘",
-      rawText: "스케줄이 저장되었습니다.",
-      textSource: "runtime_deterministic",
-      model: "gpt-test",
-      providerId: "openai",
-      workDir: "/tmp/project",
-    })
-    expect(finalizationDependencies.appendRunEvent).toHaveBeenCalledWith(
-      "run-schedule-notice-render",
-      "user_facing_final_response_rewritten:llm",
+    expect(moduleDependencies.completeRunWithAssistantMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "스케줄이 저장되었습니다.",
+        textSource: "runtime_deterministic",
+        responseContext: expect.objectContaining({ originalRequest: "매 분 안녕이라고 해줘" }),
+        renderFinalResponseText,
+      }),
     )
   })
 })

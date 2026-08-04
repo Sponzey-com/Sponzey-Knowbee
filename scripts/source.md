@@ -11,11 +11,20 @@
 - Linux용 Yeonjang 빌드/시작/종료 스크립트
 - Linux용 Yeonjang headless managed 시작/종료 스크립트
 - Windows용 Yeonjang 빌드/시작/종료 배치 스크립트
+- 패키징과 릴리스 실행 스크립트
+
+## 자체 검증 스크립트
+
+- 감사, 수집, smoke, rehearsal, verify처럼 프로젝트가 자체 검증에 사용하는 스크립트는 `scripts/self/`에 둡니다.
+- 자체 검증 스크립트 전용 모듈은 `scripts/self/lib/`에 둡니다.
+- 사용자와 운영자가 직접 사용하는 시작, 중지, 빌드, 상태, 패키징 진입점은 `scripts/` 루트에 둡니다.
 
 ## 메모
 
 - 이 스크립트들은 운영 편의 도구이지 제품의 핵심 런타임 자체는 아닙니다.
 - 시작 방식이 바뀌면 실제 패키지 진입점과 스크립트가 서로 어긋나지 않게 맞춰야 합니다.
+- Gateway 시작은 nohup과 명시적 launchctl opt-in 모두에서 같은 startup-captured 로그 목적과
+  Field Debug 만료 시각을 전달해야 합니다.
 - Knowbee와 Yeonjang 모두 재시작 흐름은 별도 restart 스크립트보다 `start-* --restart` 진입점으로 모읍니다.
 - 로컬 Gateway/WebUI 제어는 bash 스크립트를 기준으로 하고, Windows 네이티브 배치는 현재 Yeonjang runtime 관리에 집중합니다.
 - Yeonjang GUI 시작 스크립트는 `desktop_interactive`를 tray-first lifecycle로 안내해야 하며, startup hidden / close-to-tray / explicit quit 원칙을 함께 표시합니다.

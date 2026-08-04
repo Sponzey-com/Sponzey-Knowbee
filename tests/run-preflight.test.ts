@@ -164,7 +164,33 @@ describe("start preflight", () => {
     })
 
     expect(failure).toBeNull()
-    expect(plan.toolPolicy.requiresYeonjang).toBe(false)
+    expect(plan.toolPolicy.requiresYeonjang).toBe("unknown")
+  })
+
+  it("marks Yeonjang not required only from an explicit non-Yeonjang policy input", () => {
+    expect(resolveStartContextPlan({
+      source: "webui",
+      message: "hello",
+      providerId: "openai",
+      model: "gpt-5",
+      toolsEnabled: false,
+      config: DEFAULT_CONFIG,
+    }).toolPolicy.requiresYeonjang).toBe("not_required")
+
+    expect(resolveStartContextPlan({
+      source: "webui",
+      message: "hello",
+      providerId: "openai",
+      model: "gpt-5",
+      executionSemantics: {
+        filesystemEffect: "none",
+        privilegedOperation: "none",
+        artifactDelivery: "none",
+        approvalRequired: false,
+        approvalTool: "external_action",
+      },
+      config: DEFAULT_CONFIG,
+    }).toolPolicy.requiresYeonjang).toBe("not_required")
   })
 
   it("allows Yeonjang-bound requests to reach request-time method refresh when a snapshot is connected", () => {
@@ -228,7 +254,7 @@ describe("start preflight", () => {
     expect(plan.toolPolicy).toEqual({
       toolsEnabled: true,
       requiresApproval: true,
-      requiresYeonjang: true,
+      requiresYeonjang: "required",
     })
   })
 
@@ -266,7 +292,7 @@ describe("start preflight", () => {
     expect(plan.toolPolicy).toEqual({
       toolsEnabled: true,
       requiresApproval: true,
-      requiresYeonjang: true,
+      requiresYeonjang: "required",
     })
     expect(plan.retrieval.vectorOptional).toBe(true)
   })

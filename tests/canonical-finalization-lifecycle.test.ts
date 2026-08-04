@@ -13,6 +13,7 @@ import {
   buildCanonicalRecoveredDeliveryDescriptor,
   recordCanonicalFinalizationTransition,
 } from "../packages/core/src/runs/canonical-finalization-lifecycle.ts"
+import { projectCanonicalWorkStateToRunStatus } from "../packages/core/src/runs/canonical-work-run-projection.ts"
 
 const completeState = {
   executionSatisfied: true,
@@ -179,14 +180,112 @@ describe("canonical finalization lifecycle", () => {
       runId: "run-2",
       review: null,
       state: completeState,
-      application: { kind: "awaiting_user", summary: "need input", reason: "missing value" },
+      application: {
+        kind: "awaiting_user",
+        summary: "need input",
+        reason: "missing value",
+        inputRequirement: {
+          resolutionKind: "provide_value",
+          missingFields: ["output_file_name"],
+        },
+      },
       preview: "question",
     })
     expect(exhausted).toEqual({
       ok: false,
       reasonCode: "canonical_exhaustion_authorization_missing",
     })
-    expect(awaiting).toMatchObject({ ok: true, descriptor: { event: "INPUT_REQUIRED" } })
+    expect(awaiting).toMatchObject({
+      ok: true,
+      descriptor: {
+        event: "INPUT_REQUIRED",
+        waitingKind: "user_input",
+      },
+    })
+    if (!awaiting.ok) return
+    let projectedWaitingKind: "approval" | "user_input" | undefined
+    expect(recordCanonicalFinalizationTransition(awaiting.descriptor, {
+      issueReceipt: () => ({ issued: true }),
+      loadReceipt: () => undefined,
+      applyTransition: (input) => {
+        projectedWaitingKind = input.waitingKind
+        return { status: "applied" }
+      },
+    })).toEqual({ ok: true })
+    expect(projectCanonicalWorkStateToRunStatus({
+      state: "USER_INPUT_REQUIRED",
+      waitingKind: projectedWaitingKind,
+    })).toEqual({
+      ok: true,
+      projection: {
+        canonicalState: "USER_INPUT_REQUIRED",
+        runStatus: "awaiting_user",
+        lossy: true,
+      },
+    })
+  })
+
+  it("does not convert an internal side-effect conflict into user input required", () => {
+    const built = buildCanonicalCompletionOutcomeDescriptor({
+      runId: "run-side-effect-conflict",
+      review: null,
+      state: {
+        ...completeState,
+        executionSatisfied: false,
+        completionSatisfied: false,
+        interpretationStatus: "user_input_required",
+        executionStatus: "missing",
+        recoveryStatus: "required",
+        blockingReasons: ["operation_scope_params_conflict"],
+        conflictReason: "operation_scope_params_conflict",
+        checklist: {
+          ...completeState.checklist,
+          pendingCount: 2,
+        },
+      },
+      application: {
+        kind: "awaiting_user",
+        summary: "Additional input is required.",
+        reason: "operation_scope_params_conflict",
+      },
+      preview: "",
+    })
+
+    expect(built).toEqual({
+      ok: false,
+      reasonCode: "canonical_user_input_evidence_missing",
+    })
+  })
+
+  it("rejects empty and duplicate typed user-input fields", () => {
+    const build = (missingFields: string[]) =>
+      buildCanonicalCompletionOutcomeDescriptor({
+        runId: "run-invalid-input-requirement",
+        review: null,
+        state: {
+          ...completeState,
+          executionSatisfied: false,
+          completionSatisfied: false,
+        },
+        application: {
+          kind: "awaiting_user",
+          summary: "need input",
+          inputRequirement: {
+            resolutionKind: "provide_value",
+            missingFields,
+          },
+        },
+        preview: "",
+      })
+
+    expect(build([])).toEqual({
+      ok: false,
+      reasonCode: "canonical_user_input_evidence_missing",
+    })
+    expect(build(["file_name", "file_name"])).toEqual({
+      ok: false,
+      reasonCode: "canonical_user_input_evidence_missing",
+    })
   })
 
   it("authorizes path exhaustion only from an evidence-bound LLM paths-exhausted review", () => {

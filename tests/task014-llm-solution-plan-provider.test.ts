@@ -13,7 +13,7 @@ const plan: LlmSolutionPlanPayload = {
       step_id: "inspect",
       owner_agent_name: "마당쇠",
       action_type: "use_tool",
-      input_refs: ["request:1"],
+      input_refs: ["request:1", "capability:tool:shell-read"],
       expected_output: "Current repository state.",
       completion_criteria: "Repository state is supported by command evidence.",
       status: "pending",
@@ -51,7 +51,8 @@ describe("task014 LLM solution-plan provider", () => {
         workId: "work:1",
         runId: "run:1",
         requestDiagnosisReceiptId: "receipt:diagnosis:1",
-        capabilityRefs: ["tool:shell-read"],
+        capabilityRefs: ["capability:tool:shell-read"],
+        requiredCapabilityRefs: [],
       }),
     ])
     expect(result).toMatchObject({

@@ -23,11 +23,15 @@ describe("task1059 tool security config snapshot", () => {
     expect(dispatcherSource).toContain("securityConfig: NonNullable<ToolContext[\"securityConfig\"]>")
     expect(legacyConfigAccesses(dispatcherSource)).toEqual([])
     expect(functionParameterTypes(dispatcherSource, "buildRuntimeToolContext")).toEqual([[
-      "ToolContext",
-      "ToolRuntimeConfigSnapshot",
+      expect.stringContaining("ctx: ToolContext"),
     ]])
-    expect(callArgumentCounts(dispatcherSource, "buildRuntimeToolContext")).toEqual([2])
-    expect(dispatcherSource).toContain("const approvalRequired = this.shouldRequireApproval(tool, ctx, securityConfig.approvalMode)")
+    expect(functionParameterTypes(dispatcherSource, "buildRuntimeToolContext")[0]?.[0]).toContain(
+      "config: ToolRuntimeConfigSnapshot",
+    )
+    expect(callArgumentCounts(dispatcherSource, "buildRuntimeToolContext")).toEqual([1])
+    expect(dispatcherSource).toContain("const approvalRequired = this.shouldRequireApproval(")
+    expect(dispatcherSource).toContain("securityConfig.approvalMode,")
+    expect(dispatcherSource).toContain("capabilityDecision.approvalRequired,")
     expect(dispatcherSource).toContain("security: securityConfig")
     for (const sourceText of [fileSource, telegramSource]) {
       expect(sourceText).not.toContain("getConfig()")

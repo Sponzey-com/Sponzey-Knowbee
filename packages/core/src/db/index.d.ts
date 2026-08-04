@@ -1002,6 +1002,7 @@ export interface ArtifactMetadataInput {
 export declare function insertSession(session: Omit<DbSession, "token_count">): void;
 export declare function getSession(id: string): DbSession | undefined;
 export declare function insertMessage(msg: DbMessage): void;
+export declare function insertMessageIfAbsent(msg: DbMessage): boolean;
 export declare function getMessages(sessionId: string): DbMessage[];
 export declare function getMessagesForRequestGroup(sessionId: string, requestGroupId: string): DbMessage[];
 export declare function getMessagesForRequestGroupWithRunMeta(sessionId: string, requestGroupId: string): DbRequestGroupMessage[];
@@ -1097,6 +1098,14 @@ export declare function listChannelRuntimeEvents(input?: {
 }): DbChannelRuntimeEvent[];
 export declare function insertChannelSmokeRun(input: DbChannelSmokeRunInput): string;
 export declare function updateChannelSmokeRun(id: string, fields: Partial<Pick<DbChannelSmokeRunInput, "status" | "finishedAt" | "scenarioCount" | "passedCount" | "failedCount" | "skippedCount" | "summary" | "metadata">>): void;
+/**
+ * Finalizes diagnostic runs owned by a previous Gateway process. CLI smoke
+ * runs have a separate process owner and are deliberately excluded.
+ */
+export declare function interruptGatewayOwnedChannelSmokeRunsStartedBefore(input: {
+    startedBefore: number;
+    finishedAt: number;
+}): number;
 export declare function insertChannelSmokeStep(input: DbChannelSmokeStepInput): string;
 export declare function getChannelSmokeRun(id: string): DbChannelSmokeRun | undefined;
 export declare function listChannelSmokeRuns(limit?: number): DbChannelSmokeRun[];
@@ -1586,6 +1595,7 @@ export declare function hasArtifactReceipt(input: {
     runId: string;
     channel: string;
     artifactPath: string;
+    channelTarget?: string;
 }): boolean;
 export declare function listArtifactReceiptsForRun(runId: string): DbArtifactReceipt[];
 export declare function insertArtifactMetadata(input: ArtifactMetadataInput): string;

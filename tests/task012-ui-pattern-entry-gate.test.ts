@@ -4,7 +4,7 @@ import {
   analyzeUiSourcePatterns,
   evaluateUiFoundationEntry,
   validatePatternDebt,
-} from "../scripts/lib/ui-pattern-inventory.mjs"
+} from "../scripts/self/lib/ui-pattern-inventory.mjs"
 
 describe("task012 UI pattern inventory and entry gate", () => {
   it("finds oversized radius, unnamed icon buttons, and raw status styling", () => {
@@ -37,7 +37,7 @@ describe("task012 UI pattern inventory and entry gate", () => {
   })
 
   it("keeps the analyzer deterministic and side-effect free", () => {
-    const source = readFileSync("scripts/lib/ui-pattern-inventory.mjs", "utf8")
+    const source = readFileSync("scripts/self/lib/ui-pattern-inventory.mjs", "utf8")
     expect(source).not.toMatch(/process\.env|readFile|writeFile|fetch\(|console\./)
   })
 })

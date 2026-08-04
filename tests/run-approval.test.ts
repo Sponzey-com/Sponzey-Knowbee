@@ -9,7 +9,7 @@ afterEach(() => {
 })
 
 describe("run approval helpers", () => {
-  it("creates a synthetic approval request for privileged worker-driven actions", () => {
+  it("does not create a synthetic approval for a privileged Tool owned by the dispatcher", () => {
     const approval = detectSyntheticApprovalRequest({
       executionProfile: {
         approvalRequired: true,
@@ -29,10 +29,7 @@ describe("run approval helpers", () => {
       sawRealFilesystemMutation: false,
     })
 
-    expect(approval).not.toBeNull()
-    expect(approval?.toolName).toBe("screen_capture")
-    expect(approval?.summary).toContain("승인")
-    expect(approval?.continuationPrompt).toContain("Approval Granted Continuation")
+    expect(approval).toBeNull()
   })
 
   it("does not request synthetic approval when meaningful execution evidence already exists", () => {
@@ -57,7 +54,7 @@ describe("run approval helpers", () => {
     expect(approval).toBeNull()
   })
 
-  it("does not let an unrelated successful tool bypass privileged action approval", () => {
+  it("does not turn a privileged Tool failure into a second synthetic approval", () => {
     const approval = detectSyntheticApprovalRequest({
       executionProfile: {
         approvalRequired: true,
@@ -76,8 +73,7 @@ describe("run approval helpers", () => {
       sawRealFilesystemMutation: false,
     })
 
-    expect(approval).not.toBeNull()
-    expect(approval?.toolName).toBe("screen_capture")
+    expect(approval).toBeNull()
   })
 
   it("does not request approval for non-privileged non-worker flows", () => {
@@ -179,5 +175,80 @@ describe("run approval helpers", () => {
 
     expect(cancelled).toEqual([])
     expect(steps.some((step) => step.stepKey === "awaiting_approval" && step.status === "completed")).toBe(true)
+  })
+
+  it("records an aborted approval wait as one canonical cancellation before execution", async () => {
+    const controller = new AbortController()
+    const steps: Array<{ stepKey: string; status: string; summary: string }> = []
+    const cancelled: Array<{ runId: string; runSummary: string }> = []
+    const resolvedEvents: Array<{ decision: string; reason?: string }> = []
+
+    const promise = requestSyntheticApproval({
+      runId: "run-aborted",
+      sessionId: "session-aborted",
+      toolName: "yeonjang_camera_capture",
+      summary: "카메라 촬영 진행 전 승인이 필요합니다.",
+      params: { source: "telegram" },
+      signal: controller.signal,
+    }, {
+      timeoutSec: 30,
+      fallback: "deny",
+      appendRunEvent: () => undefined,
+      setRunStepStatus: (_runId, stepKey, status, summary) => {
+        steps.push({ stepKey, status, summary })
+      },
+      updateRunStatus: () => undefined,
+      cancelRun: (runId, denial) => {
+        cancelled.push({ runId, runSummary: denial.runSummary })
+      },
+      emitApprovalResolved: (payload) => {
+        resolvedEvents.push({
+          decision: payload.decision,
+          reason: payload.reason,
+        })
+      },
+      emitApprovalRequest: () => undefined,
+    })
+
+    controller.abort()
+    await expect(promise).resolves.toBe("deny")
+
+    expect(steps).toContainEqual(expect.objectContaining({
+      stepKey: "awaiting_approval",
+      status: "cancelled",
+    }))
+    expect(cancelled).toEqual([{
+      runId: "run-aborted",
+      runSummary: "yeonjang_camera_capture 승인 처리가 시스템에 의해 중단되었습니다.",
+    }])
+    expect(resolvedEvents).toEqual([{ decision: "deny", reason: "abort" }])
+  })
+
+  it("does not emit an approval request when cancellation already won admission", async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const emitApprovalRequest = vi.fn()
+    const cancelRun = vi.fn()
+
+    await expect(requestSyntheticApproval({
+      runId: "run-pre-aborted",
+      sessionId: "session-pre-aborted",
+      toolName: "yeonjang_camera_capture",
+      summary: "카메라 촬영 진행 전 승인이 필요합니다.",
+      params: { source: "telegram" },
+      signal: controller.signal,
+    }, {
+      timeoutSec: 30,
+      fallback: "deny",
+      appendRunEvent: vi.fn(),
+      setRunStepStatus: vi.fn(),
+      updateRunStatus: vi.fn(),
+      cancelRun,
+      emitApprovalResolved: vi.fn(),
+      emitApprovalRequest,
+    })).resolves.toBe("deny")
+
+    expect(emitApprovalRequest).not.toHaveBeenCalled()
+    expect(cancelRun).toHaveBeenCalledOnce()
   })
 })

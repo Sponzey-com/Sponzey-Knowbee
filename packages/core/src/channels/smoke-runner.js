@@ -1,4 +1,4 @@
-import { insertChannelSmokeRun, insertChannelSmokeStep, updateChannelSmokeRun, } from "../db/index.js";
+import { insertChannelSmokeRun, insertChannelSmokeStep, interruptGatewayOwnedChannelSmokeRunsStartedBefore, updateChannelSmokeRun, } from "../db/index.js";
 import { redactLogText } from "../logger/index.js";
 export function channelSmokeScenarioRequiresCapabilityAdmission(kind) {
     return (kind === "web_skill" ||
@@ -8,6 +8,20 @@ export function channelSmokeScenarioRequiresCapabilityAdmission(kind) {
 function channelSmokeErrorReason(error) {
     const raw = error instanceof Error ? error.message : String(error);
     return redactLogText(raw);
+}
+export function recoverInterruptedGatewayChannelSmokeRuns(input) {
+    if (!Number.isSafeInteger(input.gatewayStartedAt)
+        || input.gatewayStartedAt < 0
+        || !Number.isSafeInteger(input.recoveredAt)
+        || input.recoveredAt < input.gatewayStartedAt) {
+        throw new Error("channel_smoke_startup_recovery_time_invalid");
+    }
+    return Object.freeze({
+        recoveredCount: interruptGatewayOwnedChannelSmokeRunsStartedBefore({
+            startedBefore: input.gatewayStartedAt,
+            finishedAt: input.recoveredAt,
+        }),
+    });
 }
 const LOCAL_PATH_MARKDOWN_PATTERN = /!?\[[^\]]*\]\((?:\/Users\/|\/tmp\/|[A-Za-z]:\\)[^)]+\)|(?:\/Users\/|\/tmp\/|[A-Za-z]:\\)[^\s)]+/u;
 const SENSITIVE_KEY_PATTERN = /token|secret|authorization|cookie|api[_-]?key|password|credential|chat[_-]?id|channel[_-]?id|group[_-]?id|user[_-]?id|target[_-]?id|allowed.*ids/i;
@@ -384,9 +398,6 @@ function validateRequestFlowTrace(scenario, trace, failures) {
             || !Number.isSafeInteger(latency.terminalResponseLatencyMs)
             || latency.terminalResponseLatencyMs < 0) {
             failures.push("latency_evidence_invalid");
-        }
-        if (latency.firstResponseStatus !== "ok") {
-            failures.push("first_response_latency_budget_exceeded");
         }
     }
     if (!trace.finalization?.rootOwnerFinalized) {

@@ -4,8 +4,11 @@ import {
   type TaskIntentEnvelope,
   type TaskStructuredRequest,
 } from "../agent/intake.js"
+import type { ChannelSource } from "../channels/contracts.js"
 import { detectPrimaryMessageLanguage } from "../channels/language.js"
 import { loadPromptValue } from "../memory/prompt-fragments.js"
+import type { AdmittedCapabilityExecutionScope } from "./run-scoped-tool-admission.js"
+import { isChannelArtifactDeliveryExecutionTargetRef } from "./channel-artifact-delivery-requirement.js"
 import { createRecoveryBudgetUsage, type RecoveryBudgetUsage } from "./recovery-budget.js"
 
 const EXECUTION_FALLBACK_ORIGINAL_REQUEST_CONTEXT_SOURCE_ID = "execution_fallback_original_request_context_user"
@@ -101,6 +104,36 @@ export function normalizeDirectArtifactDeliverySemantics(params: {
     }
   }
   return executionSemantics
+}
+
+/**
+ * Reconcile the LLM intake contract with the later, durable capability
+ * admission. A channel destination binding exists only after the LLM plan and
+ * policy validation select a direct-delivery capability, so it is authoritative
+ * evidence that the result must cross the current channel boundary. This
+ * prevents an earlier `artifactDelivery: none` value from creating a second,
+ * conflicting execution path after a capture has already succeeded.
+ */
+export function resolveCapabilityScopedArtifactDeliverySemantics(params: {
+  source: ChannelSource
+  executionSemantics: TaskExecutionSemantics
+  admittedCapabilityExecutionScope?: Pick<
+    AdmittedCapabilityExecutionScope,
+    "selectedToolTargets"
+  >
+}): TaskExecutionSemantics {
+  if (params.executionSemantics.artifactDelivery === "direct") {
+    return params.executionSemantics
+  }
+  const selectedToolTargets = params.admittedCapabilityExecutionScope?.selectedToolTargets ?? []
+  if (!selectedToolTargets.some((target) =>
+    isChannelArtifactDeliveryExecutionTargetRef(params.source, target.targetId))) {
+    return params.executionSemantics
+  }
+  return {
+    ...params.executionSemantics,
+    artifactDelivery: "direct",
+  }
 }
 
 export function createExecutionLoopRuntimeState(params: {

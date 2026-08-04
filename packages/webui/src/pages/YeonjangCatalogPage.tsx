@@ -460,8 +460,6 @@ export function YeonjangCatalogView(props: YeonjangCatalogViewProps) {
           </div>
 
           <aside
-            role="dialog"
-            aria-modal="false"
             aria-label={text("연장 운영 상세", "Yeonjang operational details")}
             className="rounded-[var(--ui-surface-radius)] border border-stone-200 bg-white p-5 shadow-sm xl:sticky xl:top-4"
           >

@@ -201,12 +201,36 @@ interface CodexFunctionCallState {
   args: string
 }
 
+const CODEX_SCHEMA_COMPOSITION_KEYS = ["anyOf", "oneOf", "allOf"] as const
+
+function schemaAllowsNull(schema: Record<string, unknown>): boolean {
+  if (schema.type === "null") return true
+  if (Array.isArray(schema.type) && schema.type.includes("null")) return true
+  return (["anyOf", "oneOf"] as const).some((keyword) =>
+    Array.isArray(schema[keyword])
+    && schema[keyword].some((branch) =>
+      branch
+      && typeof branch === "object"
+      && !Array.isArray(branch)
+      && schemaAllowsNull(branch as Record<string, unknown>)))
+}
+
 function makeSchemaNullable(schema: Record<string, unknown>): Record<string, unknown> {
+  if (schemaAllowsNull(schema)) return { ...schema }
+
   const next = { ...schema }
   if (Array.isArray(next.type)) {
-    if (!next.type.includes("null")) next.type = [...next.type, "null"]
+    next.type = [...next.type, "null"]
   } else if (typeof next.type === "string") {
     next.type = [next.type, "null"]
+  } else if (Array.isArray(next.anyOf)) {
+    next.anyOf = [...next.anyOf, { type: "null" }]
+  } else if (Array.isArray(next.oneOf)) {
+    next.oneOf = [...next.oneOf, { type: "null" }]
+  } else {
+    return {
+      anyOf: [next, { type: "null" }],
+    }
   }
   if (Array.isArray(next.enum) && !next.enum.includes(null)) {
     next.enum = [...next.enum, null]
@@ -216,6 +240,15 @@ function makeSchemaNullable(schema: Record<string, unknown>): Record<string, unk
 
 function normalizeCodexSchema(schema: Record<string, unknown>): Record<string, unknown> {
   const normalized = { ...schema }
+
+  for (const keyword of CODEX_SCHEMA_COMPOSITION_KEYS) {
+    const branches = schema[keyword]
+    if (!Array.isArray(branches)) continue
+    normalized[keyword] = branches.map((branch) =>
+      branch && typeof branch === "object" && !Array.isArray(branch)
+        ? normalizeCodexSchema(branch as Record<string, unknown>)
+        : branch)
+  }
 
   if (schema.type === "object" && schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)) {
     const properties = Object.entries(schema.properties as Record<string, unknown>).reduce<Record<string, unknown>>((acc, [key, value]) => {
@@ -426,7 +459,7 @@ export function shouldRetryCodexOAuthWithSimplePayload(input: {
   if (!hasComplexPayload) return false
   if (input.status === 401 || input.status === 403) return false
   if (input.status === 400 || input.status === 422) {
-    return !input.requiredToolChoice
+    return true
   }
   return isLikelyHtmlError(input.detail)
 }
@@ -436,6 +469,7 @@ export function shouldRetryCodexOAuthWithSimplePayload(input: {
 export class OpenAIProvider implements AIProvider {
   readonly id = "openai"
   readonly supportedModels = Object.keys(CONTEXT_LIMITS)
+  private codexOAuthPayloadMode: "rich" | "simplified" = "rich"
 
   constructor(
     private profile: AuthProfile,
@@ -472,16 +506,37 @@ export class OpenAIProvider implements AIProvider {
       ...(params.maxTokens !== undefined ? { max_output_tokens: params.maxTokens } : {}),
       ...(tools ? { tools, tool_choice: params.toolChoice ?? "auto" } : {}),
     }
+    const fallbackBody = {
+      ...baseBody,
+      input: [{
+        role: "user" as const,
+        content: [{
+          type: "input_text" as const,
+          text: buildCodexOAuthFallbackPrompt(params.messages),
+        }],
+      }],
+      // A required tool is an execution boundary, not an optional payload
+      // enhancement. Keep it available when simplifying the conversation.
+      ...(tools && params.toolChoice === "required"
+        ? { tools, tool_choice: "required" as const }
+        : {}),
+    }
+    const simplifiedFirst = this.codexOAuthPayloadMode === "simplified"
 
     let response = await fetchCodexResponse(url, {
       method: "POST",
       headers,
-      body: JSON.stringify(primaryBody),
+      body: JSON.stringify(simplifiedFirst ? fallbackBody : primaryBody),
       ...(params.signal ? { signal: params.signal } : {}),
     }, params.signal)
 
     if (!response.ok) {
       const detail = (await response.text().catch(() => "")).trim()
+      if (simplifiedFirst) {
+        throw new AIProviderInvocationError(
+          providerFailureReasonForHttpStatus(response.status),
+        )
+      }
       const shouldRetry = shouldRetryCodexOAuthWithSimplePayload({
         status: response.status,
         detail,
@@ -505,21 +560,10 @@ export class OpenAIProvider implements AIProvider {
         messageCount: params.messages.length,
       })
 
-      const fallbackBody = {
-        ...baseBody,
-        input: [{
-          role: "user" as const,
-          content: [{
-            type: "input_text" as const,
-            text: buildCodexOAuthFallbackPrompt(params.messages),
-          }],
-        }],
-        // A required tool is an execution boundary, not an optional payload
-        // enhancement. Keep it available when simplifying the conversation.
-        ...(tools && params.toolChoice === "required"
-          ? { tools, tool_choice: "required" as const }
-          : {}),
-      }
+      // A 400/422 contract rejection is stable for this configured provider
+      // instance. Remember the accepted payload shape so later stages do not
+      // spend their deadline probing the rejected shape again.
+      this.codexOAuthPayloadMode = "simplified"
 
       response = await fetchCodexResponse(url, {
         method: "POST",
@@ -545,6 +589,7 @@ export class OpenAIProvider implements AIProvider {
     let buffer = ""
     let inputTokens = 0
     let outputTokens = 0
+    let emittedOutputText = false
     const functionCalls = new Map<string, CodexFunctionCallState>()
 
     const emitFrame = async (frame: string): Promise<AIChunk[]> => {
@@ -558,7 +603,14 @@ export class OpenAIProvider implements AIProvider {
       switch (type) {
         case "response.output_text.delta": {
           const delta = typeof payload.delta === "string" ? payload.delta : ""
+          if (delta) emittedOutputText = true
           return delta ? [{ type: "text_delta", delta }] : []
+        }
+        case "response.output_text.done": {
+          const text = typeof payload.text === "string" ? payload.text : ""
+          if (!text || emittedOutputText) return []
+          emittedOutputText = true
+          return [{ type: "text_delta", delta: text }]
         }
         case "response.output_item.added": {
           const item = payload.item as Record<string, unknown> | undefined

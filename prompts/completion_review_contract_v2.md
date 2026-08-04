@@ -19,6 +19,8 @@ Return one object with this shape:
   "followup_required_tool_names": ["exact tool names required by the selected follow-up strategy"],
   "followup_target_refs": ["exact URLs or target refs selected for the follow-up strategy"],
   "user_message": "required only when status = ask_user",
+  "input_resolution_kind": "provide_value | choose_option | confirm_scope; required only when status = ask_user",
+  "missing_fields": ["1 to 8 concise field identifiers; required only when status = ask_user"],
   "remaining_items": ["concrete unresolved items"],
   "blocker_evidence_refs": ["verified blocker evidence refs; blocked only"],
   "evaluated_alternative_evidence_refs": ["evidence refs for materially different evaluated alternatives"],
@@ -56,7 +58,10 @@ Return one object with this shape:
 - When status is complete, every expected condition must be satisfied.
 - Do not mark an execution request complete merely because the candidate explains why execution did not occur.
 - If an applicable criterion or expected condition is unsatisfied or uncertain, choose followup, ask_user, blocked, or paths_exhausted and list the unresolved item.
-- followup_prompt is mandatory for followup. user_message is mandatory for ask_user.
+- followup_prompt is mandatory for followup. user_message, input_resolution_kind, and 1 to 8 non-empty unique missing_fields are mandatory for ask_user.
+- Use provide_value when a concrete value is missing, choose_option when the user must select among valid alternatives, and confirm_scope when an exact target or boundary must be confirmed.
+- Keep missing_fields as concise language-neutral field identifiers. Do not put questions, values, evidence, paths, targets, or explanations in missing_fields.
+- Keep input_resolution_kind empty and missing_fields empty for every status other than ask_user.
 - Always return followup_execution_mode, followup_required_tool_names, and followup_target_refs. Keep the arrays empty unless status is followup; use an empty string for followup_execution_mode unless status is followup.
 - For followup, set followup_execution_mode to tool when another tool call is required, or response_only when the existing evidence only needs a corrected final response.
 - A tool-mode followup must contain at least one exact runtime tool name in followup_required_tool_names. A response_only followup must keep followup_required_tool_names empty.

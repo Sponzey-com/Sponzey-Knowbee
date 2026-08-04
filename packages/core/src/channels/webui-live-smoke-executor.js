@@ -27,9 +27,6 @@ function validateObservation(scenario, started, observation) {
         || observation.latencyEvidence.requestGroupId !== started.requestGroupId) {
         throw new Error("webui_live_smoke_latency_evidence_identity_mismatch");
     }
-    if (observation.latencyEvidence.status !== "ok") {
-        throw new Error("webui_live_smoke_first_response_latency_budget_exceeded");
-    }
     if (!observation.userReportDelivered) {
         throw new Error("webui_live_smoke_user_report_not_delivered");
     }

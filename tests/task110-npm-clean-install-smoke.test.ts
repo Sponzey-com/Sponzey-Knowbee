@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { inspectStagedPackageSet, runNpmCleanInstallSmoke } from "../scripts/smoke-npm-install.mjs"
+import { inspectStagedPackageSet, runNpmCleanInstallSmoke } from "../scripts/self/smoke-npm-install.mjs"
 
 const tempDirs: string[] = []
 

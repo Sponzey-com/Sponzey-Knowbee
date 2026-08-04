@@ -177,6 +177,32 @@ async function fixture() {
 }
 
 describe("typed task intake response", () => {
+  it("documents the exact camera approval capability in the response-tool schema", () => {
+    const inputSchema = TASK_INTAKE_RESPONSE_TOOL.input_schema as {
+      properties?: {
+        execution?: {
+          properties?: {
+            execution_semantics?: {
+              properties?: {
+                approval_tool?: {
+                  description?: string
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    const description =
+      inputSchema.properties?.execution?.properties?.execution_semantics
+        ?.properties?.approval_tool?.description
+
+    expect(description).toContain("Camera capture: yeonjang_camera_capture")
+    expect(description).toContain(
+      "external_action only when no purpose-specific value applies",
+    )
+  })
+
   it("keeps schema repair on the required response-tool contract", () => {
     const prompt = readFileSync("prompts/task_intake_schema_retry_user.md", "utf-8")
 
@@ -394,11 +420,17 @@ describe("typed task intake response", () => {
       chat: vi.fn(async function* () {
         attempt += 1
         const intake = validActionableIntake()
+        const actionItems = intake.action_items as Array<Record<string, unknown>>
+        const actionPayload = actionItems[0]?.payload as Record<string, unknown>
+        actionPayload.preferred_methods = attempt === 1
+          ? ["screen_capture"]
+          : ["yeonjang_camera_capture"]
+        actionPayload.exclusive_methods = []
         const execution = intake.execution as Record<string, unknown>
         execution.needs_tools = true
         execution.execution_semantics = {
           filesystem_effect: "none",
-          privileged_operation: attempt === 1 ? "none" : "required",
+          privileged_operation: "required",
           artifact_delivery: "direct",
           approval_required: true,
           approval_tool: "yeonjang_camera_capture",
@@ -422,8 +454,13 @@ describe("typed task intake response", () => {
       workDir: process.cwd(),
     })
 
-    expect(provider.chat).toHaveBeenCalledTimes(2)
     expect(result).toMatchObject({
+      action_items: [{
+        payload: {
+          preferred_methods: ["yeonjang_camera_capture"],
+          exclusive_methods: [],
+        },
+      }],
       execution: {
         needs_tools: true,
         execution_semantics: {
@@ -434,8 +471,9 @@ describe("typed task intake response", () => {
         },
       },
     })
+    expect(provider.chat).toHaveBeenCalledTimes(2)
     const repairMessage = provider.chat.mock.calls[1]?.[0].messages[1]?.content
-    expect(repairMessage).toContain("execution_approval_requires_privileged_operation")
+    expect(repairMessage).toContain("execution_specific_approval_tool_method_mismatch")
   })
 
   it("repairs a text-only response through the structured response tool", async () => {
@@ -504,10 +542,11 @@ describe("typed task intake response", () => {
       workDir: process.cwd(),
     })
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       status: "failure",
       reasonCode: "response_invalid",
       retryable: true,
+      providerInvocationRef: expect.stringMatching(/^intake:[0-9a-f-]+$/u),
     })
     expect(provider.chat).toHaveBeenCalledTimes(2)
   })
@@ -554,10 +593,11 @@ describe("typed task intake response", () => {
       workDir: process.cwd(),
     })
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       status: "failure",
       reasonCode: "response_invalid",
       retryable: true,
+      providerInvocationRef: expect.stringMatching(/^intake:[0-9a-f-]+$/u),
     })
     expect(provider.chat).toHaveBeenCalledTimes(2)
   })
@@ -582,12 +622,51 @@ describe("typed task intake response", () => {
       workDir: process.cwd(),
     })
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       status: "failure",
       reasonCode: "provider_unavailable",
       retryable: true,
+      providerInvocationRef: expect.stringMatching(/^intake:[0-9a-f-]+$/u),
     })
     expect(JSON.stringify(result)).not.toContain("sensitive provider detail")
+  })
+
+  it("retries a retryable provider failure with a distinct compact intake invocation", async () => {
+    const { runtime, analyzeTaskIntakeOutcome } = await fixture()
+    let attempt = 0
+    const provider = {
+      id: "mock-provider",
+      maxContextTokens: vi.fn(() => 128_000),
+      chat: vi.fn(async function* () {
+        attempt += 1
+        if (attempt === 1) throw new Error("temporary provider failure")
+        yield {
+          type: "tool_use",
+          id: "intake-adapter-recovery",
+          name: "submit_task_intake",
+          input: validDirectIntake(),
+        } as const
+      }),
+    }
+    aiMocks.getProvider.mockReturnValue(provider)
+
+    const result = await analyzeTaskIntakeOutcome({
+      instructionRuntime: createInstructionRuntimeContext(runtime.paths.stateDir),
+      config: runtime.config,
+      runId: "run-intake-adapter-recovery",
+      userMessage: "현재 주가를 알려줘.",
+      model: "fake-model",
+      source: "webui",
+      workDir: process.cwd(),
+    })
+
+    expect(result.status).toBe("success")
+    expect(provider.chat).toHaveBeenCalledTimes(2)
+    expect(provider.chat.mock.calls.map((call) => call[0].observability?.operationCode)).toEqual([
+      "task_intake",
+      "task_intake_adapter_recovery",
+    ])
+    expect(provider.chat.mock.calls[1]?.[0].messages).toHaveLength(1)
   })
 
   it.each([

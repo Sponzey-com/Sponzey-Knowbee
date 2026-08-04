@@ -4,12 +4,12 @@ import {
   resolveCanonicalUiRouteBudget,
   validateCanonicalUiRouteBudgets,
 } from "../packages/webui/src/lib/ui-performance.ts"
-import { webUiBuildGateExitCode } from "../scripts/collect-webui-build-baseline.mjs"
-import { buildWebUiBuildBaseline } from "../scripts/lib/webui-build-baseline.mjs"
+import { webUiBuildGateExitCode } from "../scripts/self/collect-webui-build-baseline.mjs"
+import { buildWebUiBuildBaseline } from "../scripts/self/lib/webui-build-baseline.mjs"
 import {
   evaluateCanonicalRoutePerformance,
   sanitizeBrowserRequest,
-} from "../scripts/lib/webui-live-performance-evidence.mjs"
+} from "../scripts/self/lib/webui-live-performance-evidence.mjs"
 
 describe("task048 canonical UI performance manifest", () => {
   it("defines the five representative canonical routes without mode fallback", () => {

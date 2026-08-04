@@ -58,7 +58,12 @@ const MAX_COMPLETED_ARTIFACT_DELIVERY_KEYS = 2_000;
 const activeArtifactDeliveryLocks = new Map();
 const completedArtifactDeliveryKeys = new Map();
 export function buildArtifactDeliveryKey(params) {
-    return `${params.runId}:${params.channel}:${params.filePath}`;
+    return [
+        params.runId,
+        params.channel,
+        params.channelTarget ?? "unbound-target",
+        params.filePath,
+    ].join(":");
 }
 function rememberCompletedArtifactDelivery(key) {
     completedArtifactDeliveryKeys.set(key, Date.now());
@@ -76,17 +81,27 @@ export async function deliverArtifactOnce(params) {
         runId,
         channel: params.channel,
         filePath: params.filePath,
+        ...(params.channelTarget
+            ? { channelTarget: params.channelTarget }
+            : {}),
     });
     if (!params.force && completedArtifactDeliveryKeys.has(key))
         return undefined;
     const run = getRootRun(runId);
     if (!params.force &&
         run &&
-        hasArtifactReceipt({ runId, channel: params.channel, artifactPath: params.filePath })) {
+        hasArtifactReceipt({
+            runId,
+            channel: params.channel,
+            artifactPath: params.filePath,
+            ...(params.channelTarget
+                ? { channelTarget: params.channelTarget }
+                : {}),
+        })) {
         rememberCompletedArtifactDelivery(key);
         return undefined;
     }
-    if (!params.force && run) {
+    if (!params.force && run && !params.channelTarget) {
         const continuity = getTaskContinuity(run.requestGroupId);
         const deliveryReceipts = [
             `${params.channel}:${params.filePath}`,
@@ -106,7 +121,9 @@ export async function deliverArtifactOnce(params) {
     const delivery = params
         .task()
         .then((result) => {
-        if (result !== undefined) {
+        const verified = result !== undefined
+            && (params.isVerifiedDelivery?.(result) ?? true);
+        if (verified) {
             rememberCompletedArtifactDelivery(key);
             if (run) {
                 try {

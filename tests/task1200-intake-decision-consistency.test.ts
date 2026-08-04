@@ -172,6 +172,62 @@ describe("task1200 intake decision consistency", () => {
     })
   })
 
+  it("requires a typed method selection when a privileged effect uses the generic approval bucket", () => {
+    const result = validateIntakeDecisionConsistency({
+      intent: { category: "task_intake" },
+      userMessage: { mode: "accepted_receipt", text: "장치 요청을 확인했습니다." },
+      actionItems: [{
+        type: "run_task",
+        payload: { goal: "Perform the requested device effect." },
+      }],
+      execution: {
+        requires_run: true,
+        requires_delegation: false,
+        needs_tools: true,
+        execution_semantics: {
+          privilegedOperation: "required",
+          approvalRequired: true,
+          approvalTool: "external_action",
+        },
+      },
+    })
+
+    expect(result).toEqual({
+      ok: false,
+      issues: ["execution_generic_approval_tool_method_missing"],
+    })
+  })
+
+  it("rejects a method constraint that omits the purpose-specific approval Tool", () => {
+    const result = validateIntakeDecisionConsistency({
+      intent: { category: "task_intake" },
+      userMessage: { mode: "accepted_receipt", text: "카메라 요청을 확인했습니다." },
+      actionItems: [{
+        type: "run_task",
+        payload: {
+          goal: "Capture and deliver a camera image.",
+          preferred_methods: ["screen_capture"],
+          exclusive_methods: [],
+        },
+      }],
+      execution: {
+        requires_run: true,
+        requires_delegation: false,
+        needs_tools: true,
+        execution_semantics: {
+          privilegedOperation: "required",
+          approvalRequired: true,
+          approvalTool: "yeonjang_camera_capture",
+        },
+      },
+    })
+
+    expect(result).toEqual({
+      ok: false,
+      issues: ["execution_specific_approval_tool_method_mismatch"],
+    })
+  })
+
   it("rejects a model failed receipt for a schedule request", () => {
     expect(validateIntakeDecisionConsistency({
       intent: { category: "schedule_request" },

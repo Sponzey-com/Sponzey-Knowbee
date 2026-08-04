@@ -400,7 +400,14 @@ describe("task013 channel delivery and approval observability", () => {
 
     const events = listMessageLedgerEvents({ requestGroupId: run.requestGroupId })
 
-    expect(first).toEqual({ persisted: true, textDelivered: true, doneDelivered: true })
+    expect(first).toMatchObject({
+      persisted: true,
+      textDelivered: true,
+      doneDelivered: true,
+      runId: run.id,
+      receiptRef: expect.stringMatching(/^message-ledger:/u),
+      deliveredAtMs: expect.any(Number),
+    })
     expect(second).toEqual({ persisted: false, textDelivered: true, doneDelivered: true })
     expect(firstChunk).toHaveBeenCalledTimes(2)
     expect(secondChunk).not.toHaveBeenCalled()

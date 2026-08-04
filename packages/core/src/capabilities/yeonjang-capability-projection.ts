@@ -1,3 +1,5 @@
+import { YEONJANG_SESSION_STALE_AFTER_MS } from "../contracts/yeonjang-liveness-contract.js"
+
 export type YeonjangCapabilityStatus =
   | "ready"
   | "unavailable"
@@ -134,7 +136,7 @@ function projectItem(input: {
   if (stale) status = "stale"
   else if (permission === "required") status = "permission_required"
   else if (input.source.state === "discovered") status = "inactive"
-  else if (input.source.state === "online" && permission === "ready" && !duplicate) status = "ready"
+  else if (input.source.runnableTarget && permission === "ready" && !duplicate) status = "ready"
 
   let actionableIssue: YeonjangCapabilityItem["actionableIssue"] = null
   if (duplicate) actionableIssue = "yeonjang_duplicate_instance"
@@ -168,7 +170,7 @@ export function buildYeonjangCapabilityProjection(input: {
   duplicateLocalDetected?: boolean
   publicRefForInstanceId(id: string): string
 }): YeonjangCapabilityProjection {
-  const staleAfterMs = Math.max(1, input.staleAfterMs ?? 30_000)
+  const staleAfterMs = Math.max(1, input.staleAfterMs ?? YEONJANG_SESSION_STALE_AFTER_MS)
   const duplicateLocalDetected = input.duplicateLocalDetected === true
   const items = input.instances
     .map((source) =>

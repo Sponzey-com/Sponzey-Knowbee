@@ -104,7 +104,7 @@ describe("task008 yeonjang governance api and audit", () => {
     })).toEqual(expect.objectContaining({ ok: true }))
 
     const app = Fastify({ logger: false })
-    const keyProvisionCalls: Array<{ extensionId: string; pairingSecret: string }> = []
+    const keyProvisionCalls: Array<{ extensionId: string }> = []
     registerYeonjangInstancesRoute(app, {
       pairingExecutionAdmissionKeyProvisioner: {
         provision: (input) => {
@@ -151,7 +151,6 @@ describe("task008 yeonjang governance api and audit", () => {
       ]))
       expect(keyProvisionCalls).toEqual([{
         extensionId: "yeonjang-windows",
-        pairingSecret: "my-secret-value",
       }])
 
       const renamed = await app.inject({

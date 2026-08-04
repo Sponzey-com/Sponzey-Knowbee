@@ -118,6 +118,67 @@ describe("execution chunk pass", () => {
     })
   })
 
+  it("turns a structural pre-dispatch failure into bounded recovery and aborts", () => {
+    const dependencies = createDependencies()
+    const pendingToolParams = new Map<string, unknown>([
+      ["yeonjang_camera_capture", { extensionId: "model-variation" }],
+    ])
+    const applyToolEndChunk = vi.fn()
+    const applyExecutionRecoveryAttempt = vi.fn().mockImplementation(
+      (input: { payload: unknown }) => ({
+        kind: "retry",
+        payload: input.payload,
+      }),
+    )
+    const fingerprint = `sha256:${"c".repeat(64)}`
+
+    const result = applyExecutionChunkPass({
+      ...createBaseParams(),
+      pendingToolParams,
+      chunk: {
+        type: "tool_end",
+        toolName: "yeonjang_camera_capture",
+        success: false,
+        output: "",
+        details: {
+          kind: "run_scoped_pre_dispatch_failure",
+          reasonCode: "run_scoped_target_ambiguous",
+          effectStarted: false,
+          repairRequired: true,
+          failureFingerprint: fingerprint,
+        },
+      },
+    }, dependencies, {
+      applyToolStartChunk: vi.fn(),
+      applyToolEndChunk,
+      applyExecutionRecoveryAttempt,
+      applyExternalRecoveryAttempt: vi.fn(),
+    })
+
+    expect(result).toEqual({
+      handled: true,
+      executionRecovery: {
+        summary: "실행 범위 검증 실패 후 다른 허용 전략을 검토합니다.",
+        reason: "run_scoped_target_ambiguous",
+        reasonCode: "run_scoped_target_ambiguous",
+        toolNames: ["yeonjang_camera_capture"],
+        evidenceRefs: [fingerprint],
+      },
+      abortExecutionStream: true,
+    })
+    expect(applyExecutionRecoveryAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          reasonCode: "run_scoped_target_ambiguous",
+          evidenceRefs: [fingerprint],
+        }),
+      }),
+      dependencies,
+    )
+    expect(applyToolEndChunk).not.toHaveBeenCalled()
+    expect(pendingToolParams.has("yeonjang_camera_capture")).toBe(false)
+  })
+
   it("returns ai recovery retry payload", () => {
     const dependencies = createDependencies()
 
@@ -128,6 +189,7 @@ describe("execution chunk pass", () => {
         summary: "AI 오류를 분석하고 다른 방법으로 재시도합니다.",
         reason: "403 blocked",
         message: "forbidden",
+        providerFailureReasonCode: "provider_contract_rejected",
       },
     }, dependencies, {
       applyToolStartChunk: vi.fn(),
@@ -139,6 +201,7 @@ describe("execution chunk pass", () => {
           summary: "AI 오류를 분석하고 다른 방법으로 재시도합니다.",
           reason: "403 blocked",
           message: "forbidden",
+          providerFailureReasonCode: "provider_contract_rejected",
         },
       }),
     })
@@ -149,6 +212,7 @@ describe("execution chunk pass", () => {
         summary: "AI 오류를 분석하고 다른 방법으로 재시도합니다.",
         reason: "403 blocked",
         message: "forbidden",
+        providerFailureReasonCode: "provider_contract_rejected",
       },
     })
   })

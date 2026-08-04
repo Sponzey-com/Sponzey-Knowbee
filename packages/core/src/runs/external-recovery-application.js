@@ -3,12 +3,18 @@ const defaultModuleDependencies = {
     applyTerminalApplication,
 };
 export async function applyExternalRecoveryPlan(params, dependencies, moduleDependencies = defaultModuleDependencies) {
+    if (params.plan.reviewRequired) {
+        params.seenKeys.add(params.plan.recoveryKey);
+        dependencies.appendRunEvent(params.runId, params.plan.eventLabel);
+        return { kind: "review" };
+    }
     if (params.plan.duplicateStop) {
         await moduleDependencies.applyTerminalApplication({
             runId: params.runId,
             sessionId: params.sessionId,
             source: params.source,
             onChunk: params.onChunk,
+            ...(params.responseContext ? { responseContext: params.responseContext } : {}),
             application: {
                 kind: "stop",
                 preview: params.preview,

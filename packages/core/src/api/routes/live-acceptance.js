@@ -74,11 +74,22 @@ export function bindLiveAcceptanceRequestCancellation(input) {
 }
 function projectResult(result) {
     const events = result.events.map(({ state, stage }) => ({ state, ...(stage ? { stage } : {}) }));
+    const runtimeIdentity = result.runtimeIdentity
+        ? {
+            buildId: result.runtimeIdentity.buildId,
+            bundleSha256: result.runtimeIdentity.bundleSha256,
+            processStartedAt: result.runtimeIdentity.processStartedAt,
+            artifactBuiltAt: result.runtimeIdentity.artifactBuiltAt,
+            buildRequired: result.runtimeIdentity.buildRequired,
+            restartRequired: result.runtimeIdentity.restartRequired,
+        }
+        : undefined;
     if (result.status === "collected") {
         return {
             status: "collected",
             evidenceCount: result.payload.evidence.length,
             events,
+            ...(runtimeIdentity ? { runtimeIdentity } : {}),
         };
     }
     return {
@@ -90,6 +101,7 @@ function projectResult(result) {
                 : "live_acceptance_blocked",
         })),
         events,
+        ...(runtimeIdentity ? { runtimeIdentity } : {}),
     };
 }
 export function registerLiveAcceptanceRoute(app, options) {
@@ -102,6 +114,25 @@ export function registerLiveAcceptanceRoute(app, options) {
             return {
                 status: "disabled",
                 reasonCode: "live_acceptance_disabled",
+            };
+        }
+        let runtimeIdentity;
+        try {
+            runtimeIdentity = options.inspectRuntimeIdentity?.() ?? {
+                status: "blocked",
+                reasonCode: "live_acceptance_runtime_identity_invalid",
+            };
+        }
+        catch {
+            runtimeIdentity = {
+                status: "blocked",
+                reasonCode: "live_acceptance_runtime_identity_invalid",
+            };
+        }
+        if (runtimeIdentity.status === "blocked") {
+            return {
+                status: "unavailable",
+                reasonCode: runtimeIdentity.reasonCode,
             };
         }
         const capabilities = inspectBoundedReadiness(options.inspectReadiness);

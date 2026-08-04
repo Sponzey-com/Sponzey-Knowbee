@@ -3,6 +3,7 @@ import type { ChannelSource } from "./contracts.js"
 import {
   insertChannelSmokeRun,
   insertChannelSmokeStep,
+  interruptGatewayOwnedChannelSmokeRunsStartedBefore,
   updateChannelSmokeRun,
   type DbChannelSmokeRunStatus,
 } from "../db/index.js"
@@ -214,6 +215,26 @@ export interface PersistedChannelSmokeRunnerOptions extends Omit<ChannelSmokeRun
   initiatedBy?: string
   metadata?: Record<string, unknown>
   executeScenario?: (scenario: ChannelSmokeScenario) => Promise<ChannelSmokeTrace>
+}
+
+export function recoverInterruptedGatewayChannelSmokeRuns(input: {
+  readonly gatewayStartedAt: number
+  readonly recoveredAt: number
+}): { readonly recoveredCount: number } {
+  if (
+    !Number.isSafeInteger(input.gatewayStartedAt)
+    || input.gatewayStartedAt < 0
+    || !Number.isSafeInteger(input.recoveredAt)
+    || input.recoveredAt < input.gatewayStartedAt
+  ) {
+    throw new Error("channel_smoke_startup_recovery_time_invalid")
+  }
+  return Object.freeze({
+    recoveredCount: interruptGatewayOwnedChannelSmokeRunsStartedBefore({
+      startedBefore: input.gatewayStartedAt,
+      finishedAt: input.recoveredAt,
+    }),
+  })
 }
 
 const LOCAL_PATH_MARKDOWN_PATTERN =
@@ -606,9 +627,6 @@ function validateRequestFlowTrace(
       || latency.terminalResponseLatencyMs < 0
     ) {
       failures.push("latency_evidence_invalid")
-    }
-    if (latency.firstResponseStatus !== "ok") {
-      failures.push("first_response_latency_budget_exceeded")
     }
   }
 

@@ -1,6 +1,6 @@
 export type CameraChannelAcceptanceSource = "webui" | "telegram";
 export type CameraApprovalStatus = "awaiting" | "approved" | "rejected" | "expired";
-export type CameraDeliveryApprovalStatus = CameraApprovalStatus | "not_required";
+export type CameraDeliveryApprovalStatus = CameraApprovalStatus | "not_started" | "not_required";
 export type CameraCaptureStatus = "not_started" | "succeeded" | "failed";
 export type CameraDeliveryStatus = "not_started" | "delivered" | "failed" | "partial";
 export type CameraCompletionOutcome = "pending" | "complete" | "partial" | "blocked" | "cancelled";
@@ -23,6 +23,8 @@ export interface CameraChannelAcceptanceObservation {
         status: CameraDeliveryApprovalStatus;
         operationRef?: string;
         targetRef?: string;
+        destinationRef?: string;
+        artifactRef?: string;
     };
     capture: {
         dispatchCount: number;
@@ -39,12 +41,18 @@ export interface CameraChannelAcceptanceObservation {
         status: CameraDeliveryStatus;
         targetBound: boolean;
         receiptRef?: string;
+        destinationRef?: string;
+        artifactRef?: string;
         artifactCount: number;
         artifactBeforeFinal: boolean;
     };
     completionReview: {
         performed: boolean;
         outcome: CameraCompletionOutcome;
+    };
+    cancellation?: {
+        requested: boolean;
+        afterCapture: boolean;
     };
     finalization: {
         reviewedFinalAnswer: boolean;

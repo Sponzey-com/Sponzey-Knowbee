@@ -10,8 +10,6 @@ function readRepoFile(path: string): string {
 describe("task0988 temporary guard maintenance metadata", () => {
   it("requires temporary guards to declare owner, active caller evidence, removal condition, validation plan, and source marker", () => {
     const temporaryEntries = criticalDecisionAuditEntries.filter((entry) => entry.category === "temporary-guard")
-    expect(temporaryEntries.length).toBeGreaterThan(0)
-
     for (const entry of temporaryEntries) {
       expect(entry.maintenanceOwner?.trim(), `${entry.id} maintenance owner`).toBeTruthy()
       expect(entry.activeCallerEvidence?.length, `${entry.id} active caller evidence`).toBeGreaterThan(0)

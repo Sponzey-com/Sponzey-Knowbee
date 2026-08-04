@@ -1,6 +1,6 @@
 import type { GatewayStartupEvidence } from "./gateway-startup-evidence.js";
 export interface GatewayStartupProcessSnapshot {
-    readonly state: "running" | "exited";
+    readonly state: "running" | "exited" | "unknown";
     readonly repositoryOwned: boolean;
     readonly listening: boolean;
 }
@@ -9,7 +9,7 @@ export interface GatewayStartupProcessPort {
 }
 export type GatewayStartupObserverResult = {
     readonly status: "still_starting";
-    readonly state: GatewayStartupEvidence["state"] | "awaiting_evidence" | "verifying_ready";
+    readonly state: GatewayStartupEvidence["state"] | "awaiting_evidence" | "verifying_process" | "verifying_ready";
     readonly elapsedMs: number;
     readonly performance: "within_budget" | "budget_exceeded";
 } | {

@@ -44,15 +44,19 @@ describe("intake provider failure subtype", () => {
     ["transport_failed", true],
     ["provider_unavailable", true],
   ] as const)("preserves %s through bounded attempt and intake", async (reasonCode, retryable) => {
-    const stream = async function* () {
+    const receivedObservability: unknown[] = []
+    const stream = async function* (params?: { observability?: unknown }) {
+      receivedObservability.push(params?.observability)
       throw new AIProviderInvocationError(reasonCode)
     }
-    await expect(collectBoundedChatAttempt({
-      stream,
-      deadlineMs: 1_000,
-      maxTextBytes: 1_000,
-      maxToolInputBytes: 1_000,
-    })).resolves.toEqual({
+    await expect(
+      collectBoundedChatAttempt({
+        stream,
+        deadlineMs: 1_000,
+        maxTextBytes: 1_000,
+        maxToolInputBytes: 1_000,
+      }),
+    ).resolves.toEqual({
       status: "provider_failed",
       reasonCode,
     })
@@ -67,17 +71,31 @@ describe("intake provider failure subtype", () => {
     })
     const { analyzeTaskIntakeOutcome } = await import("../packages/core/src/agent/intake.ts")
 
-    await expect(analyzeTaskIntakeOutcome({
+    const outcome = await analyzeTaskIntakeOutcome({
       instructionRuntime: createInstructionRuntimeContext(runtime.paths.stateDir),
       config: runtime.config,
+      runId: "run-provider-failure",
       userMessage: "현재 주가를 알려줘.",
       model: "fake-model",
       source: "webui",
       workDir: process.cwd(),
-    })).resolves.toEqual({
+    })
+
+    expect(outcome).toMatchObject({
       status: "failure",
       reasonCode,
       retryable,
     })
+    expect(outcome).toMatchObject({
+      providerInvocationRef: expect.stringMatching(/^intake:[0-9a-f-]+$/u),
+    })
+    expect(receivedObservability.at(-1)).toMatchObject({
+      invocationId:
+        outcome.status === "failure" ? outcome.providerInvocationRef : expect.any(String),
+      runId: "run-provider-failure",
+      stage: "intake",
+      operationCode: retryable ? "task_intake_adapter_recovery" : "task_intake",
+    })
+    expect(receivedObservability).toHaveLength(retryable ? 3 : 2)
   })
 })

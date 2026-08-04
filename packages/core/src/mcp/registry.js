@@ -10,6 +10,9 @@ function mcpRegistryErrorMessage(error) {
     const raw = error instanceof Error ? error.message : String(error);
     return redactMcpLogText(raw);
 }
+function mcpRegistryStatusErrorMessage(error) {
+    return sanitizeUserFacingError(mcpRegistryErrorMessage(error)).userMessage;
+}
 export function filterMcpStatusesForAgentAllowlist(statuses, input) {
     const allowlist = "skillMcpAllowlist" in input ? input.skillMcpAllowlist : input;
     return statuses
@@ -196,6 +199,7 @@ class McpRegistry {
             if (!isCurrent())
                 return;
             const safeError = mcpRegistryErrorMessage(error);
+            const statusError = mcpRegistryStatusErrorMessage(error);
             this.unregisterTools(entry.toolNames);
             entry.toolNames = [];
             recordExtensionFailure({
@@ -209,7 +213,7 @@ class McpRegistry {
                 connectionState: "degraded",
                 ready: false,
                 registeredToolCount: 0,
-                error: safeError,
+                error: statusError,
             };
         };
         const client = transport === "http"
@@ -257,6 +261,7 @@ class McpRegistry {
         }
         catch (error) {
             const message = mcpRegistryErrorMessage(error);
+            const statusError = mcpRegistryStatusErrorMessage(error);
             if (!isCurrent()) {
                 await client.close();
                 return;
@@ -276,7 +281,7 @@ class McpRegistry {
                 toolCount: 0,
                 registeredToolCount: 0,
                 tools: [],
-                error: message,
+                error: statusError,
             };
             await client.close();
             log.product("external_feature_connection_failed", {

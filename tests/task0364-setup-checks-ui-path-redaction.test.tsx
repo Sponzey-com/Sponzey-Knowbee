@@ -6,7 +6,10 @@ import { describe, expect, it } from "vitest"
 import { SetupChecksPanel } from "../packages/webui/src/components/setup/SetupChecksPanel.tsx"
 import type { SetupChecksResponse } from "../packages/webui/src/api/adapters/types.ts"
 
-const setupPageSource = readFileSync(join(process.cwd(), "packages", "webui", "src", "pages", "SetupPage.tsx"), "utf-8")
+const setupChecksPanelSource = readFileSync(
+  join(process.cwd(), "packages", "webui", "src", "components", "setup", "SetupChecksPanel.tsx"),
+  "utf-8",
+)
 
 function checks(): SetupChecksResponse {
   return {
@@ -39,9 +42,9 @@ describe("task0364 setup checks UI path redaction", () => {
   })
 
   it("does not render setup completion cards from raw check path fields", () => {
-    expect(setupPageSource).not.toContain('label="Config File" value={checks?.configFile')
-    expect(setupPageSource).not.toContain('label="Setup State" value={checks?.setupStateFile')
-    expect(setupPageSource).toContain('label="로컬 저장소"')
-    expect(setupPageSource).toContain('label="설정 상태"')
+    expect(setupChecksPanelSource).not.toContain('label="Config File" value={checks?.configFile')
+    expect(setupChecksPanelSource).not.toContain('label="Setup State" value={checks?.setupStateFile')
+    expect(setupChecksPanelSource).toContain('label={text("로컬 저장소", "Local storage")}')
+    expect(setupChecksPanelSource).toContain('label={text("설정 저장", "Settings storage")}')
   })
 })

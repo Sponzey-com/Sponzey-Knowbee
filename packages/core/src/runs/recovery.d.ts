@@ -43,6 +43,8 @@ export interface YeonjangFailureEvidenceRecoveryPayload {
 export interface RecoveryKeyParts {
     action: string;
     error: string;
+    reasonCode?: string | undefined;
+    evidenceRefs?: readonly string[] | undefined;
     toolName?: string | undefined;
     targetId?: string | undefined;
     channel?: DeliverySource | string | undefined;
@@ -61,6 +63,8 @@ export declare function selectGenericExecutionRecovery(params: {
         summary: string;
         reason: string;
         toolNames: string[];
+        reasonCode?: string | undefined;
+        evidenceRefs?: string[] | undefined;
     };
     seenKeys: Set<string>;
 }): GenericExecutionRecoveryCandidate | null;
@@ -102,6 +106,8 @@ export declare function buildExecutionRecoveryPrompt(params: {
     summary: string;
     reason: string;
     toolNames: string[];
+    reasonCode?: string | undefined;
+    evidenceRefs?: string[] | undefined;
     alternatives?: RecoveryAlternative[];
 }): string;
 export declare function summarizeRawErrorForUser(message: string | undefined): string;

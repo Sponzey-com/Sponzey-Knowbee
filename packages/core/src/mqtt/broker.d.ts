@@ -11,6 +11,18 @@ export interface MqttBrokerSnapshot {
     reason: string | null;
 }
 type ExtensionTopicKind = "status" | "capabilities" | "request" | "response" | "event";
+export type MqttV2RequesterRouteAdmission = {
+    readonly ok: true;
+    readonly requesterId: string | null;
+} | {
+    readonly ok: false;
+    readonly reasonCode: "mqtt_v2_requester_config_required" | "mqtt_v2_requester_mismatch";
+};
+/**
+ * Admits requester-scoped v2 routes against the immutable bootstrap identity.
+ * Observation topics are producer-owned and therefore carry no requester.
+ */
+export declare function admitMqttV2RequesterRoute(topic: unknown, configuredRequesterId: string): MqttV2RequesterRouteAdmission;
 export interface MqttExtensionSnapshot {
     extensionId: string;
     clientId: string | null;
@@ -46,6 +58,13 @@ export interface MqttExtensionSnapshot {
     pairingFingerprint?: string | null;
     hostFingerprint?: string | null;
     installFingerprint?: string | null;
+    /** Exact signed v2 execution target identity; never derived from host fields. */
+    targetFingerprint?: string | null;
+    /** Monotonic producer revisions used only to reject stale same-session v2 projections. */
+    v2StatusSequence?: number | null;
+    v2CapabilitiesSequence?: number | null;
+    /** Signed online status lease; null for offline or non-v2 projections. */
+    v2StatusExpiresAt?: number | null;
     permissions?: Record<string, unknown>;
     toolHealth?: Record<string, unknown>;
     capabilityMatrix?: Record<string, unknown>;
@@ -62,6 +81,15 @@ export interface MqttExchangeLogEntry {
     clientId: string | null;
     payload: unknown;
 }
+export type MqttV2RequesterRouteFailureReason = "mqtt_v2_requester_config_required" | "mqtt_v2_requester_mismatch";
+/** Keeps broker credential failure distinct from exact requester admission. */
+export declare function createMqttV2RequesterRouteError(reasonCode: MqttV2RequesterRouteFailureReason): Error & {
+    readonly code: MqttV2RequesterRouteFailureReason;
+    readonly returnCode: 5;
+};
+export declare function expireMqttV2Observations(nowMs: number): {
+    readonly expiredCount: number;
+};
 export declare function validateMqttBrokerConfig(config: MqttConfig): string | null;
 export declare function startMqttBroker(config: MqttConfig): Promise<void>;
 export declare function stopMqttBroker(): Promise<void>;

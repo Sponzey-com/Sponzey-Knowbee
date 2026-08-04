@@ -58,6 +58,9 @@ export function prepareRootLoopBootstrapState(
         observedFetchCandidates: [],
         observedSearchResults: [],
       },
+      ...(params.recoveredAttempt
+        ? { recoveredAttempt: params.recoveredAttempt }
+        : {}),
     },
   }
 }

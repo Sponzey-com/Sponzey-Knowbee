@@ -25,7 +25,16 @@ describe("task0926 direct artifact delivery recovery prompt source", () => {
     const prompt = buildDirectArtifactDeliveryRecoveryPrompt({
       originalRequest: "화면 캡처해서 보내줘",
       previousResult: "캡처는 되었지만 전달되지 않았습니다.",
-      successfulTools: [{ toolName: "screen_capture", output: "ok" }],
+      successfulTools: [{
+        toolName: "screen_capture",
+        output: "ok",
+        evidenceSource: {
+          sourceKind: "yeonjang",
+          sourceRef: `tool-result:yeonjang:${"a".repeat(64)}`,
+          trustClass: "untrusted_external",
+          instructionIsolation: "data_only",
+        },
+      }],
       successfulFileDeliveries: [{ channel: "telegram", filePath: `${process.env.HOME ?? ""}/capture.png` }],
       alternatives: [{ kind: "same_channel_retry", label: "같은 채널 재전송 시도" }],
     })

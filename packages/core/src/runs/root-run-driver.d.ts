@@ -10,6 +10,7 @@ import { createExecutionLoopRuntimeState } from "./execution-profile.js";
 import { type FinalizationDependencies, type FinalizationSource } from "./finalization.js";
 import type { FinalResponseIdentityContext } from "./final-response-renderer.js";
 import type { CanonicalRecoveryReentryRecorder } from "./execution-cycle-pass.js";
+import type { RecoveredExecutionAttempt } from "./execution-cycle-pass.js";
 import type { CanonicalCompletionOutcomeRecorder } from "./review-outcome-pass.js";
 import type { CanonicalDeliveryRecorder } from "./finalization.js";
 import type { CanonicalPendingResponseConsumer, CanonicalPendingResponseStager } from "./finalization.js";
@@ -179,6 +180,7 @@ export declare function executeRootRunDriver(params: {
     speaker?: AgentAttributionSnapshot;
     syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies;
     defaultMaxDelegationTurns: number;
+    recoveredAttempt?: RecoveredExecutionAttempt;
 }, dependencies: RootRunDriverDependencies, moduleDependencies?: RootRunDriverModuleDependencies): Promise<void>;
 export {};
 //# sourceMappingURL=root-run-driver.d.ts.map

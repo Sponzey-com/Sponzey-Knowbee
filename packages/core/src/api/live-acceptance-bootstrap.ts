@@ -26,6 +26,7 @@ import {
 } from "../release/live-acceptance-llm-adapter.js"
 import type { LiveAcceptanceSigningRequestSink } from "../release/live-acceptance-runner.js"
 import type { LiveAcceptanceRuntimeSnapshotReaders } from "../release/live-acceptance-runtime-snapshot-adapter.js"
+import type { LiveAcceptanceRuntimeIdentityAdmission } from "../release/live-acceptance-runtime-identity.js"
 import { captureLiveAcceptanceRuntimeSnapshot } from "../release/live-acceptance-runtime-snapshot-adapter.js"
 import { inspectLiveAcceptanceSelectionAvailability } from "../release/live-acceptance-selection-preflight.js"
 import { createLiveAcceptanceSigningRequestFileSink } from "../release/live-acceptance-signing-request-file-sink.js"
@@ -38,6 +39,7 @@ import type { ToolDispatcher } from "../tools/dispatcher.js"
 import { invokeYeonjangMethod } from "../yeonjang/mqtt-client.js"
 import { listYeonjangRegistryInstances } from "../yeonjang/registry.js"
 import { createLiveAcceptanceRuntimeFactory } from "./live-acceptance-runtime-factory.js"
+import { createLiveAcceptanceRuntimeIdentityInspector } from "../runtime/live-acceptance-runtime-identity-adapter.js"
 import type { ApiServerRuntimeDependencies } from "./server-runtime-context.js"
 
 const LIVE_MAX_AGE_MS = 60_000
@@ -62,6 +64,7 @@ export function resolveConfiguredTelegramLiveSmokeTarget(
 
 export interface LiveAcceptanceBootstrapPorts {
   readonly readers: LiveAcceptanceRuntimeSnapshotReaders
+  readonly inspectRuntimeIdentity: () => LiveAcceptanceRuntimeIdentityAdmission
   readonly llm: Readonly<LiveAcceptanceLlmPorts>
   readonly artifactStorage: ArtifactStorageContext
   readonly findAuditEventId: (input: {
@@ -88,6 +91,7 @@ export function createLiveAcceptanceBootstrapDependencies(input: {
   const ports = input.ports
   const factory = createLiveAcceptanceRuntimeFactory({
     readers: ports.readers,
+    inspectRuntimeIdentity: ports.inspectRuntimeIdentity,
     dispatcher: input.dispatcher,
     webContextFor: ({ runId, scenario, signal }) => ({
       artifactStorage: ports.artifactStorage,
@@ -152,6 +156,7 @@ export function createLiveAcceptanceBootstrapDependencies(input: {
   return Object.freeze({
     liveAcceptanceExecutorFactory: factory,
     liveAcceptanceSelectionAvailabilityInspector,
+    liveAcceptanceRuntimeIdentityInspector: ports.inspectRuntimeIdentity,
   })
 }
 
@@ -221,6 +226,7 @@ export function createDefaultLiveAcceptanceBootstrapDependencies(input: {
   })
   const ports: LiveAcceptanceBootstrapPorts = Object.freeze({
     readers,
+    inspectRuntimeIdentity: createLiveAcceptanceRuntimeIdentityInspector(),
     llm: createFileBackedLiveAcceptanceLlmPorts({
       provider,
       model,

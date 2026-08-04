@@ -75,7 +75,14 @@ describe("root loop pass launch", () => {
       receiptId: "receipt:selection:run-1",
       capabilitySnapshotFingerprint: `sha256:${"a".repeat(64)}` as const,
       selectedCapabilityId: "skill:web-research",
-      toolNames: ["web_fetch", "web_search"],
+      toolNames: ["web_fetch", "web_search", "telegram_send_file"],
+      selectedToolTargets: [{
+        stepId: "step-delivery",
+        capabilityId: "telegram_send_file",
+        bindingTargetId: "agent:main",
+        targetId: `destination:telegram:sha256:${"a".repeat(64)}`,
+        toolNames: ["telegram_send_file"],
+      }],
     }
     dependencies.getAdmittedCapabilityExecutionScope.mockReturnValue(
       admittedCapabilityExecutionScope,
@@ -170,6 +177,8 @@ describe("root loop pass launch", () => {
     expect(launch.params.state.currentMessage).toContain("[checklist]")
     expect(launch.params.state.currentMessage).toContain("- [ ] Confirm goal:")
     expect(launch.params.completionConditions).toEqual(["The requested work is completed."])
+    expect(launch.params.executionSemantics.artifactDelivery).toBe("direct")
+    expect(launch.params.wantsDirectArtifactDelivery).toBe(true)
     expect(launch.params.successfulTools).toBe(successfulTools)
     expect(launch.params.admittedCapabilityExecutionScope).toBe(
       admittedCapabilityExecutionScope,

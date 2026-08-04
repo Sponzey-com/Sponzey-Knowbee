@@ -35,8 +35,15 @@ export const SOLUTION_PLAN_RESPONSE_TOOL = Object.freeze<ToolDefinition>({
             },
             input_refs: {
               type: "array",
+              description:
+                "Input references for this step. Every use_tool or use_yeonjang step must include exactly one provided capability reference. Use the matching approved_capability or approval_tool constraint for the requested side effect instead of an unapproved generic side-effect capability; validation and reporting steps must use their non-Tool action types.",
               minItems: 1,
-              items: { type: "string", minLength: 1 },
+              items: {
+                type: "string",
+                minLength: 1,
+                description:
+                  "Copy capability references exactly from the provided solution-plan input.",
+              },
             },
             expected_output: { type: "string", minLength: 1 },
             completion_criteria: { type: "string", minLength: 1 },

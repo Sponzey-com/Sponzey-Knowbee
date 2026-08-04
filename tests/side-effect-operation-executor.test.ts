@@ -144,6 +144,40 @@ describe("side-effect operation executor", () => {
     expect(input.executeEffect).not.toHaveBeenCalled()
   })
 
+  it("records a known pre-effect rejection without post-check or manual intervention", async () => {
+    const repository = new MemoryRepository()
+    const observePostState = vi.fn()
+    const input = {
+      identity,
+      compensationSupport: "irreversible" as const,
+      executeEffect: vi.fn(async () => ({
+        value: "rejected",
+        success: false,
+        resultFingerprint: `sha256:${"c".repeat(64)}` as const,
+        recordedAt: 100,
+        preEffectRejection: {
+          reasonCode: "side_effect_authorization_required",
+          retrySafety: "change_strategy" as const,
+        },
+      })),
+      observePostState,
+    }
+
+    expect(await executeSideEffectOperation(input, dependencies(repository))).toMatchObject({
+      status: "effect_rejected",
+      reasonCode: "side_effect_authorization_required",
+    })
+    expect(repository.value?.state).toBe("EFFECT_REJECTED")
+    expect(observePostState).not.toHaveBeenCalled()
+
+    input.executeEffect.mockClear()
+    expect(await executeSideEffectOperation(input, dependencies(repository))).toMatchObject({
+      status: "effect_rejected",
+      reasonCode: "side_effect_existing_effect_rejected",
+    })
+    expect(input.executeEffect).not.toHaveBeenCalled()
+  })
+
   it("routes wrong post-state to manual intervention for irreversible effects", async () => {
     const repository = new MemoryRepository()
     const result = await executeSideEffectOperation(
@@ -344,6 +378,9 @@ describe("side-effect operation executor", () => {
       expect(result).toMatchObject({ status: "resumed_verified" })
       expect(executeEffect).not.toHaveBeenCalled()
       expect(observePostState).toHaveBeenCalledTimes(1)
+      expect(observePostState).toHaveBeenCalledWith({
+        effectEvidenceRefs: ["test-evidence:RECORD_EFFECT"],
+      })
       expect(repository.value?.state).toBe("VERIFIED")
     },
   )

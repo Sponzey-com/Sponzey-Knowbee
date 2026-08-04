@@ -13,11 +13,21 @@ const methodIdentifierSchema = {
   type: "string",
   pattern: "^[a-z][a-z0-9_.:-]{0,127}$",
   description:
-    "An exact stable capability identifier explicitly supplied by the user; never prose, an instruction, or an invented alternative.",
+    "An exact stable capability identifier from the runtime capability contract; never prose, an instruction, or an invented identifier.",
 } as const
 const methodIdentifierArraySchema = {
   type: "array",
   items: methodIdentifierSchema,
+} as const
+const preferredMethodIdentifierArraySchema = {
+  ...methodIdentifierArraySchema,
+  description:
+    "Exact capabilities selected for this action, in execution priority order. Preserve a user-named method first; otherwise select the most purpose-specific available capability before any generic executor.",
+} as const
+const exclusiveMethodIdentifierArraySchema = {
+  ...methodIdentifierArraySchema,
+  description:
+    "Exact capabilities the user explicitly required while forbidding alternatives. Leave empty unless the user imposed this restriction.",
 } as const
 const targetInstanceSchema = {
   type: ["string", "null"],
@@ -70,8 +80,8 @@ const taskPayloadSchema = closedObjectSchema({
   task_profile: nullableStringSchema,
   preferred_target: nullableStringSchema,
   target_instance: targetInstanceSchema,
-  preferred_methods: methodIdentifierArraySchema,
-  exclusive_methods: methodIdentifierArraySchema,
+  preferred_methods: preferredMethodIdentifierArraySchema,
+  exclusive_methods: exclusiveMethodIdentifierArraySchema,
 })
 
 const schedulePayloadProperties = {
@@ -97,8 +107,8 @@ const actionItemSchema = {
       assumptions: stringArraySchema,
       preferred_target: nullableStringSchema,
       target_instance: targetInstanceSchema,
-      preferred_methods: methodIdentifierArraySchema,
-      exclusive_methods: methodIdentifierArraySchema,
+      preferred_methods: preferredMethodIdentifierArraySchema,
+      exclusive_methods: exclusiveMethodIdentifierArraySchema,
     })),
     actionSchema("create_schedule", closedObjectSchema(schedulePayloadProperties)),
     actionSchema("update_schedule", closedObjectSchema({
@@ -238,6 +248,8 @@ export const TASK_INTAKE_RESPONSE_TOOL = Object.freeze<ToolDefinition>({
               approval_required: { type: "boolean" },
               approval_tool: {
                 type: "string",
+                description:
+                  "Select the purpose-specific capability for the primary approved effect. Camera capture: yeonjang_camera_capture. Screen capture: screen_capture. Use external_action only when no purpose-specific value applies; never replace a listed capability with a generic shell or process executor.",
                 enum: [
                   "screen_capture",
                   "yeonjang_camera_capture",

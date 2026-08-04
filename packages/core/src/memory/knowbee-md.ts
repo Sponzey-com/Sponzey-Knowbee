@@ -928,6 +928,28 @@ const PROMPT_SOURCE_DEFINITIONS: PromptSourceDefinition[] = [
     defaultRuntime: false,
   },
   {
+    sourceId: "final_response_evidence_review",
+    filenames: {
+      ko: "final_response_evidence_review.ko.md",
+      en: "final_response_evidence_review.md",
+    },
+    priority: 216.4,
+    required: false,
+    usageScope: "internal",
+    defaultRuntime: false,
+  },
+  {
+    sourceId: "final_response_evidence_review_user",
+    filenames: {
+      ko: "final_response_evidence_review_user.ko.md",
+      en: "final_response_evidence_review_user.md",
+    },
+    priority: 216.5,
+    required: false,
+    usageScope: "internal",
+    defaultRuntime: false,
+  },
+  {
     sourceId: "final_response_user",
     filenames: { ko: "final_response_user.ko.md", en: "final_response_user.md" },
     priority: 217,

@@ -2,7 +2,7 @@ import { observeGatewayStartup } from "../contracts/gateway-startup-state.js"
 import type { GatewayStartupEvidence } from "./gateway-startup-evidence.js"
 
 export interface GatewayStartupProcessSnapshot {
-  readonly state: "running" | "exited"
+  readonly state: "running" | "exited" | "unknown"
   readonly repositoryOwned: boolean
   readonly listening: boolean
 }
@@ -17,6 +17,7 @@ export type GatewayStartupObserverResult =
       readonly state:
         | GatewayStartupEvidence["state"]
         | "awaiting_evidence"
+        | "verifying_process"
         | "verifying_ready"
       readonly elapsedMs: number
       readonly performance: "within_budget" | "budget_exceeded"
@@ -65,6 +66,31 @@ export async function observeGatewayStartupEvidence(input: {
       status: "failed",
       elapsedMs: observationElapsedMs,
       reasonCode: "process_exited",
+    }
+  }
+  if (process.state === "unknown") {
+    if (
+      evidenceMatches
+      && (evidence.state === "failed" || evidence.state === "cancelled")
+    ) {
+      const terminalObservation = observeGatewayStartup({
+        snapshot: evidence,
+        processState: "running",
+        observedAt: input.observedAt,
+        performanceBudgetMs: input.performanceBudgetMs,
+      })
+      return terminalObservation.status === "still_starting"
+        ? { ...terminalObservation, state: evidence.state }
+        : terminalObservation
+    }
+    return {
+      status: "still_starting",
+      state: evidenceMatches ? "verifying_process" : "awaiting_evidence",
+      elapsedMs: observationElapsedMs,
+      performance: performance(
+        observationElapsedMs,
+        input.performanceBudgetMs,
+      ),
     }
   }
   if (!evidenceMatches) {

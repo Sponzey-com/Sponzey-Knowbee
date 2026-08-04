@@ -187,7 +187,7 @@ describe("yeonjang required tools", () => {
     expect(result.output).toContain("screen.capture")
   })
 
-  it("returns a terminal guidance message when remote screen capture hits the Windows path bug", async () => {
+  it("returns a bounded remote failure when remote screen capture fails", async () => {
     expect(seedObservation({
       instanceId: "inst-remote-windows",
       instanceAlias: "windows-test-pc",
@@ -213,16 +213,17 @@ describe("yeonjang required tools", () => {
     const result = await screenCaptureTool.execute({ extensionId: 'yeonjang-dongwooshinc28b-92049' }, createContext('윈도우 메인화면 캡처해서 보여줘'))
 
     expect(result.success).toBe(false)
-    expect(result.error).toBe('YEONJANG_SCREEN_CAPTURE_PATH_BUG')
-    expect(result.output).toContain('Windows 연장의 `screen.capture` 내부 경로 처리 오류')
+    expect(result.error).toBe('YEONJANG_SCREEN_CAPTURE_REMOTE_FAILURE')
+    expect(result.output).toContain('Yeonjang 화면 캡처 실패')
     expect(result.details).toMatchObject({
       via: 'yeonjang',
       stopAfterFailure: true,
-      failureKind: 'path_bug',
+      failureKind: 'remote_failure',
       extensionId: 'yeonjang-dongwooshinc28b-92049',
     })
     expect(getYeonjangCapabilities).toHaveBeenCalledWith({
       extensionId: 'yeonjang-dongwooshinc28b-92049',
+      signal: expect.any(AbortSignal),
       metadata: {
         runId: 'run-1',
         requestGroupId: 'request-group-1',
@@ -270,6 +271,7 @@ describe("yeonjang required tools", () => {
     expect(result.success).toBe(true)
     expect(getYeonjangCapabilities).toHaveBeenCalledWith({
       extensionId: 'yeonjang-dongwooshinc28b-92049',
+      signal: expect.any(AbortSignal),
       metadata: {
         runId: 'run-1',
         requestGroupId: 'request-group-1',
@@ -365,6 +367,7 @@ describe("yeonjang required tools", () => {
       {
         extensionId: 'yeonjang-main',
         timeoutMs: 60000,
+        signal: expect.any(AbortSignal),
         metadata: {
           runId: 'run-1',
           requestGroupId: 'request-group-1',

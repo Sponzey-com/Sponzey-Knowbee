@@ -12,6 +12,7 @@ describe("canonical work state", () => {
       "SOLUTION_ANALYZED",
       "POLICY_VALIDATED",
       "EXECUTING",
+      "AWAITING_APPROVAL",
       "RESULT_REVIEW",
       "SUCCEEDED",
       "PARTIALLY_SUCCEEDED",
@@ -33,6 +34,29 @@ describe("canonical work state", () => {
       "USER_CANCELLED",
       "REPORT_DELIVERED",
     ]))
+  })
+
+  it("owns approval waiting and resolution as canonical transitions", () => {
+    expect(transitionCanonicalWorkState({
+      currentState: "EXECUTING",
+      event: "APPROVAL_REQUESTED",
+      receiptRef: "approval:requested",
+    })).toMatchObject({ accepted: true, nextState: "AWAITING_APPROVAL" })
+    expect(transitionCanonicalWorkState({
+      currentState: "AWAITING_APPROVAL",
+      event: "APPROVAL_CONSUMED",
+      receiptRef: "approval:consumed",
+    })).toMatchObject({ accepted: true, nextState: "EXECUTING" })
+    expect(transitionCanonicalWorkState({
+      currentState: "AWAITING_APPROVAL",
+      event: "APPROVAL_DENIED_OR_EXPIRED",
+      receiptRef: "approval:denied",
+    })).toMatchObject({ accepted: true, nextState: "BLOCKED" })
+    expect(transitionCanonicalWorkState({
+      currentState: "AWAITING_APPROVAL",
+      event: "ATTEMPT_RECORDED",
+      receiptRef: "attempt:before-approval",
+    })).toMatchObject({ accepted: false, reasonCode: "transition_not_allowed" })
   })
 
   it("follows the request to verified report happy path", () => {

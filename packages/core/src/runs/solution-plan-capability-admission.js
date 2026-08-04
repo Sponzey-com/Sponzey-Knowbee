@@ -1,6 +1,35 @@
 import { createHash } from "node:crypto";
 import { canonicalWorkIdForRootRun } from "../contracts/canonical-work-aggregate.js";
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+/**
+ * Resolves the control-plane binding for a topology execution owned by one
+ * agent. The external effect target remains independently bound by the Tool;
+ * this only prevents a duplicate remote capability advertisement from making
+ * the owning Gateway's plan ambiguous.
+ */
+export function resolveOwnerScopedCapabilitySelectionTargets(input) {
+    const ownerAgentId = normalized(input.ownerAgentId);
+    if (!ownerAgentId || input.selections.length === 0)
+        return undefined;
+    const targets = {};
+    for (const selection of input.selections) {
+        const stepId = normalized(selection.stepId);
+        const capabilityRef = normalized(selection.capabilityRef);
+        const capabilityId = capabilityRef.startsWith("capability:")
+            ? normalized(capabilityRef.slice("capability:".length))
+            : "";
+        if (!stepId || !capabilityId || targets[stepId])
+            return undefined;
+        const ownerBindings = input.capabilitySnapshot.bindings.filter((binding) => normalized(binding.capabilityId) === capabilityId &&
+            normalized(binding.targetId) === ownerAgentId);
+        // Do not choose among multiple owner bindings. An incomplete or ambiguous
+        // canonical snapshot must remain blocked rather than be guessed.
+        if (ownerBindings.length !== 1)
+            return undefined;
+        targets[stepId] = { bindingTargetId: ownerAgentId };
+    }
+    return targets;
+}
 function normalized(value) {
     return value.trim();
 }
@@ -20,7 +49,8 @@ export function buildSolutionPlanCapabilityAdmission(input) {
     const runId = normalized(input.runId);
     const solutionPlanReceiptId = normalized(input.solutionPlanReceiptId);
     const policyReceiptId = normalized(input.policyReceiptId);
-    const targetId = normalized(input.targetId ?? "");
+    const bindingTargetId = normalized(input.bindingTargetId ?? input.targetId ?? "");
+    const executionTargetId = normalized(input.executionTargetId ?? input.targetId ?? "");
     if (!runId ||
         !solutionPlanReceiptId ||
         !policyReceiptId ||
@@ -43,12 +73,18 @@ export function buildSolutionPlanCapabilityAdmission(input) {
             return { ok: false, reasonCode: "capability_admission_invalid" };
         }
         stepIds.add(stepId);
+        const selectionTarget = input.selectionTargets?.[stepId];
+        if (input.selectionTargets && !selectionTarget) {
+            return { ok: false, reasonCode: "capability_admission_invalid" };
+        }
+        const selectedBindingTargetId = normalized(selectionTarget?.bindingTargetId ?? bindingTargetId);
+        const selectedExecutionTargetId = normalized(selectionTarget?.executionTargetId ?? executionTargetId);
         const candidates = input.capabilitySnapshot.bindings.filter((binding) => normalized(binding.capabilityId) === capabilityId);
         if (candidates.length === 0) {
             return { ok: false, reasonCode: "capability_admission_outside_snapshot" };
         }
-        const targetCandidates = targetId
-            ? candidates.filter((binding) => normalized(binding.targetId) === targetId)
+        const targetCandidates = selectedBindingTargetId
+            ? candidates.filter((binding) => normalized(binding.targetId) === selectedBindingTargetId)
             : candidates;
         if (targetCandidates.length === 0) {
             return { ok: false, reasonCode: "capability_admission_target_unavailable" };
@@ -69,8 +105,13 @@ export function buildSolutionPlanCapabilityAdmission(input) {
             stepId,
             capabilityRef,
             capabilityId,
-            targetId: normalized(binding.targetId),
+            bindingTargetId: normalized(binding.targetId),
+            targetId: selectedExecutionTargetId || normalized(binding.targetId),
         });
+    }
+    if (input.selectionTargets &&
+        Object.keys(input.selectionTargets).some((stepId) => !stepIds.has(normalized(stepId)))) {
+        return { ok: false, reasonCode: "capability_admission_invalid" };
     }
     const approvalRequired = [...approvalRequiredCapabilityIds].sort();
     const outcome = approvalRequired.length > 0

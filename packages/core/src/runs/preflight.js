@@ -38,6 +38,13 @@ function requiresYeonjangRuntime(input) {
         return false;
     return YEONJANG_APPROVAL_TOOLS.has(approvalTool) || approvalTool.startsWith("yeonjang_");
 }
+function resolveYeonjangRequirement(input) {
+    if (input.toolsEnabled === false)
+        return "not_required";
+    if (!input.executionSemantics)
+        return "unknown";
+    return requiresYeonjangRuntime(input) ? "required" : "not_required";
+}
 function resolveContextPlanMemoryScopes(input) {
     const scopes = new Set(["short-term", "flash-feedback"]);
     if (input.executionSemantics)
@@ -100,7 +107,7 @@ function resolveAiFailure(input) {
     return null;
 }
 function resolveYeonjangFailure(input) {
-    if (!requiresYeonjangRuntime(input))
+    if (resolveYeonjangRequirement(input) !== "required")
         return null;
     if (hasConnectedYeonjangSnapshot())
         return null;
@@ -118,7 +125,7 @@ export function resolveStartPreflightFailure(input) {
 }
 export function resolveStartContextPlan(input) {
     const requiresApproval = Boolean(input.executionSemantics?.approvalRequired);
-    const requiresYeonjang = requiresYeonjangRuntime(input);
+    const requiresYeonjang = resolveYeonjangRequirement(input);
     return {
         promptSources: [
             "definitions",

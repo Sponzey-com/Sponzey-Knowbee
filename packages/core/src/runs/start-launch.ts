@@ -138,6 +138,7 @@ export async function prepareStartLaunch(
     inboundMessage?: InboundMessageRecord | undefined
     config: OrchestrationModeConfigSnapshot
     hasRequestGroupExecutionQueue: (requestGroupId: string) => boolean
+    existingRun?: RootRun
   },
   dependencies: StartLaunchDependencies = defaultDependencies,
 ): Promise<PreparedStartLaunch> {
@@ -181,6 +182,35 @@ export async function prepareStartLaunch(
   })
 
   dependencies.ensureSessionExists(params.sessionId, params.source, params.now)
+  if (params.existingRun) {
+    if (
+      params.existingRun.id !== params.runId
+      || params.existingRun.sessionId !== params.sessionId
+      || params.existingRun.source !== params.source
+      || params.existingRun.requestGroupId !== startPlan.requestGroupId
+    ) {
+      throw new Error("existing_root_run_resume_binding_mismatch")
+    }
+    dependencies.bindActiveRunController(params.runId, params.controller)
+    dependencies.appendRunEvent(
+      params.runId,
+      "existing_root_run_reentered:recovered_attempt",
+    )
+    return {
+      startPlan: {
+        ...startPlan,
+        isRootRequest: params.existingRun.runScope === "root",
+        effectiveTaskProfile: params.existingRun.taskProfile,
+        effectiveContextMode: "handoff",
+        initialDelegationTurnCount: params.existingRun.delegationTurnCount,
+        ...(params.existingRun.workerSessionId
+          ? { workerSessionId: params.existingRun.workerSessionId }
+          : {}),
+      },
+      run: params.existingRun,
+      queuedBehindRequestGroupRun: false,
+    }
+  }
   const promptContextPlan = buildPromptContextBlockPlan({
     mode: startPlan.requestIsolation === "continuation" || !startPlan.isRootRequest
       ? "explicit_continuation"

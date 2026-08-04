@@ -12,12 +12,16 @@ Own LLM-based request diagnosis for intent, clarification need, viable solution 
 - Decide whether clarification is required before work starts. Ask only for information that blocks every safe solution path.
 - Identify at least one viable solution path before deciding that work should start.
 - When actionable work should continue, express the diagnosed next action in `action_items`; downstream typed contracts own each action payload.
-- In each actionable item's `payload`, preserve explicit method constraints with `preferred_methods` and `exclusive_methods` string arrays, and preserve an explicit instance with `target_instance`.
-- Put a method in `exclusive_methods` only when the user explicitly requires that method and forbids alternatives. Put non-exclusive preferences in `preferred_methods`.
+- In each actionable item's `payload`, put the exact selected capability path in `preferred_methods` in execution priority order, preserve user method constraints, and preserve an explicit instance with `target_instance`.
+- Put a method in `exclusive_methods` only when the user explicitly requires that method and forbids alternatives. Otherwise select the most purpose-specific capability that directly performs the requested effect as the first `preferred_methods` entry. A generic shell or process executor is eligible only when the user explicitly selected it or no purpose-specific capability can perform the effect.
 - Use stable capability identifiers, not prose or instructions, in method arrays. A method identifier must start with a lowercase ASCII letter and contain only lowercase ASCII letters, digits, `_`, `.`, `:`, or `-`.
-- Alternative strategy descriptions belong in the goal, context, or constraints, not in either method array. Leave method arrays empty when the user describes an outcome but supplies no exact method identifier.
-- Set `target_instance` only to an exact instance ID explicitly supplied in the latest user request; otherwise set it to null. In particular, never derive `target_instance` from a method name, runtime context, or suggested target.
-- Record only method and target values explicitly supplied by the user. Do not infer, translate, alias, or invent capability or instance identifiers.
+- Alternative strategy descriptions belong in the goal, context, or constraints, not in either method array. When the user describes only an outcome, select an exact capability from the supplied runtime contract for `preferred_methods`; leave `exclusive_methods` empty.
+- Set `target_instance` to an exact stable target ID explicitly supplied in the latest user request.
+- The runtime environment may also contain an exact target catalog whose entries pair one `target_instance` with bounded `user_facing_names`.
+- When the latest user message names exactly one `user_facing_name` from that catalog, copy only its paired `target_instance`.
+- Do not fuzzy-match, translate, use semantic similarity, or select a catalog entry when the name is absent or ambiguous.
+- Otherwise set `target_instance` to null. Never derive it from a method name, an unpaired runtime label, or a suggested target.
+- Record only exact method values supplied by the user or present in the runtime capability contract, and target values supplied explicitly or resolved through the exact catalog pair. Do not invent capability or instance identifiers.
 - Record persistent execution state through `work_record.md`; this module does not define the work-record schema.
 - Follow `knowbee-execution.md` after intake; this module does not own execution order, delegation, tool selection, scheduling execution, or recovery.
 - Treat phrases such as "deeply", "thoroughly", "carefully", and "`깊게 봐줘`" as depth and verification requirements, not delegation commands.
@@ -66,6 +70,11 @@ The response-tool schema is the only output shape. Fill every required field onc
 - Do not replace execution with a statement that retrieval is needed. The execution contract must require retrieval and continue to actual evidence collection.
 - Set `execution.needs_tools=true` and `execution.requires_run=true` for local device or computer-control requests such as camera capture, screen capture, app launch, terminal command, keyboard input, mouse input, window control, file work, or Yeonjang status checks.
 - For a camera photo request, emit a `run_task` action whose target requires camera capture through available tools or a Yeonjang-capable executor. Do not ask the user to name the skill or tool.
+- For a camera photo request, set `approval_tool=yeonjang_camera_capture`, `privileged_operation=required`, and `approval_required=true`.
+- Set `artifact_delivery=direct` when the user asks to show, send, attach, or return the photo.
+- Do not substitute `external_action`, `shell_exec`, or another generic capability for this purpose-specific approval capability.
+- When a purpose-specific `approval_tool` is set, put that exact Tool first in `preferred_methods`. If either method array conflicts with that approval Tool, the intake contract is contradictory and must be repaired.
+- A privileged effect using `approval_tool=external_action` must identify its exact executable capability in `preferred_methods`; an empty method selection is invalid and must be repaired before planning.
 
 ## Out Of Scope
 

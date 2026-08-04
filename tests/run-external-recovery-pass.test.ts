@@ -23,6 +23,12 @@ describe("external recovery pass", () => {
       source: "telegram",
       onChunk: undefined,
       preview: "안녕",
+      responseContext: {
+        originalRequest: "안녕이라고 말해줘",
+        model: "gpt-4o-mini",
+        providerId: "openai",
+        workDir: "/tmp/project",
+      },
       finalizationDependencies: {
         appendRunEvent: vi.fn(),
         setRunStepStatus: vi.fn(),
@@ -91,6 +97,12 @@ describe("external recovery pass", () => {
       source: "webui",
       onChunk: undefined,
       preview: "안녕",
+      responseContext: {
+        originalRequest: "안녕이라고 말해줘",
+        model: "gpt-4o-mini",
+        providerId: "openai",
+        workDir: "/tmp/project",
+      },
       finalizationDependencies: {
         appendRunEvent: vi.fn(),
         setRunStepStatus: vi.fn(),
@@ -118,6 +130,12 @@ describe("external recovery pass", () => {
       sessionId: "session-2",
       source: "webui",
       preview: "안녕",
+      responseContext: {
+        originalRequest: "안녕이라고 말해줘",
+        model: "gpt-4o-mini",
+        providerId: "openai",
+        workDir: "/tmp/project",
+      },
     }), {
       appendRunEvent,
     })
@@ -189,5 +207,63 @@ describe("external recovery pass", () => {
     })
 
     expect(result).toEqual({ kind: "stop" })
+  })
+
+  it("returns review when unchanged ai recovery requires LLM completion review", async () => {
+    const result = await runExternalRecoveryPass({
+      kind: "ai",
+      payload: {
+        summary: "AI 실행 계약 오류",
+        reason: "AI provider invocation failed.",
+        message: "AI provider invocation failed.",
+        providerFailureReasonCode: "provider_contract_rejected",
+      },
+      aborted: false,
+      taskProfile: "general_chat",
+      current: {
+        model: "gpt-5",
+        providerId: "openai",
+        provider: undefined,
+        targetId: "provider:openai",
+        targetLabel: "OpenAI",
+        workerRuntime: undefined,
+      },
+      seenKeys: new Set<string>(),
+      originalRequest: "카메라로 사진을 찍어줘",
+      previousResult: "",
+      runId: "run-review",
+      sessionId: "session-review",
+      source: "telegram",
+      onChunk: undefined,
+      preview: "",
+      finalizationDependencies: {
+        appendRunEvent: vi.fn(),
+        setRunStepStatus: vi.fn(),
+        updateRunStatus: vi.fn(),
+        rememberRunSuccess: vi.fn(),
+        rememberRunFailure: vi.fn(),
+      },
+    }, {
+      appendRunEvent: vi.fn(),
+    }, {
+      planExternalRecovery: vi.fn().mockReturnValue({
+        recoveryKey: "provider-contract-1",
+        eventLabel: "AI 오류를 분석합니다.",
+        routeChanged: false,
+        reviewRequired: true,
+        nextState: {
+          model: "gpt-5",
+          providerId: "openai",
+          provider: undefined,
+          targetId: "provider:openai",
+          targetLabel: "OpenAI",
+          workerRuntime: undefined,
+        },
+        nextMessage: "",
+      }),
+      applyExternalRecoveryPlan: vi.fn().mockResolvedValue({ kind: "review" }),
+    })
+
+    expect(result).toEqual({ kind: "review" })
   })
 })

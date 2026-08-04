@@ -89,23 +89,25 @@ describe("task120 intake schema failure", () => {
       releaseCanonicalSimplePath: vi.fn(),
     }
 
-    await expect(runIntakeBridgePass(
-      {
-        artifactStorage: intakeRuntime.artifactStorage,
-        message: "SK하이닉스의 현재 주가를 알려줘.",
-        originalRequest: "SK하이닉스의 현재 주가를 알려줘.",
-        sessionId: "session-task120",
-        requestGroupId: "run-task120",
-        config: DEFAULT_CONFIG,
-        workDir: process.cwd(),
-        source: "webui",
-        runId: "run-task120",
-        onChunk: undefined,
-        reuseConversationContext: false,
-      },
-      dependencies,
-      { analyzeTaskIntake: vi.fn().mockResolvedValue(null) } as never,
-    )).rejects.toMatchObject({
+    await expect(
+      runIntakeBridgePass(
+        {
+          artifactStorage: intakeRuntime.artifactStorage,
+          message: "SK하이닉스의 현재 주가를 알려줘.",
+          originalRequest: "SK하이닉스의 현재 주가를 알려줘.",
+          sessionId: "session-task120",
+          requestGroupId: "run-task120",
+          config: DEFAULT_CONFIG,
+          workDir: process.cwd(),
+          source: "webui",
+          runId: "run-task120",
+          onChunk: undefined,
+          reuseConversationContext: false,
+        },
+        dependencies,
+        { analyzeTaskIntake: vi.fn().mockResolvedValue(null) } as never,
+      ),
+    ).rejects.toMatchObject({
       kind: "knowbee.canonical_execution_failure.v1",
       phase: "intake",
       reasonCode: "intake_contract_unavailable",
@@ -138,23 +140,25 @@ describe("task120 intake schema failure", () => {
       retryable: false,
     } as const
 
-    await expect(runIntakeBridgePass(
-      {
-        artifactStorage: intakeRuntime.artifactStorage,
-        message: "현재 주가를 알려줘.",
-        originalRequest: "현재 주가를 알려줘.",
-        sessionId: "session-provider-contract",
-        requestGroupId: "run-provider-contract",
-        config: DEFAULT_CONFIG,
-        workDir: process.cwd(),
-        source: "webui",
-        runId: "run-provider-contract",
-        onChunk: undefined,
-        reuseConversationContext: false,
-      },
-      dependencies,
-      { analyzeTaskIntake: vi.fn().mockResolvedValue(providerFailure) } as never,
-    )).rejects.toMatchObject({
+    await expect(
+      runIntakeBridgePass(
+        {
+          artifactStorage: intakeRuntime.artifactStorage,
+          message: "현재 주가를 알려줘.",
+          originalRequest: "현재 주가를 알려줘.",
+          sessionId: "session-provider-contract",
+          requestGroupId: "run-provider-contract",
+          config: DEFAULT_CONFIG,
+          workDir: process.cwd(),
+          source: "webui",
+          runId: "run-provider-contract",
+          onChunk: undefined,
+          reuseConversationContext: false,
+        },
+        dependencies,
+        { analyzeTaskIntake: vi.fn().mockResolvedValue(providerFailure) } as never,
+      ),
+    ).rejects.toMatchObject({
       kind: "knowbee.canonical_execution_failure.v1",
       phase: "intake",
       reasonCode: "provider_contract_rejected",

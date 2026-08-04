@@ -242,7 +242,7 @@ mod tests {
         let result = active_hint(BrowserActiveHintParams {}).expect("browser active hint");
 
         assert!(result["available"].is_boolean());
-        assert!(result["reason"].as_str().unwrap_or_default().len() > 0);
+        assert!(!result["reason"].as_str().unwrap_or_default().is_empty());
     }
 
     #[test]

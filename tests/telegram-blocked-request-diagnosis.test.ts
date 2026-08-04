@@ -58,6 +58,47 @@ const receipt: CanonicalWorkReceipt = {
 }
 
 describe("Telegram blocked request diagnosis evidence", () => {
+  it("resolves approval denial as the terminal blocked transition", () => {
+    const approvalAggregate: CanonicalWorkAggregate = {
+      workId: "work:root:run-approval-denied",
+      rootRunId: "run-approval-denied",
+      state: "BLOCKED",
+      revision: 1,
+      transitions: [{
+        revision: 1,
+        event: "APPROVAL_DENIED_OR_EXPIRED",
+        previousState: "AWAITING_APPROVAL",
+        nextState: "BLOCKED",
+        receiptRef: "receipt:approval:denied",
+      }],
+    }
+    const approvalReceipt: CanonicalWorkReceipt = {
+      receiptId: "receipt:approval:denied",
+      workId: approvalAggregate.workId,
+      kind: "approval",
+      evidenceFingerprint: `sha256:${"c".repeat(64)}`,
+      evidenceRefs: ["approval:denied", "operation:camera"],
+      issuedAt: 1,
+      consumedRevision: 1,
+      terminalCause: {
+        schemaVersion: 1,
+        originStage: "execution",
+        outcomeKind: "blocked",
+        reasonCode: "approval_denied_or_expired",
+      },
+    }
+
+    expect(createCanonicalTerminalEvidencePort({
+      loadAggregate: () => approvalAggregate,
+      loadReceipt: () => approvalReceipt,
+    }).read(approvalAggregate.workId)).toMatchObject({
+      status: "available",
+      terminalState: "BLOCKED",
+      transition: { event: "APPROVAL_DENIED_OR_EXPIRED" },
+      cause: approvalReceipt.terminalCause,
+    })
+  })
+
   it("issues the bounded policy cause and resolves it through the terminal transition receipt", () => {
     const built = buildCanonicalPolicyBlockedDescriptor({
       runId: "run-1",

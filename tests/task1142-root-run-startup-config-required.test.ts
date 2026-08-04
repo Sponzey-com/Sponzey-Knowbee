@@ -14,7 +14,9 @@ describe("task1142 root run startup config required", () => {
     expect(start).toContain("const runtimeConfig = params.config")
     expect(start).not.toContain("const runtimeConfig = getConfig()")
     expect(start).not.toContain('import { getConfig } from "../config/index.js"')
-    expect(ingress).toContain("startRootRun({ ...resolved, inboundMessage })")
+    expect(ingress).toContain("dependencies.startRootRun({")
+    expect(ingress).toContain("...resolved,")
+    expect(ingress).toContain("inboundMessage,")
   })
 
   it("passes one snapshot from API and channel ingress", () => {

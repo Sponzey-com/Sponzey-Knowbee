@@ -14,6 +14,9 @@ export function projectCanonicalWorkStateToRunStatus(input) {
         case "EXHAUSTED":
             runStatus = "running";
             break;
+        case "AWAITING_APPROVAL":
+            runStatus = "awaiting_approval";
+            break;
         case "USER_INPUT_REQUIRED":
             if (!input.waitingKind) {
                 return { ok: false, canonicalState: input.state, reasonCode: "waiting_kind_required" };

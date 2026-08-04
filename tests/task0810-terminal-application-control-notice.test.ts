@@ -25,6 +25,7 @@ describe("task0810 terminal application control notice", () => {
       deliveryMode: "control",
       textSource: "terminal_control_notice",
       renderingRequired: "llm_final_response",
+      contentKind: "fixed_notice",
       finalAnswer: false,
       assistantIdentityClaim: false,
     })

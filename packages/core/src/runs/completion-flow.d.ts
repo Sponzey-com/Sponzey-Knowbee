@@ -1,4 +1,5 @@
 import type { CompletionReviewResult } from "../agent/completion-review.js";
+import type { UserInputRequirement } from "../contracts/user-input-requirement.js";
 import type { TaskExecutionSemantics } from "../agent/intake.js";
 import { type SuccessfulToolEvidence } from "./recovery.js";
 export type CompletionFlowDecision = {
@@ -38,6 +39,7 @@ export type CompletionFlowDecision = {
     reason?: string;
     remainingItems?: string[];
     userMessage?: string;
+    inputRequirement: UserInputRequirement;
 } | {
     kind: "blocked";
     summary: string;

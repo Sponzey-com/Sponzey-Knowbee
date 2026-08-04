@@ -1540,6 +1540,26 @@ export function insertMessage(msg: DbMessage): void {
     )
 }
 
+export function insertMessageIfAbsent(msg: DbMessage): boolean {
+  const result = getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO messages
+       (id, session_id, root_run_id, role, content, tool_calls, tool_call_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      msg.id,
+      msg.session_id,
+      msg.root_run_id ?? null,
+      msg.role,
+      msg.content,
+      msg.tool_calls,
+      msg.tool_call_id,
+      msg.created_at,
+    )
+  return result.changes === 1
+}
+
 export function getMessages(sessionId: string): DbMessage[] {
   return getDb()
     .prepare<[string], DbMessage>(
@@ -2523,6 +2543,28 @@ export function updateChannelSmokeRun(
   getDb()
     .prepare(`UPDATE channel_smoke_runs SET ${sets.join(", ")} WHERE id = ?`)
     .run(...values)
+}
+
+/**
+ * Finalizes diagnostic runs owned by a previous Gateway process. CLI smoke
+ * runs have a separate process owner and are deliberately excluded.
+ */
+export function interruptGatewayOwnedChannelSmokeRunsStartedBefore(input: {
+  startedBefore: number
+  finishedAt: number
+}): number {
+  const result = getDb()
+    .prepare(
+      `UPDATE channel_smoke_runs
+       SET status = 'failed',
+           finished_at = ?,
+           summary = 'channel smoke failed: gateway_restart_interrupted'
+       WHERE status = 'running'
+         AND started_at < ?
+         AND initiated_by IN ('webui', 'release-live-acceptance')`,
+    )
+    .run(input.finishedAt, input.startedBefore)
+  return result.changes
 }
 
 export function insertChannelSmokeStep(input: DbChannelSmokeStepInput): string {
@@ -5274,14 +5316,29 @@ export function hasArtifactReceipt(input: {
   runId: string
   channel: string
   artifactPath: string
+  channelTarget?: string
 }): boolean {
-  const row = getDb()
-    .prepare<[string, string, string], { id: string }>(
-      `SELECT id FROM artifact_receipts
-       WHERE run_id = ? AND channel = ? AND artifact_path = ?
-       LIMIT 1`,
-    )
-    .get(input.runId, input.channel, input.artifactPath)
+  const row = input.channelTarget
+    ? getDb()
+      .prepare<[string, string, string, string], { id: string }>(
+        `SELECT id FROM artifact_receipts
+         WHERE run_id = ? AND channel = ? AND artifact_path = ?
+           AND json_extract(delivery_receipt_json, '$.channelTarget') = ?
+         LIMIT 1`,
+      )
+      .get(
+        input.runId,
+        input.channel,
+        input.artifactPath,
+        input.channelTarget,
+      )
+    : getDb()
+      .prepare<[string, string, string], { id: string }>(
+        `SELECT id FROM artifact_receipts
+         WHERE run_id = ? AND channel = ? AND artifact_path = ?
+         LIMIT 1`,
+      )
+      .get(input.runId, input.channel, input.artifactPath)
   return Boolean(row)
 }
 

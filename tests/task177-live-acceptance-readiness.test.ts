@@ -12,6 +12,7 @@ import { registerLiveAcceptanceRoute } from "../packages/core/src/api/routes/liv
 import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { createRuntimePaths } from "../packages/core/src/config/paths.ts"
 import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
+import type { LiveAcceptanceRuntimeIdentityAdmission } from "../packages/core/src/release/live-acceptance-runtime-identity.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: {
@@ -46,6 +47,17 @@ afterEach(() => {
 async function appWith(
   options: Parameters<typeof registerLiveAcceptanceRoute>[1],
   authEnabled = true,
+  inspectRuntimeIdentity: () => LiveAcceptanceRuntimeIdentityAdmission = () => ({
+    status: "verified",
+    receipt: {
+      buildId: "build:task177",
+      bundleSha256: `sha256:${"a".repeat(64)}`,
+      processStartedAt: "2026-07-28T09:00:00.000Z",
+      artifactBuiltAt: "2026-07-28T08:59:00.000Z",
+      buildRequired: false,
+      restartRequired: false,
+    },
+  }),
 ) {
   const root = mkdtempSync(join(tmpdir(), "knowbee-task177-"))
   roots.push(root)
@@ -60,7 +72,8 @@ async function appWith(
   registerLiveAcceptanceRoute(app as never, {
     ...options,
     inspectReadiness: options.inspectReadiness ?? (() => READY_CAPABILITIES),
-  })
+    inspectRuntimeIdentity,
+  } as Parameters<typeof registerLiveAcceptanceRoute>[1])
   await app.ready()
   return app
 }
@@ -207,6 +220,33 @@ describe("Task 177 live acceptance readiness route", () => {
         capabilities,
       })
       expect(JSON.stringify(response.json())).not.toMatch(/chatId|userId|threadId|token/u)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it("blocks readiness when the active Gateway bundle requires restart", async () => {
+    const execute = vi.fn()
+    const app = await appWith(
+      { enabled: true, execute, now: Date.now },
+      true,
+      () => ({
+        status: "blocked",
+        reasonCode: "live_acceptance_runtime_restart_required",
+      }),
+    )
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/live-acceptance/readiness",
+        headers: { authorization: `Bearer ${TOKEN}` },
+      })
+
+      expect(response.json()).toEqual({
+        status: "unavailable",
+        reasonCode: "live_acceptance_runtime_restart_required",
+      })
+      expect(execute).not.toHaveBeenCalled()
     } finally {
       await app.close()
     }

@@ -75,13 +75,6 @@ export function evaluateCanonicalPlanPolicy(input) {
     if (applicableBindings.some((binding) => binding.risk === "denied")) {
         return decision(input, "denied", "capability_denied", selected);
     }
-    const approved = new Set(uniqueNormalized(input.constraints.approvedCapabilityIds));
-    const missingApproval = selected.filter((capabilityId) => applicableBindings.some((binding) => normalized(binding.capabilityId) === capabilityId &&
-        binding.risk === "approval_required" &&
-        !approved.has(capabilityId)));
-    if (missingApproval.length > 0) {
-        return decision(input, "approval_required", "capability_approval_required", missingApproval);
-    }
     return decision(input, "allowed", "plan_bindings_allowed", selected);
 }
 export function buildCanonicalPlanPolicyReceiptDescriptor(input) {

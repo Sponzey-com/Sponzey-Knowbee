@@ -1,4 +1,18 @@
 const INTERNAL_INTAKE_TERM = /\b(?:agent_id|node_id|missing_fields|structured_request|intent_envelope|recommended_action|schema)\b/iu;
+function explicitMethodConstraints(actionItems) {
+    return [
+        ...new Set(actionItems.flatMap((action) => [action.payload.preferred_methods, action.payload.exclusive_methods]
+            .flatMap((value) => Array.isArray(value) ? value : [])
+            .filter((value) => typeof value === "string")
+            .map((value) => value.trim())
+            .filter(Boolean))),
+    ];
+}
+/**
+ * Validates cross-field intake invariants before policy admission. A purpose-specific approval
+ * Tool and explicit method constraints must describe the same executable effect; disagreement
+ * is returned as typed repair evidence and never corrected by string or semantic heuristics.
+ */
 export function validateIntakeDecisionConsistency(input) {
     const issues = [];
     const askUserActions = input.actionItems.filter((action) => action.type === "ask_user");
@@ -75,6 +89,18 @@ export function validateIntakeDecisionConsistency(input) {
         }
         if (specificApprovalTool && !executionSemantics.approvalRequired) {
             issues.push("execution_specific_approval_tool_requires_approval");
+        }
+        const constrainedMethods = explicitMethodConstraints(input.actionItems);
+        if (privilegedOperationRequired &&
+            executionSemantics.approvalRequired &&
+            executionSemantics.approvalTool === "external_action" &&
+            constrainedMethods.length === 0) {
+            issues.push("execution_generic_approval_tool_method_missing");
+        }
+        if (specificApprovalTool &&
+            constrainedMethods.length > 0 &&
+            !constrainedMethods.includes(executionSemantics.approvalTool.trim())) {
+            issues.push("execution_specific_approval_tool_method_mismatch");
         }
     }
     return { ok: issues.length === 0, issues };

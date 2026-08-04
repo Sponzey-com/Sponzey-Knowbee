@@ -7,6 +7,10 @@ import {
   createYeonjangExecutionAdmissionPasswordHandle,
 } from "./execution-admission-key-port.js"
 import type { YeonjangExecutionAdmissionKeyProvisionerPort } from "./pairing-execution-admission-provisioning.js"
+import {
+  createYeonjangExecutionAuthorizationIssuer,
+  type YeonjangExecutionAuthorizationIssuerPort,
+} from "./execution-authorization-receipt.js"
 
 const DEFAULT_KEY_ID = "mqtt-connection-password-v1"
 const DEFAULT_TTL_MS = 60_000
@@ -21,6 +25,7 @@ export interface BrowserFocusRuntimeBootstrapOptions {
 
 export interface BrowserFocusRuntimeBootstrap {
   readonly issuer?: YeonjangBrowserFocusExecutionAdmissionIssuerPort
+  readonly executionAuthorizationIssuer?: YeonjangExecutionAuthorizationIssuerPort
   readonly pairingExecutionAdmissionKeyProvisioner?: YeonjangExecutionAdmissionKeyProvisionerPort
 }
 
@@ -67,6 +72,12 @@ export function createBrowserFocusRuntimeBootstrap(
       now: input.now ?? (() => new Date()),
       createNonce: input.createNonce ?? randomUUID,
       ttlMs: DEFAULT_TTL_MS,
+    }),
+    executionAuthorizationIssuer: createYeonjangExecutionAuthorizationIssuer({
+      issuer: "knowbee-core",
+      keyPort: registry.keyPort,
+      createAuthorizationId: input.createNonce ?? randomUUID,
+      now: () => (input.now ?? (() => new Date()))().getTime(),
     }),
     pairingExecutionAdmissionKeyProvisioner: provisioner,
   })

@@ -22,7 +22,7 @@ describe("task0852 Telegram attachment failure caption language boundary", () =>
       "utf8",
     )
 
-    expect(source).toContain("language: resolveTelegramAttachmentFailureLanguage(message.caption, ctx.from?.language_code)")
+    expect(source.match(/language:\s*resolveTelegramAttachmentFailureLanguage\([\s\S]*?message\.caption,[\s\S]*?ctx\.from\?\.language_code,[\s\S]*?\)/gu)).toHaveLength(2)
     expect(source).not.toContain("language: resolveTelegramAttachmentNoticeLanguage(ctx.from?.language_code)")
   })
 })

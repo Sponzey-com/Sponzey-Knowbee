@@ -158,6 +158,19 @@ export interface YeonjangRegistrySummary {
     activeWorkspaceScopeId: string;
     localMarkerInstanceId: string | null;
 }
+export interface YeonjangMqttV2StartupFenceResult {
+    readonly fencedInstanceCount: number;
+}
+/**
+ * Fails closed any MQTT v2 liveness that survived only in SQLite across a
+ * Gateway restart. A fresh signed status observation is the sole operation
+ * allowed to make the instance live again; capability metadata remains useful
+ * for diagnosis but is not executable while methodCount is zero.
+ */
+export declare function fencePersistedYeonjangMqttV2LivenessAtStartup(input: {
+    readonly observedAt: number;
+    readonly db?: Database.Database;
+}): YeonjangMqttV2StartupFenceResult;
 export interface YeonjangGovernanceEventView {
     id: string;
     at: number;

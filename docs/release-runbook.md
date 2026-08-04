@@ -16,12 +16,19 @@ This runbook defines the minimum release process for Sponzey Knowbee. A release 
 Required payload:
 
 - Gateway/CLI Node bundle: the complete `packages/cli/dist` and `packages/core/dist` trees,
+
   including `launcher.js`, `serve-entry.js`, `runtime/serve-bundle.js`,
   `runtime/serve-bundle.manifest.json`, and `runtime/bootstrap.js`. Local, service, npm, and
   release startup must resolve the same verified serve bundle.
 - WebUI static build: `packages/webui/dist`.
 - DB migration source: `packages/core/src/db/migrations.ts`.
+- Approval continuation migration 72 and canonical approval-state migration 73 must be
+
+  applied together in the candidate database. Migration 73 preserves existing canonical
+  aggregate and receipt rows while adding `AWAITING_APPROVAL` and the `approval` receipt
+  kind; reject release if either table still exposes the older CHECK contract.
 - Prompt seed files: all required files from the prompt source registry, including the canonical
+
   `prompts` directory inside the staged Core npm package at `dist/prompts`.
 - Yeonjang protocol and permission contract: `Yeonjang/src/protocol.rs`, `Yeonjang/manifests/permissions.json`.
 - Release runbook: `docs/release-runbook.md`.
@@ -33,6 +40,216 @@ Platform payload:
 - Linux: `knowbee-yeonjang` binary from a Linux build host.
 
 Platform binaries are optional on a single-host local release build, but must be present before publishing a release for that platform.
+
+### Gateway-free Yeonjang macOS device pre-gate
+
+On a macOS arm64 release host, build the signed package and run the direct MQTT
+device gate before any Gateway or channel acceptance:
+
+```bash
+bash scripts/build-yeonjang-macos.sh
+YEONJANG_LIVE_DEVICE_GATE=1 bash scripts/self/run-yeonjang-independent-mqtt-gate.sh
+```
+
+The exact signed app must already have Camera and Screen Recording permission;
+the gate does not request or change OS permission. It verifies loaded/package
+identity, independent Mosquitto mTLS and exact ACL, then a signed
+`capture.permission.get` response before any artifact exists. Both camera and
+screen must report platform availability, canonical local policy, and the
+actual non-prompting OS observation as separate fields. It then verifies one
+signed revision-CAS deny for each capture capability. Capabilities and
+permission read must expose the same new revision and denied policy rows while
+`advertisedMethods` continues to describe executable implementation support.
+Both denied commands must return `local_policy_denied` before effect and leave
+zero artifacts. The gate must then apply a signed rollback to the original
+allow snapshot and continue with one real camera JPEG and one real screen PNG,
+terminal and artifact digest
+agreement, camera consumer ACK/cleanup, screen transfer cancel, late-ACK
+fail-closed behavior, cancel replay, restart cleanup, graceful shutdown, and
+same-instance reacquisition. Record the command result with the candidate
+identity. A transport-only run without
+`YEONJANG_LIVE_DEVICE_GATE=1`, helper output, a camera indicator light, MQTT
+PUBACK, or a Gateway/channel smoke is not device-completion evidence. This
+macOS result must not fill Windows or Linux matrix cells.
+
+The live gate enables `--stage-timing-jsonl` only on the package process. Before
+restart it must parse bounded Product JSONL and require one or more observations
+for the closed queue, authorization, handler, post-check, publish, transfer, and
+ack inventory. Every row must carry only a SHA-256 correlation plus wall-clock
+endpoints and monotonic microsecond duration; broker secrets and private config,
+key, or artifact paths must be absent. Record the emitted target OS,
+architecture, stage, and `duration_us` lines as the package baseline. Missing
+stages or redaction failures block the cell. A duration value alone never
+changes effect outcome, retry strategy, timeout, terminal state, or delivery
+state.
+
+The same gate sends an exact `command.cancel` while the macOS camera helper is
+running. Require a distinct signed cancel acknowledgement with `accepted`, a
+target command terminal with `cancelled`, and no artifact. A blocking command
+worker may register after the following control worker starts, so the canonical
+registry may observe that transition for at most 500ms. This coordination
+grace must not be interpreted as effect success or failure, and a cancel ACK
+must never substitute for the target terminal.
+
+Publish one exact signed camera command payload twice in succession. Require
+one successful immutable terminal/artifact. The competing delivery may return
+`authorization_replayed` or `idempotency_in_progress` with
+`effect_state=not_started`, or replay the same terminal binding; it must not
+produce another artifact identity. Fetch and digest the artifact, then bind
+ACK to the canonical lifecycle's current awaiting-ACK revision rather than
+computing a revision. Cleanup and the following normal capture must pass.
+
+The gate then restarts only the Mosquitto process in its owned container,
+preserving the exact host port and certificate fixture while forcing both TLS
+connections closed. Require the signed app to reconnect without an external
+signal, resubscribe every ingress topic, and publish fresh signed online and
+capability projections. Reconnect the requester with the same mTLS/client
+identity and require subsequent real camera and screen terminal/artifact
+completion. A Docker container restart whose random published port disappears
+is test-infrastructure failure, not product reconnect evidence. TLS socket I/O
+is recoverable; certificate, key, DNS, authentication, and handshake failures
+remain terminal.
+
+After graceful signed-app shutdown and same-instance restart, redeliver the
+exact previously completed camera command. Require identical terminal payload,
+opaque receipt ID, and response digest with zero new artifact. Message ID,
+issued time, nonce, and signature are publication fields and may change; they
+must not be used as durable delivery identity.
+
+For forward compatibility, seed one legacy sequence-derived schema-1 delivery
+receipt and replay its exact terminal through the candidate runtime. The wire
+response must reuse that legacy ID and its durable published/acknowledged
+revision. Both old and new binaries accept either opaque bounded ID format.
+If storage contains multiple legacy IDs for one immutable terminal binding,
+block publication and repair the state; never choose one or create another.
+
+The permission read is an additive `yeonjang.control.v2` contract:
+`capture.permission.get` has empty params and requires the exact
+`permission.read` HMAC scope. Its signed response schema is
+`yeonjang.capture-permission-response.v2`; unavailable outcomes contain no
+success-looking permission rows. It does not change existing command,
+capabilities, artifact, or policy schemas. Before a mixed-version rollout, the
+requester must use pairing/package release identity to prove the target
+supports this discriminator. An older runtime rejects it before effect and
+does not publish a response; therefore rollback must disable the query rather
+than translating it to a legacy method or inferring permission from timeout.
+
+Pre-effect command failures use the signed, QoS 1, non-retained
+`yeonjang.command-rejection.v2` response. Verify that a v1 command returns
+`protocol_upgrade_required` with `effect_state=not_started`, performs no platform
+effect, and creates no terminal delivery receipt. The envelope binds only the
+configured instance/session/requester topic identity and a SHA-256 input
+correlation; it must not copy untrusted request, command, operation, or
+idempotency identities. Retained commands remain non-publishing rejections.
+
+Production terminal content schema 3 carries `target_scope_digest`. Use that
+exact value for signed `receipt.get`; never substitute the platform
+`terminal.binding_digest`. Verify the receipt response returns the same
+immutable terminal revision, then bind the original terminal `receipt_id`,
+`response_digest`, and revision into `response.ack`. Only its `accepted`
+result is consumer acknowledgement; MQTT PUBACK and artifact ACK are separate.
+Redelivery must return `duplicate` with the same delivery revision.
+
+Readers remain compatible with durable terminal content schema 1 and 2. A
+runtime that writes schema 3 cannot be rolled back to a binary that rejects the
+new field. Before release, prepare and exercise a previous-version rollback
+package containing schema 3 read compatibility; otherwise stop the rollout
+rather than deleting, rewriting, or guessing terminal state.
+
+Run the previous-package rehearsal on one native reference host for the
+platform-neutral Rust durable schema. Each selected OS still requires its own
+package/loaded identity and device gate. Repeat the rollback rehearsal on
+another OS only when that release changes an OS-specific persistence or
+serialization boundary:
+
+```bash
+YEONJANG_LIVE_DEVICE_GATE=1 \
+YEONJANG_ROLLBACK_GATE=1 \
+YEONJANG_ROLLBACK_BINARY='/absolute/previous/package/binary' \
+YEONJANG_ROLLBACK_PACKAGE_MANIFEST='/absolute/previous/release-identity.json' \
+  bash scripts/self/run-yeonjang-independent-mqtt-gate.sh
+```
+
+Both paths are mandatory, absolute, non-symlink package inputs. The loaded
+previous identity must match its manifest and the current OS/architecture but
+have a different binary digest from the current candidate. The current package
+first writes a successful schema-3 camera terminal and shuts down cleanly. The
+gate then starts the previous package against the same config and durable state,
+redelivers the exact signed command, and requires identical terminal payload,
+receipt ID, and response digest with no new artifact before graceful shutdown.
+Startup, online status, timeout, or current-binary restart alone is not rollback
+evidence. Verify the platform package signature through the normal native
+package gate before supplying it to this rehearsal.
+
+The 2026-07-31 macOS arm64 rehearsal used two valid signed bundles with distinct
+binary digests. The current package wrote the schema-3 camera terminal; the
+06:25 previous package replayed the exact terminal payload, receipt ID, and
+response digest from the same state root with no new camera effect. This is the
+schema compatibility evidence. Windows ARM64 and Ubuntu X11 package/device
+identity remain independently proven by their native gates.
+
+### Gateway-free Yeonjang Windows/Linux device gates
+
+Windows 11 native x64, Windows 11 native ARM64, Ubuntu LTS Wayland, and Ubuntu
+LTS X11 are separate evidence cells. The release matrix may designate which
+native Windows architecture is required, but a result from one architecture
+must never be copied into the other cell. Each executed cell must use the
+packaged binary and direct TLS/mTLS MQTT v2
+path to verify camera JPEG, screen PNG, exact terminal/artifact digest,
+consumer ACK, cleanup, shutdown, and same-instance restart. A host-side unit
+test, cross-compile, tool lookup, `/dev/video*` observation, or another OS result
+must not fill these cells.
+
+Linux capability readiness is evaluated from one startup snapshot. Camera
+requires both a supported capture tool and an observed `/dev/video*`; screen
+requires a backend compatible with the observed Wayland or X11 session.
+Unknown or mismatched sessions remain unadvertised. Linux display index
+selection is currently an exact pre-effect limitation, not a generic helper
+failure. The Windows source/helper DTO is compiled by host-side tests, but each
+Windows architecture's package, process identity, OS permission, and actual
+output remain unverified until that native device cell runs.
+
+Run each Linux cell from that exact interactive session. The script builds and
+packages the current native binary, fails before effect when camera/session
+prerequisites are absent, and invokes the shared desktop requester contract:
+
+```bash
+XDG_SESSION_TYPE=wayland YEONJANG_LIVE_DEVICE_GATE=1 \
+  bash scripts/self/run-yeonjang-independent-mqtt-gate.sh
+XDG_SESSION_TYPE=x11 YEONJANG_LIVE_DEVICE_GATE=1 \
+  bash scripts/self/run-yeonjang-independent-mqtt-gate.sh
+```
+
+Do not run the Linux gate through SSH without the actual desktop display and
+device access. Run each Windows cell from Git Bash in the exact interactive
+Windows 11 native camera/display session:
+
+```bash
+YEONJANG_LIVE_WINDOWS_CAMERA_DEVICE_ID='<exact-device-id>' \
+  YEONJANG_LIVE_DEVICE_GATE=1 \
+  bash scripts/self/run-yeonjang-independent-mqtt-gate.sh
+```
+
+The gate reads .NET `OSArchitecture`, accepts only native x64 or ARM64, rejects
+explicit target overrides, and rejects a missing exact camera device ID before
+building and packaging the matching native binary. The PE architecture,
+release manifest, and loaded executable digest must all match that native
+target. It runs the same shared assertions. The packaged GUI-subsystem process
+attaches its parent
+console once; the gate creates an exact process group and sends Ctrl+Break so
+offline publication, runtime drain, lease release, and same-instance restart
+are verified without terminating the requester. Keep an architecture cell
+incomplete until this full gate runs with Docker, OpenSSL, Node, Rust, camera,
+display, and pre-granted OS permissions on that exact native host.
+
+The selected 2026-07-31 Parallels `Windows 11 - 개발` ARM64 session passed this full gate,
+including actual camera JPEG, screen PNG, duplicate single-effect convergence,
+running cancellation, artifact fetch/digest/ACK/cancel/cleanup, broker/runtime
+restart, and singleton reacquisition. Ubuntu `192.168.20.123` passed the same
+gate from its active X11 desktop session. These are the required Windows and
+Linux cells for the current user-selected release matrix. Windows x64 and
+Ubuntu Wayland remain separately runnable compatibility profiles; they are not
+claimed as actual results in this release.
 
 ## Release Readiness Authorization
 
@@ -99,6 +316,17 @@ pnpm --filter @knowbee/cli exec knowbee smoke acceptance --check --json
 
 `ready` means all seven bounded capability checks are ready: WebUI, Telegram, Slack, Web, one safe read-only Skill selection, one safe read-only MCP selection, and one trusted online Yeonjang session. The response never includes target, binding, catalog, tool, session, token, secret, or filesystem identifiers. `disabled`, `unavailable`, an authentication failure, or a transport failure blocks the live run. The command exits non-zero for every non-ready result while leaving the Gateway running. Do not treat Gateway liveness as live acceptance readiness.
 
+The execution preflight also compares the startup-captured Gateway bundle identity with the
+current version-2 bundle manifest, bundle digest, launcher-entry digest, bundled-input-set
+digest, build status, artifact timestamp, and process start time.
+`live_acceptance_runtime_build_required`,
+`live_acceptance_runtime_restart_required`,
+`live_acceptance_runtime_bundle_identity_mismatch`, or
+`live_acceptance_runtime_identity_invalid` blocks the run before any external live work. Build
+and generated-source tests do not prove that an already running Gateway loaded those files.
+Rebuild and perform a controlled restart, then repeat the check; never bypass this gate by
+editing the manifest or treating `/api/health` as activation evidence.
+
 3. Create one schema-version-2 execution request containing the exact release candidate identity, active authorization reference, one read-only Skill selection, one read-only MCP selection, the exact online Yeonjang instance/session using `system.info`, and the trusted public signing key ID. Execute it through the authenticated Gateway.
 
 ```bash
@@ -108,7 +336,6 @@ pnpm --filter @knowbee/cli exec knowbee smoke acceptance --request <live-accepta
 The run must collect exactly one accepted evidence receipt for WebUI, Telegram, Slack, Web, Skill, MCP, and Yeonjang. A partial collection remains blocked. The Gateway writes an exclusive signing request under the configured state directory; the CLI does not expose its local path or raw evidence.
 
 4. Transfer that signing request to the external signer identified by `requestedKeyId`. The repository and Gateway must never receive or store the private key. The signer authenticates the release administrator, verifies the candidate, approval window and seven bounded evidence records, then returns a schema-version-1 Ed25519 signature response for the exact request ID and payload.
-
 5. Assemble the response with the trusted public key. This command verifies request immutability, key identity, signature and candidate binding before creating the bundle.
 
 ```bash
@@ -151,10 +378,12 @@ Publication remains blocked if the bundle is stale, signed by another key, bound
 17. Run channel smoke dry-run: `pnpm run smoke:channels`. WebUI and Telegram must each contain the five canonical scenarios (`basic_query`, `web_skill`, `approval_required_tool`, `artifact_delivery`, and `failure_tool`) from the same build with no skipped or failed result. Verify exact run/request-group/session binding, ordered LLM receipts, one final answer, and a visible delivery post-check; a transport acknowledgement is not completion evidence.
 18. Build Yeonjang packages for each target OS.
 19. Stage npm tarballs, install them in a clean consumer project, and start the installed CLI:
+
     `pnpm run smoke:install`.
 20. Generate release manifest and checksum files: `pnpm run release:package`.
 21. Run artifact cleanup CLI smoke: `pnpm run smoke:artifact-cleanup-cli`.
 22. Review artifact cleanup preview for the release output if the release package output should be retired after publication:
+
     `knowbee admin artifact-cleanup --release-output-dir <release-output-dir> --json`.
 23. Start the Gateway with `KNOWBEE_CHANNEL_SMOKE_LIVE=1`, then run at least one live channel smoke with `knowbee smoke channels --live --channel <webui|telegram|slack>`. Run without `--channel` only when all selected channels are configured. Derive the required scenario count from `getDefaultChannelSmokeScenarios()` and require every selected scenario to pass without a skipped result; do not maintain a fixed count in this runbook. Treat the 30-second objective as the first visible response budget, not as a count-only terminal failure rule. Record terminal latency separately; a slow provider or materially changed recovery path may continue while progress remains valid. Telegram live acceptance additionally requires an explicitly approved dedicated target and configured allowlist/credential. If that exact target approval is absent, record Telegram live acceptance as incomplete instead of substituting another target or a dry-run. Run one Yeonjang smoke before public publish.
 
@@ -196,7 +425,7 @@ Smoke selection:
 
 - Default installed CLI smoke is non-destructive and must be safe for local developer machines and CI: `pnpm run smoke:artifact-cleanup-cli`.
 - The default smoke verifies preview and confirmation-failure behavior only. It must not run a successful destructive cleanup path.
-- The destructive success path is verified only with an isolated fixture: `node scripts/smoke-artifact-cleanup-cli.mjs --destructive-fixture`.
+- The destructive success path is verified only with an isolated fixture: `node scripts/self/smoke-artifact-cleanup-cli.mjs --destructive-fixture`.
 - The destructive fixture smoke must use a temporary release output directory created by the smoke script and must not target a real release output or user state.
 - The destructive fixture smoke must verify that whitelisted old payload and marker files are deleted, rogue payload and symlink entries remain, and stdout, stderr, and audit log records do not expose raw paths, filenames, or reason codes by default.
 
@@ -227,6 +456,13 @@ Run these checks on the target OS after the automated release gate passes.
 ### macOS desktop_interactive
 
 - Start with `bash scripts/start-yeonjang-macos.sh --restart`.
+- Confirm normal restart reports reuse of the verified app bundle and does not run the build
+
+  script. Use `bash scripts/start-yeonjang-macos.sh --restart --build` only for an explicit
+  source/package rebuild.
+- For release signing, provide an existing `YEONJANG_CODESIGN_IDENTITY`; helper and app
+
+  `codesign --verify --deep --strict` checks must pass before launch.
 - Confirm tray-first startup: the app launches hidden, tray remains available, and the main window is not forced open.
 - Open and close the window from the tray menu, then confirm the close button hides back to tray instead of quitting.
 - Confirm the node appears in `/api/status` and `/api/doctor`.
@@ -330,6 +566,7 @@ Automated or semi-automated gates:
 - The normal channel path validates web tool schemas and source linkage deterministically, but leaves semantic sufficiency and next-action selection to the canonical LLM completion review. Do not add per-source selection, chunk selection, compression, or separate web-review LLM calls to that path.
 - Treat `preferred_methods` and `exclusive_methods` as user-level method constraints, not a complete list of internal execution steps. When one enabled catalog binding owns a constrained Tool, project only that binding's safe, available companion Tools so completion follow-up can use a required step such as `web_fetch`. Never expand into another bundle or through ambiguous, disabled, unsupported, unavailable, or unapproved bindings.
 - When LLM intake sets `execution.needs_web=true` without an explicit method constraint, evaluate `web_search` through canonical policy and require only that initial method. Never copy every source-available Tool into the required-Tool list. Project `web_fetch` only through the same admitted web Skill binding.
+- For root self-solve planning without an explicit method constraint, give the LLM only policy-admitted capability references plus bounded Tool description, risk, and effect-class metadata. Require it to distinguish read-only status/discovery from the capability that performs the requested effect and from later artifact delivery. Do not implement that choice with keywords, semantic similarity, or an adapter-side fallback, and do not expose targets, params, credentials, or runtime payloads in the planning catalog.
 - Completion follow-up must carry a structured execution mode (`tool` or `response_only`), required Tool names for Tool mode, target refs when applicable, and evidence refs. Project the next-attempt Tool policy as `unconstrained`, `required`, or `forbidden`; an empty required-Tool list must not represent both unrestricted execution and Tool prohibition. Reject response-only follow-up while freshness, accuracy, existence, or target-match evidence remains unresolved.
 - Identify a response-only follow-up by its full completion evidence revision, not by natural-language prompt, summary, or reason text. After one response-only correction on an unchanged evidence revision, reject wording-only variants into completion-review contract repair so the LLM must choose complete, blocked, ask_user, or a changed Tool/target transition. A newly recorded Tool result changes the evidence revision and permits another response-only correction.
 - Keep completion-review output bounded to 4,096 tokens and the previous raw model text projected into repair bounded to 6,000 characters. Treat truncation or contract repair as review evidence; neither limit is a count-only terminal-failure rule.
@@ -337,7 +574,11 @@ Automated or semi-automated gates:
 - If an admitted execution has a non-empty required-Tool list, reject a `complete` review when no trusted successful Tool evidence exists. Return the bounded contract reason to one LLM repair; do not promote an explanatory failure message or an attempt receipt into successful execution evidence.
 - For camera capture, require non-empty stored bytes plus an allowlisted image MIME post-check before admitting successful Tool evidence. Keep the internal path in artifact metadata and project only a run/request-group-bound opaque artifact ref, MIME, and size to the model and channel chunk. Resolve the path only inside WebUI/Telegram delivery adapters, reject cross-scope refs, and keep capture success separate from the delivery receipt or delivery failure.
 - A successful camera Tool must still run LLM completion review even when direct delivery already has a receipt. Transport acknowledgement, artifact persistence, and channel delivery are separate evidence and none alone proves the user goal.
-- Reject an unchanged camera capture with the same request group, Tool method, exact target, and canonical params hash before approval or remote dispatch. A permission-status step or changed admitted target/params remains eligible. When the deterministic recovery key repeats, return to LLM result review instead of creating a terminal result from retry or timeout counts; terminal blocked/exhausted still requires its distinct evidence contract.
+- Treat camera extension/session/selector and requested device as the effect-relevant canonical operation. Ignore adapter-owned output/transfer fields and timeout representation for approval, duplicate suppression, and side-effect identity; those fields must not be exposed in the LLM-facing camera schema. Reject the same canonical camera operation before a second approval or remote dispatch, while a permission-status step or changed admitted target/device remains eligible. Record a typed pre-effect Yeonjang rejection as `EFFECT_REJECTED` without an effect receipt or post-check; reserve `MANUAL_INTERVENTION` for an effect that started but whose outcome cannot be proved. Return either terminal aggregate and its opaque prior receipt reference to LLM result review instead of recapturing or creating a terminal result from retry/timeout counts.
+- Camera capture uses one validated operation budget from Core through Yeonjang and the platform
+
+  helper. Adapter cleanup and transport timeouts may add only their documented bounded grace;
+  they must not terminate before the operation deadline.
 - Project Yeonjang recovery evidence with an opaque target hash, Tool/method identifiers, and bounded post-check reason codes only. Do not place raw target IDs, local paths, raw Tool output, image data, or provider payloads in recovery prompts, Product Logs, or normal channel output.
 - Completion review runs before ordinary reply dispatch. When the LLM marks every applicable non-delivery criterion and every expected condition satisfied and leaves only the ordinary reply delivery criterion unresolved, normalize that structured `response_only` result to complete and let the finalizer deliver the existing answer. Do not apply this normalization to direct artifacts or explicitly requested external-channel delivery.
 - Preserve failed web candidates as individual evidence, but mark the web research trace successful after validated search evidence or at least one fetched document passes schema and provenance verification. A failed candidate must not override verified evidence or force an unchanged recovery pass.
@@ -355,45 +596,56 @@ Automated or semi-automated gates:
 - Artifacts must use native file delivery when supported and fall back to a download link when native upload is unavailable.
 - Artifact delivery or its diagnostic fallback must not suppress or replace the canonical LLM-reviewed final answer. Verify artifact-before-final ordering, exactly one final text delivery, and duplicate suppression independently for WebUI and Telegram.
 - Run camera acceptance as a separate opt-in observation set; do not add camera scenarios to the default channel smoke manifest. The deterministic macOS, Windows, and Linux fixtures share the same camera capability receipt schema, but fixture parity is not evidence of equal live platform support.
-- Sensitive artifacts and Telegram external file delivery must require an explicit delivery-operation approval before delivery. A capture-only approval never authorizes delivery; `allow_run` reuse is valid only for the same tool operation and exact params hash, including the bound target.
+- Sensitive artifacts and Telegram external file delivery must require an explicit delivery-operation approval before delivery. A capture-only approval never authorizes delivery; `allow_run` reuse is valid only for the same tool operation and canonical authorization hash, including the bound target. Tools without an explicit canonical projector retain their exact raw-params hash behavior.
 - Keep `channelLiveAcceptanceProduction` limited to basic-query capability admission. The release manifest's separate `conversationProcessEvidence` summary must cover all five current WebUI and all five current Telegram live scenarios for the same build, remain fresh, contain zero required skips or failures, and carry its own checksum. It may contain scenario IDs, bounded counts, timestamps, blocker reason codes, and opaque evidence hashes only; never raw traces, requests, responses, provider payloads, or target identifiers.
 
 ### Telegram basic-query live smoke
 
 - Before Gateway startup, set `KNOWBEE_CHANNEL_SMOKE_LIVE=1`,
+
   `KNOWBEE_CHANNEL_SMOKE_TELEGRAM_CHAT_ID`, and
   `KNOWBEE_CHANNEL_SMOKE_TELEGRAM_USER_ID`. Set
   `KNOWBEE_CHANNEL_SMOKE_TELEGRAM_THREAD_ID` only for a forum topic.
 - Restart the Gateway after changing these values. The runtime captures them once at startup and
+
   never re-reads them during a smoke run.
 - The user ID and direct chat or group ID must already be present in the active Telegram
+
   connection allowlists. Use a dedicated smoke account and room; do not target a production room.
 - Run `knowbee smoke channels --live --channel telegram`; the CLI calls the authenticated Gateway
+
   `/api/channel-smoke/runs` boundary and exits with failure unless every selected scenario passes. A pass
   requires the normal Telegram inbound handler, canonical root-run receipts, a provider send
   receipt, a same-run message reference for the configured chat/thread, and run-bound first/terminal
   response latency evidence.
 - A fast acknowledgement, an uncorrelated `sent` status, or a message reference from another
+
   chat/thread is not completion evidence. Do not retain tokens, raw updates, chat IDs, or response
   text in the release evidence export.
 
 ### Slack basic-query live smoke
 
 - Before Gateway startup, set `KNOWBEE_CHANNEL_SMOKE_LIVE=1`,
+
   `KNOWBEE_CHANNEL_SMOKE_SLACK_CHANNEL_ID`, and
   `KNOWBEE_CHANNEL_SMOKE_SLACK_USER_ID`. Set
   `KNOWBEE_CHANNEL_SMOKE_SLACK_THREAD_TS` only when the smoke must run in an existing thread.
 - Restart the Gateway after changing these values. The runtime captures the target once and does
+
   not read environment values during scenario execution.
 - The user and channel must both be present in the active Slack connection allowlists. Use an
+
   isolated app, workspace channel, and user; an empty allowlist is not sufficient for live smoke.
 - Run `knowbee smoke channels --live --channel slack`; the request must enter the
+
   existing Socket Mode message handler. A pass requires canonical terminal receipts, a Slack
   provider send receipt, and an assistant message reference for the same run, channel, and thread.
 - When no thread timestamp is configured, the synthetic inbound message timestamp becomes the
+
   thread identity and remains internal to the runtime evidence reader. A fast acknowledgement,
   cross-thread reference, or provider status without a message ID is not completion evidence.
 - Do not retain Slack tokens, raw Socket Mode envelopes, channel/user/thread IDs, request text, or
+
   final response text in the release evidence export.
 
 Fixture gates:

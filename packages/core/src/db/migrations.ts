@@ -3909,6 +3909,259 @@ export const MIGRATIONS: Migration[] = [
       `)
     },
   },
+  {
+    version: 71,
+    up(db) {
+      db.exec(`
+        CREATE TABLE canonical_work_receipts_v71 (
+          receipt_id TEXT PRIMARY KEY,
+          work_id TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('diagnosis', 'analysis_revision', 'policy', 'execution', 'attempt', 'verification', 'recovery', 'input_requirement', 'user_input', 'exhaustion', 'cancellation', 'delivery', 'blocker')),
+          evidence_fingerprint TEXT NOT NULL,
+          evidence_refs_json TEXT NOT NULL,
+          issued_at INTEGER NOT NULL,
+          consumed_revision INTEGER CHECK(consumed_revision IS NULL OR consumed_revision > 0),
+          terminal_cause_json TEXT,
+          FOREIGN KEY (work_id) REFERENCES canonical_work_aggregates(work_id) ON DELETE CASCADE
+        );
+
+        INSERT INTO canonical_work_receipts_v71
+          (receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json, issued_at,
+           consumed_revision, terminal_cause_json)
+        SELECT receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json, issued_at,
+               consumed_revision, terminal_cause_json
+        FROM canonical_work_receipts;
+
+        DROP TABLE canonical_work_receipts;
+        ALTER TABLE canonical_work_receipts_v71 RENAME TO canonical_work_receipts;
+        CREATE INDEX idx_canonical_work_receipts_work
+          ON canonical_work_receipts(work_id, issued_at DESC);
+        CREATE INDEX idx_canonical_work_receipts_unconsumed
+          ON canonical_work_receipts(work_id, kind)
+          WHERE consumed_revision IS NULL;
+      `)
+    },
+  },
+  {
+    version: 72,
+    up(db) {
+      db.exec(`
+        ALTER TABLE approval_registry
+          ADD COLUMN operation_id TEXT;
+        ALTER TABLE approval_registry
+          ADD COLUMN operation_binding_hash TEXT;
+        ALTER TABLE approval_registry
+          ADD COLUMN continuation_schema_version INTEGER;
+      `)
+    },
+  },
+  {
+    version: 73,
+    up(db) {
+      db.exec(`
+        CREATE TABLE canonical_work_aggregates_v73 (
+          work_id TEXT PRIMARY KEY,
+          root_run_id TEXT NOT NULL UNIQUE,
+          state TEXT NOT NULL CHECK(state IN (
+            'REQUEST_RECEIVED', 'SOLUTION_ANALYZED', 'POLICY_VALIDATED', 'EXECUTING',
+            'AWAITING_APPROVAL', 'RESULT_REVIEW', 'SUCCEEDED', 'PARTIALLY_SUCCEEDED',
+            'USER_INPUT_REQUIRED', 'BLOCKED', 'EXHAUSTED', 'CANCELLED', 'USER_REPORT'
+          )),
+          revision INTEGER NOT NULL CHECK(revision >= 0),
+          transitions_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (root_run_id) REFERENCES root_runs(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO canonical_work_aggregates_v73
+          (work_id, root_run_id, state, revision, transitions_json, created_at, updated_at)
+        SELECT work_id, root_run_id, state, revision, transitions_json, created_at, updated_at
+        FROM canonical_work_aggregates;
+
+        CREATE TABLE canonical_work_receipts_v73 (
+          receipt_id TEXT PRIMARY KEY,
+          work_id TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('diagnosis', 'analysis_revision', 'policy', 'execution', 'attempt', 'verification', 'recovery', 'input_requirement', 'user_input', 'exhaustion', 'cancellation', 'delivery', 'blocker', 'approval')),
+          evidence_fingerprint TEXT NOT NULL,
+          evidence_refs_json TEXT NOT NULL,
+          issued_at INTEGER NOT NULL,
+          consumed_revision INTEGER CHECK(consumed_revision IS NULL OR consumed_revision > 0),
+          terminal_cause_json TEXT,
+          FOREIGN KEY (work_id) REFERENCES canonical_work_aggregates_v73(work_id) ON DELETE CASCADE
+        );
+
+        INSERT INTO canonical_work_receipts_v73
+          (receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json, issued_at,
+           consumed_revision, terminal_cause_json)
+        SELECT receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json, issued_at,
+               consumed_revision, terminal_cause_json
+        FROM canonical_work_receipts;
+
+        DROP TABLE canonical_work_receipts;
+        DROP TABLE canonical_work_aggregates;
+        ALTER TABLE canonical_work_aggregates_v73 RENAME TO canonical_work_aggregates;
+        ALTER TABLE canonical_work_receipts_v73 RENAME TO canonical_work_receipts;
+        CREATE INDEX idx_canonical_work_root_run
+          ON canonical_work_aggregates(root_run_id);
+        CREATE INDEX idx_canonical_work_receipts_work
+          ON canonical_work_receipts(work_id, issued_at DESC);
+        CREATE INDEX idx_canonical_work_receipts_unconsumed
+          ON canonical_work_receipts(work_id, kind)
+          WHERE consumed_revision IS NULL;
+      `)
+    },
+  },
+  {
+    version: 74,
+    up(db) {
+      db.exec(`
+        CREATE TABLE approved_operation_continuations (
+          continuation_id TEXT PRIMARY KEY,
+          approval_id TEXT NOT NULL UNIQUE,
+          run_id TEXT NOT NULL,
+          request_group_id TEXT,
+          tool_name TEXT NOT NULL,
+          decision TEXT NOT NULL CHECK(decision IN ('allow_once', 'allow_run')),
+          operation_id TEXT NOT NULL,
+          operation_binding_hash TEXT NOT NULL,
+          schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+          status TEXT NOT NULL CHECK(status IN ('pending', 'claimed', 'completed', 'failed')),
+          claim_owner_id TEXT,
+          claim_expires_at INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          completed_at INTEGER,
+          FOREIGN KEY (approval_id) REFERENCES approval_registry(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_approved_operation_continuations_claim
+          ON approved_operation_continuations(status, claim_expires_at, created_at);
+        CREATE INDEX idx_approved_operation_continuations_run
+          ON approved_operation_continuations(run_id, status, created_at);
+      `)
+    },
+  },
+  {
+    version: 75,
+    up(db) {
+      db.exec(`
+        ALTER TABLE approval_registry
+          ADD COLUMN decision_actor_fingerprint TEXT;
+
+        CREATE INDEX idx_approval_registry_channel_callback
+          ON approval_registry(
+            channel,
+            channel_message_id,
+            decision_actor_fingerprint,
+            status,
+            created_at
+          );
+      `)
+    },
+  },
+  {
+    version: 76,
+    up(db) {
+      db.exec(`
+        CREATE TABLE approved_operation_continuations_v76 (
+          continuation_id TEXT PRIMARY KEY,
+          approval_id TEXT NOT NULL UNIQUE,
+          run_id TEXT NOT NULL,
+          request_group_id TEXT,
+          tool_name TEXT NOT NULL,
+          decision TEXT NOT NULL CHECK(decision IN ('allow_once', 'allow_run')),
+          operation_id TEXT NOT NULL,
+          operation_binding_hash TEXT NOT NULL,
+          schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+          status TEXT NOT NULL CHECK(status IN ('pending', 'claimed', 'completed', 'cancelled', 'failed')),
+          claim_owner_id TEXT,
+          claim_expires_at INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          completed_at INTEGER,
+          FOREIGN KEY (approval_id) REFERENCES approval_registry(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO approved_operation_continuations_v76
+        SELECT * FROM approved_operation_continuations;
+        DROP TABLE approved_operation_continuations;
+        ALTER TABLE approved_operation_continuations_v76
+          RENAME TO approved_operation_continuations;
+        CREATE INDEX idx_approved_operation_continuations_claim
+          ON approved_operation_continuations(status, claim_expires_at, created_at);
+        CREATE INDEX idx_approved_operation_continuations_run
+          ON approved_operation_continuations(run_id, status, created_at);
+      `)
+    },
+  },
+  {
+    version: 77,
+    up(db) {
+      db.exec(`
+        CREATE TABLE side_effect_operations_v77 (
+          operation_id TEXT PRIMARY KEY,
+          scope_id TEXT NOT NULL UNIQUE,
+          run_id TEXT NOT NULL,
+          work_id TEXT NOT NULL,
+          step_key TEXT NOT NULL,
+          adapter_id TEXT NOT NULL,
+          target_fingerprint TEXT NOT NULL,
+          params_fingerprint TEXT NOT NULL,
+          state TEXT NOT NULL CHECK(state IN (
+            'RESERVED', 'EFFECT_STARTED', 'EFFECT_REJECTED', 'EFFECT_RECORDED',
+            'VERIFYING', 'VERIFIED', 'VERIFY_FAILED', 'CANCEL_REQUESTED',
+            'COMPENSATING', 'COMPENSATED', 'MANUAL_INTERVENTION'
+          )),
+          revision INTEGER NOT NULL CHECK(revision >= 0),
+          transitions_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (run_id) REFERENCES root_runs(id) ON DELETE CASCADE,
+          FOREIGN KEY (work_id) REFERENCES canonical_work_aggregates(work_id) ON DELETE CASCADE
+        );
+
+        INSERT INTO side_effect_operations_v77
+        SELECT * FROM side_effect_operations;
+
+        CREATE TABLE side_effect_operation_receipts_v77 (
+          receipt_id TEXT PRIMARY KEY,
+          operation_id TEXT NOT NULL,
+          work_id TEXT NOT NULL,
+          event TEXT NOT NULL CHECK(event IN (
+            'START_EFFECT', 'RECORD_REJECTION', 'RECORD_EFFECT', 'BEGIN_VERIFICATION',
+            'VERIFICATION_PASSED', 'VERIFICATION_FAILED', 'REQUEST_CANCEL',
+            'BEGIN_COMPENSATION', 'COMPENSATION_SUCCEEDED', 'COMPENSATION_FAILED',
+            'MARK_MANUAL'
+          )),
+          kind TEXT NOT NULL CHECK(kind IN (
+            'authorization', 'effect', 'observation', 'cancellation', 'compensation', 'manual'
+          )),
+          schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+          evidence_fingerprint TEXT NOT NULL,
+          evidence_refs_json TEXT NOT NULL,
+          operation_revision INTEGER NOT NULL CHECK(operation_revision > 0),
+          issued_at INTEGER NOT NULL,
+          UNIQUE(operation_id, operation_revision),
+          FOREIGN KEY (operation_id) REFERENCES side_effect_operations_v77(operation_id) ON DELETE CASCADE,
+          FOREIGN KEY (work_id) REFERENCES canonical_work_aggregates(work_id) ON DELETE CASCADE
+        );
+
+        INSERT INTO side_effect_operation_receipts_v77
+        SELECT * FROM side_effect_operation_receipts;
+
+        DROP TABLE side_effect_operation_receipts;
+        DROP TABLE side_effect_operations;
+        ALTER TABLE side_effect_operations_v77 RENAME TO side_effect_operations;
+        ALTER TABLE side_effect_operation_receipts_v77 RENAME TO side_effect_operation_receipts;
+
+        CREATE INDEX idx_side_effect_operations_run_state
+          ON side_effect_operations(run_id, state, updated_at DESC);
+        CREATE INDEX idx_side_effect_operation_receipts_operation
+          ON side_effect_operation_receipts(operation_id, operation_revision ASC);
+      `)
+    },
+  },
 ]
 
 function schemaMigrationsTableExists(db: Database.Database): boolean {

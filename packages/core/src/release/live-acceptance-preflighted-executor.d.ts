@@ -1,6 +1,7 @@
 import type { LiveAcceptanceBundleApproval, LiveAcceptanceBundleCandidate } from "./live-acceptance-bundle.js";
 import type { LiveAcceptanceExecutionSelection } from "./live-acceptance-execution-request.js";
 import type { LiveAcceptanceRunnerResult } from "./live-acceptance-runner.js";
+import type { LiveAcceptanceRuntimeIdentityAdmission, LiveAcceptanceRuntimeIdentityReceipt } from "./live-acceptance-runtime-identity.js";
 import { type LiveAcceptanceRuntimeSnapshot, type LiveAcceptanceSelectionPreflightResult } from "./live-acceptance-selection-preflight.js";
 export interface LiveAcceptancePreflightedExecutionInput {
     readonly candidate: Readonly<LiveAcceptanceBundleCandidate>;
@@ -15,6 +16,7 @@ export interface LiveAcceptanceVerifiedExecutionContext {
     readonly requestedKeyId: string;
     readonly observedAt: number;
     readonly signal: AbortSignal;
+    readonly runtimeIdentity: Readonly<LiveAcceptanceRuntimeIdentityReceipt>;
     readonly preflight: Extract<LiveAcceptanceSelectionPreflightResult, {
         status: "verified";
     }>;
@@ -24,6 +26,7 @@ export type LiveAcceptancePreflightedExecutor = (input: LiveAcceptancePreflighte
 export declare function createPreflightedLiveAcceptanceExecutor(input: {
     readonly now: () => number;
     readonly maxYeonjangAgeMs: number;
+    readonly inspectRuntimeIdentity: () => LiveAcceptanceRuntimeIdentityAdmission;
     readonly captureSnapshot: (capturedAt: number) => LiveAcceptanceRuntimeSnapshot;
     readonly executeVerified: LiveAcceptanceVerifiedExecutor;
 }): LiveAcceptancePreflightedExecutor;

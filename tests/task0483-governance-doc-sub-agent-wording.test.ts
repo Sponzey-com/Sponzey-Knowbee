@@ -29,9 +29,10 @@ describe("task0483 governance docs sub-agent wording", () => {
       expect(agents).not.toContain(blocked)
     }
 
-    expect(agents).toContain("연결되지 않은 서브 에이전트")
-    expect(agents).toContain("서브 에이전트를 추가하고 연결하고 선택한 서브 에이전트를 정의")
-    expect(agents).toContain("서브 에이전트 그래프 중심")
+    expect(agents).toContain("Keep agent relationships explicit.")
+    expect(agents).toContain("The main agent delegates only to direct children")
+    expect(agents).toContain("A parent validates child evidence before final")
+    expect(agents).toContain("bypassed parent-child topology")
   })
 
   it("keeps release rollback checks on the current user-facing topology terms", () => {

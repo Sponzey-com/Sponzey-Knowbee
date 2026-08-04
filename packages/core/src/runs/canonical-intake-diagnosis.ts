@@ -42,20 +42,20 @@ export interface CanonicalIntakeDiagnosisRecorderDependencies {
   }) => { status: string; reasonCode?: string | undefined }
 }
 
-export type CanonicalIntakeDiagnosisRecordResult =
-  | { ok: true }
-  | { ok: false; reasonCode: string }
+export type CanonicalIntakeDiagnosisRecordResult = { ok: true } | { ok: false; reasonCode: string }
 
 function hasSameEvidence(
   receipt: CanonicalIntakeDiagnosisReceipt,
   descriptor: CanonicalIntakeDiagnosisDescriptor,
 ): boolean {
-  return receipt.receiptId === descriptor.receiptId
-    && receipt.workId === descriptor.workId
-    && receipt.kind === descriptor.kind
-    && receipt.evidenceFingerprint === descriptor.evidenceFingerprint
-    && receipt.evidenceRefs.length === descriptor.evidenceRefs.length
-    && receipt.evidenceRefs.every((ref, index) => ref === descriptor.evidenceRefs[index])
+  return (
+    receipt.receiptId === descriptor.receiptId &&
+    receipt.workId === descriptor.workId &&
+    receipt.kind === descriptor.kind &&
+    receipt.evidenceFingerprint === descriptor.evidenceFingerprint &&
+    receipt.evidenceRefs.length === descriptor.evidenceRefs.length &&
+    receipt.evidenceRefs.every((ref, index) => ref === descriptor.evidenceRefs[index])
+  )
 }
 
 export function recordCanonicalIntakeDiagnosis(

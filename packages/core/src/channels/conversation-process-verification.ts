@@ -2,6 +2,7 @@ import type {
   RequestExecutionOutcome,
   RequestExecutionOutcomeStatus,
 } from "../runs/flow-contract.js"
+import type { ApprovalInteractionDecision } from "./contracts.js"
 import type { ChannelSmokeStatus } from "./smoke-runner.js"
 
 export type ConversationVerificationChannel = "webui" | "telegram"
@@ -23,6 +24,7 @@ export interface ConversationVerificationInput {
   allowedEffects: readonly string[]
   userReportExpected: boolean
   requiresCapabilityAdmission?: boolean | undefined
+  requiresDistinctDecisionReceipts?: boolean | undefined
 }
 
 export interface ConversationRunBinding {
@@ -54,7 +56,22 @@ export interface ConversationProbeObservation {
     channel: ConversationVerificationChannel
     targetRef: string
   }
+  pendingInteraction?: ConversationPendingInteraction | undefined
 }
+
+export interface ConversationPendingInteraction {
+  kind: "approval"
+  approvalRequestRef: string
+}
+
+export interface ConversationApprovalDecisionInteraction {
+  kind: "approval_decision"
+  approvalRequestRef: string
+  decision: ApprovalInteractionDecision
+}
+
+export type ConversationControlInteraction =
+  ConversationApprovalDecisionInteraction
 
 export type ConversationProbeResult<T = undefined> =
   | ([T] extends [undefined] ? { status: "success" } : { status: "success"; value: T })
@@ -77,7 +94,7 @@ export interface ConversationProbePort {
 export interface ConversationControlProbePort {
   interact(
     binding: ConversationRunBinding,
-    interaction: Readonly<{ kind: string; value?: string }>,
+    interaction: Readonly<ConversationControlInteraction>,
     signal?: AbortSignal,
   ): Promise<ConversationProbeResult>
   cancel(
@@ -120,6 +137,10 @@ export interface VerifyConversationProcessPorts {
   delivery: ConversationDeliveryPostCheckPort
 }
 
+export interface VerifyConversationProcessOptions {
+  fixtureInteractions?: readonly ConversationControlInteraction[] | undefined
+}
+
 function releaseReadinessFor(
   status: ConversationVerificationStatus,
 ): ConversationReleaseReadiness {
@@ -156,12 +177,10 @@ function propagateProbeResult(
   return terminalResult(result.status, result.reasonCode)
 }
 
-function validateObservation(
-  input: ConversationVerificationInput,
+function validateObservationBinding(
   observation: ConversationProbeObservation,
   startedBinding: ConversationRunBinding,
 ): string | undefined {
-  if (observation.smokeStatus !== "passed") return "smoke_not_passed"
   if (
     observation.binding.runId !== startedBinding.runId
     || observation.binding.requestGroupId !== startedBinding.requestGroupId
@@ -172,11 +191,29 @@ function validateObservation(
   if (observation.binding.runId !== observation.binding.requestGroupId) {
     return "request_group_binding_mismatch"
   }
+  return undefined
+}
+
+function validateObservation(
+  input: ConversationVerificationInput,
+  observation: ConversationProbeObservation,
+  startedBinding: ConversationRunBinding,
+): string | undefined {
+  if (observation.smokeStatus !== "passed") return "smoke_not_passed"
+  const bindingFailure = validateObservationBinding(observation, startedBinding)
+  if (bindingFailure) return bindingFailure
   if (!observation.receipts.requestDiagnosisReceiptId.trim()) {
     return "request_diagnosis_receipt_missing"
   }
   if (!observation.receipts.solutionPlanReceiptId.trim()) {
     return "solution_plan_receipt_missing"
+  }
+  if (
+    input.requiresDistinctDecisionReceipts === true
+    && observation.receipts.requestDiagnosisReceiptId
+      === observation.receipts.solutionPlanReceiptId
+  ) {
+    return "decision_receipts_not_distinct"
   }
   if (
     input.requiresCapabilityAdmission === true &&
@@ -213,7 +250,10 @@ function validateObservation(
 }
 
 export class VerifyConversationProcessUseCase {
-  constructor(private readonly ports: VerifyConversationProcessPorts) {}
+  constructor(
+    private readonly ports: VerifyConversationProcessPorts,
+    private readonly options: Readonly<VerifyConversationProcessOptions> = {},
+  ) {}
 
   async execute(
     input: ConversationVerificationInput,
@@ -222,27 +262,91 @@ export class VerifyConversationProcessUseCase {
     const started = await this.ports.probe.start(input, signal)
     if (started.status !== "success") return propagateProbeResult(started)
 
-    const observed = await this.ports.probe.observe(started.value, signal)
-    if (observed.status !== "success") return propagateProbeResult(observed)
-    const observation = observed.value
+    let fixtureInteractionIndex = 0
+    let observation: ConversationProbeObservation
+    while (true) {
+      const observed = await this.ports.probe.observe(started.value, signal)
+      if (observed.status !== "success") return propagateProbeResult(observed)
+      observation = observed.value
 
-    if (observation.requestOutcome.executionStatus === "cancelled") {
-      return terminalResult("cancelled", "request_cancelled", {
-        smokeStatus: observation.smokeStatus,
-        observation,
-      })
+      const bindingFailure = validateObservationBinding(observation, started.value)
+      if (bindingFailure) {
+        return terminalResult("failure", bindingFailure, {
+          smokeStatus: observation.smokeStatus,
+          observation,
+        })
+      }
+
+      if (observation.requestOutcome.executionStatus === "cancelled") {
+        return terminalResult("cancelled", "request_cancelled", {
+          smokeStatus: observation.smokeStatus,
+          observation,
+        })
+      }
+      if (observation.requestOutcome.executionStatus === "awaiting_user") {
+        return terminalResult("additional_input_required", "request_input_required", {
+          smokeStatus: observation.smokeStatus,
+          observation,
+        })
+      }
+      if (observation.requestOutcome.executionStatus === "awaiting_approval") {
+        const interaction = this.options.fixtureInteractions?.[fixtureInteractionIndex]
+        if (observation.evidenceMode !== "fixture" || !interaction) {
+          return terminalResult("additional_input_required", "request_input_required", {
+            smokeStatus: observation.smokeStatus,
+            observation,
+          })
+        }
+        const pending = observation.pendingInteraction
+        if (!pending?.approvalRequestRef.trim()) {
+          return terminalResult("failure", "pending_approval_ref_missing", {
+            smokeStatus: observation.smokeStatus,
+            observation,
+          })
+        }
+        if (
+          interaction.kind !== "approval_decision"
+          || !["allow_once", "allow_run", "deny"].includes(interaction.decision)
+        ) {
+          return terminalResult("failure", "approval_interaction_invalid", {
+            smokeStatus: observation.smokeStatus,
+            observation,
+          })
+        }
+        if (interaction.approvalRequestRef !== pending.approvalRequestRef) {
+          return terminalResult("failure", "approval_interaction_ref_mismatch", {
+            smokeStatus: observation.smokeStatus,
+            observation,
+          })
+        }
+        const controlled = await this.ports.control.interact(
+          observation.binding,
+          interaction,
+          signal,
+        )
+        if (controlled.status !== "success") {
+          return terminalResult(controlled.status, controlled.reasonCode, {
+            smokeStatus: observation.smokeStatus,
+            observation,
+          })
+        }
+        fixtureInteractionIndex += 1
+        continue
+      }
+      if (observation.requestOutcome.executionStatus === "blocked") {
+        return terminalResult("blocked", "request_blocked", {
+          smokeStatus: observation.smokeStatus,
+          observation,
+        })
+      }
+      break
     }
+
     if (
-      observation.requestOutcome.executionStatus === "awaiting_user"
-      || observation.requestOutcome.executionStatus === "awaiting_approval"
+      observation.evidenceMode === "fixture"
+      && fixtureInteractionIndex !== (this.options.fixtureInteractions?.length ?? 0)
     ) {
-      return terminalResult("additional_input_required", "request_input_required", {
-        smokeStatus: observation.smokeStatus,
-        observation,
-      })
-    }
-    if (observation.requestOutcome.executionStatus === "blocked") {
-      return terminalResult("blocked", "request_blocked", {
+      return terminalResult("failure", "fixture_interaction_unused", {
         smokeStatus: observation.smokeStatus,
         observation,
       })

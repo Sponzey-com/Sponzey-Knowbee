@@ -5,7 +5,11 @@ import {
 } from "./external-recovery-sequence.js"
 import { enqueueRunRecovery } from "./recovery-queue.js"
 import type { ExternalRecoveryPayload, ExternalRecoveryState } from "./external-recovery.js"
-import type { FinalizationDependencies, FinalizationSource } from "./finalization.js"
+import type {
+  FinalizationDependencies,
+  FinalizationSource,
+  StandaloneAssistantMessageResponseContext,
+} from "./finalization.js"
 import type { TaskProfile } from "./types.js"
 import { applyTerminalApplication } from "./terminal-application.js"
 
@@ -64,6 +68,7 @@ export async function runRecoveryEntryPass(
     seenKeys: Set<string>
     originalRequest: string
     previousResult: string
+    responseContext?: StandaloneAssistantMessageResponseContext | undefined
     finalizationDependencies: FinalizationDependencies
   },
   dependencies: RecoveryEntryPassDependencies,
@@ -78,6 +83,7 @@ export async function runRecoveryEntryPass(
           sessionId: params.sessionId,
           source: params.source,
           onChunk: params.onChunk,
+          ...(params.responseContext ? { responseContext: params.responseContext } : {}),
           application: {
             kind: "stop",
             preview: params.preview,
@@ -97,6 +103,7 @@ export async function runRecoveryEntryPass(
           sessionId: params.sessionId,
           source: params.source,
           onChunk: params.onChunk,
+          ...(params.responseContext ? { responseContext: params.responseContext } : {}),
           application: {
             kind: "stop",
             preview: params.preview,
@@ -123,6 +130,7 @@ export async function runRecoveryEntryPass(
         source: params.source,
         onChunk: params.onChunk,
         preview: params.preview,
+        ...(params.responseContext ? { responseContext: params.responseContext } : {}),
         finalizationDependencies: params.finalizationDependencies,
       }, {
         appendRunEvent: dependencies.appendRunEvent,
@@ -130,6 +138,10 @@ export async function runRecoveryEntryPass(
 
       if (externalRecoverySequence.kind === "stop") {
         return { kind: "break" }
+      }
+
+      if (externalRecoverySequence.kind === "review") {
+        return { kind: "continue" }
       }
 
       if (externalRecoverySequence.kind === "retry") {

@@ -15,7 +15,7 @@ describe("task100 artifact cleanup docs and smoke", () => {
       expect(document).toContain("knowbee admin artifact-cleanup --release-output-dir")
       expect(document).toContain('knowbee admin artifact-cleanup --execute --confirm "CONFIRM ARTIFACT CLEANUP"')
       expect(document).toContain("knowbee admin artifact-cleanup --audit --json")
-      expect(document).toContain("scripts/smoke-artifact-cleanup-cli.mjs")
+      expect(document).toContain("scripts/self/smoke-artifact-cleanup-cli.mjs")
       expect(document).not.toContain("reasonCounts are shown by default")
       expect(document).not.toContain("기본 출력에서 reasonCounts")
     }
@@ -29,7 +29,7 @@ describe("task100 artifact cleanup docs and smoke", () => {
   })
 
   it("keeps the installed CLI smoke on preview and confirmation-failure paths by default", () => {
-    const script = source("scripts/smoke-artifact-cleanup-cli.mjs")
+    const script = source("scripts/self/smoke-artifact-cleanup-cli.mjs")
     const packageJson = source("package.json")
 
     expect(script).toContain("admin")

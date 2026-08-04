@@ -18,11 +18,19 @@ export interface ChannelPendingResponseDeliveryOwner {
 
 export interface StartedChannelRecoveryRuntime {
   resolveDeliveryHandler: CanonicalPendingDeliveryHandlerResolver
+  resumeExistingRootRun(
+    runId: string,
+    signal?: AbortSignal,
+  ): Promise<boolean>
 }
 
 export function createStartedChannelRecoveryRuntime(input: {
   telegram?: ChannelPendingResponseDeliveryOwner
   slack?: ChannelPendingResponseDeliveryOwner
+  resumeExistingRootRun?: (
+    runId: string,
+    signal?: AbortSignal,
+  ) => Promise<boolean>
 }): StartedChannelRecoveryRuntime {
   const resolveDeliveryHandler = (
     resolution: CanonicalPendingDeliveryHandlerResolutionInput,
@@ -41,5 +49,9 @@ export function createStartedChannelRecoveryRuntime(input: {
     return undefined
   }
 
-  return Object.freeze({ resolveDeliveryHandler })
+  return Object.freeze({
+    resolveDeliveryHandler,
+    resumeExistingRootRun: input.resumeExistingRootRun
+      ?? (async () => false),
+  })
 }

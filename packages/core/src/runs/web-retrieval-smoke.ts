@@ -192,6 +192,11 @@ function sanitizeText(value: string): string {
   return text.length > 1_000 ? `${text.slice(0, 990)}...` : text
 }
 
+function webRetrievalSmokeErrorReason(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return sanitizeText(raw)
+}
+
 function sanitizeValue<T>(value: T): T {
   if (typeof value === "string") return sanitizeText(value) as T
   if (Array.isArray(value)) return value.map(sanitizeValue) as T
@@ -429,7 +434,7 @@ export async function runWebRetrievalLiveSmokeScenarios(
         scenario: item,
         status: "failed",
         failures: ["scenario_execution_failed"],
-        reason: sanitizeText(error instanceof Error ? error.message : String(error)),
+        reason: webRetrievalSmokeErrorReason(error),
         startedAt: itemStartedAt,
         finishedAt: nowIso(clock()),
       })

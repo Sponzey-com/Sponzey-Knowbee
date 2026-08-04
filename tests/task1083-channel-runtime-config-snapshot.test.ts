@@ -15,9 +15,7 @@ describe("task1083 channel runtime config snapshot", () => {
     expect(channelSource).not.toContain("export async function startChannels(): Promise<void>")
     expect(channelSource).not.toContain("const config = getConfig()\n\n  try {\n    persistChannelConnections")
 
-    expect(coreIndexSource).toContain(
-      "await activateChannelsAndRecoverPendingResponses(runtimeConfig, runtimePaths)",
-    )
+    expect(coreIndexSource).toMatch(/await activateChannelsAndRecoverPendingResponses\(\s*runtimeConfig,\s*runtimePaths,?\s*\)/u)
     expect(settingsRouteSource).toMatch(
       /await activateChannelsAndRecoverPendingResponses\(\s*cfg,\s*getApiRuntimePaths\(req\),?\s*\)/u,
     )

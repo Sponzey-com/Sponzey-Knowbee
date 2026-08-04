@@ -23,9 +23,12 @@ function inventory(): YeonjangInventory {
   return JSON.parse(readText("docs/yeonjang/capability-inventory.json")) as YeonjangInventory
 }
 
-function rustMethodsFromNodeSource(): string[] {
-  const source = readText("Yeonjang/src/node.rs")
-  return [...source.matchAll(/"([a-z]+\.[a-z_]+)"/gu)]
+function rustMethodsFromCanonicalDescriptor(): string[] {
+  const source = readText("Yeonjang/src/method_descriptor.rs")
+  const inventoryBody = source.match(
+    /const ALL_METHOD_NAMES: &\[&str\] = &\[(?<body>[\s\S]*?)\];/u,
+  )?.groups?.body ?? ""
+  return [...inventoryBody.matchAll(/"([a-z]+\.[a-z_]+)"/gu)]
     .map((match) => match[1])
     .filter((method): method is string => Boolean(method))
     .filter((method, index, methods) => methods.indexOf(method) === index)
@@ -55,10 +58,12 @@ describe("task001 Yeonjang inventory baseline", () => {
     const baseline = inventory()
 
     expect(baseline.protocolVersion).toBe("2026-04-16.capability-matrix.v1")
-    expect(baseline.rustMethods).toEqual(rustMethodsFromNodeSource())
+    expect(baseline.rustMethods).toEqual(rustMethodsFromCanonicalDescriptor())
     expect(baseline.rustMethods).toEqual([
       "application.launch",
       "browser.active_hint",
+      "browser.active_tab_info",
+      "browser.focus",
       "browser.list",
       "browser.open_url",
       "camera.capture",

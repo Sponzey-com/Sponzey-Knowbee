@@ -131,6 +131,6 @@ describe("Task 057 registry recovery owner", () => {
 
     expect(source).toContain('registry.getPendingResponseDeliveryOwner("telegram")')
     expect(source).toContain('registry.getPendingResponseDeliveryOwner("slack")')
-    expect(source).toContain("return createStartedChannelRecoveryRuntime({")
+    expect(source).toContain("return buildRecoveryRuntime({")
   })
 })

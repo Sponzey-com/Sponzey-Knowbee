@@ -34,7 +34,16 @@ describe("task0965 recovery prompt section text source", () => {
     const direct = buildDirectArtifactDeliveryRecoveryPrompt({
       originalRequest: "파일을 보내줘",
       previousResult: "stored locally",
-      successfulTools: [{ toolName: "file_write", output: "ok" }],
+      successfulTools: [{
+        toolName: "file_write",
+        output: "ok",
+        evidenceSource: {
+          sourceKind: "tool",
+          sourceRef: `tool-result:tool:${"c".repeat(64)}`,
+          trustClass: "untrusted_external",
+          instructionIsolation: "data_only",
+        },
+      }],
       successfulFileDeliveries: [{ channel: "telegram", filePath: "/tmp/a.txt" }],
       alternatives: [{ kind: "same_channel_retry", label: "같은 채널 재전송 시도" }],
     })
@@ -79,7 +88,16 @@ describe("task0965 recovery prompt section text source", () => {
     const empty = buildEmptyResultRecoveryPrompt({
       originalRequest: "파일 만들어줘",
       previousResult: "partial",
-      successfulTools: [{ toolName: "file_write", output: "ok" }],
+      successfulTools: [{
+        toolName: "file_write",
+        output: "ok",
+        evidenceSource: {
+          sourceKind: "tool",
+          sourceRef: `tool-result:tool:${"d".repeat(64)}`,
+          trustClass: "untrusted_external",
+          instructionIsolation: "data_only",
+        },
+      }],
       sawRealFilesystemMutation: true,
     })
     const truncated = buildTruncatedOutputRecoveryPrompt({

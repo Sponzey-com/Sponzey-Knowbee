@@ -46,13 +46,22 @@ const LOGGER_PROCESS = typeof process === "undefined" ? undefined : process;
 const LOGGER_RUNTIME_ENV = Object.freeze({
     logLevel: LOGGER_PROCESS?.env["KNOWBEE_LOG_LEVEL"],
     logPurpose: LOGGER_PROCESS?.env["KNOWBEE_LOG_PURPOSE"],
+    fieldDebugUntil: LOGGER_PROCESS?.env["KNOWBEE_FIELD_DEBUG_UNTIL"],
     noColorDisabled: LOGGER_PROCESS?.env["KNOWBEE_NO_COLOR"] != null,
     stdoutIsTty: LOGGER_PROCESS?.stdout.isTTY === true,
 });
 const minLevel = normalizeLogLevel(LOGGER_RUNTIME_ENV.logLevel);
+function parseFieldDebugDeadline(value) {
+    const normalized = value?.trim();
+    if (!normalized)
+        return undefined;
+    const deadline = Number(normalized);
+    return Number.isSafeInteger(deadline) && deadline > 0 ? deadline : undefined;
+}
 const LOG_POLICY = {
     minLevel,
     purposeVisibility: normalizeLogPurposeVisibility(LOGGER_RUNTIME_ENV.logPurpose, minLevel === "debug" ? "debug" : "product"),
+    fieldDebugDeadline: parseFieldDebugDeadline(LOGGER_RUNTIME_ENV.fieldDebugUntil),
     color: !LOGGER_RUNTIME_ENV.noColorDisabled && LOGGER_RUNTIME_ENV.stdoutIsTty,
 };
 export function redactLogText(value, purpose = "product") {
@@ -154,9 +163,15 @@ export function createLogger(namespace) {
         else
             console.log(line);
     }
+    function fieldDebug(message, ...args) {
+        const deadline = LOG_POLICY.fieldDebugDeadline;
+        if (deadline == null || Date.now() >= deadline)
+            return;
+        log("info", "debug", message, ...args);
+    }
     return {
         product: (msg, ...args) => log("info", "product", msg, ...args),
-        fieldDebug: (msg, ...args) => log("info", "debug", msg, ...args),
+        fieldDebug,
         development: (msg, ...args) => log("info", "development", msg, ...args),
         debug: (msg, ...args) => log("debug", "debug", msg, ...args),
         info: (msg, ...args) => log("info", "product", msg, ...args),

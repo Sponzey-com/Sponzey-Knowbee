@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { telegramSendFileTool } from "../packages/core/src/tools/builtin/telegram-send.ts"
+import { yeonjangCameraCaptureTool } from "../packages/core/src/tools/builtin/yeonjang.ts"
+import { buildChannelArtifactDeliveryExecutionTargetRef } from "../packages/core/src/runs/channel-artifact-delivery-requirement.ts"
 
 describe("capability selection start cutover", () => {
   afterEach(() => {
@@ -168,12 +171,17 @@ describe("capability selection start cutover", () => {
                 targetId: "client:camera-1",
                 risk: "approval_required",
               },
+              {
+                capabilityId: "telegram_send_file",
+                targetId: "agent:main",
+                risk: "approval_required",
+              },
             ],
             exclusions: [],
           },
           constraints: {
             requiredMethods: ["action:run_task"],
-            requestedMethods: [],
+            requestedMethods: ["screen_capture"],
             exclusiveMethods: [],
             approvedCapabilityIds: [],
           },
@@ -225,20 +233,35 @@ describe("capability selection start cutover", () => {
     const planSolution = vi.fn(async (subject: {
       ownerAgentName: string
       capabilityRefs: string[]
-    }) => ({
-      ownerAgentName: subject.ownerAgentName,
-      steps: [
-        {
-          step_id: "capture",
-          owner_agent_name: subject.ownerAgentName,
-          action_type: "use_yeonjang",
-          input_refs: [subject.capabilityRefs[0]],
-          expected_output: "Camera artifact",
-          completion_criteria: "Artifact evidence exists.",
-          status: "pending",
-        },
-      ],
-    }))
+    }) => {
+      const captureRef = subject.capabilityRefs.find((ref) =>
+        ref === "capability:yeonjang_camera_capture")
+      const deliveryRef = subject.capabilityRefs.find((ref) =>
+        ref === "capability:telegram_send_file")
+      return {
+        ownerAgentName: subject.ownerAgentName,
+        steps: [
+          {
+            step_id: "capture",
+            owner_agent_name: subject.ownerAgentName,
+            action_type: "use_yeonjang",
+            input_refs: [captureRef],
+            expected_output: "Camera artifact",
+            completion_criteria: "Artifact evidence exists.",
+            status: "pending",
+          },
+          {
+            step_id: "deliver",
+            owner_agent_name: subject.ownerAgentName,
+            action_type: "use_tool",
+            input_refs: [deliveryRef, "step:capture"],
+            expected_output: "Telegram delivery receipt",
+            completion_criteria: "The artifact is delivered to the current chat.",
+            status: "pending",
+          },
+        ],
+      }
+    })
     const { buildStartRootRunDriverDependencies } = await import(
       "../packages/core/src/runs/start-driver-dependencies.ts"
     )
@@ -259,7 +282,7 @@ describe("capability selection start cutover", () => {
         orchestration: { maxDelegationTurns: 3 },
         security: { approvalTimeout: 30, approvalTimeoutFallback: "deny" },
       },
-      canonicalPolicyTools: [],
+      canonicalPolicyTools: [yeonjangCameraCaptureTool, telegramSendFileTool],
       canonicalPolicySnapshotAt: 1,
       canonicalRuntimeHealthObservations: [],
       canonicalYeonjangAgentBindings: [],
@@ -294,16 +317,42 @@ describe("capability selection start cutover", () => {
       originalRequest: "카메라 요청",
     })).resolves.toEqual({
       ok: true,
-      requiredToolNames: ["yeonjang_camera_capture"],
+      requiredToolNames: ["telegram_send_file", "yeonjang_camera_capture"],
     })
     expect(planSolution).toHaveBeenCalledWith(expect.objectContaining({
-      capabilityRefs: ["capability:yeonjang_camera_capture"],
+      capabilityRefs: [
+        "capability:telegram_send_file",
+        "capability:yeonjang_camera_capture",
+      ],
+      requiredCapabilityRefs: [
+        "capability:telegram_send_file",
+        "capability:yeonjang_camera_capture",
+      ],
     }))
+    const deliveryTarget = buildChannelArtifactDeliveryExecutionTargetRef(
+      "telegram",
+      "session-camera",
+    )
     expect(driverDependencies.getAdmittedCapabilityExecutionScope()).toMatchObject({
-      selectedCapabilityId: "yeonjang_camera_capture",
-      selectedTargetIds: ["client:camera-1"],
-      approvalRequiredCapabilityIds: ["yeonjang_camera_capture"],
-      toolNames: ["yeonjang_camera_capture"],
+      selectedCapabilityId: "telegram_send_file",
+      selectedTargetIds: ["client:camera-1", deliveryTarget],
+      approvalRequiredCapabilityIds: [
+        "telegram_send_file",
+        "yeonjang_camera_capture",
+      ],
+      selectedToolTargets: [
+        expect.objectContaining({
+          capabilityId: "yeonjang_camera_capture",
+          targetId: "client:camera-1",
+          toolNames: ["yeonjang_camera_capture"],
+        }),
+        expect.objectContaining({
+          capabilityId: "telegram_send_file",
+          targetId: deliveryTarget,
+          toolNames: ["telegram_send_file"],
+        }),
+      ],
+      toolNames: ["telegram_send_file", "yeonjang_camera_capture"],
     })
     expect(issue).toHaveBeenCalledTimes(1)
   })
@@ -321,6 +370,15 @@ function intake(needsTools = false) {
     },
     execution: {
       needs_tools: needsTools,
+      execution_semantics: {
+        filesystemEffect: "none" as const,
+        privilegedOperation: needsTools ? "required" as const : "none" as const,
+        artifactDelivery: needsTools ? "direct" as const : "none" as const,
+        approvalRequired: needsTools,
+        approvalTool: needsTools
+          ? "yeonjang_camera_capture" as const
+          : "external_action" as const,
+      },
     },
   }
 }

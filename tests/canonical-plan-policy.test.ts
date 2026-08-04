@@ -47,14 +47,14 @@ describe("canonical plan policy", () => {
     })).toMatchObject({ outcome: "input_required", reasonCode: "target_binding_unavailable" })
   })
 
-  it("requires explicit approval for a risky capability", () => {
+  it("preserves risky capability classification while deferring approval to execution", () => {
     const input = policyInput()
     input.constraints.requestedMethods = ["filesystem.write"]
     input.constraints.exclusiveMethods = ["filesystem.write"]
     input.constraints.targetId = "agent:local"
     expect(evaluateCanonicalPlanPolicy(input)).toMatchObject({
-      outcome: "approval_required",
-      reasonCode: "capability_approval_required",
+      outcome: "allowed",
+      reasonCode: "plan_bindings_allowed",
     })
     input.constraints.approvedCapabilityIds = ["filesystem.write"]
     expect(evaluateCanonicalPlanPolicy(input)).toMatchObject({ outcome: "allowed" })

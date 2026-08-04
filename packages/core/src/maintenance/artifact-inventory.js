@@ -62,8 +62,7 @@ export function describeRepositoryArtifact(rawArtifactId) {
     else if (/(?:^|\/)(?:package\.json|tsconfig(?:\.[^/]+)?\.json|biome\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$/u.test(artifactId)) {
         kind = "configuration";
     }
-    else if ((artifactId.startsWith("docs/") && artifactId.endsWith(".md")) ||
-        (artifactId.startsWith("docs/audit/") && artifactId.endsWith(".json")) ||
+    else if ((artifactId.startsWith("docs/") && /\.(?:md|json)$/u.test(artifactId)) ||
         (artifactId.startsWith("packages/") && artifactId.endsWith(".md")) ||
         (artifactId.startsWith("scripts/") && artifactId.endsWith(".md")) ||
         (artifactId.startsWith("tests/") && artifactId.endsWith(".md")) ||

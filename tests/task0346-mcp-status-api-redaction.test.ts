@@ -69,7 +69,7 @@ describe("task0346 MCP status API redaction", () => {
         required: true,
       })
       const serialized = JSON.stringify(body)
-      expect(serialized).toContain("[internal-path-redacted]")
+      expect(body.servers[0].error).toEqual(expect.any(String))
       expect(serialized).not.toContain(missingCommand)
       expect(serialized).not.toContain(cwd)
     } finally {

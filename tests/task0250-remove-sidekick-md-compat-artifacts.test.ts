@@ -6,7 +6,7 @@ const repoRoot = process.cwd()
 
 describe("task0250 sidekick prompt-memory artifact removal", () => {
   it("does not keep the stale sidekick-md compatibility exception", () => {
-    const syncScript = readFileSync(join(repoRoot, "scripts/sync-core-src-artifacts.mjs"), "utf-8")
+    const syncScript = readFileSync(join(repoRoot, "scripts/self/sync-core-src-artifacts.mjs"), "utf-8")
     const consistencyTest = readFileSync(join(repoRoot, "tests/generated-artifact-consistency.test.ts"), "utf-8")
 
     expect(syncScript).not.toContain("memory/sidekick-md")

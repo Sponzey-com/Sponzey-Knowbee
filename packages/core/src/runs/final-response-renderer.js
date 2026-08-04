@@ -27,6 +27,47 @@ function extractJsonObject(text) {
     const end = text.lastIndexOf("}");
     return start >= 0 && end > start ? text.slice(start, end + 1) : null;
 }
+function parseFailureResponseEnvelope(text, evidence) {
+    const json = extractJsonObject(text);
+    if (!json)
+        return null;
+    try {
+        const parsed = JSON.parse(json);
+        if (Object.keys(parsed).some((key) => key !== "text" && key !== "accepted_failure")) {
+            return null;
+        }
+        if (typeof parsed.text !== "string" || !parsed.text.trim())
+            return null;
+        const accepted = parsed.accepted_failure;
+        if (!accepted || typeof accepted !== "object" || Array.isArray(accepted))
+            return null;
+        const fields = accepted;
+        const allowedKeys = new Set([
+            "phase",
+            "reason_code",
+            "retryable",
+            "execution_observed",
+            "delivery_observed",
+            "evidence_refs",
+        ]);
+        if (Object.keys(fields).some((key) => !allowedKeys.has(key)))
+            return null;
+        if (fields.phase !== evidence.phase ||
+            fields.reason_code !== evidence.reasonCode ||
+            fields.retryable !== evidence.retryable ||
+            fields.execution_observed !== evidence.executionObserved ||
+            fields.delivery_observed !== evidence.deliveryObserved ||
+            !Array.isArray(fields.evidence_refs) ||
+            fields.evidence_refs.length !== evidence.evidenceRefs.length ||
+            fields.evidence_refs.some((reference, index) => reference !== evidence.evidenceRefs[index])) {
+            return null;
+        }
+        return parsed.text.trim();
+    }
+    catch {
+        return null;
+    }
+}
 function parseLanguageExceptionReview(text, requestedMode) {
     const json = extractJsonObject(text);
     if (!json)
@@ -40,6 +81,66 @@ function parseLanguageExceptionReview(text, requestedMode) {
     }
     catch {
         return false;
+    }
+}
+function parseEvidenceConsistencyReview(text) {
+    const json = extractJsonObject(text);
+    if (!json)
+        return null;
+    try {
+        const parsed = JSON.parse(json);
+        const allowedKeys = new Set(["supported", "reason_code", "corrected_text"]);
+        if (Object.keys(parsed).some((key) => !allowedKeys.has(key)))
+            return null;
+        if (parsed.supported === true && parsed.reason_code === "evidence_consistent") {
+            return { supported: true };
+        }
+        if (parsed.supported === false &&
+            typeof parsed.reason_code === "string" &&
+            parsed.reason_code.trim() &&
+            typeof parsed.corrected_text === "string") {
+            return {
+                supported: false,
+                reasonCode: parsed.reason_code.trim().slice(0, 120),
+                correctedText: parsed.corrected_text.trim(),
+            };
+        }
+    }
+    catch {
+        return null;
+    }
+    return null;
+}
+async function reviewEvidenceConsistency(input) {
+    try {
+        const system = loadPromptTemplate({
+            sourceId: "final_response_evidence_review",
+            workDir: input.workDir,
+        });
+        const user = loadPromptTemplate({
+            sourceId: "final_response_evidence_review_user",
+            workDir: input.workDir,
+            variables: {
+                originalRequestJson: JSON.stringify(input.originalRequest),
+                responseTextJson: JSON.stringify(input.responseText),
+                failureEvidenceJson: JSON.stringify(input.failureEvidence),
+            },
+        });
+        let output = "";
+        for await (const chunk of input.provider.chat({
+            model: input.model,
+            system,
+            messages: [{ role: "user", content: user }],
+            maxTokens: 600,
+            ...(input.observability ? { observability: input.observability } : {}),
+        })) {
+            if (chunk.type === "text_delta")
+                output += chunk.delta;
+        }
+        return parseEvidenceConsistencyReview(output.trim());
+    }
+    catch {
+        return null;
     }
 }
 async function reviewResponseLanguageMode(input) {
@@ -90,6 +191,9 @@ async function renderResponseAttempt(input) {
             originalRequest: input.originalRequest,
             rawText: input.rawText,
             textSource: input.textSource,
+            failureEvidenceJson: input.failureEvidence
+                ? JSON.stringify(input.failureEvidence)
+                : "not_applicable",
         },
     });
     let output = "";
@@ -180,6 +284,7 @@ export async function renderFinalResponseText(input) {
             originalRequest,
             rawText: attemptRawText,
             textSource: attemptTextSource,
+            ...(input.failureEvidence ? { failureEvidence: input.failureEvidence } : {}),
             workDir: input.workDir,
             ...(input.runId || input.requestGroupId
                 ? {
@@ -195,23 +300,84 @@ export async function renderFinalResponseText(input) {
         });
         if (!text)
             return null;
+        const acceptedFailureText = input.failureEvidence
+            ? parseFailureResponseEnvelope(text, input.failureEvidence)
+            : text;
+        if (!acceptedFailureText) {
+            log.fieldDebug("final response failure evidence rejected", {
+                phase: input.failureEvidence?.phase,
+                reasonCode: input.failureEvidence?.reasonCode,
+                attempt: attempt + 1,
+            });
+            attemptRawText = JSON.stringify({
+                failureEvidence: input.failureEvidence,
+                validationIssue: "accepted_failure_must_match_exactly",
+            });
+            attemptTextSource = "runtime_deterministic";
+            continue;
+        }
         const identitySafeText = preserveConfiguredMainAgentIdentityFact({
             rawText: attemptRawText,
-            renderedText: text,
+            renderedText: acceptedFailureText,
             mainAgentSelfName: identityContext.mainAgentSelfName,
         });
         if (allowsAdditionalResponseLanguages(responseLanguageMode) ||
             responseLanguageMatches(identitySafeText, identityContext.promptLocale)) {
+            let evidenceReviewedText = identitySafeText;
+            if (input.failureEvidence) {
+                const observabilityBase = input.runId || input.requestGroupId
+                    ? {
+                        ...(input.runId ? { runId: input.runId } : {}),
+                        ...(input.requestGroupId ? { requestGroupId: input.requestGroupId } : {}),
+                        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+                        stage: "final_response",
+                    }
+                    : undefined;
+                const review = await reviewEvidenceConsistency({
+                    provider,
+                    model,
+                    originalRequest,
+                    responseText: evidenceReviewedText,
+                    failureEvidence: input.failureEvidence,
+                    workDir: input.workDir,
+                    ...(observabilityBase
+                        ? { observability: { ...observabilityBase, operationCode: "final_response_evidence_review" } }
+                        : {}),
+                });
+                if (!review)
+                    return null;
+                if (!review.supported) {
+                    if (!review.correctedText)
+                        return null;
+                    if (!allowsAdditionalResponseLanguages(responseLanguageMode) &&
+                        !responseLanguageMatches(review.correctedText, identityContext.promptLocale))
+                        return null;
+                    const repairedReview = await reviewEvidenceConsistency({
+                        provider,
+                        model,
+                        originalRequest,
+                        responseText: review.correctedText,
+                        failureEvidence: input.failureEvidence,
+                        workDir: input.workDir,
+                        ...(observabilityBase
+                            ? { observability: { ...observabilityBase, operationCode: "final_response_evidence_repair_review" } }
+                            : {}),
+                    });
+                    if (!repairedReview?.supported)
+                        return null;
+                    evidenceReviewedText = review.correctedText;
+                }
+            }
             const contentKind = input.contentKind ?? "fixed_notice";
             const reviewReceipt = buildLlmResponseReviewReceipt({
                 rawText,
-                responseText: identitySafeText,
+                responseText: evidenceReviewedText,
                 rawTextSource: input.textSource,
                 contentKind,
             });
             const authorization = authorizeUserFacingResponse({
                 rawText,
-                responseText: identitySafeText,
+                responseText: evidenceReviewedText,
                 rawTextSource: input.textSource,
                 contentKind,
                 expectedLanguage: allowsAdditionalResponseLanguages(responseLanguageMode)
@@ -222,7 +388,7 @@ export async function renderFinalResponseText(input) {
             if (!authorization.ok)
                 return null;
             return {
-                text: identitySafeText,
+                text: evidenceReviewedText,
                 textSource: "llm_reviewed",
                 promptSourceId: "final_response",
                 rawTextSource: input.textSource,

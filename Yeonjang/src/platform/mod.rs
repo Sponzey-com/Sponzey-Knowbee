@@ -6,7 +6,9 @@ mod linux;
 mod macos;
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 mod unsupported;
-#[cfg(target_os = "windows")]
+// Keep the Windows adapter in host-side unit builds so its pure request,
+// response, and helper contracts do not silently rot between Windows runs.
+#[cfg(any(target_os = "windows", test))]
 mod windows;
 
 #[cfg(target_os = "linux")]
@@ -20,26 +22,12 @@ pub use windows::PlatformBackend as CurrentBackend;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::run_camera_capture_helper as run_platform_camera_capture_helper;
 
+#[cfg(target_os = "linux")]
 pub fn current_backend() -> CurrentBackend {
-    CurrentBackend
+    CurrentBackend::default()
 }
 
-/// Executes the private browser focus backend only after the caller has completed
-/// admission verification. Platforms without a native implementation fail closed.
-pub fn execute_verified_browser_focus(process_name: &str, interactive_desktop_session: bool) -> serde_json::Value {
-    #[cfg(target_os = "macos")]
-    {
-        return macos::execute_verified_browser_focus(process_name, interactive_desktop_session);
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (process_name, interactive_desktop_session);
-        serde_json::json!({
-            "commandAccepted": false,
-            "reasonCode": "browser_focus_platform_unsupported",
-            "focusedTargetObservationRequired": true,
-            "goalSuccess": false,
-        })
-    }
+#[cfg(not(target_os = "linux"))]
+pub fn current_backend() -> CurrentBackend {
+    CurrentBackend
 }

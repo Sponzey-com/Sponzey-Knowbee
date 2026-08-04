@@ -69,6 +69,13 @@ export interface ExecutionCycleState {
   truncatedOutputRecoveryAttempted: boolean
   successfulTools: SuccessfulToolEvidence[]
   webExecutionState: WebExecutionState
+  recoveredAttempt?: RecoveredExecutionAttempt
+}
+
+export interface RecoveredExecutionAttempt {
+  preview: string
+  canonicalAttemptEvidenceRefs: string[]
+  successfulFileDeliveries?: SuccessfulFileDelivery[]
 }
 
 export type ExecutionCyclePassResult =
@@ -229,7 +236,9 @@ export async function runExecutionCyclePass(
   let workerRuntimeRecovery: ExecutionAttemptPassResult["workerRuntimeRecovery"] = null
   let executionRecovery: ExecutionAttemptPassResult["executionRecovery"] = null
   const failedCommandTools: FailedCommandTool[] = []
-  const successfulFileDeliveries: SuccessfulFileDelivery[] = []
+  const successfulFileDeliveries: SuccessfulFileDelivery[] = [
+    ...(params.state.recoveredAttempt?.successfulFileDeliveries ?? []),
+  ]
   const successfulTextDeliveries: SuccessfulTextDelivery[] = []
   let commandFailureSeen = false
   let commandRecoveredWithinSamePass = false
@@ -242,7 +251,22 @@ export async function runExecutionCyclePass(
     observedSearchResults: [],
   }
 
-  const executionAttemptPass = await moduleDependencies.runExecutionAttemptPass(
+  const recoveredAttempt = params.state.recoveredAttempt
+  const executionAttemptPass: ExecutionAttemptPassResult = recoveredAttempt
+    ? {
+        preview: recoveredAttempt.preview,
+        previewSource: "runtime_deterministic",
+        failed: false,
+        executionRecoveryLimitStop: null,
+        aiRecoveryLimitStop: null,
+        aiRecovery: null,
+        workerRuntimeRecovery: null,
+        executionRecovery: null,
+        sawRealFilesystemMutation: false,
+        commandFailureSeen: false,
+        commandRecoveredWithinSamePass: false,
+      }
+    : await moduleDependencies.runExecutionAttemptPass(
     {
       artifactStorage: params.artifactStorage,
       memoryJournal: params.memoryJournal,
@@ -308,7 +332,7 @@ export async function runExecutionCyclePass(
     },
   )
 
-  if (params.isRootRequest) {
+  if (params.isRootRequest && !recoveredAttempt) {
     const canonicalAttempt = await dependencies.recordCanonicalAttempt({
       runId: params.runId,
       attempt: executionAttemptPass,
@@ -322,6 +346,10 @@ export async function runExecutionCyclePass(
       })
     }
     canonicalAttemptEvidenceRefs = canonicalAttempt.evidenceRefs ?? []
+  } else if (recoveredAttempt) {
+    canonicalAttemptEvidenceRefs = [
+      ...recoveredAttempt.canonicalAttemptEvidenceRefs,
+    ]
   }
 
   preview = executionAttemptPass.preview
@@ -332,8 +360,12 @@ export async function runExecutionCyclePass(
   commandFailureSeen = executionAttemptPass.commandFailureSeen
   commandRecoveredWithinSamePass = executionAttemptPass.commandRecoveredWithinSamePass
 
+  const {
+    recoveredAttempt: _consumedRecoveredAttempt,
+    ...stateAfterRecoveredAttempt
+  } = params.state
   const nextStateFromAttempt: ExecutionCycleState = {
-    ...params.state,
+    ...stateAfterRecoveredAttempt,
     webExecutionState,
     executionRecoveryLimitStop: executionAttemptPass.executionRecoveryLimitStop,
     aiRecoveryLimitStop: executionAttemptPass.aiRecoveryLimitStop,
@@ -368,6 +400,24 @@ export async function runExecutionCyclePass(
       seenKeys: params.seenAiRecoveryKeys,
       originalRequest: params.originalRequest,
       previousResult: preview,
+      responseContext: {
+        originalRequest: params.originalRequest,
+        ...(params.responseLanguageMode
+          ? { responseLanguageMode: params.responseLanguageMode }
+          : {}),
+        model: nextStateFromAttempt.currentModel,
+        ...(nextStateFromAttempt.currentProviderId
+          ? { providerId: nextStateFromAttempt.currentProviderId }
+          : {}),
+        ...(nextStateFromAttempt.currentProvider
+          ? { provider: nextStateFromAttempt.currentProvider }
+          : {}),
+        config: params.config,
+        workDir: params.workDir,
+        ...(params.finalResponseIdentityContext
+          ? { identityContext: params.finalResponseIdentityContext }
+          : {}),
+      },
       finalizationDependencies: dependencies.getFinalizationDependencies(),
     },
     {

@@ -213,8 +213,9 @@ describe("ai provider configuration", () => {
       }
     `).config
 
-    const provider = getProvider(undefined, config) as { baseUrl?: string }
-    expect(provider.baseUrl).toBe("http://127.0.0.1:11434/v1")
+    expect(resolveProviderResolutionSnapshot(undefined, config).endpoint).toBe(
+      "http://127.0.0.1:11434/v1",
+    )
   })
 
   it("rebuilds the openai provider when auth mode switches to chatgpt oauth", () => {
@@ -260,9 +261,13 @@ describe("ai provider configuration", () => {
 
     const oauthConfigSnapshot = fixture.load()
 
-    const oauthProvider = getProvider(undefined, oauthConfigSnapshot) as { oauthConfig?: { authFilePath?: string } }
+    const oauthProvider = getProvider(undefined, oauthConfigSnapshot)
     expect(oauthProvider).not.toBe(apiKeyProvider)
-    expect(oauthProvider.oauthConfig?.authFilePath).toBe(authFilePath)
+    expect(oauthConfigSnapshot.ai.connection.auth?.oauthAuthFilePath).toBe(authFilePath)
+    expect(resolveProviderResolutionSnapshot(undefined, oauthConfigSnapshot)).toMatchObject({
+      adapterType: "openai_codex_oauth",
+      authType: "chatgpt_oauth",
+    })
   })
 
   it("normalizes legacy ChatGPT/Codex OAuth provider aliases to the OpenAI Codex OAuth connection", () => {
@@ -287,7 +292,7 @@ describe("ai provider configuration", () => {
     const config = fixture.load()
     resetAIProviderCache()
 
-    const provider = getProvider("openai", config) as { oauthConfig?: { authFilePath?: string }; profile?: { apiKeys: string[] }; baseUrl?: string }
+    expect(() => getProvider("openai", config)).not.toThrow()
     expect(detectAvailableProvider(config)).toBe("openai")
     expect(getDefaultModel(config)).toBe("gpt-5.4")
     expect(resolveProviderResolutionSnapshot(undefined, config)).toMatchObject({
@@ -299,8 +304,9 @@ describe("ai provider configuration", () => {
       configured: true,
       healthy: true,
     })
-    expect(provider.oauthConfig?.authFilePath).toBe(authFilePath)
-    expect(provider.profile?.apiKeys).toEqual([])
-    expect(provider.baseUrl).toBe("https://chatgpt.com/backend-api/codex")
+    expect(config.ai.connection.auth?.oauthAuthFilePath).toBe(authFilePath)
+    expect(resolveProviderResolutionSnapshot(undefined, config).endpoint).toBe(
+      "https://chatgpt.com/backend-api/codex",
+    )
   })
 })

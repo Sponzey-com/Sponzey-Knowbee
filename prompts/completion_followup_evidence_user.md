@@ -10,6 +10,10 @@ Resolve only these remaining items:
 
 {{remainingItemsBlock}}
 
+Required runtime tools for this continuation:
+
+{{requiredToolNamesBlock}}
+
 Non-authoritative action proposal from the completion reviewer:
 
 {{actionProposalBlock}}
@@ -19,6 +23,8 @@ The action proposal can guide method selection, but it is not evidence and canno
 Derive every factual value, target identity, timestamp, state, and source from those tool results or from a new tool result produced during this continuation.
 Do not use factual claims from prior candidate answers, completion summaries, or rejected follow-up proposals as evidence.
 Select the next action with the LLM from the original request, remaining items, and cited evidence.
+When a required runtime tool is listed, it is an execution constraint: invoke only that listed tool for a tool-mode continuation. For a pending direct artifact delivery, use the opaque artifact reference from the cited current-run tool result with that delivery tool exactly once. Do not invoke another capture or artifact-creation tool, and do not report a delivery failure before that delivery tool returns a typed result.
 If the cited evidence already satisfies the remaining items, produce a grounded candidate answer without another tool call.
 Otherwise use a materially different available method and preserve its evidence reference for the next review.
-Do not repeat a generic web_search or merely rephrase the previous query when the cited evidence already contains an exact direct URL. Use web_fetch for that exact URL when permitted. If no concrete changed method can improve the missing field, produce the best evidence-grounded candidate with an explicit limitation instead of calling the same evidence class again.
+Do not repeat a generic web_search or merely rephrase the previous query when the cited evidence already contains an exact direct URL. Use web_fetch for that exact URL when permitted.
+If no concrete changed method can improve the missing field, produce the best evidence-grounded candidate with an explicit limitation instead of calling the same evidence class again.

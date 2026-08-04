@@ -35,6 +35,7 @@ vi.mock("../packages/core/src/memory/store.js", () => ({
 
 vi.mock("../packages/core/src/memory/knowbee-md.js", () => ({
   loadKnowbeeMd: vi.fn(() => ""),
+  loadBundledPromptTemplate: vi.fn(() => "# Test bundled prompt."),
   loadPromptSourceRegistry: vi.fn(() => []),
   loadPromptTemplate: vi.fn(() => "# Test System Prompt\n\nYou are {{mainAgentName}}."),
   loadSystemPromptSourceAssembly: vi.fn(() => null),

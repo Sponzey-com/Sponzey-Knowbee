@@ -3,6 +3,7 @@ const REASON_CODES = {
         "llm_output_schema_invalid",
         "intake_contract_unavailable",
         "analysis_schema_invalid",
+        "response_invalid",
     ],
     capability_degraded: [
         "capability_selection_catalog_invalid",
@@ -15,13 +16,22 @@ const REASON_CODES = {
         "capability_selection_output_limit_exceeded",
         "capability_selection_invalid_output",
         "capability_unavailable",
+        "solution_plan_selected_capability_unavailable",
         "capability_snapshot_degraded",
         "required_method_unavailable",
         "capability_denied",
     ],
     policy_waiting: ["approval_required", "user_input_required", "capability_approval_required"],
     persistence_conflict: ["revision_conflict", "receipt_already_exists", "receipt_already_consumed"],
-    adapter_unavailable: ["adapter_unavailable", "network_unavailable", "delivery_unavailable"],
+    adapter_unavailable: [
+        "adapter_unavailable",
+        "network_unavailable",
+        "delivery_unavailable",
+        "provider_contract_rejected",
+        "provider_unavailable",
+        "transport_failed",
+        "deadline_exceeded",
+    ],
 };
 function classifyReasonCode(reasonCode) {
     for (const [failureClass, reasonCodes] of Object.entries(REASON_CODES)) {

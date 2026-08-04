@@ -1,4 +1,5 @@
 import type { RequestExecutionOutcome, RequestExecutionOutcomeStatus } from "../runs/flow-contract.js";
+import type { ApprovalInteractionDecision } from "./contracts.js";
 import type { ChannelSmokeStatus } from "./smoke-runner.js";
 export type ConversationVerificationChannel = "webui" | "telegram";
 export type ConversationEvidenceMode = "fixture" | "browser" | "live";
@@ -13,6 +14,7 @@ export interface ConversationVerificationInput {
     allowedEffects: readonly string[];
     userReportExpected: boolean;
     requiresCapabilityAdmission?: boolean | undefined;
+    requiresDistinctDecisionReceipts?: boolean | undefined;
 }
 export interface ConversationRunBinding {
     runId: string;
@@ -41,7 +43,18 @@ export interface ConversationProbeObservation {
         channel: ConversationVerificationChannel;
         targetRef: string;
     };
+    pendingInteraction?: ConversationPendingInteraction | undefined;
 }
+export interface ConversationPendingInteraction {
+    kind: "approval";
+    approvalRequestRef: string;
+}
+export interface ConversationApprovalDecisionInteraction {
+    kind: "approval_decision";
+    approvalRequestRef: string;
+    decision: ApprovalInteractionDecision;
+}
+export type ConversationControlInteraction = ConversationApprovalDecisionInteraction;
 export type ConversationProbeResult<T = undefined> = ([T] extends [undefined] ? {
     status: "success";
 } : {
@@ -65,10 +78,7 @@ export interface ConversationProbePort {
     observe(binding: ConversationRunBinding, signal?: AbortSignal): Promise<ConversationProbeResult<ConversationProbeObservation>>;
 }
 export interface ConversationControlProbePort {
-    interact(binding: ConversationRunBinding, interaction: Readonly<{
-        kind: string;
-        value?: string;
-    }>, signal?: AbortSignal): Promise<ConversationProbeResult>;
+    interact(binding: ConversationRunBinding, interaction: Readonly<ConversationControlInteraction>, signal?: AbortSignal): Promise<ConversationProbeResult>;
     cancel(binding: ConversationRunBinding, signal?: AbortSignal): Promise<ConversationProbeResult>;
 }
 export interface ConversationDeliveryEvidence {
@@ -98,9 +108,13 @@ export interface VerifyConversationProcessPorts {
     control: ConversationControlProbePort;
     delivery: ConversationDeliveryPostCheckPort;
 }
+export interface VerifyConversationProcessOptions {
+    fixtureInteractions?: readonly ConversationControlInteraction[] | undefined;
+}
 export declare class VerifyConversationProcessUseCase {
     private readonly ports;
-    constructor(ports: VerifyConversationProcessPorts);
+    private readonly options;
+    constructor(ports: VerifyConversationProcessPorts, options?: Readonly<VerifyConversationProcessOptions>);
     execute(input: ConversationVerificationInput, signal?: AbortSignal): Promise<ConversationVerificationResult>;
 }
 //# sourceMappingURL=conversation-process-verification.d.ts.map

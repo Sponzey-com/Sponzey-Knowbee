@@ -131,6 +131,7 @@ export async function runExecutionAttemptPass(params, dependencies, moduleDepend
                 }
                 if (executionChunkPass.abortExecutionStream) {
                     abortExecutionStream();
+                    break;
                 }
             }
             else if (chunk.type === "error") {

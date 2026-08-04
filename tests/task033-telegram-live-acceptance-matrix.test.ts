@@ -128,6 +128,23 @@ function execute(
 }
 
 describe("Task 033 Telegram live acceptance matrix", () => {
+  it("keeps a slow first response as latency evidence after verified completion", async () => {
+    await expect(execute(scenario("basic_query"), observation({
+      latencyEvidence: {
+        ...observation().latencyEvidence!,
+        durationMs: 45_000,
+        status: "slow",
+        terminalResponseLatencyMs: 50_000,
+      },
+    }))).resolves.toMatchObject({
+      latency: {
+        firstResponseStatus: "slow",
+        firstResponseLatencyMs: 45_000,
+        terminalResponseLatencyMs: 50_000,
+      },
+    })
+  })
+
   it("supports all four configured Telegram smoke scenario kinds", async () => {
     await expect(execute(scenario("basic_query"))).resolves.toMatchObject({
       sourceChannel: "telegram",

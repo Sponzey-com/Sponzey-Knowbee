@@ -95,12 +95,42 @@ describe("parseCompletionReviewResult", () => {
       "summary": "추가 정보가 필요합니다.",
       "reason": "대상 파일 경로가 없습니다.",
       "user_message": "어느 파일을 수정해야 하나요?",
+      "input_resolution_kind": "provide_value",
+      "missing_fields": ["target_file_path"],
       "remaining_items": ["대상 파일 확인"]
     }`)
 
     expect(parsed?.status).toBe("ask_user")
     expect(parsed?.userMessage).toBe("어느 파일을 수정해야 하나요?")
+    expect(parsed?.inputRequirement).toEqual({
+      resolutionKind: "provide_value",
+      missingFields: ["target_file_path"],
+    })
     expect(parsed?.remainingItems).toEqual(["대상 파일 확인"])
+  })
+
+  it("accepts the contract's explicit empty input fields for non-ask-user results", () => {
+    const parsed = parseCompletionReviewResult(`{
+      "status": "complete",
+      "summary": "완료했습니다.",
+      "reason": "검증된 근거가 있습니다.",
+      "input_resolution_kind": "",
+      "missing_fields": [],
+      "remaining_items": []
+    }`)
+
+    expect(parsed?.status).toBe("complete")
+    expect(parsed).not.toHaveProperty("inputRequirement")
+  })
+
+  it("rejects ask_user without a typed input requirement", () => {
+    expect(parseCompletionReviewResult(`{
+      "status": "ask_user",
+      "summary": "추가 정보가 필요합니다.",
+      "reason": "대상이 없습니다.",
+      "user_message": "대상을 알려 주세요.",
+      "remaining_items": ["대상 확인"]
+    }`)).toBeNull()
   })
 
   it("parses a terminal blocked review when no materially different path remains", () => {

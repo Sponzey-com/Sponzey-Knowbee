@@ -14,6 +14,7 @@ import {
   type LiveAcceptanceSigningRequest,
   createLiveAcceptanceSigningRequest,
 } from "./live-acceptance-signing-exchange.js"
+import type { LiveAcceptanceRuntimeIdentityReceipt } from "./live-acceptance-runtime-identity.js"
 
 export type LiveAcceptanceRunnerStage = "channels" | "web" | "extensions" | "yeonjang"
 export type LiveAcceptanceRunnerFailurePolicy = "continue_diagnostics" | "stop_on_failure"
@@ -85,11 +86,13 @@ export type LiveAcceptanceRunnerResult =
       status: "collected"
       payload: Readonly<LiveAcceptanceBundlePayload>
       events: readonly LiveAcceptanceRunnerEvent[]
+      runtimeIdentity?: Readonly<LiveAcceptanceRuntimeIdentityReceipt>
     }
   | {
       status: "blocked" | "cancelled"
       blockers: readonly LiveAcceptanceCollectionBlocker[]
       events: readonly LiveAcceptanceRunnerEvent[]
+      runtimeIdentity?: Readonly<LiveAcceptanceRuntimeIdentityReceipt>
     }
 
 export async function runLiveAcceptanceCollection(input: {

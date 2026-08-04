@@ -124,6 +124,11 @@ export function createApiServerRuntimeContext(startup, dependencies = {}) {
                 liveAcceptanceSelectionAvailabilityInspector: dependencies.liveAcceptanceSelectionAvailabilityInspector,
             }
             : {}),
+        ...(dependencies.liveAcceptanceRuntimeIdentityInspector
+            ? {
+                liveAcceptanceRuntimeIdentityInspector: dependencies.liveAcceptanceRuntimeIdentityInspector,
+            }
+            : {}),
         ...(telegramLiveSmokeTarget ? { telegramLiveSmokeTarget } : {}),
         ...(slackLiveSmokeTarget ? { slackLiveSmokeTarget } : {}),
         ...(dependencies.channelSmokeLiveExecutor

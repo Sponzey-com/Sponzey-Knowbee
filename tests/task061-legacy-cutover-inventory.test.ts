@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest"
 import {
   classifyLegacyCandidate,
   evaluateLegacyCutoverInventory,
-} from "../scripts/lib/legacy-cutover-inventory.mjs"
+} from "../scripts/self/lib/legacy-cutover-inventory.mjs"
 import {
   collectJsxRoutePaths,
   collectModuleReferences,
   collectNamedObjectPropertyReferences,
   collectPropertyReferences,
   collectStaticObjectArray,
-} from "../scripts/lib/legacy-cutover-collector.mjs"
+} from "../scripts/self/lib/legacy-cutover-collector.mjs"
 
 const base = {
   candidateId: "component:LegacyPanel",

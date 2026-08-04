@@ -115,12 +115,21 @@ export function decideCompletionFlow(params) {
             ...(review.remainingItems.length > 0 ? { remainingItems: review.remainingItems } : {}),
         };
     }
+    if (!review.inputRequirement) {
+        return {
+            kind: "blocked",
+            summary: "추가 사용자 입력 계약을 검증하지 못했습니다.",
+            reason: "completion review ask_user 결과에 typed input requirement가 없습니다.",
+            remainingItems: review.remainingItems,
+        };
+    }
     return {
         kind: "ask_user",
         summary: review.summary || "사용자 추가 입력이 필요합니다.",
         ...(review.reason ? { reason: review.reason } : {}),
         ...(review.remainingItems.length > 0 ? { remainingItems: review.remainingItems } : {}),
         ...(review.userMessage ? { userMessage: review.userMessage } : {}),
+        inputRequirement: review.inputRequirement,
     };
 }
 //# sourceMappingURL=completion-flow.js.map

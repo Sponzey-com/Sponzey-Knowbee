@@ -40,6 +40,7 @@ import {
   validateAndAppendYeonjangSideEffectGoalValidationEvidence,
   type YeonjangSideEffectGoalValidationCandidate,
 } from "../yeonjang/side-effect-goal-validation-review.js"
+import { enforceDirectArtifactDeliveryFollowup } from "./direct-artifact-delivery-followup.js"
 
 interface ReviewCyclePassDependencies {
   rememberRunApprovalScope: (runId: string, toolName: string) => void
@@ -306,7 +307,21 @@ export async function runReviewCyclePass(
     truncatedOutputRecoveryAttempted: params.truncatedOutputRecoveryAttempted,
   })
 
-  const reviewPass = reviewGate.kind === "skip"
+  // A direct artifact delivery is an already-admitted deterministic next step.
+  // Do not ask completion review to assess a delivery receipt before the
+  // delivery tool has been allowed to create one.
+  const directDeliveryFollowup = enforceDirectArtifactDeliveryFollowup({
+    source: params.source,
+    deliveryOutcome: params.deliveryOutcome,
+    successfulTools: params.successfulTools,
+    review: null,
+  })
+  const reviewPass = directDeliveryFollowup
+    ? {
+        review: directDeliveryFollowup,
+        syntheticApproval: null,
+      }
+    : reviewGate.kind === "skip"
     ? {
         review: null,
         syntheticApproval: null,
@@ -350,6 +365,19 @@ export async function runReviewCyclePass(
         },
       })
 
+  const review = directDeliveryFollowup ?? enforceDirectArtifactDeliveryFollowup({
+    source: params.source,
+    deliveryOutcome: params.deliveryOutcome,
+    successfulTools: params.successfulTools,
+    review: reviewPass.review,
+  })
+  if (review !== reviewPass.review) {
+    dependencies.appendRunEvent(
+      params.runId,
+      "direct_artifact_delivery_followup_enforced",
+    )
+  }
+
   params.priorAssistantMessages.push(params.preview)
   if (reviewPass.reviewFailureReasonCode) {
     dependencies.appendRunEvent(
@@ -358,28 +386,28 @@ export async function runReviewCyclePass(
     )
   }
   const currentRun = moduleDependencies.getRootRun(params.runId)
-  const structuredFollowupKey = reviewPass.review?.status === "followup" && reviewPass.review.followupPrompt?.trim()
+  const structuredFollowupKey = review?.status === "followup" && review.followupPrompt?.trim()
     ? buildStructuredFollowupKey({
         kind: "followup",
-        summary: reviewPass.review.summary || "Follow-up required.",
-        reason: reviewPass.review.reason || "",
-        remainingItems: reviewPass.review.remainingItems ?? [],
-        followupPrompt: reviewPass.review.followupPrompt,
-        followupEvidenceRefs: reviewPass.review.followupEvidenceRefs ?? [],
+        summary: review.summary || "Follow-up required.",
+        reason: review.reason || "",
+        remainingItems: review.remainingItems ?? [],
+        followupPrompt: review.followupPrompt,
+        followupEvidenceRefs: review.followupEvidenceRefs ?? [],
         evidenceRevisionRefs:
-          reviewPass.review.contextReceipt?.evidenceRefs
-          ?? reviewPass.review.followupEvidenceRefs
+          review.contextReceipt?.evidenceRefs
+          ?? review.followupEvidenceRefs
           ?? [],
-        ...(reviewPass.review.followupExecutionMode
-          ? { followupExecutionMode: reviewPass.review.followupExecutionMode }
+        ...(review.followupExecutionMode
+          ? { followupExecutionMode: review.followupExecutionMode }
           : {}),
-        ...(reviewPass.review.followupRequiredToolNames?.length
-          ? { followupRequiredToolNames: reviewPass.review.followupRequiredToolNames }
+        ...(review.followupRequiredToolNames?.length
+          ? { followupRequiredToolNames: review.followupRequiredToolNames }
           : {}),
-        ...(reviewPass.review.followupTargetRefs?.length
-          ? { followupTargetRefs: reviewPass.review.followupTargetRefs }
+        ...(review.followupTargetRefs?.length
+          ? { followupTargetRefs: review.followupTargetRefs }
           : {}),
-      }, reviewPass.review.contextReceipt?.evidenceRefs)
+      }, review.contextReceipt?.evidenceRefs)
     : undefined
 
   return moduleDependencies.runReviewOutcomePass({
@@ -391,7 +419,7 @@ export async function runReviewCyclePass(
     preview: params.preview,
     ...(params.previewSource ? { previewSource: params.previewSource } : {}),
     ...(params.deferredPreviewDelivery ? { deferredPreviewDelivery: true } : {}),
-    review: reviewPass.review,
+    review,
     ...(reviewPass.reviewFailureReasonCode
       ? { reviewFailureReasonCode: reviewPass.reviewFailureReasonCode }
       : {}),

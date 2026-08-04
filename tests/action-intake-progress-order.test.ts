@@ -8,7 +8,7 @@ import { createTestAgentRuntimeDependencies } from "./fixtures/agent-runtime.ts"
 const runtime = createTestAgentRuntimeDependencies("/tmp/knowbee-action-intake-progress-order")
 
 describe("action intake first progress", () => {
-  it("delivers LLM progress before canonical diagnosis and keeps the run non-terminal", async () => {
+  it("delivers LLM progress only after canonical diagnosis is accepted and keeps the run non-terminal", async () => {
     const order: string[] = []
     const intake = {
       intent: { category: "task_intake" as const, summary: "실행 필요", confidence: 0.99 },
@@ -129,7 +129,7 @@ describe("action intake first progress", () => {
       } as never,
     )
 
-    expect(order.slice(0, 2)).toEqual(["progress", "diagnosis"])
+    expect(order.slice(0, 2)).toEqual(["diagnosis", "progress"])
     expect(emitAssistantTextDelivery).toHaveBeenCalledWith(
       expect.objectContaining({
         text: "요청을 확인하고 있습니다.",
@@ -143,5 +143,78 @@ describe("action intake first progress", () => {
       receiptRef: "message-ledger:progress-1",
       deliveredAtMs: 30_999,
     })
+
+    emitAssistantTextDelivery.mockClear()
+    await expect(
+      runIntakeBridgePass(
+        {
+          artifactStorage: runtime.artifactStorage,
+          message: "현재 상황을 확인해줘",
+          originalRequest: "현재 상황을 확인해줘",
+          sessionId: "session-progress-rejected",
+          requestGroupId: "group-progress-rejected",
+          model: "gpt-test",
+          config: DEFAULT_CONFIG,
+          workDir: "/tmp",
+          source: "telegram",
+          runId: "run-progress-rejected",
+          onChunk: vi.fn(),
+          firstResponseDeadline: createFirstResponseDeadline(1_000),
+          recordFirstResponseReceipt,
+          reuseConversationContext: false,
+        },
+        {
+          ...dependencies,
+          recordCanonicalIntakeDiagnosis: vi.fn(async () => ({
+            ok: false as const,
+            reasonCode: "intake_receipt_rejected",
+          })),
+        },
+        {
+          analyzeTaskIntake: vi.fn(async () => intake),
+          emitAssistantTextDelivery,
+        } as never,
+      ),
+    ).rejects.toMatchObject({
+      phase: "intake",
+      reasonCode: "intake_receipt_rejected",
+    })
+    expect(emitAssistantTextDelivery).not.toHaveBeenCalled()
+
+    emitAssistantTextDelivery.mockResolvedValueOnce({
+      persisted: true,
+      textDelivered: false,
+      doneDelivered: false,
+      admissionStatus: "provider_evidence_unavailable",
+    })
+    recordFirstResponseReceipt.mockClear()
+    await runIntakeBridgePass(
+      {
+        artifactStorage: runtime.artifactStorage,
+        message: "현재 상황을 확인해줘",
+        originalRequest: "현재 상황을 확인해줘",
+        sessionId: "session-progress-no-evidence",
+        requestGroupId: "group-progress-no-evidence",
+        model: "gpt-test",
+        config: DEFAULT_CONFIG,
+        workDir: "/tmp",
+        source: "telegram",
+        runId: "run-progress-no-evidence",
+        onChunk: vi.fn(),
+        firstResponseDeadline: createFirstResponseDeadline(1_000),
+        recordFirstResponseReceipt,
+        reuseConversationContext: false,
+      },
+      dependencies,
+      {
+        analyzeTaskIntake: vi.fn(async () => intake),
+        emitAssistantTextDelivery,
+      } as never,
+    )
+    expect(recordFirstResponseReceipt).not.toHaveBeenCalled()
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith(
+      "run-progress-no-evidence",
+      "first_response_progress_delivery_failed:delivery_admission_provider_evidence_unavailable",
+    )
   })
 })

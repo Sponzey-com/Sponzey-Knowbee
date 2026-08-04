@@ -19,9 +19,15 @@ export type SideEffectOperationExecutionResult<T> = {
     status: "compensated";
     aggregate: SideEffectOperationAggregate;
 } | {
+    status: "effect_rejected";
+    reasonCode: string;
+    aggregate: SideEffectOperationAggregate;
+} | {
     status: "manual_intervention";
     reasonCode: string;
     aggregate: SideEffectOperationAggregate;
+    recoveryEvidence?: unknown;
+    priorReceiptRef?: string;
 } | {
     status: "blocked";
     reasonCode: string;
@@ -35,9 +41,20 @@ export declare function executeSideEffectOperation<T>(input: {
         success: boolean;
         resultFingerprint: Fingerprint;
         recordedAt: number;
+        effectEvidenceRefs?: readonly string[];
+        preEffectRejection?: {
+            reasonCode: string;
+            retrySafety: "safe_same_command" | "change_strategy";
+        };
     }>;
-    observePostState: (value: T) => Promise<Omit<SideEffectObservationEvidence, "receiptRef">>;
-    observeCurrentPostState?: (() => Promise<Omit<SideEffectObservationEvidence, "receiptRef">>) | undefined;
+    observePostState: (value: T) => Promise<Omit<SideEffectObservationEvidence, "receiptRef"> & {
+        recoveryEvidence?: unknown;
+    }>;
+    observeCurrentPostState?: ((input: {
+        effectEvidenceRefs: readonly string[];
+    }) => Promise<Omit<SideEffectObservationEvidence, "receiptRef"> & {
+        recoveryEvidence?: unknown;
+    }>) | undefined;
     compensate?: ((value: T) => Promise<{
         success: boolean;
         receiptEvidence: unknown;

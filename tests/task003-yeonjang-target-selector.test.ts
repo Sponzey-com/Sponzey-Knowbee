@@ -157,6 +157,112 @@ describe("task003 yeonjang target selector", () => {
     }))
   })
 
+  it("resolves an exact node_id selector independently of the instance alias", () => {
+    expect(seedObservation({
+      instanceId: "inst-local-node",
+      instanceAlias: "localhost",
+      displayName: "Local Control Terminal",
+      nodeId: "yeonjang-main",
+      sessionId: "sess-local-node",
+    })).toEqual(expect.objectContaining({ ok: true }))
+
+    const result = resolveYeonjangTargetSelection({
+      targetSelector: {
+        type: "node_id",
+        nodeId: "yeonjang-main",
+      },
+    })
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      status: "exact_match",
+      extensionId: "yeonjang-main",
+      instanceId: "inst-local-node",
+      targetSessionId: "sess-local-node",
+    }))
+    expect(result.proof).toEqual(expect.objectContaining({
+      selectorSource: "structured_target_selector",
+      matchedField: "node_id",
+      matchedValue: "yeonjang-main",
+      matchedInstanceId: "inst-local-node",
+      matchedExtensionId: "yeonjang-main",
+    }))
+  })
+
+  it("accepts matching structured and legacy node IDs injected at separate boundaries", () => {
+    expect(seedObservation({
+      instanceId: "inst-compatible-node",
+      instanceAlias: "localhost",
+      nodeId: "yeonjang-main",
+      sessionId: "sess-compatible-node",
+    })).toEqual(expect.objectContaining({ ok: true }))
+
+    const result = resolveYeonjangTargetSelection({
+      requestedExtensionId: "yeonjang-main",
+      targetSelector: {
+        type: "node_id",
+        nodeId: "yeonjang-main",
+      },
+    })
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      status: "exact_match",
+      extensionId: "yeonjang-main",
+      instanceId: "inst-compatible-node",
+    }))
+    expect(result.proof.selectorSource).toBe("structured_target_selector")
+  })
+
+  it("rejects mismatched structured and legacy node IDs", () => {
+    const result = resolveYeonjangTargetSelection({
+      requestedExtensionId: "yeonjang-main",
+      targetSelector: {
+        type: "node_id",
+        nodeId: "yeonjang-other",
+      },
+    })
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      status: "invalid_selector",
+    }))
+    expect(result.reasonCodes).toContain("conflicting_target_selector_and_extension_id")
+  })
+
+  it("keeps duplicate exact node_id matches ambiguous instead of choosing an implicit instance", () => {
+    expect(seedObservation({
+      instanceId: "inst-node-a",
+      instanceAlias: "localhost-a",
+      displayName: "Local A",
+      nodeId: "yeonjang-main",
+      sessionId: "sess-node-a",
+      installFingerprint: "install-node-a",
+    })).toEqual(expect.objectContaining({ ok: true }))
+    expect(seedObservation({
+      instanceId: "inst-node-b",
+      instanceAlias: "localhost-b",
+      displayName: "Local B",
+      nodeId: "yeonjang-main",
+      sessionId: "sess-node-b",
+      installFingerprint: "install-node-b",
+    })).toEqual(expect.objectContaining({ ok: true }))
+
+    const result = resolveYeonjangTargetSelection({
+      targetSelector: {
+        type: "node_id",
+        nodeId: "yeonjang-main",
+      },
+    })
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      status: "ambiguous_state",
+      uiAction: "ui_selection",
+    }))
+    expect(result.proof.candidateList).toHaveLength(2)
+  })
+
   it("resolves exact call_name selectors through the shared call-name namespace", () => {
     expect(seedObservation({
       instanceId: "inst-display-name",

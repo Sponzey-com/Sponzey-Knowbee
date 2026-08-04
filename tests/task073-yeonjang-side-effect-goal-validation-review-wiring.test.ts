@@ -172,8 +172,58 @@ describe("Task 073 Yeonjang side-effect goal validation review wiring", () => {
     expect(candidates).toHaveLength(0)
   })
 
+  it("does not elevate a typed command timeout without an artifact into goal-success validation", () => {
+    const candidates: YeonjangSideEffectGoalValidationCandidate[] = []
+
+    expect(collectYeonjangSideEffectGoalValidationCandidate({
+      toolName: "yeonjang_camera_capture",
+      success: false,
+      output: "외부 변경 결과를 검증하거나 자동 복구할 수 없습니다.",
+      details: {
+        kind: "side_effect_manual_intervention",
+        operationId: "side-effect-operation-073",
+        goalValidationCandidate: true,
+        failure: {
+          reasonCode: "camera_handler_timeout",
+          terminalStage: "handler_timeout",
+          retrySafety: "unknown_effect_state",
+          retrySameStrategy: false,
+        },
+      },
+      candidates,
+    })).toBe(false)
+    expect(candidates).toHaveLength(0)
+  })
+
   it("appends normalized successful evidence after runtime LLM goal validation", async () => {
     const successfulTools: SuccessfulToolEvidence[] = []
+    const validateRuntimeGoal = vi.fn(async () => ({
+      status: "validated" as const,
+      publicSummary: {
+        operationId: "side-effect-operation-073",
+        runId: "run-073",
+        workId: "work:root:run-073",
+        adapterId: "tool:mouse_click",
+        state: "MANUAL_INTERVENTION" as const,
+        revision: 5,
+        transitionCount: 5,
+      },
+      evidence: buildYeonjangEvidenceEnvelope({
+        targetRef: "tool:mouse_click:side-effect-goal",
+        toolName: "mouse_click",
+        methodIds: ["mouse.click"],
+        group: "mouse",
+        riskLevel: "moderate",
+        requiresApproval: true,
+        summary: "mouse_click goal validated by LLM result diagnosis.",
+        postCheck: buildYeonjangGoalValidatedPostCheck({
+          diagnosisReceiptId: "diagnosis:work:root:run-073:executing:result",
+          diagnosisSubjectKind: "tool_result",
+          evidenceRefs: ["operation-evidence:mark_manual:073"],
+        }),
+        collectedAt: 73,
+      }),
+    }))
 
     const result = await validateAndAppendYeonjangSideEffectGoalValidationEvidence({
       db: {} as never,
@@ -193,6 +243,22 @@ describe("Task 073 Yeonjang side-effect goal validation review wiring", () => {
           operationId: "side-effect-operation-073",
           goalValidationCandidate: true,
           rawObservedState: "must-not-leak",
+          failure: {
+            reasonCode: "camera_handler_timeout",
+            terminalStage: "handler_timeout",
+            retrySafety: "unknown_effect_state",
+            retrySameStrategy: false,
+            rawMessage: "must-not-leak",
+          },
+          recoveryEvidence: {
+            kind: "artifact_candidate",
+            artifactRef: "artifact:2ad772f0-c51f-4ed7-a93a-257ca769da17",
+            mimeType: "image/jpeg",
+            sizeBytes: 128,
+            reasonCode: "camera_resolved_device_mismatch",
+            resolvedDevicePresent: true,
+            rawPath: "/private/must-not-leak.jpg",
+          },
         },
       }],
       successfulTools,
@@ -202,33 +268,7 @@ describe("Task 073 Yeonjang side-effect goal validation review wiring", () => {
         riskLevel: "moderate",
         requiresApproval: true,
       }),
-      validateRuntimeGoal: async () => ({
-        status: "validated",
-        publicSummary: {
-          operationId: "side-effect-operation-073",
-          runId: "run-073",
-          workId: "work:root:run-073",
-          adapterId: "tool:mouse_click",
-          state: "MANUAL_INTERVENTION",
-          revision: 5,
-          transitionCount: 5,
-        },
-        evidence: buildYeonjangEvidenceEnvelope({
-          targetRef: "tool:mouse_click:side-effect-goal",
-          toolName: "mouse_click",
-          methodIds: ["mouse.click"],
-          group: "mouse",
-          riskLevel: "moderate",
-          requiresApproval: true,
-          summary: "mouse_click goal validated by LLM result diagnosis.",
-          postCheck: buildYeonjangGoalValidatedPostCheck({
-            diagnosisReceiptId: "diagnosis:work:root:run-073:executing:result",
-            diagnosisSubjectKind: "tool_result",
-            evidenceRefs: ["operation-evidence:mark_manual:073"],
-          }),
-          collectedAt: 73,
-        }),
-      }),
+      validateRuntimeGoal,
     })
 
     expect(result).toEqual({ added: 1, skipped: [] })
@@ -249,6 +289,34 @@ describe("Task 073 Yeonjang side-effect goal validation review wiring", () => {
       },
     })
     expect(JSON.stringify(successfulTools)).not.toContain("must-not-leak")
+    expect(validateRuntimeGoal).toHaveBeenCalledWith(expect.objectContaining({
+      manualResultDetails: expect.objectContaining({
+        failure: {
+          reasonCode: "camera_handler_timeout",
+          terminalStage: "handler_timeout",
+          retrySafety: "unknown_effect_state",
+          retrySameStrategy: false,
+        },
+        recoveryEvidence: {
+          kind: "artifact_candidate",
+          artifactRef: "artifact:2ad772f0-c51f-4ed7-a93a-257ca769da17",
+          mimeType: "image/jpeg",
+          sizeBytes: 128,
+          reasonCode: "camera_resolved_device_mismatch",
+          resolvedDevicePresent: true,
+        },
+      }),
+      sanitizedObservedStateSummary: expect.stringContaining(
+        "artifact:2ad772f0-c51f-4ed7-a93a-257ca769da17",
+      ),
+    }))
+    expect(validateRuntimeGoal).toHaveBeenCalledWith(expect.objectContaining({
+      sanitizedObservedStateSummary: expect.stringContaining(
+        "command_terminal_stage: handler_timeout",
+      ),
+    }))
+    expect(JSON.stringify(validateRuntimeGoal.mock.calls)).not.toContain("must-not-leak")
+    expect(JSON.stringify(validateRuntimeGoal.mock.calls)).not.toContain("/private/")
   })
 
   it("runs goal validation before review gate sees successful tools", async () => {

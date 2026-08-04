@@ -8,6 +8,7 @@ const getAllMock = vi.fn(() => [])
 const dispatchMock = vi.fn()
 const getMessagesForRunMock = vi.fn(() => [])
 const buildMemoryContextMock = vi.fn(async () => "")
+const insertMessageMock = vi.hoisted(() => vi.fn())
 
 vi.mock("../packages/core/src/db/index.js", () => ({
   getDb: () => ({
@@ -15,7 +16,7 @@ vi.mock("../packages/core/src/db/index.js", () => ({
   }),
   insertSession: vi.fn(),
   getSession: vi.fn(() => null),
-  insertMessage: vi.fn(),
+  insertMessage: insertMessageMock,
   getMessages: vi.fn(() => []),
   getMessagesForRequestGroup: vi.fn(() => []),
   getMessagesForRequestGroupWithRunMeta: vi.fn(() => []),
@@ -81,10 +82,26 @@ describe("task022 Yeonjang public tool_end redaction", () => {
 
     dispatchMock.mockResolvedValueOnce({
       success: true,
-      output: "captured",
+      output: [
+        "captured",
+        "장치: private-camera-device",
+        "파일명: private-camera.jpg",
+        "전달 형식: base64",
+        "인라인 이미지: 128KB base64",
+      ].join("\n"),
       details: {
         via: "yeonjang",
         extensionId: "yeonjang-main",
+        deviceId: "private-camera-device",
+        deviceName: "Private Camera",
+        fileName: "private-camera.jpg",
+        transferEncoding: "base64",
+        artifactVerification: {
+          status: "verified",
+          artifactRef: "artifact:2ad772f0-c51f-4ed7-a93a-257ca769da17",
+          mimeType: "image/jpeg",
+          sizeBytes: 128,
+        },
         localSavedPath: "/private/knowbee/artifacts/camera.jpg",
         rawPayload: { secret: "do-not-project-raw-payload" },
         base64_data: "do-not-project-base64",
@@ -107,12 +124,6 @@ describe("task022 Yeonjang public tool_end redaction", () => {
           },
           collectedAt: 123,
         }),
-      },
-      evidenceSource: {
-        sourceKind: "yeonjang",
-        sourceRef: `tool-result:yeonjang:${"d".repeat(64)}`,
-        trustClass: "untrusted_external",
-        instructionIsolation: "data_only",
       },
     })
 
@@ -158,21 +169,27 @@ describe("task022 Yeonjang public tool_end redaction", () => {
       type: "tool_end",
       toolName: "yeonjang_camera_capture",
       success: true,
-      output: "captured",
       details: {
-        via: "yeonjang",
-        extensionId: "yeonjang-main",
-        nested: {
-          safeLabel: "camera-ready",
-        },
+        kind: "camera_artifact",
+        artifactRef: "artifact:2ad772f0-c51f-4ed7-a93a-257ca769da17",
+        mimeType: "image/jpeg",
+        sizeBytes: 128,
       },
     })
-    expect(JSON.stringify(toolEnd)).not.toContain("evidence")
-    expect(JSON.stringify(toolEnd)).not.toContain("rawPayload")
-    expect(JSON.stringify(toolEnd)).not.toContain("base64")
-    expect(JSON.stringify(toolEnd)).not.toContain("localSavedPath")
-    expect(JSON.stringify(toolEnd)).not.toContain("/private/knowbee/artifacts")
-    expect(JSON.stringify(toolEnd)).not.toContain("do-not-project")
-    expect(JSON.stringify(provider.chat.mock.calls)).not.toContain("/private/knowbee/artifacts")
+    const publicProjection = JSON.stringify(toolEnd)
+    const llmProjection = JSON.stringify(provider.chat.mock.calls)
+    const persistedProjection = JSON.stringify(insertMessageMock.mock.calls)
+    for (const projection of [publicProjection, llmProjection, persistedProjection]) {
+      expect(projection).not.toContain("evidence")
+      expect(projection).not.toContain("rawPayload")
+      expect(projection).not.toContain("base64")
+      expect(projection).not.toContain("localSavedPath")
+      expect(projection).not.toContain("/private/knowbee/artifacts")
+      expect(projection).not.toContain("do-not-project")
+      expect(projection).not.toContain("private-camera-device")
+      expect(projection).not.toContain("Private Camera")
+      expect(projection).not.toContain("private-camera.jpg")
+      expect(projection).not.toContain("yeonjang-main")
+    }
   })
 })

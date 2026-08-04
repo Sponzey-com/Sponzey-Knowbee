@@ -1,8 +1,12 @@
-export type YeonjangTargetSelectorType = "local" | "instance_id" | "instance_alias" | "call_name" | "all_online" | "filtered_group";
+export type YeonjangTargetSelectorType = "local" | "node_id" | "instance_id" | "instance_alias" | "call_name" | "all_online" | "filtered_group";
 export type YeonjangTargetSelectorLocation = "local" | "remote";
 export type YeonjangTargetSelectorState = "discovered" | "online" | "degraded" | "offline" | "update_required" | "permission_required";
 export interface YeonjangTargetSelectorLocal {
     type: "local";
+}
+export interface YeonjangTargetSelectorByNodeId {
+    type: "node_id";
+    nodeId: string;
 }
 export interface YeonjangTargetSelectorByInstanceId {
     type: "instance_id";
@@ -26,7 +30,7 @@ export interface YeonjangTargetSelectorFilteredGroup {
     platforms?: string[];
     states?: YeonjangTargetSelectorState[];
 }
-export type YeonjangTargetSelector = YeonjangTargetSelectorLocal | YeonjangTargetSelectorByInstanceId | YeonjangTargetSelectorByInstanceAlias | YeonjangTargetSelectorByCallName | YeonjangTargetSelectorAllOnline | YeonjangTargetSelectorFilteredGroup;
+export type YeonjangTargetSelector = YeonjangTargetSelectorLocal | YeonjangTargetSelectorByNodeId | YeonjangTargetSelectorByInstanceId | YeonjangTargetSelectorByInstanceAlias | YeonjangTargetSelectorByCallName | YeonjangTargetSelectorAllOnline | YeonjangTargetSelectorFilteredGroup;
 export interface YeonjangTargetSelectorValidationIssue {
     path: string;
     code: "contract_validation_failed";

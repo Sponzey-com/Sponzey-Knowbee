@@ -237,6 +237,17 @@ function productionHarness() {
         } as never,
       ]),
     },
+    inspectRuntimeIdentity: vi.fn(() => ({
+      status: "verified" as const,
+      receipt: Object.freeze({
+        buildId: "build:task176",
+        bundleSha256: `sha256:${"a".repeat(64)}` as const,
+        processStartedAt: "2026-07-17T21:58:00.000Z",
+        artifactBuiltAt: "2026-07-17T21:57:00.000Z",
+        buildRequired: false as const,
+        restartRequired: false as const,
+      }),
+    })),
     llm: {
       webPlan: async ({ candidates }) => ({
         diagnosedBy: "llm",

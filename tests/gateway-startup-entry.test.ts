@@ -72,7 +72,7 @@ describe("Gateway startup entry contract", () => {
       'exec nohup "$NODE_RUNTIME_PATH" packages/core/dist/runtime/serve-bundle.js',
     )
     expect(script).toContain("pnpm run gateway:bundle")
-    expect(script).toContain("scripts/observe-gateway-startup.mjs")
+    expect(script).toContain("scripts/self/observe-gateway-startup.mjs")
     expect(script).toContain("verify_gateway_health")
     expect(script).not.toContain("GATEWAY_STARTUP_TIMEOUT_SECONDS")
     expect(script).not.toContain("node packages/cli/dist/index.js serve")

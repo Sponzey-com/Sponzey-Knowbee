@@ -8,6 +8,10 @@ import {
   shouldForceReasoningMode,
 } from "../ai/index.js"
 import type { AIChunk, Message, ToolDefinition } from "../ai/types.js"
+import {
+  isAIProviderInvocationError,
+  type AIProviderFailureReasonCode,
+} from "../ai/provider-failure.js"
 import type { ArtifactStorageContext } from "../artifacts/lifecycle.js"
 import type { ChannelSource } from "../channels/contracts.js"
 import type { KnowbeeConfig } from "../config/types.js"
@@ -58,6 +62,7 @@ import { appendRunEvent } from "../runs/store.js"
 import {
   type AdmittedCapabilityExecutionScope,
   dispatchRunScopedTool,
+  isRunScopedPreDispatchFailureDetails,
   projectRunScopedInstruction,
   projectRunScopedToolNames,
 } from "../runs/run-scoped-tool-admission.js"
@@ -238,8 +243,21 @@ export type AgentChunk =
       details?: unknown
       evidenceSource?: Readonly<ToolEvidenceSourceReceipt>
     }
-  | { type: "execution_recovery"; toolNames: string[]; summary: string; reason: string }
-  | { type: "ai_recovery"; summary: string; reason: string; message: string }
+  | {
+      type: "execution_recovery"
+      toolNames: string[]
+      summary: string
+      reason: string
+      reasonCode?: string
+      evidenceRefs?: string[]
+    }
+  | {
+      type: "ai_recovery"
+      summary: string
+      reason: string
+      message: string
+      providerFailureReasonCode?: AIProviderFailureReasonCode
+    }
   | { type: "done"; totalTokens: number }
   | { type: "error"; message: string }
 
@@ -278,6 +296,8 @@ interface ExecutionRecoveryFailure {
   error?: string
   summary?: string
   reason?: string
+  reasonCode?: string
+  evidenceRefs?: string[]
 }
 
 interface ExecutedToolResult {
@@ -739,6 +759,9 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
         summary: "AI 응답 생성 중 오류가 발생해 다른 방법을 다시 시도합니다.",
         reason: sanitized.reason,
         message: sanitized.userMessage,
+        ...(isAIProviderInvocationError(err)
+          ? { providerFailureReasonCode: err.reasonCode }
+          : {}),
       }
       return
     }
@@ -1104,19 +1127,37 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       executedToolResults.push({ toolName: tu.name, result })
 
       if (shouldSignalExecutionRecovery(tu.name, result)) {
-        const yeonjangRecovery = buildYeonjangFailureEvidenceRecoveryPayload({
-          toolName: tu.name,
-          output: result.output,
-          details: result.details,
-          ...(result.evidenceSource ? { evidenceSource: result.evidenceSource } : {}),
-        })
-        executionRecoveryFailures.push(yeonjangRecovery
+        const preDispatchFailure =
+          isRunScopedPreDispatchFailureDetails(result.details)
+            ? result.details
+            : null
+        const yeonjangRecovery = preDispatchFailure
+          ? null
+          : buildYeonjangFailureEvidenceRecoveryPayload({
+              toolName: tu.name,
+              output: result.output,
+              details: result.details,
+              ...(result.evidenceSource ? { evidenceSource: result.evidenceSource } : {}),
+            })
+        executionRecoveryFailures.push(preDispatchFailure
           ? {
               toolName: tu.name,
               output: "",
-              summary: yeonjangRecovery.summary,
-              reason: yeonjangRecovery.reason,
+              summary: "실행 범위 계약을 다시 계획해야 합니다.",
+              reason:
+                "External effect did not start because execution scope validation failed.",
+              reasonCode: preDispatchFailure.reasonCode,
+              evidenceRefs: [
+                `run-scoped-pre-dispatch:${preDispatchFailure.failureFingerprint}`,
+              ],
             }
+          : yeonjangRecovery
+            ? {
+                toolName: tu.name,
+                output: "",
+                summary: yeonjangRecovery.summary,
+                reason: yeonjangRecovery.reason,
+              }
           : {
               toolName: tu.name,
               output: result.output,
@@ -1133,16 +1174,12 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
         }),
         is_error: !result.success,
       })
-      const persistedResult = buildPersistedToolResultProjection(tu.name, result)
-      persistedToolResultContents.push({
-        type: "tool_result",
-        tool_use_id: tu.id,
-        content: buildToolResultContent(tu.name, persistedResult, {
-          sourceRef: `tool:${tu.name}:${tu.id}`,
-          ownerScope: memoryOwnerScope,
-        }),
-        is_error: !persistedResult.success,
-      })
+      persistedToolResultContents.push(buildPersistedToolResultBlock({
+        toolName: tu.name,
+        toolUseId: tu.id,
+        result,
+        ownerScope: memoryOwnerScope,
+      }))
     }
 
     messages.push({ role: "user", content: toolResultContents })
@@ -1168,7 +1205,12 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       break
     }
 
+    const runScopedPreDispatchFailureSeen = executedToolResults.some(
+      ({ result }) =>
+        isRunScopedPreDispatchFailureDetails(result.details),
+    )
     if (
+      !runScopedPreDispatchFailureSeen &&
       shouldStopAfterToolRound({
         source: ctx.source,
         toolResults: executedToolResults,
@@ -1178,12 +1220,24 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
     }
 
     if (executionRecoveryFailures.length > 0) {
+      const latestRecoveryFailure =
+        executionRecoveryFailures[executionRecoveryFailures.length - 1]
       yield {
         type: "execution_recovery",
         toolNames: [...new Set(executionRecoveryFailures.map((failure) => failure.toolName))],
         summary: buildExecutionRecoverySummary(executionRecoveryFailures),
         reason: buildExecutionRecoveryReason(executionRecoveryFailures),
+        ...(latestRecoveryFailure?.reasonCode
+          ? { reasonCode: latestRecoveryFailure.reasonCode }
+          : {}),
+        ...(latestRecoveryFailure?.evidenceRefs &&
+        latestRecoveryFailure.evidenceRefs.length > 0
+          ? { evidenceRefs: [...latestRecoveryFailure.evidenceRefs] }
+          : {}),
       }
+    }
+    if (runScopedPreDispatchFailureSeen) {
+      break
     }
 
     // Guard against runaway context
@@ -1294,6 +1348,7 @@ function appendAgentLatencyEvent(runId: string, name: string, durationMs: number
 }
 
 function shouldSignalExecutionRecovery(toolName: string, result: ToolResult): boolean {
+  if (isRunScopedPreDispatchFailureDetails(result.details)) return true
   return (
     !result.success &&
     EXECUTION_RECOVERY_TOOL_NAMES.has(toolName) &&
@@ -1302,28 +1357,37 @@ function shouldSignalExecutionRecovery(toolName: string, result: ToolResult): bo
 }
 
 function buildPublicToolEndProjection(toolName: string, result: ToolResult): {
+  output?: string
   details?: unknown
   evidenceSource?: Readonly<ToolEvidenceSourceReceipt>
 } {
+  const projectedResult = projectToolResultForExternalBoundary(toolName, result)
   if (toolName.startsWith("yeonjang_")) {
-    const details = redactYeonjangPublicDetails(result.details)
-    return details !== undefined ? { details } : {}
+    const details = redactYeonjangPublicDetails(projectedResult.details)
+    return {
+      ...(projectedResult !== result ? { output: projectedResult.output } : {}),
+      ...(details !== undefined ? { details } : {}),
+    }
   }
   if (toolName === "web_search" || toolName === "web_fetch") {
-    const details = result.details && typeof result.details === "object" &&
-        !Array.isArray(result.details)
-      ? { ...(result.details as Record<string, unknown>) }
+    const details = projectedResult.details && typeof projectedResult.details === "object" &&
+        !Array.isArray(projectedResult.details)
+      ? { ...(projectedResult.details as Record<string, unknown>) }
       : undefined
     if (details) delete details.internalObservedFetchCandidates
     return {
       ...(details && Object.keys(details).length > 0 ? { details } : {}),
-      ...(result.evidenceSource ? { evidenceSource: result.evidenceSource } : {}),
+      ...(projectedResult.evidenceSource
+        ? { evidenceSource: projectedResult.evidenceSource }
+        : {}),
     }
   }
 
   return {
-    ...(result.details !== undefined ? { details: result.details } : {}),
-    ...(result.evidenceSource ? { evidenceSource: result.evidenceSource } : {}),
+    ...(projectedResult.details !== undefined ? { details: projectedResult.details } : {}),
+    ...(projectedResult.evidenceSource
+      ? { evidenceSource: projectedResult.evidenceSource }
+      : {}),
   }
 }
 
@@ -1331,18 +1395,118 @@ function buildPersistedToolResultProjection(
   toolName: string,
   result: ToolResult,
 ): ToolResult {
-  if (toolName !== "web_search" && toolName !== "web_fetch") return result
-  const details = result.details && typeof result.details === "object" &&
-      !Array.isArray(result.details)
-    ? { ...(result.details as Record<string, unknown>) }
+  const projectedResult = projectToolResultForExternalBoundary(toolName, result)
+  if (toolName !== "web_search" && toolName !== "web_fetch") return projectedResult
+  const details = projectedResult.details && typeof projectedResult.details === "object" &&
+      !Array.isArray(projectedResult.details)
+    ? { ...(projectedResult.details as Record<string, unknown>) }
     : undefined
   if (!details || !Object.hasOwn(details, "internalObservedFetchCandidates")) {
-    return result
+    return projectedResult
   }
   delete details.internalObservedFetchCandidates
   return {
-    ...result,
+    ...projectedResult,
     details: Object.keys(details).length > 0 ? details : undefined,
+  }
+}
+
+export interface PersistedToolResultBlock {
+  readonly type: "tool_result"
+  readonly tool_use_id: string
+  readonly content: string
+  readonly is_error?: boolean
+}
+
+export function buildPersistedToolResultBlock(input: {
+  toolName: string
+  toolUseId: string
+  result: ToolResult
+  ownerScope?: UntrustedEvidenceOwnerScope
+}): PersistedToolResultBlock {
+  const projectedResult = buildPersistedToolResultProjection(
+    input.toolName,
+    input.result,
+  )
+  return {
+    type: "tool_result",
+    tool_use_id: input.toolUseId,
+    content: buildToolResultContent(input.toolName, projectedResult, {
+      sourceRef: `tool:${input.toolName}:${input.toolUseId}`,
+      ownerScope: input.ownerScope ?? MAIN_AGENT_MEMORY_OWNER_SCOPE,
+    }),
+    ...(!projectedResult.success ? { is_error: true } : {}),
+  }
+}
+
+const CAMERA_PUBLIC_ARTIFACT_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+])
+
+function projectToolResultForExternalBoundary(
+  toolName: string,
+  result: ToolResult,
+): ToolResult {
+  if (toolName !== "yeonjang_camera_capture" || !result.success) return result
+  const details = result.details && typeof result.details === "object" &&
+      !Array.isArray(result.details)
+    ? result.details as Record<string, unknown>
+    : {}
+  const verification =
+    details.kind === "camera_artifact" || details.kind === "artifact_delivery"
+      ? details
+      : details.artifactVerification &&
+          typeof details.artifactVerification === "object" &&
+          !Array.isArray(details.artifactVerification)
+        ? details.artifactVerification as Record<string, unknown>
+        : {}
+  const artifactRef =
+    (verification.status === "verified"
+      || details.kind === "camera_artifact"
+      || details.kind === "artifact_delivery") &&
+    typeof verification.artifactRef === "string" &&
+    verification.artifactRef.startsWith("artifact:")
+      ? verification.artifactRef
+      : undefined
+  const mimeType =
+    typeof verification.mimeType === "string" &&
+    CAMERA_PUBLIC_ARTIFACT_MIME_TYPES.has(verification.mimeType)
+      ? verification.mimeType
+      : undefined
+  const sizeBytes =
+    typeof (verification.sizeBytes ?? verification.size) === "number" &&
+    Number.isSafeInteger(verification.sizeBytes ?? verification.size) &&
+    Number(verification.sizeBytes ?? verification.size) > 0
+      ? Number(verification.sizeBytes ?? verification.size)
+      : undefined
+  const artifact =
+    artifactRef && mimeType && sizeBytes !== undefined
+      ? { artifactRef, mimeType, sizeBytes }
+      : undefined
+  const artifactDetails =
+    artifact && details.kind === "artifact_delivery"
+      ? {
+          kind: "artifact_delivery",
+          channel: details.channel,
+          source: details.source,
+          artifactRef: artifact.artifactRef,
+          mimeType: artifact.mimeType,
+          size: artifact.sizeBytes,
+        }
+      : artifact
+        ? {
+            kind: "camera_artifact",
+            ...artifact,
+          }
+        : undefined
+  return {
+    ...result,
+    output: artifact
+      ? "카메라 촬영 결과가 검증된 artifact로 저장되었습니다."
+      : "카메라 촬영 작업이 검증되었습니다.",
+    details: artifactDetails,
   }
 }
 
@@ -1542,23 +1706,24 @@ function buildToolResultContent(
   result: ToolResult,
   provenance: { sourceRef: string; ownerScope: UntrustedEvidenceOwnerScope },
 ): string {
+  const projectedResult = projectToolResultForExternalBoundary(toolName, result)
   const sections: string[] = []
-  const output = result.output.trim()
+  const output = projectedResult.output.trim()
   sections.push(output || agentRuntimePromptContextLabel("no_output"))
 
-  if (!result.success) {
+  if (!projectedResult.success) {
     sections.push(
       [
         agentRuntimePromptContextLabel("tool_failure_header"),
         `${agentRuntimePromptContextLabel("tool_label")} ${toolName}`,
-        `${agentRuntimePromptContextLabel("error_label")} ${(result.error ?? "unknown").trim() || "unknown"}`,
+        `${agentRuntimePromptContextLabel("error_label")} ${(projectedResult.error ?? "unknown").trim() || "unknown"}`,
       ].join("\n"),
     )
   }
 
   const promptDetails = toolName.startsWith("yeonjang_")
-    ? redactYeonjangPublicDetails(result.details)
-    : result.details
+    ? redactYeonjangPublicDetails(projectedResult.details)
+    : projectedResult.details
   const details = stringifyToolDetails(promptDetails)
   if (details) {
     sections.push(`${agentRuntimePromptContextLabel("details_header")}\n${details}`)
@@ -1566,8 +1731,8 @@ function buildToolResultContent(
 
   return renderUntrustedEvidenceForPrompt(
     createUntrustedEvidenceEnvelope({
-      sourceKind: result.evidenceSource?.sourceKind ?? "tool",
-      sourceRef: result.evidenceSource?.sourceRef ?? provenance.sourceRef,
+      sourceKind: projectedResult.evidenceSource?.sourceKind ?? "tool",
+      sourceRef: projectedResult.evidenceSource?.sourceRef ?? provenance.sourceRef,
       contentLabel: `Tool result: ${toolName}`,
       ownerScope: provenance.ownerScope,
       content: sections.join("\n\n"),

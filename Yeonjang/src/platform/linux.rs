@@ -14,13 +14,54 @@ use crate::automation::{
     CommandExecutionResult, FocusedTargetResult, KeyboardActionKind, KeyboardActionRequest,
     KeyboardActionResult, KeyboardTypeRequest, KeyboardTypeResult, MouseActionKind,
     MouseActionRequest, MouseActionResult, MouseClickRequest, MouseClickResult, MouseMoveRequest,
-    MouseMoveResult, MousePositionResult, PlatformKind, ScreenCaptureRequest, ScreenCaptureResult,
-    SystemControlRequest, SystemControlResult, SystemSnapshot,
+    MouseMoveResult, MousePositionResult, PlatformKind, ScreenCaptureProcessError,
+    ScreenCaptureRequest, ScreenCaptureResult, SystemControlRequest, SystemControlResult,
+    SystemSnapshot,
 };
 use crate::platform::shared;
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct PlatformBackend;
+/// Desktop protocol observed once when the Linux adapter is composed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxDesktopSession {
+    Wayland,
+    X11,
+    Unknown,
+}
+
+/// Immutable camera/screen host facts used throughout one adapter lifetime.
+#[derive(Debug, Clone, Copy)]
+struct LinuxCaptureRuntime {
+    camera_tool: Option<&'static str>,
+    camera_device_observed: bool,
+    screen_tool: Option<&'static str>,
+}
+
+impl LinuxCaptureRuntime {
+    fn detect() -> Self {
+        let camera_tool = linux_camera_capture_tool();
+        let camera_device_observed = has_linux_camera_device();
+        let session = detect_linux_desktop_session();
+        let screen_tool = resolve_linux_screen_capture_tool(session, command_exists);
+        Self {
+            camera_tool,
+            camera_device_observed,
+            screen_tool,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PlatformBackend {
+    capture: LinuxCaptureRuntime,
+}
+
+impl Default for PlatformBackend {
+    fn default() -> Self {
+        Self {
+            capture: LinuxCaptureRuntime::detect(),
+        }
+    }
+}
 
 impl AutomationBackend for PlatformBackend {
     fn platform_kind(&self) -> PlatformKind {
@@ -30,10 +71,13 @@ impl AutomationBackend for PlatformBackend {
     fn capabilities(&self) -> AutomationCapabilities {
         AutomationCapabilities {
             platform: self.platform_kind(),
-            camera_management: has_linux_camera_capture_tool(),
+            camera_management: linux_camera_capability_ready(
+                self.capture.camera_tool,
+                self.capture.camera_device_observed,
+            ),
             command_execution: true,
             application_launch: true,
-            screen_capture: linux_screen_capture_tool().is_some(),
+            screen_capture: self.capture.screen_tool.is_some(),
             mouse_control: command_exists("xdotool"),
             keyboard_control: command_exists("xdotool"),
             system_control: linux_system_control_available(),
@@ -148,10 +192,10 @@ impl AutomationBackend for PlatformBackend {
                 .context("no Linux camera device was found; pass device_id such as /dev/video0")?,
         };
 
-        if command_exists("ffmpeg") {
-            run_program(
+        let (program, args) = match self.capture.camera_tool {
+            Some("ffmpeg") => (
                 "ffmpeg",
-                &[
+                vec![
                     "-hide_banner".to_string(),
                     "-loglevel".to_string(),
                     "error".to_string(),
@@ -164,22 +208,28 @@ impl AutomationBackend for PlatformBackend {
                     "1".to_string(),
                     output_path.clone(),
                 ],
-                "Linux camera capture via ffmpeg",
-            )?;
-        } else if command_exists("fswebcam") {
-            run_program(
+            ),
+            Some("fswebcam") => (
                 "fswebcam",
-                &[
+                vec![
                     "-q".to_string(),
                     "-d".to_string(),
                     device_id.clone(),
                     "--no-banner".to_string(),
                     output_path.clone(),
                 ],
-                "Linux camera capture via fswebcam",
-            )?;
-        } else {
-            bail!("Linux camera.capture requires ffmpeg or fswebcam in PATH");
+            ),
+            _ => bail!("Linux camera.capture requires ffmpeg or fswebcam in PATH"),
+        };
+        let mut command = Command::new(program);
+        command.args(&args);
+        if let Err(error) = shared::run_bounded_camera_command(
+            &mut command,
+            shared::camera_capture_timeout(request.capture_timeout_ms),
+            request.cancellation.as_ref(),
+        ) {
+            let _ = fs::remove_file(&output_path);
+            return Err(error);
         }
 
         let metadata = build_file_metadata(&output_path, inline_base64, "image/jpeg");
@@ -192,6 +242,7 @@ impl AutomationBackend for PlatformBackend {
 
         Ok(CameraCaptureResult {
             device_id: Some(device_id),
+            artifact_ref: None,
             output_path: if inline_base64 {
                 None
             } else {
@@ -210,16 +261,14 @@ impl AutomationBackend for PlatformBackend {
     fn capture_screen(&self, request: ScreenCaptureRequest) -> Result<ScreenCaptureResult> {
         shared::validate_screen_request(&request)?;
         if request.display.is_some() {
-            bail!(
-                "Linux screen.capture does not support display index selection yet; omit display to capture the current full screen"
-            );
+            return Err(ScreenCaptureProcessError::display_selection_unsupported().into());
         }
 
         let inline_base64 = request.inline_base64;
         let output_path = resolve_screen_output_path(request.output_path.as_deref())?;
         ensure_parent_directory(&output_path)?;
 
-        match linux_screen_capture_tool() {
+        match self.capture.screen_tool {
             Some("grim") => run_program(
                 "grim",
                 std::slice::from_ref(&output_path),
@@ -259,6 +308,7 @@ impl AutomationBackend for PlatformBackend {
 
         Ok(ScreenCaptureResult {
             display: request.display,
+            artifact_ref: None,
             output_path: if inline_base64 {
                 None
             } else {
@@ -670,12 +720,56 @@ fn first_available_command(candidates: &[&'static str]) -> Option<&'static str> 
         .find(|command| command_exists(command))
 }
 
-fn linux_screen_capture_tool() -> Option<&'static str> {
-    first_available_command(&["grim", "gnome-screenshot", "scrot", "import"])
+fn detect_linux_desktop_session() -> LinuxDesktopSession {
+    let session_type = env::var("XDG_SESSION_TYPE")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let has_wayland_display = env::var_os("WAYLAND_DISPLAY").is_some_and(|value| !value.is_empty());
+    let has_x11_display = env::var_os("DISPLAY").is_some_and(|value| !value.is_empty());
+
+    match session_type.as_str() {
+        "wayland" if has_wayland_display => LinuxDesktopSession::Wayland,
+        "x11" if has_x11_display => LinuxDesktopSession::X11,
+        _ if has_wayland_display => LinuxDesktopSession::Wayland,
+        _ if has_x11_display => LinuxDesktopSession::X11,
+        _ => LinuxDesktopSession::Unknown,
+    }
 }
 
-fn has_linux_camera_capture_tool() -> bool {
-    command_exists("ffmpeg") || command_exists("fswebcam")
+fn resolve_linux_screen_capture_tool(
+    session: LinuxDesktopSession,
+    command_available: impl Fn(&str) -> bool,
+) -> Option<&'static str> {
+    let candidates: &[&'static str] = match session {
+        LinuxDesktopSession::Wayland => &["grim", "gnome-screenshot"],
+        LinuxDesktopSession::X11 => &["gnome-screenshot", "scrot", "import"],
+        LinuxDesktopSession::Unknown => &[],
+    };
+    candidates
+        .iter()
+        .copied()
+        .find(|command| command_available(command))
+}
+
+fn linux_camera_capture_tool() -> Option<&'static str> {
+    first_available_command(&["ffmpeg", "fswebcam"])
+}
+
+fn has_linux_camera_device() -> bool {
+    fs::read_dir("/dev")
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .any(|entry| entry.file_name().to_string_lossy().starts_with("video"))
+}
+
+fn linux_camera_capability_ready(
+    capture_tool: Option<&'static str>,
+    camera_device_observed: bool,
+) -> bool {
+    capture_tool.is_some() && camera_device_observed
 }
 
 fn linux_system_control_available() -> bool {
@@ -888,10 +982,7 @@ fn resolve_output_path(output_path: Option<&str>, prefix: &str, extension: &str)
                 Ok(path.to_string())
             }
         }
-        _ => Ok(env::temp_dir()
-            .join(build_generated_capture_name(prefix, extension))
-            .display()
-            .to_string()),
+        _ => bail!("capture artifact output path is required"),
     }
 }
 
@@ -909,12 +1000,11 @@ fn should_treat_as_output_directory(path: &Path) -> bool {
 }
 
 fn ensure_parent_directory(output_path: &str) -> Result<()> {
-    if let Some(parent) = Path::new(output_path).parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create output directory: {}", parent.display())
-            })?;
-        }
+    if let Some(parent) = Path::new(output_path).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create output directory: {}", parent.display()))?;
     }
     Ok(())
 }
@@ -1069,8 +1159,7 @@ fn normalize_linux_modifiers(modifiers: &[String]) -> Result<Vec<String>> {
         let value = match modifier
             .trim()
             .to_lowercase()
-            .replace('_', "")
-            .replace('-', "")
+            .replace(['_', '-'], "")
             .as_str()
         {
             "control" | "ctrl" | "leftcontrol" | "leftctrl" | "rightcontrol" | "rightctrl" => {
@@ -1098,11 +1187,7 @@ fn resolve_linux_key_name(key: &str) -> Result<String> {
         return Ok(trimmed.to_string());
     }
 
-    let normalized = trimmed
-        .to_lowercase()
-        .replace('_', "")
-        .replace('-', "")
-        .replace(' ', "");
+    let normalized = trimmed.to_lowercase().replace(['_', '-', ' '], "");
     let key_name = match normalized.as_str() {
         "enter" | "return" => "Return",
         "tab" => "Tab",
@@ -1151,10 +1236,91 @@ fn is_function_key(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        base64_encode, build_xdotool_key_chord, linux_mouse_button_name, normalize_linux_modifiers,
-        normalize_linux_mouse_button_code, parse_v4l2_camera_devices, resolve_linux_key_name,
-        resolve_optional_mouse_point, scroll_units,
+        LinuxCaptureRuntime, LinuxDesktopSession, PlatformBackend, base64_encode,
+        build_xdotool_key_chord, linux_camera_capability_ready, linux_mouse_button_name,
+        normalize_linux_modifiers, normalize_linux_mouse_button_code, parse_v4l2_camera_devices,
+        resolve_linux_key_name, resolve_linux_screen_capture_tool, resolve_optional_mouse_point,
+        scroll_units,
     };
+    use crate::automation::{AutomationBackend, ScreenCaptureProcessError, ScreenCaptureRequest};
+
+    #[test]
+    fn camera_capability_requires_a_capture_tool_and_an_observed_device() {
+        assert!(!linux_camera_capability_ready(Some("ffmpeg"), false));
+        assert!(!linux_camera_capability_ready(None, true));
+        assert!(linux_camera_capability_ready(Some("fswebcam"), true));
+    }
+
+    #[test]
+    fn wayland_and_x11_select_only_session_compatible_screen_backends() {
+        let installed = |command: &str| matches!(command, "grim" | "scrot" | "import");
+
+        assert_eq!(
+            resolve_linux_screen_capture_tool(LinuxDesktopSession::Wayland, installed),
+            Some("grim")
+        );
+        assert_eq!(
+            resolve_linux_screen_capture_tool(LinuxDesktopSession::X11, installed),
+            Some("scrot")
+        );
+        assert_eq!(
+            resolve_linux_screen_capture_tool(LinuxDesktopSession::Unknown, installed),
+            None
+        );
+    }
+
+    #[test]
+    fn installed_but_session_incompatible_screen_tool_is_not_ready() {
+        let only_x11_tool = |command: &str| command == "scrot";
+        let only_wayland_tool = |command: &str| command == "grim";
+
+        assert_eq!(
+            resolve_linux_screen_capture_tool(LinuxDesktopSession::Wayland, only_x11_tool),
+            None
+        );
+        assert_eq!(
+            resolve_linux_screen_capture_tool(LinuxDesktopSession::X11, only_wayland_tool),
+            None
+        );
+    }
+
+    #[test]
+    fn capability_snapshot_does_not_promote_tool_only_camera_or_unknown_screen_session() {
+        let backend = PlatformBackend {
+            capture: LinuxCaptureRuntime {
+                camera_tool: Some("ffmpeg"),
+                camera_device_observed: false,
+                screen_tool: None,
+            },
+        };
+
+        let capabilities = backend.capabilities();
+        assert!(!capabilities.camera_management);
+        assert!(!capabilities.screen_capture);
+    }
+
+    #[test]
+    fn display_selection_limitation_is_typed_before_linux_screen_effect() {
+        let backend = PlatformBackend {
+            capture: LinuxCaptureRuntime {
+                camera_tool: None,
+                camera_device_observed: false,
+                screen_tool: Some("grim"),
+            },
+        };
+
+        let error = backend
+            .capture_screen(ScreenCaptureRequest {
+                display: Some(1),
+                output_path: None,
+                inline_base64: false,
+            })
+            .expect_err("display selection must fail before invoking grim");
+        let typed = error
+            .downcast_ref::<ScreenCaptureProcessError>()
+            .expect("known screen limitation");
+        assert_eq!(typed.code(), "screen_display_selection_unsupported");
+    }
 
     #[test]
     fn parses_v4l2_camera_devices() {

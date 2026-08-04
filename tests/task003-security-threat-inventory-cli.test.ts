@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { createSecurityThreatBaseline } from "../scripts/audit-security-threat-inventory.mjs"
+import { createSecurityThreatBaseline } from "../scripts/self/audit-security-threat-inventory.mjs"
 
 describe("task003 security threat inventory CLI", () => {
   it("uses an explicit repository reader and emits no raw source content", () => {

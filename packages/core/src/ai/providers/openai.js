@@ -149,14 +149,38 @@ function isOfficialOpenAIBaseUrl(baseUrl) {
         return false;
     }
 }
+const CODEX_SCHEMA_COMPOSITION_KEYS = ["anyOf", "oneOf", "allOf"];
+function schemaAllowsNull(schema) {
+    if (schema.type === "null")
+        return true;
+    if (Array.isArray(schema.type) && schema.type.includes("null"))
+        return true;
+    return ["anyOf", "oneOf"].some((keyword) => Array.isArray(schema[keyword])
+        && schema[keyword].some((branch) => branch
+            && typeof branch === "object"
+            && !Array.isArray(branch)
+            && schemaAllowsNull(branch)));
+}
 function makeSchemaNullable(schema) {
+    if (schemaAllowsNull(schema))
+        return { ...schema };
     const next = { ...schema };
     if (Array.isArray(next.type)) {
-        if (!next.type.includes("null"))
-            next.type = [...next.type, "null"];
+        next.type = [...next.type, "null"];
     }
     else if (typeof next.type === "string") {
         next.type = [next.type, "null"];
+    }
+    else if (Array.isArray(next.anyOf)) {
+        next.anyOf = [...next.anyOf, { type: "null" }];
+    }
+    else if (Array.isArray(next.oneOf)) {
+        next.oneOf = [...next.oneOf, { type: "null" }];
+    }
+    else {
+        return {
+            anyOf: [next, { type: "null" }],
+        };
     }
     if (Array.isArray(next.enum) && !next.enum.includes(null)) {
         next.enum = [...next.enum, null];
@@ -165,6 +189,14 @@ function makeSchemaNullable(schema) {
 }
 function normalizeCodexSchema(schema) {
     const normalized = { ...schema };
+    for (const keyword of CODEX_SCHEMA_COMPOSITION_KEYS) {
+        const branches = schema[keyword];
+        if (!Array.isArray(branches))
+            continue;
+        normalized[keyword] = branches.map((branch) => branch && typeof branch === "object" && !Array.isArray(branch)
+            ? normalizeCodexSchema(branch)
+            : branch);
+    }
     if (schema.type === "object" && schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)) {
         const properties = Object.entries(schema.properties).reduce((acc, [key, value]) => {
             if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -347,7 +379,7 @@ export function shouldRetryCodexOAuthWithSimplePayload(input) {
     if (input.status === 401 || input.status === 403)
         return false;
     if (input.status === 400 || input.status === 422) {
-        return !input.requiredToolChoice;
+        return true;
     }
     return isLikelyHtmlError(input.detail);
 }
@@ -358,6 +390,7 @@ export class OpenAIProvider {
     oauthConfig;
     id = "openai";
     supportedModels = Object.keys(CONTEXT_LIMITS);
+    codexOAuthPayloadMode = "rich";
     constructor(profile, baseUrl, oauthConfig) {
         this.profile = profile;
         this.baseUrl = baseUrl;
@@ -391,14 +424,33 @@ export class OpenAIProvider {
             ...(params.maxTokens !== undefined ? { max_output_tokens: params.maxTokens } : {}),
             ...(tools ? { tools, tool_choice: params.toolChoice ?? "auto" } : {}),
         };
+        const fallbackBody = {
+            ...baseBody,
+            input: [{
+                    role: "user",
+                    content: [{
+                            type: "input_text",
+                            text: buildCodexOAuthFallbackPrompt(params.messages),
+                        }],
+                }],
+            // A required tool is an execution boundary, not an optional payload
+            // enhancement. Keep it available when simplifying the conversation.
+            ...(tools && params.toolChoice === "required"
+                ? { tools, tool_choice: "required" }
+                : {}),
+        };
+        const simplifiedFirst = this.codexOAuthPayloadMode === "simplified";
         let response = await fetchCodexResponse(url, {
             method: "POST",
             headers,
-            body: JSON.stringify(primaryBody),
+            body: JSON.stringify(simplifiedFirst ? fallbackBody : primaryBody),
             ...(params.signal ? { signal: params.signal } : {}),
         }, params.signal);
         if (!response.ok) {
             const detail = (await response.text().catch(() => "")).trim();
+            if (simplifiedFirst) {
+                throw new AIProviderInvocationError(providerFailureReasonForHttpStatus(response.status));
+            }
             const shouldRetry = shouldRetryCodexOAuthWithSimplePayload({
                 status: response.status,
                 detail,
@@ -417,21 +469,10 @@ export class OpenAIProvider {
                 hasMaxOutputTokens: params.maxTokens !== undefined,
                 messageCount: params.messages.length,
             });
-            const fallbackBody = {
-                ...baseBody,
-                input: [{
-                        role: "user",
-                        content: [{
-                                type: "input_text",
-                                text: buildCodexOAuthFallbackPrompt(params.messages),
-                            }],
-                    }],
-                // A required tool is an execution boundary, not an optional payload
-                // enhancement. Keep it available when simplifying the conversation.
-                ...(tools && params.toolChoice === "required"
-                    ? { tools, tool_choice: "required" }
-                    : {}),
-            };
+            // A 400/422 contract rejection is stable for this configured provider
+            // instance. Remember the accepted payload shape so later stages do not
+            // spend their deadline probing the rejected shape again.
+            this.codexOAuthPayloadMode = "simplified";
             response = await fetchCodexResponse(url, {
                 method: "POST",
                 headers,
@@ -451,6 +492,7 @@ export class OpenAIProvider {
         let buffer = "";
         let inputTokens = 0;
         let outputTokens = 0;
+        let emittedOutputText = false;
         const functionCalls = new Map();
         const emitFrame = async (frame) => {
             const parsed = parseSseFrame(frame);
@@ -463,7 +505,16 @@ export class OpenAIProvider {
             switch (type) {
                 case "response.output_text.delta": {
                     const delta = typeof payload.delta === "string" ? payload.delta : "";
+                    if (delta)
+                        emittedOutputText = true;
                     return delta ? [{ type: "text_delta", delta }] : [];
+                }
+                case "response.output_text.done": {
+                    const text = typeof payload.text === "string" ? payload.text : "";
+                    if (!text || emittedOutputText)
+                        return [];
+                    emittedOutputText = true;
+                    return [{ type: "text_delta", delta: text }];
                 }
                 case "response.output_item.added": {
                     const item = payload.item;

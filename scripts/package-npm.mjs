@@ -117,7 +117,7 @@ function copyMetaPackage(outputDir, version) {
 function main() {
   const options = parseArgs(process.argv.slice(2))
   const version = packageVersion(options.version)
-  execFileSync(process.execPath, ["scripts/build-gateway-startup-bundle.mjs"], {
+  execFileSync(process.execPath, ["scripts/self/build-gateway-startup-bundle.mjs"], {
     cwd: rootDir,
     stdio: "pipe",
   })

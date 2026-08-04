@@ -25,6 +25,26 @@ export async function observeGatewayStartupEvidence(input) {
             reasonCode: "process_exited",
         };
     }
+    if (process.state === "unknown") {
+        if (evidenceMatches
+            && (evidence.state === "failed" || evidence.state === "cancelled")) {
+            const terminalObservation = observeGatewayStartup({
+                snapshot: evidence,
+                processState: "running",
+                observedAt: input.observedAt,
+                performanceBudgetMs: input.performanceBudgetMs,
+            });
+            return terminalObservation.status === "still_starting"
+                ? { ...terminalObservation, state: evidence.state }
+                : terminalObservation;
+        }
+        return {
+            status: "still_starting",
+            state: evidenceMatches ? "verifying_process" : "awaiting_evidence",
+            elapsedMs: observationElapsedMs,
+            performance: performance(observationElapsedMs, input.performanceBudgetMs),
+        };
+    }
     if (!evidenceMatches) {
         return {
             status: "still_starting",

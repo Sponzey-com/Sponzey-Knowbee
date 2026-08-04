@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 
 describe("task101 artifact cleanup destructive fixture smoke", () => {
   it("keeps destructive cleanup smoke isolated behind an explicit fixture flag", () => {
-    const script = readFileSync("scripts/smoke-artifact-cleanup-cli.mjs", "utf8")
+    const script = readFileSync("scripts/self/smoke-artifact-cleanup-cli.mjs", "utf8")
     const readme = readFileSync("README.md", "utf8")
     const readmeKo = readFileSync("README.ko.md", "utf8")
 
@@ -19,9 +19,9 @@ describe("task101 artifact cleanup destructive fixture smoke", () => {
     expect(script).toContain("audit_logs")
     expect(script).toContain("[explicit-release-output]")
 
-    expect(readme).toContain("node scripts/smoke-artifact-cleanup-cli.mjs --destructive-fixture")
+    expect(readme).toContain("node scripts/self/smoke-artifact-cleanup-cli.mjs --destructive-fixture")
     expect(readme).toContain("The destructive fixture smoke uses only a temporary release output directory.")
-    expect(readmeKo).toContain("node scripts/smoke-artifact-cleanup-cli.mjs --destructive-fixture")
+    expect(readmeKo).toContain("node scripts/self/smoke-artifact-cleanup-cli.mjs --destructive-fixture")
     expect(readmeKo).toContain("destructive fixture smoke는 임시 릴리스 출력 폴더만 사용합니다.")
   })
 })

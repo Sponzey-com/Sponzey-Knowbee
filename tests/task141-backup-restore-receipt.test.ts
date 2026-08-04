@@ -253,7 +253,7 @@ describe("task141 backup restore receipt", () => {
     const command = spawnSync(
       process.execPath,
       [
-        "scripts/audit-backup-restore-rehearsal.mjs",
+        "scripts/self/audit-backup-restore-rehearsal.mjs",
         "--manifest",
         join(snapshotDir, "manifest.json"),
         "--json",

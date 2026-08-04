@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { formatReleaseDryRunSummary } from "../scripts/run-release-dry-run-rehearsal.mjs"
-import { buildNpmCleanInstallEnvironment } from "../scripts/smoke-npm-install.mjs"
+import { formatReleaseDryRunSummary } from "../scripts/self/run-release-dry-run-rehearsal.mjs"
+import { buildNpmCleanInstallEnvironment } from "../scripts/self/smoke-npm-install.mjs"
 
 const tempDirs: string[] = []
 
@@ -28,7 +28,7 @@ function runWrapper(arguments_: string[]) {
   const command = spawnSync(
     process.execPath,
     [
-      "scripts/run-release-dry-run-rehearsal.mjs",
+      "scripts/self/run-release-dry-run-rehearsal.mjs",
       "--json",
       "--no-copy",
       "--output-dir",
@@ -117,7 +117,7 @@ describe("task188 trusted release operational composition", () => {
     }
 
     expect(packageManifest.scripts?.["release:dry-run"]).toBe(
-      "node scripts/run-release-dry-run-rehearsal.mjs",
+      "node scripts/self/run-release-dry-run-rehearsal.mjs",
     )
   })
 

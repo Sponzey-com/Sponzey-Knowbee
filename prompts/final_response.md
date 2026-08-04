@@ -19,6 +19,7 @@ Own the final user-facing natural-language answer.
 - Follow `prompt_visibility.md` for raw system prompt source disclosure and redaction boundaries.
 - Follow `output_policy.md` for internal IDs, private memory, secrets, hidden trace payloads, and raw error presentation.
 - Consume sufficiency, failure, recovery, and next-action decisions only from the reviewed facts produced under `result_review.md`.
+- When typed failure evidence is supplied, acknowledge its fields exactly in the required structured envelope. Never reinterpret an intake or provider failure as a device, tool, OS permission, execution, or delivery failure.
 
 ## Rewrite Contract
 

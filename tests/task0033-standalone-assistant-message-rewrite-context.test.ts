@@ -46,14 +46,15 @@ describe("task0033 standalone assistant message rewrite context", () => {
       dependencies,
     })
 
-    expect(renderFinalResponseText).toHaveBeenCalledWith({
+    expect(renderFinalResponseText).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "run-standalone-rewrite",
       originalRequest: "왜 안돼?",
       rawText: "설정에서 다시 확인해 주세요.",
       textSource: "runtime_deterministic",
       model: "gpt-test",
       providerId: "openai",
       workDir: "/tmp/project",
-    })
+    }))
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith(
       "run-standalone-rewrite",
       "user_facing_standalone_rewritten:llm",
@@ -113,14 +114,15 @@ describe("task0033 standalone assistant message rewrite context", () => {
       dependencies,
     })
 
-    expect(renderFinalResponseText).toHaveBeenCalledWith({
+    expect(renderFinalResponseText).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "run-standalone-llm",
       originalRequest: "상태 알려줘",
       rawText: "이미 정리된 안내입니다.",
       textSource: "llm_generated",
       model: "gpt-test",
       providerId: "openai",
       workDir: "/tmp/project",
-    })
+    }))
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith(
       "run-standalone-llm",
       "user_facing_standalone_rewritten:llm",

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   validateBrowserObservation,
-} from "../scripts/verify-conversation-webui.mjs"
+} from "../scripts/self/verify-conversation-webui.mjs"
 
 const observation = {
   schemaVersion: 1,

@@ -12,10 +12,11 @@ describe("task1075 scheduler contract executor config snapshot", () => {
 
     expect(legacyConfigAccesses(source)).toEqual([])
     expect(interfacePropertyTypes(source, "ExecuteScheduleContractInput").config).toBe("KnowbeeConfig")
-    for (const functionName of ["deliverText", "executeToolTask", "executeAgentTask", "executeArtifactDelivery"]) {
+    for (const functionName of ["deliverText", "executeArtifactDelivery"]) {
       const calls = callObjectPropertyInitializers(source, functionName)
       expect(calls.length).toBeGreaterThan(0)
       expect(calls.every((properties) => properties.config != null)).toBe(true)
     }
+    expect(callObjectPropertyInitializers(source, "start").some((properties) => properties.config === "params.config")).toBe(true)
   })
 })

@@ -107,6 +107,7 @@ function handoff(): WorkHandoffPackage {
     quality_criteria: ["The result has evidence."],
     validation_method: "Check repository evidence.",
     retry_limit: 2,
+    stop_condition: "Stop after recovery options are exhausted.",
     failure_recovery_policy: "Retry with a changed tool.",
     deadline_or_budget: "One review cycle.",
     memory_visibility: "explicit_handoff_only",

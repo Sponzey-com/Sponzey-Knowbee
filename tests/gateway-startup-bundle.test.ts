@@ -5,8 +5,9 @@ import { pathToFileURL } from "node:url"
 import { describe, expect, it } from "vitest"
 
 interface StartupBundleManifest {
-  schemaVersion: 1
+  schemaVersion: 2
   entryPoint: string
+  entryPointSha256: string
   artifact: string
   sourceMap: string
   metafile: string
@@ -14,6 +15,7 @@ interface StartupBundleManifest {
   repositoryOwnedJavaScriptFileCount: number
   bundleBytes: number
   bundleSha256: string
+  bundledInputsSha256: string
   externalPackages: string[]
   bundledInputs: string[]
   preservedImportMetaUrlInputs: string[]
@@ -27,8 +29,19 @@ function sha256(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex")
 }
 
+function sha256FileSet(paths: readonly string[]): string {
+  const hash = createHash("sha256")
+  for (const path of [...paths].sort()) {
+    hash.update(path)
+    hash.update("\0")
+    hash.update(readFileSync(path))
+    hash.update("\0")
+  }
+  return hash.digest("hex")
+}
+
 function buildStartupBundle(): StartupBundleManifest {
-  execFileSync("node", ["scripts/build-gateway-startup-bundle.mjs"], {
+  execFileSync("node", ["scripts/self/build-gateway-startup-bundle.mjs"], {
     cwd: process.cwd(),
     stdio: "pipe",
   })
@@ -70,7 +83,7 @@ describe("Gateway startup bundle", () => {
     }>("package.json")
     expect(pkg.devDependencies?.esbuild).toMatch(/^\d+\.\d+\.\d+$/)
     expect(pkg.scripts?.["gateway:bundle"]).toBe(
-      "node scripts/build-gateway-startup-bundle.mjs",
+      "node scripts/self/build-gateway-startup-bundle.mjs",
     )
 
     const first = buildStartupBundle()
@@ -85,8 +98,12 @@ describe("Gateway startup bundle", () => {
   it("meets the repository-owned file and bundle size budgets", () => {
     const manifest = buildStartupBundle()
 
-    expect(manifest.schemaVersion).toBe(1)
+    expect(manifest.schemaVersion).toBe(2)
     expect(manifest.entryPoint).toBe("packages/cli/dist/serve-entry.js")
+    expect(manifest.entryPointSha256).toBe(sha256(manifest.entryPoint))
+    expect(manifest.bundledInputsSha256).toBe(
+      sha256FileSet(manifest.bundledInputs),
+    )
     expect(manifest.repositoryOwnedJavaScriptFileCount).toBe(
       manifest.repositoryOwnedJavaScriptFiles.length,
     )

@@ -1,17 +1,37 @@
 use std::env;
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::thread::sleep;
+use std::sync::atomic::Ordering;
+use std::thread::{self, sleep};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use sha2::{Digest, Sha256};
 
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
+use crate::automation::CameraCaptureProcessError;
 use crate::automation::{
-    ApplicationLaunchRequest, CameraCaptureRequest, CommandExecutionRequest,
-    CommandExecutionResult, FocusedTargetResult, MouseClickRequest, MouseMoveRequest, PlatformKind,
-    ScreenCaptureRequest, SystemSnapshot,
+    ApplicationLaunchRequest, CameraCaptureRequest, CommandExecutionProcessError,
+    CommandExecutionRequest, CommandExecutionResult, FocusedTargetResult, MouseClickRequest,
+    MouseMoveRequest, PlatformKind, ScreenCaptureRequest, SystemSnapshot,
 };
+
+const MAX_COMMAND_OUTPUT_BYTES: usize = 1024 * 1024;
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
+const DEFAULT_CAMERA_CAPTURE_TIMEOUT_MS: u64 = 60_000;
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
+const MIN_CAMERA_CAPTURE_TIMEOUT_MS: u64 = 1_000;
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
+const MAX_CAMERA_CAPTURE_TIMEOUT_MS: u64 = 60_000;
+
+/// Sanitized successful output from one owned camera helper process.
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
+#[derive(Debug)]
+pub(crate) struct BoundedCameraCommandOutput {
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    pub(crate) stdout: String,
+}
 
 pub fn collect_system_info(platform: PlatformKind) -> SystemSnapshot {
     let current_dir = env::current_dir()
@@ -69,16 +89,8 @@ pub fn focused_target_result(
 }
 
 pub fn execute_command(request: CommandExecutionRequest) -> Result<CommandExecutionResult> {
-    if request.command.trim().is_empty() {
-        bail!("command must not be empty");
-    }
-
-    if request.shell && !request.args.is_empty() {
-        bail!("shell execution does not support a separate args array");
-    }
-
-    if let Some(reason) = detect_command_policy_violation(&request) {
-        bail!("command rejected: {reason}");
+    if request.cancellation.load(Ordering::SeqCst) {
+        return Err(CommandExecutionProcessError::Cancelled.into());
     }
 
     let mut command = if request.shell {
@@ -105,92 +117,214 @@ pub fn execute_command(request: CommandExecutionRequest) -> Result<CommandExecut
         command.envs(&request.env);
     }
 
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_command_process_group(&mut command);
 
     let mut child = command
         .spawn()
         .with_context(|| format!("failed to execute command `{}`", request.command))?;
-
-    let output = if let Some(timeout_sec) = request.timeout_sec.filter(|value| *value > 0) {
-        let timeout = Duration::from_secs(timeout_sec);
-        let start = Instant::now();
-        loop {
-            if child.try_wait()?.is_some() {
-                break child.wait_with_output().with_context(|| {
-                    format!("failed to collect command output for `{}`", request.command)
-                })?;
-            }
-
-            if start.elapsed() >= timeout {
-                let _ = child.kill();
-                let partial = child.wait_with_output().ok();
-                let stdout = partial
-                    .as_ref()
-                    .map(|value| String::from_utf8_lossy(&value.stdout).into_owned())
-                    .unwrap_or_default();
-                let partial_stderr = partial
-                    .as_ref()
-                    .map(|value| String::from_utf8_lossy(&value.stderr).into_owned())
-                    .unwrap_or_default();
-                let timeout_message = format!("command timed out after {timeout_sec}s");
-                let stderr = if partial_stderr.trim().is_empty() {
-                    timeout_message
-                } else {
-                    format!("{partial_stderr}\n{timeout_message}")
-                };
-
-                return Ok(CommandExecutionResult {
-                    success: false,
-                    exit_code: None,
-                    stdout,
-                    stderr,
-                });
-            }
-
-            sleep(Duration::from_millis(50));
+    let stdout_reader = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("command stdout pipe is unavailable"))?;
+    let stderr_reader = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("command stderr pipe is unavailable"))?;
+    let stdout_task = thread::spawn(move || read_bounded_output(stdout_reader));
+    let stderr_task = thread::spawn(move || read_bounded_output(stderr_reader));
+    let started_at = Instant::now();
+    let timeout = request.timeout_sec.map(Duration::from_secs);
+    let mut timed_out = false;
+    let mut cancelled = false;
+    let status = loop {
+        if request.cancellation.load(Ordering::SeqCst) {
+            cancelled = true;
+            terminate_command_process_tree(&mut child);
+        } else if timeout.is_some_and(|timeout| started_at.elapsed() >= timeout) {
+            timed_out = true;
+            terminate_command_process_tree(&mut child);
         }
-    } else {
-        child.wait_with_output().with_context(|| {
-            format!("failed to collect command output for `{}`", request.command)
-        })?
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        sleep(Duration::from_millis(20));
     };
+    let (stdout, stdout_truncated) = stdout_task
+        .join()
+        .map_err(|_| anyhow!("command stdout reader failed"))??;
+    let (mut stderr, stderr_truncated) = stderr_task
+        .join()
+        .map_err(|_| anyhow!("command stderr reader failed"))??;
+    if cancelled {
+        return Err(CommandExecutionProcessError::Cancelled.into());
+    }
+    if timed_out {
+        let timeout_message = format!(
+            "command timed out after {}s",
+            request.timeout_sec.unwrap_or_default()
+        );
+        if !stderr.is_empty() {
+            stderr.push('\n');
+        }
+        stderr.push_str(&timeout_message);
+    }
 
     Ok(CommandExecutionResult {
-        success: output.status.success(),
-        exit_code: output.status.code(),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        success: !timed_out && status.success(),
+        exit_code: (!timed_out).then(|| status.code()).flatten(),
+        stdout,
+        stderr,
+        stdout_truncated,
+        stderr_truncated,
     })
 }
 
-fn detect_command_policy_violation(request: &CommandExecutionRequest) -> Option<&'static str> {
-    let mut joined = request.command.to_lowercase();
-    if !request.args.is_empty() {
-        joined.push(' ');
-        joined.push_str(&request.args.join(" ").to_lowercase());
+/// Runs one camera helper with bounded output, cancellation, timeout, and child reaping.
+///
+/// Native stdout/stderr never crosses this Platform boundary on failure.
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
+pub(crate) fn run_bounded_camera_command(
+    command: &mut Command,
+    timeout: Duration,
+    cancellation: &std::sync::atomic::AtomicBool,
+) -> Result<BoundedCameraCommandOutput> {
+    if cancellation.load(Ordering::SeqCst) {
+        return Err(CameraCaptureProcessError::cancelled().into());
     }
 
-    if joined.contains("eval(") {
-        return Some("Potentially obfuscated command detected (pattern: eval()");
-    }
-    if joined.contains("exec(") {
-        return Some("Potentially obfuscated command detected (pattern: exec()");
-    }
-    if joined.contains("base64 -d") || joined.contains("base64 --decode") {
-        return Some("Potentially obfuscated command detected (pattern: base64 -d)");
-    }
-    if (joined.contains("python -c")
-        || joined.contains("python2 -c")
-        || joined.contains("python3 -c"))
-        && joined.contains("base64")
-    {
-        return Some("Potentially obfuscated command detected (pattern: python -c ... base64)");
-    }
-    if joined.contains("$(echo ") && joined.contains("|") {
-        return Some("Potentially obfuscated command detected (pattern: $(echo ... | ...))");
-    }
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    configure_command_process_group(command);
+    let mut child = command
+        .spawn()
+        .map_err(|_| CameraCaptureProcessError::helper_spawn_failed())?;
+    let Some(stdout_reader) = child.stdout.take() else {
+        terminate_command_process_tree(&mut child);
+        let _ = child.wait();
+        return Err(CameraCaptureProcessError::helper_protocol_invalid().into());
+    };
+    let Some(stderr_reader) = child.stderr.take() else {
+        terminate_command_process_tree(&mut child);
+        let _ = child.wait();
+        return Err(CameraCaptureProcessError::helper_protocol_invalid().into());
+    };
+    let stdout_task = thread::spawn(move || read_bounded_output(stdout_reader));
+    let stderr_task = thread::spawn(move || read_bounded_output(stderr_reader));
+    let started_at = Instant::now();
+    let mut timed_out = false;
+    let mut cancelled = false;
 
-    None
+    let status = loop {
+        if cancellation.load(Ordering::SeqCst) {
+            cancelled = true;
+            terminate_command_process_tree(&mut child);
+        } else if started_at.elapsed() >= timeout {
+            timed_out = true;
+            terminate_command_process_tree(&mut child);
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => sleep(Duration::from_millis(20)),
+            Err(_) => {
+                terminate_command_process_tree(&mut child);
+                let _ = child.wait();
+                let _ = stdout_task.join();
+                let _ = stderr_task.join();
+                return Err(CameraCaptureProcessError::helper_protocol_invalid().into());
+            }
+        }
+    };
+
+    let stdout = join_camera_output(stdout_task)?;
+    let _stderr = join_camera_output(stderr_task)?;
+    if cancelled {
+        return Err(CameraCaptureProcessError::cancelled().into());
+    }
+    if timed_out {
+        return Err(CameraCaptureProcessError::timed_out().into());
+    }
+    if !status.success() {
+        return Err(CameraCaptureProcessError::helper_exited().into());
+    }
+    if stdout.1 {
+        return Err(CameraCaptureProcessError::helper_protocol_invalid().into());
+    }
+    Ok(BoundedCameraCommandOutput { stdout: stdout.0 })
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
+pub(crate) fn camera_capture_timeout(requested_ms: Option<u64>) -> Duration {
+    Duration::from_millis(
+        requested_ms
+            .unwrap_or(DEFAULT_CAMERA_CAPTURE_TIMEOUT_MS)
+            .clamp(MIN_CAMERA_CAPTURE_TIMEOUT_MS, MAX_CAMERA_CAPTURE_TIMEOUT_MS),
+    )
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
+fn join_camera_output(
+    task: thread::JoinHandle<std::io::Result<(String, bool)>>,
+) -> Result<(String, bool)> {
+    task.join()
+        .ok()
+        .and_then(Result::ok)
+        .ok_or_else(|| CameraCaptureProcessError::helper_protocol_invalid().into())
+}
+
+fn read_bounded_output(mut reader: impl Read) -> std::io::Result<(String, bool)> {
+    let mut kept = Vec::new();
+    let mut buffer = [0u8; 8192];
+    let mut truncated = false;
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let remaining = MAX_COMMAND_OUTPUT_BYTES.saturating_sub(kept.len());
+        let copied = remaining.min(read);
+        kept.extend_from_slice(&buffer[..copied]);
+        truncated |= copied < read;
+    }
+    Ok((String::from_utf8_lossy(&kept).into_owned(), truncated))
+}
+
+#[cfg(unix)]
+fn configure_command_process_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_command_process_group(_command: &mut Command) {}
+
+#[cfg(unix)]
+fn terminate_command_process_tree(child: &mut std::process::Child) {
+    if let Ok(process_group) = i32::try_from(child.id()) {
+        // SAFETY: the child is created in a new process group whose ID is its PID.
+        unsafe {
+            libc::kill(-process_group, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+}
+
+#[cfg(windows)]
+fn terminate_command_process_tree(child: &mut std::process::Child) {
+    let _ = Command::new("taskkill")
+        .args(["/PID", &child.id().to_string(), "/T", "/F"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = child.kill();
+}
+
+#[cfg(not(any(unix, windows)))]
+fn terminate_command_process_tree(child: &mut std::process::Child) {
+    let _ = child.kill();
 }
 
 #[allow(dead_code)]
@@ -216,19 +350,19 @@ pub fn validate_mouse_click(request: &MouseClickRequest) -> Result<()> {
 }
 
 pub fn validate_camera_request(request: &CameraCaptureRequest) -> Result<()> {
-    if let Some(path) = &request.output_path {
-        if path.trim().is_empty() {
-            bail!("output_path must not be empty");
-        }
+    if let Some(path) = &request.output_path
+        && path.trim().is_empty()
+    {
+        bail!("output_path must not be empty");
     }
     Ok(())
 }
 
 pub fn validate_screen_request(request: &ScreenCaptureRequest) -> Result<()> {
-    if let Some(path) = &request.output_path {
-        if path.trim().is_empty() {
-            bail!("output_path must not be empty");
-        }
+    if let Some(path) = &request.output_path
+        && path.trim().is_empty()
+    {
+        bail!("output_path must not be empty");
     }
     Ok(())
 }
@@ -242,39 +376,184 @@ pub fn validate_application_request(request: &ApplicationLaunchRequest) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::io::Cursor;
+    #[cfg(unix)]
+    use std::sync::{Arc, atomic::AtomicBool};
 
-    use super::detect_command_policy_violation;
-    use crate::automation::CommandExecutionRequest;
+    use super::*;
 
-    fn request(command: &str, args: &[&str], shell: bool) -> CommandExecutionRequest {
-        CommandExecutionRequest {
-            command: command.to_string(),
-            args: args.iter().map(|value| value.to_string()).collect(),
+    #[test]
+    fn command_output_reader_drains_but_retains_only_the_bounded_prefix() {
+        let bytes = vec![b'x'; MAX_COMMAND_OUTPUT_BYTES + 37];
+
+        let (output, truncated) = read_bounded_output(Cursor::new(bytes)).expect("bounded output");
+
+        assert_eq!(output.len(), MAX_COMMAND_OUTPUT_BYTES);
+        assert!(truncated);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pre_cancelled_command_never_spawns_the_process() {
+        let marker =
+            std::env::temp_dir().join(format!("knowbee-command-cancelled-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let cancellation = Arc::new(AtomicBool::new(true));
+        let error = execute_command(CommandExecutionRequest {
+            command: "/usr/bin/touch".to_string(),
+            args: vec![marker.display().to_string()],
             cwd: None,
-            shell,
-            env: BTreeMap::new(),
-            timeout_sec: None,
-        }
+            shell: false,
+            env: Default::default(),
+            timeout_sec: Some(5),
+            cancellation,
+        })
+        .expect_err("pre-cancelled command");
+
+        assert_eq!(
+            error
+                .downcast_ref::<CommandExecutionProcessError>()
+                .copied(),
+            Some(CommandExecutionProcessError::Cancelled)
+        );
+        assert!(!marker.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn active_shell_cancellation_terminates_its_process_group_and_returns_typed_error() {
+        let marker = std::env::temp_dir().join(format!(
+            "knowbee-command-active-cancelled-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let task_cancellation = Arc::clone(&cancellation);
+        let marker_argument = marker.display().to_string();
+        let started_at = Instant::now();
+        let task = thread::spawn(move || {
+            execute_command(CommandExecutionRequest {
+                command: format!("sleep 5; /usr/bin/touch '{marker_argument}'"),
+                args: Vec::new(),
+                cwd: None,
+                shell: true,
+                env: Default::default(),
+                timeout_sec: Some(10),
+                cancellation: task_cancellation,
+            })
+        });
+        sleep(Duration::from_millis(100));
+        cancellation.store(true, Ordering::SeqCst);
+
+        let error = task
+            .join()
+            .expect("command worker")
+            .expect_err("active command cancellation");
+
+        assert_eq!(
+            error
+                .downcast_ref::<CommandExecutionProcessError>()
+                .copied(),
+            Some(CommandExecutionProcessError::Cancelled)
+        );
+        assert!(started_at.elapsed() < Duration::from_secs(2));
+        sleep(Duration::from_millis(100));
+        assert!(!marker.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_camera_process_times_out_and_reaps_the_process_group() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 5"]);
+        let cancellation = AtomicBool::new(false);
+        let started_at = Instant::now();
+
+        let error =
+            run_bounded_camera_command(&mut command, Duration::from_millis(50), &cancellation)
+                .expect_err("camera process timeout");
+
+        assert_eq!(
+            error
+                .downcast_ref::<crate::automation::CameraCaptureProcessError>()
+                .map(crate::automation::CameraCaptureProcessError::failure),
+            Some(crate::automation::CameraCaptureFailure::HelperTimeout)
+        );
+        assert!(started_at.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_camera_process_returns_typed_non_zero_exit_without_raw_output() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "echo private-camera-detail >&2; exit 7"]);
+        let cancellation = AtomicBool::new(false);
+
+        let error = run_bounded_camera_command(&mut command, Duration::from_secs(1), &cancellation)
+            .expect_err("camera process non-zero exit");
+
+        assert_eq!(
+            error
+                .downcast_ref::<crate::automation::CameraCaptureProcessError>()
+                .map(crate::automation::CameraCaptureProcessError::failure),
+            Some(crate::automation::CameraCaptureFailure::HelperExited)
+        );
+        assert!(!error.to_string().contains("private-camera-detail"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_camera_process_cancellation_reaps_descendants_before_returning() {
+        let marker = std::env::temp_dir().join(format!(
+            "knowbee-camera-active-cancelled-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let task_cancellation = Arc::clone(&cancellation);
+        let marker_argument = marker.display().to_string();
+        let task = thread::spawn(move || {
+            let mut command = Command::new("sh");
+            command.args([
+                "-c",
+                &format!("sleep 5; /usr/bin/touch '{marker_argument}'"),
+            ]);
+            run_bounded_camera_command(
+                &mut command,
+                Duration::from_secs(10),
+                task_cancellation.as_ref(),
+            )
+        });
+        sleep(Duration::from_millis(100));
+        cancellation.store(true, Ordering::SeqCst);
+
+        let error = task
+            .join()
+            .expect("camera worker")
+            .expect_err("active camera cancellation");
+        assert_eq!(
+            error
+                .downcast_ref::<crate::automation::CameraCaptureProcessError>()
+                .map(crate::automation::CameraCaptureProcessError::failure),
+            Some(crate::automation::CameraCaptureFailure::Cancelled)
+        );
+        sleep(Duration::from_millis(100));
+        assert!(!marker.exists());
     }
 
     #[test]
-    fn rejects_eval_obfuscation() {
-        let violation =
-            detect_command_policy_violation(&request("python -c \"eval(1)\"", &[], true));
-        assert!(violation.is_some());
-    }
-
-    #[test]
-    fn rejects_base64_decode_pattern() {
-        let violation =
-            detect_command_policy_violation(&request("sh", &["-lc", "echo x | base64 -d"], false));
-        assert!(violation.is_some());
-    }
-
-    #[test]
-    fn allows_simple_command() {
-        let violation = detect_command_policy_violation(&request("pwd", &[], true));
-        assert!(violation.is_none());
+    fn camera_timeout_budget_has_stable_default_and_bounds() {
+        assert_eq!(
+            camera_capture_timeout(None),
+            Duration::from_millis(DEFAULT_CAMERA_CAPTURE_TIMEOUT_MS)
+        );
+        assert_eq!(
+            camera_capture_timeout(Some(1)),
+            Duration::from_millis(MIN_CAMERA_CAPTURE_TIMEOUT_MS)
+        );
+        assert_eq!(
+            camera_capture_timeout(Some(90_000)),
+            Duration::from_millis(MAX_CAMERA_CAPTURE_TIMEOUT_MS)
+        );
     }
 }

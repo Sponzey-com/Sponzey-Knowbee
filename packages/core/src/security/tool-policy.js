@@ -30,7 +30,7 @@ export function evaluateAndRecordToolPolicy(input) {
 }
 export function evaluateToolPolicy(input) {
     const sourceTrust = sourceToTrustTag(input.ctx.source);
-    const paramsHash = hashApprovalParams(input.params);
+    const paramsHash = hashApprovalParams(input.authorizationParams ?? input.params);
     const createdAt = Date.now();
     const base = {
         id: crypto.randomUUID(),

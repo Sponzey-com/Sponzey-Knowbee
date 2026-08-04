@@ -235,7 +235,7 @@ describe("task225 release active tab info audit artifact verifier", () => {
       const success = spawnSync(
         process.execPath,
         [
-          resolve("scripts/verify-active-tab-info-audit-artifact.mjs"),
+          resolve("scripts/self/verify-active-tab-info-audit-artifact.mjs"),
           "--manifest",
           result.manifestPath,
           "--payload",
@@ -246,7 +246,7 @@ describe("task225 release active tab info audit artifact verifier", () => {
       const rejected = spawnSync(
         process.execPath,
         [
-          resolve("scripts/verify-active-tab-info-audit-artifact.mjs"),
+          resolve("scripts/self/verify-active-tab-info-audit-artifact.mjs"),
           "--manifest",
           rawManifestPath,
           "--payload",
@@ -274,7 +274,7 @@ describe("task225 release active tab info audit artifact verifier", () => {
 
       const packageJson = require("../package.json") as { scripts?: Record<string, string> }
       expect(packageJson.scripts?.["release:verify-active-tab-info-audit"]).toBe(
-        "node scripts/verify-active-tab-info-audit-artifact.mjs",
+        "node scripts/self/verify-active-tab-info-audit-artifact.mjs",
       )
     } finally {
       rmSync(outputDir, { recursive: true, force: true })

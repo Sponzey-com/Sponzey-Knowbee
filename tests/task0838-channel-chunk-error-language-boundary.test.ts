@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import { buildChannelChunkErrorNotice } from "../packages/core/src/channels/chunk-error-notice.ts"
 import { createTelegramChunkDeliveryHandler } from "../packages/core/src/channels/telegram/chunk-delivery.ts"
 import { DEFAULT_CONFIG } from "../packages/core/src/config/types.js"
+import { buildReviewedFinalResponse } from "./fixtures/final-response-review.ts"
 
 describe("task0838 channel chunk error language boundary", () => {
   it("builds Korean chunk error notices as non-final control notices", () => {
@@ -42,12 +43,10 @@ describe("task0838 channel chunk error language boundary", () => {
       logError: vi.fn(),
       noticeRendering: {
         config: DEFAULT_CONFIG,
-        renderFinalResponseText: vi.fn(async (input) => ({
-          text: `렌더링됨: ${input.rawText}`,
-          textSource: "llm_reviewed" as const,
-          promptSourceId: "final_response" as const,
-          rawTextSource: input.textSource,
-        })),
+        renderFinalResponseText: vi.fn(async (input) => buildReviewedFinalResponse(
+          input,
+          `렌더링됨: ${input.rawText}`,
+        )),
         getDefaultModel: () => "gpt-test",
         workDir: "/tmp",
       },

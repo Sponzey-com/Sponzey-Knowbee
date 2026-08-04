@@ -269,6 +269,21 @@ node packages/knowbee/bin/knowbee.js serve
 
 일반적인 로컬 개발과 설정에서는 WebUI와 서비스 수명주기를 같이 관리하는 `bash scripts/knowbee-start.sh` 사용을 권장합니다.
 
+### 제한 시간 Field Debug
+
+MQTT 요청 경로를 현장 진단할 때만 Gateway를 재시작하며 다음 두 환경 변수를 함께 설정할 수 있습니다.
+`KNOWBEE_FIELD_DEBUG_UNTIL`은 Unix epoch milliseconds의 미래 시각이어야 하며, 시간이 지나면
+Field Debug 출력은 자동으로 멈춥니다. 기본 Product Log는 계속 유지됩니다.
+
+```bash
+KNOWBEE_LOG_PURPOSE=debug \
+KNOWBEE_FIELD_DEBUG_UNTIL="$(node -e 'console.log(Date.now() + 15 * 60 * 1000)')" \
+bash scripts/knowbee-start.sh --restart
+```
+
+이 진단 로그는 MQTT terminal waiter의 category, bounded count, latency와 해시된 상관 식별자만
+기록합니다. raw MQTT payload, topic, 이미지, 파일 경로, 비밀값은 기록하지 않습니다.
+
 ### 결과물 정리
 
 오래된 진단 내보내기, 외부 서명 요청, 명시한 릴리스 출력 폴더를 확인하거나 정리할 때 admin cleanup 명령을 사용합니다.
@@ -313,13 +328,13 @@ knowbee admin artifact-cleanup --audit --json
 
 ```bash
 pnpm run smoke:artifact-cleanup-cli
-node scripts/smoke-artifact-cleanup-cli.mjs
+node scripts/self/smoke-artifact-cleanup-cli.mjs
 ```
 
 삭제 성공 경로까지 확인하려면 격리된 fixture smoke를 실행합니다.
 
 ```bash
-node scripts/smoke-artifact-cleanup-cli.mjs --destructive-fixture
+node scripts/self/smoke-artifact-cleanup-cli.mjs --destructive-fixture
 ```
 
 destructive fixture smoke는 임시 릴리스 출력 폴더만 사용합니다. 실제 릴리스 출력 폴더나 사용자 state를 대상으로 삼으면 안 됩니다.
@@ -339,6 +354,17 @@ macOS에서 정리 후 재시작할 때:
 ```bash
 bash scripts/start-yeonjang-macos.sh --restart
 ```
+
+일반 시작과 재시작은 검증된 기존 앱 번들을 재사용해 macOS 코드 identity와 카메라
+권한을 유지합니다. Yeonjang 소스나 패키징을 변경한 뒤에는 빌드를 명시합니다.
+
+```bash
+bash scripts/start-yeonjang-macos.sh --restart --build
+```
+
+빌드는 기본적으로 ad-hoc 서명을 사용합니다. 릴리스 또는 지속적인 개발 설치에서는
+기존 코드 서명 identity를 `YEONJANG_CODESIGN_IDENTITY`로 지정할 수 있습니다.
+helper 또는 앱 서명 검증에 실패하면 빌드를 중단합니다.
 
 재시작 없이 macOS Yeonjang GUI만 종료할 때:
 
@@ -378,7 +404,8 @@ cargo run --manifest-path Yeonjang/Cargo.toml
 
 메모:
 
-- `start-yeonjang-macos.sh`는 시작 전에 macOS 앱 번들을 확인하고 다시 빌드합니다.
+- `start-yeonjang-macos.sh`는 앱 번들이 없거나 `--build`를 명시했을 때만 빌드하고,
+  일반 재시작에서는 기존 번들을 검증해 재사용합니다.
 - `start-yeonjang-windows.bat`가 Windows 시작/재시작 흐름을 담당하고, build 스크립트는 바이너리가 없을 때만 준비 단계로 사용합니다.
 - `start-yeonjang-linux.sh`는 시작 전에 Linux desktop 바이너리를 확인하고 다시 빌드합니다.
 - `start-yeonjang-linux-headless.sh`는 `headless_managed` 프로파일로 managed MQTT entrypoint만 실행하며 tray/window를 기대하지 않습니다.

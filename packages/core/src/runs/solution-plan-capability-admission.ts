@@ -18,7 +18,47 @@ export interface SolutionPlanCapabilityAdmissionEntry {
   stepId: string
   capabilityRef: string
   capabilityId: string
+  bindingTargetId: string
   targetId: string
+}
+
+export interface SolutionPlanSelectionTarget {
+  bindingTargetId?: string | undefined
+  executionTargetId?: string | undefined
+}
+
+/**
+ * Resolves the control-plane binding for a topology execution owned by one
+ * agent. The external effect target remains independently bound by the Tool;
+ * this only prevents a duplicate remote capability advertisement from making
+ * the owning Gateway's plan ambiguous.
+ */
+export function resolveOwnerScopedCapabilitySelectionTargets(input: {
+  capabilitySnapshot: CanonicalPlanPolicyInput["capabilitySnapshot"]
+  selections: readonly SolutionPlanCapabilitySelection[]
+  ownerAgentId: string
+}): Readonly<Record<string, SolutionPlanSelectionTarget>> | undefined {
+  const ownerAgentId = normalized(input.ownerAgentId)
+  if (!ownerAgentId || input.selections.length === 0) return undefined
+  const targets: Record<string, SolutionPlanSelectionTarget> = {}
+  for (const selection of input.selections) {
+    const stepId = normalized(selection.stepId)
+    const capabilityRef = normalized(selection.capabilityRef)
+    const capabilityId = capabilityRef.startsWith("capability:")
+      ? normalized(capabilityRef.slice("capability:".length))
+      : ""
+    if (!stepId || !capabilityId || targets[stepId]) return undefined
+    const ownerBindings = input.capabilitySnapshot.bindings.filter(
+      (binding) =>
+        normalized(binding.capabilityId) === capabilityId &&
+        normalized(binding.targetId) === ownerAgentId,
+    )
+    // Do not choose among multiple owner bindings. An incomplete or ambiguous
+    // canonical snapshot must remain blocked rather than be guessed.
+    if (ownerBindings.length !== 1) return undefined
+    targets[stepId] = { bindingTargetId: ownerAgentId }
+  }
+  return targets
 }
 
 export interface SolutionPlanCapabilityAdmissionDescriptor {
@@ -64,6 +104,9 @@ export function buildSolutionPlanCapabilityAdmission(input: {
   capabilitySnapshot: CanonicalPlanPolicyInput["capabilitySnapshot"]
   selections: SolutionPlanCapabilitySelection[]
   targetId?: string | undefined
+  bindingTargetId?: string | undefined
+  executionTargetId?: string | undefined
+  selectionTargets?: Readonly<Record<string, SolutionPlanSelectionTarget>> | undefined
   approvedCapabilityIds: string[]
 }):
   | { ok: true; descriptor: SolutionPlanCapabilityAdmissionDescriptor }
@@ -71,7 +114,12 @@ export function buildSolutionPlanCapabilityAdmission(input: {
   const runId = normalized(input.runId)
   const solutionPlanReceiptId = normalized(input.solutionPlanReceiptId)
   const policyReceiptId = normalized(input.policyReceiptId)
-  const targetId = normalized(input.targetId ?? "")
+  const bindingTargetId = normalized(
+    input.bindingTargetId ?? input.targetId ?? "",
+  )
+  const executionTargetId = normalized(
+    input.executionTargetId ?? input.targetId ?? "",
+  )
   if (
     !runId ||
     !solutionPlanReceiptId ||
@@ -96,14 +144,26 @@ export function buildSolutionPlanCapabilityAdmission(input: {
       return { ok: false, reasonCode: "capability_admission_invalid" }
     }
     stepIds.add(stepId)
+    const selectionTarget = input.selectionTargets?.[stepId]
+    if (input.selectionTargets && !selectionTarget) {
+      return { ok: false, reasonCode: "capability_admission_invalid" }
+    }
+    const selectedBindingTargetId = normalized(
+      selectionTarget?.bindingTargetId ?? bindingTargetId,
+    )
+    const selectedExecutionTargetId = normalized(
+      selectionTarget?.executionTargetId ?? executionTargetId,
+    )
     const candidates = input.capabilitySnapshot.bindings.filter(
       (binding) => normalized(binding.capabilityId) === capabilityId,
     )
     if (candidates.length === 0) {
       return { ok: false, reasonCode: "capability_admission_outside_snapshot" }
     }
-    const targetCandidates = targetId
-      ? candidates.filter((binding) => normalized(binding.targetId) === targetId)
+    const targetCandidates = selectedBindingTargetId
+      ? candidates.filter(
+          (binding) => normalized(binding.targetId) === selectedBindingTargetId,
+        )
       : candidates
     if (targetCandidates.length === 0) {
       return { ok: false, reasonCode: "capability_admission_target_unavailable" }
@@ -123,8 +183,15 @@ export function buildSolutionPlanCapabilityAdmission(input: {
       stepId,
       capabilityRef,
       capabilityId,
-      targetId: normalized(binding.targetId),
+      bindingTargetId: normalized(binding.targetId),
+      targetId: selectedExecutionTargetId || normalized(binding.targetId),
     })
+  }
+  if (
+    input.selectionTargets &&
+    Object.keys(input.selectionTargets).some((stepId) => !stepIds.has(normalized(stepId)))
+  ) {
+    return { ok: false, reasonCode: "capability_admission_invalid" }
   }
   const approvalRequired = [...approvalRequiredCapabilityIds].sort()
   const outcome =

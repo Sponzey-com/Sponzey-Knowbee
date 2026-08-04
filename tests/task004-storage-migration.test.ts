@@ -243,6 +243,96 @@ afterEach(() => {
 })
 
 describe("task004 storage migration", () => {
+  it("preserves canonical rows while adding approval state and receipt contracts", () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "knowbee-canonical-approval-v73-"))
+    tempDirs.push(rootDir)
+    const dbPath = join(rootDir, "legacy-v72.sqlite3")
+    const legacyDb = new BetterSqlite3(dbPath)
+    try {
+      applyMigrationsThrough(legacyDb, 72)
+      legacyDb.prepare(
+        `INSERT INTO sessions
+          (id, source, source_id, created_at, updated_at, summary, token_count)
+         VALUES (?, ?, NULL, ?, ?, NULL, 0)`,
+      ).run("session:approval-v73", "telegram", now, now)
+      legacyDb.prepare(
+        `INSERT INTO root_runs
+          (id, session_id, title, prompt, source, status, task_profile,
+           target_id, delegation_turn_count, max_delegation_turns,
+           current_step_key, current_step_index, total_steps, summary,
+           can_cancel, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 0, 5, ?, 0, 7, ?, 1, ?, ?)`,
+      ).run(
+        "run:approval-v73",
+        "session:approval-v73",
+        "approval",
+        "capture",
+        "telegram",
+        "running",
+        "standard",
+        "executing",
+        "executing",
+        now,
+        now,
+      )
+      legacyDb.prepare(
+        `INSERT INTO canonical_work_aggregates
+          (work_id, root_run_id, state, revision, transitions_json, created_at, updated_at)
+         VALUES (?, ?, 'EXECUTING', 3, '[]', ?, ?)`,
+      ).run("work:root:run:approval-v73", "run:approval-v73", now, now)
+      legacyDb.prepare(
+        `INSERT INTO canonical_work_receipts
+          (receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json,
+           issued_at, consumed_revision, terminal_cause_json)
+         VALUES (?, ?, 'blocker', ?, '["evidence:legacy"]', ?, NULL, NULL)`,
+      ).run(
+        "receipt:legacy:blocker",
+        "work:root:run:approval-v73",
+        `sha256:${"a".repeat(64)}`,
+        now,
+      )
+
+      runMigrations(legacyDb as unknown as Parameters<typeof runMigrations>[0])
+
+      expect(legacyDb.prepare(
+        "SELECT state, revision FROM canonical_work_aggregates WHERE work_id = ?",
+      ).get("work:root:run:approval-v73")).toEqual({
+        state: "EXECUTING",
+        revision: 3,
+      })
+      expect(legacyDb.prepare(
+        "SELECT kind FROM canonical_work_receipts WHERE receipt_id = ?",
+      ).get("receipt:legacy:blocker")).toEqual({ kind: "blocker" })
+      expect(() => legacyDb.prepare(
+        "UPDATE canonical_work_aggregates SET state = 'AWAITING_APPROVAL' WHERE work_id = ?",
+      ).run("work:root:run:approval-v73")).not.toThrow()
+      expect(() => legacyDb.prepare(
+        `INSERT INTO canonical_work_receipts
+          (receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json,
+           issued_at, consumed_revision, terminal_cause_json)
+         VALUES (?, ?, 'approval', ?, '["approval:test"]', ?, NULL, NULL)`,
+      ).run(
+        "receipt:approval:v73",
+        "work:root:run:approval-v73",
+        `sha256:${"b".repeat(64)}`,
+        now + 1,
+      )).not.toThrow()
+      expect(legacyDb.prepare(
+        `SELECT COUNT(*) AS count
+         FROM approved_operation_continuations`,
+      ).get()).toEqual({ count: 0 })
+      expect(legacyDb.prepare(
+        `SELECT sql FROM sqlite_master
+         WHERE type = 'table'
+           AND name = 'approved_operation_continuations'`,
+      ).get()).toMatchObject({
+        sql: expect.stringContaining("'cancelled'"),
+      })
+    } finally {
+      legacyDb.close()
+    }
+  })
+
   it("creates the extended schema and verification indexes on a fresh DB", () => {
     const db = getDb()
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name)

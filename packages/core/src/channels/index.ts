@@ -20,9 +20,15 @@ import { setDiscordRuntimeError, stopDiscordRuntime } from "./discord/runtime.js
 import { GoogleChatChannelAdapter } from "./google-chat/adapter.js"
 import { setGoogleChatRuntimeError, stopGoogleChatRuntime } from "./google-chat/runtime.js"
 import {
+  type ChannelPendingResponseDeliveryOwner,
   createStartedChannelRecoveryRuntime,
   type StartedChannelRecoveryRuntime,
 } from "./pending-response-delivery.js"
+import { startRootRun } from "../runs/start.js"
+import { getRootRun } from "../runs/store.js"
+import {
+  loadRecoveredApprovedOperationAttempt,
+} from "../runs/approved-operation-result-handoff.js"
 
 export { TelegramChannel } from "./telegram/bot.js"
 export {
@@ -311,6 +317,7 @@ export {
   getDefaultChannelSmokeScenarios,
   createDryRunChannelSmokeExecutor,
   resolveChannelSmokeReadiness,
+  recoverInterruptedGatewayChannelSmokeRuns,
   runPersistedChannelSmokeScenarios,
   runChannelSmokeScenarios,
   sanitizeChannelSmokeTrace,
@@ -345,11 +352,14 @@ export {
 } from "./semantic-outcome-matrix.js"
 export {
   VerifyConversationProcessUseCase,
+  type ConversationApprovalDecisionInteraction,
+  type ConversationControlInteraction,
   type ConversationControlProbePort,
   type ConversationDecisionReceipts,
   type ConversationDeliveryEvidence,
   type ConversationDeliveryPostCheckPort,
   type ConversationEvidenceMode,
+  type ConversationPendingInteraction,
   type ConversationProbeObservation,
   type ConversationProbePort,
   type ConversationProbeResult,
@@ -359,8 +369,27 @@ export {
   type ConversationVerificationInput,
   type ConversationVerificationResult,
   type ConversationVerificationStatus,
+  type VerifyConversationProcessOptions,
   type VerifyConversationProcessPorts,
 } from "./conversation-process-verification.js"
+export {
+  CameraConversationProbeAdapter,
+  projectCameraConversationCompletedSnapshot,
+  projectCameraConversationDeliveryApprovalSnapshot,
+  projectCameraConversationPostEffectSnapshot,
+  projectCameraConversationPreEffectSnapshot,
+  type CameraConversationPostEffectFacts,
+  type CameraConversationPostEffectSnapshot,
+  type CameraConversationCompletedFacts,
+  type CameraConversationDeliveryApprovalFacts,
+  type CameraConversationPreEffectFacts,
+  type CameraConversationPreEffectSnapshot,
+  type CameraConversationProbeAdapterDependencies,
+} from "./camera-conversation-probe.js"
+export {
+  createStartRootRunConversationProbe,
+  type StartRootRunConversationProbeDependencies,
+} from "./start-root-run-conversation-probe.js"
 export {
   projectConversationProcessBaseline,
   type ConversationBaselineClassification,
@@ -403,6 +432,72 @@ export async function startChannels(
   const memoryJournal = createMemoryJournalRepository(paths)
   activeChannelMemoryJournal = memoryJournal
   const hierarchyStorage = createAgentHierarchyStorage(paths)
+  const buildRecoveryRuntime = (owners: {
+    telegram?: ChannelPendingResponseDeliveryOwner
+    slack?: ChannelPendingResponseDeliveryOwner
+  }): StartedChannelRecoveryRuntime => {
+    let runtime: StartedChannelRecoveryRuntime
+    runtime = createStartedChannelRecoveryRuntime({
+      ...owners,
+      resumeExistingRootRun: async (runId, signal) => {
+        const run = getRootRun(runId)
+        const recovered = loadRecoveredApprovedOperationAttempt(runId)
+        if (!run || !recovered.ok) return false
+        const onChunk = runtime.resolveDeliveryHandler({
+          runId: run.id,
+          sessionId: run.sessionId,
+          source: run.source,
+        })
+        if (!onChunk) return false
+        const started = startRootRun({
+          artifactStorage,
+          memoryJournal,
+          hierarchyStorage,
+          runId: run.id,
+          message: run.prompt,
+          sessionId: run.sessionId,
+          requestGroupId: run.requestGroupId,
+          forceRequestGroupReuse: true,
+          model: undefined,
+          config,
+          targetId: run.targetId,
+          targetLabel: run.targetLabel,
+          workDir: config.profile.workspace,
+          source: run.source,
+          contextMode: "handoff",
+          taskProfile: run.taskProfile,
+          skipIntake: true,
+          executionSemantics: {
+            filesystemEffect: "none",
+            privilegedOperation: "required",
+            artifactDelivery: "direct",
+            approvalRequired: false,
+            approvalTool: "external_action",
+          },
+          structuredRequest: {
+            source_language: "unknown",
+            response_language_mode: "same_as_request",
+            normalized_english: run.prompt,
+            target: run.prompt,
+            to: "current channel conversation",
+            context: [
+              "A verified artifact from the approved operation is already bound to this run.",
+            ],
+            complete_condition: [
+              "Deliver the verified artifact to the current channel conversation and report the verified result.",
+            ],
+          },
+          resumeExistingRun: true,
+          recoveredAttempt: recovered.attempt,
+          onChunk,
+          ...(signal ? { signal } : {}),
+        })
+        await started.finished
+        return true
+      },
+    })
+    return runtime
+  }
   try {
     persistChannelConnections(buildCompatChannelConnectionsFromConfig(config))
   } catch (err: unknown) {
@@ -430,7 +525,7 @@ export async function startChannels(
     await registry.startEnabled()
     const telegram = registry.getPendingResponseDeliveryOwner("telegram")
     const slack = registry.getPendingResponseDeliveryOwner("slack")
-    return createStartedChannelRecoveryRuntime({
+    return buildRecoveryRuntime({
       ...(telegram ? { telegram } : {}),
       ...(slack ? { slack } : {}),
     })
@@ -494,7 +589,7 @@ export async function startChannels(
     }
   }
 
-  return createStartedChannelRecoveryRuntime({
+  return buildRecoveryRuntime({
     ...(startedTelegram ? { telegram: startedTelegram } : {}),
     ...(startedSlack ? { slack: startedSlack } : {}),
   })

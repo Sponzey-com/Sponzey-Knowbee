@@ -79,9 +79,12 @@ export function detectSyntheticApprovalRequest(params: {
   if (params.successfulFileDeliveries.length > 0 || params.sawRealFilesystemMutation) {
     return null
   }
+  if (params.requiresPrivilegedToolExecution) {
+    return null
+  }
 
   const reviewExplicitlyNeedsApproval = params.review?.status === "ask_user"
-  const privilegedRequestNeedsApproval = params.executionProfile.approvalRequired || params.requiresPrivilegedToolExecution
+  const privilegedRequestNeedsApproval = params.executionProfile.approvalRequired
 
   if (!reviewExplicitlyNeedsApproval && !privilegedRequestNeedsApproval) return null
   if (!params.usesWorkerRuntime && !params.requiresPrivilegedToolExecution) return null
@@ -137,6 +140,24 @@ export async function requestSyntheticApproval(
   params: SyntheticApprovalRuntimeRequest,
   dependencies: SyntheticApprovalRuntimeDependencies,
 ): Promise<ApprovalDecision> {
+  if (params.signal.aborted) {
+    const denial = describeSyntheticApprovalDenial(params.toolName, "abort")
+    dependencies.setRunStepStatus(
+      params.runId,
+      "awaiting_approval",
+      "cancelled",
+      denial.stepSummary,
+    )
+    dependencies.cancelRun(params.runId, denial)
+    dependencies.emitApprovalResolved({
+      runId: params.runId,
+      decision: "deny",
+      toolName: params.toolName,
+      reason: "abort",
+    })
+    return "deny"
+  }
+
   dependencies.appendRunEvent(params.runId, `${params.toolName} 승인 요청`)
   dependencies.setRunStepStatus(params.runId, "reviewing", "completed", params.summary)
   dependencies.setRunStepStatus(params.runId, "awaiting_approval", "running", params.summary)
@@ -173,6 +194,20 @@ export async function requestSyntheticApproval(
       if (resolved) return
       resolved = true
       clearTimeout(timeout)
+      const denial = describeSyntheticApprovalDenial(params.toolName, "abort")
+      dependencies.setRunStepStatus(
+        params.runId,
+        "awaiting_approval",
+        "cancelled",
+        denial.stepSummary,
+      )
+      dependencies.cancelRun(params.runId, denial)
+      dependencies.emitApprovalResolved({
+        runId: params.runId,
+        decision: "deny",
+        toolName: params.toolName,
+        reason: "abort",
+      })
       resolve("deny")
     }, { once: true })
 

@@ -16,7 +16,10 @@ function actionStep(inputRefs: string[]) {
   }
 }
 
-async function planWith(inputRefs: string[]) {
+async function planWith(
+  inputRefs: string[],
+  requiredCapabilityRefs: string[] = [],
+) {
   return runLlmSolutionPlanProvider({
     provider: {
       planSolution: async () => ({
@@ -33,6 +36,7 @@ async function planWith(inputRefs: string[]) {
     goal: "Use one admitted capability.",
     constraints: [],
     capabilityRefs,
+    requiredCapabilityRefs,
     completionCriteria: ["The result is verified."],
   })
 }
@@ -68,6 +72,18 @@ describe("solution-plan capability reference", () => {
     await expect(planWith(["capability:tool:unknown"])).resolves.toMatchObject({
       status: "blocked",
       reasonCode: "solution_plan_capability_ref_outside_snapshot",
+    })
+  })
+
+  it("rejects a plan that omits a required capability selected by prior LLM diagnosis", async () => {
+    await expect(
+      planWith(
+        ["request:user", capabilityRefs[1]],
+        [capabilityRefs[0]],
+      ),
+    ).resolves.toMatchObject({
+      status: "blocked",
+      reasonCode: "solution_plan_required_capability_ref_missing",
     })
   })
 })

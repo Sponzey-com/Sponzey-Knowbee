@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
-import { evaluateCutoverAuthorization } from "../scripts/lib/cutover-authorization.mjs"
-import { legacyCutoverInventoryDigest } from "../scripts/lib/legacy-cutover-inventory.mjs"
-import { legacyRemovalProofSourceDigest } from "../scripts/lib/legacy-rollback-bundle.mjs"
+import { evaluateCutoverAuthorization } from "../scripts/self/lib/cutover-authorization.mjs"
+import { legacyCutoverInventoryDigest } from "../scripts/self/lib/legacy-cutover-inventory.mjs"
+import { legacyRemovalProofSourceDigest } from "../scripts/self/lib/legacy-rollback-bundle.mjs"
 
 const ready = {
   phase10Valid: true,

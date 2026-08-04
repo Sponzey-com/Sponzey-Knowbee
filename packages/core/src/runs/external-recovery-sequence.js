@@ -18,11 +18,12 @@ export async function runExternalRecoverySequence(params, dependencies, moduleDe
             source: params.source,
             onChunk: params.onChunk,
             preview: params.preview,
+            ...(params.responseContext ? { responseContext: params.responseContext } : {}),
             finalizationDependencies: params.finalizationDependencies,
         }, {
             appendRunEvent: dependencies.appendRunEvent,
         });
-        if (result.kind === "stop" || result.kind === "retry") {
+        if (result.kind === "stop" || result.kind === "review" || result.kind === "retry") {
             return result;
         }
     }

@@ -327,16 +327,16 @@ describe("task012 Topology Workspace release gate", () => {
     expect(apiCapability).toEqual(expect.objectContaining({ enabled: false, status: "disabled" }))
     expect(featureGateHtml).toContain("기능 상태를 확인할 수 없습니다")
     expect(featureGateHtml).not.toContain("workspace route content")
-    expect(getUiNavigation("advanced", false).filter((item) => item.path === "/sub-agents")).toEqual([
-      expect.objectContaining({ path: "/sub-agents" }),
+    expect(getUiNavigation("advanced", false).filter((item) => item.path === "/agents")).toEqual([
+      expect.objectContaining({ path: "/agents" }),
     ])
     expect(inventory.find((item) => item.path === "/advanced/enterprise-topology")).toEqual(
       expect.objectContaining({
-        status: "compatibility",
-        replacementPath: "/advanced/topology?mode=build",
+        status: "redirect",
+        replacementPath: "/agents",
       }),
     )
-    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/sub-agents")
+    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/agents")
     expect(resolveTopologyWorkspaceInitialLayer("?mode=resources")).toBe("build")
     expect(resolveTopologyWorkspaceInitialLayer("?mode=improve")).toBe("improve")
     expect(appSource).toContain('path="/advanced/enterprise-topology"')

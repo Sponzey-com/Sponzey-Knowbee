@@ -1,7 +1,10 @@
 import type { AgentContextMode } from "../agent/index.js"
 import type { TaskExecutionSemantics, TaskStructuredRequest } from "../agent/intake.js"
 import type { LoopDirective } from "./loop-directive.js"
-import type { ExecutionCycleState } from "./execution-cycle-pass.js"
+import type {
+  ExecutionCycleState,
+  RecoveredExecutionAttempt,
+} from "./execution-cycle-pass.js"
 import { prepareRootLoopBootstrapState } from "./root-loop-bootstrap-state.js"
 import { runRootLoopTurn } from "./root-loop-turn.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
@@ -145,6 +148,7 @@ export interface RootLoopParams {
   priorAssistantMessages: string[]
   syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies
   defaultMaxDelegationTurns: number
+  recoveredAttempt?: RecoveredExecutionAttempt
 }
 
 export async function runRootLoop(

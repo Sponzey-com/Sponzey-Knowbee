@@ -25,8 +25,8 @@ describe("task0862 intake source language primary boundary", () => {
     const requestNormalizer = readFileSync(join(process.cwd(), "packages/core/src/agent/request-normalizer.ts"), "utf-8")
     const intake = readFileSync(join(process.cwd(), "packages/core/src/agent/intake.ts"), "utf-8")
 
-    expect(prompt).toContain('"source_language": "ko | en | unknown"')
     expect(prompt).toContain("source_language must be the primary user-facing language")
+    expect(prompt).toContain("The response-tool schema is the only output shape")
     expect(requestNormalizer).not.toContain('"mixed"')
     expect(intake).not.toContain('value === "mixed"')
   })

@@ -106,6 +106,9 @@ export const DEFAULT_CONFIG = {
         username: "",
         password: "",
         allowAnonymous: false,
+        yeonjangV2: {
+            requesterId: "",
+        },
     },
     search: {},
     memory: {

@@ -3,8 +3,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
-import { auditProjectRequirements } from "../scripts/audit-project-requirements.mjs"
-import { createProjectRequirementEvidenceSkeleton } from "../scripts/create-project-requirement-skeleton.mjs"
+import { auditProjectRequirements } from "../scripts/self/audit-project-requirements.mjs"
+import { createProjectRequirementEvidenceSkeleton } from "../scripts/self/create-project-requirement-skeleton.mjs"
 
 describe("task007 PROJECT requirement audit CLI", () => {
   it("audits explicit PROJECT inputs with PRJ IDs", () => {

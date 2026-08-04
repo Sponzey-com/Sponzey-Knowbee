@@ -67,5 +67,73 @@ export const TEMPORARY_ARTIFACT_LIFECYCLES = [
         },
         activeConsumerIds: ["consumer:imessage-local", "consumer:kakaotalk-local"],
     },
+    {
+        artifactId: "packages/core/src/agent/sub-agent-result-review.ts#legacy-failure-keys",
+        kind: "temporary_compatibility",
+        ownerId: "owner:sub-agent-result-review",
+        createdVersion: "compat:strategy-aware-result-review:v1",
+        expiryCondition: {
+            conditionId: "legacy-result-review-failure-keys-migrated",
+            satisfied: false,
+            evidenceRefs: ["source:agent/sub-agent-result-review.ts"],
+        },
+        removalCondition: {
+            conditionId: "legacy-result-review-failure-key-consumers-zero",
+            satisfied: false,
+            evidenceRefs: ["test:no-fixed-sub-agent-exhaustion"],
+        },
+        activeConsumerIds: ["consumer:legacy-result-review-payloads"],
+    },
+    {
+        artifactId: "packages/core/src/orchestration/evidence-redelegation.ts#legacy-failure-fingerprints",
+        kind: "temporary_compatibility",
+        ownerId: "owner:evidence-redelegation",
+        createdVersion: "compat:strategy-aware-redelegation:v1",
+        expiryCondition: {
+            conditionId: "legacy-redelegation-failure-fingerprints-migrated",
+            satisfied: false,
+            evidenceRefs: ["source:orchestration/evidence-redelegation.ts"],
+        },
+        removalCondition: {
+            conditionId: "legacy-redelegation-failure-fingerprint-consumers-zero",
+            satisfied: false,
+            evidenceRefs: ["test:explicit-exchange-redelegation"],
+        },
+        activeConsumerIds: ["consumer:legacy-redelegation-payloads"],
+    },
+    {
+        artifactId: "packages/core/src/orchestration/feedback-loop.ts#legacy-failure-keys",
+        kind: "temporary_compatibility",
+        ownerId: "owner:feedback-loop",
+        createdVersion: "compat:strategy-aware-feedback-loop:v1",
+        expiryCondition: {
+            conditionId: "legacy-feedback-failure-keys-migrated",
+            satisfied: false,
+            evidenceRefs: ["source:orchestration/feedback-loop.ts"],
+        },
+        removalCondition: {
+            conditionId: "legacy-feedback-failure-key-consumers-zero",
+            satisfied: false,
+            evidenceRefs: ["test:feedback-redelegation-loop"],
+        },
+        activeConsumerIds: ["consumer:legacy-feedback-loop-payloads"],
+    },
+    {
+        artifactId: "packages/core/src/release/sub-agent-release-gate.ts#legacy-default-thresholds",
+        kind: "temporary_compatibility",
+        ownerId: "owner:sub-agent-release-gate",
+        createdVersion: "compat:operational-reference-thresholds:v1",
+        expiryCondition: {
+            conditionId: "legacy-default-release-threshold-imports-migrated",
+            satisfied: false,
+            evidenceRefs: ["source:release/sub-agent-release-gate.ts"],
+        },
+        removalCondition: {
+            conditionId: "legacy-default-release-threshold-consumers-zero",
+            satisfied: false,
+            evidenceRefs: ["test:sub-agent-rollout-threshold-policy"],
+        },
+        activeConsumerIds: ["consumer:legacy-release-threshold-imports"],
+    },
 ];
 //# sourceMappingURL=temporary-artifact-registry.js.map

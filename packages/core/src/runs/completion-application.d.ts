@@ -1,3 +1,4 @@
+import type { UserInputRequirement } from "../contracts/user-input-requirement.js";
 import type { SuccessfulToolEvidence } from "./recovery.js";
 import type { CompletionFlowDecision } from "./completion-flow.js";
 import { type NextAttemptToolPolicy } from "./next-attempt-tool-policy.js";
@@ -33,6 +34,7 @@ export type CompletionApplicationDecision = {
     reason?: string;
     remainingItems?: string[];
     userMessage?: string;
+    inputRequirement?: UserInputRequirement;
 };
 export interface CompletionFollowupTransitionIdentity {
     kind: "completion_followup";

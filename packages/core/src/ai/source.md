@@ -20,4 +20,14 @@
 - 이 폴더는 OpenAI, Anthropic, Gemini 같은 backend adapter 구현에 집중합니다.
 - Anthropic 계열 backend도 설정 기반 `provider:anthropic` 경로로만 사용하고, worker runtime 명령을 다른 AI/CLI로 치환하는 환경변수 override도 두지 않습니다.
 - 자연어 해석, 재시도, 복구, 완료 판정 같은 오케스트레이션은 `agent`와 `runs`가 맡습니다.
+- provider adapter는 같은 활성 연결의 wire-format 호환을 위해 서버가 거부한 rich payload를
+  bounded alternate payload로 정확히 한 번 다시 보낼 수 있습니다. 이때 required Tool과
+  strict schema는 유지하며, provider 선택·요청 의미·완료 판단을 바꾸는 recovery로 취급하지 않습니다.
+- Codex OAuth adapter는 rich payload가 400/422 계약 거부를 받은 provider 인스턴스에서
+  simplified payload 형식을 기억합니다. 이후 단계는 거부된 형식을 다시 시험하지 않아
+  동일 deadline을 소모하지 않으며 required Tool·strict schema·system instructions는 유지합니다.
+- Codex OAuth의 Responses stream은 `response.output_text.delta`와
+  `response.output_text.done` 중 실제로 제공된 text event 형식을 모두 지원합니다. delta가
+  이미 전달된 경우 done의 전체 text를 다시 emit하지 않고, done-only 응답은 정확히 한 번
+  text chunk로 변환해 provider 성공을 빈 응답으로 오판하지 않습니다.
 - 즉 이 폴더는 별도 외부 자연어 엔진 행위자가 아니라, Knowbee가 사용하는 내부 AI backend 구현 계층입니다.

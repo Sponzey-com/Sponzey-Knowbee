@@ -166,6 +166,65 @@ describe("terminal report finalization gate", () => {
     )
   })
 
+  it("rejects an invented camera or OS cause when intake failed before execution", async () => {
+    const runId = "run-intake-provider-cause-guard"
+    const deps = dependencies()
+    const onChunk = vi.fn()
+    const renderFinalResponseText = vi.fn(async (input) =>
+      buildReviewedFinalResponse(
+        input,
+        "차단되었습니다. 카메라 권한이 없어 사진 촬영을 완료하지 못했습니다. OS 권한을 허용하세요.",
+      ),
+    )
+    const terminalReport = buildCanonicalResultReportFacts({
+      goalId: `goal:${runId}`,
+      workId: `work:root:${runId}`,
+      outcome: "blocked",
+      primaryLanguage: "ko",
+      completedScope: [],
+      unresolvedScope: ["요청 분석 및 후속 실행"],
+      reasonCode: "provider_unavailable",
+      verifiedReasonFacts: [
+        "요청 분석 단계가 실행 전에 중단되어 도구 또는 장치 실행이 관측되지 않았습니다.",
+      ],
+      evidenceRefs: ["llm-invocation:intake:invocation-1"],
+      nextActions: [{
+        kind: "required_condition",
+        text: "연결된 AI provider 상태를 확인한 뒤 같은 요청을 다시 시도하세요.",
+      }],
+    })
+
+    const outcome = await completeRunWithAssistantMessage({
+      runId,
+      sessionId: "session-camera",
+      text: "요청 분석용 AI provider가 응답하지 않았습니다.",
+      textSource: "runtime_deterministic",
+      terminalReport,
+      responseContext: {
+        originalRequest: "컴퓨터 카메라로 사진찍어서 보내줘",
+        model: "gpt-test",
+        providerId: "openai",
+        config: DEFAULT_CONFIG,
+        workDir: "/tmp/project",
+      },
+      renderFinalResponseText,
+      source: "telegram",
+      onChunk,
+      recordCanonicalDelivery: vi.fn(async () => ({ ok: true as const })),
+      stageCanonicalPendingResponse: vi.fn(async () => ({ ok: true as const })),
+      canonicalFinalOutcome: "blocked",
+      dependencies: deps,
+    })
+
+    expect(outcome).toEqual({ status: "blocked_by_final_response_rendering" })
+    expect(renderFinalResponseText).toHaveBeenCalledTimes(2)
+    expect(onChunk).not.toHaveBeenCalled()
+    expect(deps.appendRunEvent).toHaveBeenCalledWith(
+      runId,
+      expect.stringContaining("canonical_terminal_report_response_rejected:"),
+    )
+  })
+
   it("repairs one terminal response that omits canonical facts", async () => {
     const runId = "run-semantic-repair"
     const deps = dependencies()

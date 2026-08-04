@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { scanPromptRegistryReferences } from "../scripts/lib/repository-reference-scanner.mjs"
+import { scanPromptRegistryReferences } from "../scripts/self/lib/repository-reference-scanner.mjs"
 
 describe("task1189 prompt registry reference scanner", () => {
   it("records required English and present optional locale files", () => {

@@ -1,6 +1,7 @@
 export const SIDE_EFFECT_OPERATION_STATES = [
     "RESERVED",
     "EFFECT_STARTED",
+    "EFFECT_REJECTED",
     "EFFECT_RECORDED",
     "VERIFYING",
     "VERIFIED",
@@ -12,6 +13,7 @@ export const SIDE_EFFECT_OPERATION_STATES = [
 ];
 export const SIDE_EFFECT_OPERATION_EVENTS = [
     "START_EFFECT",
+    "RECORD_REJECTION",
     "RECORD_EFFECT",
     "BEGIN_VERIFICATION",
     "VERIFICATION_PASSED",
@@ -32,6 +34,7 @@ export const SIDE_EFFECT_RECEIPT_KINDS = [
 ];
 export const SIDE_EFFECT_EVENT_RECEIPT_KIND = Object.freeze({
     START_EFFECT: "authorization",
+    RECORD_REJECTION: "effect",
     RECORD_EFFECT: "effect",
     BEGIN_VERIFICATION: "observation",
     VERIFICATION_PASSED: "observation",
@@ -125,6 +128,19 @@ export function buildSideEffectOperationIdentity(input) {
         paramsFingerprint: input.paramsFingerprint,
     };
 }
+export function buildPreparedSideEffectOperation(input) {
+    if (!HASH_PATTERN.test(input.operationBindingHash)) {
+        throw new Error("Prepared side-effect operation binding must be a SHA-256 reference.");
+    }
+    const identity = Object.freeze({ ...input.identity });
+    return Object.freeze({
+        schemaVersion: 1,
+        identity,
+        operationBindingHash: input.operationBindingHash,
+        resolvedTargetFingerprint: identity.targetFingerprint,
+        effectFingerprint: identity.paramsFingerprint,
+    });
+}
 export function buildSideEffectOperationAuthorization(input) {
     if (!STATE_CHANGING_SIDE_EFFECT_CLASSES.has(input.effectClass)) {
         throw new Error("Side-effect authorization requires a state-changing effect class.");
@@ -169,9 +185,11 @@ export function validateSideEffectOperationAuthorization(input) {
 const TRANSITIONS = Object.freeze({
     RESERVED: Object.freeze({ START_EFFECT: "EFFECT_STARTED", REQUEST_CANCEL: "CANCEL_REQUESTED" }),
     EFFECT_STARTED: Object.freeze({
+        RECORD_REJECTION: "EFFECT_REJECTED",
         RECORD_EFFECT: "EFFECT_RECORDED",
         REQUEST_CANCEL: "CANCEL_REQUESTED",
     }),
+    EFFECT_REJECTED: Object.freeze({}),
     EFFECT_RECORDED: Object.freeze({
         BEGIN_VERIFICATION: "VERIFYING",
         REQUEST_CANCEL: "CANCEL_REQUESTED",
@@ -202,6 +220,7 @@ const TERMINAL_STATES = new Set([
     "VERIFIED",
     "COMPENSATED",
     "MANUAL_INTERVENTION",
+    "EFFECT_REJECTED",
 ]);
 export function transitionSideEffectOperation(input) {
     const receiptRef = input.receiptRef.trim();

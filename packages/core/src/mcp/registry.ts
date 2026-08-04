@@ -33,6 +33,10 @@ function mcpRegistryErrorMessage(error: unknown): string {
   return redactMcpLogText(raw)
 }
 
+function mcpRegistryStatusErrorMessage(error: unknown): string {
+  return sanitizeUserFacingError(mcpRegistryErrorMessage(error)).userMessage
+}
+
 export interface McpToolStatus {
   name: string
   registeredName: string
@@ -295,6 +299,7 @@ class McpRegistry {
     const onExit = (error: string) => {
       if (!isCurrent()) return
       const safeError = mcpRegistryErrorMessage(error)
+      const statusError = mcpRegistryStatusErrorMessage(error)
       this.unregisterTools(entry.toolNames)
       entry.toolNames = []
       recordExtensionFailure({
@@ -308,7 +313,7 @@ class McpRegistry {
         connectionState: "degraded",
         ready: false,
         registeredToolCount: 0,
-        error: safeError,
+        error: statusError,
       }
     }
     const client: McpRuntimeClient =
@@ -357,6 +362,7 @@ class McpRegistry {
       })
     } catch (error) {
       const message = mcpRegistryErrorMessage(error)
+      const statusError = mcpRegistryStatusErrorMessage(error)
       if (!isCurrent()) {
         await client.close()
         return
@@ -376,7 +382,7 @@ class McpRegistry {
         toolCount: 0,
         registeredToolCount: 0,
         tools: [],
-        error: message,
+        error: statusError,
       }
       await client.close()
       log.product("external_feature_connection_failed", {

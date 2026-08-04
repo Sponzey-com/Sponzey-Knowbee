@@ -66,7 +66,54 @@ describe("built-in Yeonjang skill persistence", () => {
 
     registerBuiltinSkills({ mainAgentId: "agent:main", now: 2000 })
 
-    expect(listAgentCapabilityBindings({ agentId: "agent:main", includeArchived: true })[0])
-      .toMatchObject({ status: "disabled", source: "manual", updated_at: 1500 })
+    const binding = listAgentCapabilityBindings({
+      agentId: "agent:main",
+      includeArchived: true,
+    }).find((entry) => entry.catalog_id === "skill:yeonjang")
+
+    expect(binding).toMatchObject({
+      capability_kind: "skill",
+      catalog_id: "skill:yeonjang",
+      status: "disabled",
+      source: "manual",
+      updated_at: 1500,
+    })
+  })
+
+  it("keeps one Yeonjang Skill while preserving multiple independent instance bindings", () => {
+    for (const instanceId of ["yeonjang:office", "yeonjang:studio"]) {
+      upsertAgentCapabilityBinding({
+        bindingId: `binding:agent:main:${instanceId}`,
+        agentId: "agent:main",
+        capabilityKind: "yeonjang",
+        catalogId: instanceId,
+        status: "enabled",
+        enabledToolNames: ["yeonjang_status"],
+        disabledToolNames: [],
+        createdAt: 900,
+        updatedAt: 900,
+      }, { source: "manual", now: 900 })
+    }
+
+    registerBuiltinSkills({ mainAgentId: "agent:main", now: 1000 })
+
+    expect(
+      listSkillCatalogEntries({ includeArchived: true })
+        .filter((entry) => entry.skill_id === "skill:yeonjang"),
+    ).toHaveLength(1)
+    expect(
+      listAgentCapabilityBindings({
+        agentId: "agent:main",
+        capabilityKind: "skill",
+        includeArchived: true,
+      }).filter((entry) => entry.catalog_id === "skill:yeonjang"),
+    ).toHaveLength(1)
+    expect(
+      listAgentCapabilityBindings({
+        agentId: "agent:main",
+        capabilityKind: "yeonjang",
+        includeArchived: true,
+      }).map((entry) => entry.catalog_id),
+    ).toEqual(["yeonjang:office", "yeonjang:studio"])
   })
 })

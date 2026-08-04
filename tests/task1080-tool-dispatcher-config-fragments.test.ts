@@ -7,9 +7,12 @@ describe("task1080 tool dispatcher config fragments", () => {
     const agentSource = readFileSync("packages/core/src/agent/index.ts", "utf-8")
     const schedulerContractSource = readFileSync("packages/core/src/scheduler/contract-executor.ts", "utf-8")
 
-    expect(dispatcherSource).toContain("function buildRuntimeToolContext(ctx: ToolContext, config: ToolRuntimeConfigSnapshot)")
+    expect(dispatcherSource).toContain("function buildRuntimeToolContext(input: {")
+    expect(dispatcherSource).toContain("ctx: ToolContext")
+    expect(dispatcherSource).toContain("config: ToolRuntimeConfigSnapshot")
     expect(dispatcherSource).toContain("const securityConfig = ctx.securityConfig ?? config.security")
-    expect(dispatcherSource).toContain("const { runtimeToolContext, securityConfig } = buildRuntimeToolContext(ctx, this.config)")
+    expect(dispatcherSource).toContain("const { runtimeToolContext, securityConfig } = buildRuntimeToolContext({")
+    expect(dispatcherSource).toContain("config: this.config")
     expect(dispatcherSource).not.toContain("getConfig")
 
     for (const fragment of [
@@ -21,13 +24,6 @@ describe("task1080 tool dispatcher config fragments", () => {
       expect(agentSource).toContain(fragment)
     }
 
-    for (const fragment of [
-      "mqttConfig: params.config.mqtt",
-      "securityConfig: params.config.security",
-      "searchConfig: params.config.search",
-      "memoryConfig: params.config.memory",
-    ]) {
-      expect(schedulerContractSource).toContain(fragment)
-    }
+    expect(schedulerContractSource).toContain("config: params.config")
   })
 })

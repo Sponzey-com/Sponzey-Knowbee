@@ -101,6 +101,16 @@ function observation(
     targetMatched: true,
     userReportDelivered: true,
     deliveryReceiptRef: "receipt:delivery:telegram-recovery",
+    latencyEvidence: {
+      metricId: "metric:first-response:telegram-recovery",
+      runId: "run-telegram-recovery",
+      requestGroupId: "run-telegram-recovery",
+      durationMs: 500,
+      budgetMs: 30_000,
+      status: "ok",
+      recordedAt: 1_000,
+      terminalResponseLatencyMs: 800,
+    },
     toolReceipts: [{
       runId: "run-telegram-recovery",
       requestGroupId: "run-telegram-recovery",

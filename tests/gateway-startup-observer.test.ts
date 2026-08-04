@@ -24,7 +24,7 @@ function evidence(
 
 function processPort(
   snapshot: {
-    state: "running" | "exited"
+    state: "running" | "exited" | "unknown"
     repositoryOwned: boolean
     listening: boolean
   } = { state: "running", repositoryOwned: true, listening: true },
@@ -78,6 +78,28 @@ describe("Gateway startup evidence observer", () => {
       performanceBudgetMs: 30_000,
       processPort: processPort({
         state: "running",
+        repositoryOwned: false,
+        listening: false,
+      }),
+    })
+
+    expect(result).toEqual({
+      status: "still_starting",
+      state: "awaiting_evidence",
+      elapsedMs: 1_100,
+      performance: "within_budget",
+    })
+  })
+
+  it("keeps permission-restricted process inspection non-terminal", async () => {
+    const result = await observeGatewayStartupEvidence({
+      evidence: null,
+      expectedPid: 8123,
+      minimumStartedAt: 900,
+      observedAt: 2_000,
+      performanceBudgetMs: 30_000,
+      processPort: processPort({
+        state: "unknown",
         repositoryOwned: false,
         listening: false,
       }),
@@ -149,14 +171,17 @@ describe("Gateway startup evidence observer", () => {
 
   it("routes local startup through the structured observer instead of a fixed HTTP timeout", () => {
     const source = readFileSync("scripts/knowbee-start.sh", "utf8")
+    const observerSource = readFileSync("scripts/self/observe-gateway-startup.mjs", "utf8")
 
-    expect(source).toContain("scripts/observe-gateway-startup.mjs")
+    expect(source).toContain("scripts/self/observe-gateway-startup.mjs")
     expect(source).toContain('observer_status="$(extract_status_field status')
     expect(source).toContain("still_starting)")
     expect(source).not.toContain('GATEWAY_STARTUP_TIMEOUT_SECONDS="120"')
     expect(source).not.toContain(
       'wait_for_http "Gateway" "http://$GATEWAY_HOST:$GATEWAY_PORT/api/ready"',
     )
+    expect(observerSource).toContain('return "unknown"')
+    expect(observerSource).toContain("state: processState")
   })
 
   it("cleans only the exact terminal launch and keeps Product-only logging by default", () => {

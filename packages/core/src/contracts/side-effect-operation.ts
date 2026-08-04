@@ -1,6 +1,7 @@
 export const SIDE_EFFECT_OPERATION_STATES = [
   "RESERVED",
   "EFFECT_STARTED",
+  "EFFECT_REJECTED",
   "EFFECT_RECORDED",
   "VERIFYING",
   "VERIFIED",
@@ -15,6 +16,7 @@ export type SideEffectOperationState = (typeof SIDE_EFFECT_OPERATION_STATES)[num
 
 export const SIDE_EFFECT_OPERATION_EVENTS = [
   "START_EFFECT",
+  "RECORD_REJECTION",
   "RECORD_EFFECT",
   "BEGIN_VERIFICATION",
   "VERIFICATION_PASSED",
@@ -43,6 +45,7 @@ export const SIDE_EFFECT_EVENT_RECEIPT_KIND: Readonly<
   Record<SideEffectOperationEvent, SideEffectReceiptKind>
 > = Object.freeze({
   START_EFFECT: "authorization",
+  RECORD_REJECTION: "effect",
   RECORD_EFFECT: "effect",
   BEGIN_VERIFICATION: "observation",
   VERIFICATION_PASSED: "observation",
@@ -93,6 +96,14 @@ export interface SideEffectOperationIdentity {
   adapterId: string
   targetFingerprint: `sha256:${string}`
   paramsFingerprint: `sha256:${string}`
+}
+
+export interface PreparedSideEffectOperation {
+  readonly schemaVersion: 1
+  readonly identity: Readonly<SideEffectOperationIdentity>
+  readonly operationBindingHash: `sha256:${string}`
+  readonly resolvedTargetFingerprint: `sha256:${string}`
+  readonly effectFingerprint: `sha256:${string}`
 }
 
 export interface SideEffectOperationAuthorization {
@@ -198,6 +209,23 @@ export function buildSideEffectOperationIdentity(
   }
 }
 
+export function buildPreparedSideEffectOperation(input: {
+  identity: SideEffectOperationIdentity
+  operationBindingHash: `sha256:${string}`
+}): PreparedSideEffectOperation {
+  if (!HASH_PATTERN.test(input.operationBindingHash)) {
+    throw new Error("Prepared side-effect operation binding must be a SHA-256 reference.")
+  }
+  const identity = Object.freeze({ ...input.identity })
+  return Object.freeze({
+    schemaVersion: 1 as const,
+    identity,
+    operationBindingHash: input.operationBindingHash,
+    resolvedTargetFingerprint: identity.targetFingerprint,
+    effectFingerprint: identity.paramsFingerprint,
+  })
+}
+
 export function buildSideEffectOperationAuthorization(input: {
   identity: SideEffectOperationIdentity
   policyDecisionId: string
@@ -268,9 +296,11 @@ type TransitionTable = Readonly<
 const TRANSITIONS: TransitionTable = Object.freeze({
   RESERVED: Object.freeze({ START_EFFECT: "EFFECT_STARTED", REQUEST_CANCEL: "CANCEL_REQUESTED" }),
   EFFECT_STARTED: Object.freeze({
+    RECORD_REJECTION: "EFFECT_REJECTED",
     RECORD_EFFECT: "EFFECT_RECORDED",
     REQUEST_CANCEL: "CANCEL_REQUESTED",
   }),
+  EFFECT_REJECTED: Object.freeze({}),
   EFFECT_RECORDED: Object.freeze({
     BEGIN_VERIFICATION: "VERIFYING",
     REQUEST_CANCEL: "CANCEL_REQUESTED",
@@ -302,6 +332,7 @@ const TERMINAL_STATES = new Set<SideEffectOperationState>([
   "VERIFIED",
   "COMPENSATED",
   "MANUAL_INTERVENTION",
+  "EFFECT_REJECTED",
 ])
 
 export type SideEffectOperationTransitionDecision =

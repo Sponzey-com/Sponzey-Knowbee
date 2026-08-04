@@ -1,5 +1,5 @@
 import { authorizeDiagnosisActionRoute, } from "../contracts/diagnosis-action-routing.js";
-import { authorizeUserFacingResponse, buildLlmResponseReviewReceipt, } from "./user-facing-response-gate.js";
+import { authorizeUserFacingResponse, buildDirectLlmResponseReviewReceipt, buildLlmResponseReviewReceipt, } from "./user-facing-response-gate.js";
 const TYPED_REDACTED_REFERENCE = /^[a-z][a-z0-9_-]*:[^\s]+$/;
 const SENSITIVE_CONTENT = /(?:api[_-]?key|access[_-]?token|secret|password|token=|raw system prompt|raw tool output|memory:|begin (?:rsa |ec |openssh )?private key)/i;
 function requireText(value, field) {
@@ -113,6 +113,16 @@ function contentKindFor(input) {
     }
 }
 export function buildAssistantFinalReviewReceipt(input) {
+    if (contentKindFor(input.finalInput) === "direct_answer") {
+        if (!input.directProvenance) {
+            throw new Error("Direct answers require final LLM provider provenance.");
+        }
+        return buildDirectLlmResponseReviewReceipt({
+            rawText: serializeFinalInput(input.finalInput),
+            responseText: requireText(input.responseText, "Final response text"),
+            ...input.directProvenance,
+        });
+    }
     return buildLlmResponseReviewReceipt({
         rawText: serializeFinalInput(input.finalInput),
         responseText: requireText(input.responseText, "Final response text"),
@@ -121,10 +131,13 @@ export function buildAssistantFinalReviewReceipt(input) {
     });
 }
 export function authorizeAssistantFinalDelivery(input) {
+    const rawTextSource = input.receipt?.schemaVersion === 2
+        ? "llm_generated"
+        : "runtime_deterministic";
     const authorization = authorizeUserFacingResponse({
         rawText: serializeFinalInput(input.finalInput),
         responseText: input.responseText,
-        rawTextSource: "runtime_deterministic",
+        rawTextSource,
         contentKind: contentKindFor(input.finalInput),
         expectedLanguage: input.finalInput.expectedLanguage,
         receipt: input.receipt,

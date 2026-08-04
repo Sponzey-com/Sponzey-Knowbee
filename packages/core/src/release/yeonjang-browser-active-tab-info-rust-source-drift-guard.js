@@ -2,22 +2,34 @@ const REQUIRED_SECTIONS = [
     { section: "methods_inventory", pattern: /"name"\s*:\s*"browser\.active_tab_info"/u },
     { section: "dispatch", pattern: /"browser\.active_tab_info"\s*=>\s*dispatch_browser_active_tab_info_request/u },
     { section: "capability_matrix", pattern: /"browser\.active_tab_info"\s*:\s*capability_entry/u },
-    { section: "method_classification", pattern: /"browser\.active_tab_info"\s*=>\s*CapabilityMethodClassification/u },
+    {
+        section: "method_classification",
+        pattern: /"browser\.active_tab_info"\s*=>\s*CapabilityMethodClassification|"browser\.list"\s*\|\s*"browser\.active_hint"\s*\|\s*"browser\.active_tab_info"\s*=>/u,
+    },
     {
         section: "tool_health",
         pattern: /"browser\.active_tab_info"\s*:\s*(tool_health_entry|browser_active_tab_info_tool_health_entry)/u,
     },
     { section: "method_metadata", pattern: /"browser\.active_tab_info"\s*=>\s*CapabilityMethodMetadata/u },
-    { section: "permission_setting_allow_browser_read", pattern: /Some\("allow_browser_read"\)/u },
+    {
+        section: "permission_setting_allow_browser_read",
+        pattern: /Some\("allow_browser_read"\)|Some\(PermissionKey::BrowserRead\)/u,
+    },
     {
         section: "requires_approval_true",
-        pattern: /capability_entry\(\s*"browser\.active_tab_info",\s*[^,]+,\s*true,/u,
+        pattern: /capability_entry\(\s*"browser\.active_tab_info",\s*[^,]+,\s*true,|requires_approval:\s*side_effecting\s*\|\|\s*method\s*==\s*"browser\.active_tab_info"/u,
     },
     { section: "requires_interactive_desktop_true", pattern: /requires_interactive_desktop:\s*true/u },
     { section: "broadcast_safe_false", pattern: /broadcast_safe:\s*false/u },
     { section: "default_target_policy_exact_instance", pattern: /default_target_policy:\s*"exact_instance"/u },
-    { section: "risk_level_moderate", pattern: /risk_level:\s*"moderate"/u },
-    { section: "side_effect_class_read_local", pattern: /side_effect_class:\s*"read_local"/u },
+    {
+        section: "risk_level_moderate",
+        pattern: /risk_level:\s*"moderate"|method\s*==\s*"browser\.active_tab_info"\s*\{\s*RiskLevel::Moderate/u,
+    },
+    {
+        section: "side_effect_class_read_local",
+        pattern: /side_effect_class:\s*"read_local"|SideEffectClass::ReadLocal/u,
+    },
     {
         section: "raw_payload_visibility_audit_only",
         pattern: /raw_payload_visibility:\s*"audit_only"|raw_payload_visibility\s*=\s*if method == "browser\.active_tab_info"\s*\{\s*"audit_only"/u,
@@ -29,6 +41,9 @@ const REQUIRED_SECTIONS = [
 ];
 export function validateYeonjangBrowserActiveTabInfoRustSourceDrift(input) {
     const implementationSource = stripRustTestModule(input.source);
+    const contractSource = input.descriptorSource
+        ? `${implementationSource}\n${stripRustTestModule(input.descriptorSource)}`
+        : implementationSource;
     if (!hasYeonjangBrowserActiveTabInfoRuntimeInventoryExposure(implementationSource)) {
         return {
             status: "fail_closed",
@@ -37,7 +52,7 @@ export function validateYeonjangBrowserActiveTabInfoRustSourceDrift(input) {
         };
     }
     const missingSections = REQUIRED_SECTIONS
-        .filter((requirement) => !requirement.pattern.test(implementationSource))
+        .filter((requirement) => !requirement.pattern.test(contractSource))
         .map((requirement) => requirement.section);
     if (missingSections.length > 0) {
         if (missingSections.length === 1 && missingSections[0] === "dispatch") {
@@ -60,7 +75,11 @@ export function validateYeonjangBrowserActiveTabInfoRustSourceDrift(input) {
     };
 }
 function stripRustTestModule(source) {
-    return source.split("#[cfg(test)]")[0] ?? source;
+    // Rust sources can use `#[cfg(test)]` on individual imports and helper
+    // functions before the production implementation. Only the actual test
+    // module marks the boundary after which fixture strings must be ignored.
+    const testModule = /^#\[cfg\(test\)\]\s*\r?\nmod tests\s*\{/mu.exec(source);
+    return testModule?.index === undefined ? source : source.slice(0, testModule.index);
 }
 export function hasYeonjangBrowserActiveTabInfoRuntimeInventoryExposure(source) {
     return (/"name"\s*:\s*"browser\.active_tab_info"/u.test(source) ||

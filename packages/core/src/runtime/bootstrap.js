@@ -1,10 +1,13 @@
 import { createDefaultLiveAcceptanceBootstrapDependencies } from "../api/live-acceptance-bootstrap.js";
+import { recoverInterruptedGatewayChannelSmokeRuns } from "../channels/smoke-runner.js";
 import { createApiServerRuntimeContext, } from "../api/server-runtime-context.js";
-import { closeServer, startServer } from "../api/server.js";
+import { closeServer as closeApiServer, startServer } from "../api/server.js";
 import { loadConfigSnapshot } from "../config/index.js";
 import { createRuntimePaths } from "../config/paths.js";
 import { createImmutableConfigSnapshot, createStartupConfigSource, } from "../config/startup-source.js";
 import { getDb, insertAuditLog, upsertPromptSources } from "../db/index.js";
+import { eventBus } from "../events/index.js";
+import { createLogger } from "../logger/index.js";
 import { ensurePromptSourceFiles } from "../memory/knowbee-md.js";
 import { startMqttBroker, stopMqttBroker } from "../mqtt/broker.js";
 import { recoverActiveRunsOnStartup } from "../runs/store.js";
@@ -13,12 +16,26 @@ import { initializeToolDispatcher, registerBuiltinTools, } from "../tools/index.
 import { createBrowserFocusRuntimeBootstrap, } from "../yeonjang/browser-focus-runtime-bootstrap.js";
 import { listYeonjangRegistryInstances } from "../yeonjang/registry.js";
 import { activateChannelsAndRecoverPendingResponses } from "./channel-activation-recovery.js";
+import { getGatewayProcessStartTimeMs } from "./build-status.js";
 import { refreshRuntimeManifest } from "./manifest.js";
+import { recoverApprovedOperationContinuations, } from "./approved-operation-continuation-recovery.js";
+import { createApprovedOperationContinuationRecoverySupervisor, } from "./approved-operation-continuation-recovery-supervisor.js";
 import { captureStartupProcessContext, } from "./startup-process-context.js";
 import { createMcpStartupPort, startMcpConnectionsInBackground, } from "./mcp-startup-port.js";
 let startupProcessContext = null;
 let startupRuntimePaths = null;
 let startupBrowserFocusRuntime = null;
+let continuationRecoverySupervisor = null;
+let detachContinuationRecoveryWake = null;
+const continuationRecoveryLog = createLogger("runtime:approved-operation-continuation");
+const channelSmokeRecoveryLog = createLogger("runtime:channel-smoke-recovery");
+async function stopContinuationRecovery() {
+    detachContinuationRecoveryWake?.();
+    detachContinuationRecoveryWake = null;
+    const supervisor = continuationRecoverySupervisor;
+    continuationRecoverySupervisor = null;
+    await supervisor?.stop();
+}
 async function advanceStartupOrThrow(progress, event) {
     if (!progress)
         return;
@@ -59,6 +76,9 @@ function resolveBootstrapBrowserFocusRuntime(options, runtimeConfig) {
         runtime,
         dispatcherDependencies: Object.freeze({
             ...(runtime.issuer ? { yeonjangBrowserFocusExecutionAdmissionIssuer: runtime.issuer } : {}),
+            ...(runtime.executionAuthorizationIssuer
+                ? { yeonjangExecutionAuthorizationIssuer: runtime.executionAuthorizationIssuer }
+                : {}),
         }),
     });
     return startupBrowserFocusRuntime;
@@ -142,18 +162,30 @@ export async function bootstrapAsync(config, options = {}) {
     if (preparedMcp.status === "rejected") {
         throw new Error(`mcp_startup_prepare_rejected:${preparedMcp.reasonCode}`);
     }
+    let channelRecoveryRuntime;
     await advanceStartupOrThrow(startupProgress, {
         type: "runtime_loaded",
         at: Date.now(),
     });
     try {
         await bootstrapRuntime(runtimeConfig, options);
+        const smokeRecovery = recoverInterruptedGatewayChannelSmokeRuns({
+            gatewayStartedAt: getGatewayProcessStartTimeMs(),
+            recoveredAt: Date.now(),
+        });
+        if (smokeRecovery.recoveredCount > 0) {
+            channelSmokeRecoveryLog.product("channel_smoke_startup_reconciled", {
+                reasonCode: "gateway_restart_interrupted",
+                recoveredCount: smokeRecovery.recoveredCount,
+            });
+        }
         await advanceStartupOrThrow(startupProgress, {
             type: "core_initialized",
             at: Date.now(),
         });
         await startMqttBroker(runtimeConfig.mqtt);
-        await activateChannelsAndRecoverPendingResponses(runtimeConfig, runtimePaths);
+        const channelActivation = await activateChannelsAndRecoverPendingResponses(runtimeConfig, runtimePaths);
+        channelRecoveryRuntime = channelActivation.channelRuntime;
         await advanceStartupOrThrow(startupProgress, {
             type: "channels_activated",
             at: Date.now(),
@@ -201,8 +233,44 @@ export async function bootstrapAsync(config, options = {}) {
         await mcpStartup.cancel();
         throw error;
     }
+    await stopContinuationRecovery();
+    continuationRecoverySupervisor =
+        createApprovedOperationContinuationRecoverySupervisor({
+            recover: (signal) => recoverApprovedOperationContinuations({
+                config: runtimeConfig,
+                paths: runtimePaths,
+                signal,
+                ...(channelRecoveryRuntime
+                    ? {
+                        resolveDeliveryHandler: channelRecoveryRuntime.resolveDeliveryHandler,
+                    }
+                    : {}),
+            }),
+            onSummary: async (summary, signal) => {
+                for (const runId of summary.completedRunIds) {
+                    await channelRecoveryRuntime?.resumeExistingRootRun(runId, signal);
+                }
+                if (summary.claimed > 0) {
+                    continuationRecoveryLog.product("approved_operation_continuation_recovery_completed", {
+                        reasonCode: "runtime_recovery_settled",
+                        claimed: summary.claimed,
+                        completed: summary.completed,
+                        blocked: summary.blocked,
+                        cancelled: summary.cancelled,
+                    });
+                }
+            },
+            onError: () => {
+                continuationRecoveryLog.product("approved_operation_continuation_recovery_failed", { reasonCode: "runtime_recovery_unavailable" });
+            },
+        });
+    detachContinuationRecoveryWake = eventBus.on("approval.continuation.enqueued", () => continuationRecoverySupervisor?.wake());
+    void continuationRecoverySupervisor.wake();
     startMcpConnectionsInBackground(mcpStartup);
     return runtimeConfig;
 }
-export { closeServer };
+export async function closeServer() {
+    await stopContinuationRecovery();
+    await closeApiServer();
+}
 //# sourceMappingURL=bootstrap.js.map

@@ -126,7 +126,12 @@ mod tests {
         let result = process_info(ProcessInfoParams { pid: current_pid }).expect("process info");
 
         assert_eq!(result["process"]["pid"], current_pid);
-        assert!(result["process"]["name"].as_str().unwrap_or_default().len() > 0);
+        assert!(
+            !result["process"]["name"]
+                .as_str()
+                .unwrap_or_default()
+                .is_empty()
+        );
     }
 
     #[test]

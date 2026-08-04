@@ -230,6 +230,46 @@ describe("run review cycle pass", () => {
     )
   })
 
+  it("routes a verified pending camera artifact directly to the delivery tool before LLM review", async () => {
+    const dependencies = createDependencies()
+    const moduleDependencies = createModuleDependencies()
+    const params = createParams()
+    params.executionSemantics = {
+      ...params.executionSemantics,
+      artifactDelivery: "direct",
+    }
+    params.deliveryOutcome = {
+      directArtifactDeliveryRequested: true,
+      hasSuccessfulArtifactDelivery: false,
+      deliverySatisfied: false,
+      requiresDirectArtifactRecovery: true,
+    }
+    params.successfulTools = [{
+      toolName: "yeonjang_camera_capture",
+      output: "camera artifact ready",
+      details: {
+        kind: "camera_artifact",
+        artifactRef: "artifact:32742982-7e55-4c4c-bfa5-fcfa10092231",
+        mimeType: "image/jpeg",
+        sizeBytes: 128,
+      },
+    }]
+
+    await runReviewCyclePass(params, dependencies, moduleDependencies)
+
+    expect(moduleDependencies.runReviewPass).not.toHaveBeenCalled()
+    expect(moduleDependencies.runReviewOutcomePass).toHaveBeenCalledWith(
+      expect.objectContaining({
+        review: expect.objectContaining({
+          status: "followup",
+          followupRequiredToolNames: ["telegram_send_file"],
+          followupEvidenceRefs: ["artifact:32742982-7e55-4c4c-bfa5-fcfa10092231"],
+        }),
+      }),
+      expect.any(Object),
+    )
+  })
+
   it("skips review pass when reply text delivery already satisfies completion", async () => {
     const dependencies = createDependencies()
     const moduleDependencies = createModuleDependencies()

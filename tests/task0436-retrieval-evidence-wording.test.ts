@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
-const runsPageSource = readFileSync(join(process.cwd(), "packages", "webui", "src", "pages", "RunsPage.tsx"), "utf-8")
+const runsPageSource = readFileSync(join(process.cwd(), "packages", "webui", "src", "pages", "RunsDiagnosticPage.tsx"), "utf-8")
 
 describe("task0436 retrieval evidence wording", () => {
   it("does not describe retrieval evidence as raw control timeline data", () => {

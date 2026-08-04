@@ -1,9 +1,11 @@
 import type { ApprovalDecision, ApprovalKind } from "../events/index.js"
 import {
   ToolDispatcher,
+  type ToolApprovalDecisionCommandResult,
   type ToolDispatcherDependencies,
   type ToolRuntimeConfigSnapshot,
 } from "./dispatcher.js"
+import type { ResolveApprovalDecisionCommand } from "../runs/approval-decision-command.js"
 
 let activeDispatcher: ToolDispatcher | null = null
 let activeConfig: ToolRuntimeConfigSnapshot | null = null
@@ -61,6 +63,12 @@ export function grantRunSingleApproval(
 
 export function resolvePendingInteraction(runId: string, decision: ApprovalDecision): boolean {
   return getToolDispatcher().resolvePendingInteraction(runId, decision)
+}
+
+export function resolveApprovalDecision(
+  command: ResolveApprovalDecisionCommand,
+): ToolApprovalDecisionCommandResult {
+  return getToolDispatcher().resolveApprovalDecision(command)
 }
 
 export function listPendingInteractions(): Array<{

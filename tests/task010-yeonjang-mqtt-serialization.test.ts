@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  armYeonjangResponseWaiter,
   enqueueYeonjangExtensionExecution,
   shouldSerializeYeonjangMethod,
 } from "../packages/core/src/yeonjang/mqtt-client.ts"
@@ -15,6 +16,23 @@ function createDeferred<T = void>() {
 }
 
 describe("yeonjang mqtt serialization", () => {
+  it("arms the response observer before a fast response can arrive during publish", async () => {
+    const order: string[] = []
+    let receive!: (value: string) => void
+    const waiter = armYeonjangResponseWaiter<string>(() => {
+      order.push("listener")
+      return new Promise((resolve) => {
+        receive = resolve
+      })
+    })
+
+    order.push("publish")
+    receive("fast-response")
+
+    await expect(waiter.response).resolves.toBe("fast-response")
+    expect(order).toEqual(["listener", "publish"])
+  })
+
   it("serializes same-extension executions to prevent action interleaving", async () => {
     const gate = createDeferred<void>()
     const order: string[] = []

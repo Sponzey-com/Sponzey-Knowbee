@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { createPerformanceCostBaseline } from "../scripts/audit-performance-cost-baseline.mjs"
+import { createPerformanceCostBaseline } from "../scripts/self/audit-performance-cost-baseline.mjs"
 
 describe("task005 performance baseline CLI", () => {
   it("creates a complete deterministic receipt without raw labels", () => {

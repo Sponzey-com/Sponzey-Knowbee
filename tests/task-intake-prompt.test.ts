@@ -89,4 +89,13 @@ describe("buildTaskIntakeSystemPrompt", () => {
     expect(prompt).toContain("Current prices")
     expect(prompt).toContain("Do not ask the user to provide the requested external result")
   })
+
+  it("binds camera artifact requests to the purpose-specific approval capability", () => {
+    const prompt = buildTaskIntakeSystemPrompt()
+
+    expect(prompt).toContain("set `approval_tool=yeonjang_camera_capture`")
+    expect(prompt).toContain(
+      "Do not substitute `external_action`, `shell_exec`, or another generic capability",
+    )
+  })
 })

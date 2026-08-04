@@ -19,13 +19,17 @@ const EXPECTED_INVOCATION_COUNTS: Record<string, Record<Invocation["kind"], numb
   "packages/core/src/ai/diagnosis-adapter.ts": { chatWithContextPreflight: 0, "provider.chat": 1 },
   "packages/core/src/ai/observed-provider.ts": { chatWithContextPreflight: 0, "provider.chat": 2 },
   "packages/core/src/ai/solution-plan-adapter.ts": { chatWithContextPreflight: 0, "provider.chat": 1 },
+  "packages/core/src/ai/structured-json-attempt.ts": { chatWithContextPreflight: 0, "provider.chat": 1 },
+  "packages/core/src/ai/web-evidence-pipeline-adapter.ts": { chatWithContextPreflight: 0, "provider.chat": 1 },
+  "packages/core/src/ai/web-research-method-adapter.ts": { chatWithContextPreflight: 0, "provider.chat": 1 },
   "packages/core/src/api/routes/settings.ts": { chatWithContextPreflight: 1, "provider.chat": 0 },
   "packages/core/src/api/routes/topologies.ts": { chatWithContextPreflight: 0, "provider.chat": 1 },
   "packages/core/src/memory/compaction.ts": { chatWithContextPreflight: 0, "provider.chat": 1 },
   "packages/core/src/memory/compressor.ts": { chatWithContextPreflight: 1, "provider.chat": 0 },
+  "packages/core/src/release/live-acceptance-llm-adapter.ts": { chatWithContextPreflight: 0, "provider.chat": 1 },
   "packages/core/src/runs/context-preflight.ts": { chatWithContextPreflight: 0, "provider.chat": 1 },
   "packages/core/src/runs/entry-comparison.ts": { chatWithContextPreflight: 1, "provider.chat": 0 },
-  "packages/core/src/runs/final-response-renderer.ts": { chatWithContextPreflight: 0, "provider.chat": 2 },
+  "packages/core/src/runs/final-response-renderer.ts": { chatWithContextPreflight: 0, "provider.chat": 3 },
   "packages/core/src/runs/intake-bridge-pass.ts": { chatWithContextPreflight: 0, "provider.chat": 1 },
   "packages/core/src/schedules/comparison.ts": { chatWithContextPreflight: 1, "provider.chat": 0 },
 }
@@ -34,7 +38,6 @@ const REQUIRED_OWNERSHIP_SNIPPETS: Record<string, string[]> = {
   "packages/core/src/agent/completion-review.ts": [
     'sourceId: "completion_review_user"',
     "buildCompletionReviewSystemPrompt",
-    "agentRuntimePromptContextLabel",
   ],
   "packages/core/src/agent/index.ts": [
     "loadSystemPromptSourceAssembly",
@@ -44,7 +47,6 @@ const REQUIRED_OWNERSHIP_SNIPPETS: Record<string, string[]> = {
   ],
   "packages/core/src/agent/intake.ts": [
     'sourceId: "task_intake_user"',
-    "buildTaskIntakeSystemPrompt",
     "buildMainAgentIdentityPromptContext",
     "agentRuntimePromptContextLabel",
   ],
@@ -56,6 +58,20 @@ const REQUIRED_OWNERSHIP_SNIPPETS: Record<string, string[]> = {
     "const { observability, ...providerParams } = params",
     "this.options.repository.append(receipt)",
     "this.provider.chat(providerParams)",
+  ],
+  "packages/core/src/ai/structured-json-attempt.ts": [
+    "...input.chatParams",
+    "signal,",
+  ],
+  "packages/core/src/ai/web-evidence-pipeline-adapter.ts": [
+    "this.options.promptSourceBlocks[operation]",
+    "loadPromptValue(",
+    "content: JSON.stringify(",
+  ],
+  "packages/core/src/ai/web-research-method-adapter.ts": [
+    "this.options.webResearchMethodPromptSourceBlock",
+    "loadPromptValue(",
+    "content: JSON.stringify(",
   ],
   "packages/core/src/api/routes/settings.ts": [
     'loadPromptValue("ai_connection_test"',
@@ -73,6 +89,11 @@ const REQUIRED_OWNERSHIP_SNIPPETS: Record<string, string[]> = {
   "packages/core/src/memory/compressor.ts": [
     "memoryPromptValue(MEMORY_COMPRESSOR_SUMMARY_PROMPT_SOURCE_ID)",
     "memoryContextLabel",
+  ],
+  "packages/core/src/release/live-acceptance-llm-adapter.ts": [
+    "selectLiveAcceptancePromptSource",
+    "const system = prompt.content.trim()",
+    "content: JSON.stringify({ kind: invokeInput.operation, evidence })",
   ],
   "packages/core/src/runs/context-preflight.ts": [
     "messages: prepared.messages",

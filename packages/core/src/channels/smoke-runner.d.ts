@@ -158,6 +158,12 @@ export interface PersistedChannelSmokeRunnerOptions extends Omit<ChannelSmokeRun
     metadata?: Record<string, unknown>;
     executeScenario?: (scenario: ChannelSmokeScenario) => Promise<ChannelSmokeTrace>;
 }
+export declare function recoverInterruptedGatewayChannelSmokeRuns(input: {
+    readonly gatewayStartedAt: number;
+    readonly recoveredAt: number;
+}): {
+    readonly recoveredCount: number;
+};
 export declare function getDefaultChannelSmokeScenarios(): ChannelSmokeScenario[];
 export declare function resolveChannelSmokeReadiness(config: KnowbeeConfig, scenario: ChannelSmokeScenario): ChannelSmokeReadiness;
 export declare function validateChannelSmokeTrace(scenario: ChannelSmokeScenario, trace: ChannelSmokeTrace): ChannelSmokeValidation;

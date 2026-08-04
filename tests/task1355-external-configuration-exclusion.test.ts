@@ -43,7 +43,7 @@ describe("task1355 external configuration exclusion", () => {
 
   it("keeps exact prompt source mutation available with the same startup snapshot", () => {
     expect(authorizeImprovementMutation({
-      target: { targetKind: "file", requestedRef: "prompts/tool_policy.md", canonicalWorkspacePath: "prompts/tool_policy.md", withinWorkspace: true, traversedSymlink: false, sourceAuthorization: "prompt_source" },
+      target: { targetKind: "file", requestedRef: "prompts/task_intake.md", canonicalWorkspacePath: "prompts/task_intake.md", withinWorkspace: true, traversedSymlink: false, sourceAuthorization: "prompt_source" },
       runtimeSnapshot,
     })).toMatchObject({ status: "authorized", runtimeSnapshotId: "startup-config:fingerprint:v1" })
   })

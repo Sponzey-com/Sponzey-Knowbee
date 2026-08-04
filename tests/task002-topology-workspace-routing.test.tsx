@@ -56,11 +56,11 @@ describe("task002 topology workspace routing", () => {
   it("exposes sub-agent settings in beginner and advanced navigation", () => {
     const beginnerNav = getUiNavigation("beginner", false)
     const nav = getUiNavigation("advanced", false)
-    const subAgentItems = nav.filter((item) => item.path === "/sub-agents")
+    const subAgentItems = nav.filter((item) => item.path === "/agents")
 
     expect(beginnerNav).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        path: "/sub-agents",
+        path: "/agents",
         labelKo: "서브 에이전트 설정",
         labelEn: "Sub-Agent Settings",
         capabilityKey: "enterprise_topology_builder_ui",
@@ -68,7 +68,7 @@ describe("task002 topology workspace routing", () => {
     ]))
     expect(subAgentItems).toEqual([
       expect.objectContaining({
-        path: "/sub-agents",
+        path: "/agents",
         labelKo: "서브 에이전트 설정",
         labelEn: "Sub-Agent Settings",
         capabilityKey: "enterprise_topology_builder_ui",
@@ -78,7 +78,7 @@ describe("task002 topology workspace routing", () => {
 
   it("tracks old enterprise builder bookmarks as compatibility aliases for the workspace", () => {
     const inventory = getUiRouteInventory()
-    const beginnerWorkspace = inventory.find((item) => item.path === "/sub-agents")
+    const beginnerWorkspace = inventory.find((item) => item.path === "/agents")
     const topologyAlias = inventory.find((item) => item.path === "/topology")
     const workspace = inventory.find((item) => item.path === "/advanced/topology")
     const enterpriseAlias = inventory.find((item) => item.path === "/advanced/enterprise-topology")
@@ -91,23 +91,23 @@ describe("task002 topology workspace routing", () => {
       replacementPath: null,
     }))
     expect(topologyAlias).toEqual(expect.objectContaining({
-      component: "TopologyWorkspacePage",
+      component: "UnifiedRouteRedirect",
       status: "redirect",
-      replacementPath: "/sub-agents",
+      replacementPath: "/agents",
     }))
     expect(workspace).toEqual(expect.objectContaining({
-      component: "TopologyWorkspacePage",
-      status: "kept",
-      replacementPath: null,
-      apiCalls: expect.arrayContaining(["/api/topologies", "/api/agent-topology"]),
+      component: "UnifiedRouteRedirect",
+      status: "redirect",
+      replacementPath: "/agents",
+      apiCalls: [],
     }))
     expect(enterpriseAlias).toEqual(expect.objectContaining({
-      component: "Navigate",
-      status: "compatibility",
-      replacementPath: "/advanced/topology?mode=build",
+      component: "UnifiedRouteRedirect",
+      status: "redirect",
+      replacementPath: "/agents",
     }))
-    expect(resolveLegacyAdvancedRoute("/topology")).toBe("/sub-agents")
-    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/sub-agents")
+    expect(resolveLegacyAdvancedRoute("/topology")).toBe("/agents")
+    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/agents")
     expect(appSource).toContain("TopologyWorkspacePage")
     expect(appSource).toContain('path="/sub-agents"')
     expect(appSource).toContain('path="/advanced/enterprise-topology"')
@@ -141,8 +141,8 @@ describe("task002 topology workspace routing", () => {
   })
 
   it("keeps beginner and advanced mode switch policy stable", () => {
-    expect(resolveModeSwitchRoute("/advanced/topology", "beginner")).toBe("/sub-agents")
-    expect(resolveModeSwitchRoute("/advanced/enterprise-topology", "beginner")).toBe("/sub-agents")
+    expect(resolveModeSwitchRoute("/advanced/topology", "beginner")).toBe("/agents")
+    expect(resolveModeSwitchRoute("/advanced/enterprise-topology", "beginner")).toBe("/agents")
     expect(resolveModeSwitchRoute("/sub-agents", "advanced")).toBe("/sub-agents")
     expect(resolveModeSwitchRoute("/status", "advanced")).toBe("/status")
   })

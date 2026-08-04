@@ -150,6 +150,17 @@ REQUEST_RECEIVED
 - 개인정보 노출, 외부 전송과 비용 범위
 - 이미 실패한 전략과 실질적으로 다른지 여부
 
+장치와 컴퓨터 제어 요청의 실행 수단은 다음 우선순위 계약을 추가로 지킨다.
+
+1. 사용자가 지정한 exact 대상과 방법을 먼저 검증하고 사용한다.
+2. 지정 방법이 없으면 LLM이 요청한 효과를 직접 수행하는 purpose-specific capability를 선택한다. 연결된 연장이 그 capability를 제공하면 해당 연장 capability가 첫 실행 경로다.
+3. 선택된 purpose-specific capability의 연결, 대상, 권한 또는 지원 상태가 부족하면 그 상태를 typed evidence로 진단하고, 같은 capability를 제공하는 다른 허용 대상 또는 사용자가 허용한 대체 방법을 검토한다.
+4. `shell_exec`, 범용 프로세스 실행, 임의 OS 명령 조합은 purpose-specific capability의 구현 대체물로 사용하지 않는다. 사용자가 shell을 명시했거나 LLM이 현재 capability 계약에 전용 기능이 없음을 확인하고 exact shell capability를 별도 방법으로 선택한 경우에만 계획 후보가 될 수 있다.
+5. 전용 capability와 범용 executor를 같은 우선순위 후보 집합에 넣어 LLM이 임의로 우회하게 하지 않는다. 구조화 진단이 선택한 exact method와 필수 전달 capability만 해당 실행 scope에 admission한다.
+6. 전용 capability 실행 실패 후 범용 executor로 전환하면 대상, 부작용, 권한 및 승인 범위가 달라지므로 기존 승인을 재사용하지 않고 새로운 전략과 승인을 요구한다.
+
+따라서 카메라 촬영은 `yeonjang_camera_capture`, 화면 캡처는 해당 화면 캡처 capability처럼 장치 효과를 직접 소유한 계약을 사용한다. `imagesnap`, `ffmpeg`, Python/OpenCV 또는 임의 shell 명령을 찾아 조합하는 것은 전용 연장 capability가 존재하는 요청의 정상 경로나 자동 복구 경로가 아니다.
+
 ### 3.3 연장(Yeonjang)의 정의와 실행 경계
 
 연장(Yeonjang)은 노비(Knowbee) 본체가 설치되지 않은 원격 컴퓨터 또는 별도 컴퓨터 인스턴스를 노비가 제어하기 위한 cross-platform 실행 런타임이다. 연장은 Linux, Windows, macOS를 지원 대상으로 하며, 각 운영체제의 권한 모델과 시스템 API 차이를 어댑터 내부에 캡슐화한다.
@@ -258,6 +269,7 @@ Knowbee는 연장을 사용할 때 다음 순서를 지킨다.
 ### 6.1 LLM과 코드의 책임
 
 - LLM은 문제 분석, 해결 절차 수립, 단계 분해, 실행 evidence의 의미 분석, 결과 충분성 검증, 실패 진단과 다음 행동 선택을 담당한다.
+- 사용자 요청을 해결하기 위한 의미 판단을 시맨틱 알고리즘으로 대신하는 방식은 지양한다. 시맨틱 유사도, 임베딩 거리 임계값, 키워드, 정규식, 문자열 비교 또는 하드코딩된 자연어 분류를 사용해 요청 의미, 에이전트나 실행 수단 선택, 결과 충분성, 실패 원인 또는 재시도 전략을 결정하지 않는다. 이러한 판단은 LLM이 구조화된 컨텍스트와 evidence를 바탕으로 수행한다.
 - 코드는 타입, 스키마, 상태 전이, 권한, 안전, 도구 연결, 실행, 영속화와 추적을 담당한다.
 - 어댑터는 외부 시스템의 전송, 호출, 수집, 구조 변환과 provenance 보존만 담당한다. 어댑터가 자연어 또는 도메인 의미를 분석해 현재 값, 정답, 완료 여부를 판정하지 않는다.
 - 하네스는 LLM 진단과 절차 및 결과 검증 receipt의 존재, 유효성, scope와 evidence binding을 검사한다. 하네스가 별도의 의미 알고리즘으로 LLM 판단을 대체하거나 승인하지 않는다.

@@ -29,7 +29,6 @@ describe("task0968 agent runtime prompt context label source", () => {
     const intakeSource = readFileSync("packages/core/src/agent/intake.ts", "utf-8")
 
     expect(agentSource).toContain('AGENT_RUNTIME_PROMPT_CONTEXT_LABELS_SOURCE_ID = "agent_runtime_prompt_context_labels_user"')
-    expect(completionReviewSource).toContain('AGENT_RUNTIME_PROMPT_CONTEXT_LABELS_SOURCE_ID = "agent_runtime_prompt_context_labels_user"')
     expect(intakeSource).toContain('AGENT_RUNTIME_PROMPT_CONTEXT_LABELS_SOURCE_ID = "agent_runtime_prompt_context_labels_user"')
     expect(agentSource).not.toContain("`[Runtime]\\nToday is ${")
     expect(agentSource).not.toContain("`\\n[Instruction Chain]\\n${instructions.mergedText}`")

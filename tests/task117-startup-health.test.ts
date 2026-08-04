@@ -38,7 +38,7 @@ describe("Task 117 startup liveness contract", () => {
     expect(statusDiagnostic).toBeGreaterThan(readinessWait)
     expect(webuiStart).toBeGreaterThan(readinessWait)
     expect(start.slice(readinessWait, statusDiagnostic)).not.toContain("/api/status")
-    expect(start).toContain("scripts/observe-gateway-startup.mjs")
+    expect(start).toContain("scripts/self/observe-gateway-startup.mjs")
   })
 
   it("keeps detailed status failure non-terminal after health and ownership succeed", () => {

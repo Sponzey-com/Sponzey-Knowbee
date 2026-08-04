@@ -62,6 +62,14 @@ describe("task014 AI solution-plan adapter", () => {
       goal: "Inspect repository.",
       constraints: [],
       capabilityRefs: ["tool:shell-read"],
+      capabilityOptions: [
+        {
+          capabilityRef: "capability:tool:shell-read",
+          description: "Read repository state without modifying it.",
+          effectClass: "read_only",
+          risk: "safe",
+        },
+      ],
       completionCriteria: ["Return command evidence."],
     })
 
@@ -84,6 +92,14 @@ describe("task014 AI solution-plan adapter", () => {
     expect(payload.input).toMatchObject({
       workId: "work:1",
       capabilityRefs: ["capability:tool:shell-read"],
+      capabilityOptions: [
+        {
+          capabilityRef: "capability:tool:shell-read",
+          description: "Read repository state without modifying it.",
+          effectClass: "read_only",
+          risk: "safe",
+        },
+      ],
     })
   })
 
@@ -108,6 +124,62 @@ describe("task014 AI solution-plan adapter", () => {
       solution_plan_adapter_error: "response_tool_missing",
     })
     expect(provider.calls).toHaveLength(1)
+  })
+
+  it("makes capability selection an explicit enum and normalizes it into input_refs", async () => {
+    const provider = new FakeProvider({
+      ownerAgentName: "마당쇠",
+      steps: [
+        {
+          ...step,
+          input_refs: ["request:1"],
+          capability_ref: "capability:tool:shell-read",
+        },
+      ],
+    })
+    const adapter = new AiChatSolutionPlanProviderAdapter({
+      provider,
+      model: "fake-model",
+      solutionPlanPromptSourceBlock: "workflow",
+    })
+
+    const result = await runLlmSolutionPlanProvider({
+      provider: adapter,
+      workId: "work:1",
+      runId: "run:1",
+      ownerAgentName: "마당쇠",
+      requestDiagnosisReceiptId: "receipt:diagnosis:1",
+      requestDiagnosisIssuedAt: 100,
+      issuedAt: 101,
+      goal: "Inspect repository.",
+      constraints: [],
+      capabilityRefs: ["tool:shell-read"],
+      completionCriteria: ["Return command evidence."],
+    })
+
+    expect(result).toMatchObject({
+      status: "valid",
+      capabilitySelections: [
+        {
+          stepId: "inspect",
+          capabilityRef: "capability:tool:shell-read",
+        },
+      ],
+    })
+    const stepSchema = (
+      provider.calls[0]?.tools?.[0]?.input_schema.properties?.steps as {
+        items?: {
+          properties?: {
+            capability_ref?: { enum?: string[] }
+          }
+          required?: string[]
+        }
+      }
+    ).items
+    expect(stepSchema?.properties?.capability_ref?.enum).toEqual([
+      "capability:tool:shell-read",
+    ])
+    expect(stepSchema?.required).toContain("capability_ref")
   })
 
 })

@@ -14,7 +14,9 @@ describe("task0592 Yeonjang and Telegram tool error redaction", () => {
     const combined = [telegram, yeonjang, broadcast].join("\n")
 
     expect(telegram).toContain("const msg = toolUserFacingErrorMessage(err)")
-    expect(yeonjang.match(/toolUserFacingErrorMessage\(error\)/g)?.length).toBe(2)
+    expect(yeonjang.match(/toolUserFacingErrorMessage\(error\)/g)?.length).toBe(
+      yeonjang.match(/\} catch \(error\) \{/g)?.length,
+    )
     expect(broadcast).toContain("const message = toolUserFacingErrorMessage(error)")
     expect(combined).not.toContain("err instanceof Error ? err.message : String(err)")
     expect(combined).not.toContain("error instanceof Error ? error.message : String(error)")

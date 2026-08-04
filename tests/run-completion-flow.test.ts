@@ -170,6 +170,10 @@ describe("run completion flow", () => {
         summary: "추가 정보가 필요합니다.",
         reason: "대상 파일 경로가 없습니다.",
         userMessage: "어느 파일을 수정해야 하나요?",
+        inputRequirement: {
+          resolutionKind: "provide_value",
+          missingFields: ["target_file_path"],
+        },
         remainingItems: ["대상 파일 확인"],
       },
       executionSemantics: baseExecutionSemantics,
@@ -184,6 +188,10 @@ describe("run completion flow", () => {
     expect(decision.kind).toBe("ask_user")
     if (decision.kind === "ask_user") {
       expect(decision.userMessage).toBe("어느 파일을 수정해야 하나요?")
+      expect(decision.inputRequirement).toEqual({
+        resolutionKind: "provide_value",
+        missingFields: ["target_file_path"],
+      })
     }
   })
 

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   classifyWebResearchLiveSmoke,
   sanitizeWebResearchLiveSmokeReceipt,
-} from "../scripts/run-web-research-live-smoke.mjs"
+} from "../scripts/self/run-web-research-live-smoke.mjs"
 
 describe("task032 controlled web research live smoke", () => {
   it("passes only after both real search and public fetch observations succeed", () => {
@@ -62,7 +62,7 @@ describe("task032 controlled web research live smoke", () => {
     const releaseSource = readFileSync("packages/core/src/release/package.ts", "utf8")
 
     expect(manifest.scripts?.["smoke:web:live"]).toBe(
-      "node scripts/run-web-research-live-smoke.mjs",
+      "node scripts/self/run-web-research-live-smoke.mjs",
     )
     expect(releaseSource).toContain('"pnpm", "run", "smoke:web:live"')
     expect(releaseSource).not.toMatch(

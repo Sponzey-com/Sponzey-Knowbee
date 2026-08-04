@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest"
 import {
   type SideEffectOperationReceipt,
+  buildPreparedSideEffectOperation,
   buildSideEffectOperationIdentity,
   buildSideEffectOperationReceipt,
 } from "../packages/core/src/contracts/side-effect-operation.ts"
 import {
   type SideEffectOperationAggregate,
   type SideEffectOperationRepository,
+  prepareSideEffectOperation,
   reserveSideEffectOperation,
   transitionReservedSideEffectOperation,
 } from "../packages/core/src/runs/side-effect-operation-use-case.ts"
@@ -78,6 +80,86 @@ describe("side-effect operation use case", () => {
       status: "existing",
       aggregate: { state: "RESERVED", revision: 0 },
     })
+  })
+
+  it("builds an immutable prepared operation only from resolved target and effect identity", () => {
+    const operationIdentity = identity()
+    const prepared = buildPreparedSideEffectOperation({
+      identity: operationIdentity,
+      operationBindingHash: `sha256:${"c".repeat(64)}`,
+    })
+
+    expect(prepared).toEqual({
+      schemaVersion: 1,
+      identity: operationIdentity,
+      operationBindingHash: `sha256:${"c".repeat(64)}`,
+      resolvedTargetFingerprint: operationIdentity.targetFingerprint,
+      effectFingerprint: operationIdentity.paramsFingerprint,
+    })
+    expect(Object.isFrozen(prepared)).toBe(true)
+    expect(Object.isFrozen(prepared.identity)).toBe(true)
+  })
+
+  it("keeps exact target and effect changes in distinct prepared operation bindings", () => {
+    const base = buildPreparedSideEffectOperation({
+      identity: identity(),
+      operationBindingHash: `sha256:${"c".repeat(64)}`,
+    })
+    const changedEffect = buildPreparedSideEffectOperation({
+      identity: identity(`sha256:${"d".repeat(64)}`),
+      operationBindingHash: `sha256:${"e".repeat(64)}`,
+    })
+    const changedTarget = buildPreparedSideEffectOperation({
+      identity: buildSideEffectOperationIdentity({
+        runId: "run-1",
+        workId: "work:root:run-1",
+        stepKey: "executing",
+        adapterId: "tool:file_write",
+        targetFingerprint: `sha256:${"f".repeat(64)}`,
+        paramsFingerprint: `sha256:${"b".repeat(64)}`,
+      }),
+      operationBindingHash: `sha256:${"1".repeat(64)}`,
+    })
+
+    expect(changedEffect.identity.operationId).not.toBe(base.identity.operationId)
+    expect(changedEffect.operationBindingHash).not.toBe(base.operationBindingHash)
+    expect(changedTarget.identity.scopeId).not.toBe(base.identity.scopeId)
+    expect(changedTarget.operationBindingHash).not.toBe(base.operationBindingHash)
+  })
+
+  it("returns closed admission results for new, terminal, and active operations", () => {
+    const operationIdentity = identity()
+    const prepared = buildPreparedSideEffectOperation({
+      identity: operationIdentity,
+      operationBindingHash: `sha256:${"c".repeat(64)}`,
+    })
+
+    const freshRepository = new MemoryRepository()
+    expect(prepareSideEffectOperation({
+      repository: freshRepository,
+      prepared,
+    })).toMatchObject({
+      status: "reserved_new",
+      aggregate: { state: "RESERVED" },
+    })
+
+    for (const [state, expectedStatus] of [
+      ["VERIFIED", "verified_existing"],
+      ["MANUAL_INTERVENTION", "manual_intervention_existing"],
+      ["EFFECT_STARTED", "active_existing"],
+    ] as const) {
+      const repository = new MemoryRepository()
+      repository.byScope.set(operationIdentity.scopeId, {
+        identity: operationIdentity,
+        state,
+        revision: state === "RESERVED" ? 0 : 1,
+        transitions: [],
+      })
+      expect(prepareSideEffectOperation({ repository, prepared })).toMatchObject({
+        status: expectedStatus,
+        aggregate: { state },
+      })
+    }
   })
 
   it("rejects changed params in the same operation scope", () => {

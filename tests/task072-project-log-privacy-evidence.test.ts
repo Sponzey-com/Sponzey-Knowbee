@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   DEFAULT_PROJECT_EVIDENCE_PATH,
   auditProjectRequirements,
-} from "../scripts/audit-project-requirements.mjs"
+} from "../scripts/self/audit-project-requirements.mjs"
 
 describe("Task 072 PROJECT log privacy evidence", () => {
   it("proves secrets, internal prompts, and private memory cannot enter any log purpose", () => {

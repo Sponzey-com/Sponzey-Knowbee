@@ -27,7 +27,16 @@ export interface ScreenCaptureFailureDetails {
   via: "yeonjang"
   extensionId?: string
   stopAfterFailure?: boolean
-  failureKind?: "path_bug" | "timeout" | "remote_failure"
+  failureKind?: "remote_failure" | "remote_rejected"
+  reasonCode?: string
+  terminalStage?: "response_timeout" | "handler_timeout" | "helper_timeout" | "handler_failed" | "cancelled" | "rejected"
+  retrySafety?: "safe_same_command" | "change_strategy" | "unknown_effect_state" | "completed"
+  failure?: {
+    reasonCode: string
+    retrySameStrategy: false
+    terminalStage?: "response_timeout" | "handler_timeout" | "helper_timeout" | "handler_failed" | "cancelled" | "rejected"
+    retrySafety?: "safe_same_command" | "change_strategy" | "unknown_effect_state" | "completed"
+  }
 }
 
 export const DEFAULT_SCREEN_CAPTURE_TIMEOUT_MS = 60_000
@@ -140,39 +149,70 @@ export async function preflightYeonjangScreenCapture(options: YeonjangClientOpti
   }
 }
 
-export function classifyYeonjangScreenCaptureFailure(message: string): {
+export function classifyYeonjangScreenCaptureFailure(error: unknown, message: string): {
   code: string
   output: string
   details: ScreenCaptureFailureDetails
 } {
-  if (/(getdirectoryname|output path is empty|argumentexception|directory name is invalid)/i.test(message)
-    || /디렉터리 이름이 올바르지|경로 처리/.test(message)) {
+  const candidate =
+    error instanceof Error
+      ? error as Error & { code?: unknown; attempt?: unknown }
+      : null
+  const code = typeof candidate?.code === "string" ? candidate.code.trim() : ""
+  const attempt =
+    candidate?.attempt
+    && typeof candidate.attempt === "object"
+    && !Array.isArray(candidate.attempt)
+      ? candidate.attempt as Record<string, unknown>
+      : null
+  const terminalStage = attempt?.["terminalStage"]
+  const retrySafety = attempt?.["retrySafety"]
+  const boundAttempt =
+    code.length > 0
+    && attempt?.["schemaVersion"] === 1
+    && attempt["method"] === "screen.capture"
+    && attempt["reasonCode"] === code
+  if (boundAttempt) {
     return {
-      code: "YEONJANG_SCREEN_CAPTURE_PATH_BUG",
-      output: [
-        "Windows 연장의 `screen.capture` 내부 경로 처리 오류 때문에 화면 캡처가 실패했습니다.",
-        "이 문제는 다른 도구 조합으로 우회하기보다 Windows Yeonjang을 최신 버전으로 다시 빌드하고 재시작해야 해결됩니다.",
-        "Windows에서 `build-yeonjang-windows.bat`로 재빌드하고 `start-yeonjang-windows.bat --restart` 후 다시 시도해 주세요.",
-      ].join("\n"),
+      code,
+      output: `Yeonjang 화면 캡처 실패: ${message}`,
       details: {
         via: "yeonjang",
         stopAfterFailure: true,
-        failureKind: "path_bug",
-      },
-    }
-  }
-
-  if (/(응답 시간이 초과되었습니다|연결 시간이 초과되었습니다|timed out|timeout)/i.test(message)) {
-    return {
-      code: "YEONJANG_SCREEN_CAPTURE_TIMEOUT",
-      output: [
-        "연장의 화면 캡처가 제한 시간 안에 끝나지 않았습니다.",
-        "Windows Yeonjang을 다시 시작한 뒤 다시 시도해 주세요.",
-      ].join("\n"),
-      details: {
-        via: "yeonjang",
-        stopAfterFailure: true,
-        failureKind: "timeout",
+        failureKind: terminalStage === "rejected" ? "remote_rejected" : "remote_failure",
+        reasonCode: code,
+        ...(terminalStage === "response_timeout"
+          || terminalStage === "handler_timeout"
+          || terminalStage === "helper_timeout"
+          || terminalStage === "handler_failed"
+          || terminalStage === "cancelled"
+          || terminalStage === "rejected"
+          ? { terminalStage }
+          : {}),
+        ...(retrySafety === "safe_same_command"
+          || retrySafety === "change_strategy"
+          || retrySafety === "unknown_effect_state"
+          || retrySafety === "completed"
+          ? { retrySafety }
+          : {}),
+        failure: {
+          reasonCode: code,
+          retrySameStrategy: false,
+          ...(terminalStage === "response_timeout"
+            || terminalStage === "handler_timeout"
+            || terminalStage === "helper_timeout"
+            || terminalStage === "handler_failed"
+            || terminalStage === "cancelled"
+            || terminalStage === "rejected"
+            ? { terminalStage }
+            : {}),
+          ...(retrySafety === "safe_same_command"
+            || retrySafety === "change_strategy"
+            || retrySafety === "unknown_effect_state"
+            || retrySafety === "completed"
+            ? { retrySafety }
+            : {}),
+        },
       },
     }
   }

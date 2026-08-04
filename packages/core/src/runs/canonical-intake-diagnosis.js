@@ -12,12 +12,12 @@ function stableStringify(value) {
     return JSON.stringify(value) ?? "null";
 }
 function hasSameEvidence(receipt, descriptor) {
-    return receipt.receiptId === descriptor.receiptId
-        && receipt.workId === descriptor.workId
-        && receipt.kind === descriptor.kind
-        && receipt.evidenceFingerprint === descriptor.evidenceFingerprint
-        && receipt.evidenceRefs.length === descriptor.evidenceRefs.length
-        && receipt.evidenceRefs.every((ref, index) => ref === descriptor.evidenceRefs[index]);
+    return (receipt.receiptId === descriptor.receiptId &&
+        receipt.workId === descriptor.workId &&
+        receipt.kind === descriptor.kind &&
+        receipt.evidenceFingerprint === descriptor.evidenceFingerprint &&
+        receipt.evidenceRefs.length === descriptor.evidenceRefs.length &&
+        receipt.evidenceRefs.every((ref, index) => ref === descriptor.evidenceRefs[index]));
 }
 export function recordCanonicalIntakeDiagnosis(descriptor, dependencies) {
     const issuance = dependencies.issueReceipt({

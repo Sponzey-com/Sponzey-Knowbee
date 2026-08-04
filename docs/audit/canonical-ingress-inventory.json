@@ -7,7 +7,7 @@
       "owner": "packages/core/src/api/routes/agent.ts",
       "entryMarker": "/api/agent/run",
       "executionOwner": "packages/core/src/api/routes/runs.ts",
-      "executionMarker": "startIngressRun({",
+      "executionMarker": "submitUserRequest({",
       "classification": "canonical",
       "finalResponseBinding": "webui_chunk_delivery",
       "cancellationBinding": "root_run_controller"
@@ -18,7 +18,7 @@
       "owner": "packages/core/src/api/routes/runs.ts",
       "entryMarker": "startLocalRun",
       "executionOwner": "packages/core/src/api/routes/runs.ts",
-      "executionMarker": "startIngressRun({",
+      "executionMarker": "submitUserRequest({",
       "classification": "canonical",
       "finalResponseBinding": "caller_or_webui_chunk_delivery",
       "cancellationBinding": "root_run_controller"
@@ -38,9 +38,9 @@
       "id": "telegram-message",
       "kind": "external_ingress",
       "owner": "packages/core/src/channels/telegram/bot.ts",
-      "entryMarker": "startIngressRun({",
+      "entryMarker": "submitUserRequest({",
       "executionOwner": "packages/core/src/channels/telegram/bot.ts",
-      "executionMarker": "startIngressRun({",
+      "executionMarker": "submitUserRequest({",
       "classification": "canonical",
       "finalResponseBinding": "telegram_chunk_delivery",
       "cancellationBinding": "root_run_controller"

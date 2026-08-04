@@ -2,6 +2,7 @@ import type { LiveAcceptanceCapability } from "./live-acceptance-admission.js";
 import type { LiveAcceptanceBundleApproval, LiveAcceptanceBundleCandidate, LiveAcceptanceBundlePayload } from "./live-acceptance-bundle.js";
 import { type LiveAcceptanceCollectionBlocker, type LiveAcceptanceProducerResult } from "./live-acceptance-collector.js";
 import { type LiveAcceptanceSigningRequest } from "./live-acceptance-signing-exchange.js";
+import type { LiveAcceptanceRuntimeIdentityReceipt } from "./live-acceptance-runtime-identity.js";
 export type LiveAcceptanceRunnerStage = "channels" | "web" | "extensions" | "yeonjang";
 export type LiveAcceptanceRunnerFailurePolicy = "continue_diagnostics" | "stop_on_failure";
 export interface LiveAcceptanceRunnerContext {
@@ -49,10 +50,12 @@ export type LiveAcceptanceRunnerResult = {
     status: "collected";
     payload: Readonly<LiveAcceptanceBundlePayload>;
     events: readonly LiveAcceptanceRunnerEvent[];
+    runtimeIdentity?: Readonly<LiveAcceptanceRuntimeIdentityReceipt>;
 } | {
     status: "blocked" | "cancelled";
     blockers: readonly LiveAcceptanceCollectionBlocker[];
     events: readonly LiveAcceptanceRunnerEvent[];
+    runtimeIdentity?: Readonly<LiveAcceptanceRuntimeIdentityReceipt>;
 };
 export declare function runLiveAcceptanceCollection(input: {
     candidate: LiveAcceptanceBundleCandidate;

@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
@@ -462,7 +462,7 @@ fn shell_escape_single_quotes(value: &str) -> String {
     value.replace('\'', "'\"'\"'")
 }
 
-fn build_autostart_entry_content(path: &PathBuf) -> String {
+fn build_autostart_entry_content(path: &Path) -> String {
     let executable = path.display().to_string();
 
     #[cfg(target_os = "macos")]

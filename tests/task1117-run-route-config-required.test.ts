@@ -11,6 +11,7 @@ describe("task1117 run route config boundary", () => {
     expect(routingSource).toContain("export function resolveRunRoute(input: RouteActionInput, config: KnowbeeConfig): ResolvedRunRoute")
     expect(routingSource).toContain("return resolveRunRouteFromDraft(buildSetupDraft(config, null), input)")
     expect(routingSource).not.toContain("return resolveRunRouteFromDraft(buildSetupDraft(), input)")
-    expect(bridgeSource).toContain("}, params.config),")
+    expect(bridgeSource).toContain("moduleDependencies.resolveRunRoute(")
+    expect(bridgeSource).toContain("params.config,")
   })
 })

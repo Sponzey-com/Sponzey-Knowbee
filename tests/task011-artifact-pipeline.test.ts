@@ -331,13 +331,7 @@ describe("task011 artifact pipeline", () => {
     expect(responder.sendFile).toHaveBeenCalledWith(filePath, "메인 화면")
     expect(responder.sendFinalResponse).toHaveBeenCalledWith(expect.stringContaining("/api/artifacts/screens/telegram-fallback.png?download=1"))
     expect(receipt?.textDeliveries?.[0]).toMatchObject({ channel: "telegram", messageIds: [707] })
-    expect(receipt?.artifactDeliveries?.[0]).toMatchObject({
-      channel: "telegram",
-      filePath,
-      url: "/api/artifacts/screens/telegram-fallback.png",
-      downloadUrl: "/api/artifacts/screens/telegram-fallback.png?download=1",
-      messageId: 707,
-    })
+    expect(receipt?.artifactDeliveries).toBeUndefined()
   })
 
   it("falls back to a same-thread Slack artifact link when upload fails", async () => {

@@ -33,7 +33,9 @@ describe("task1189 repository filesystem collector", () => {
     file(root, "prompts/identity.md")
     file(root, "packages/core/src/agent.ts")
     file(root, "packages/core/src/agent.js")
+    file(root, "packages/core/.artifact-consistency-test-123/agent.js")
     file(root, "docs/guide.md")
+    file(root, "docs/yeonjang/capability-inventory.json")
     file(root, "tests/fixtures/input.json")
     file(root, "packages/webui/src/assets/logo.svg")
     file(root, ".temp/result.json")
@@ -47,6 +49,7 @@ describe("task1189 repository filesystem collector", () => {
       [".temp/result.json", "temporary"],
       ["backups/state.json", "backup"],
       ["docs/guide.md", "document"],
+      ["docs/yeonjang/capability-inventory.json", "document"],
       ["package.json", "configuration"],
       ["packages/core/src/agent.js", "generated_output"],
       ["packages/core/src/agent.ts", "source"],

@@ -20,6 +20,7 @@ describe("task0928 generic execution recovery prompt source", () => {
     expect(source?.content).toContain("{{failedTools}}")
     expect(source?.content).toContain("{{alternatives}}")
     expect(source?.content).toContain("{{previousResult}}")
+    expect(source?.content).toContain("Do not name a browser or another application")
   })
 
   it("renders generic execution recovery evidence from runtime values", () => {

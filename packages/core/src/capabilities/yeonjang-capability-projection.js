@@ -1,3 +1,4 @@
+import { YEONJANG_SESSION_STALE_AFTER_MS } from "../contracts/yeonjang-liveness-contract.js";
 function platform(value) {
     switch (value?.trim().toLowerCase()) {
         case "darwin":
@@ -64,7 +65,7 @@ function projectItem(input) {
         status = "permission_required";
     else if (input.source.state === "discovered")
         status = "inactive";
-    else if (input.source.state === "online" && permission === "ready" && !duplicate)
+    else if (input.source.runnableTarget && permission === "ready" && !duplicate)
         status = "ready";
     let actionableIssue = null;
     if (duplicate)
@@ -96,7 +97,7 @@ function projectItem(input) {
     });
 }
 export function buildYeonjangCapabilityProjection(input) {
-    const staleAfterMs = Math.max(1, input.staleAfterMs ?? 30_000);
+    const staleAfterMs = Math.max(1, input.staleAfterMs ?? YEONJANG_SESSION_STALE_AFTER_MS);
     const duplicateLocalDetected = input.duplicateLocalDetected === true;
     const items = input.instances
         .map((source) => projectItem({

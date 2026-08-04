@@ -13,9 +13,7 @@ describe("task1099 channel start requires config", () => {
     expect(channelSource).not.toContain("import { getConfig } from \"../config/index.js\"")
     expect(channelSource).not.toContain("startChannels(config: KnowbeeConfig = getConfig())")
 
-    expect(coreIndexSource).toContain(
-      "await activateChannelsAndRecoverPendingResponses(runtimeConfig, runtimePaths)",
-    )
+    expect(coreIndexSource).toMatch(/await activateChannelsAndRecoverPendingResponses\(\s*runtimeConfig,\s*runtimePaths,?\s*\)/u)
     expect(settingsRouteSource).toMatch(
       /await activateChannelsAndRecoverPendingResponses\(\s*cfg,\s*getApiRuntimePaths\(req\),?\s*\)/u,
     )

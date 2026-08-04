@@ -17,6 +17,7 @@ describe("task1091 execution graph config snapshot", () => {
     expect(decisionSource).toContain("type ExecutionGraphConfigSnapshot")
     expect(decisionSource).toContain("config: ExecutionGraphConfigSnapshot")
     expect(decisionSource).toContain("config: input.config")
-    expect(intakeSource).toContain("config: params.config,\n        buildExecutionGraphSnapshot")
+    expect(intakeSource).toContain("config: params.config")
+    expect(intakeSource).toContain("buildExecutionGraphSnapshot: moduleDependencies.buildExecutionGraphSnapshot")
   })
 })

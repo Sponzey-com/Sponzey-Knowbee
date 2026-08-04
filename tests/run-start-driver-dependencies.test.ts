@@ -111,5 +111,8 @@ describe("start driver dependencies", () => {
     expect(dependencySource).toContain(
       "getAdmittedCapabilityExecutionScope: () => admittedCapabilityExecutionScope",
     )
+    expect(dependencySource).not.toMatch(
+      /approvedCapabilityIds:[\s\S]{0,240}hasSyntheticApprovalScope/u,
+    )
   })
 })

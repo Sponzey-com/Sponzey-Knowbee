@@ -198,6 +198,7 @@ export async function runIntakeBridgePass(params, dependencies, moduleDependenci
     try {
         const analysis = await moduleDependencies.analyzeTaskIntake({
             userMessage: params.message,
+            runId: params.runId,
             ...(intakeSessionId ? { sessionId: intakeSessionId } : {}),
             requestGroupId: params.requestGroupId,
             ...(params.model ? { model: params.model } : {}),
@@ -217,6 +218,7 @@ export async function runIntakeBridgePass(params, dependencies, moduleDependenci
                     phase: "intake",
                     reasonCode: analysis.reasonCode,
                     retryable: analysis.retryable,
+                    safeEvidenceRefs: [`llm-invocation:${analysis.providerInvocationRef}`],
                 });
             }
             intake = analysis.intake;
@@ -282,22 +284,34 @@ export async function runIntakeBridgePass(params, dependencies, moduleDependenci
             kind: "complete",
             text: directAnswerText,
             textSource,
-            ...(directResponseProvenance ? { responseReview: {
-                    rawText: directAnswerText,
-                    rawTextSource: "llm_generated",
-                    contentKind: "direct_answer",
-                    expectedLanguage: intake.structured_request.source_language === "ko" ||
-                        intake.structured_request.source_language === "en"
-                        ? intake.structured_request.source_language
-                        : "unknown",
-                    receipt: buildDirectLlmResponseReviewReceipt({
+            ...(directResponseProvenance
+                ? {
+                    responseReview: {
                         rawText: directAnswerText,
-                        responseText: directAnswerText,
-                        ...directResponseProvenance,
-                    }),
-                } } : {}),
+                        rawTextSource: "llm_generated",
+                        contentKind: "direct_answer",
+                        expectedLanguage: intake.structured_request.source_language === "ko" ||
+                            intake.structured_request.source_language === "en"
+                            ? intake.structured_request.source_language
+                            : "unknown",
+                        receipt: buildDirectLlmResponseReviewReceipt({
+                            rawText: directAnswerText,
+                            responseText: directAnswerText,
+                            ...directResponseProvenance,
+                        }),
+                    },
+                }
+                : {}),
             eventLabel: textSource === "llm_generated" ? "intake 즉시 응답 완료" : "intake 런타임 즉시 응답 완료",
         };
+    }
+    const canonicalDiagnosis = await dependencies.recordCanonicalIntakeDiagnosis(buildCanonicalIntakeDiagnosisDescriptor({ runId: params.runId, intake }));
+    if (!canonicalDiagnosis.ok) {
+        throw new CanonicalExecutionFailure({
+            phase: "intake",
+            reasonCode: canonicalDiagnosis.reasonCode,
+            retryable: false,
+        });
     }
     if (intake.user_message.mode === "accepted_receipt" &&
         directAnswerText &&
@@ -330,14 +344,6 @@ export async function runIntakeBridgePass(params, dependencies, moduleDependenci
                 deliveredAtMs: progressReceipt.deliveredAtMs,
             });
         }
-    }
-    const canonicalDiagnosis = await dependencies.recordCanonicalIntakeDiagnosis(buildCanonicalIntakeDiagnosisDescriptor({ runId: params.runId, intake }));
-    if (!canonicalDiagnosis.ok) {
-        throw new CanonicalExecutionFailure({
-            phase: "intake",
-            reasonCode: canonicalDiagnosis.reasonCode,
-            retryable: false,
-        });
     }
     const canonicalPolicy = await dependencies.authorizeCanonicalIntakePlan({
         runId: params.runId,
@@ -416,9 +422,7 @@ export async function runIntakeBridgePass(params, dependencies, moduleDependenci
                     preview: "",
                     summary: "일정 요청을 처리하지 못했습니다.",
                     reason: scheduleResult.detail || scheduleResult.message,
-                    remainingItems: [
-                        "유효한 run_at 또는 cron 일정이 필요합니다.",
-                    ],
+                    remainingItems: ["유효한 run_at 또는 cron 일정이 필요합니다."],
                     eventLabel: "일정 실행 실패 종료",
                 };
             }
@@ -560,8 +564,8 @@ export async function runIntakeBridgePass(params, dependencies, moduleDependenci
                         intake: delegatedIntake,
                         action: delegatedAction,
                         taskProfile: delegatedTaskProfile,
-                        selectedExecutorReason: decisionRoute.agentExecutionDecision.unresolved_reason?.trim()
-                            || decisionRoute.agentExecutionDecision.reason.trim(),
+                        selectedExecutorReason: decisionRoute.agentExecutionDecision.unresolved_reason?.trim() ||
+                            decisionRoute.agentExecutionDecision.reason.trim(),
                     }),
                     requiredToolNames: [],
                     eventLabel: "execution decision 경계 결과 재진단",

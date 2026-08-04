@@ -154,9 +154,11 @@ describe("task021 Yeonjang failure recovery event integration", () => {
       toolNames: ["yeonjang_camera_capture"],
       summary: "yeonjang_camera_capture Yeonjang evidence failed verification.",
     })
-    expect(JSON.stringify(recovery)).toContain("target=yeonjang-main")
-    expect(JSON.stringify(recovery)).toContain("method=camera.capture")
-    expect(JSON.stringify(recovery)).toContain("post_check=failed")
-    expect(JSON.stringify(recovery)).not.toContain("do-not-project")
+    const projectedRecovery = JSON.stringify(recovery)
+    expect(projectedRecovery).toMatch(/target_ref=sha256:[a-f0-9]{64}/u)
+    expect(projectedRecovery).not.toContain("target=yeonjang-main")
+    expect(projectedRecovery).toContain("method=camera.capture")
+    expect(projectedRecovery).toContain("post_check=failed")
+    expect(projectedRecovery).not.toContain("do-not-project")
   })
 })

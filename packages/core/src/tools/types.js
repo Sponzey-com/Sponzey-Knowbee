@@ -9,4 +9,7 @@ export function isArtifactDeliveryResultDetails(value) {
         typeof candidate.size === "number" &&
         typeof candidate.source === "string");
 }
+export function canonicalToolOperationParams(input) {
+    return input.contract?.canonicalOperation?.(input.params, input.ctx) ?? input.params;
+}
 //# sourceMappingURL=types.js.map

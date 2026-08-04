@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
-const ROOT = process.cwd()
+const ROOT = join(process.cwd(), ".tasks", "phase005")
 const TASKS = ["task232.md", "task233.md", "task234.md", "task235.md", "task236.md"] as const
 
 function readTask(name: string): string {
-  return readFileSync(join(ROOT, ".tasks", name), "utf-8")
+  return readFileSync(join(ROOT, name), "utf-8")
 }
 
 describe("Task 234 active tab info runtime transition task evidence", () => {
@@ -23,7 +23,7 @@ describe("Task 234 active tab info runtime transition task evidence", () => {
   })
 
   it("keeps the current plan pointed at production exposure recheck before live enable work", () => {
-    const plan = readFileSync(join(ROOT, ".tasks", "plan.md"), "utf-8")
+    const plan = readFileSync(join(ROOT, "plan.md"), "utf-8")
     const currentItem = plan.slice(plan.indexOf("205."))
 
     expect(currentItem).toContain("production exposure audit")

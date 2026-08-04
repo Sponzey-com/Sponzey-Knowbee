@@ -17,9 +17,9 @@ describe("task1132 scheduler runtime config required", () => {
     const cli = readFileSync("packages/cli/src/commands/schedule.ts", "utf-8")
 
     expect(source).toContain("getHealth(config: KnowbeeConfig)")
-    expect(source).toContain("artifactStorage: ArtifactStorageContext, memoryJournal: MemoryJournalRepository")
-    expect(source).toContain("return scheduler.runNow(scheduleId, trigger, config, artifactStorage, memoryJournal)")
-    expect(source).toContain("return scheduler.runNowAndWait(scheduleId, trigger, config, artifactStorage, memoryJournal)")
+    expect(source).toContain("artifactStorage: ArtifactStorageContext, memoryJournal: MemoryJournalRepository, hierarchyStorage: AgentHierarchyStorage")
+    expect(source).toContain("return scheduler.runNow(scheduleId, trigger, config, artifactStorage, memoryJournal, hierarchyStorage)")
+    expect(source).toContain("return scheduler.runNowAndWait(scheduleId, trigger, config, artifactStorage, memoryJournal, hierarchyStorage)")
     expect(cli).toContain("const config = await bootstrapRuntime()")
     expect(cli).not.toContain("getConfig")
     expect(cli).toContain("startChannels(config, paths)")

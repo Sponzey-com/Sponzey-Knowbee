@@ -23,16 +23,16 @@ describe("task1054 Yeonjang MQTT config snapshot boundary", () => {
 
     expect(toolTypesSource).toContain("mqttConfig?: MqttConfig")
     expect(legacyConfigAccesses(dispatcherSource)).toEqual([])
-    expect(functionParameterTypes(dispatcherSource, "buildRuntimeToolContext")).toEqual([[
-      "ToolContext",
-      "ToolRuntimeConfigSnapshot",
-    ]])
-    expect(callArgumentCounts(dispatcherSource, "buildRuntimeToolContext")).toEqual([2])
-    expect(dispatcherSource).toContain("result = await tool.execute(params, {")
+    expect(functionParameterTypes(dispatcherSource, "buildRuntimeToolContext")[0]?.[0]).toContain("ctx: ToolContext")
+    expect(functionParameterTypes(dispatcherSource, "buildRuntimeToolContext")[0]?.[0]).toContain("config: ToolRuntimeConfigSnapshot")
+    expect(callArgumentCounts(dispatcherSource, "buildRuntimeToolContext")).toEqual([1])
+    expect(dispatcherSource).toContain("const authorizedContext = {")
     expect(dispatcherSource).toContain("...runtimeToolContext,")
+    expect(dispatcherSource).toContain("result = await executeToolWithSideEffectLedger({")
+    expect(dispatcherSource).toContain("ctx: authorizedContext,")
     expect(dispatcherSource).toContain("authorizationReceipt: Object.freeze({")
-    expect(metadataSource).toContain("const mqttConfig = options.mqttConfig ?? ctx.mqttConfig")
+    expect(metadataSource).toContain("const mqttConfig = callerOptions.mqttConfig ?? ctx.mqttConfig")
     expect(metadataSource).toContain("...(mqttConfig ? { mqttConfig } : {})")
-    expect(schedulerSource).toContain("mqttConfig: params.config.mqtt")
+    expect(schedulerSource).toContain("config: params.config")
   })
 })

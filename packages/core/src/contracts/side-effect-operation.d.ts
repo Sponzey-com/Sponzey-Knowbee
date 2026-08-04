@@ -1,6 +1,6 @@
-export declare const SIDE_EFFECT_OPERATION_STATES: readonly ["RESERVED", "EFFECT_STARTED", "EFFECT_RECORDED", "VERIFYING", "VERIFIED", "VERIFY_FAILED", "CANCEL_REQUESTED", "COMPENSATING", "COMPENSATED", "MANUAL_INTERVENTION"];
+export declare const SIDE_EFFECT_OPERATION_STATES: readonly ["RESERVED", "EFFECT_STARTED", "EFFECT_REJECTED", "EFFECT_RECORDED", "VERIFYING", "VERIFIED", "VERIFY_FAILED", "CANCEL_REQUESTED", "COMPENSATING", "COMPENSATED", "MANUAL_INTERVENTION"];
 export type SideEffectOperationState = (typeof SIDE_EFFECT_OPERATION_STATES)[number];
-export declare const SIDE_EFFECT_OPERATION_EVENTS: readonly ["START_EFFECT", "RECORD_EFFECT", "BEGIN_VERIFICATION", "VERIFICATION_PASSED", "VERIFICATION_FAILED", "REQUEST_CANCEL", "BEGIN_COMPENSATION", "COMPENSATION_SUCCEEDED", "COMPENSATION_FAILED", "MARK_MANUAL"];
+export declare const SIDE_EFFECT_OPERATION_EVENTS: readonly ["START_EFFECT", "RECORD_REJECTION", "RECORD_EFFECT", "BEGIN_VERIFICATION", "VERIFICATION_PASSED", "VERIFICATION_FAILED", "REQUEST_CANCEL", "BEGIN_COMPENSATION", "COMPENSATION_SUCCEEDED", "COMPENSATION_FAILED", "MARK_MANUAL"];
 export type SideEffectOperationEvent = (typeof SIDE_EFFECT_OPERATION_EVENTS)[number];
 export declare const SIDE_EFFECT_RECEIPT_KINDS: readonly ["authorization", "effect", "observation", "cancellation", "compensation", "manual"];
 export type SideEffectReceiptKind = (typeof SIDE_EFFECT_RECEIPT_KINDS)[number];
@@ -28,6 +28,13 @@ export interface SideEffectOperationIdentity {
     adapterId: string;
     targetFingerprint: `sha256:${string}`;
     paramsFingerprint: `sha256:${string}`;
+}
+export interface PreparedSideEffectOperation {
+    readonly schemaVersion: 1;
+    readonly identity: Readonly<SideEffectOperationIdentity>;
+    readonly operationBindingHash: `sha256:${string}`;
+    readonly resolvedTargetFingerprint: `sha256:${string}`;
+    readonly effectFingerprint: `sha256:${string}`;
 }
 export interface SideEffectOperationAuthorization {
     authorized: true;
@@ -62,6 +69,10 @@ export declare function buildSideEffectOperationReceipt(input: {
     issuedAt: number;
 }): SideEffectOperationReceipt;
 export declare function buildSideEffectOperationIdentity(input: Omit<SideEffectOperationIdentity, "operationId" | "scopeId">): SideEffectOperationIdentity;
+export declare function buildPreparedSideEffectOperation(input: {
+    identity: SideEffectOperationIdentity;
+    operationBindingHash: `sha256:${string}`;
+}): PreparedSideEffectOperation;
 export declare function buildSideEffectOperationAuthorization(input: {
     identity: SideEffectOperationIdentity;
     policyDecisionId: string;

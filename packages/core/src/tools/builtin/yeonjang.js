@@ -10,7 +10,7 @@ import { toolUserFacingErrorMessage } from "./error-redaction.js";
 import { buildYeonjangEvidenceFromMapping } from "../../yeonjang/evidence.js";
 import { YEONJANG_TOOL_MAPPINGS } from "../../yeonjang/tool-mapping.js";
 import { createYeonjangBrowserFocusSideEffect } from "./yeonjang-browser-focus-side-effect.js";
-import { recordArtifactMetadata } from "../../artifacts/lifecycle.js";
+import { recordArtifactMetadata, resolveArtifactReference } from "../../artifacts/lifecycle.js";
 const yeonjangToolMappingByName = new Map(YEONJANG_TOOL_MAPPINGS.map((mapping) => [mapping.toolName, mapping]));
 function yeonjangMapping(toolName) {
     const mapping = yeonjangToolMappingByName.get(toolName);
@@ -140,12 +140,82 @@ function yeonjangCameraTargetRef(params) {
     const deviceRef = params.deviceId?.trim() || "default";
     return `yeonjang:${extensionId}${sessionRef ? `:${sessionRef}` : ""}:camera:${deviceRef}`;
 }
+function canonicalYeonjangCameraOperation(params) {
+    const extensionId = params.extensionId?.trim() || DEFAULT_YEONJANG_EXTENSION_ID;
+    const targetSessionId = params.targetSessionId?.trim();
+    const deviceId = params.deviceId?.trim();
+    return {
+        extensionId,
+        ...(targetSessionId ? { targetSessionId } : {}),
+        ...(params.targetSelector ? { targetSelector: params.targetSelector } : {}),
+        ...(deviceId ? { deviceId } : {}),
+        // A facing is enforceable only when an exact device was selected from a
+        // typed camera inventory. It is not a substitute for the default-device
+        // protocol target and must not create an approval binding the command
+        // cannot actually enforce.
+        ...(deviceId && params.requestedFacing
+            ? { requestedFacing: params.requestedFacing }
+            : {}),
+    };
+}
+function prepareYeonjangCameraOperation(params, _ctx) {
+    const selection = resolveYeonjangTargetSelection({
+        requestedExtensionId: params.extensionId,
+        targetSelector: params.targetSelector,
+        expectedTargetSessionId: params.targetSessionId,
+    });
+    if (!selection.ok) {
+        return {
+            status: "rejected",
+            result: {
+                success: false,
+                ...buildYeonjangTargetSelectionFailure(selection),
+            },
+        };
+    }
+    const executionParams = {
+        ...(params.deviceId ? { deviceId: params.deviceId } : {}),
+        ...(params.deviceId && params.requestedFacing
+            ? { requestedFacing: params.requestedFacing }
+            : {}),
+        ...(params.timeoutSec != null ? { timeoutSec: params.timeoutSec } : {}),
+        extensionId: selection.extensionId ?? DEFAULT_YEONJANG_EXTENSION_ID,
+        ...(selection.targetSessionId
+            ? { targetSessionId: selection.targetSessionId }
+            : {}),
+    };
+    return {
+        status: "prepared",
+        executionParams,
+        targetRef: yeonjangCameraTargetRef(executionParams),
+        effectParams: {
+            ...(executionParams.deviceId ? { deviceId: executionParams.deviceId } : {}),
+            ...(executionParams.requestedFacing
+                ? { requestedFacing: executionParams.requestedFacing }
+                : {}),
+        },
+        expectedState: cameraExpectedState(executionParams),
+    };
+}
 function cameraExpectedState(params) {
+    const deviceId = params.deviceId?.trim();
     return {
         artifact: "local_saved",
-        deviceId: params.deviceId?.trim() || "default",
+        requestedDevice: deviceId
+            ? { kind: "exact", deviceId }
+            : { kind: "any_resolved_device" },
         minBytes: 1,
     };
+}
+function cameraObservedState(input) {
+    if (input.expectedState.requestedDevice.kind === "exact") {
+        if (!input.resolvedDeviceId)
+            return { reason: "camera_resolved_device_missing" };
+        if (input.expectedState.requestedDevice.deviceId !== input.resolvedDeviceId) {
+            return { reason: "camera_resolved_device_mismatch" };
+        }
+    }
+    return input.expectedState;
 }
 function observeYeonjangCameraCapture(params, result) {
     const expectedState = cameraExpectedState(params);
@@ -153,18 +223,23 @@ function observeYeonjangCameraCapture(params, result) {
         ? result.details
         : {};
     const localFileSize = typeof details.localFileSize === "number" ? details.localFileSize : 0;
+    const resolvedDeviceId = typeof details.deviceId === "string" ? details.deviceId.trim() : "";
     const observedState = result.success && localFileSize >= expectedState.minBytes
-        ? {
-            artifact: "local_saved",
-            deviceId: typeof details.deviceId === "string" ? details.deviceId : expectedState.deviceId,
-            minBytes: expectedState.minBytes,
-        }
+        ? cameraObservedState({ expectedState, resolvedDeviceId })
         : { reason: "camera_artifact_missing_or_empty" };
+    const recoveryEvidence = cameraRecoveryEvidence({
+        result,
+        observedState,
+        resolvedDevicePresent: resolvedDeviceId.length > 0,
+    });
     return {
-        available: result.success === true && localFileSize >= expectedState.minBytes,
+        available: result.success === true &&
+            localFileSize >= expectedState.minBytes &&
+            !("reason" in observedState),
         targetRef: yeonjangCameraTargetRef(params),
         expectedState,
         observedState,
+        ...(recoveryEvidence ? { recoveryEvidence } : {}),
     };
 }
 const SUPPORTED_CAMERA_ARTIFACT_MIME_TYPES = new Set([
@@ -172,6 +247,117 @@ const SUPPORTED_CAMERA_ARTIFACT_MIME_TYPES = new Set([
     "image/png",
     "image/webp",
 ]);
+const CAMERA_DEVICE_CONSTRAINT_SATISFIED_REF = "side-effect-fact:camera-device-constraint-satisfied:v1";
+function cameraRecoveryEvidence(input) {
+    if (!("reason" in input.observedState))
+        return undefined;
+    if (input.observedState.reason !== "camera_resolved_device_missing" &&
+        input.observedState.reason !== "camera_resolved_device_mismatch") {
+        return undefined;
+    }
+    const details = input.result.details && typeof input.result.details === "object" &&
+        !Array.isArray(input.result.details)
+        ? input.result.details
+        : {};
+    const verification = details.artifactVerification &&
+        typeof details.artifactVerification === "object" &&
+        !Array.isArray(details.artifactVerification)
+        ? details.artifactVerification
+        : {};
+    if (verification.status !== "verified" ||
+        typeof verification.artifactRef !== "string" ||
+        !/^artifact:[0-9a-f-]{36}$/iu.test(verification.artifactRef) ||
+        typeof verification.mimeType !== "string" ||
+        !SUPPORTED_CAMERA_ARTIFACT_MIME_TYPES.has(verification.mimeType) ||
+        typeof verification.sizeBytes !== "number" ||
+        !Number.isSafeInteger(verification.sizeBytes) ||
+        verification.sizeBytes <= 0) {
+        return undefined;
+    }
+    return {
+        kind: "artifact_candidate",
+        artifactRef: verification.artifactRef,
+        mimeType: verification.mimeType,
+        sizeBytes: verification.sizeBytes,
+        reasonCode: input.observedState.reason,
+        resolvedDevicePresent: input.resolvedDevicePresent,
+    };
+}
+function cameraEffectEvidenceRefs(params, result) {
+    const details = result.details && typeof result.details === "object" && !Array.isArray(result.details)
+        ? result.details
+        : {};
+    const verification = details.artifactVerification &&
+        typeof details.artifactVerification === "object" &&
+        !Array.isArray(details.artifactVerification)
+        ? details.artifactVerification
+        : {};
+    const artifactRef = verification.status === "verified" &&
+        typeof verification.artifactRef === "string" &&
+        /^artifact:[0-9a-f-]{36}$/iu.test(verification.artifactRef)
+        ? verification.artifactRef
+        : undefined;
+    if (!artifactRef)
+        return [];
+    const expectedState = cameraExpectedState(params);
+    const resolvedDeviceId = typeof details.deviceId === "string" ? details.deviceId.trim() : "";
+    const observedState = cameraObservedState({ expectedState, resolvedDeviceId });
+    return observedState === expectedState && expectedState.requestedDevice.kind === "exact"
+        ? [artifactRef, CAMERA_DEVICE_CONSTRAINT_SATISFIED_REF]
+        : [artifactRef];
+}
+async function observeCurrentYeonjangCameraCapture(params, ctx, effectEvidenceRefs) {
+    const expectedState = cameraExpectedState(params);
+    const artifactRefs = effectEvidenceRefs.filter((ref) => /^artifact:[0-9a-f-]{36}$/iu.test(ref));
+    const deviceConstraintSatisfied = effectEvidenceRefs.includes(CAMERA_DEVICE_CONSTRAINT_SATISFIED_REF);
+    const artifactResolution = artifactRefs.length === 1
+        ? resolveArtifactReference({
+            artifactRef: artifactRefs[0],
+            runId: ctx.runId,
+            requestGroupId: ctx.requestGroupId ?? ctx.runId,
+        }, ctx.artifactStorage)
+        : undefined;
+    let artifactAvailable = false;
+    if (artifactResolution?.ok &&
+        artifactResolution.sizeBytes > 0 &&
+        SUPPORTED_CAMERA_ARTIFACT_MIME_TYPES.has(artifactResolution.mimeType)) {
+        try {
+            const stat = ctx.artifactStorage.fileSystem.stat(artifactResolution.filePath);
+            artifactAvailable =
+                ctx.artifactStorage.fileSystem.exists(artifactResolution.filePath) &&
+                    stat.isFile() &&
+                    stat.size > 0;
+        }
+        catch {
+            artifactAvailable = false;
+        }
+    }
+    const requiresDeviceConstraint = expectedState.requestedDevice.kind === "exact";
+    const available = artifactAvailable && (!requiresDeviceConstraint || deviceConstraintSatisfied);
+    const recoveryEvidence = requiresDeviceConstraint && artifactResolution?.ok && artifactAvailable && !deviceConstraintSatisfied
+        ? {
+            kind: "artifact_candidate",
+            artifactRef: artifactResolution.artifactRef,
+            mimeType: artifactResolution.mimeType,
+            sizeBytes: artifactResolution.sizeBytes,
+            reasonCode: "camera_device_constraint_evidence_missing",
+            resolvedDevicePresent: false,
+        }
+        : undefined;
+    return {
+        available,
+        targetRef: yeonjangCameraTargetRef(params),
+        expectedState,
+        observedState: available
+            ? expectedState
+            : {
+                reason: artifactAvailable
+                    ? "camera_device_constraint_evidence_missing"
+                    : "camera_artifact_resume_evidence_invalid",
+            },
+        ...(recoveryEvidence ? { recoveryEvidence } : {}),
+    };
+}
 function validateYeonjangBinaryCaptureResult(result) {
     if (!result.base64_data) {
         return {
@@ -209,37 +395,13 @@ function validateYeonjangBinaryCaptureResult(result) {
     }
     return { ok: true, bytes, mimeType };
 }
-const CAMERA_CAPTURE_INTENT_PATTERNS = [
-    /\b(capture|photo|picture|snapshot|shot|take a photo|take photo)\b/i,
-    /(?:사진|찍어|촬영|캡처|스냅샷)/u,
-];
-const FRONT_CAMERA_PATTERNS = [
-    /\b(front camera|front-facing|selfie)\b/i,
-    /(?:전면|셀카)/u,
-];
-const REAR_CAMERA_PATTERNS = [
-    /\b(rear camera|back camera|rear-facing|back-facing)\b/i,
-    /(?:후면|뒷면)/u,
-];
-function wantsCameraInventoryOnly(userMessage) {
-    const normalized = userMessage.trim();
-    if (!normalized)
-        return false;
-    if (CAMERA_CAPTURE_INTENT_PATTERNS.some((pattern) => pattern.test(normalized))) {
-        return false;
-    }
-    return /\b(camera|cameras|device|devices|list|count|what cameras)\b/i.test(normalized)
-        || /(?:카메라|장치|목록|몇\s*개|뭐뭐|무엇)/u.test(normalized);
-}
-function resolveRequestedCameraFacing(userMessage) {
-    if (FRONT_CAMERA_PATTERNS.some((pattern) => pattern.test(userMessage)))
+function cameraDeviceFacing(device) {
+    const position = device.position?.trim().toLowerCase();
+    if (position === "front")
         return "front";
-    if (REAR_CAMERA_PATTERNS.some((pattern) => pattern.test(userMessage)))
+    if (position === "rear" || position === "back")
         return "rear";
     return null;
-}
-function isContinuityCameraDevice(device) {
-    return /\biphone\b/i.test(device.name);
 }
 function findCameraDeviceById(devices, deviceId) {
     if (!deviceId)
@@ -254,12 +416,80 @@ function buildCameraFacingUnsupportedMessage(params) {
         `iPhone에서 ${facingLabel} 카메라로 직접 전환한 뒤 다시 촬영하거나, 다른 카메라를 선택해 주세요.`,
     ].join("\n");
 }
+function buildCameraFacingCapabilityUnknownMessage(params) {
+    const facingLabel = params.facing === "front" ? "전면" : "후면";
+    return [
+        `선택한 카메라 "${params.deviceName}"의 ${facingLabel} 카메라 선택 지원 여부를 확인할 수 없습니다.`,
+        "카메라 목록의 position capability를 확인하거나, facing 조건 없이 다시 요청해 주세요.",
+    ].join("\n");
+}
 function resolveTimeoutMs(timeoutSec) {
     if (!Number.isFinite(timeoutSec))
         return undefined;
     return Math.max(1, Math.min(60, Math.floor(timeoutSec))) * 1000;
 }
-const DEFAULT_CAMERA_CAPTURE_TIMEOUT_MS = 70_000;
+const DEFAULT_CAMERA_CAPTURE_OPERATION_BUDGET_MS = 60_000;
+const CAMERA_CAPTURE_TRANSPORT_GRACE_MS = 10_000;
+function resolveCameraCaptureOperationBudgetMs(timeoutSec) {
+    return resolveTimeoutMs(timeoutSec) ?? DEFAULT_CAMERA_CAPTURE_OPERATION_BUDGET_MS;
+}
+function cameraCaptureTransportTimeoutMs(operationBudgetMs) {
+    return operationBudgetMs + CAMERA_CAPTURE_TRANSPORT_GRACE_MS;
+}
+const CAMERA_CAPTURE_RUNTIME_FAILURES = Object.freeze({
+    camera_response_timeout: "CAMERA_RESPONSE_TIMEOUT",
+    camera_handler_timeout: "CAMERA_HANDLER_TIMEOUT",
+    camera_helper_timeout: "CAMERA_HELPER_TIMEOUT",
+    camera_capture_timeout: "CAMERA_CAPTURE_TIMEOUT",
+    camera_busy: "CAMERA_BUSY",
+    camera_capture_cancelled: "CAMERA_CAPTURE_CANCELLED",
+    camera_permission_denied: "CAMERA_PERMISSION_DENIED",
+    camera_permission_restricted: "CAMERA_PERMISSION_RESTRICTED",
+    camera_permission_not_determined: "CAMERA_PERMISSION_NOT_DETERMINED",
+});
+function cameraCaptureFailureProjection(error) {
+    const code = error instanceof Error
+        && typeof error.code === "string"
+        ? error.code
+        : "";
+    const attempt = error instanceof Error
+        && error.attempt
+        && typeof error.attempt === "object"
+        && !Array.isArray(error.attempt)
+        ? error.attempt
+        : null;
+    const terminalStage = attempt?.terminalStage;
+    const retrySafety = attempt?.retrySafety;
+    const boundAttempt = attempt?.schemaVersion === 1
+        && attempt.method === "camera.capture"
+        && attempt.reasonCode === code;
+    if (Object.hasOwn(CAMERA_CAPTURE_RUNTIME_FAILURES, code) || (code && boundAttempt)) {
+        const reasonCode = code;
+        return {
+            errorCode: Object.hasOwn(CAMERA_CAPTURE_RUNTIME_FAILURES, code)
+                ? CAMERA_CAPTURE_RUNTIME_FAILURES[reasonCode]
+                : code,
+            reasonCode,
+            ...(boundAttempt
+                && (terminalStage === "response_timeout"
+                    || terminalStage === "handler_timeout"
+                    || terminalStage === "helper_timeout"
+                    || terminalStage === "handler_failed"
+                    || terminalStage === "cancelled"
+                    || terminalStage === "rejected")
+                ? { terminalStage }
+                : {}),
+            ...(boundAttempt
+                && (retrySafety === "safe_same_command"
+                    || retrySafety === "change_strategy"
+                    || retrySafety === "unknown_effect_state"
+                    || retrySafety === "completed")
+                ? { retrySafety }
+                : {}),
+        };
+    }
+    return { errorCode: "YEONJANG_CAMERA_CAPTURE_REMOTE_FAILURE" };
+}
 function formatCameraList(extensionId, devices) {
     if (devices.length === 0) {
         return `연장 "${extensionId}" 에서 사용 가능한 카메라를 찾지 못했습니다.`;
@@ -646,7 +876,6 @@ export const yeonjangCameraListTool = {
             requestedExtensionId: params.extensionId,
             targetSelector: params.targetSelector,
             expectedTargetSessionId: params.targetSessionId,
-            userMessage: ctx.userMessage,
         });
         if (!selection.ok) {
             return {
@@ -674,7 +903,6 @@ export const yeonjangCameraListTool = {
                     extensionId,
                     devices,
                     ...buildYeonjangTargetResolutionDetails(selection),
-                    ...(wantsCameraInventoryOnly(ctx.userMessage) ? { responseOwnership: "final_text" } : {}),
                 },
             };
         }
@@ -696,7 +924,10 @@ export const yeonjangCameraListTool = {
 export const yeonjangCameraPermissionStatusTool = {
     evidenceSourceKind: "yeonjang",
     runtimeHealthMode: "required",
-    runtimeMethodIds: ["camera.permission_status"],
+    // Legacy Yeonjang advertises the diagnostic method directly. MQTT v2 keeps
+    // the read-only permission query off the effect capability catalog, so its
+    // authenticated camera.capture capability is the exact transport witness.
+    runtimeMethodIds: ["camera.permission_status", "camera.capture"],
     name: "yeonjang_camera_permission_status",
     description: "MQTT로 연결된 Yeonjang 연장 장치의 카메라 권한 상태를 진단합니다. 이미지는 캡처하지 않습니다.",
     parameters: {
@@ -2588,13 +2819,10 @@ export const yeonjangCameraCaptureTool = {
                 type: "string",
                 description: "캡처할 카메라 장치 ID. 비우면 기본 카메라를 사용합니다.",
             },
-            outputPath: {
+            requestedFacing: {
                 type: "string",
-                description: "연장 장치 쪽에 저장할 출력 경로입니다.",
-            },
-            inlineBase64: {
-                type: "boolean",
-                description: "이미지 base64 데이터를 응답에 포함합니다. 기본값은 true 입니다.",
+                enum: ["front", "rear"],
+                description: "LLM 계획이 선택한 전면 또는 후면 카메라 조건입니다.",
             },
             timeoutSec: {
                 type: "number",
@@ -2608,16 +2836,19 @@ export const yeonjangCameraCaptureTool = {
     sideEffect: {
         effectClass: "local_write",
         compensationSupport: "irreversible",
+        prepareOperation: prepareYeonjangCameraOperation,
+        canonicalOperation: canonicalYeonjangCameraOperation,
         targetRef: yeonjangCameraTargetRef,
         expectedState: cameraExpectedState,
         observe: async (params, _ctx, result) => observeYeonjangCameraCapture(params, result),
+        effectEvidenceRefs: (params, _ctx, result) => cameraEffectEvidenceRefs(params, result),
+        observeCurrent: observeCurrentYeonjangCameraCapture,
     },
     async execute(params, ctx) {
         const selection = resolveYeonjangTargetSelection({
             requestedExtensionId: params.extensionId,
             targetSelector: params.targetSelector,
             expectedTargetSessionId: params.targetSessionId,
-            userMessage: ctx.userMessage,
         });
         if (!selection.ok) {
             return {
@@ -2629,11 +2860,10 @@ export const yeonjangCameraCaptureTool = {
         const yeonjangOptions = withYeonjangRequestMetadata(ctx, {
             extensionId,
             ...(selection.targetSessionId ? { metadata: { targetSessionId: selection.targetSessionId } } : {}),
-        });
-        const inlineBase64 = true;
+        }, "camera");
         ctx.onProgress(`연장 ${extensionId} 카메라 캡처를 요청합니다.`);
         try {
-            const requestedFacing = resolveRequestedCameraFacing(ctx.userMessage);
+            const requestedFacing = params.requestedFacing;
             if (requestedFacing && params.deviceId) {
                 const reboundSelection = revalidateYeonjangTargetSelection({ selection });
                 if (!reboundSelection.ok) {
@@ -2649,21 +2879,32 @@ export const yeonjangCameraCaptureTool = {
                     ...(listTimeoutMs != null ? { timeoutMs: listTimeoutMs } : {}),
                 });
                 const selectedDevice = findCameraDeviceById(listedDevices, params.deviceId);
-                if (selectedDevice && isContinuityCameraDevice(selectedDevice)) {
+                if (selectedDevice
+                    && cameraDeviceFacing(selectedDevice) !== requestedFacing) {
+                    const capabilityKnown = cameraDeviceFacing(selectedDevice) !== null;
                     return {
                         success: false,
-                        output: buildCameraFacingUnsupportedMessage({
-                            deviceName: selectedDevice.name,
-                            facing: requestedFacing,
-                        }),
-                        error: "CAMERA_FACING_SELECTION_UNSUPPORTED",
+                        output: capabilityKnown
+                            ? buildCameraFacingUnsupportedMessage({
+                                deviceName: selectedDevice.name,
+                                facing: requestedFacing,
+                            })
+                            : buildCameraFacingCapabilityUnknownMessage({
+                                deviceName: selectedDevice.name,
+                                facing: requestedFacing,
+                            }),
+                        error: capabilityKnown
+                            ? "CAMERA_FACING_SELECTION_UNSUPPORTED"
+                            : "CAMERA_FACING_CAPABILITY_UNKNOWN",
                         details: {
                             via: "yeonjang",
                             extensionId,
                             deviceId: params.deviceId,
                             deviceName: selectedDevice.name,
                             requestedFacing,
-                            constraint: "camera_facing_selection_unsupported",
+                            constraint: capabilityKnown
+                                ? "camera_facing_selection_unsupported"
+                                : "camera_facing_capability_unknown",
                             ...buildYeonjangTargetResolutionDetails(reboundSelection),
                         },
                     };
@@ -2677,12 +2918,14 @@ export const yeonjangCameraCaptureTool = {
                 };
             }
             recordYeonjangRemoteExecutionApproval({ selection: reboundSelection, toolName: "camera.capture", ctx });
+            const operationBudgetMs = resolveCameraCaptureOperationBudgetMs(params.timeoutSec);
             const result = await invokeYeonjangMethod("camera.capture", {
                 ...(params.deviceId ? { device_id: params.deviceId } : {}),
-                inline_base64: inlineBase64,
+                inline_base64: true,
+                capture_timeout_ms: operationBudgetMs,
             }, {
                 ...yeonjangOptions,
-                timeoutMs: resolveTimeoutMs(params.timeoutSec) ?? DEFAULT_CAMERA_CAPTURE_TIMEOUT_MS,
+                timeoutMs: cameraCaptureTransportTimeoutMs(operationBudgetMs),
             });
             const details = {
                 via: "yeonjang",
@@ -2754,10 +2997,10 @@ export const yeonjangCameraCaptureTool = {
                 mimeType: binaryValidation.mimeType,
                 sizeBytes: localFileSize,
             };
-            if (ctx.source === "webui") {
+            if (ctx.source === "webui" || ctx.source === "telegram") {
                 artifactDetails = {
                     kind: "artifact_delivery",
-                    channel: "webui",
+                    channel: ctx.source,
                     artifactRef,
                     size: localFileSize,
                     source: ctx.source,
@@ -2788,13 +3031,24 @@ export const yeonjangCameraCaptureTool = {
         }
         catch (error) {
             const message = toolUserFacingErrorMessage(error);
+            const failure = cameraCaptureFailureProjection(error);
             return {
                 success: false,
                 output: `연장 "${extensionId}" 카메라 캡처 실패: ${message}`,
-                error: message,
+                error: failure.errorCode,
                 details: {
                     via: "yeonjang",
                     extensionId,
+                    ...(failure.reasonCode
+                        ? {
+                            failure: {
+                                reasonCode: failure.reasonCode,
+                                retrySameStrategy: false,
+                                ...(failure.terminalStage ? { terminalStage: failure.terminalStage } : {}),
+                                ...(failure.retrySafety ? { retrySafety: failure.retrySafety } : {}),
+                            },
+                        }
+                        : {}),
                     ...buildYeonjangTargetResolutionDetails(selection),
                 },
             };

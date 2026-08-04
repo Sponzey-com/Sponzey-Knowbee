@@ -19,7 +19,7 @@ describe("task102 artifact cleanup release runbook", () => {
     expect(runbook).toContain("verifiedDeletedFiles")
     expect(runbook).toContain("failedDeleteFiles")
     expect(runbook).toContain("pnpm run smoke:artifact-cleanup-cli")
-    expect(runbook).toContain("node scripts/smoke-artifact-cleanup-cli.mjs --destructive-fixture")
+    expect(runbook).toContain("node scripts/self/smoke-artifact-cleanup-cli.mjs --destructive-fixture")
     expect(runbook).toContain("must not target a real release output or user state")
     expect(runbook).not.toContain("delete audit raw data with artifact-cleanup")
   })

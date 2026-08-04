@@ -106,9 +106,13 @@ describe("task038 browser/process boundary", () => {
   it("does not claim unsupported browser/process control in Rust dispatch", () => {
     const nodeSource = readFileSync("Yeonjang/src/node.rs", "utf8")
 
-    for (const method of FUTURE_CONTROL_METHODS) {
+    for (const method of ["process.kill", "process.focus_window"] as const) {
       expect(nodeSource).not.toContain(`"${method}" =>`)
     }
+    expect(nodeSource).toContain('"name": "browser.active_tab_info"')
+    expect(nodeSource).not.toContain(
+      '"browser.active_tab_info" => dispatch_browser_active_tab_info_request',
+    )
     expect(nodeSource).toContain('"browser.open_url" =>')
     expect(nodeSource).toContain('"browser.focus" =>')
     expect(nodeSource).toContain('"process.list" =>')

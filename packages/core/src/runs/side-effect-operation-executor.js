@@ -18,6 +18,25 @@ export async function executeSideEffectOperation(input, dependencies) {
     let aggregate = reserved.aggregate;
     if (aggregate.state === "VERIFIED")
         return { status: "duplicate_verified", aggregate };
+    if (aggregate.state === "EFFECT_REJECTED") {
+        return {
+            status: "effect_rejected",
+            reasonCode: "side_effect_existing_effect_rejected",
+            aggregate,
+        };
+    }
+    if (aggregate.state === "MANUAL_INTERVENTION") {
+        const priorReceiptRef = [...aggregate.transitions]
+            .reverse()
+            .find((item) => item.event === "MARK_MANUAL" || item.event === "COMPENSATION_FAILED")
+            ?.receiptRef;
+        return {
+            status: "manual_intervention",
+            reasonCode: "side_effect_existing_manual_intervention",
+            aggregate,
+            ...(priorReceiptRef ? { priorReceiptRef } : {}),
+        };
+    }
     const transition = (event, evidence) => {
         const receipt = dependencies.createReceipt({
             identity: aggregate.identity,
@@ -63,7 +82,9 @@ export async function executeSideEffectOperation(input, dependencies) {
                 return { status: "blocked", reasonCode: started.reasonCode, aggregate };
             }
         }
-        const observation = await input.observeCurrentPostState();
+        const observation = await input.observeCurrentPostState({
+            effectEvidenceRefs: persistedEffectReceipt.evidenceRefs,
+        });
         const decision = decideResumedSideEffectVerification({
             targetFingerprint: input.identity.targetFingerprint,
             authorizedExpectedStateFingerprint: authorization.authorization.expectedEffectFingerprint,
@@ -97,6 +118,9 @@ export async function executeSideEffectOperation(input, dependencies) {
                 status: "manual_intervention",
                 reasonCode: "side_effect_resume_verification_failed",
                 aggregate,
+                ...(observation.recoveryEvidence !== undefined
+                    ? { recoveryEvidence: observation.recoveryEvidence }
+                    : {}),
             }
             : { status: "blocked", reasonCode: manual.reasonCode, aggregate };
     }
@@ -125,11 +149,30 @@ export async function executeSideEffectOperation(input, dependencies) {
             : { status: "blocked", reasonCode: cancelled.reasonCode, aggregate };
     }
     const effect = await input.executeEffect();
+    if (effect.preEffectRejection) {
+        const rejected = transition("RECORD_REJECTION", {
+            reasonCode: effect.preEffectRejection.reasonCode,
+            retrySafety: effect.preEffectRejection.retrySafety,
+            targetFingerprint: input.identity.targetFingerprint,
+            resultFingerprint: effect.resultFingerprint,
+            recordedAt: effect.recordedAt,
+        });
+        return rejected.status === "applied"
+            ? {
+                status: "effect_rejected",
+                reasonCode: effect.preEffectRejection.reasonCode,
+                aggregate,
+            }
+            : { status: "blocked", reasonCode: rejected.reasonCode, aggregate };
+    }
     const effectEvidence = {
         success: effect.success,
         targetFingerprint: input.identity.targetFingerprint,
         resultFingerprint: effect.resultFingerprint,
         recordedAt: effect.recordedAt,
+        ...(effect.effectEvidenceRefs
+            ? { effectEvidenceRefs: [...effect.effectEvidenceRefs] }
+            : {}),
     };
     const recorded = transition("RECORD_EFFECT", effectEvidence);
     if (recorded.status !== "applied")
@@ -181,7 +224,14 @@ export async function executeSideEffectOperation(input, dependencies) {
         !input.verifyCompensation) {
         const manual = transition("MARK_MANUAL", { reasonCode: remediation.reasonCode });
         return manual.status === "applied"
-            ? { status: "manual_intervention", reasonCode: remediation.reasonCode, aggregate }
+            ? {
+                status: "manual_intervention",
+                reasonCode: remediation.reasonCode,
+                aggregate,
+                ...(observation.recoveryEvidence !== undefined
+                    ? { recoveryEvidence: observation.recoveryEvidence }
+                    : {}),
+            }
             : { status: "blocked", reasonCode: manual.reasonCode, aggregate };
     }
     const compensating = transition("BEGIN_COMPENSATION");

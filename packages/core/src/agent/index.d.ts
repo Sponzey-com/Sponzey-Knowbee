@@ -1,4 +1,5 @@
 import { type AIProvider } from "../ai/index.js";
+import { type AIProviderFailureReasonCode } from "../ai/provider-failure.js";
 import type { ArtifactStorageContext } from "../artifacts/lifecycle.js";
 import type { ChannelSource } from "../channels/contracts.js";
 import type { KnowbeeConfig } from "../config/types.js";
@@ -7,7 +8,8 @@ import type { WebExecutionState } from "../contracts/web-execution-state.js";
 import type { MemoryJournalRepository } from "../memory/journal.js";
 import type { UserFacingTextSource } from "../runs/loop-directive.js";
 import { type AdmittedCapabilityExecutionScope } from "../runs/run-scoped-tool-admission.js";
-import type { ToolEvidenceSourceReceipt } from "../tools/types.js";
+import { type UntrustedEvidenceOwnerScope } from "../security/trust-boundary.js";
+import type { ToolEvidenceSourceReceipt, ToolResult } from "../tools/types.js";
 import { type AgentTerminalFailureNotice } from "./terminal-failure-notice.js";
 export type AgentChunk = {
     type: "text";
@@ -30,11 +32,14 @@ export type AgentChunk = {
     toolNames: string[];
     summary: string;
     reason: string;
+    reasonCode?: string;
+    evidenceRefs?: string[];
 } | {
     type: "ai_recovery";
     summary: string;
     reason: string;
     message: string;
+    providerFailureReasonCode?: AIProviderFailureReasonCode;
 } | {
     type: "done";
     totalTokens: number;
@@ -70,4 +75,16 @@ export interface RunAgentParams {
     contextMode?: AgentContextMode | undefined;
 }
 export declare function runAgent(params: RunAgentParams): AsyncGenerator<AgentChunk>;
+export interface PersistedToolResultBlock {
+    readonly type: "tool_result";
+    readonly tool_use_id: string;
+    readonly content: string;
+    readonly is_error?: boolean;
+}
+export declare function buildPersistedToolResultBlock(input: {
+    toolName: string;
+    toolUseId: string;
+    result: ToolResult;
+    ownerScope?: UntrustedEvidenceOwnerScope;
+}): PersistedToolResultBlock;
 //# sourceMappingURL=index.d.ts.map

@@ -276,6 +276,56 @@ describe("run execution attempt pass", () => {
     })
   })
 
+  it("does not consume cosmetic Tool variations after a structural abort", async () => {
+    const dependencies = createDependencies()
+    const params = createParams()
+    const moduleDependencies = {
+      createExecutionChunkStream: vi.fn(() => toAsyncGenerator([
+        {
+          type: "tool_end",
+          toolName: "yeonjang_camera_capture",
+          success: false,
+          output: "",
+        },
+        {
+          type: "tool_end",
+          toolName: "yeonjang_camera_capture",
+          success: false,
+          output: "cosmetic variation",
+        },
+      ])),
+      applyExecutionChunkPass: vi.fn(() => ({
+        handled: true,
+        executionRecovery: {
+          summary: "scope failure",
+          reason: "run_scoped_target_ambiguous",
+          reasonCode: "run_scoped_target_ambiguous",
+          toolNames: ["yeonjang_camera_capture"],
+          evidenceRefs: [`sha256:${"c".repeat(64)}`],
+        },
+        abortExecutionStream: true,
+      })),
+      applyErrorChunkPass: vi.fn(),
+      deliverTrackedChunk: vi.fn().mockResolvedValue(undefined),
+      getRootRun: vi.fn(() => ({
+        delegationTurnCount: 1,
+        maxDelegationTurns: 3,
+      })),
+    }
+
+    const result = await runExecutionAttemptPass(
+      params,
+      dependencies,
+      moduleDependencies,
+    )
+
+    expect(result.executionRecovery).toMatchObject({
+      reasonCode: "run_scoped_target_ambiguous",
+    })
+    expect(moduleDependencies.applyExecutionChunkPass).toHaveBeenCalledTimes(1)
+    expect(params.abortExecutionStream).toHaveBeenCalledTimes(1)
+  })
+
   it("stops consuming further chunks after direct artifact delivery succeeds", async () => {
     const dependencies = createDependencies()
     const params = createParams()

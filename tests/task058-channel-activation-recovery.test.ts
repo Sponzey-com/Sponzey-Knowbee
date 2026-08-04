@@ -82,8 +82,8 @@ describe("Task 058 channel activation recovery", () => {
     const settings = readFileSync("packages/core/src/api/routes/settings.ts", "utf8")
     const channels = readFileSync("packages/core/src/api/routes/channels.ts", "utf8")
 
-    expect(core).toContain(
-      "activateChannelsAndRecoverPendingResponses(runtimeConfig, runtimePaths)",
+    expect(core).toMatch(
+      /activateChannelsAndRecoverPendingResponses\(\s*runtimeConfig,\s*runtimePaths,?\s*\)/,
     )
     expect(settings).toMatch(
       /activateChannelsAndRecoverPendingResponses\(\s*cfg,\s*getApiRuntimePaths\(req\),?\s*\)/,

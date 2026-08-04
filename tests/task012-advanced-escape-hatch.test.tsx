@@ -122,7 +122,7 @@ describe("task012 removed advanced topology surfaces", () => {
       ),
     )
 
-    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/sub-agents")
+    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/agents")
     expect(fallbackHtml).toContain("기능 상태를 확인할 수 없습니다")
     expect(fallbackHtml).not.toContain("workspace body")
   })

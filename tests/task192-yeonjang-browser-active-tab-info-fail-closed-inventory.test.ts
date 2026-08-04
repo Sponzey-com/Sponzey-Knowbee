@@ -12,6 +12,11 @@ import {
 import { YEONJANG_SKILL_TOOL_NAMES } from "../packages/core/src/skills/builtin.ts"
 import { YEONJANG_TOOL_MAPPINGS } from "../packages/core/src/yeonjang/tool-mapping.ts"
 
+function stripRustTestModule(source: string): string {
+  const match = /^#\[cfg\(test\)\]\s*\r?\nmod tests\s*\{/mu.exec(source)
+  return match?.index === undefined ? source : source.slice(0, match.index)
+}
+
 describe("Task 192 Yeonjang browser.active_tab_info fail-closed inventory", () => {
   it("keeps browser.active_tab_info out of dispatch and user execution surfaces before all gates exist", () => {
     const mappedMethods = YEONJANG_TOOL_MAPPINGS.flatMap((mapping) => mapping.methodIds)
@@ -23,12 +28,11 @@ describe("Task 192 Yeonjang browser.active_tab_info fail-closed inventory", () =
     expect(mappedMethods).not.toContain("browser.active_tab_info")
     expect(mappedTools).not.toContain("yeonjang_browser_active_tab_info")
     expect(YEONJANG_SKILL_TOOL_NAMES).not.toContain("yeonjang_browser_active_tab_info")
-    const nodeImplementation = nodeSource.split("#[cfg(test)]")[0] ?? nodeSource
-    expect(nodeImplementation).toMatch(/"name"\s*:\s*"browser\.active_tab_info"/u)
-    expect(nodeImplementation).toContain('"browser.active_tab_info": capability_entry')
-    expect(nodeImplementation).toContain('"browser.active_tab_info": browser_active_tab_info_tool_health_entry')
-    expect(nodeImplementation).not.toContain('"browser.active_tab_info" => dispatch_browser_active_tab_info_request')
-    expect(hasYeonjangBrowserActiveTabInfoRuntimeInventoryExposure(nodeImplementation)).toBe(true)
+    expect(nodeSource).toMatch(/"name"\s*:\s*"browser\.active_tab_info"/u)
+    expect(nodeSource).toContain('"browser.active_tab_info": capability_entry')
+    expect(nodeSource).toContain('"browser.active_tab_info": browser_active_tab_info_tool_health_entry')
+    expect(nodeSource).not.toContain('"browser.active_tab_info" => dispatch_browser_active_tab_info_request')
+    expect(hasYeonjangBrowserActiveTabInfoRuntimeInventoryExposure(nodeSource)).toBe(true)
   })
 
   it("requires explicit gates before active tab info can be exposed", () => {
@@ -47,8 +51,8 @@ describe("Task 192 Yeonjang browser.active_tab_info fail-closed inventory", () =
   it("does not contain fallback implementation paths that read raw browser state through command or profile files", () => {
     const browserSource = readFileSync("Yeonjang/src/features/browser.rs", "utf8")
     const nodeSource = readFileSync("Yeonjang/src/node.rs", "utf8")
-    const browserImplementation = browserSource.split("#[cfg(test)]")[0] ?? browserSource
-    const nodeImplementation = nodeSource.split("#[cfg(test)]")[0] ?? nodeSource
+    const browserImplementation = stripRustTestModule(browserSource)
+    const nodeImplementation = stripRustTestModule(nodeSource)
     const combinedImplementation = `${browserImplementation}\n${nodeImplementation}`
 
     expect(combinedImplementation).not.toMatch(/activeTabInfo|current_tab|Current Tabs/u)

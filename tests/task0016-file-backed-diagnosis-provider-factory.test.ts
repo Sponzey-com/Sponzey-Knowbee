@@ -24,8 +24,10 @@ class FakeAiProvider implements AIProvider {
   async *chat(params: ChatParams): AsyncGenerator<AIChunk> {
     this.calls.push(params)
     yield {
-      type: "text_delta",
-      delta: JSON.stringify({
+      type: "tool_use",
+      id: "request-diagnosis-response",
+      name: "submit_request_diagnosis",
+      input: {
         diagnosis_summary: "The request should be planned.",
         intent: "implementation_request",
         goal: "Implement the requested behavior.",
@@ -35,7 +37,7 @@ class FakeAiProvider implements AIProvider {
         confidence: "high",
         recommended_action: "plan",
         reason: "Planning is the safest next step.",
-      }),
+      },
     }
     yield { type: "message_stop", usage: { input_tokens: 10, output_tokens: 20 } }
   }

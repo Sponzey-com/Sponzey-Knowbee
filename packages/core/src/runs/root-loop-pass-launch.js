@@ -1,4 +1,5 @@
 import { buildStructuredExecutionBrief } from "./request-prompt.js";
+import { resolveCapabilityScopedArtifactDeliverySemantics } from "./execution-profile.js";
 import { loadPromptValue } from "../memory/prompt-fragments.js";
 export function prepareRootLoopEntryPassLaunch(params, dependencies) {
     return {
@@ -40,6 +41,13 @@ export function prepareRootExecutionCyclePassLaunch(params, dependencies) {
         })
         : params.state.currentMessage;
     const admittedCapabilityExecutionScope = dependencies.getAdmittedCapabilityExecutionScope?.();
+    const effectiveExecutionSemantics = resolveCapabilityScopedArtifactDeliverySemantics({
+        source: params.source,
+        executionSemantics: params.executionSemantics,
+        ...(admittedCapabilityExecutionScope
+            ? { admittedCapabilityExecutionScope }
+            : {}),
+    });
     return {
         params: {
             artifactStorage: params.artifactStorage,
@@ -54,7 +62,7 @@ export function prepareRootExecutionCyclePassLaunch(params, dependencies) {
                 ...params.state,
                 currentMessage: executionMessage,
             },
-            executionSemantics: params.executionSemantics,
+            executionSemantics: effectiveExecutionSemantics,
             originalRequest: params.originalRequest,
             ...(params.structuredRequest?.response_language_mode
                 ? { responseLanguageMode: params.structuredRequest.response_language_mode }
@@ -80,7 +88,7 @@ export function prepareRootExecutionCyclePassLaunch(params, dependencies) {
             contextMode: params.contextMode,
             taskProfile: params.taskProfile,
             ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
-            wantsDirectArtifactDelivery: params.wantsDirectArtifactDelivery,
+            wantsDirectArtifactDelivery: effectiveExecutionSemantics.artifactDelivery === "direct",
             requiresFilesystemMutation: params.requiresFilesystemMutation,
             requiresPrivilegedToolExecution: params.requiresPrivilegedToolExecution,
             pendingToolParams: params.pendingToolParams,

@@ -3,9 +3,12 @@ use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::thread::{self, JoinHandle};
+use std::sync::{Arc, atomic::AtomicBool};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::artifact_sink::{
+    CaptureArtifactBindingInput, CaptureArtifactSink, UnavailableCaptureArtifactSink,
+};
 use crate::automation::{
     AutomationBackend, AutomationCapabilities, KeyboardActionRequest, MouseActionRequest,
     PlatformKind,
@@ -16,11 +19,14 @@ use crate::features::{
     screen, system,
 };
 use crate::lifecycle::{SupportProfileKind, SupportProfileRuntimeInfo, runtime_support_profile};
-use crate::platform::current_backend;
-use crate::protocol::{Request, Response};
-use crate::settings::{PermissionSettings, YeonjangSettings, browser_focus_nonce_state_path};
+use crate::method_descriptor::{MethodUnavailableError, UnknownMethodError, method_descriptor};
+use crate::protocol::{
+    CommandAttemptEvidence, CommandAttemptRetrySafety, CommandAttemptTerminalStage, Request,
+    Response,
+};
 #[cfg(test)]
 use crate::settings::load_settings;
+use crate::settings::{PermissionSettings, YeonjangSettings, browser_focus_nonce_state_path};
 
 const YEONJANG_PROTOCOL_VERSION: &str = "2026-04-16.capability-matrix.v1";
 const YEONJANG_CAPABILITY_SCHEMA_VERSION: u64 = 1;
@@ -29,28 +35,175 @@ type HmacSha256 = Hmac<Sha256>;
 /// Handles a request against the immutable settings snapshot captured when the
 /// runtime started. Managed transports must use this entry point instead of
 /// reloading settings while handling a command.
+#[cfg(test)]
 pub fn handle_request_with_settings(request: Request, settings: YeonjangSettings) -> Response {
-    match dispatch_with_settings(&request, &settings) {
-        Ok(result) => Response::ok(request.id, result),
-        Err(error) => Response::error(request.id, "request_failed", format!("{error:#}")),
+    let backend = crate::platform::CurrentBackend;
+    handle_request_with_settings_and_backend_and_cancellation(
+        request,
+        settings,
+        &backend,
+        Arc::new(AtomicBool::new(false)),
+    )
+}
+
+pub fn handle_request_with_settings_and_backend(
+    request: Request,
+    settings: YeonjangSettings,
+    backend: &dyn AutomationBackend,
+) -> Response {
+    handle_request_with_settings_and_backend_and_cancellation(
+        request,
+        settings,
+        backend,
+        Arc::new(AtomicBool::new(false)),
+    )
+}
+
+pub(crate) fn handle_request_with_settings_and_backend_and_cancellation(
+    request: Request,
+    settings: YeonjangSettings,
+    backend: &dyn AutomationBackend,
+    cancellation: Arc<AtomicBool>,
+) -> Response {
+    let artifact_sink = UnavailableCaptureArtifactSink;
+    handle_request_with_settings_backend_sink_and_cancellation(
+        request,
+        settings,
+        backend,
+        &artifact_sink,
+        cancellation,
+    )
+}
+
+pub(crate) fn handle_request_with_settings_backend_sink_and_cancellation(
+    request: Request,
+    settings: YeonjangSettings,
+    backend: &dyn AutomationBackend,
+    artifact_sink: &dyn CaptureArtifactSink,
+    cancellation: Arc<AtomicBool>,
+) -> Response {
+    match dispatch_with_settings(&request, &settings, backend, artifact_sink, cancellation) {
+        Ok(result) => success_response_for_request(&request, result),
+        Err(error) => error_response_for_request(&request, &error),
     }
 }
 
-/// Spawns a request using a caller-owned startup settings snapshot.
-pub fn spawn_request_task_with_settings(
-    request: Request,
-    settings: YeonjangSettings,
-) -> JoinHandle<Response> {
-    thread::spawn(move || handle_request_with_settings(request, settings))
+fn classify_request_error(error: &anyhow::Error) -> (String, String) {
+    if let Some(policy_error) =
+        error.downcast_ref::<crate::features::capture_artifact::CaptureArtifactPolicyError>()
+    {
+        return (
+            policy_error.code().to_string(),
+            policy_error.public_message().to_string(),
+        );
+    }
+    if let Some(artifact_error) = error.downcast_ref::<crate::artifact_sink::CaptureArtifactError>()
+    {
+        return (
+            artifact_error.code().to_string(),
+            artifact_error.public_message().to_string(),
+        );
+    }
+    if let Some(camera_error) = error.downcast_ref::<crate::automation::CameraCaptureProcessError>()
+    {
+        return (
+            camera_error.code().to_string(),
+            camera_error.public_message().to_string(),
+        );
+    }
+    if let Some(command_error) =
+        error.downcast_ref::<crate::automation::CommandExecutionProcessError>()
+    {
+        return (
+            command_error.code().to_string(),
+            command_error.public_message().to_string(),
+        );
+    }
+    if let Some(policy_error) = error.downcast_ref::<crate::features::system::CommandPolicyError>()
+    {
+        return (
+            policy_error.code().to_string(),
+            policy_error.public_message().to_string(),
+        );
+    }
+    if let Some(method_error) = error.downcast_ref::<UnknownMethodError>() {
+        return (
+            method_error.code().to_string(),
+            method_error.public_message().to_string(),
+        );
+    }
+    if let Some(method_error) = error.downcast_ref::<MethodUnavailableError>() {
+        return (
+            method_error.code().to_string(),
+            method_error.public_message().to_string(),
+        );
+    }
+
+    (
+        "request_failed".to_string(),
+        "Request could not be completed.".to_string(),
+    )
 }
 
-pub fn capabilities_payload(settings: &YeonjangSettings) -> Value {
-    capabilities_with_settings(settings)
+fn success_response_for_request(request: &Request, result: Value) -> Response {
+    let attempt = CommandAttemptEvidence::for_request(
+        request,
+        CommandAttemptTerminalStage::ResponseReady,
+        "command_completed",
+        CommandAttemptRetrySafety::Completed,
+    );
+    match attempt {
+        Some(attempt) => Response::ok_with_attempt(request.id.clone(), result, attempt),
+        None => Response::ok(request.id.clone(), result),
+    }
 }
 
-fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Result<Value> {
-    let support_profile = runtime_support_profile(&settings, None);
-    let runtime_capabilities = runtime_capabilities(&support_profile);
+fn error_response_for_request(request: &Request, error: &anyhow::Error) -> Response {
+    let (code, message) = classify_request_error(error);
+    let (terminal_stage, retry_safety) = match code.as_str() {
+        "camera_helper_timeout" => (
+            CommandAttemptTerminalStage::HelperTimeout,
+            CommandAttemptRetrySafety::ChangeStrategy,
+        ),
+        "camera_permission_denied" | "camera_permission_restricted" => (
+            CommandAttemptTerminalStage::Rejected,
+            CommandAttemptRetrySafety::ChangeStrategy,
+        ),
+        "command_invalid"
+        | "command_shell_args_conflict"
+        | "command_args_too_large"
+        | "command_cwd_invalid"
+        | "command_environment_too_large"
+        | "command_timeout_invalid" => (
+            CommandAttemptTerminalStage::Rejected,
+            CommandAttemptRetrySafety::ChangeStrategy,
+        ),
+        "camera_capture_cancelled" | "command_cancelled" => (
+            CommandAttemptTerminalStage::Cancelled,
+            CommandAttemptRetrySafety::UnknownEffectState,
+        ),
+        _ => (
+            CommandAttemptTerminalStage::HandlerFailed,
+            CommandAttemptRetrySafety::UnknownEffectState,
+        ),
+    };
+    let attempt =
+        CommandAttemptEvidence::for_request(request, terminal_stage, code.as_str(), retry_safety);
+    match attempt {
+        Some(attempt) => Response::error_with_attempt(request.id.clone(), code, message, attempt),
+        None => Response::error(request.id.clone(), code, message),
+    }
+}
+
+fn dispatch_with_settings(
+    request: &Request,
+    settings: &YeonjangSettings,
+    backend: &dyn AutomationBackend,
+    artifact_sink: &dyn CaptureArtifactSink,
+    cancellation: Arc<AtomicBool>,
+) -> Result<Value> {
+    let support_profile = runtime_support_profile(settings, None);
+    let runtime_capabilities = runtime_capabilities_with_backend(&support_profile, backend);
     let permissions = settings.permissions.clone();
 
     match request.method.as_str() {
@@ -65,8 +218,8 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
             "arch": std::env::consts::ARCH,
             "status": "ready",
         })),
-        "node.capabilities" => Ok(capabilities_with_settings(settings)),
-        "system.info" => system::system_info(),
+        "node.capabilities" => Ok(capabilities_with_settings_and_backend(settings, backend)),
+        "system.info" => system::system_info_with_backend(backend),
         "file.metadata" => {
             ensure_runtime_support(true, "file.metadata", &support_profile)?;
             ensure_permission(
@@ -227,6 +380,7 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
             &support_profile,
             settings,
             request.metadata.target_session_id.as_deref(),
+            backend,
         ),
         "clipboard.read" => {
             ensure_runtime_support(true, "clipboard.read", &support_profile)?;
@@ -284,7 +438,7 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
             )?;
             let params = serde_json::from_value::<system::ControlParams>(request.params.clone())
                 .context("invalid params for system.control")?;
-            system::control(params)
+            system::control(params, backend)
         }
         "camera.list" => {
             ensure_runtime_support(
@@ -297,7 +451,7 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
                 "camera.list",
                 "allow_camera_access",
             )?;
-            camera::list_devices()
+            camera::list_devices(backend)
         }
         "camera.permission_status" => {
             ensure_runtime_support(
@@ -310,7 +464,7 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
                 "camera.permission_status",
                 "allow_camera_access",
             )?;
-            camera::permission_status()
+            camera::permission_status(backend)
         }
         "camera.capture" => {
             ensure_runtime_support(
@@ -325,7 +479,13 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
             )?;
             let params = serde_json::from_value::<camera::CaptureParams>(request.params.clone())
                 .context("invalid params for camera.capture")?;
-            camera::capture(params)
+            camera::capture_with_artifact_sink(
+                params,
+                cancellation,
+                backend,
+                artifact_sink,
+                capture_artifact_binding_input(request),
+            )
         }
         "system.exec" => {
             ensure_runtime_support(
@@ -340,7 +500,7 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
             )?;
             let params = serde_json::from_value::<system::ExecParams>(request.params.clone())
                 .context("invalid params for system.exec")?;
-            system::exec(params)
+            system::exec(params, cancellation, backend)
         }
         "application.launch" => {
             ensure_runtime_support(
@@ -355,7 +515,7 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
             )?;
             let params = serde_json::from_value::<system::LaunchAppParams>(request.params.clone())
                 .context("invalid params for application.launch")?;
-            system::launch_application(params)
+            system::launch_application(params, backend)
         }
         "screen.capture" => {
             ensure_runtime_support(
@@ -370,7 +530,12 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
             )?;
             let params = serde_json::from_value::<screen::CaptureParams>(request.params.clone())
                 .context("invalid params for screen.capture")?;
-            screen::capture(params)
+            screen::capture_with_artifact_sink(
+                params,
+                backend,
+                artifact_sink,
+                capture_artifact_binding_input(request),
+            )
         }
         "mouse.position" => {
             ensure_runtime_support(
@@ -383,7 +548,7 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
                 "mouse.position",
                 "allow_mouse_control",
             )?;
-            mouse::current_position()
+            mouse::current_position(backend)
         }
         "input.focused_target" => {
             ensure_runtime_support(
@@ -396,7 +561,7 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
                 "input.focused_target",
                 "allow_keyboard_control",
             )?;
-            input::focused_target()
+            input::focused_target(backend)
         }
         "mouse.move" => {
             ensure_runtime_support(
@@ -411,7 +576,7 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
             )?;
             let params = serde_json::from_value::<mouse::MoveParams>(request.params.clone())
                 .context("invalid params for mouse.move")?;
-            mouse::move_cursor(params)
+            mouse::move_cursor(params, backend)
         }
         "mouse.click" => {
             ensure_runtime_support(
@@ -426,7 +591,7 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
             )?;
             let params = serde_json::from_value::<mouse::ClickParams>(request.params.clone())
                 .context("invalid params for mouse.click")?;
-            mouse::click(params)
+            mouse::click(params, backend)
         }
         "mouse.action" => {
             ensure_runtime_support(
@@ -441,7 +606,7 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
             )?;
             let params = serde_json::from_value::<MouseActionRequest>(request.params.clone())
                 .context("invalid params for mouse.action")?;
-            mouse::action(params)
+            mouse::action(params, backend)
         }
         "keyboard.type" => {
             ensure_runtime_support(
@@ -456,7 +621,7 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
             )?;
             let params = serde_json::from_value::<keyboard::TypeParams>(request.params.clone())
                 .context("invalid params for keyboard.type")?;
-            keyboard::type_text(params)
+            keyboard::type_text(params, backend)
         }
         "keyboard.action" => {
             ensure_runtime_support(
@@ -471,9 +636,22 @@ fn dispatch_with_settings(request: &Request, settings: &YeonjangSettings) -> Res
             )?;
             let params = serde_json::from_value::<KeyboardActionRequest>(request.params.clone())
                 .context("invalid params for keyboard.action")?;
-            keyboard::action(params)
+            keyboard::action(params, backend)
         }
-        other => anyhow::bail!("unknown method: {other}"),
+        _ if method_descriptor(&request.method).is_some() => {
+            Err(anyhow::Error::new(MethodUnavailableError))
+        }
+        _ => Err(anyhow::Error::new(UnknownMethodError)),
+    }
+}
+
+fn capture_artifact_binding_input(request: &Request) -> CaptureArtifactBindingInput<'_> {
+    CaptureArtifactBindingInput {
+        command_id: request.metadata.command_id.as_deref(),
+        operation_id: request.metadata.operation_id.as_deref(),
+        target_session_id: request.metadata.target_session_id.as_deref(),
+        target_fingerprint: request.metadata.target_fingerprint.as_deref(),
+        idempotency_key: request.metadata.idempotency_key.as_deref(),
     }
 }
 
@@ -490,6 +668,7 @@ fn dispatch_browser_focus_request(
         support_profile,
         &settings,
         request.metadata.target_session_id.as_deref(),
+        &crate::platform::CurrentBackend,
     )
 }
 
@@ -499,6 +678,7 @@ fn dispatch_browser_focus_request_with_runtime(
     support_profile: &SupportProfileRuntimeInfo,
     settings: &YeonjangSettings,
     expected_session_id: Option<&str>,
+    backend: &dyn AutomationBackend,
 ) -> Result<Value> {
     ensure_runtime_support(
         support_profile.effective_profile != SupportProfileKind::HeadlessManaged,
@@ -516,13 +696,12 @@ fn dispatch_browser_focus_request_with_runtime(
         expected_session_id,
         now_unix_millis() as i64,
         support_profile.effective_profile != SupportProfileKind::HeadlessManaged,
+        backend,
     )
 }
 
 #[cfg(test)]
-fn prepare_browser_focus_dispatch_contract(
-    params: &Value,
-) -> Result<Value> {
+fn prepare_browser_focus_dispatch_contract(params: &Value) -> Result<Value> {
     let settings = load_settings().unwrap_or_else(|_| YeonjangSettings::default());
     prepare_browser_focus_dispatch_contract_with_runtime(
         params,
@@ -530,6 +709,7 @@ fn prepare_browser_focus_dispatch_contract(
         None,
         now_unix_millis() as i64,
         true,
+        &crate::platform::CurrentBackend,
     )
 }
 
@@ -539,6 +719,7 @@ fn prepare_browser_focus_dispatch_contract_with_runtime(
     expected_session_id: Option<&str>,
     now_ms: i64,
     interactive_desktop_session: bool,
+    backend: &dyn AutomationBackend,
 ) -> Result<Value> {
     let target = params
         .get("target")
@@ -589,14 +770,18 @@ fn prepare_browser_focus_dispatch_contract_with_runtime(
                 &settings.node_id,
                 expected_session_id,
                 &expected_target_hash,
-                approval.get("scopeId").and_then(Value::as_str).unwrap_or_default(),
+                approval
+                    .get("scopeId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
                 now_ms,
             )
         })
         .transpose()?;
 
     if invoke_now == Some(true) {
-        let admission = admission.ok_or_else(|| anyhow::anyhow!("browser_focus_execution_admission_missing"))?;
+        let admission = admission
+            .ok_or_else(|| anyhow::anyhow!("browser_focus_execution_admission_missing"))?;
         return execute_browser_focus_after_admission(
             target,
             admission,
@@ -604,12 +789,9 @@ fn prepare_browser_focus_dispatch_contract_with_runtime(
             interactive_desktop_session,
             &browser_focus_nonce_state_path(),
             |verified_process_name, interactive_desktop| {
-                crate::platform::execute_verified_browser_focus(
-                    verified_process_name,
-                    interactive_desktop,
-                )
+                backend.focus_browser(verified_process_name, interactive_desktop)
             },
-            || crate::platform::current_backend().focused_target().ok(),
+            || backend.focused_target().ok(),
         );
     }
 
@@ -640,7 +822,7 @@ fn execute_browser_focus_after_admission<F, O>(
     observe_focused_target: O,
 ) -> Result<Value>
 where
-    F: FnOnce(&str, bool) -> Value,
+    F: FnOnce(&str, bool) -> crate::automation::BrowserFocusExecutionResult,
     O: FnOnce() -> Option<crate::automation::FocusedTargetResult>,
 {
     let process_name = target
@@ -658,11 +840,7 @@ where
         now_ms,
     )?;
     let execution = executor(process_name, interactive_desktop_session);
-    let observed_focused_target = if execution
-        .get("commandAccepted")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
+    let observed_focused_target = if execution.command_accepted {
         project_observed_browser_focus_target(observe_focused_target())
     } else {
         None
@@ -672,8 +850,8 @@ where
         "method": "browser.focus",
         "toolName": "yeonjang_browser_focus",
         "status": "dispatch_executed",
-        "reasonCode": execution.get("reasonCode").and_then(Value::as_str).unwrap_or("macos_browser_focus_command_failed"),
-        "commandAccepted": execution.get("commandAccepted").and_then(Value::as_bool).unwrap_or(false),
+        "reasonCode": execution.reason_code,
+        "commandAccepted": execution.command_accepted,
         "focusedTargetObservationRequired": true,
         "goalSuccess": false,
         "target": project_browser_focus_public_target(target),
@@ -684,10 +862,7 @@ where
 fn project_observed_browser_focus_target(
     observation: Option<crate::automation::FocusedTargetResult>,
 ) -> Option<Value> {
-    let app_name = observation?
-        .app_name?
-        .trim()
-        .to_string();
+    let app_name = observation?.app_name?.trim().to_string();
     if app_name.is_empty() {
         return None;
     }
@@ -870,9 +1045,20 @@ fn project_browser_focus_public_target(target: &Value) -> Value {
     Value::Object(projected)
 }
 
-fn capabilities_with_settings(settings: &YeonjangSettings) -> Value {
-    let support_profile = runtime_support_profile(&settings, None);
-    let capability_flags = runtime_capabilities(&support_profile);
+fn capabilities_with_settings_and_backend(
+    settings: &YeonjangSettings,
+    backend: &dyn AutomationBackend,
+) -> Value {
+    capabilities_payload_with_snapshot(settings, backend.capabilities())
+}
+
+pub(crate) fn capabilities_payload_with_snapshot(
+    settings: &YeonjangSettings,
+    capability_snapshot: AutomationCapabilities,
+) -> Value {
+    let support_profile = runtime_support_profile(settings, None);
+    let capability_flags =
+        runtime_capabilities_with_snapshot(&support_profile, capability_snapshot);
     let permissions = settings.permissions.clone();
     let last_checked_at = now_unix_millis();
     json!({
@@ -1179,14 +1365,12 @@ fn capability_matrix(
     last_checked_at: u64,
 ) -> Value {
     json!({
-        "node.ping": capability_entry("node.ping", true, false, None, flags.platform, support_profile, last_checked_at),
-        "node.capabilities": capability_entry("node.capabilities", true, false, None, flags.platform, support_profile, last_checked_at),
-        "system.info": capability_entry("system.info", true, false, None, flags.platform, support_profile, last_checked_at),
+        "node.ping": capability_entry("node.ping", true, flags.platform, support_profile, last_checked_at),
+        "node.capabilities": capability_entry("node.capabilities", true, flags.platform, support_profile, last_checked_at),
+        "system.info": capability_entry("system.info", true, flags.platform, support_profile, last_checked_at),
         "file.metadata": capability_entry(
             "file.metadata",
             true,
-            false,
-            Some("allow_file_read"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1194,8 +1378,6 @@ fn capability_matrix(
         "file.list": capability_entry(
             "file.list",
             true,
-            false,
-            Some("allow_file_read"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1203,8 +1385,6 @@ fn capability_matrix(
         "file.read": capability_entry(
             "file.read",
             true,
-            false,
-            Some("allow_file_read"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1212,8 +1392,6 @@ fn capability_matrix(
         "file.search": capability_entry(
             "file.search",
             true,
-            false,
-            Some("allow_file_read"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1221,8 +1399,6 @@ fn capability_matrix(
         "file.write": capability_entry(
             "file.write",
             true,
-            true,
-            Some("allow_file_write"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1230,8 +1406,6 @@ fn capability_matrix(
         "file.patch": capability_entry(
             "file.patch",
             true,
-            true,
-            Some("allow_file_write"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1239,8 +1413,6 @@ fn capability_matrix(
         "file.delete": capability_entry(
             "file.delete",
             true,
-            true,
-            Some("allow_file_delete"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1248,8 +1420,6 @@ fn capability_matrix(
         "disk.info": capability_entry(
             "disk.info",
             true,
-            false,
-            Some("allow_disk_read"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1257,8 +1427,6 @@ fn capability_matrix(
         "disk.usage": capability_entry(
             "disk.usage",
             true,
-            false,
-            Some("allow_disk_read"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1266,8 +1434,6 @@ fn capability_matrix(
         "disk.exists": capability_entry(
             "disk.exists",
             true,
-            false,
-            Some("allow_disk_read"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1275,8 +1441,6 @@ fn capability_matrix(
         "process.list": capability_entry(
             "process.list",
             true,
-            false,
-            Some("allow_process_read"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1284,8 +1448,6 @@ fn capability_matrix(
         "process.info": capability_entry(
             "process.info",
             true,
-            false,
-            Some("allow_process_read"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1293,8 +1455,6 @@ fn capability_matrix(
         "browser.list": capability_entry(
             "browser.list",
             true,
-            false,
-            Some("allow_browser_read"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1302,8 +1462,6 @@ fn capability_matrix(
         "browser.active_hint": capability_entry(
             "browser.active_hint",
             true,
-            false,
-            Some("allow_browser_read"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1311,8 +1469,6 @@ fn capability_matrix(
         "browser.active_tab_info": capability_entry(
             "browser.active_tab_info",
             false,
-            true,
-            Some("allow_browser_read"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1320,8 +1476,6 @@ fn capability_matrix(
         "browser.open_url": capability_entry(
             "browser.open_url",
             true,
-            true,
-            Some("allow_browser_control"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1329,8 +1483,6 @@ fn capability_matrix(
         "browser.focus": capability_entry(
             "browser.focus",
             flags.application_launch,
-            true,
-            Some("allow_browser_control"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1338,8 +1490,6 @@ fn capability_matrix(
         "clipboard.read": capability_entry(
             "clipboard.read",
             true,
-            false,
-            Some("allow_clipboard_read"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1347,8 +1497,6 @@ fn capability_matrix(
         "clipboard.write": capability_entry(
             "clipboard.write",
             true,
-            true,
-            Some("allow_clipboard_write"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1356,8 +1504,6 @@ fn capability_matrix(
         "network.status": capability_entry(
             "network.status",
             true,
-            false,
-            Some("allow_network_read"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1365,8 +1511,6 @@ fn capability_matrix(
         "device.status": capability_entry(
             "device.status",
             true,
-            false,
-            Some("allow_device_status"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1374,8 +1518,6 @@ fn capability_matrix(
         "camera.list": capability_entry(
             "camera.list",
             flags.camera_management,
-            false,
-            Some("allow_camera_access"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1383,8 +1525,6 @@ fn capability_matrix(
         "camera.permission_status": capability_entry(
             "camera.permission_status",
             flags.camera_management,
-            false,
-            Some("allow_camera_access"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1392,8 +1532,6 @@ fn capability_matrix(
         "camera.capture": capability_entry(
             "camera.capture",
             flags.camera_management,
-            true,
-            Some("allow_camera_access"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1401,8 +1539,6 @@ fn capability_matrix(
         "system.control": capability_entry(
             "system.control",
             flags.system_control,
-            true,
-            Some("allow_system_control"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1410,8 +1546,6 @@ fn capability_matrix(
         "system.exec": capability_entry(
             "system.exec",
             flags.command_execution,
-            true,
-            Some("allow_shell_exec"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1419,8 +1553,6 @@ fn capability_matrix(
         "application.launch": capability_entry(
             "application.launch",
             flags.application_launch,
-            true,
-            Some("allow_application_launch"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1428,8 +1560,6 @@ fn capability_matrix(
         "screen.capture": capability_entry(
             "screen.capture",
             flags.screen_capture,
-            false,
-            Some("allow_screen_capture"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1437,8 +1567,6 @@ fn capability_matrix(
         "mouse.position": capability_entry(
             "mouse.position",
             flags.mouse_control,
-            false,
-            Some("allow_mouse_control"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1446,8 +1574,6 @@ fn capability_matrix(
         "input.focused_target": capability_entry(
             "input.focused_target",
             flags.keyboard_control,
-            false,
-            Some("allow_keyboard_control"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1455,8 +1581,6 @@ fn capability_matrix(
         "mouse.action": capability_entry(
             "mouse.action",
             flags.mouse_control,
-            true,
-            Some("allow_mouse_control"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1464,8 +1588,6 @@ fn capability_matrix(
         "mouse.move": capability_entry(
             "mouse.move",
             flags.mouse_control,
-            true,
-            Some("allow_mouse_control"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1473,8 +1595,6 @@ fn capability_matrix(
         "mouse.click": capability_entry(
             "mouse.click",
             flags.mouse_control,
-            true,
-            Some("allow_mouse_control"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1482,8 +1602,6 @@ fn capability_matrix(
         "keyboard.action": capability_entry(
             "keyboard.action",
             flags.keyboard_control,
-            true,
-            Some("allow_keyboard_control"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1491,8 +1609,6 @@ fn capability_matrix(
         "keyboard.type": capability_entry(
             "keyboard.type",
             flags.keyboard_control,
-            true,
-            Some("allow_keyboard_control"),
             flags.platform,
             support_profile,
             last_checked_at,
@@ -1517,141 +1633,33 @@ struct CapabilityMethodClassification {
     side_effect_class: &'static str,
 }
 
-fn method_classification(method: &'static str) -> CapabilityMethodClassification {
-    match method {
-        "node.ping" | "node.capabilities" | "system.info" => CapabilityMethodClassification {
-            group: "system",
-            risk_level: "safe",
-            side_effect_class: "read_local",
-        },
-        "file.metadata" | "file.list" | "file.read" | "file.search" => {
-            CapabilityMethodClassification {
-                group: "files",
-                risk_level: "safe",
-                side_effect_class: "read_local",
-            }
-        }
-        "file.write" | "file.patch" => CapabilityMethodClassification {
-            group: "files",
-            risk_level: "moderate",
-            side_effect_class: "write_local",
-        },
-        "file.delete" => CapabilityMethodClassification {
-            group: "files",
-            risk_level: "dangerous",
-            side_effect_class: "delete_local",
-        },
-        "disk.info" | "disk.usage" | "disk.exists" => CapabilityMethodClassification {
-            group: "disk",
-            risk_level: "safe",
-            side_effect_class: "read_local",
-        },
-        "process.list" | "process.info" => CapabilityMethodClassification {
-            group: "process",
-            risk_level: "safe",
-            side_effect_class: "read_local",
-        },
-        "browser.list" | "browser.active_hint" => CapabilityMethodClassification {
-            group: "browser",
-            risk_level: "safe",
-            side_effect_class: "read_local",
-        },
-        "browser.active_tab_info" => CapabilityMethodClassification {
-            group: "browser",
-            risk_level: "moderate",
-            side_effect_class: "read_local",
-        },
-        "browser.open_url" | "browser.focus" => CapabilityMethodClassification {
-            group: "browser",
-            risk_level: "moderate",
-            side_effect_class: "process_control",
-        },
-        "clipboard.read" => CapabilityMethodClassification {
-            group: "clipboard",
-            risk_level: "safe",
-            side_effect_class: "read_local",
-        },
-        "clipboard.write" => CapabilityMethodClassification {
-            group: "clipboard",
-            risk_level: "moderate",
-            side_effect_class: "write_local",
-        },
-        "network.status" => CapabilityMethodClassification {
-            group: "network",
-            risk_level: "safe",
-            side_effect_class: "network",
-        },
-        "device.status" => CapabilityMethodClassification {
-            group: "device",
-            risk_level: "safe",
-            side_effect_class: "read_local",
-        },
-        "camera.list" | "camera.permission_status" => CapabilityMethodClassification {
-            group: "camera",
-            risk_level: "safe",
-            side_effect_class: "read_local",
-        },
-        "camera.capture" => CapabilityMethodClassification {
-            group: "camera",
-            risk_level: "moderate",
-            side_effect_class: "screen_read",
-        },
-        "screen.capture" => CapabilityMethodClassification {
-            group: "screen",
-            risk_level: "moderate",
-            side_effect_class: "screen_read",
-        },
-        "mouse.position" => CapabilityMethodClassification {
-            group: "input",
-            risk_level: "safe",
-            side_effect_class: "read_local",
-        },
-        "input.focused_target" => CapabilityMethodClassification {
-            group: "input",
-            risk_level: "safe",
-            side_effect_class: "read_local",
-        },
-        "mouse.action" | "mouse.move" | "mouse.click" | "keyboard.action" | "keyboard.type" => {
-            CapabilityMethodClassification {
-                group: "input",
-                risk_level: "moderate",
-                side_effect_class: "input_control",
-            }
-        }
-        "system.exec" => CapabilityMethodClassification {
-            group: "command",
-            risk_level: "dangerous",
-            side_effect_class: "system_control",
-        },
-        "system.control" => CapabilityMethodClassification {
-            group: "system",
-            risk_level: "dangerous",
-            side_effect_class: "system_control",
-        },
-        "application.launch" => CapabilityMethodClassification {
-            group: "applications",
-            risk_level: "moderate",
-            side_effect_class: "process_control",
-        },
-        _ => CapabilityMethodClassification {
+fn method_classification(method: &str) -> CapabilityMethodClassification {
+    method_descriptor(method)
+        .map(|descriptor| CapabilityMethodClassification {
+            group: descriptor.group,
+            risk_level: descriptor.risk.as_str(),
+            side_effect_class: descriptor.side_effect.as_str(),
+        })
+        .unwrap_or(CapabilityMethodClassification {
             group: "unknown",
-            risk_level: "safe",
-            side_effect_class: "none",
-        },
-    }
+            risk_level: "dangerous",
+            side_effect_class: "unknown",
+        })
 }
 
 fn capability_entry(
     method: &'static str,
     supported: bool,
-    requires_approval: bool,
-    permission_setting: Option<&'static str>,
     platform: PlatformKind,
     support_profile: &SupportProfileRuntimeInfo,
     last_checked_at: u64,
 ) -> Value {
     let baseline = method_metadata_for_platform(method, platform);
     let classification = method_classification(method);
+    let descriptor = method_descriptor(method).expect("capability method must have a descriptor");
+    let descriptor_permission = descriptor
+        .permission
+        .map(|permission| permission.as_setting_name());
     let platform_baseline = json!({
         "macos": platform_method_summary(method, PlatformKind::Macos),
         "windows": platform_method_summary(method, PlatformKind::Windows),
@@ -1691,9 +1699,15 @@ fn capability_entry(
         "sideEffectClass": classification.side_effect_class,
         "supported": supported,
         "supportState": support_state,
-        "requiresApproval": requires_approval,
-        "requiresPermission": permission_setting.is_some(),
-        "permissionSetting": permission_setting,
+        "requiresApproval": descriptor.requires_approval,
+        "cancellable": descriptor.cancellable,
+        "postCheckRequired": descriptor.post_check_required,
+        "timeoutClass": descriptor.timeout.as_str(),
+        "executorAvailable": descriptor.executor_available,
+        "inputSchema": descriptor.params_schema.as_str(),
+        "outputSchema": descriptor.result_schema.as_str(),
+        "requiresPermission": descriptor_permission.is_some(),
+        "permissionSetting": descriptor_permission,
         "knownLimitations": known_limitations,
         "requiresInteractiveDesktop": baseline.requires_interactive_desktop,
         "broadcastSafe": baseline.broadcast_safe,
@@ -1848,11 +1862,20 @@ fn active_tab_observation_backend_families(platform: PlatformKind) -> Vec<&'stat
 #[cfg(test)]
 fn capabilities() -> Value {
     let settings = load_settings().unwrap_or_else(|_| YeonjangSettings::default());
-    capabilities_with_settings(&settings)
+    capabilities_with_settings_and_backend(&settings, &crate::platform::CurrentBackend)
 }
 
-fn runtime_capabilities(support_profile: &SupportProfileRuntimeInfo) -> AutomationCapabilities {
-    let mut capability_flags = current_backend().capabilities();
+fn runtime_capabilities_with_backend(
+    support_profile: &SupportProfileRuntimeInfo,
+    backend: &dyn AutomationBackend,
+) -> AutomationCapabilities {
+    runtime_capabilities_with_snapshot(support_profile, backend.capabilities())
+}
+
+fn runtime_capabilities_with_snapshot(
+    support_profile: &SupportProfileRuntimeInfo,
+    mut capability_flags: AutomationCapabilities,
+) -> AutomationCapabilities {
     if support_profile.effective_profile == SupportProfileKind::HeadlessManaged {
         capability_flags.application_launch = false;
         capability_flags.screen_capture = false;
@@ -2226,6 +2249,76 @@ mod tests {
     use super::*;
 
     #[test]
+    fn camera_timeout_is_projected_as_a_bounded_protocol_error() {
+        let error = anyhow::Error::new(crate::automation::CameraCaptureProcessError::timed_out());
+
+        let (code, message) = classify_request_error(&error);
+
+        assert_eq!(code, "camera_helper_timeout");
+        assert_eq!(message, "Camera capture timed out before completion.");
+        assert!(!message.contains('/'));
+    }
+
+    #[test]
+    fn camera_timeout_response_carries_the_exact_command_attempt_binding() {
+        let request = Request {
+            id: Some("delivery-1".to_string()),
+            method: "camera.capture".to_string(),
+            params: json!({}),
+            metadata: crate::protocol::RequestMetadata {
+                command_id: Some("command-1".to_string()),
+                operation_id: Some("operation-1".to_string()),
+                target_fingerprint: Some(
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        .to_string(),
+                ),
+                ..Default::default()
+            },
+        };
+        let error = anyhow::Error::new(crate::automation::CameraCaptureProcessError::timed_out());
+
+        let response = error_response_for_request(&request, &error);
+
+        assert_eq!(
+            response.error.as_ref().map(|error| error.code.as_str()),
+            Some("camera_helper_timeout")
+        );
+        let attempt = response.attempt.expect("typed attempt evidence");
+        assert_eq!(attempt.command_id, "command-1");
+        assert_eq!(attempt.operation_id.as_deref(), Some("operation-1"));
+        assert!(matches!(
+            attempt.terminal_stage,
+            crate::protocol::CommandAttemptTerminalStage::HelperTimeout
+        ));
+    }
+
+    #[test]
+    fn camera_permission_denial_is_a_typed_rejection_not_a_helper_timeout() {
+        let request = Request {
+            id: Some("delivery-1".to_string()),
+            method: "camera.capture".to_string(),
+            params: json!({}),
+            metadata: crate::protocol::RequestMetadata {
+                command_id: Some("command-1".to_string()),
+                ..Default::default()
+            },
+        };
+        let error =
+            anyhow::Error::new(crate::automation::CameraCaptureProcessError::permission_denied());
+
+        let response = error_response_for_request(&request, &error);
+
+        assert_eq!(
+            response.error.as_ref().map(|error| error.code.as_str()),
+            Some("camera_permission_denied")
+        );
+        assert!(matches!(
+            response.attempt.expect("typed attempt").terminal_stage,
+            crate::protocol::CommandAttemptTerminalStage::Rejected
+        ));
+    }
+
+    #[test]
     fn request_handling_uses_the_explicit_startup_settings_snapshot() {
         let mut settings = YeonjangSettings::default();
         settings.permissions.allow_browser_control = false;
@@ -2245,8 +2338,7 @@ mod tests {
             response
                 .result
                 .as_ref()
-                .expect("capabilities response must include a result")["permissions"]
-                ["allow_browser_control"],
+                .expect("capabilities response must include a result")["permissions"]["allow_browser_control"],
             Value::Bool(false)
         );
     }
@@ -2261,15 +2353,7 @@ mod tests {
             reason_codes: vec!["tray_runtime_visible".to_string()],
         };
 
-        let entry = capability_entry(
-            "screen.capture",
-            true,
-            false,
-            Some("allow_screen_capture"),
-            PlatformKind::Linux,
-            &runtime,
-            42,
-        );
+        let entry = capability_entry("screen.capture", true, PlatformKind::Linux, &runtime, 42);
 
         assert_eq!(entry["supported"], Value::Bool(true));
         assert_eq!(entry["requiresInteractiveDesktop"], Value::Bool(true));
@@ -2305,15 +2389,7 @@ mod tests {
             reason_codes: vec!["tray_runtime_visible".to_string()],
         };
 
-        let screen = capability_entry(
-            "screen.capture",
-            true,
-            false,
-            Some("allow_screen_capture"),
-            PlatformKind::Macos,
-            &runtime,
-            42,
-        );
+        let screen = capability_entry("screen.capture", true, PlatformKind::Macos, &runtime, 42);
         assert_eq!(screen["schemaVersion"], Value::Number(1.into()));
         assert_eq!(screen["group"], Value::String("screen".to_string()));
         assert_eq!(screen["riskLevel"], Value::String("moderate".to_string()));
@@ -2322,15 +2398,7 @@ mod tests {
             Value::String("screen_read".to_string())
         );
 
-        let command = capability_entry(
-            "system.exec",
-            true,
-            true,
-            Some("allow_shell_exec"),
-            PlatformKind::Macos,
-            &runtime,
-            42,
-        );
+        let command = capability_entry("system.exec", true, PlatformKind::Macos, &runtime, 42);
         assert_eq!(command["group"], Value::String("command".to_string()));
         assert_eq!(command["riskLevel"], Value::String("dangerous".to_string()));
         assert_eq!(
@@ -2344,6 +2412,122 @@ mod tests {
         let payload = capabilities();
 
         assert_eq!(payload["capabilitySchemaVersion"], Value::Number(1.into()));
+    }
+
+    #[test]
+    fn capability_advertisement_exactly_matches_the_canonical_method_inventory() {
+        let payload = capabilities();
+        let advertised = payload["methods"]
+            .as_array()
+            .expect("capabilities methods")
+            .iter()
+            .filter_map(|entry| entry["name"].as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let matrix = payload["capabilityMatrix"]
+            .as_object()
+            .expect("capability matrix")
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let health = payload["toolHealth"]
+            .as_object()
+            .expect("tool health")
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let canonical = crate::method_descriptor::all_method_names()
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(advertised, canonical);
+        assert_eq!(matrix, canonical);
+        assert_eq!(health, canonical);
+        for method in crate::method_descriptor::all_method_names() {
+            let descriptor =
+                crate::method_descriptor::method_descriptor(method).expect("descriptor");
+            let entry = &payload["capabilityMatrix"][method];
+            let listed = payload["methods"]
+                .as_array()
+                .expect("methods")
+                .iter()
+                .find(|listed| listed["name"] == **method)
+                .expect("listed method");
+            assert_eq!(entry["requiresApproval"], descriptor.requires_approval);
+            assert_eq!(entry["cancellable"], descriptor.cancellable);
+            assert_eq!(entry["postCheckRequired"], descriptor.post_check_required);
+            assert_eq!(entry["timeoutClass"], descriptor.timeout.as_str());
+            assert_eq!(
+                entry["permissionSetting"],
+                descriptor
+                    .permission
+                    .map(|permission| Value::String(permission.as_setting_name().to_string()))
+                    .unwrap_or(Value::Null)
+            );
+            assert_eq!(listed["implemented"], entry["supported"]);
+            if !descriptor.executor_available {
+                assert_eq!(entry["supported"], Value::Bool(false));
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_executor_method_returns_a_typed_fail_closed_error() {
+        let response = handle_request_with_settings(
+            Request {
+                id: Some("unknown-method".to_string()),
+                method: "unknown.method".to_string(),
+                params: json!({}),
+                metadata: Default::default(),
+            },
+            YeonjangSettings::default(),
+        );
+
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.as_ref().map(|error| error.code.as_str()),
+            Some("unknown_method")
+        );
+        assert_eq!(
+            response.error.as_ref().map(|error| error.message.as_str()),
+            Some("The requested method is not supported.")
+        );
+    }
+
+    #[test]
+    fn every_canonical_method_has_an_explicit_executor_or_unavailable_outcome() {
+        for method in crate::method_descriptor::all_method_names() {
+            let descriptor =
+                crate::method_descriptor::method_descriptor(method).expect("descriptor");
+            let response = handle_request_with_settings(
+                Request {
+                    id: Some(format!("route-{method}")),
+                    method: method.to_string(),
+                    params: json!({}),
+                    metadata: Default::default(),
+                },
+                YeonjangSettings::default(),
+            );
+            let code = response.error.as_ref().map(|error| error.code.as_str());
+            if descriptor.executor_available {
+                assert_ne!(
+                    code,
+                    Some("unknown_method"),
+                    "`{method}` has no executor route"
+                );
+                assert_ne!(
+                    code,
+                    Some("method_unavailable"),
+                    "`{method}` is marked executable but routed as unavailable"
+                );
+            } else {
+                assert_eq!(
+                    code,
+                    Some("method_unavailable"),
+                    "`{method}` must fail with the explicit unavailable contract"
+                );
+            }
+        }
     }
 
     #[test]
@@ -2665,8 +2849,6 @@ mod tests {
         let entry = capability_entry(
             "browser.active_tab_info",
             true,
-            true,
-            Some("allow_browser_read"),
             PlatformKind::Macos,
             &runtime,
             42,
@@ -2715,15 +2897,7 @@ mod tests {
             reason_codes: vec!["interactive_desktop_unavailable".to_string()],
         };
 
-        let entry = capability_entry(
-            "screen.capture",
-            false,
-            false,
-            Some("allow_screen_capture"),
-            PlatformKind::Linux,
-            &runtime,
-            42,
-        );
+        let entry = capability_entry("screen.capture", false, PlatformKind::Linux, &runtime, 42);
 
         assert_eq!(
             entry["supportState"],
@@ -2749,7 +2923,7 @@ mod tests {
     }
 
     #[test]
-    fn permission_settings_default_and_payload_expose_resource_permissions() {
+    fn permission_payload_exposes_fail_closed_resource_permissions() {
         let permissions = PermissionSettings::default();
         let payload = permissions_payload(&permissions);
 
@@ -2773,9 +2947,19 @@ mod tests {
                 "permissions payload is missing {key}"
             );
         }
-        assert_eq!(payload["allow_camera_access"], Value::Bool(true));
-        assert_eq!(payload["allow_file_write"], Value::Bool(false));
-        assert_eq!(payload["allow_process_control"], Value::Bool(false));
+        for key in [
+            "allow_camera_access",
+            "allow_file_write",
+            "allow_process_control",
+            "allow_system_control",
+            "allow_shell_exec",
+            "allow_application_launch",
+            "allow_screen_capture",
+            "allow_keyboard_control",
+            "allow_mouse_control",
+        ] {
+            assert_eq!(payload[key], Value::Bool(false), "{key} must fail closed");
+        }
     }
 
     #[test]
@@ -2891,8 +3075,8 @@ mod tests {
             signature: String::new(),
         };
         let canonical = browser_focus_execution_admission_canonical_payload(&unsigned);
-        let mut mac = HmacSha256::new_from_slice(b"pairing-secret")
-            .expect("fixed HMAC key should be valid");
+        let mut mac =
+            HmacSha256::new_from_slice(b"pairing-secret").expect("fixed HMAC key should be valid");
         mac.update(canonical.as_bytes());
         let signature = format!("hmac-sha256:{:x}", mac.finalize().into_bytes());
         json!({
@@ -3025,57 +3209,65 @@ mod tests {
 
         let mut wrong_instance = admission.clone();
         wrong_instance["extensionId"] = Value::String("other-node".to_string());
-        assert!(verify_browser_focus_execution_admission(
-            &wrong_instance,
-            "pairing-secret",
-            "yeonjang-main",
-            Some("session-001"),
-            &target_hash,
-            "scope:approved",
-            1_784_760_000_000,
-        )
-        .expect_err("different extension must not verify")
-        .to_string()
-        .contains("browser_focus_execution_admission_invalid"));
+        assert!(
+            verify_browser_focus_execution_admission(
+                &wrong_instance,
+                "pairing-secret",
+                "yeonjang-main",
+                Some("session-001"),
+                &target_hash,
+                "scope:approved",
+                1_784_760_000_000,
+            )
+            .expect_err("different extension must not verify")
+            .to_string()
+            .contains("browser_focus_execution_admission_invalid")
+        );
 
-        assert!(verify_browser_focus_execution_admission(
-            &admission,
-            "pairing-secret",
-            "yeonjang-main",
-            Some("session-001"),
-            &target_hash,
-            "scope:other",
-            1_784_760_000_000,
-        )
-        .expect_err("different approval scope must not verify")
-        .to_string()
-        .contains("browser_focus_execution_admission_invalid"));
+        assert!(
+            verify_browser_focus_execution_admission(
+                &admission,
+                "pairing-secret",
+                "yeonjang-main",
+                Some("session-001"),
+                &target_hash,
+                "scope:other",
+                1_784_760_000_000,
+            )
+            .expect_err("different approval scope must not verify")
+            .to_string()
+            .contains("browser_focus_execution_admission_invalid")
+        );
 
-        assert!(verify_browser_focus_execution_admission(
-            &admission,
-            "wrong-secret",
-            "yeonjang-main",
-            Some("session-001"),
-            &target_hash,
-            "scope:approved",
-            1_784_760_000_000,
-        )
-        .expect_err("different secret must not verify")
-        .to_string()
-        .contains("browser_focus_execution_admission_signature_invalid"));
+        assert!(
+            verify_browser_focus_execution_admission(
+                &admission,
+                "wrong-secret",
+                "yeonjang-main",
+                Some("session-001"),
+                &target_hash,
+                "scope:approved",
+                1_784_760_000_000,
+            )
+            .expect_err("different secret must not verify")
+            .to_string()
+            .contains("browser_focus_execution_admission_signature_invalid")
+        );
 
-        assert!(verify_browser_focus_execution_admission(
-            &admission,
-            "pairing-secret",
-            "yeonjang-main",
-            Some("session-001"),
-            &target_hash,
-            "scope:approved",
-            1_784_800_000_000,
-        )
-        .expect_err("expired admission must not verify")
-        .to_string()
-        .contains("browser_focus_execution_admission_expired"));
+        assert!(
+            verify_browser_focus_execution_admission(
+                &admission,
+                "pairing-secret",
+                "yeonjang-main",
+                Some("session-001"),
+                &target_hash,
+                "scope:approved",
+                1_784_800_000_000,
+            )
+            .expect_err("expired admission must not verify")
+            .to_string()
+            .contains("browser_focus_execution_admission_expired")
+        );
     }
 
     #[test]
@@ -3093,9 +3285,11 @@ mod tests {
             Some("session-001"),
             1_784_760_000_000,
             true,
+            &crate::platform::CurrentBackend,
         )
         .expect("valid signed execution admission should be accepted by dispatch");
-        let public = serde_json::to_string(&result).expect("public dispatch result should serialize");
+        let public =
+            serde_json::to_string(&result).expect("public dispatch result should serialize");
         assert!(!public.contains("pairing-secret"));
         assert!(!public.contains("nonce-private"));
         assert!(!public.contains("hmac-sha256"));
@@ -3112,11 +3306,14 @@ mod tests {
             Some("session-001"),
             1_784_760_000_000,
             true,
+            &crate::platform::CurrentBackend,
         )
         .expect_err("malformed admission must stop dispatch");
-        assert!(invalid
-            .to_string()
-            .contains("browser_focus_execution_admission_invalid"));
+        assert!(
+            invalid
+                .to_string()
+                .contains("browser_focus_execution_admission_invalid")
+        );
     }
 
     #[test]
@@ -3150,35 +3347,44 @@ mod tests {
             &nonce_state_path,
             |process_name, interactive_desktop| {
                 executor_calls.push((process_name.to_string(), interactive_desktop));
-                json!({
-                    "commandAccepted": true,
-                    "reasonCode": "macos_browser_focus_command_accepted",
+                crate::automation::BrowserFocusExecutionResult {
+                    command_accepted: true,
+                    reason_code: "macos_browser_focus_command_accepted",
+                }
+            },
+            || {
+                Some(crate::automation::FocusedTargetResult {
+                    available: true,
+                    app_name: Some("Google Chrome".to_string()),
+                    process_id: None,
+                    title_hash: None,
+                    title_length: 0,
+                    message: "Focused target observed.".to_string(),
                 })
             },
-            || Some(crate::automation::FocusedTargetResult {
-                available: true,
-                app_name: Some("Google Chrome".to_string()),
-                process_id: None,
-                title_hash: None,
-                title_length: 0,
-                message: "Focused target observed.".to_string(),
-            }),
         )
         .expect("verified admission should reach the executor");
         assert_eq!(executor_calls, vec![("Google Chrome".to_string(), true)]);
-        assert_eq!(result["status"], Value::String("dispatch_executed".to_string()));
+        assert_eq!(
+            result["status"],
+            Value::String("dispatch_executed".to_string())
+        );
         assert_eq!(result["commandAccepted"], Value::Bool(true));
         assert_eq!(result["goalSuccess"], Value::Bool(false));
         assert_eq!(
             result["observedFocusedTarget"]["processName"],
             Value::String("Google Chrome".to_string())
         );
-        assert!(!serde_json::to_string(&result)
-            .expect("result should serialize")
-            .contains("nonce-private"));
-        assert!(!serde_json::to_string(&result)
-            .expect("result should serialize")
-            .contains("scope:approved"));
+        assert!(
+            !serde_json::to_string(&result)
+                .expect("result should serialize")
+                .contains("nonce-private")
+        );
+        assert!(
+            !serde_json::to_string(&result)
+                .expect("result should serialize")
+                .contains("scope:approved")
+        );
 
         let replay_admission = verify_browser_focus_execution_admission(
             &admission_value,
@@ -3200,9 +3406,11 @@ mod tests {
             || panic!("replayed nonce must not reach observer"),
         )
         .expect_err("replayed nonce must block the OS executor");
-        assert!(replay
-            .to_string()
-            .contains("browser_focus_execution_admission_nonce_replayed"));
+        assert!(
+            replay
+                .to_string()
+                .contains("browser_focus_execution_admission_nonce_replayed")
+        );
         let _ = std::fs::remove_file(nonce_state_path);
     }
 

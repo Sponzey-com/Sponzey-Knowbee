@@ -6,7 +6,10 @@ const runSummarySource = readFileSync(
   join(process.cwd(), "packages", "webui", "src", "components", "runs", "RunSummaryPanel.tsx"),
   "utf-8",
 )
-const runsPageSource = readFileSync(join(process.cwd(), "packages", "webui", "src", "pages", "RunsPage.tsx"), "utf-8")
+const runsPageSource = readFileSync(
+  join(process.cwd(), "packages", "webui", "src", "pages", "RunsDiagnosticPage.tsx"),
+  "utf-8",
+)
 
 describe("task0434 run prompt and memory identifier redaction", () => {
   it("summarizes prompt source snapshots without exposing source ids or checksums in run summary", () => {
@@ -28,7 +31,9 @@ describe("task0434 run prompt and memory identifier redaction", () => {
     expect(runsPageSource).not.toContain("source.version")
     expect(runsPageSource).not.toContain("source.locale")
 
-    expect(runsPageSource).toContain("const promptSourceCount = diagnostics?.promptSources.length ?? diagnostics?.promptSourceIds.length ?? 0")
+    expect(runsPageSource).toMatch(
+      /const promptSourceCount\s*=\s*diagnostics\?\.promptSources\.length\s*\?\?\s*diagnostics\?\.promptSourceIds\.length\s*\?\?\s*0/u,
+    )
     expect(runsPageSource).toContain("baselines recorded")
   })
 
@@ -46,4 +51,3 @@ describe("task0434 run prompt and memory identifier redaction", () => {
     expect(runsPageSource).toContain('text("검증 기준 연결됨", "Verification linked")')
   })
 })
-

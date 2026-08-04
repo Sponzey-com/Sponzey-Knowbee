@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
+import { AIProviderInvocationError } from "../packages/core/src/ai/provider-failure.ts"
 import { createTestAgentRuntimeDependencies } from "./fixtures/agent-runtime.ts"
 
 const getAllMock = vi.fn(() => [])
@@ -169,6 +170,8 @@ vi.mock("../packages/core/src/instructions/merge.js", () => ({
 vi.mock("../packages/core/src/tools/runtime-dispatcher.js", () => ({
   toolDispatcher: {
     getAll: (...args: unknown[]) => getAllMock(...args),
+    get: (name: string) =>
+      getAllMock().find((tool: { name?: string }) => tool.name === name),
     isToolAvailableForSource: () => true,
     dispatch: (...args: unknown[]) => dispatchMock(...args),
   },
@@ -420,7 +423,12 @@ describe("runAgent streaming policy", () => {
     expect(dispatchMock).toHaveBeenCalledWith(
       "web_fetch",
       { url, freshnessPolicy: "strict_timestamp" },
-      expect.objectContaining({ runId: "run-direct-web", allowWebAccess: true }),
+      expect.objectContaining({
+        runId: "run-direct-web",
+        allowWebAccess: true,
+        signal: expect.any(AbortSignal),
+      }),
+      undefined,
     )
     expect(chunks).toContainEqual({
       type: "tool_start",
@@ -1685,6 +1693,34 @@ describe("runAgent streaming policy", () => {
     }])
   })
 
+  it("preserves a bounded provider contract reason for recovery policy", async () => {
+    const provider = {
+      chat: vi.fn(async function* () {
+        throw new AIProviderInvocationError("provider_contract_rejected")
+      }),
+    }
+
+    const chunks = []
+    for await (const chunk of runAgent({
+      config: DEFAULT_CONFIG,
+      ...testAgentRuntime,
+      userMessage: "카메라로 사진을 찍어줘",
+      sessionId: "session-provider-contract-rejected",
+      runId: "run-provider-contract-rejected",
+      model: "gpt-5",
+      provider: provider as never,
+      source: "telegram",
+      toolsEnabled: false,
+    })) {
+      chunks.push(chunk)
+    }
+
+    expect(chunks).toEqual([expect.objectContaining({
+      type: "ai_recovery",
+      providerFailureReasonCode: "provider_contract_rejected",
+    })])
+  })
+
   it("emits the buffered assistant text only after a successful non-tool round", async () => {
     insertMessageMock.mockClear()
     const provider = {
@@ -2210,6 +2246,88 @@ describe("runAgent streaming policy", () => {
       },
       { type: "done", totalTokens: 4 },
     ])
+  })
+
+  it("returns one typed recovery event for a run-scoped pre-dispatch failure", async () => {
+    getAllMock.mockReturnValue([{
+      name: "yeonjang_camera_capture",
+      description: "camera capture",
+      parameters: {
+        type: "object",
+        properties: { extensionId: { type: "string" } },
+      },
+    }])
+    let round = 0
+    const provider = {
+      chat: vi.fn(async function* () {
+        if (round < 2) {
+          yield {
+            type: "tool_use",
+            id: `tool-scope-failure-${round}`,
+            name: "yeonjang_camera_capture",
+            input: round === 0
+              ? { extensionId: "model-target-one" }
+              : { extensionId: "model-target-two", outputPath: "/changed/path" },
+          } as const
+        } else {
+          yield { type: "text_delta", delta: "scope failure ignored" } as const
+        }
+        round += 1
+        yield {
+          type: "message_stop",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        } as const
+      }),
+    }
+
+    const chunks = []
+    for await (const chunk of runAgent({
+      config: DEFAULT_CONFIG,
+      ...testAgentRuntime,
+      userMessage: "카메라로 사진 찍어줘",
+      sessionId: "session-agent-scope-failure",
+      runId: "run-agent-scope-failure",
+      agentId: "agent:main",
+      model: "gpt-5",
+      provider: provider as never,
+      source: "telegram",
+      toolsEnabled: true,
+      admittedCapabilityExecutionScope: {
+        schemaVersion: 1,
+        kind: "tool_bundle_skill",
+        runId: "run-agent-scope-failure",
+        ownerAgentId: "agent:main",
+        receiptId: "receipt:scope-failure",
+        capabilitySnapshotFingerprint: `sha256:${"a".repeat(64)}`,
+        selectedCapabilityId: "yeonjang_camera_capture",
+        selectedTargetIds: ["yeonjang-main", "yeonjang-backup"],
+        toolNames: ["yeonjang_camera_capture"],
+      },
+    })) {
+      chunks.push(chunk)
+    }
+
+    expect(provider.chat).toHaveBeenCalledTimes(1)
+    expect(dispatchMock).not.toHaveBeenCalled()
+    expect(chunks.filter((chunk) => chunk.type === "execution_recovery")).toEqual([
+      {
+        type: "execution_recovery",
+        toolNames: ["yeonjang_camera_capture"],
+        summary: "실행 범위 계약을 다시 계획해야 합니다.",
+        reason: "External effect did not start because execution scope validation failed.",
+        reasonCode: "run_scoped_target_ambiguous",
+        evidenceRefs: [
+          expect.stringMatching(
+            /^run-scoped-pre-dispatch:sha256:[a-f0-9]{64}$/u,
+          ),
+        ],
+      },
+    ])
+    expect(JSON.stringify(
+      chunks.filter((chunk) => chunk.type !== "tool_start"),
+    )).not.toMatch(
+      /model-target|changed\/path|yeonjang-backup/u,
+    )
   })
 
   it("uses run-local messages and scoped memory when context mode is handoff", async () => {

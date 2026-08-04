@@ -158,6 +158,111 @@ describe("conversation process verification contract", () => {
     })
   })
 
+  it("uses two explicit fixture approval interactions to resume the same binding to terminal success", async () => {
+    const captureWaiting = {
+      ...observation("awaiting_approval"),
+      pendingInteraction: {
+        kind: "approval",
+        approvalRequestRef: "approval:capture",
+      },
+    } as ConversationProbeObservation
+    const deliveryWaiting = {
+      ...observation("awaiting_approval"),
+      pendingInteraction: {
+        kind: "approval",
+        approvalRequestRef: "approval:delivery",
+      },
+    } as ConversationProbeObservation
+    const succeeded = observation()
+    const configured = ports(succeeded)
+    configured.probe.observe = vi.fn()
+      .mockResolvedValueOnce({ status: "success" as const, value: captureWaiting })
+      .mockResolvedValueOnce({ status: "success" as const, value: deliveryWaiting })
+      .mockResolvedValueOnce({ status: "success" as const, value: succeeded })
+    const fixtureInteractions = [
+      {
+        kind: "approval_decision" as const,
+        approvalRequestRef: "approval:capture",
+        decision: "allow_once" as const,
+      },
+      {
+        kind: "approval_decision" as const,
+        approvalRequestRef: "approval:delivery",
+        decision: "allow_run" as const,
+      },
+    ]
+    const useCase = new VerifyConversationProcessUseCase(configured, {
+      fixtureInteractions,
+    })
+
+    await expect(useCase.execute(input)).resolves.toMatchObject({
+      verificationStatus: "success",
+      releaseReadiness: "passed",
+    })
+    expect(configured.control.interact).toHaveBeenNthCalledWith(
+      1,
+      captureWaiting.binding,
+      fixtureInteractions[0],
+      undefined,
+    )
+    expect(configured.control.interact).toHaveBeenNthCalledWith(
+      2,
+      deliveryWaiting.binding,
+      fixtureInteractions[1],
+      undefined,
+    )
+    expect(configured.probe.observe).toHaveBeenCalledTimes(3)
+  })
+
+  it("does not apply fixture approval interactions to live evidence", async () => {
+    const liveWaiting = {
+      ...observation("awaiting_approval"),
+      evidenceMode: "live",
+      pendingInteraction: {
+        kind: "approval",
+        approvalRequestRef: "approval:live",
+      },
+    } as ConversationProbeObservation
+    const configured = ports(liveWaiting)
+    const useCase = new VerifyConversationProcessUseCase(configured, {
+      fixtureInteractions: [{
+        kind: "approval_decision",
+        approvalRequestRef: "approval:live",
+        decision: "allow_once",
+      }],
+    })
+
+    await expect(useCase.execute(input)).resolves.toMatchObject({
+      verificationStatus: "additional_input_required",
+      reasonCode: "request_input_required",
+    })
+    expect(configured.control.interact).not.toHaveBeenCalled()
+  })
+
+  it("rejects a fixture interaction that does not match the pending approval ref", async () => {
+    const waiting = {
+      ...observation("awaiting_approval"),
+      pendingInteraction: {
+        kind: "approval",
+        approvalRequestRef: "approval:capture",
+      },
+    } as ConversationProbeObservation
+    const configured = ports(waiting)
+    const useCase = new VerifyConversationProcessUseCase(configured, {
+      fixtureInteractions: [{
+        kind: "approval_decision",
+        approvalRequestRef: "approval:other",
+        decision: "allow_once",
+      }],
+    })
+
+    await expect(useCase.execute(input)).resolves.toMatchObject({
+      verificationStatus: "failure",
+      reasonCode: "approval_interaction_ref_mismatch",
+    })
+    expect(configured.control.interact).not.toHaveBeenCalled()
+  })
+
   it.each([
     {
       executionStatus: "cancelled" as const,
@@ -201,6 +306,32 @@ describe("conversation process verification contract", () => {
       smokeStatus: "passed",
       releaseReadiness: "failed",
       reasonCode: "solution_plan_receipt_missing",
+    })
+  })
+
+  it("rejects one receipt reused for diagnosis and solution planning when distinct judgments are required", async () => {
+    const observed = observation()
+    observed.receipts.solutionPlanReceiptId =
+      observed.receipts.requestDiagnosisReceiptId
+    const useCase = new VerifyConversationProcessUseCase(ports(observed))
+
+    await expect(useCase.execute({
+      ...input,
+      requiresDistinctDecisionReceipts: true,
+    })).resolves.toMatchObject({
+      verificationStatus: "failure",
+      reasonCode: "decision_receipts_not_distinct",
+    })
+  })
+
+  it("preserves the simplified direct-conversation receipt contract unless explicitly strengthened", async () => {
+    const observed = observation()
+    observed.receipts.solutionPlanReceiptId =
+      observed.receipts.requestDiagnosisReceiptId
+    const useCase = new VerifyConversationProcessUseCase(ports(observed))
+
+    await expect(useCase.execute(input)).resolves.toMatchObject({
+      verificationStatus: "success",
     })
   })
 

@@ -220,6 +220,51 @@ describe("run recovery helpers", () => {
     expect(recovery).toBeNull()
   })
 
+  it("keys structured pre-dispatch recovery by reason code and evidence ref instead of prose", () => {
+    const first = selectGenericExecutionRecovery({
+      executionRecovery: {
+        summary: "scope repair",
+        reason: "first wording",
+        reasonCode: "run_scoped_target_ambiguous",
+        evidenceRefs: [
+          `run-scoped-pre-dispatch:sha256:${"a".repeat(64)}`,
+        ],
+        toolNames: ["yeonjang_camera_capture"],
+      },
+      seenKeys: new Set<string>(),
+    })
+    expect(first).not.toBeNull()
+    if (!first) return
+
+    const sameEvidence = selectGenericExecutionRecovery({
+      executionRecovery: {
+        summary: "scope repair",
+        reason: "different wording",
+        reasonCode: "run_scoped_target_ambiguous",
+        evidenceRefs: [
+          `run-scoped-pre-dispatch:sha256:${"a".repeat(64)}`,
+        ],
+        toolNames: ["yeonjang_camera_capture"],
+      },
+      seenKeys: new Set([first.key]),
+    })
+    const changedScope = selectGenericExecutionRecovery({
+      executionRecovery: {
+        summary: "scope repair",
+        reason: "different wording",
+        reasonCode: "run_scoped_target_ambiguous",
+        evidenceRefs: [
+          `run-scoped-pre-dispatch:sha256:${"b".repeat(64)}`,
+        ],
+        toolNames: ["yeonjang_camera_capture"],
+      },
+      seenKeys: new Set([first.key]),
+    })
+
+    expect(sameEvidence).toBeNull()
+    expect(changedScope).not.toBeNull()
+  })
+
   it("keeps direct artifact delivery recovery keys channel-specific", () => {
     const webuiRecovery = selectDirectArtifactDeliveryRecovery({
       source: "webui",

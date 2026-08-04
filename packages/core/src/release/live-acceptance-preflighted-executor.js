@@ -20,6 +20,18 @@ export function createPreflightedLiveAcceptanceExecutor(input) {
         const signal = request.signal;
         if (signal.aborted)
             return stopped("cancelled", "live_collection_cancelled");
+        let runtimeIdentity;
+        try {
+            runtimeIdentity = input.inspectRuntimeIdentity();
+        }
+        catch {
+            return stopped("blocked", "live_acceptance_runtime_identity_invalid");
+        }
+        if (runtimeIdentity.status === "blocked") {
+            return stopped("blocked", runtimeIdentity.reasonCode);
+        }
+        if (signal.aborted)
+            return stopped("cancelled", "live_collection_cancelled");
         const observedAt = input.now();
         let snapshot;
         try {
@@ -47,10 +59,15 @@ export function createPreflightedLiveAcceptanceExecutor(input) {
             requestedKeyId: request.requestedKeyId,
             observedAt,
             signal,
+            runtimeIdentity: runtimeIdentity.receipt,
             preflight,
         });
         try {
-            return await input.executeVerified(context);
+            const result = await input.executeVerified(context);
+            return Object.freeze({
+                ...result,
+                runtimeIdentity: runtimeIdentity.receipt,
+            });
         }
         catch {
             return stopped("blocked", "live_verified_execution_failed", true);

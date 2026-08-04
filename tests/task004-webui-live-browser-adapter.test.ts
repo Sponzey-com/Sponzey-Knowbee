@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 
-import { collectWebUiBrowserProfile } from "../scripts/collect-webui-live-performance.mjs"
+import { collectWebUiBrowserProfile } from "../scripts/self/collect-webui-live-performance.mjs"
 
 function fakeBrowser() {
   const requestHandlers: Array<(request: unknown) => void> = []

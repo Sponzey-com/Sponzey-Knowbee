@@ -28,6 +28,8 @@ readonly LIVE_TELEGRAM_THREAD_ID_SNAPSHOT="${KNOWBEE_CHANNEL_SMOKE_TELEGRAM_THRE
 readonly LIVE_SLACK_CHANNEL_ID_SNAPSHOT="${KNOWBEE_CHANNEL_SMOKE_SLACK_CHANNEL_ID:-}"
 readonly LIVE_SLACK_USER_ID_SNAPSHOT="${KNOWBEE_CHANNEL_SMOKE_SLACK_USER_ID:-}"
 readonly LIVE_SLACK_THREAD_TS_SNAPSHOT="${KNOWBEE_CHANNEL_SMOKE_SLACK_THREAD_TS:-}"
+readonly LOG_PURPOSE_SNAPSHOT="${KNOWBEE_LOG_PURPOSE:-}"
+readonly FIELD_DEBUG_UNTIL_SNAPSHOT="${KNOWBEE_FIELD_DEBUG_UNTIL:-}"
 LABEL_SUFFIX="$(printf '%s' "$ROOT_DIR" | cksum | awk '{print $1}')"
 GATEWAY_LAUNCHD_LABEL="com.sponzey.knowbee.${LABEL_SUFFIX}.gateway"
 WEBUI_LAUNCHD_LABEL="com.sponzey.knowbee.${LABEL_SUFFIX}.webui"
@@ -73,8 +75,10 @@ pid_alive() {
   local state
   [[ -z "$pid" ]] && return 1
   state="$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]')"
-  [[ -z "$state" || "$state" == Z* ]] && return 1
-  kill -0 "$pid" >/dev/null 2>&1
+  [[ "$state" == Z* ]] && return 1
+  kill -0 "$pid" >/dev/null 2>&1 && return 0
+  command -v lsof >/dev/null 2>&1 && lsof -p "$pid" >/dev/null 2>&1 && return 0
+  ps -p "$pid" >/dev/null 2>&1
 }
 
 pid_command() {
@@ -104,7 +108,8 @@ pid_belongs_to_repo() {
 }
 
 can_use_launchctl() {
-  [[ "${KNOWBEE_DISABLE_LAUNCHCTL:-0}" != "1" ]] \
+  [[ "${KNOWBEE_USE_LAUNCHCTL:-0}" == "1" ]] \
+    && [[ "${KNOWBEE_DISABLE_LAUNCHCTL:-0}" != "1" ]] \
     && [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]] \
     && command -v launchctl >/dev/null 2>&1
 }
@@ -128,10 +133,25 @@ launchctl_job_pid() {
   launchctl print "gui/$(id -u)/$label" 2>/dev/null | awk '/pid = / { print $3; exit }' || true
 }
 
+wait_launchctl_job_removed() {
+  local label="$1"
+  for _ in $(seq 1 50); do
+    if ! launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "launchctl 작업 제거 완료를 확인하지 못했습니다. label=$label"
+  return 1
+}
+
 remove_launchctl_job() {
   local label="$1"
   can_use_launchctl || return 0
   launchctl remove "$label" >/dev/null 2>&1 || true
+  if ! wait_launchctl_job_removed "$label"; then
+    return 1
+  fi
 }
 
 wait_launchctl_pid() {
@@ -586,7 +606,7 @@ wait_for_gateway_startup() {
   local observer_result observer_status observer_state elapsed_ms performance reason_code progress
 
   while true; do
-    observer_result="$("$NODE_RUNTIME_PATH" "$ROOT_DIR/scripts/observe-gateway-startup.mjs" \
+    observer_result="$("$NODE_RUNTIME_PATH" "$ROOT_DIR/scripts/self/observe-gateway-startup.mjs" \
       --evidence "$STATE_DIR/gateway-startup.json" \
       --pid "$expected_pid" \
       --minimum-started-at "$minimum_started_at" \
@@ -633,6 +653,8 @@ start_gateway_nohup() {
     cd "$ROOT_DIR"
     export KNOWBEE_STATE_DIR="$STATE_DIR"
     export KNOWBEE_LOG_LEVEL="${KNOWBEE_LOG_LEVEL:-info}"
+    export KNOWBEE_LOG_PURPOSE="$LOG_PURPOSE_SNAPSHOT"
+    export KNOWBEE_FIELD_DEBUG_UNTIL="$FIELD_DEBUG_UNTIL_SNAPSHOT"
     export KNOWBEE_ADMIN_UI="$ADMIN_UI"
     export KNOWBEE_ADMIN_UI_SOURCE="local-script"
     export KNOWBEE_LIVE_ACCEPTANCE="$LIVE_ACCEPTANCE"
@@ -663,9 +685,9 @@ start_gateway() {
   echo "Gateway를 시작합니다..."
   if can_use_gateway_launchctl; then
     remove_launchctl_job "$GATEWAY_LAUNCHD_LABEL"
-    local command
-    printf -v command 'cd %q && export KNOWBEE_STATE_DIR=%q KNOWBEE_LOG_LEVEL=%q KNOWBEE_ADMIN_UI=%q KNOWBEE_ADMIN_UI_SOURCE=%q KNOWBEE_LIVE_ACCEPTANCE=%q KNOWBEE_CHANNEL_SMOKE_LIVE=%q PATH=%q && exec %q packages/core/dist/runtime/serve-bundle.js >>%q 2>&1' \
-      "$ROOT_DIR" "$STATE_DIR" "${KNOWBEE_LOG_LEVEL:-info}" "$ADMIN_UI" "local-script" "$LIVE_ACCEPTANCE" "$LIVE_ACCEPTANCE" "$PATH" "$NODE_RUNTIME_PATH" "$GATEWAY_LOG_FILE"
+    local command submitted_pid
+    printf -v command 'cd %q && export KNOWBEE_STATE_DIR=%q KNOWBEE_LOG_LEVEL=%q KNOWBEE_LOG_PURPOSE=%q KNOWBEE_FIELD_DEBUG_UNTIL=%q KNOWBEE_ADMIN_UI=%q KNOWBEE_ADMIN_UI_SOURCE=%q KNOWBEE_LIVE_ACCEPTANCE=%q KNOWBEE_CHANNEL_SMOKE_LIVE=%q PATH=%q && exec %q packages/core/dist/runtime/serve-bundle.js >>%q 2>&1' \
+      "$ROOT_DIR" "$STATE_DIR" "${KNOWBEE_LOG_LEVEL:-info}" "$LOG_PURPOSE_SNAPSHOT" "$FIELD_DEBUG_UNTIL_SNAPSHOT" "$ADMIN_UI" "local-script" "$LIVE_ACCEPTANCE" "$LIVE_ACCEPTANCE" "$PATH" "$NODE_RUNTIME_PATH" "$GATEWAY_LOG_FILE"
     if launchctl submit -l "$GATEWAY_LAUNCHD_LABEL" -- /bin/bash -lc "$command"; then
       if ! wait_launchctl_pid "Gateway" "$GATEWAY_LAUNCHD_LABEL" "$GATEWAY_PID_FILE"; then
         echo "Gateway launchctl PID 확인에 실패해 nohup 방식으로 전환합니다."
@@ -673,9 +695,15 @@ start_gateway() {
         start_gateway_nohup
       fi
     else
-      echo "Gateway launchctl 시작에 실패해 nohup 방식으로 전환합니다."
-      remove_launchctl_job "$GATEWAY_LAUNCHD_LABEL"
-      start_gateway_nohup
+      submitted_pid="$(launchctl_job_pid "$GATEWAY_LAUNCHD_LABEL")"
+      if [[ -n "$submitted_pid" ]]; then
+        echo "$submitted_pid" > "$GATEWAY_PID_FILE"
+        echo "Gateway launchctl 명령은 실패를 반환했지만 생성된 작업을 계속 관찰합니다."
+      else
+        echo "Gateway launchctl 시작에 실패해 nohup 방식으로 전환합니다."
+        remove_launchctl_job "$GATEWAY_LAUNCHD_LABEL"
+        start_gateway_nohup
+      fi
     fi
   else
     start_gateway_nohup
@@ -716,7 +744,7 @@ start_webui() {
   echo "WebUI를 시작합니다..."
   if can_use_launchctl; then
     remove_launchctl_job "$WEBUI_LAUNCHD_LABEL"
-    local command
+    local command submitted_pid
     printf -v command 'cd %q && export KNOWBEE_LOG_LEVEL=%q PATH=%q && exec pnpm --filter @knowbee/webui exec vite --host %q --port %q --strictPort >>%q 2>&1' \
       "$ROOT_DIR" "${KNOWBEE_LOG_LEVEL:-info}" "$PATH" "$WEBUI_HOST" "$WEBUI_PORT" "$WEBUI_LOG_FILE"
     if launchctl submit -l "$WEBUI_LAUNCHD_LABEL" -- /bin/bash -lc "$command"; then
@@ -726,9 +754,15 @@ start_webui() {
         start_webui_nohup
       fi
     else
-      echo "WebUI launchctl 시작에 실패해 nohup 방식으로 전환합니다."
-      remove_launchctl_job "$WEBUI_LAUNCHD_LABEL"
-      start_webui_nohup
+      submitted_pid="$(launchctl_job_pid "$WEBUI_LAUNCHD_LABEL")"
+      if [[ -n "$submitted_pid" ]]; then
+        echo "$submitted_pid" > "$WEBUI_PID_FILE"
+        echo "WebUI launchctl 명령은 실패를 반환했지만 생성된 작업을 계속 관찰합니다."
+      else
+        echo "WebUI launchctl 시작에 실패해 nohup 방식으로 전환합니다."
+        remove_launchctl_job "$WEBUI_LAUNCHD_LABEL"
+        start_webui_nohup
+      fi
     fi
   else
     start_webui_nohup

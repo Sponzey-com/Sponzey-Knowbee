@@ -85,12 +85,15 @@ afterEach(() => {
 
 describe("canonical work receipt contract", () => {
   it("defines one explicit compatible receipt kind for every canonical event", () => {
-    expect(Object.keys(CANONICAL_EVENT_RECEIPT_KINDS)).toHaveLength(15)
+    expect(Object.keys(CANONICAL_EVENT_RECEIPT_KINDS)).toHaveLength(18)
     expect(CANONICAL_EVENT_RECEIPT_KINDS).toMatchObject({
       DIAGNOSIS_ACCEPTED: "diagnosis",
       ANALYSIS_REVISED: "analysis_revision",
       POLICY_ALLOWED: "policy",
       EXECUTION_STARTED: "execution",
+      APPROVAL_REQUESTED: "approval",
+      APPROVAL_CONSUMED: "approval",
+      APPROVAL_DENIED_OR_EXPIRED: "approval",
       RESULT_BLOCKED: "blocker",
       REPORT_DELIVERED: "delivery",
     })

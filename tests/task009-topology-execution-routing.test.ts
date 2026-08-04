@@ -1291,7 +1291,7 @@ describe("task009 topology execution routing", () => {
         topologyId: topology.id,
       }),
     )
-    expect(contextPlan.toolPolicy.requiresYeonjang).toBe(true)
+    expect(contextPlan.toolPolicy.requiresYeonjang).toBe("required")
     expect(contextPlan.preflightFailure).toEqual(
       expect.objectContaining({
         code: "yeonjang_unavailable",

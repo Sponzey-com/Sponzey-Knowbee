@@ -121,6 +121,33 @@ describe("Task 032 Yeonjang method capability admission", () => {
     ])
   })
 
+  it("does not advertise a method whose exact runtime permission is disabled", () => {
+    const observations = projectYeonjangRuntimeHealthObservations({
+      instances: [office],
+      tools: [shellTool],
+      methodSnapshots: [{
+        instanceId: "office",
+        methods: ["system.exec"],
+        toolHealth: {
+          "system.exec": { status: "permission_disabled", internalDetail: "private" },
+        },
+      }],
+      observedAt: 1_000,
+    })
+
+    expect(observations).toEqual([
+      {
+        capabilityId: "shell_exec",
+        targetId: "yeonjang:office",
+        status: "unavailable",
+        observedAt: 1_000,
+        expiresAt: 1_000,
+        reasonCodes: ["yeonjang_method_permission_disabled"],
+      },
+    ])
+    expect(JSON.stringify(observations)).not.toContain("private")
+  })
+
   it("does not substitute another method-capable instance for an exact target", () => {
     const observations = projectYeonjangRuntimeHealthObservations({
       instances: [office, { ...office, instanceId: "home" }],

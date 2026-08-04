@@ -118,13 +118,20 @@ describe("Task 041 agent delegation drawer", () => {
         activeSection: "delegation",
         relationshipProjection: projection,
         relationshipParentDraft: peerRef,
-        relationshipError: "mutation_revision_conflict",
+        relationshipError: {
+          kind: "conflict",
+          reasonCode: "mutation_revision_conflict",
+          messageKey: "conflict",
+          action: "refresh_state",
+          actionLabelKey: "refresh_state",
+        },
         saving: true,
       }),
     )
-    expect(html).toContain("mutation_revision_conflict")
+    expect(html).toContain("화면의 정보가 서버 상태와 다릅니다")
+    expect(html).not.toContain("mutation_revision_conflict")
     expect(html).toMatch(/aria-label="상위 에이전트"[^>]*disabled/u)
-    expect(html).toMatch(/aria-label="Close Research"[^>]*disabled/u)
+    expect(html).not.toContain('aria-label="Close Research"')
     expect(html).toMatch(/aria-busy="true"/u)
   })
 })

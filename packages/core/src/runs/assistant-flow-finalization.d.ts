@@ -37,6 +37,11 @@ export declare function assembleAssistantFinalLlmInput(input: {
 export declare function buildAssistantFinalReviewReceipt(input: {
     finalInput: AssistantFinalLlmInput;
     responseText: string;
+    directProvenance?: {
+        taskIntakePromptSha256: string;
+        finalResponsePromptSha256: string;
+        providerInvocationRef: string;
+    } | undefined;
 }): LlmResponseReviewReceipt;
 export type AssistantFinalDeliveryAuthorization = {
     ok: true;

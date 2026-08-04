@@ -26,6 +26,9 @@ const GOVERNED_ROOT_FILES = [
     "tsconfig.base.json",
 ];
 const SKIPPED_DIRECTORIES = new Set([".git", "node_modules", "dist", "coverage"]);
+function isOwnedTransientBuildDirectory(artifactId) {
+    return /^packages\/core\/\.artifact-consistency-test-\d+$/u.test(artifactId);
+}
 export function collectRepositoryArtifactInventory(input) {
     const artifacts = [];
     const diagnostics = [];
@@ -65,6 +68,11 @@ export function collectRepositoryArtifactInventory(input) {
                 continue;
             const absolutePath = join(absoluteDir, entry);
             const artifactId = relative(input.repositoryRoot, absolutePath).replaceAll("\\", "/");
+            // The generated-artifact consistency test owns and removes this build
+            // directory. Interrupted test processes can leave it behind, but it is
+            // never a repository artifact or a supported source boundary.
+            if (isOwnedTransientBuildDirectory(artifactId))
+                continue;
             try {
                 const stat = lstatSync(absolutePath);
                 if (stat.isSymbolicLink()) {

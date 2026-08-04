@@ -3,7 +3,7 @@ import { runReviewPass } from "../packages/core/src/runs/review-pass.ts"
 import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 
 describe("run review pass", () => {
-  it("returns review and synthetic approval together", async () => {
+  it("keeps privileged Tool approval at the dispatcher boundary", async () => {
     const reviewTaskCompletion = vi.fn().mockResolvedValue({
       status: "ask_user",
       summary: "화면 캡처 진행 전 승인이 필요합니다.",
@@ -37,7 +37,7 @@ describe("run review pass", () => {
       completionConditions: ["화면 캡처가 사용자에게 전달됨"],
       requiresSuccessfulToolEvidence: true,
     }))
-    expect(result.syntheticApproval?.toolName).toBe("screen_capture")
+    expect(result.syntheticApproval).toBeNull()
   })
 
   it("swallows review errors and reports them through callback", async () => {

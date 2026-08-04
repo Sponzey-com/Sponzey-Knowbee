@@ -5,8 +5,24 @@ export interface SolutionPlanCapabilityAdmissionEntry {
     stepId: string;
     capabilityRef: string;
     capabilityId: string;
+    bindingTargetId: string;
     targetId: string;
 }
+export interface SolutionPlanSelectionTarget {
+    bindingTargetId?: string | undefined;
+    executionTargetId?: string | undefined;
+}
+/**
+ * Resolves the control-plane binding for a topology execution owned by one
+ * agent. The external effect target remains independently bound by the Tool;
+ * this only prevents a duplicate remote capability advertisement from making
+ * the owning Gateway's plan ambiguous.
+ */
+export declare function resolveOwnerScopedCapabilitySelectionTargets(input: {
+    capabilitySnapshot: CanonicalPlanPolicyInput["capabilitySnapshot"];
+    selections: readonly SolutionPlanCapabilitySelection[];
+    ownerAgentId: string;
+}): Readonly<Record<string, SolutionPlanSelectionTarget>> | undefined;
 export interface SolutionPlanCapabilityAdmissionDescriptor {
     runId: string;
     receiptId: string;
@@ -32,6 +48,9 @@ export declare function buildSolutionPlanCapabilityAdmission(input: {
     capabilitySnapshot: CanonicalPlanPolicyInput["capabilitySnapshot"];
     selections: SolutionPlanCapabilitySelection[];
     targetId?: string | undefined;
+    bindingTargetId?: string | undefined;
+    executionTargetId?: string | undefined;
+    selectionTargets?: Readonly<Record<string, SolutionPlanSelectionTarget>> | undefined;
     approvedCapabilityIds: string[];
 }): {
     ok: true;

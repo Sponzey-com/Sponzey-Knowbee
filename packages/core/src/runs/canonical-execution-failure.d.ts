@@ -3,6 +3,7 @@ export interface CanonicalExecutionFailureInput {
     phase: CanonicalExecutionFailurePhase;
     reasonCode: string;
     retryable: boolean;
+    safeEvidenceRefs?: readonly string[];
     message?: string;
 }
 export declare class CanonicalExecutionFailure extends Error {
@@ -10,6 +11,7 @@ export declare class CanonicalExecutionFailure extends Error {
     readonly phase: CanonicalExecutionFailurePhase;
     readonly reasonCode: string;
     readonly retryable: boolean;
+    readonly safeEvidenceRefs: readonly string[];
     constructor(input: CanonicalExecutionFailureInput);
 }
 export declare function isCanonicalExecutionFailure(failure: unknown): failure is CanonicalExecutionFailure;

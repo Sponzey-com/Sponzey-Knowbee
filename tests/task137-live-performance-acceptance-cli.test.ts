@@ -172,7 +172,7 @@ describe("task137 live performance acceptance CLI", () => {
       )
       const command = spawnSync(
         process.execPath,
-        [resolve("scripts/audit-live-performance-acceptance.mjs"), ...arguments_],
+        [resolve("scripts/self/audit-live-performance-acceptance.mjs"), ...arguments_],
         { cwd: resolve("."), encoding: "utf8" },
       )
       expect(command.status, command.stderr).toBe(0)

@@ -2,6 +2,7 @@ import type { ChannelSmokeRunnerOptions, PersistedChannelSmokeRunResult } from "
 import type { LiveAcceptanceLlmPorts } from "../release/live-acceptance-llm-adapter.js";
 import type { LiveAcceptanceRunnerContext, LiveAcceptanceRunnerFailurePolicy, LiveAcceptanceSigningRequestSink } from "../release/live-acceptance-runner.js";
 import { type LiveAcceptanceRuntimeSnapshotReaders } from "../release/live-acceptance-runtime-snapshot-adapter.js";
+import type { LiveAcceptanceRuntimeIdentityAdmission } from "../release/live-acceptance-runtime-identity.js";
 import { type LiveAcceptanceLiveRunIdInput } from "../release/live-acceptance-verified-executor.js";
 import type { ExtensionLiveSmokeExecutionInput } from "../runs/extension-live-smoke-runner.js";
 import type { WebRetrievalLiveSmokeScenario } from "../runs/web-retrieval-smoke.js";
@@ -33,6 +34,7 @@ export type LiveAcceptanceExtensionBaseContext = LiveAcceptanceExtensionBaseRequ
 export type LiveAcceptanceExtensionBaseContextFactory = (input: ExtensionLiveSmokeExecutionInput) => LiveAcceptanceExtensionBaseContext;
 export interface LiveAcceptanceRuntimeFactoryInput {
     readonly readers: LiveAcceptanceRuntimeSnapshotReaders;
+    readonly inspectRuntimeIdentity: () => LiveAcceptanceRuntimeIdentityAdmission;
     readonly dispatcher: Pick<ToolDispatcher, "dispatch" | "dispatchAgentScoped">;
     readonly webContextFor: LiveAcceptanceWebContextFactory;
     readonly extensionBaseContextFor: LiveAcceptanceExtensionBaseContextFactory;

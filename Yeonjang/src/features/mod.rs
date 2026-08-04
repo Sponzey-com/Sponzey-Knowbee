@@ -1,5 +1,6 @@
 pub mod browser;
 pub mod camera;
+pub(crate) mod capture_artifact;
 pub mod clipboard;
 pub mod device;
 pub mod disk;

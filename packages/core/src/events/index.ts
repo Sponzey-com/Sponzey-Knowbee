@@ -134,6 +134,10 @@ export interface KnowbeeEvents {
     kind?: ApprovalKind
     reason?: ApprovalResolutionReason
   }
+  "approval.continuation.enqueued": {
+    continuationId: string
+    runId: string
+  }
   "schedule.created": {
     runId: string
     requestGroupId: string

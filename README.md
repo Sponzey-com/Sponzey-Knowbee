@@ -243,10 +243,17 @@ Notes:
 
 - `knowbee-start.sh` builds the Gateway runtime packages it needs before launch.
 - Local and packaged startup use the verified `packages/core/dist/runtime/serve-bundle.js`
+
   artifact.
+- Live acceptance is rejected before channel or device work when the running Gateway bundle,
+
+  its manifest, the built sources, and the process start order do not agree. Restart with
+  `bash scripts/knowbee-start.sh --restart` after rebuilding.
 - The script reports structured startup phases. The 30-second objective is a performance
+
   signal; a running Gateway continues toward an explicit ready, failed, or cancelled result.
 - Success is printed only after the current Gateway PID, repository ownership, listener, health,
+
   and WebUI startup checks pass.
 - If Gateway or WebUI is already running, `knowbee-start.sh` can stop and start them again.
 - Use `--restart` when you want the restart step to be explicit in logs and workflow.
@@ -313,13 +320,13 @@ Smoke-check the installed CLI path without running destructive success cleanup:
 
 ```bash
 pnpm run smoke:artifact-cleanup-cli
-node scripts/smoke-artifact-cleanup-cli.mjs
+node scripts/self/smoke-artifact-cleanup-cli.mjs
 ```
 
 To also verify the successful delete path, run the isolated fixture smoke:
 
 ```bash
-node scripts/smoke-artifact-cleanup-cli.mjs --destructive-fixture
+node scripts/self/smoke-artifact-cleanup-cli.mjs --destructive-fixture
 ```
 
 The destructive fixture smoke uses only a temporary release output directory. It must not target your real release output or user state.
@@ -357,6 +364,17 @@ For a clean macOS restart:
 ```bash
 bash scripts/start-yeonjang-macos.sh --restart
 ```
+
+Normal start and restart reuse an existing verified app bundle so macOS code identity and
+camera permission remain stable. Rebuild explicitly after changing Yeonjang source or packaging:
+
+```bash
+bash scripts/start-yeonjang-macos.sh --restart --build
+```
+
+The build uses ad-hoc signing by default. Release and persistent development installations can
+set `YEONJANG_CODESIGN_IDENTITY` to an existing code-signing identity. Helper or app signing
+verification failure stops the build.
 
 To stop the macOS Yeonjang GUI without restarting:
 
@@ -396,7 +414,9 @@ cargo run --manifest-path Yeonjang/Cargo.toml
 
 Notes:
 
-- `start-yeonjang-macos.sh` checks and rebuilds the macOS app bundle before launch.
+- `start-yeonjang-macos.sh` builds only when the app bundle is missing or `--build` is explicit;
+
+  normal restart verifies and reuses the existing bundle.
 - `start-yeonjang-windows.bat` owns the Windows start and restart flow, and uses the build script only to prepare a missing binary.
 - `start-yeonjang-linux.sh` checks and rebuilds the Linux desktop binary before launch.
 - `start-yeonjang-linux-headless.sh` runs the `headless_managed` profile through the managed MQTT entrypoint with no tray/window expectation.

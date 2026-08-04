@@ -35,9 +35,9 @@ describe("task1185 GOAL completion maintenance audit", () => {
       "utf8",
     )
 
-    expect(agents).toContain("### 3.4 상태머신 적용 경계")
-    expect(agents).toContain("단순 질의응답, 값 변환, projection, validation, 한 번의 adapter 호출에는 상태머신을 추가하지 않는다.")
-    expect(agents).toContain("여러 boolean flag나 서로 다른 모듈의 문자열 상태 조합으로 상태머신을 암묵적으로 구현하지 않는다.")
+    expect(agents).toContain("Use an explicit state machine when retry, approval, cancellation")
+    expect(agents).toMatch(/Keep simple\s+validation and one-shot transformations as ordinary functions/u)
+    expect(agents).toContain("Do not coordinate a workflow with copied booleans")
 
     expect(promptHarness).toContain("PROMPT_IMPROVEMENT_HARNESS_TRANSITIONS")
     expect(subSession).toContain("SUB_SESSION_STATUS_TRANSITIONS")

@@ -140,8 +140,7 @@ export function describeRepositoryArtifact(
   ) {
     kind = "configuration"
   } else if (
-    (artifactId.startsWith("docs/") && artifactId.endsWith(".md")) ||
-    (artifactId.startsWith("docs/audit/") && artifactId.endsWith(".json")) ||
+    (artifactId.startsWith("docs/") && /\.(?:md|json)$/u.test(artifactId)) ||
     (artifactId.startsWith("packages/") && artifactId.endsWith(".md")) ||
     (artifactId.startsWith("scripts/") && artifactId.endsWith(".md")) ||
     (artifactId.startsWith("tests/") && artifactId.endsWith(".md")) ||

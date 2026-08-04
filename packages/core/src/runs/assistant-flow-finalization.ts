@@ -13,6 +13,7 @@ import {
   type UserFacingResponseAuthorization,
   type UserFacingResponseContentKind,
   authorizeUserFacingResponse,
+  buildDirectLlmResponseReviewReceipt,
   buildLlmResponseReviewReceipt,
 } from "./user-facing-response-gate.js"
 
@@ -180,7 +181,22 @@ function contentKindFor(input: AssistantFinalLlmInput): UserFacingResponseConten
 export function buildAssistantFinalReviewReceipt(input: {
   finalInput: AssistantFinalLlmInput
   responseText: string
+  directProvenance?: {
+    taskIntakePromptSha256: string
+    finalResponsePromptSha256: string
+    providerInvocationRef: string
+  } | undefined
 }): LlmResponseReviewReceipt {
+  if (contentKindFor(input.finalInput) === "direct_answer") {
+    if (!input.directProvenance) {
+      throw new Error("Direct answers require final LLM provider provenance.")
+    }
+    return buildDirectLlmResponseReviewReceipt({
+      rawText: serializeFinalInput(input.finalInput),
+      responseText: requireText(input.responseText, "Final response text"),
+      ...input.directProvenance,
+    })
+  }
   return buildLlmResponseReviewReceipt({
     rawText: serializeFinalInput(input.finalInput),
     responseText: requireText(input.responseText, "Final response text"),
@@ -201,10 +217,13 @@ export function authorizeAssistantFinalDelivery(input: {
   responseText: string
   receipt?: LlmResponseReviewReceipt | undefined
 }): AssistantFinalDeliveryAuthorization {
+  const rawTextSource = input.receipt?.schemaVersion === 2
+    ? "llm_generated"
+    : "runtime_deterministic"
   const authorization = authorizeUserFacingResponse({
     rawText: serializeFinalInput(input.finalInput),
     responseText: input.responseText,
-    rawTextSource: "runtime_deterministic",
+    rawTextSource,
     contentKind: contentKindFor(input.finalInput),
     expectedLanguage: input.finalInput.expectedLanguage,
     receipt: input.receipt,

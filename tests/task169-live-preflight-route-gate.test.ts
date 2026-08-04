@@ -6,9 +6,30 @@ import {
   type LiveAcceptanceVerifiedExecutionContext,
   createPreflightedLiveAcceptanceExecutor,
 } from "../packages/core/src/release/live-acceptance-preflighted-executor.ts"
+import {
+  admitLiveAcceptanceRuntimeIdentity,
+  type LiveAcceptanceRuntimeIdentitySnapshot,
+} from "../packages/core/src/release/live-acceptance-runtime-identity.ts"
 import type { LiveAcceptanceRuntimeSnapshot } from "../packages/core/src/release/live-acceptance-selection-preflight.ts"
 
 const NOW = Date.parse("2026-07-17T21:00:00.000Z")
+const BUNDLE_HASH = `sha256:${"a".repeat(64)}` as const
+
+function runtimeIdentity(
+  overrides: Partial<LiveAcceptanceRuntimeIdentitySnapshot> = {},
+) {
+  return admitLiveAcceptanceRuntimeIdentity({
+    buildId: "build:task169",
+    bundleSha256: BUNDLE_HASH,
+    processStartedAt: "2026-07-17T20:58:00.000Z",
+    artifactBuiltAt: "2026-07-17T20:57:00.000Z",
+    buildRequired: false,
+    restartRequired: false,
+    manifestMatchesArtifact: true,
+    activeBundleMatchesArtifact: true,
+    ...overrides,
+  })
+}
 
 function selection(): LiveAcceptanceExecutionSelection {
   return {
@@ -165,6 +186,7 @@ describe("Task 169 preflighted live route execution gate", () => {
     const execute = createPreflightedLiveAcceptanceExecutor({
       now: () => NOW,
       maxYeonjangAgeMs: 30_000,
+      inspectRuntimeIdentity: () => runtimeIdentity(),
       captureSnapshot,
       executeVerified,
     })
@@ -176,6 +198,14 @@ describe("Task 169 preflighted live route execution gate", () => {
     expect(executeVerified).toHaveBeenCalledOnce()
     const context = executeVerified.mock.calls[0]?.[0]
     expect(context?.signal).toBe(signal)
+    expect(context?.runtimeIdentity).toEqual({
+      buildId: "build:task169",
+      bundleSha256: BUNDLE_HASH,
+      processStartedAt: "2026-07-17T20:58:00.000Z",
+      artifactBuiltAt: "2026-07-17T20:57:00.000Z",
+      buildRequired: false,
+      restartRequired: false,
+    })
     expect(context?.preflight.extensions.map((item) => item.scenario.expectedToolName)).toEqual([
       "release_skill_read",
       "release_mcp_read",
@@ -185,11 +215,42 @@ describe("Task 169 preflighted live route execution gate", () => {
     expect(Object.isFrozen(context?.preflight.extensions)).toBe(true)
   })
 
+  it.each([
+    [{ buildRequired: true }, "live_acceptance_runtime_build_required"],
+    [{ restartRequired: true }, "live_acceptance_runtime_restart_required"],
+    [
+      { activeBundleMatchesArtifact: false },
+      "live_acceptance_runtime_bundle_identity_mismatch",
+    ],
+  ] as const)("blocks stale runtime before snapshot or downstream execution", async (
+    overrides,
+    reasonCode,
+  ) => {
+    const captureSnapshot = vi.fn(() => snapshot())
+    const executeVerified = vi.fn()
+    const execute = createPreflightedLiveAcceptanceExecutor({
+      now: () => NOW,
+      maxYeonjangAgeMs: 30_000,
+      inspectRuntimeIdentity: () => runtimeIdentity(overrides),
+      captureSnapshot,
+      executeVerified,
+    })
+
+    await expect(execute(routeInput())).resolves.toEqual({
+      status: "blocked",
+      blockers: [{ capability: "collection", reasonCode }],
+      events: [{ state: "initialized" }, { state: "blocked" }],
+    })
+    expect(captureSnapshot).not.toHaveBeenCalled()
+    expect(executeVerified).not.toHaveBeenCalled()
+  })
+
   it("blocks an exact preflight mismatch before downstream execution", async () => {
     const executeVerified = vi.fn()
     const execute = createPreflightedLiveAcceptanceExecutor({
       now: () => NOW,
       maxYeonjangAgeMs: 30_000,
+      inspectRuntimeIdentity: () => runtimeIdentity(),
       captureSnapshot: () => snapshot("agent:other"),
       executeVerified,
     })
@@ -207,6 +268,7 @@ describe("Task 169 preflighted live route execution gate", () => {
     const captureFailure = createPreflightedLiveAcceptanceExecutor({
       now: () => NOW,
       maxYeonjangAgeMs: 30_000,
+      inspectRuntimeIdentity: () => runtimeIdentity(),
       captureSnapshot: () => {
         throw new Error("private runtime detail")
       },
@@ -217,6 +279,7 @@ describe("Task 169 preflighted live route execution gate", () => {
     const cancelled = createPreflightedLiveAcceptanceExecutor({
       now: () => NOW,
       maxYeonjangAgeMs: 30_000,
+      inspectRuntimeIdentity: () => runtimeIdentity(),
       captureSnapshot: vi.fn(() => snapshot()),
       executeVerified,
     })
@@ -253,6 +316,7 @@ describe("Task 169 preflighted live route execution gate", () => {
     const execute = createPreflightedLiveAcceptanceExecutor({
       now: () => NOW,
       maxYeonjangAgeMs: 30_000,
+      inspectRuntimeIdentity: () => runtimeIdentity(),
       captureSnapshot: () => snapshot(),
       executeVerified,
     })

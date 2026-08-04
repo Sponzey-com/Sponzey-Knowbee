@@ -13,6 +13,7 @@ import type { FinalResponseIdentityContext } from "./final-response-renderer.js"
 import type { KnowbeeConfig } from "../config/types.js";
 import type { ArtifactStorageContext } from "../artifacts/lifecycle.js";
 import type { MemoryJournalRepository } from "../memory/journal.js";
+import type { RecoveredExecutionAttempt } from "./execution-cycle-pass.js";
 export declare function prepareRootLoopLaunch(params: {
     artifactStorage: ArtifactStorageContext;
     memoryJournal: MemoryJournalRepository;
@@ -48,6 +49,7 @@ export declare function prepareRootLoopLaunch(params: {
     memorySearchQuery?: string;
     syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies;
     defaultMaxDelegationTurns: number;
+    recoveredAttempt?: RecoveredExecutionAttempt;
 }, dependencies: RootRunDriverDependencies, executionLoopRuntime: ExecutionLoopRuntimeState): {
     rootLoopParams: RootLoopParams;
     rootLoopDependencies: RootLoopDependencies;

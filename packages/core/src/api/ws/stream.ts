@@ -5,7 +5,11 @@ import type { ApprovalDecision, ApprovalResolutionReason } from "../../events/in
 import { createLogger } from "../../logger/index.js"
 import { recordLatencyMetric } from "../../observability/latency.js"
 import { listRunsForActiveRequestGroups } from "../../runs/store.js"
-import { listPendingInteractions, resolvePendingInteraction } from "../../tools/runtime-dispatcher.js"
+import {
+  listPendingInteractions,
+  resolveApprovalDecision,
+  resolvePendingInteraction,
+} from "../../tools/runtime-dispatcher.js"
 import { redactUiValue } from "../../ui/redaction.js"
 import { authMiddleware } from "../middleware/auth.js"
 import type { KnowbeeEvents } from "../../events/index.js"
@@ -134,7 +138,7 @@ function setupEventForwarding(): void {
     "approval.request",
     (event) => {
       const { approvalId, runId, toolName, resolve } = event
-      registerApprovalFromWs(runId, resolve, approvalId)
+      if (!approvalId) registerApprovalFromWs(runId, resolve)
       log.info(
         `approval.request registered for approvalId=${approvalId ?? "none"} runId=${runId} tool=${toolName}`,
       )
@@ -182,6 +186,19 @@ export function resolveRegisteredWebUiApproval(input: {
   runId: string
   decision: ApprovalDecision
 }): boolean {
+  if (input.approvalId) {
+    try {
+      return resolveApprovalDecision({
+        approvalId: input.approvalId,
+        runId: input.runId,
+        decision: input.decision,
+        decisionBy: "webui",
+        decisionSource: "user",
+      }).accepted
+    } catch {
+      return false
+    }
+  }
   const resolve = input.approvalId
     ? (pendingApprovals.get(input.approvalId) ?? pendingApprovals.get(input.runId))
     : pendingApprovals.get(input.runId)

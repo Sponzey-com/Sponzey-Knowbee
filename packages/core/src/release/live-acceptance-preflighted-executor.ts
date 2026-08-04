@@ -4,6 +4,10 @@ import type {
 } from "./live-acceptance-bundle.js"
 import type { LiveAcceptanceExecutionSelection } from "./live-acceptance-execution-request.js"
 import type { LiveAcceptanceRunnerResult } from "./live-acceptance-runner.js"
+import type {
+  LiveAcceptanceRuntimeIdentityAdmission,
+  LiveAcceptanceRuntimeIdentityReceipt,
+} from "./live-acceptance-runtime-identity.js"
 import {
   type LiveAcceptanceRuntimeSnapshot,
   type LiveAcceptanceSelectionPreflightResult,
@@ -24,6 +28,7 @@ export interface LiveAcceptanceVerifiedExecutionContext {
   readonly requestedKeyId: string
   readonly observedAt: number
   readonly signal: AbortSignal
+  readonly runtimeIdentity: Readonly<LiveAcceptanceRuntimeIdentityReceipt>
   readonly preflight: Extract<LiveAcceptanceSelectionPreflightResult, { status: "verified" }>
 }
 
@@ -62,11 +67,23 @@ function freezeApproval(
 export function createPreflightedLiveAcceptanceExecutor(input: {
   readonly now: () => number
   readonly maxYeonjangAgeMs: number
+  readonly inspectRuntimeIdentity: () => LiveAcceptanceRuntimeIdentityAdmission
   readonly captureSnapshot: (capturedAt: number) => LiveAcceptanceRuntimeSnapshot
   readonly executeVerified: LiveAcceptanceVerifiedExecutor
 }): LiveAcceptancePreflightedExecutor {
   return async (request) => {
     const signal = request.signal
+    if (signal.aborted) return stopped("cancelled", "live_collection_cancelled")
+
+    let runtimeIdentity: LiveAcceptanceRuntimeIdentityAdmission
+    try {
+      runtimeIdentity = input.inspectRuntimeIdentity()
+    } catch {
+      return stopped("blocked", "live_acceptance_runtime_identity_invalid")
+    }
+    if (runtimeIdentity.status === "blocked") {
+      return stopped("blocked", runtimeIdentity.reasonCode)
+    }
     if (signal.aborted) return stopped("cancelled", "live_collection_cancelled")
 
     const observedAt = input.now()
@@ -95,10 +112,15 @@ export function createPreflightedLiveAcceptanceExecutor(input: {
       requestedKeyId: request.requestedKeyId,
       observedAt,
       signal,
+      runtimeIdentity: runtimeIdentity.receipt,
       preflight,
     })
     try {
-      return await input.executeVerified(context)
+      const result = await input.executeVerified(context)
+      return Object.freeze({
+        ...result,
+        runtimeIdentity: runtimeIdentity.receipt,
+      })
     } catch {
       return stopped("blocked", "live_verified_execution_failed", true)
     }

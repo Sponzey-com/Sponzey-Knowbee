@@ -57,6 +57,7 @@ export interface ArtifactDeliveryOnceParams<T> {
     force?: boolean | undefined;
     forceReason?: string | undefined;
     task: () => Promise<T>;
+    isVerifiedDelivery?: ((result: T) => boolean) | undefined;
 }
 export interface AssistantTextDeliveryReceipt {
     persisted: boolean;
@@ -111,6 +112,7 @@ export declare function buildArtifactDeliveryKey(params: {
     runId: string;
     channel: SuccessfulFileDelivery["channel"];
     filePath: string;
+    channelTarget?: string | undefined;
 }): string;
 export declare function deliverArtifactOnce<T>(params: ArtifactDeliveryOnceParams<T>): Promise<T | undefined>;
 export declare function resetArtifactDeliveryDedupeForTest(): void;

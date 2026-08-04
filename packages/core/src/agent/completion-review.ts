@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto"
 import {
+  parseUserInputRequirement,
+  type UserInputRequirement,
+} from "../contracts/user-input-requirement.js"
+import {
   type AIProvider,
   detectAvailableProvider,
   getDefaultModel,
@@ -141,6 +145,7 @@ export interface CompletionReviewResult {
   followupRequiredToolNames?: string[]
   followupTargetRefs?: string[]
   userMessage?: string
+  inputRequirement?: UserInputRequirement
   remainingItems: string[]
   criterionAssessments?: CompletionReviewCriterionAssessment[]
   conditionAssessments?: CompletionReviewConditionAssessment[]
@@ -736,6 +741,15 @@ export async function reviewTaskCompletion(params: {
           : repeatedTransition
             ? "completion_review_followup_transition_repeated"
           : "completion_review_parse_failed"
+    if (!parsed) {
+      log.fieldDebug("completion_review_parse_rejected", {
+        providerId,
+        model,
+        attempt,
+        structuralReason: classifyCompletionReviewParseFailure(raw),
+        characterCount: raw.length,
+      })
+    }
     params.onRejected?.(previousReason, attempt)
     log.debug("completion review rejected", {
       providerId,
@@ -847,6 +861,17 @@ export function parseCompletionReviewResult(raw: string): CompletionReviewResult
     const parsed = JSON.parse(jsonLike) as Partial<Record<string, unknown>>
     const status = normalizeStatus(parsed.status)
     if (!status) return null
+    const inputRequirement = parseUserInputRequirement({
+      resolutionKind: parsed.input_resolution_kind,
+      missingFields: parsed.missing_fields,
+    })
+    if (
+      (status === "ask_user" && !inputRequirement)
+      || (
+        status !== "ask_user"
+        && !hasEmptyNonAskUserInputFields(parsed)
+      )
+    ) return null
 
     const criterionAssessments = parseCriterionAssessments(parsed.criterion_assessments)
     const conditionAssessments = parseConditionAssessments(parsed.condition_assessments)
@@ -886,6 +911,7 @@ export function parseCompletionReviewResult(raw: string): CompletionReviewResult
       ...(typeof parsed.user_message === "string" && parsed.user_message.trim()
         ? { userMessage: parsed.user_message.trim() }
         : {}),
+      ...(inputRequirement ? { inputRequirement } : {}),
       remainingItems: Array.isArray(parsed.remaining_items)
         ? parsed.remaining_items.filter(
             (item): item is string => typeof item === "string" && item.trim().length > 0,
@@ -897,6 +923,43 @@ export function parseCompletionReviewResult(raw: string): CompletionReviewResult
     }
   } catch {
     return null
+  }
+}
+
+function hasEmptyNonAskUserInputFields(parsed: Partial<Record<string, unknown>>): boolean {
+  const resolutionKind = parsed.input_resolution_kind
+  const missingFields = parsed.missing_fields
+  const resolutionKindEmpty = resolutionKind === undefined || resolutionKind === ""
+  const missingFieldsEmpty = missingFields === undefined
+    || (Array.isArray(missingFields) && missingFields.length === 0)
+  return resolutionKindEmpty && missingFieldsEmpty
+}
+
+function classifyCompletionReviewParseFailure(raw: string):
+  | "empty"
+  | "json_object_missing"
+  | "json_invalid"
+  | "status_invalid"
+  | "input_requirement_invalid" {
+  const trimmed = raw.trim()
+  if (!trimmed) return "empty"
+  const jsonLike = extractJsonObject(trimmed)
+  if (!jsonLike) return "json_object_missing"
+  try {
+    const parsed = JSON.parse(jsonLike) as Partial<Record<string, unknown>>
+    const status = normalizeStatus(parsed.status)
+    if (!status) return "status_invalid"
+    const inputRequirement = parseUserInputRequirement({
+      resolutionKind: parsed.input_resolution_kind,
+      missingFields: parsed.missing_fields,
+    })
+    if (
+      (status === "ask_user" && !inputRequirement)
+      || (status !== "ask_user" && !hasEmptyNonAskUserInputFields(parsed))
+    ) return "input_requirement_invalid"
+    return "json_invalid"
+  } catch {
+    return "json_invalid"
   }
 }
 

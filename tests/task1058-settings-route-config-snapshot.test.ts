@@ -21,6 +21,6 @@ describe("task1058 settings route config snapshot", () => {
     expect(source).toContain("currentConfig.slack?.botToken")
     expect(source).toContain("currentConfig.discord?.publicKey")
     expect(source).toContain("currentConfig.googleChat?.verificationToken")
-    expect(source).toContain("const providerCapability = getProviderCapabilityMatrix({ connection: config.ai.connection, memory: config.memory })")
+    expect(source).toContain("const providerCapability = getProviderCapabilityMatrix({ connection, memory: cfg.memory })")
   })
 })

@@ -15,7 +15,7 @@ import { validateIntakeDecisionConsistency } from "./intake-decision.js";
 import { extractIntakeMethodConstraints } from "./intake-method-constraints.js";
 import { buildTaskIntakeFirstResponsePromptAssembly } from "./intake-prompt.js";
 import { TASK_INTAKE_RESPONSE_TOOL, TASK_INTAKE_RESPONSE_TOOL_NAME, } from "./intake-response-tool.js";
-import { isTaskIntakeIntentCategory, } from "./intake-category.js";
+import { isTaskIntakeIntentCategory } from "./intake-category.js";
 import { buildMainAgentIdentityPromptContext, KNOWBEE_PRODUCT_NAME, KNOWBEE_PRODUCT_NAME_KO, resolveMainAgentSelfName, resolvePromptLocaleForRequest, } from "./main-agent-identity.js";
 import { buildUserProfilePromptContext, resolveUserProfileName } from "./profile-context.js";
 import { selectRequestGroupContextMessages } from "./request-group-context.js";
@@ -545,24 +545,35 @@ function withStructuredRequest(userMessage, result, environment, normalized) {
         intent_envelope: artifacts.intentEnvelope,
     };
 }
-function intakeFailureForAttempt(attempt) {
+function intakeFailureForAttempt(attempt, providerInvocationRef) {
     switch (attempt.status) {
         case "provider_failed":
             return {
                 status: "failure",
                 reasonCode: attempt.reasonCode,
                 retryable: attempt.reasonCode !== "provider_contract_rejected",
+                providerInvocationRef,
             };
         case "timed_out":
-            return { status: "failure", reasonCode: "deadline_exceeded", retryable: true };
+            return {
+                status: "failure",
+                reasonCode: "deadline_exceeded",
+                retryable: true,
+                providerInvocationRef,
+            };
         case "cancelled":
-            return { status: "failure", reasonCode: "cancelled", retryable: false };
+            return { status: "failure", reasonCode: "cancelled", retryable: false, providerInvocationRef };
         case "output_limit_exceeded":
         case "response_tool_missing":
         case "response_tool_multiple":
         case "response_tool_name_invalid":
         case "response_tool_input_invalid":
-            return { status: "failure", reasonCode: "response_invalid", retryable: true };
+            return {
+                status: "failure",
+                reasonCode: "response_invalid",
+                retryable: true,
+                providerInvocationRef,
+            };
     }
 }
 function repairInputForAttempt(attempt, validationIssues) {
@@ -576,12 +587,12 @@ function repairInputForAttempt(attempt, validationIssues) {
     return JSON.stringify(value).slice(0, 32 * 1_024);
 }
 function isRepairableIntakeAttempt(attempt) {
-    return (attempt.status === "parsed"
-        || attempt.status === "output_limit_exceeded"
-        || attempt.status === "response_tool_missing"
-        || attempt.status === "response_tool_multiple"
-        || attempt.status === "response_tool_name_invalid"
-        || attempt.status === "response_tool_input_invalid");
+    return (attempt.status === "parsed" ||
+        attempt.status === "output_limit_exceeded" ||
+        attempt.status === "response_tool_missing" ||
+        attempt.status === "response_tool_multiple" ||
+        attempt.status === "response_tool_name_invalid" ||
+        attempt.status === "response_tool_input_invalid");
 }
 export function isTaskIntakeAnalysisOutcome(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
@@ -623,6 +634,18 @@ export async function analyzeTaskIntakeOutcome(params) {
             }),
         },
     ];
+    const compactMessages = [
+        {
+            role: "user",
+            content: loadPromptTemplate({
+                sourceId: "task_intake_user",
+                workDir,
+                variables: {
+                    conversationContext: buildConversationContext(undefined, undefined, params.userMessage, intakeMessage, params.source),
+                },
+            }),
+        },
+    ];
     const identity = {
         mainAgentSelfName,
         userName: resolveUserProfileName(config.profile),
@@ -637,8 +660,10 @@ export async function analyzeTaskIntakeOutcome(params) {
     });
     let messages = baseMessages;
     let attemptCount = 0;
+    let schemaRepairAttempted = false;
+    let adapterRecoveryAttempted = false;
+    let attemptKind = "primary";
     for (;;) {
-        const repair = attemptCount > 0;
         const providerInvocationRef = `intake:${randomUUID()}`;
         attemptCount += 1;
         const attempt = await collectStructuredToolAttempt({
@@ -659,10 +684,15 @@ export async function analyzeTaskIntakeOutcome(params) {
                 memoryConfig: config.memory,
                 metadata: {
                     invocationId: providerInvocationRef,
+                    ...(params.runId ? { runId: params.runId } : {}),
                     ...(params.sessionId ? { sessionId: params.sessionId } : {}),
                     ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
                     mainAgentNameSnapshot: mainAgentSelfName,
-                    operation: repair ? "task_intake_schema_repair" : "task_intake",
+                    operation: attemptKind === "schema_repair"
+                        ? "task_intake_schema_repair"
+                        : attemptKind === "adapter_recovery"
+                            ? "task_intake_adapter_recovery"
+                            : "task_intake",
                     llmStage: "intake",
                 },
             }),
@@ -713,16 +743,35 @@ export async function analyzeTaskIntakeOutcome(params) {
             };
         }
         if (identityClaimInvalid) {
-            return { status: "failure", reasonCode: "response_invalid", retryable: true };
+            return {
+                status: "failure",
+                reasonCode: "response_invalid",
+                retryable: true,
+                providerInvocationRef,
+            };
         }
         if (!isRepairableIntakeAttempt(attempt)) {
-            return intakeFailureForAttempt(attempt);
+            const failure = intakeFailureForAttempt(attempt, providerInvocationRef);
+            if (failure.retryable && !adapterRecoveryAttempted) {
+                adapterRecoveryAttempted = true;
+                attemptKind = "adapter_recovery";
+                messages = compactMessages;
+                continue;
+            }
+            return failure;
         }
-        if (repair) {
-            return { status: "failure", reasonCode: "response_invalid", retryable: true };
+        if (schemaRepairAttempted) {
+            return {
+                status: "failure",
+                reasonCode: "response_invalid",
+                retryable: true,
+                providerInvocationRef,
+            };
         }
+        schemaRepairAttempted = true;
+        attemptKind = "schema_repair";
         messages = [
-            ...baseMessages,
+            ...(adapterRecoveryAttempted ? compactMessages : baseMessages),
             {
                 role: "user",
                 content: loadPromptTemplate({
@@ -777,16 +826,32 @@ function buildConversationContext(sessionId, requestGroupId, latestUserMessage, 
     lines.push(latestUserMessage.trim());
     return lines.join("\n");
 }
-function buildRuntimeIntakeContext() {
-    const snapshots = getMqttExtensionSnapshots();
+const STABLE_TARGET_INSTANCE_PATTERN = /^[a-z][a-z0-9_.:-]{0,127}$/u;
+function boundedRuntimeLabel(value) {
+    return (value ?? "")
+        .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+        .trim()
+        .slice(0, 128);
+}
+export function projectRuntimeIntakeContext(snapshots) {
     const connected = snapshots.filter((item) => (item.state ?? "").toLowerCase() !== "offline");
     if (connected.length === 0)
         return [];
     const lines = [`- Connected Yeonjang extensions: ${connected.length}`];
     for (const extension of connected.slice(0, 4)) {
-        lines.push(`- Extension: ${extension.extensionId}` +
-            `${extension.displayName ? ` (${extension.displayName})` : ""}` +
-            `${extension.state ? `, state=${extension.state}` : ""}`);
+        const stableInstanceId = extension.instanceId?.trim() ?? "";
+        const userFacingNames = [
+            ...new Set([extension.extensionId, extension.displayName].map(boundedRuntimeLabel).filter(Boolean)),
+        ];
+        const state = boundedRuntimeLabel(extension.state) || "unknown";
+        if (STABLE_TARGET_INSTANCE_PATTERN.test(stableInstanceId)) {
+            lines.push(`- Extension target: target_instance=yeonjang:${stableInstanceId}, ` +
+                `user_facing_names=${JSON.stringify(userFacingNames)}, state=${state}`);
+        }
+        else {
+            lines.push(`- Extension without stable target binding: ` +
+                `user_facing_names=${JSON.stringify(userFacingNames)}, state=${state}`);
+        }
     }
     if (connected.length === 1) {
         const only = connected[0];
@@ -794,6 +859,9 @@ function buildRuntimeIntakeContext() {
             "Unless the user explicitly mentions another device or another computer, do not ask which device to use.");
     }
     return lines;
+}
+function buildRuntimeIntakeContext() {
+    return projectRuntimeIntakeContext(getMqttExtensionSnapshots());
 }
 function parseTaskIntakeResultValue(value, maxDelegationTurns, latestUserMessage, environment, normalized) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -932,9 +1000,7 @@ function isIntentCategory(value) {
     return isTaskIntakeIntentCategory(value);
 }
 function isModelMessageMode(value) {
-    return (value === "direct_answer" ||
-        value === "accepted_receipt" ||
-        value === "clarification_receipt");
+    return (value === "direct_answer" || value === "accepted_receipt" || value === "clarification_receipt");
 }
 function isActionType(value) {
     return (value === "reply" ||

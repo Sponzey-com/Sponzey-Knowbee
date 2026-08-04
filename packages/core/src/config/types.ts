@@ -141,6 +141,13 @@ export interface MqttConfig {
   username: string
   password: string
   allowAnonymous: boolean
+  /**
+   * Explicit local enrollment for the Gateway MQTT v2 requester. This value
+   * is never inferred from the broker account, agent name, or legacy node ID.
+   */
+  yeonjangV2?: {
+    requesterId: string
+  }
 }
 
 export interface SearchConfig {
@@ -346,6 +353,9 @@ export const DEFAULT_CONFIG: KnowbeeConfig = {
     username: "",
     password: "",
     allowAnonymous: false,
+    yeonjangV2: {
+      requesterId: "",
+    },
   },
   search: {},
   memory: {

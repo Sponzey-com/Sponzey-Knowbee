@@ -1,6 +1,7 @@
 import {
   type SideEffectOperationEvent,
   type SideEffectOperationIdentity,
+  type PreparedSideEffectOperation,
   type SideEffectOperationReceipt,
   type SideEffectOperationState,
   transitionSideEffectOperation,
@@ -63,6 +64,70 @@ export type ReserveSideEffectOperationResult =
       status: "rejected"
       reasonCode: "operation_scope_params_conflict" | "operation_scope_persistence_conflict"
     }
+
+type PreparedSideEffectOperationAdmissionStatus =
+  | "reserved_new"
+  | "reserved_existing"
+  | "verified_existing"
+  | "compensated_existing"
+  | "effect_rejected_existing"
+  | "manual_intervention_existing"
+  | "active_existing"
+
+type PreparedSideEffectOperationAdmission = {
+  [Status in PreparedSideEffectOperationAdmissionStatus]: {
+    status: Status
+    prepared: PreparedSideEffectOperation
+    aggregate: SideEffectOperationAggregate
+  }
+}[PreparedSideEffectOperationAdmissionStatus]
+
+export type PrepareSideEffectOperationResult =
+  | PreparedSideEffectOperationAdmission
+  | {
+      status: "rejected"
+      reasonCode: Extract<ReserveSideEffectOperationResult, { status: "rejected" }>["reasonCode"]
+    }
+
+export function prepareSideEffectOperation(input: {
+  repository: SideEffectOperationRepository
+  prepared: PreparedSideEffectOperation
+}): PrepareSideEffectOperationResult {
+  const reservation = reserveSideEffectOperation({
+    repository: input.repository,
+    identity: input.prepared.identity,
+  })
+  if (reservation.status === "rejected") return reservation
+  if (reservation.status === "reserved") {
+    return {
+      status: "reserved_new",
+      prepared: input.prepared,
+      aggregate: reservation.aggregate,
+    }
+  }
+
+  const status = (() => {
+    switch (reservation.aggregate.state) {
+      case "RESERVED":
+        return "reserved_existing" as const
+      case "VERIFIED":
+        return "verified_existing" as const
+      case "COMPENSATED":
+        return "compensated_existing" as const
+      case "EFFECT_REJECTED":
+        return "effect_rejected_existing" as const
+      case "MANUAL_INTERVENTION":
+        return "manual_intervention_existing" as const
+      default:
+        return "active_existing" as const
+    }
+  })()
+  return {
+    status,
+    prepared: input.prepared,
+    aggregate: reservation.aggregate,
+  }
+}
 
 export function reserveSideEffectOperation(input: {
   repository: SideEffectOperationRepository

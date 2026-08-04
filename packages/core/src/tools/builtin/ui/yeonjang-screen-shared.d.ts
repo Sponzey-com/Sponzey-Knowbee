@@ -14,7 +14,16 @@ export interface ScreenCaptureFailureDetails {
     via: "yeonjang";
     extensionId?: string;
     stopAfterFailure?: boolean;
-    failureKind?: "path_bug" | "timeout" | "remote_failure";
+    failureKind?: "remote_failure" | "remote_rejected";
+    reasonCode?: string;
+    terminalStage?: "response_timeout" | "handler_timeout" | "helper_timeout" | "handler_failed" | "cancelled" | "rejected";
+    retrySafety?: "safe_same_command" | "change_strategy" | "unknown_effect_state" | "completed";
+    failure?: {
+        reasonCode: string;
+        retrySameStrategy: false;
+        terminalStage?: "response_timeout" | "handler_timeout" | "helper_timeout" | "handler_failed" | "cancelled" | "rejected";
+        retrySafety?: "safe_same_command" | "change_strategy" | "unknown_effect_state" | "completed";
+    };
 }
 export declare const DEFAULT_SCREEN_CAPTURE_TIMEOUT_MS = 60000;
 export declare function extensionFromScreenCaptureMimeType(mimeType?: string): string;
@@ -25,7 +34,7 @@ export declare function yeonjangCapabilityMatrixRequiredFailure(method: string):
 export declare function yeonjangOutputModeFailure(method: string, outputMode: string): ToolResult;
 export declare function yeonjangOutputModeUnknownFailure(method: string, outputMode: string): ToolResult;
 export declare function preflightYeonjangScreenCapture(options: YeonjangClientOptions): Promise<ToolResult | null>;
-export declare function classifyYeonjangScreenCaptureFailure(message: string): {
+export declare function classifyYeonjangScreenCaptureFailure(error: unknown, message: string): {
     code: string;
     output: string;
     details: ScreenCaptureFailureDetails;

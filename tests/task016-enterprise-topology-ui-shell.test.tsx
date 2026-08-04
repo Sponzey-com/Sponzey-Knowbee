@@ -37,7 +37,7 @@ afterEach(() => {
 describe("task016 enterprise topology UI shell", () => {
   it("unifies Runtime Resource Topology and Enterprise Builder behind the Topology workspace route", () => {
     const nav = getUiNavigation("advanced", false)
-    const topologyNav = nav.find((item) => item.path === "/sub-agents")
+    const topologyNav = nav.find((item) => item.path === "/agents")
     const oldBuilderNav = nav.find((item) => item.path === "/advanced/enterprise-topology")
     const inventory = getUiRouteInventory()
     const workspaceRoute = inventory.find((item) => item.path === "/advanced/topology")
@@ -49,19 +49,21 @@ describe("task016 enterprise topology UI shell", () => {
     }))
     expect(oldBuilderNav).toBeUndefined()
     expect(workspaceRoute).toEqual(expect.objectContaining({
-      component: "TopologyWorkspacePage",
-      apiCalls: expect.arrayContaining(["/api/topologies", "/api/agent-topology"]),
+      component: "UnifiedRouteRedirect",
+      apiCalls: [],
+      status: "redirect",
+      replacementPath: "/agents",
     }))
     expect(builderAlias).toEqual(expect.objectContaining({
-      component: "Navigate",
-      status: "compatibility",
-      replacementPath: "/advanced/topology?mode=build",
+      component: "UnifiedRouteRedirect",
+      status: "redirect",
+      replacementPath: "/agents",
     }))
-    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/sub-agents")
-    expect(resolveModeSwitchRoute("/advanced/enterprise-topology", "beginner")).toBe("/sub-agents")
+    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/agents")
+    expect(resolveModeSwitchRoute("/advanced/enterprise-topology", "beginner")).toBe("/agents")
   })
 
-  it("keeps the Enterprise Builder route behind its feature gate", () => {
+  it("keeps the standalone capability gate while legacy routes redirect to the canonical workspace", () => {
     useCapabilitiesStore.getState().setItems([capability("disabled")])
     const apiCapability = createCapabilities({
       enterpriseTopologyBuilderEnabled: false,
@@ -83,7 +85,7 @@ describe("task016 enterprise topology UI shell", () => {
       enabled: false,
     }))
     expect(appSource).toContain('path="/advanced/topology"')
-    expect(appSource).toContain('capabilityKey="enterprise_topology_builder_ui"')
+    expect(appSource).toContain('<UnifiedRouteRedirect fallback="/agents" />')
     expect(html).toContain("Enterprise Topology Builder")
     expect(html).toContain("기능 상태를 확인할 수 없습니다")
     expect(html).not.toContain("builder route content")

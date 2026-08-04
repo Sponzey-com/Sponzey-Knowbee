@@ -73,6 +73,9 @@ export async function executeRootRunDriver(params, dependencies, moduleDependenc
         ...(params.memorySearchQuery ? { memorySearchQuery: params.memorySearchQuery } : {}),
         syntheticApprovalRuntimeDependencies: params.syntheticApprovalRuntimeDependencies,
         defaultMaxDelegationTurns: params.defaultMaxDelegationTurns,
+        ...(params.recoveredAttempt
+            ? { recoveredAttempt: params.recoveredAttempt }
+            : {}),
     }, dependencies, executionLoopRuntime);
     try {
         await new Promise((resolve) => setImmediate(resolve));

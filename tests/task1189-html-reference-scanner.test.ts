@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { scanHtmlReferences } from "../scripts/lib/repository-reference-scanner.mjs"
+import { scanHtmlReferences } from "../scripts/self/lib/repository-reference-scanner.mjs"
 
 describe("task1189 HTML reference scanner", () => {
   it("resolves package-root modules and Vite public assets", () => {
@@ -57,6 +57,22 @@ describe("task1189 HTML reference scanner", () => {
         owner: "packages/webui/index.html",
         reference: "/src/missing.ts",
       }],
+    })
+  })
+
+  it("treats protocol-relative references as external URLs", () => {
+    const result = scanHtmlReferences({
+      artifactIds: ["tests/fixtures/search-results.html"],
+      documents: [{
+        owner: "tests/fixtures/search-results.html",
+        content: '<a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com">result</a>',
+      }],
+    })
+
+    expect(result).toEqual({
+      complete: true,
+      records: [],
+      diagnostics: [],
     })
   })
 })

@@ -15,6 +15,9 @@ import { setDiscordRuntimeError, stopDiscordRuntime } from "./discord/runtime.js
 import { GoogleChatChannelAdapter } from "./google-chat/adapter.js";
 import { setGoogleChatRuntimeError, stopGoogleChatRuntime } from "./google-chat/runtime.js";
 import { createStartedChannelRecoveryRuntime, } from "./pending-response-delivery.js";
+import { startRootRun } from "../runs/start.js";
+import { getRootRun } from "../runs/store.js";
+import { loadRecoveredApprovedOperationAttempt, } from "../runs/approved-operation-result-handoff.js";
 export { TelegramChannel } from "./telegram/bot.js";
 export { TelegramChannelAdapter, buildTelegramCapabilityManifest, buildTelegramContinuationLookupCandidate, createTelegramChannelAdapter, normalizeTelegramInboundUpdate, normalizeTelegramInteractionUpdate, resolveTelegramConnectionPolicy, validateTelegramWebhookSecretToken, } from "./telegram/adapter.js";
 export { SlackChannel } from "./slack/bot.js";
@@ -34,9 +37,11 @@ export { buildCapabilityFallbackNotice, describeUnsupportedCapability, resolveCh
 export { detectPrimaryMessageLanguage, resolveUserFacingMessageLanguage, } from "./language.js";
 export { createStartedChannelRecoveryRuntime, } from "./pending-response-delivery.js";
 export { buildUnsupportedCapabilityReceipt, createRawPayloadRef, defineChannelAdapter, defineChannelCapabilities, isBuiltInChannelProvider, isExternalChannelProvider, isInternalChannelSurface, isPositiveDeliveryReceipt, normalizeChannelSource, resolveDeliveryReceiptStatus, resolveChannelSurface, sanitizeChannelContractValue, } from "./contracts.js";
-export { getDefaultChannelSmokeScenarios, createDryRunChannelSmokeExecutor, resolveChannelSmokeReadiness, runPersistedChannelSmokeScenarios, runChannelSmokeScenarios, sanitizeChannelSmokeTrace, sanitizeChannelSmokeValue, validateChannelSmokeTrace, } from "./smoke-runner.js";
+export { getDefaultChannelSmokeScenarios, createDryRunChannelSmokeExecutor, resolveChannelSmokeReadiness, recoverInterruptedGatewayChannelSmokeRuns, runPersistedChannelSmokeScenarios, runChannelSmokeScenarios, sanitizeChannelSmokeTrace, sanitizeChannelSmokeValue, validateChannelSmokeTrace, } from "./smoke-runner.js";
 export { validateTelegramWebUiSemanticOutcomeMatrix, } from "./semantic-outcome-matrix.js";
 export { VerifyConversationProcessUseCase, } from "./conversation-process-verification.js";
+export { CameraConversationProbeAdapter, projectCameraConversationCompletedSnapshot, projectCameraConversationDeliveryApprovalSnapshot, projectCameraConversationPostEffectSnapshot, projectCameraConversationPreEffectSnapshot, } from "./camera-conversation-probe.js";
+export { createStartRootRunConversationProbe, } from "./start-root-run-conversation-probe.js";
 export { projectConversationProcessBaseline, } from "./conversation-process-baseline.js";
 export { validateConversationControlRecoveryParity, } from "./conversation-control-recovery.js";
 export { validateConversationDeliveryParity, } from "./conversation-delivery-parity.js";
@@ -56,6 +61,71 @@ export async function startChannels(config, paths) {
     const memoryJournal = createMemoryJournalRepository(paths);
     activeChannelMemoryJournal = memoryJournal;
     const hierarchyStorage = createAgentHierarchyStorage(paths);
+    const buildRecoveryRuntime = (owners) => {
+        let runtime;
+        runtime = createStartedChannelRecoveryRuntime({
+            ...owners,
+            resumeExistingRootRun: async (runId, signal) => {
+                const run = getRootRun(runId);
+                const recovered = loadRecoveredApprovedOperationAttempt(runId);
+                if (!run || !recovered.ok)
+                    return false;
+                const onChunk = runtime.resolveDeliveryHandler({
+                    runId: run.id,
+                    sessionId: run.sessionId,
+                    source: run.source,
+                });
+                if (!onChunk)
+                    return false;
+                const started = startRootRun({
+                    artifactStorage,
+                    memoryJournal,
+                    hierarchyStorage,
+                    runId: run.id,
+                    message: run.prompt,
+                    sessionId: run.sessionId,
+                    requestGroupId: run.requestGroupId,
+                    forceRequestGroupReuse: true,
+                    model: undefined,
+                    config,
+                    targetId: run.targetId,
+                    targetLabel: run.targetLabel,
+                    workDir: config.profile.workspace,
+                    source: run.source,
+                    contextMode: "handoff",
+                    taskProfile: run.taskProfile,
+                    skipIntake: true,
+                    executionSemantics: {
+                        filesystemEffect: "none",
+                        privilegedOperation: "required",
+                        artifactDelivery: "direct",
+                        approvalRequired: false,
+                        approvalTool: "external_action",
+                    },
+                    structuredRequest: {
+                        source_language: "unknown",
+                        response_language_mode: "same_as_request",
+                        normalized_english: run.prompt,
+                        target: run.prompt,
+                        to: "current channel conversation",
+                        context: [
+                            "A verified artifact from the approved operation is already bound to this run.",
+                        ],
+                        complete_condition: [
+                            "Deliver the verified artifact to the current channel conversation and report the verified result.",
+                        ],
+                    },
+                    resumeExistingRun: true,
+                    recoveredAttempt: recovered.attempt,
+                    onChunk,
+                    ...(signal ? { signal } : {}),
+                });
+                await started.finished;
+                return true;
+            },
+        });
+        return runtime;
+    };
     try {
         persistChannelConnections(buildCompatChannelConnectionsFromConfig(config));
     }
@@ -82,7 +152,7 @@ export async function startChannels(config, paths) {
         await registry.startEnabled();
         const telegram = registry.getPendingResponseDeliveryOwner("telegram");
         const slack = registry.getPendingResponseDeliveryOwner("slack");
-        return createStartedChannelRecoveryRuntime({
+        return buildRecoveryRuntime({
             ...(telegram ? { telegram } : {}),
             ...(slack ? { slack } : {}),
         });
@@ -147,7 +217,7 @@ export async function startChannels(config, paths) {
             log.warn(`Failed to start Google Chat channel: ${message}`);
         }
     }
-    return createStartedChannelRecoveryRuntime({
+    return buildRecoveryRuntime({
         ...(startedTelegram ? { telegram: startedTelegram } : {}),
         ...(startedSlack ? { slack: startedSlack } : {}),
     });

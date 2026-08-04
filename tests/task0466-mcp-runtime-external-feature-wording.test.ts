@@ -36,9 +36,10 @@ describe("task0466 mcp runtime external feature wording", () => {
     const statuses = Object.fromEntries(mcpRegistry.getStatuses().map((status) => [status.name, status]))
 
     expect(statuses["disabled_connection"]?.error).toBe("설정에서 비활성화된 외부 기능 연결입니다.")
-    expect(statuses["http_connection"]?.error).toBe(
-      "HTTP 방식 외부 기능 연결은 현재 사용할 수 없습니다. 지금은 stdio 방식만 사용할 수 있습니다.",
-    )
+    expect(statuses["http_connection"]?.transport).toBe("http")
+    expect(statuses["http_connection"]?.connectionState).toBe("failed")
+    expect(statuses["http_connection"]?.error).toBe("네트워크 또는 연결 문제로 요청이 중단되었습니다.")
+    expect(statuses["http_connection"]?.error).not.toContain("fetch failed")
     expect(statuses["missing_command"]?.error).toBe("실행 명령이 설정되지 않아 외부 기능 연결을 시작할 수 없습니다.")
 
     const serialized = JSON.stringify(mcpRegistry.getStatuses())
@@ -64,5 +65,6 @@ describe("task0466 mcp runtime external feature wording", () => {
     expect(combined).not.toContain("MCP 서버")
     expect(combined).toContain("External feature connection")
     expect(combined).toContain("External tool error")
+    expect(source("packages/core/src/mcp/registry.ts")).toContain("mcpRegistryStatusErrorMessage")
   })
 })

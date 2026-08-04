@@ -9,7 +9,9 @@ describe("task1004 runtime unsupported feature copy", () => {
 
     expect(combined).not.toContain("아직 구현되지 않았습니다")
     expect(combined).not.toContain("task004 baseline")
-    expect(registry).toContain("HTTP 방식 외부 기능 연결은 현재 사용할 수 없습니다. 지금은 stdio 방식만 사용할 수 있습니다.")
+    expect(registry).toContain('transport === "http"')
+    expect(registry).toContain("new McpHttpClient")
+    expect(registry).not.toContain("HTTP 방식 외부 기능 연결은 현재 사용할 수 없습니다")
     expect(broadcast).toContain("broadcast는 현재 사용할 수 없습니다. 지금은 screen_capture만 전체 실행을 지원합니다.")
   })
 })

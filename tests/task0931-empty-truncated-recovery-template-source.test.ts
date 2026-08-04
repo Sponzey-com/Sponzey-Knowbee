@@ -31,7 +31,16 @@ describe("task0931 empty and truncated recovery prompt sources", () => {
     const prompt = buildEmptyResultRecoveryPrompt({
       originalRequest: "파일을 만들어줘",
       previousResult: "",
-      successfulTools: [{ toolName: "file_write", output: "ok" }],
+      successfulTools: [{
+        toolName: "file_write",
+        output: "ok",
+        evidenceSource: {
+          sourceKind: "tool",
+          sourceRef: `tool-result:tool:${"b".repeat(64)}`,
+          trustClass: "untrusted_external",
+          instructionIsolation: "data_only",
+        },
+      }],
       sawRealFilesystemMutation: true,
     })
 

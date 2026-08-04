@@ -33,7 +33,7 @@ export interface StartContextPlan {
   toolPolicy: {
     toolsEnabled: boolean
     requiresApproval: boolean
-    requiresYeonjang: boolean
+    requiresYeonjang: "unknown" | "required" | "not_required"
   }
   preflightFailure: StartPreflightFailure | null
 }
@@ -107,6 +107,14 @@ function requiresYeonjangRuntime(input: StartPreflightInput): boolean {
   return YEONJANG_APPROVAL_TOOLS.has(approvalTool) || approvalTool.startsWith("yeonjang_")
 }
 
+function resolveYeonjangRequirement(
+  input: StartPreflightInput,
+): StartContextPlan["toolPolicy"]["requiresYeonjang"] {
+  if (input.toolsEnabled === false) return "not_required"
+  if (!input.executionSemantics) return "unknown"
+  return requiresYeonjangRuntime(input) ? "required" : "not_required"
+}
+
 function resolveContextPlanMemoryScopes(input: StartPreflightInput): ContextMemoryScope[] {
   const scopes = new Set<ContextMemoryScope>(["short-term", "flash-feedback"])
   if (input.executionSemantics) scopes.add("task")
@@ -176,7 +184,7 @@ function resolveAiFailure(input: StartPreflightInput): StartPreflightFailure | n
 }
 
 function resolveYeonjangFailure(input: StartPreflightInput): StartPreflightFailure | null {
-  if (!requiresYeonjangRuntime(input)) return null
+  if (resolveYeonjangRequirement(input) !== "required") return null
   if (hasConnectedYeonjangSnapshot()) return null
 
   return {
@@ -195,7 +203,7 @@ export function resolveStartPreflightFailure(input: StartPreflightInput): StartP
 
 export function resolveStartContextPlan(input: StartPreflightInput): StartContextPlan {
   const requiresApproval = Boolean(input.executionSemantics?.approvalRequired)
-  const requiresYeonjang = requiresYeonjangRuntime(input)
+  const requiresYeonjang = resolveYeonjangRequirement(input)
 
   return {
     promptSources: [

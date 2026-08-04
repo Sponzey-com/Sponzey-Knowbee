@@ -1,4 +1,3 @@
-import { closeServer } from "../api/server.js";
 import { type RuntimePaths } from "../config/paths.js";
 import type { KnowbeeConfig } from "../config/types.js";
 import { type BrowserFocusRuntimeBootstrapOptions } from "../yeonjang/browser-focus-runtime-bootstrap.js";
@@ -13,5 +12,5 @@ export interface BootstrapOptions {
 export declare function bootstrap(config?: KnowbeeConfig, options?: BootstrapOptions): KnowbeeConfig;
 export declare function bootstrapRuntime(config?: KnowbeeConfig, options?: BootstrapOptions): Promise<KnowbeeConfig>;
 export declare function bootstrapAsync(config?: KnowbeeConfig, options?: BootstrapOptions): Promise<KnowbeeConfig>;
-export { closeServer };
+export declare function closeServer(): Promise<void>;
 //# sourceMappingURL=bootstrap.d.ts.map

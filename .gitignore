@@ -151,4 +151,5 @@ packages/core/.artifact-consistency-*/
 .docs
 backups/
 .db
+.knowbee
 PROCESS.md

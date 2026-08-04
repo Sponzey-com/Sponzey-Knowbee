@@ -1,5 +1,6 @@
 import type { AgentTool } from "../types.js";
 import { type YeonjangTargetedToolParams } from "./yeonjang-target.js";
+type RequestedCameraFacing = "front" | "rear";
 interface YeonjangCameraListParams extends YeonjangTargetedToolParams {
     timeoutSec?: number;
 }
@@ -8,8 +9,7 @@ interface YeonjangCameraPermissionStatusParams extends YeonjangTargetedToolParam
 }
 interface YeonjangCameraCaptureParams extends YeonjangTargetedToolParams {
     deviceId?: string;
-    outputPath?: string;
-    inlineBase64?: boolean;
+    requestedFacing?: RequestedCameraFacing;
     timeoutSec?: number;
 }
 interface YeonjangFilePathParams extends YeonjangTargetedToolParams {

@@ -20,6 +20,10 @@ function sanitizeText(value) {
         return "[html content hidden]";
     return text.length > 1_000 ? `${text.slice(0, 990)}...` : text;
 }
+function webRetrievalSmokeErrorReason(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return sanitizeText(raw);
+}
 function sanitizeValue(value) {
     if (typeof value === "string")
         return sanitizeText(value);
@@ -217,7 +221,7 @@ export async function runWebRetrievalLiveSmokeScenarios(input = {}) {
                 scenario: item,
                 status: "failed",
                 failures: ["scenario_execution_failed"],
-                reason: sanitizeText(error instanceof Error ? error.message : String(error)),
+                reason: webRetrievalSmokeErrorReason(error),
                 startedAt: itemStartedAt,
                 finishedAt: nowIso(clock()),
             });

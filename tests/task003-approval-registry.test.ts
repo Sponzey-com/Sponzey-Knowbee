@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { closeDb, getDb, insertSession } from "../packages/core/src/db/index.js"
 import { eventBus } from "../packages/core/src/events/index.js"
 import {
+  acquireApprovalRegistryGrant,
   consumeApprovalRegistryDecision,
   createApprovalRegistryRequest,
   getApprovalRegistryRow,
@@ -82,6 +83,81 @@ describe("task003 approval registry", () => {
     expect(reused).toMatchObject({ accepted: false, status: "consumed", reason: "already_consumed" })
   })
 
+  it("reacquires only a consumed allow-run decision for its exact DB scope", () => {
+    const runGrant = createApprovalRegistryRequest({
+      id: "approval-run-reusable",
+      runId: "run-reusable",
+      requestGroupId: "group-reusable",
+      channel: "webui",
+      toolName: "file_write",
+      riskLevel: "moderate",
+      kind: "approval",
+      params: { path: "memo.txt" },
+      authorizationParams: { operationBindingHash: "binding-a" },
+      expiresAt: Date.now() + 60_000,
+    })
+    expect(resolveApprovalRegistryDecision({
+      approvalId: runGrant.id,
+      decision: "allow_run",
+      decisionSource: "webui",
+    }).accepted).toBe(true)
+    expect(consumeApprovalRegistryDecision(runGrant.id, Date.now(), {
+      runId: "run-reusable",
+      requestGroupId: "group-reusable",
+      toolName: "file_write",
+      params: { path: "memo.txt" },
+      authorizationParams: { operationBindingHash: "binding-a" },
+    }).accepted).toBe(true)
+
+    expect(acquireApprovalRegistryGrant({
+      runId: "run-reusable",
+      requestGroupId: "group-reusable",
+      toolName: "file_write",
+      params: { path: "memo.txt" },
+      authorizationParams: { operationBindingHash: "binding-a" },
+    })).toMatchObject({
+      acquired: true,
+      decision: "allow_run",
+      approvalId: runGrant.id,
+      source: "consumed_run",
+    })
+    expect(acquireApprovalRegistryGrant({
+      runId: "run-reusable",
+      requestGroupId: "group-reusable",
+      toolName: "file_write",
+      params: { path: "memo.txt" },
+      authorizationParams: { operationBindingHash: "binding-b" },
+    })).toMatchObject({ acquired: false })
+
+    const once = createApprovalRegistryRequest({
+      id: "approval-once-not-reusable",
+      runId: "run-once",
+      requestGroupId: "group-once",
+      channel: "webui",
+      toolName: "file_write",
+      riskLevel: "moderate",
+      kind: "approval",
+      params: { path: "once.txt" },
+    })
+    resolveApprovalRegistryDecision({
+      approvalId: once.id,
+      decision: "allow_once",
+      decisionSource: "webui",
+    })
+    consumeApprovalRegistryDecision(once.id, Date.now(), {
+      runId: "run-once",
+      requestGroupId: "group-once",
+      toolName: "file_write",
+      params: { path: "once.txt" },
+    })
+    expect(acquireApprovalRegistryGrant({
+      runId: "run-once",
+      requestGroupId: "group-once",
+      toolName: "file_write",
+      params: { path: "once.txt" },
+    })).toMatchObject({ acquired: false })
+  })
+
   it("keeps timeout distinct from user denial and rejects late approval", () => {
     const approval = createApprovalRegistryRequest({
       id: "approval-expired",
@@ -147,6 +223,69 @@ describe("task003 approval registry", () => {
       agentId: "agent:a",
     })
     expect(exact).toMatchObject({ accepted: true, status: "consumed" })
+  })
+
+  it("persists and consumes the exact prepared operation continuation binding", () => {
+    const operationBindingHash = `sha256:${"a".repeat(64)}` as const
+    const approval = createApprovalRegistryRequest({
+      id: "approval-operation-bound",
+      runId: "run-operation-bound",
+      requestGroupId: "group-operation-bound",
+      channel: "telegram",
+      toolName: "yeonjang_camera_capture",
+      riskLevel: "moderate",
+      kind: "approval",
+      params: { target: "bounded-preview" },
+      authorizationParams: { operationBindingHash },
+      operationBinding: {
+        operationId: "operation:camera:prepared",
+        operationBindingHash,
+        continuationSchemaVersion: 1,
+      },
+    })
+
+    expect(approval).toMatchObject({
+      operation_id: "operation:camera:prepared",
+      operation_binding_hash: operationBindingHash,
+      continuation_schema_version: 1,
+    })
+    resolveApprovalRegistryDecision({
+      approvalId: approval.id,
+      decision: "allow_once",
+      decisionSource: "telegram",
+    })
+
+    expect(consumeApprovalRegistryDecision(approval.id, Date.now(), {
+      runId: "run-operation-bound",
+      requestGroupId: "group-operation-bound",
+      toolName: "yeonjang_camera_capture",
+      params: { target: "bounded-preview" },
+      authorizationParams: { operationBindingHash },
+      operationBinding: {
+        operationId: "operation:camera:other",
+        operationBindingHash,
+        continuationSchemaVersion: 1,
+      },
+    })).toMatchObject({
+      accepted: false,
+      reason: "scope_mismatch",
+    })
+
+    expect(consumeApprovalRegistryDecision(approval.id, Date.now(), {
+      runId: "run-operation-bound",
+      requestGroupId: "group-operation-bound",
+      toolName: "yeonjang_camera_capture",
+      params: { target: "bounded-preview" },
+      authorizationParams: { operationBindingHash },
+      operationBinding: {
+        operationId: "operation:camera:prepared",
+        operationBindingHash,
+        continuationSchemaVersion: 1,
+      },
+    })).toMatchObject({
+      accepted: true,
+      status: "consumed",
+    })
   })
 
   it("rejects an approved decision that expires before consumption", () => {

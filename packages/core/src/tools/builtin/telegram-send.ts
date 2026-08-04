@@ -103,6 +103,10 @@ export const telegramSendFileTool: AgentTool<TelegramSendFileParams> = {
   riskLevel: "moderate",
   requiresApproval: true,
   availableSources: ["telegram"],
+  channelCapability: {
+    kind: "direct_artifact_delivery",
+    channel: "telegram",
+  },
 
   async execute(params, ctx: ToolContext): Promise<ToolResult> {
     try {

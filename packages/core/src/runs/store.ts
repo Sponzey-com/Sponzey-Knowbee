@@ -1248,6 +1248,40 @@ export function applyCanonicalRunTransition(
   }
 
   if (result.status === "applied") {
+    switch (command.event) {
+      case "APPROVAL_REQUESTED":
+        setRunStepStatus(
+          command.runId,
+          "awaiting_approval",
+          "running",
+          "승인된 작업의 실행 결정을 기다립니다.",
+        )
+        break
+      case "APPROVAL_CONSUMED":
+        setRunStepStatus(
+          command.runId,
+          "awaiting_approval",
+          "completed",
+          "승인된 동일 작업을 계속 실행합니다.",
+        )
+        setRunStepStatus(
+          command.runId,
+          "executing",
+          "running",
+          "승인된 동일 작업을 계속 실행합니다.",
+        )
+        break
+      case "APPROVAL_DENIED_OR_EXPIRED":
+        setRunStepStatus(
+          command.runId,
+          "awaiting_approval",
+          "cancelled",
+          "승인 거부 또는 만료로 작업 실행을 시작하지 않았습니다.",
+        )
+        break
+      default:
+        break
+    }
     recordCanonicalTransitionObservability({
       repository: new SqliteTypedObservabilityEventRepository(),
       aggregate: result.aggregate,

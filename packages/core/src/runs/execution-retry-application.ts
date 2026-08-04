@@ -9,6 +9,8 @@ export interface ExecutionRecoveryPayload {
   summary: string
   reason: string
   toolNames: string[]
+  reasonCode?: string | undefined
+  evidenceRefs?: string[] | undefined
 }
 
 export type ExecutionRecoveryAttemptResult =

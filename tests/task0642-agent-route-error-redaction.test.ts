@@ -8,7 +8,7 @@ const agentRouteSource = readFileSync(
 
 describe("task0642 agent route persistence error redaction", () => {
   it("summarizes agent persistence errors through a redacted helper", () => {
-    expect(agentRouteSource).toContain('import { redactLogText } from "../../logger/index.js"')
+    expect(agentRouteSource).toContain('import { createLogger, redactLogText } from "../../logger/index.js"')
     expect(agentRouteSource).toContain("function agentRoutePersistenceErrorSummary(error: unknown)")
     expect(agentRouteSource).toContain("return sanitizeUserFacingError(redactLogText(rawMessage))")
     expect(agentRouteSource).toContain("const sanitized = agentRoutePersistenceErrorSummary(error)")

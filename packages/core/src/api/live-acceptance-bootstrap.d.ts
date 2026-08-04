@@ -4,6 +4,7 @@ import type { KnowbeeConfig } from "../config/types.js";
 import { type LiveAcceptanceLlmPorts } from "../release/live-acceptance-llm-adapter.js";
 import type { LiveAcceptanceSigningRequestSink } from "../release/live-acceptance-runner.js";
 import type { LiveAcceptanceRuntimeSnapshotReaders } from "../release/live-acceptance-runtime-snapshot-adapter.js";
+import type { LiveAcceptanceRuntimeIdentityAdmission } from "../release/live-acceptance-runtime-identity.js";
 import type { YeonjangLiveAuditEvent } from "../runs/yeonjang-live-transport-adapter.js";
 import type { ToolDispatcher } from "../tools/dispatcher.js";
 import { createLiveAcceptanceRuntimeFactory } from "./live-acceptance-runtime-factory.js";
@@ -11,6 +12,7 @@ import type { ApiServerRuntimeDependencies } from "./server-runtime-context.js";
 export declare function resolveConfiguredTelegramLiveSmokeTarget(config: Readonly<KnowbeeConfig>): ApiServerRuntimeDependencies["telegramLiveSmokeTarget"];
 export interface LiveAcceptanceBootstrapPorts {
     readonly readers: LiveAcceptanceRuntimeSnapshotReaders;
+    readonly inspectRuntimeIdentity: () => LiveAcceptanceRuntimeIdentityAdmission;
     readonly llm: Readonly<LiveAcceptanceLlmPorts>;
     readonly artifactStorage: ArtifactStorageContext;
     readonly findAuditEventId: (input: {

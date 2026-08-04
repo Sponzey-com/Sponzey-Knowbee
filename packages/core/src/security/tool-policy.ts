@@ -32,6 +32,7 @@ export interface EvaluateToolPolicyInput {
   toolName: string
   riskLevel: RiskLevel
   params: Record<string, unknown>
+  authorizationParams?: Record<string, unknown>
   ctx: ToolContext
   security: {
     allowedCommands: string[]
@@ -68,7 +69,7 @@ export function evaluateAndRecordToolPolicy(input: EvaluateToolPolicyInput): Too
 
 export function evaluateToolPolicy(input: EvaluateToolPolicyInput): ToolPolicyDecisionRecord {
   const sourceTrust = sourceToTrustTag(input.ctx.source)
-  const paramsHash = hashApprovalParams(input.params)
+  const paramsHash = hashApprovalParams(input.authorizationParams ?? input.params)
   const createdAt = Date.now()
   const base: Omit<ToolPolicyDecisionRecord, "permissionScope" | "decision" | "reasonCode" | "userMessage" | "diagnostic"> = {
     id: crypto.randomUUID(),

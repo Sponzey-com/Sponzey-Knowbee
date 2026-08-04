@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto"
+import { createHash, createHmac } from "node:crypto"
 import { describe, expect, it } from "vitest"
 
 import {
@@ -36,6 +36,25 @@ describe("task567 browser.focus execution admission key port", () => {
       keyId: "mqtt-connection-password-v1",
       connectionPassword: " ",
     })).toBeUndefined()
+  })
+
+  it("derives the execution key for an existing short broker credential", () => {
+    const connectionPassword = "samjoko1"
+    const handle = createYeonjangExecutionAdmissionPasswordHandle({
+      extensionId: "studio-mac",
+      keyId: "mqtt-connection-password-v1",
+      connectionPassword,
+    })
+    const derived = createHash("sha256")
+      .update("knowbee.yeonjang.execution-admission.v1\u0000", "utf8")
+      .update(connectionPassword, "utf8")
+      .digest()
+
+    expect(handle?.sign({ canonicalPayload: "canonical-short" })).toBe(
+      `hmac-sha256:${createHmac("sha256", derived)
+        .update("canonical-short", "utf8")
+        .digest("hex")}`,
+    )
   })
 
   it("creates an immutable bootstrap snapshot and rejects invalid or duplicate instance/session bindings", () => {

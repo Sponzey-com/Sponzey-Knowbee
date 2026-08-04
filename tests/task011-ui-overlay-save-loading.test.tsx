@@ -1,7 +1,8 @@
 import React, { createRef } from "../packages/webui/node_modules/react/index.js"
 import { renderToStaticMarkup } from "../packages/webui/node_modules/react-dom/server.js"
 import { describe, expect, it } from "vitest"
-import { Drawer, resolveTrappedFocusIndex } from "../packages/webui/src/components/ui/Drawer.js"
+import { Drawer } from "../packages/webui/src/components/ui/Drawer.js"
+import { resolveTrappedFocusIndex } from "../packages/webui/src/lib/focus-trap.js"
 import { SaveBar, transitionSaveState } from "../packages/webui/src/components/ui/SaveBar.js"
 import { Skeleton } from "../packages/webui/src/components/ui/Skeleton.js"
 

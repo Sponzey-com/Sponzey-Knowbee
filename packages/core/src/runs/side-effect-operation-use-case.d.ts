@@ -1,4 +1,4 @@
-import { type SideEffectOperationEvent, type SideEffectOperationIdentity, type SideEffectOperationReceipt, type SideEffectOperationState } from "../contracts/side-effect-operation.js";
+import { type SideEffectOperationEvent, type SideEffectOperationIdentity, type PreparedSideEffectOperation, type SideEffectOperationReceipt, type SideEffectOperationState } from "../contracts/side-effect-operation.js";
 export interface SideEffectOperationTransitionRecord {
     revision: number;
     previousState: SideEffectOperationState;
@@ -40,6 +40,24 @@ export type ReserveSideEffectOperationResult = {
     status: "rejected";
     reasonCode: "operation_scope_params_conflict" | "operation_scope_persistence_conflict";
 };
+type PreparedSideEffectOperationAdmissionStatus = "reserved_new" | "reserved_existing" | "verified_existing" | "compensated_existing" | "effect_rejected_existing" | "manual_intervention_existing" | "active_existing";
+type PreparedSideEffectOperationAdmission = {
+    [Status in PreparedSideEffectOperationAdmissionStatus]: {
+        status: Status;
+        prepared: PreparedSideEffectOperation;
+        aggregate: SideEffectOperationAggregate;
+    };
+}[PreparedSideEffectOperationAdmissionStatus];
+export type PrepareSideEffectOperationResult = PreparedSideEffectOperationAdmission | {
+    status: "rejected";
+    reasonCode: Extract<ReserveSideEffectOperationResult, {
+        status: "rejected";
+    }>["reasonCode"];
+};
+export declare function prepareSideEffectOperation(input: {
+    repository: SideEffectOperationRepository;
+    prepared: PreparedSideEffectOperation;
+}): PrepareSideEffectOperationResult;
 export declare function reserveSideEffectOperation(input: {
     repository: SideEffectOperationRepository;
     identity: SideEffectOperationIdentity;
@@ -60,4 +78,5 @@ export declare function transitionReservedSideEffectOperation(input: {
     event: SideEffectOperationEvent;
     receipt: SideEffectOperationReceipt;
 }): TransitionSideEffectOperationResult;
+export {};
 //# sourceMappingURL=side-effect-operation-use-case.d.ts.map

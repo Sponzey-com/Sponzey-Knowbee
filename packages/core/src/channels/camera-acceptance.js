@@ -41,10 +41,48 @@ export function validateCameraChannelAcceptance(observation) {
     if (!observation.publicProjectionSafe) {
         fail("camera_public_projection_unsafe");
     }
-    if (observation.deliveryApproval.required) {
-        if (!observation.deliveryApproval.operationRef ||
-            observation.deliveryApproval.targetRef !== targetRef) {
+    if (observation.cancellation?.requested) {
+        if (observation.cancellation.afterCapture &&
+            observation.capture.status !== "succeeded") {
+            fail("camera_cancellation_capture_state_invalid");
+        }
+        if (observation.delivery.status !== "not_started") {
+            fail("camera_delivery_after_cancellation");
+        }
+        if (!observation.completionReview.performed ||
+            observation.completionReview.outcome !== "cancelled") {
+            fail("camera_cancellation_review_invalid");
+        }
+    }
+    if (observation.deliveryApproval.required
+        && observation.deliveryApproval.status === "not_started") {
+        if (observation.deliveryApproval.operationRef !== undefined
+            || observation.deliveryApproval.targetRef !== undefined
+            || observation.deliveryApproval.destinationRef !== undefined
+            || observation.deliveryApproval.artifactRef !== undefined
+            || observation.delivery.status !== "not_started") {
+            fail("camera_delivery_approval_not_started_invalid");
+        }
+    }
+    else if (observation.deliveryApproval.required) {
+        if (!observation.deliveryApproval.operationRef) {
             fail("camera_delivery_approval_binding_invalid");
+        }
+        const destinationRef = observation.deliveryApproval.destinationRef?.trim();
+        if (!destinationRef ||
+            destinationRef === targetRef ||
+            (observation.deliveryApproval.targetRef !== undefined &&
+                observation.deliveryApproval.targetRef !== destinationRef) ||
+            (observation.delivery.status !== "not_started" &&
+                observation.delivery.destinationRef !== destinationRef)) {
+            fail("camera_delivery_destination_binding_invalid");
+        }
+        const artifactRef = observation.capture.artifact?.artifactRef;
+        if (!artifactRef ||
+            observation.deliveryApproval.artifactRef !== artifactRef ||
+            (observation.delivery.status !== "not_started" &&
+                observation.delivery.artifactRef !== artifactRef)) {
+            fail("camera_delivery_artifact_binding_invalid");
         }
     }
     else if (observation.deliveryApproval.status !== "not_required") {
@@ -99,7 +137,8 @@ export function validateCameraChannelAcceptance(observation) {
         observation.captureApproval.status === "rejected" ||
         observation.captureApproval.status === "expired" ||
         observation.deliveryApproval.status === "rejected" ||
-        observation.deliveryApproval.status === "expired";
+        observation.deliveryApproval.status === "expired" ||
+        observation.cancellation?.requested === true;
     if (terminalReportRequired) {
         if (!observation.completionReview.performed) {
             fail("camera_completion_review_missing");

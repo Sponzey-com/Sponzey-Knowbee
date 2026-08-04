@@ -57,6 +57,9 @@ export function prepareRootLoopLaunch(params, dependencies, executionLoopRuntime
         priorAssistantMessages: executionLoopRuntime.priorAssistantMessages,
         syntheticApprovalRuntimeDependencies: params.syntheticApprovalRuntimeDependencies,
         defaultMaxDelegationTurns: params.defaultMaxDelegationTurns,
+        ...(params.recoveredAttempt
+            ? { recoveredAttempt: params.recoveredAttempt }
+            : {}),
     };
     const rootLoopDependencies = {
         ...(dependencies.getAdmittedCapabilityExecutionScope

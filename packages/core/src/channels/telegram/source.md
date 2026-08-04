@@ -29,3 +29,16 @@
 - Telegram chunk 처리도 `bot.ts` 본문에서 바로 하지 않고 `chunk-delivery.ts` helper를 통해 텍스트/파일/tool status를 구조화된 delivery receipt로 올리는 쪽으로 분리하고 있습니다.
 - Telegram 최종 텍스트, receipt, file 전송 primitive도 `message-delivery.ts`로 분리해, `responder.ts`가 텍스트 분할과 파일 전송 세부 구현까지 직접 들고 있지 않도록 정리하고 있습니다.
 - 파일 전달과 최종 텍스트 전달 순서도 chunk helper 테스트로 고정해, artifact가 먼저 나가고 텍스트가 뒤따르는 delivery 순서를 보장하는 방향으로 정리하고 있습니다.
+- versioned 승인 요청은 Telegram message identity와 승인 가능한 사용자 ID의
+  SHA-256 fingerprint를 approval registry에 결속합니다. Gateway restart로
+  `pending` Map이 사라져도 callback의 exact chat/thread/message/actor binding이
+  requested row와 일치하면 durable approval command를 호출합니다. raw Telegram
+  user ID는 approval row에 저장하지 않으며, wrong actor/message와 legacy unbound
+  row는 자동 승인하지 않습니다.
+- Telegram artifact upload의 성공은 `sendFile` provider receipt가 있을 때만
+  `artifactDeliveries`와 durable artifact receipt로 기록합니다. 업로드 실패 뒤
+  같은 대화에 보낸 다운로드 링크는 `textDeliveries` fallback으로만 남아 direct
+  photo delivery 성공을 대체하지 않습니다.
+- restart delivery handler도 session의 durable `source_id`에서 동일 chat/thread를
+  복원합니다. 승인 continuation의 target fingerprint와 이 session binding이
+  일치하지 않으면 provider 호출 전에 중단합니다.

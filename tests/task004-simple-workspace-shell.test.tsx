@@ -266,7 +266,7 @@ describe("task004 simple workspace shell", () => {
     expect(advancedHtml).not.toContain('data-testid="topology-workspace-layer-resources"')
     expect(advancedHtml).toContain("서브 에이전트 구성하기")
     expect(advancedHtml).not.toContain("Topology Workspace")
-    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/sub-agents")
+    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/agents")
     expect(fallbackHtml).toContain("기능 상태를 확인할 수 없습니다")
     expect(fallbackHtml).not.toContain("simple workspace content")
   })

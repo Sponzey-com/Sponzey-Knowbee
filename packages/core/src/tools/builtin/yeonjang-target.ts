@@ -213,6 +213,18 @@ function buildRequestedSelectorInput(params: {
 }): RequestedSelectorInput | YeonjangTargetSelection {
   const requested = normalize(params.requestedExtensionId)
   if (params.targetSelector != null && requested) {
+    const validation = validateYeonjangTargetSelector(params.targetSelector)
+    if (validation.ok) {
+      const selector = normalizeYeonjangTargetSelector(validation.value)
+      if (selector.type === "node_id" && selector.nodeId === requested) {
+        return {
+          explicitTarget: true,
+          selectorSource: "structured_target_selector",
+          selector,
+          legacyRequestedExtensionId: requested,
+        }
+      }
+    }
     const input: RequestedSelectorInput = {
       explicitTarget: true,
       selectorSource: "structured_target_selector",
@@ -308,6 +320,15 @@ function selectStructuredCandidates(
         matchedValue: "local",
         reasonCode: "explicit_local_selector",
         selectorType: "local",
+      }
+    }
+    case "node_id": {
+      return {
+        candidates: instances.filter((instance) => normalize(instance.nodeId) === selector.nodeId),
+        matchedField: "node_id",
+        matchedValue: selector.nodeId,
+        reasonCode: "exact_node_id_match",
+        selectorType: "node_id",
       }
     }
     case "instance_id": {
@@ -815,7 +836,7 @@ export function buildYeonjangTargetParameterProperties(defaultExtensionId: strin
   return {
     extensionId: {
       type: "string",
-      description: `대상 Yeonjang 연장 ID. 기존 호환용 필드이며, 새 요청에서는 targetSelector 사용을 우선합니다. 기본값: ${defaultExtensionId}`,
+      description: `대상 Yeonjang 노드 ID의 기존 호환용 필드입니다. targetSelector와 동시에 보내지 마세요. 새 요청에서는 targetSelector의 node_id 사용을 우선합니다. 기본값: ${defaultExtensionId}`,
     },
     targetSelector: buildYeonjangTargetSelectorSchemaProperty(),
     targetSessionId: {

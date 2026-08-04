@@ -6,7 +6,7 @@ import {
   legacyRemovalProofSourceDigest,
   sha256,
   validateLegacyRollbackBundle,
-} from "../scripts/lib/legacy-rollback-bundle.mjs"
+} from "../scripts/self/lib/legacy-rollback-bundle.mjs"
 
 const input = {
   sourceProofDigest: sha256("proof"),

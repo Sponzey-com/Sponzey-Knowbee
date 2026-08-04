@@ -12,7 +12,7 @@ const REQUIRED_YEONJANG_POLICY_MARKERS = [
   "Check the selected instance state, trust state, scope access, support profile, requested method, and output mode before execution.",
   "Do not dispatch when the selected instance is offline, untrusted, outside scope, missing the requested method, missing the requested output mode, or waiting for required approval.",
   "If no Yeonjang instance is available, continue with Knowbee-only conversation, reasoning, planning, guidance, and workflow drafting where those can help.",
-  "Do not claim file operations, app launch, screen control, keyboard input, mouse input, local command execution, or computer inspection succeeded when Yeonjang is unavailable.",
+  "Do not claim file operations, app launch, screen control, camera capture, keyboard input, mouse input, local command execution, or computer inspection succeeded when Yeonjang is unavailable.",
   "Provide selected-target, connectivity, permission, capability, timeout, approval, and tool-result evidence to `result_review.md` for failure diagnosis and retry recommendation.",
   "Provide completed, blocked, and Knowbee-only result facts to `final_response.md` for user-facing wording and next-action rendering.",
 ] as const

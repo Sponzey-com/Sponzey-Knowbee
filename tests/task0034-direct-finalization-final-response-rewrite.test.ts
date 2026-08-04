@@ -195,6 +195,46 @@ describe("task0034 direct finalization final response rewrite", () => {
     )
   })
 
+  it("forwards the canonical failure evidence context to final response rendering", async () => {
+    const dependencies = createFinalizationDependencies()
+    const runId = uniqueId("run-failure-evidence-forwarding")
+    const failureEvidence = {
+      schemaVersion: 1 as const,
+      phase: "intake" as const,
+      reasonCode: "provider_unavailable",
+      retryable: true,
+      executionObserved: false,
+      deliveryObserved: false,
+      evidenceRefs: ["llm-invocation:intake:invocation-1"],
+    }
+    const renderFinalResponseText = vi.fn(async (input) =>
+      buildReviewedFinalResponse(input, "요청 분석용 AI 연결 문제로 실행을 시작하지 못했습니다."),
+    )
+
+    await completeRunWithAssistantMessage({
+      runId,
+      sessionId: uniqueId("session-failure-evidence-forwarding"),
+      text: "요청 분석 단계가 실행 전에 중단되었습니다.",
+      textSource: "runtime_deterministic",
+      responseContext: {
+        originalRequest: "컴퓨터 카메라로 사진찍어서 보내줘",
+        model: "gpt-test",
+        providerId: "openai",
+        config: DEFAULT_CONFIG,
+        workDir: "/tmp/project",
+        failureEvidence,
+      },
+      renderFinalResponseText,
+      source: "webui",
+      onChunk: vi.fn().mockResolvedValue(undefined),
+      dependencies,
+    })
+
+    expect(renderFinalResponseText).toHaveBeenCalledWith(
+      expect.objectContaining({ failureEvidence }),
+    )
+  })
+
   it("rewrites LLM-generated direct finalization text through final_response", async () => {
     const dependencies = createFinalizationDependencies()
     const runId = uniqueId("run-direct-finalization-llm-rewrite")

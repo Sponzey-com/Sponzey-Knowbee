@@ -9,7 +9,7 @@ import {
   buildNpmCleanInstallReceipt,
   verifyNpmCleanInstallReceipt,
 } from "../packages/core/src/release/npm-install-receipt.js"
-import { runNpmCleanInstallSmoke } from "../scripts/smoke-npm-install.mjs"
+import { runNpmCleanInstallSmoke } from "../scripts/self/smoke-npm-install.mjs"
 
 const tempDirs: string[] = []
 const digest = (character: string) => character.repeat(64)
@@ -176,7 +176,7 @@ describe("task140 npm install receipt", () => {
 
     const command = spawnSync(
       process.execPath,
-      ["scripts/smoke-npm-install.mjs", "--stage-dir", stageDir, "--json"],
+      ["scripts/self/smoke-npm-install.mjs", "--stage-dir", stageDir, "--json"],
       {
         cwd: resolve("."),
         encoding: "utf8",

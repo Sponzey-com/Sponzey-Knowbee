@@ -13,7 +13,7 @@ function source(path: string): string {
 describe("task1063 mcp registry config snapshot", () => {
   it("requires explicit config snapshots for registry loading", () => {
     const registrySource = source("packages/core/src/mcp/registry.ts")
-    const indexSource = source("packages/core/src/runtime/bootstrap.ts")
+    const startupPortSource = source("packages/core/src/runtime/mcp-startup-port.ts")
 
     expect(legacyConfigAccesses(registrySource)).toEqual([])
     expect(functionParameterTypes(registrySource, "loadFromConfig")).toEqual([[
@@ -25,6 +25,6 @@ describe("task1063 mcp registry config snapshot", () => {
       "NodeJS.ProcessEnv",
     ]])
     expect(callArgumentCounts(registrySource, "loadFromConfig").every((count) => count >= 1)).toBe(true)
-    expect(callArgumentCounts(indexSource, "loadFromConfig")).toEqual([2])
+    expect(callArgumentCounts(startupPortSource, "prepareFromConfig")).toEqual([2])
   })
 })

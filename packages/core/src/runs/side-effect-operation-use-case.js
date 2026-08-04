@@ -9,6 +9,42 @@ function sameIdentity(left, right) {
         left.targetFingerprint === right.targetFingerprint &&
         left.paramsFingerprint === right.paramsFingerprint);
 }
+export function prepareSideEffectOperation(input) {
+    const reservation = reserveSideEffectOperation({
+        repository: input.repository,
+        identity: input.prepared.identity,
+    });
+    if (reservation.status === "rejected")
+        return reservation;
+    if (reservation.status === "reserved") {
+        return {
+            status: "reserved_new",
+            prepared: input.prepared,
+            aggregate: reservation.aggregate,
+        };
+    }
+    const status = (() => {
+        switch (reservation.aggregate.state) {
+            case "RESERVED":
+                return "reserved_existing";
+            case "VERIFIED":
+                return "verified_existing";
+            case "COMPENSATED":
+                return "compensated_existing";
+            case "EFFECT_REJECTED":
+                return "effect_rejected_existing";
+            case "MANUAL_INTERVENTION":
+                return "manual_intervention_existing";
+            default:
+                return "active_existing";
+        }
+    })();
+    return {
+        status,
+        prepared: input.prepared,
+        aggregate: reservation.aggregate,
+    };
+}
 export function reserveSideEffectOperation(input) {
     const current = input.repository.loadByScope(input.identity.scopeId);
     if (current) {

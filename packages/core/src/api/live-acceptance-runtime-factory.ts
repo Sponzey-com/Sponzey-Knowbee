@@ -13,6 +13,7 @@ import {
   type LiveAcceptanceRuntimeSnapshotReaders,
   captureLiveAcceptanceRuntimeSnapshot,
 } from "../release/live-acceptance-runtime-snapshot-adapter.js"
+import type { LiveAcceptanceRuntimeIdentityAdmission } from "../release/live-acceptance-runtime-identity.js"
 import {
   type LiveAcceptanceLiveRunIdInput,
   createVerifiedLiveAcceptanceExecutor,
@@ -69,6 +70,7 @@ export type LiveAcceptanceExtensionBaseContextFactory = (
 
 export interface LiveAcceptanceRuntimeFactoryInput {
   readonly readers: LiveAcceptanceRuntimeSnapshotReaders
+  readonly inspectRuntimeIdentity: () => LiveAcceptanceRuntimeIdentityAdmission
   readonly dispatcher: Pick<ToolDispatcher, "dispatch" | "dispatchAgentScoped">
   readonly webContextFor: LiveAcceptanceWebContextFactory
   readonly extensionBaseContextFor: LiveAcceptanceExtensionBaseContextFactory
@@ -206,6 +208,7 @@ export function createLiveAcceptanceRuntimeFactory(
     return createPreflightedLiveAcceptanceExecutor({
       now,
       maxYeonjangAgeMs: policy.maxYeonjangInstanceAgeMs,
+      inspectRuntimeIdentity: input.inspectRuntimeIdentity,
       captureSnapshot: (capturedAt) =>
         captureLiveAcceptanceRuntimeSnapshot({ capturedAt, readers }),
       executeVerified,

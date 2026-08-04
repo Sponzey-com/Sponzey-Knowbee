@@ -10,6 +10,7 @@ import {
   buildSideEffectOperationReceipt,
 } from "../packages/core/src/contracts/side-effect-operation.ts"
 import { closeDb, getDb, insertSession } from "../packages/core/src/db/index.js"
+import { MIGRATIONS } from "../packages/core/src/db/migrations.ts"
 import { SqliteSideEffectOperationRepository } from "../packages/core/src/db/side-effect-operation-repository.ts"
 import { executeSideEffectOperation } from "../packages/core/src/runs/side-effect-operation-executor.ts"
 import {
@@ -111,6 +112,39 @@ describe("side-effect operation SQLite repository", () => {
       kind: "authorization",
       operationRevision: 1,
     })
+  })
+
+  it("preserves existing operation and receipt rows while widening the v77 state contract", () => {
+    const repository = new SqliteSideEffectOperationRepository(getDb(), () => 1)
+    const operationIdentity = identity()
+    const reserved = reserveSideEffectOperation({ repository, identity: operationIdentity })
+    if (reserved.status === "rejected") throw new Error("reserve expected")
+    const changed = transitionReservedSideEffectOperation({
+      repository,
+      operationId: operationIdentity.operationId,
+      scopeId: operationIdentity.scopeId,
+      expectedRevision: 0,
+      event: "START_EFFECT",
+      receipt: receipt(operationIdentity, "START_EFFECT", 1),
+    })
+    if (changed.status !== "applied") throw new Error(changed.reasonCode)
+
+    const migration = MIGRATIONS.find((item) => item.version === 77)
+    if (!migration) throw new Error("migration 77 missing")
+    migration.up(getDb())
+
+    const migrated = new SqliteSideEffectOperationRepository(getDb(), () => 2)
+    expect(migrated.loadByScope(operationIdentity.scopeId)).toMatchObject({
+      state: "EFFECT_STARTED",
+      revision: 1,
+    })
+    expect(migrated.loadReceipt(receipt(operationIdentity, "START_EFFECT", 1).receiptId))
+      .toMatchObject({ event: "START_EFFECT", kind: "authorization" })
+    expect(
+      getDb()
+        .prepare<[], { integrity_check: string }>("PRAGMA integrity_check")
+        .get()?.integrity_check,
+    ).toBe("ok")
   })
 
   it("rolls back receipt insertion when the operation revision update conflicts", () => {

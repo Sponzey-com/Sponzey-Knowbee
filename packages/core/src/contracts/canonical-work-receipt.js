@@ -1,10 +1,11 @@
 export const CANONICAL_WORK_RECEIPT_KINDS = [
     "diagnosis", "analysis_revision", "policy", "execution", "attempt", "verification", "recovery",
     "input_requirement", "user_input", "exhaustion", "cancellation", "delivery",
-    "blocker",
+    "blocker", "approval",
 ];
 export const CANONICAL_EVENT_RECEIPT_KINDS = Object.freeze({
     DIAGNOSIS_ACCEPTED: "diagnosis", ANALYSIS_REVISED: "analysis_revision", POLICY_ALLOWED: "policy", EXECUTION_STARTED: "execution",
+    APPROVAL_REQUESTED: "approval", APPROVAL_CONSUMED: "approval", APPROVAL_DENIED_OR_EXPIRED: "approval",
     ATTEMPT_RECORDED: "attempt", ALL_CRITERIA_VERIFIED: "verification", SOME_CRITERIA_VERIFIED: "verification",
     RECOVERY_ACCEPTED: "recovery", INPUT_REQUIRED: "input_requirement", USER_INPUT_RECEIVED: "user_input",
     POLICY_BLOCKED: "policy", PATHS_EXHAUSTED: "exhaustion", USER_CANCELLED: "cancellation", REPORT_DELIVERED: "delivery",

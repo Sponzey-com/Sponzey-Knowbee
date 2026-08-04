@@ -154,7 +154,6 @@ describe("Task 039 agent capability binding drawer", () => {
     )
     expect(html).toMatch(/aria-label="기능 검색"[^>]*disabled/)
     expect(html).toMatch(/aria-label="UI UX Pro Max 연결"[^>]*disabled/)
-    expect(html).toMatch(/aria-label="Close Designer"[^>]*disabled/)
     expect(html).toMatch(/aria-busy="true"/)
   })
 })

@@ -5,6 +5,7 @@ import {
   validateLiveAcceptanceExecutionRequest,
 } from "../../release/live-acceptance-execution-request.js"
 import type { LiveAcceptanceRunnerResult } from "../../release/live-acceptance-runner.js"
+import type { LiveAcceptanceRuntimeIdentityAdmission } from "../../release/live-acceptance-runtime-identity.js"
 import { authMiddleware, getApiAuthenticationPrincipal } from "../middleware/auth.js"
 
 export type LiveAcceptanceRouteExecutor = (input: {
@@ -49,6 +50,7 @@ export interface LiveAcceptanceRouteOptions {
   readonly enabled: boolean
   readonly execute?: LiveAcceptanceRouteExecutor
   readonly inspectReadiness?: () => readonly LiveAcceptanceCapabilityReadiness[]
+  readonly inspectRuntimeIdentity?: () => LiveAcceptanceRuntimeIdentityAdmission
   readonly now: () => number
 }
 
@@ -139,11 +141,22 @@ export function bindLiveAcceptanceRequestCancellation(input: {
 
 function projectResult(result: LiveAcceptanceRunnerResult): Record<string, unknown> {
   const events = result.events.map(({ state, stage }) => ({ state, ...(stage ? { stage } : {}) }))
+  const runtimeIdentity = result.runtimeIdentity
+    ? {
+        buildId: result.runtimeIdentity.buildId,
+        bundleSha256: result.runtimeIdentity.bundleSha256,
+        processStartedAt: result.runtimeIdentity.processStartedAt,
+        artifactBuiltAt: result.runtimeIdentity.artifactBuiltAt,
+        buildRequired: result.runtimeIdentity.buildRequired,
+        restartRequired: result.runtimeIdentity.restartRequired,
+      }
+    : undefined
   if (result.status === "collected") {
     return {
       status: "collected",
       evidenceCount: result.payload.evidence.length,
       events,
+      ...(runtimeIdentity ? { runtimeIdentity } : {}),
     }
   }
   return {
@@ -155,6 +168,7 @@ function projectResult(result: LiveAcceptanceRunnerResult): Record<string, unkno
         : "live_acceptance_blocked",
     })),
     events,
+    ...(runtimeIdentity ? { runtimeIdentity } : {}),
   }
 }
 
@@ -171,6 +185,24 @@ export function registerLiveAcceptanceRoute(
       return {
         status: "disabled",
         reasonCode: "live_acceptance_disabled",
+      }
+    }
+    let runtimeIdentity: LiveAcceptanceRuntimeIdentityAdmission
+    try {
+      runtimeIdentity = options.inspectRuntimeIdentity?.() ?? {
+        status: "blocked",
+        reasonCode: "live_acceptance_runtime_identity_invalid",
+      }
+    } catch {
+      runtimeIdentity = {
+        status: "blocked",
+        reasonCode: "live_acceptance_runtime_identity_invalid",
+      }
+    }
+    if (runtimeIdentity.status === "blocked") {
+      return {
+        status: "unavailable",
+        reasonCode: runtimeIdentity.reasonCode,
       }
     }
     const capabilities = inspectBoundedReadiness(options.inspectReadiness)

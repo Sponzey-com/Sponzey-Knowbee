@@ -379,6 +379,11 @@ export function createTelegramChunkDeliveryHandler(
           channelTarget: `${context.chatId}${context.threadId !== undefined ? `:${context.threadId}` : ""}`,
           sizeBytes,
           ...(mimeType ? { mimeType } : {}),
+          isVerifiedDelivery: (result) =>
+            Boolean(result.artifactDeliveries?.some((delivery) =>
+              delivery.channel === "telegram"
+              && delivery.filePath === filePath
+            )),
           task: async () => {
             try {
               const sent = await sendFileWithReceipt(
@@ -427,28 +432,6 @@ export function createTelegramChunkDeliveryHandler(
                     deliveryReceipts: sent.deliveryReceipts,
                   },
                 ],
-                ...(artifact.ok && artifact.url
-                  ? {
-                      artifactDeliveries: [
-                        {
-                          toolName: chunk.toolName,
-                          channel: "telegram" as const,
-                          filePath,
-                          url: artifact.url,
-                          ...(artifact.previewUrl ? { previewUrl: artifact.previewUrl } : {}),
-                          ...(artifact.downloadUrl ? { downloadUrl: artifact.downloadUrl } : {}),
-                          previewable: artifact.previewable,
-                          mimeType: artifact.mimeType,
-                          sizeBytes,
-                          ...(caption ? { caption } : {}),
-                          ...(sent.messageIds[0] !== undefined
-                            ? { messageId: sent.messageIds[0] }
-                            : {}),
-                          deliveryReceipts: sent.deliveryReceipts,
-                        },
-                      ],
-                    }
-                  : {}),
               }
             }
           },

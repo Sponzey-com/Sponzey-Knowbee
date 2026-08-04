@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   REQUIRED_USABILITY_TASKS,
   evaluateUsabilityEvidence,
-} from "../scripts/lib/usability-evidence.mjs"
+} from "../scripts/self/lib/usability-evidence.mjs"
 
 function completedTasks(outcome: "success" | "failure" = "success") {
   return REQUIRED_USABILITY_TASKS.map((taskId, index) => ({

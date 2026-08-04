@@ -27,6 +27,7 @@ export interface ExecutionChunkPassResult {
         summary: string;
         reason: string;
         message: string;
+        providerFailureReasonCode?: import("../ai/provider-failure.js").AIProviderFailureReasonCode;
     };
     aiRecoveryLimitStop?: {
         summary: string;

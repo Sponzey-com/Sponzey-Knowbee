@@ -72,7 +72,7 @@ describe("Task 049 doctor Yeonjang internal ID redaction", () => {
       extensionId: "yeonjang-main",
       instanceId: null,
       instanceAlias: "public-office-mac",
-      state: "online",
+      state: "offline",
       supportProfile: "desktop_interactive",
     }))
     expect(JSON.stringify({ manifest, report })).not.toMatch(/private-instance-049|private-session-049|private-client-049|localMarkerInstanceId/u)

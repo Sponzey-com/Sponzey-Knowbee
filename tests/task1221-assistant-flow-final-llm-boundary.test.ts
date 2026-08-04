@@ -168,7 +168,18 @@ describe("task1221 canonical assistant flow and final LLM boundary", () => {
       expectedLanguage: "ko",
     })
     const responseText = "요청하신 내용을 확인했습니다."
-    const receipt = buildAssistantFinalReviewReceipt({ finalInput, responseText })
+    expect(() => buildAssistantFinalReviewReceipt({ finalInput, responseText })).toThrow(
+      /provider provenance/i,
+    )
+    const receipt = buildAssistantFinalReviewReceipt({
+      finalInput,
+      responseText,
+      directProvenance: {
+        taskIntakePromptSha256: "a".repeat(64),
+        finalResponsePromptSha256: "b".repeat(64),
+        providerInvocationRef: "provider-invocation:test-1221",
+      },
+    })
     expect(authorizeAssistantFinalDelivery({ finalInput, responseText, receipt })).toEqual({
       ok: true,
       flow: "direct_answer",

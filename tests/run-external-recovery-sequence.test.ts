@@ -25,6 +25,12 @@ function createBaseParams() {
     source: "telegram" as const,
     onChunk: undefined,
     preview: "preview",
+    responseContext: {
+      originalRequest: "hello",
+      model: "gpt-4o-mini",
+      providerId: "openai",
+      workDir: "/tmp/project",
+    },
     finalizationDependencies: {
       appendRunEvent: vi.fn(),
       setRunStepStatus: vi.fn(),
@@ -49,6 +55,15 @@ describe("external recovery sequence", () => {
 
     expect(result).toEqual({ kind: "none" })
     expect(runExternalRecoveryPass).toHaveBeenCalledTimes(2)
+    expect(runExternalRecoveryPass).toHaveBeenCalledWith(
+      expect.objectContaining({
+        responseContext: expect.objectContaining({
+          originalRequest: "hello",
+          providerId: "openai",
+        }),
+      }),
+      expect.anything(),
+    )
   })
 
   it("stops on the first stop result", async () => {
@@ -61,6 +76,19 @@ describe("external recovery sequence", () => {
     })
 
     expect(result).toEqual({ kind: "stop" })
+    expect(runExternalRecoveryPass).toHaveBeenCalledTimes(1)
+  })
+
+  it("returns review without evaluating later unchanged recoveries", async () => {
+    const runExternalRecoveryPass = vi.fn().mockResolvedValueOnce({ kind: "review" })
+
+    const result = await runExternalRecoverySequence(createBaseParams(), {
+      appendRunEvent: vi.fn(),
+    }, {
+      runExternalRecoveryPass,
+    })
+
+    expect(result).toEqual({ kind: "review" })
     expect(runExternalRecoveryPass).toHaveBeenCalledTimes(1)
   })
 

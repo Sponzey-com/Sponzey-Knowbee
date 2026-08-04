@@ -5,7 +5,7 @@ import type { ResponseLanguageMode } from "../agent/intake.js";
 import type { AgentAttributionSnapshot } from "../contracts/sub-agent-orchestration.js";
 import { type CancellationReportDeliveryAuthorization, type RunChunkDeliveryHandler, emitAssistantTextDelivery } from "./delivery.js";
 import { type DirectAnswerResponseReview, type UserFacingTextSource } from "./loop-directive.js";
-import { type FinalResponseIdentityContext, renderFinalResponseText as renderFinalResponseTextDefault } from "./final-response-renderer.js";
+import { type FinalResponseFailureEvidence, type FinalResponseIdentityContext, renderFinalResponseText as renderFinalResponseTextDefault } from "./final-response-renderer.js";
 import type { RunStatus, RunStepStatus } from "./types.js";
 import { type CanonicalFinalizationTransitionDescriptor } from "./canonical-finalization-lifecycle.js";
 import type { CanonicalFinalOutcome } from "./canonical-work-run-projection.js";
@@ -143,6 +143,7 @@ export interface StandaloneAssistantMessageResponseContext {
     config: AIProviderConfigSnapshot;
     workDir: string;
     identityContext?: FinalResponseIdentityContext | undefined;
+    failureEvidence?: FinalResponseFailureEvidence | undefined;
 }
 export interface StandaloneAssistantMessageNotice {
     kind: string;

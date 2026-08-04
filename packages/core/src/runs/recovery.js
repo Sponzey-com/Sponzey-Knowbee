@@ -45,8 +45,16 @@ function recoveryPromptSectionText(key, variables = {}) {
 }
 export function buildRecoveryKey(parts) {
     // knowbee-critical-decision-audit: recovery.normalized_error_key
-    // Recovery dedupe is based on structured tool/action/target/channel plus sanitized error kind, not user request text.
-    const errorKind = sanitizeUserFacingError(parts.error).kind;
+    // Recovery dedupe prefers an exact reason/evidence identity and keeps sanitized
+    // error-kind fallback only for legacy unstructured failures.
+    const reasonCode = parts.reasonCode?.trim();
+    const errorKind = reasonCode
+        ? `reason:${reasonCode}`
+        : sanitizeUserFacingError(parts.error).kind;
+    const evidenceRefs = [...new Set((parts.evidenceRefs ?? []).map((ref) => ref.trim()).filter(Boolean))].sort();
+    const evidenceFingerprint = evidenceRefs.length > 0
+        ? createHash("sha256").update(evidenceRefs.join("\u0000")).digest("hex")
+        : null;
     return [
         "recovery",
         normalizeRecoveryKeyPart(parts.action || "unknown_action"),
@@ -54,6 +62,7 @@ export function buildRecoveryKey(parts) {
         `channel=${normalizeRecoveryKeyPart(parts.channel ?? "none")}`,
         `tool=${normalizeRecoveryKeyPart(parts.toolName ?? "none")}`,
         `error=${normalizeRecoveryKeyPart(errorKind)}`,
+        ...(evidenceFingerprint ? [`evidence=sha256:${evidenceFingerprint}`] : []),
     ].join("::");
 }
 function normalizeRecoveryKeyPart(value) {
@@ -124,18 +133,23 @@ export function selectCommandFailureRecovery(params) {
     }
     return null;
 }
-function normalizeExecutionRecoveryKey(toolNames, reason) {
+function normalizeExecutionRecoveryKey(toolNames, reason, reasonCode, evidenceRefs) {
     const normalizedTools = [...new Set(toolNames)].sort().join(",");
+    const normalizedEvidenceRefs = [...new Set((evidenceRefs ?? []).map((ref) => ref.trim()).filter(Boolean))].sort();
     return buildRecoveryKey({
         action: "execution_failure",
         toolName: normalizedTools || "none",
         error: reason,
+        ...(reasonCode?.trim() ? { reasonCode: reasonCode.trim() } : {}),
+        ...(normalizedEvidenceRefs.length > 0
+            ? { evidenceRefs: normalizedEvidenceRefs }
+            : {}),
     });
 }
 export function selectGenericExecutionRecovery(params) {
     if (params.executionRecovery.toolNames.length === 0)
         return null;
-    const key = normalizeExecutionRecoveryKey(params.executionRecovery.toolNames, params.executionRecovery.reason);
+    const key = normalizeExecutionRecoveryKey(params.executionRecovery.toolNames, params.executionRecovery.reason, params.executionRecovery.reasonCode, params.executionRecovery.evidenceRefs);
     if (params.seenKeys.has(key))
         return null;
     return {
@@ -351,7 +365,13 @@ export function buildExecutionRecoveryPrompt(params) {
         variables: {
             originalRequest: params.originalRequest,
             summary: params.summary,
-            reason: params.reason,
+            reason: [
+                params.reason,
+                ...(params.reasonCode?.trim()
+                    ? [`reason_code=${params.reasonCode.trim()}`]
+                    : []),
+                ...[...new Set((params.evidenceRefs ?? []).map((ref) => ref.trim()).filter(Boolean))].sort().map((ref) => `evidence_ref=${ref}`),
+            ].join("\n"),
             failedTools: toolLine,
             alternatives: alternativeLines.length > 0
                 ? [recoveryPromptSectionText("preferred_alternatives"), ...alternativeLines].join("\n")

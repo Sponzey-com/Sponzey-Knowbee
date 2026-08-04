@@ -276,12 +276,14 @@ describe("run intake bridge pass", () => {
       requiredToolNames: ["web_search"],
       eventLabel: "LLM intake 실행 계약 적용",
     })
-    expect(moduleDependencies.decideExecutionRoute).toHaveBeenCalledWith(expect.objectContaining({
-      availableTools: [
-        expect.objectContaining({ tool_id: "web_search" }),
-        expect.objectContaining({ tool_id: "web_fetch" }),
-      ],
-    }))
+    expect(moduleDependencies.decideExecutionRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        availableTools: [
+          expect.objectContaining({ tool_id: "web_search" }),
+          expect.objectContaining({ tool_id: "web_fetch" }),
+        ],
+      }),
+    )
   })
 
   it("does not route deterministic reply payloads through direct completion", async () => {
@@ -1578,5 +1580,49 @@ describe("run intake bridge pass", () => {
       textSource: "runtime_deterministic",
       eventLabel: "intake 처리 결과 전달",
     })
+  })
+
+  it("does not synthesize a changed strategy from retryable intake provider wording", async () => {
+    const dependencies = createDependencies()
+    const moduleDependencies = {
+      analyzeTaskIntake: vi.fn().mockResolvedValue({
+        status: "failure" as const,
+        reasonCode: "provider_unavailable" as const,
+        retryable: true,
+        providerInvocationRef: "intake:invocation-1",
+      }),
+      resolveRunRoute: vi.fn(),
+      executeScheduleActions: vi.fn(),
+      createDefaultScheduleActionDependencies: vi.fn(),
+      inferDelegatedTaskProfile: vi.fn(),
+      buildFollowupPrompt: vi.fn(),
+    }
+
+    await expect(
+      runIntakeBridgePass(
+        {
+          message: "컴퓨터 카메라로 사진찍어서 보내줘",
+          originalRequest: "컴퓨터 카메라로 사진찍어서 보내줘",
+          sessionId: "session-camera",
+          requestGroupId: "group-camera",
+          model: "gpt-test",
+          workDir: "/tmp/project",
+          source: "telegram",
+          runId: "run-camera",
+          onChunk: undefined,
+          reuseConversationContext: false,
+        },
+        dependencies,
+        moduleDependencies,
+      ),
+    ).rejects.toMatchObject({
+      kind: "knowbee.canonical_execution_failure.v1",
+      phase: "intake",
+      reasonCode: "provider_unavailable",
+      retryable: true,
+      safeEvidenceRefs: ["llm-invocation:intake:invocation-1"],
+    })
+    expect(dependencies.recordCanonicalIntakeDiagnosis).not.toHaveBeenCalled()
+    expect(dependencies.recordCanonicalExecutionStart).not.toHaveBeenCalled()
   })
 })

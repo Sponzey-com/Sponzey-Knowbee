@@ -53,6 +53,39 @@ describe("canonical intake plan policy adapter", () => {
     expect(result).toMatchObject({ ok: true, input: { constraints: { requiredMethods: ["action:run_task"] } }, descriptor: { kind: "policy" } })
   })
 
+  it("admits an approval-required Tool plan and defers user approval to its exact operation boundary", () => {
+    const result = buildCanonicalIntakePlanPolicy({
+      runId: "run:camera",
+      intake: intake({ exclusive_methods: ["yeonjang_camera_capture"] }),
+      registry,
+      tools: [{
+        name: "yeonjang_camera_capture",
+        description: "",
+        parameters: { type: "object", properties: {} },
+        riskLevel: "high",
+        requiresApproval: true,
+        execute: async () => ({ success: true, output: "" }),
+      }],
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      input: {
+        constraints: {
+          approvedCapabilityIds: [],
+        },
+      },
+      descriptor: { kind: "policy" },
+    })
+    if (!result.ok) throw new Error("expected allowed camera plan")
+    expect(result.input.capabilitySnapshot.bindings).toEqual(
+      expect.arrayContaining([expect.objectContaining({
+        capabilityId: "yeonjang_camera_capture",
+        risk: "approval_required",
+      })]),
+    )
+  })
+
   it("fails closed for unavailable exclusive methods and conflicting targets", () => {
     expect(buildCanonicalIntakePlanPolicy({ runId: "run:1", intake: intake({ exclusive_methods: ["missing"] }), registry, tools: [] })).toMatchObject({
       ok: false,

@@ -7,7 +7,15 @@ export interface LlmSolutionPlanProviderInput {
     goal: string;
     constraints: string[];
     capabilityRefs: string[];
+    capabilityOptions?: LlmSolutionPlanCapabilityOption[];
+    requiredCapabilityRefs: string[];
     completionCriteria: string[];
+}
+export interface LlmSolutionPlanCapabilityOption {
+    capabilityRef: string;
+    description: string;
+    risk: "safe" | "approval_required";
+    effectClass: "read_only" | "local_write" | "external_write" | "destructive" | "financial";
 }
 export interface LlmSolutionPlanProvider {
     planSolution(input: LlmSolutionPlanProviderInput): Promise<unknown> | unknown;
@@ -41,7 +49,7 @@ export type LlmSolutionPlanProviderResult = {
     capabilitySelections: SolutionPlanCapabilitySelection[];
 } | {
     status: "blocked";
-    reasonCode: "invalid_solution_plan_output" | "invalid_solution_plan_receipt" | "solution_plan_capability_ref_missing" | "solution_plan_capability_ref_ambiguous" | "solution_plan_capability_ref_outside_snapshot";
+    reasonCode: "invalid_solution_plan_output" | "invalid_solution_plan_receipt" | "solution_plan_capability_ref_missing" | "solution_plan_capability_ref_ambiguous" | "solution_plan_capability_ref_outside_snapshot" | "solution_plan_required_capability_ref_missing";
     workId: string;
     runId: string;
 };
@@ -55,13 +63,16 @@ export type LlmSolutionPlanProviderWithRepairResult = (Extract<LlmSolutionPlanPr
     workId: string;
     runId: string;
     repairAttempted: boolean;
+    repairFailureReasonCode?: Extract<LlmSolutionPlanProviderResult, {
+        status: "blocked";
+    }>["reasonCode"];
     reanalysis?: {
         action: "changed_strategy_reanalysis";
         failedInputRefs: ["llm-output:solution_plan", "llm-output:repaired_solution_plan"];
         failedStrategies: ["initial_llm_solution_plan", "schema_repair"];
     };
 };
-type CapabilityRefValidationReason = "solution_plan_capability_ref_missing" | "solution_plan_capability_ref_ambiguous" | "solution_plan_capability_ref_outside_snapshot";
+type CapabilityRefValidationReason = "solution_plan_capability_ref_missing" | "solution_plan_capability_ref_ambiguous" | "solution_plan_capability_ref_outside_snapshot" | "solution_plan_required_capability_ref_missing";
 export declare function runLlmSolutionPlanProvider(input: {
     provider: LlmSolutionPlanProvider;
     workId: string;
@@ -73,6 +84,7 @@ export declare function runLlmSolutionPlanProvider(input: {
     goal: string;
     constraints: string[];
     capabilityRefs: string[];
+    requiredCapabilityRefs?: string[];
     completionCriteria: string[];
 }): Promise<LlmSolutionPlanProviderResult>;
 export declare function runLlmSolutionPlanProviderWithRepair(input: Parameters<typeof runLlmSolutionPlanProvider>[0] & {

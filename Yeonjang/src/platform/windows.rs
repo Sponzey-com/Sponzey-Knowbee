@@ -1,8 +1,11 @@
+#![cfg_attr(all(test, not(target_os = "windows")), allow(dead_code))]
+
 use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, atomic::AtomicBool};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
@@ -10,12 +13,12 @@ use serde_json::Value;
 
 use crate::automation::{
     ApplicationLaunchRequest, ApplicationLaunchResult, AutomationBackend, AutomationCapabilities,
-    CameraCaptureRequest, CameraCaptureResult, CameraDevice, CommandExecutionRequest,
-    CommandExecutionResult, FocusedTargetResult, KeyboardActionKind, KeyboardActionRequest,
-    KeyboardActionResult, KeyboardTypeRequest, KeyboardTypeResult, MouseActionKind,
-    MouseActionRequest, MouseActionResult, MouseClickRequest, MouseClickResult, MouseMoveRequest,
-    MouseMoveResult, MousePositionResult, PlatformKind, ScreenCaptureRequest, ScreenCaptureResult,
-    SystemControlRequest, SystemControlResult, SystemSnapshot,
+    CameraCaptureProcessError, CameraCaptureRequest, CameraCaptureResult, CameraDevice,
+    CommandExecutionRequest, CommandExecutionResult, FocusedTargetResult, KeyboardActionKind,
+    KeyboardActionRequest, KeyboardActionResult, KeyboardTypeRequest, KeyboardTypeResult,
+    MouseActionKind, MouseActionRequest, MouseActionResult, MouseClickRequest, MouseClickResult,
+    MouseMoveRequest, MouseMoveResult, MousePositionResult, PlatformKind, ScreenCaptureRequest,
+    ScreenCaptureResult, SystemControlRequest, SystemControlResult, SystemSnapshot,
 };
 use crate::platform::shared;
 
@@ -53,6 +56,7 @@ impl AutomationBackend for PlatformBackend {
             shell: false,
             env: Default::default(),
             timeout_sec: Some(15),
+            cancellation: Arc::new(AtomicBool::new(false)),
         })?;
 
         if !result.success {
@@ -113,17 +117,23 @@ impl AutomationBackend for PlatformBackend {
     }
 
     fn list_cameras(&self) -> Result<Vec<CameraDevice>> {
-        let output = run_powershell_json(WINDOWS_CAMERA_LIST_SCRIPT, &[], "camera discovery")?;
+        let output =
+            run_winrt_powershell_json(WINDOWS_CAMERA_LIST_SCRIPT, &[], "camera discovery")?;
         parse_windows_camera_devices(&output)
     }
 
     fn capture_camera(&self, request: CameraCaptureRequest) -> Result<CameraCaptureResult> {
         shared::validate_camera_request(&request)?;
         let inline_base64 = request.inline_base64;
-        let output_path = resolve_camera_output_path(request.output_path.as_deref());
-        let executable_path = env::current_exe()?;
+        let output_path = resolve_camera_output_path(request.output_path.as_deref())?;
+        let winrt_output_path = normalize_windows_native_output_path(Path::new(&output_path))
+            .ok_or_else(CameraCaptureProcessError::output_path_unsupported)?;
+        let executable_path =
+            env::current_exe().map_err(|_| CameraCaptureProcessError::helper_spawn_failed())?;
         let mut command = Command::new(&executable_path);
-        command.arg("--camera-capture-helper").arg(&output_path);
+        command
+            .arg("--camera-capture-helper")
+            .arg(&winrt_output_path);
         if let Some(device_id) = request.device_id.as_deref() {
             command.arg("--device-id").arg(device_id);
         }
@@ -131,30 +141,20 @@ impl AutomationBackend for PlatformBackend {
             command.arg("--inline-base64");
         }
 
-        let output = command.output().with_context(|| {
-            format!(
-                "failed to execute Yeonjang camera capture command: {}",
-                executable_path.display()
-            )
-        })?;
+        let output = match shared::run_bounded_camera_command(
+            &mut command,
+            shared::camera_capture_timeout(request.capture_timeout_ms),
+            request.cancellation.as_ref(),
+        ) {
+            Ok(output) => output,
+            Err(error) => {
+                let _ = fs::remove_file(&output_path);
+                return Err(error);
+            }
+        };
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            bail!(
-                "camera capture failed: {}{}{}",
-                stderr.trim(),
-                if !stderr.trim().is_empty() && !stdout.trim().is_empty() {
-                    " | "
-                } else {
-                    ""
-                },
-                stdout.trim()
-            );
-        }
-
-        let output: Value = serde_json::from_slice(&output.stdout)
-            .context("failed to parse camera capture helper output")?;
+        let output: Value = serde_json::from_str(&output.stdout)
+            .map_err(|_| CameraCaptureProcessError::helper_protocol_invalid())?;
 
         let metadata = build_file_metadata(&output_path, inline_base64, "image/jpeg");
         let base64_data = if inline_base64 {
@@ -163,7 +163,7 @@ impl AutomationBackend for PlatformBackend {
                     .get("base64Data")
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned)
-                    .context("camera capture must include inline base64 data")?,
+                    .ok_or_else(CameraCaptureProcessError::helper_protocol_invalid)?,
             )
         } else {
             None
@@ -173,6 +173,7 @@ impl AutomationBackend for PlatformBackend {
         }
 
         Ok(CameraCaptureResult {
+            artifact_ref: None,
             device_id: output
                 .get("deviceId")
                 .and_then(Value::as_str)
@@ -200,18 +201,21 @@ impl AutomationBackend for PlatformBackend {
     fn capture_screen(&self, request: ScreenCaptureRequest) -> Result<ScreenCaptureResult> {
         shared::validate_screen_request(&request)?;
         let inline_base64 = request.inline_base64;
-        let output_path = resolve_screen_output_path(request.output_path.as_deref());
+        let output_path = resolve_screen_output_path(request.output_path.as_deref())?;
+        let native_output_path = normalize_windows_native_output_path(Path::new(&output_path))
+            .ok_or_else(crate::automation::ScreenCaptureProcessError::output_path_unsupported)?;
         let output = run_powershell_json(
             WINDOWS_SCREEN_CAPTURE_SCRIPT,
             &[
-                output_path.clone(),
+                native_output_path.to_string_lossy().into_owned(),
                 request
                     .display
                     .map(|value| value.to_string())
                     .unwrap_or_default(),
             ],
             "screen capture",
-        )?;
+        )
+        .map_err(|_| crate::automation::ScreenCaptureProcessError::helper_exited())?;
 
         let metadata = build_file_metadata(&output_path, inline_base64, "image/png");
         let base64_data = if inline_base64 {
@@ -231,6 +235,7 @@ impl AutomationBackend for PlatformBackend {
 
         Ok(ScreenCaptureResult {
             display: request.display,
+            artifact_ref: None,
             output_path: if inline_base64 {
                 None
             } else {
@@ -443,7 +448,7 @@ impl AutomationBackend for PlatformBackend {
         }
         run_powershell_script(
             WINDOWS_KEYBOARD_TYPE_SCRIPT,
-            &[request.text.clone()],
+            std::slice::from_ref(&request.text),
             "keyboard text input",
         )?;
         Ok(KeyboardTypeResult {
@@ -534,25 +539,25 @@ struct WindowsCameraCaptureHelperRequest {
 pub(crate) fn run_camera_capture_helper(args: Vec<String>) -> Result<()> {
     let request = parse_windows_camera_capture_helper_request(args)?;
     let output = if let Some(device_id) = request.device_id.as_deref() {
-        run_powershell_script(
+        run_winrt_powershell_script(
             WINDOWS_CAMERA_CAPTURE_DEVICE_SCRIPT,
             &[request.output_path.clone(), device_id.to_string()],
             "camera capture",
         )?
     } else {
-        run_powershell_script(
+        run_winrt_powershell_script(
             WINDOWS_CAMERA_CAPTURE_SCRIPT,
-            &[request.output_path.clone()],
+            std::slice::from_ref(&request.output_path),
             "camera capture",
         )?
     };
 
     let mut parsed: Value = serde_json::from_str(output.trim())
         .context("failed to parse Windows camera capture helper output")?;
-    if !request.inline_base64 {
-        if let Some(object) = parsed.as_object_mut() {
-            object.remove("base64Data");
-        }
+    if !request.inline_base64
+        && let Some(object) = parsed.as_object_mut()
+    {
+        object.remove("base64Data");
     }
 
     serde_json::to_writer(io::stdout().lock(), &parsed)?;
@@ -674,6 +679,17 @@ fn run_powershell_json(script: &str, args: &[String], context: &str) -> Result<V
         .with_context(|| format!("failed to parse PowerShell JSON output for {context}"))
 }
 
+fn run_winrt_powershell_json(script: &str, args: &[String], context: &str) -> Result<Value> {
+    let stdout = run_winrt_powershell_script(script, args, context)?;
+    serde_json::from_str::<Value>(stdout.trim())
+        .with_context(|| format!("failed to parse PowerShell JSON output for {context}"))
+}
+
+fn run_winrt_powershell_script(script: &str, args: &[String], context: &str) -> Result<String> {
+    let script_with_bridge = format!("{WINDOWS_WINRT_ASYNC_BRIDGE}\n{script}");
+    run_powershell_script(&script_with_bridge, args, context)
+}
+
 fn build_temp_powershell_script_path(context: &str) -> PathBuf {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -753,6 +769,28 @@ fn normalize_windows_mouse_button_name(button: &str) -> Result<&'static str> {
     }
 }
 
+/// Converts Rust's canonical extended-length path into the native helper form.
+///
+/// `std::fs::canonicalize` intentionally returns `\\?\` paths on Windows,
+/// while `StorageFolder::GetFolderFromPathAsync` rejects that prefix even when
+/// the same local path is comfortably below the classic Win32 limit.
+fn normalize_windows_native_output_path(path: &Path) -> Option<PathBuf> {
+    const MAX_WINRT_PATH_UTF16_UNITS: usize = 259;
+
+    let raw = path.to_str()?;
+    let normalized = if let Some(rest) = raw.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = raw.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        raw.to_string()
+    };
+    if normalized.encode_utf16().count() > MAX_WINRT_PATH_UTF16_UNITS {
+        return None;
+    }
+    Some(PathBuf::from(normalized))
+}
+
 fn resolve_optional_mouse_point(
     x: Option<i32>,
     y: Option<i32>,
@@ -811,11 +849,7 @@ fn resolve_windows_virtual_key_code(key: &str) -> Result<u16> {
         }
     }
 
-    let normalized = trimmed
-        .to_lowercase()
-        .replace('_', "")
-        .replace('-', "")
-        .replace(' ', "");
+    let normalized = trimmed.to_lowercase().replace(['_', '-', ' '], "");
 
     let code = match normalized.as_str() {
         "backspace" | "deletebackward" => Some(0x08),
@@ -899,43 +933,37 @@ fn resolve_windows_virtual_key_code(key: &str) -> Result<u16> {
     code.ok_or_else(|| anyhow::anyhow!("unsupported keyboard key for Windows: {trimmed}"))
 }
 
-fn resolve_screen_output_path(output_path: Option<&str>) -> String {
+fn resolve_screen_output_path(output_path: Option<&str>) -> Result<String> {
     match output_path {
         Some(path) if !path.trim().is_empty() => {
             let candidate = Path::new(path);
             if should_treat_as_output_directory(candidate) {
-                candidate
+                Ok(candidate
                     .join(build_generated_capture_name("yeonjang-screen", "png"))
                     .display()
-                    .to_string()
+                    .to_string())
             } else {
-                path.to_string()
+                Ok(path.to_string())
             }
         }
-        _ => env::temp_dir()
-            .join(build_generated_capture_name("yeonjang-screen", "png"))
-            .display()
-            .to_string(),
+        _ => bail!("capture artifact output path is required"),
     }
 }
 
-fn resolve_camera_output_path(output_path: Option<&str>) -> String {
+fn resolve_camera_output_path(output_path: Option<&str>) -> Result<String> {
     match output_path {
         Some(path) if !path.trim().is_empty() => {
             let candidate = Path::new(path);
             if should_treat_as_output_directory(candidate) {
-                candidate
+                Ok(candidate
                     .join(build_generated_capture_name("yeonjang-camera", "jpg"))
                     .display()
-                    .to_string()
+                    .to_string())
             } else {
-                path.to_string()
+                Ok(path.to_string())
             }
         }
-        _ => env::temp_dir()
-            .join(build_generated_capture_name("yeonjang-camera", "jpg"))
-            .display()
-            .to_string(),
+        _ => bail!("capture artifact output path is required"),
     }
 }
 
@@ -1126,10 +1154,55 @@ try {
 } | ConvertTo-Json -Compress
 "#;
 
-const WINDOWS_CAMERA_LIST_SCRIPT: &str = r#"
+/// Resolves PowerShell 5.1's ambiguous WinRT `AsTask` overloads by binding the
+/// exact result type or action contract before awaiting it.
+///
+/// This bridge is infrastructure-only: it does not infer camera success,
+/// permissions, or target identity. The caller still validates the typed
+/// operation result and artifact after the native effect.
+const WINDOWS_WINRT_ASYNC_BRIDGE: &str = r#"
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$script:YeonjangWinRtOperationAsTask =
+  [System.WindowsRuntimeSystemExtensions].GetMethods() |
+  Where-Object {
+    $_.Name -eq 'AsTask' -and
+    $_.IsGenericMethodDefinition -and
+    $_.GetGenericArguments().Count -eq 1 -and
+    $_.GetParameters().Count -eq 1 -and
+    $_.ReturnType.IsGenericType -and
+    $_.ReturnType.GetGenericTypeDefinition().Name -eq 'Task`1'
+  } |
+  Select-Object -First 1
+$script:YeonjangWinRtActionAsTask =
+  [System.WindowsRuntimeSystemExtensions].GetMethods() |
+  Where-Object {
+    $_.Name -eq 'AsTask' -and
+    -not $_.IsGenericMethodDefinition -and
+    $_.GetParameters().Count -eq 1 -and
+    $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncAction'
+  } |
+  Select-Object -First 1
+if ($null -eq $script:YeonjangWinRtOperationAsTask -or
+    $null -eq $script:YeonjangWinRtActionAsTask) {
+  throw 'Required WinRT async bridge methods are unavailable.'
+}
+function Await-WinRtOperation([object]$operation, [type]$resultType) {
+  $task = $script:YeonjangWinRtOperationAsTask.
+    MakeGenericMethod($resultType).
+    Invoke($null, @($operation))
+  return $task.GetAwaiter().GetResult()
+}
+function Await-WinRtAction([object]$action) {
+  $task = $script:YeonjangWinRtActionAsTask.Invoke($null, @($action))
+  $task.GetAwaiter().GetResult() | Out-Null
+}
+"#;
+
+const WINDOWS_CAMERA_LIST_SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
 $null = [Windows.Devices.Enumeration.DeviceInformation, Windows.Devices.Enumeration, ContentType=WindowsRuntime]
+$null = [Windows.Devices.Enumeration.DeviceInformationCollection, Windows.Devices.Enumeration, ContentType=WindowsRuntime]
 $null = [Windows.Devices.Enumeration.DeviceClass, Windows.Devices.Enumeration, ContentType=WindowsRuntime]
 $items = New-Object System.Collections.ArrayList
 $seen = @{}
@@ -1150,7 +1223,7 @@ function Add-Camera([string]$id, [string]$name, [string]$position = $null) {
 }
 try {
   $findAsync = [Windows.Devices.Enumeration.DeviceInformation]::FindAllAsync([Windows.Devices.Enumeration.DeviceClass]::VideoCapture)
-  $devices = [System.WindowsRuntimeSystemExtensions]::AsTask($findAsync).GetAwaiter().GetResult()
+  $devices = Await-WinRtOperation $findAsync ([Windows.Devices.Enumeration.DeviceInformationCollection])
   foreach ($device in $devices) {
     $position = $null
     try {
@@ -1193,10 +1266,10 @@ $items | ConvertTo-Json -Compress
 
 const WINDOWS_CAMERA_CAPTURE_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $null = [Windows.Media.Capture.CameraCaptureUI, Windows.Media.Capture, ContentType=WindowsRuntime]
 $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType=WindowsRuntime]
 $null = [Windows.Storage.FileIO, Windows.Storage, ContentType=WindowsRuntime]
+$null = [Windows.Storage.Streams.IBuffer, Windows.Storage.Streams, ContentType=WindowsRuntime]
 $null = [Windows.Storage.Streams.DataReader, Windows.Storage.Streams, ContentType=WindowsRuntime]
 $outputPath = [System.IO.Path]::GetFullPath($args[0])
 $directory = [System.IO.Path]::GetDirectoryName($outputPath)
@@ -1207,12 +1280,12 @@ $ui = New-Object Windows.Media.Capture.CameraCaptureUI
 $ui.PhotoSettings.AllowCropping = $false
 $ui.PhotoSettings.Format = [Windows.Media.Capture.CameraCaptureUIPhotoFormat]::Jpeg
 $captureAsync = $ui.CaptureFileAsync([Windows.Media.Capture.CameraCaptureUIMode]::Photo)
-$file = [System.WindowsRuntimeSystemExtensions]::AsTask($captureAsync).GetAwaiter().GetResult()
+$file = Await-WinRtOperation $captureAsync ([Windows.Storage.StorageFile])
 if ($null -eq $file) {
   throw 'Camera capture was cancelled or failed.'
 }
 $bufferAsync = [Windows.Storage.FileIO]::ReadBufferAsync($file)
-$buffer = [System.WindowsRuntimeSystemExtensions]::AsTask($bufferAsync).GetAwaiter().GetResult()
+$buffer = Await-WinRtOperation $bufferAsync ([Windows.Storage.Streams.IBuffer])
 $reader = [Windows.Storage.Streams.DataReader]::FromBuffer($buffer)
 $bytes = New-Object byte[] ([int]$buffer.Length)
 $reader.ReadBytes($bytes)
@@ -1226,12 +1299,12 @@ $reader.ReadBytes($bytes)
 
 const WINDOWS_CAMERA_CAPTURE_DEVICE_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $null = [Windows.Media.Capture.MediaCapture, Windows.Media.Capture, ContentType=WindowsRuntime]
 $null = [Windows.Media.Capture.MediaCaptureInitializationSettings, Windows.Media.Capture, ContentType=WindowsRuntime]
 $null = [Windows.Media.Capture.StreamingCaptureMode, Windows.Media.Capture, ContentType=WindowsRuntime]
 $null = [Windows.Media.MediaProperties.ImageEncodingProperties, Windows.Media.MediaProperties, ContentType=WindowsRuntime]
 $null = [Windows.Storage.StorageFolder, Windows.Storage, ContentType=WindowsRuntime]
+$null = [Windows.Storage.StorageFile, Windows.Storage, ContentType=WindowsRuntime]
 $null = [Windows.Storage.CreationCollisionOption, Windows.Storage, ContentType=WindowsRuntime]
 $outputPath = [System.IO.Path]::GetFullPath($args[0])
 $deviceId = $args[1]
@@ -1247,16 +1320,16 @@ $settings = New-Object Windows.Media.Capture.MediaCaptureInitializationSettings
 $settings.StreamingCaptureMode = [Windows.Media.Capture.StreamingCaptureMode]::Video
 $settings.VideoDeviceId = $deviceId
 $mediaCapture = New-Object Windows.Media.Capture.MediaCapture
+$initializeAsync = $mediaCapture.InitializeAsync($settings)
+Await-WinRtAction $initializeAsync
 try {
-  $initializeAsync = $mediaCapture.InitializeAsync($settings)
-  [System.WindowsRuntimeSystemExtensions]::AsTask($initializeAsync).GetAwaiter().GetResult() | Out-Null
   $folderAsync = [Windows.Storage.StorageFolder]::GetFolderFromPathAsync($directory)
-  $folder = [System.WindowsRuntimeSystemExtensions]::AsTask($folderAsync).GetAwaiter().GetResult()
+  $folder = Await-WinRtOperation $folderAsync ([Windows.Storage.StorageFolder])
   $fileAsync = $folder.CreateFileAsync($fileName, [Windows.Storage.CreationCollisionOption]::ReplaceExisting)
-  $file = [System.WindowsRuntimeSystemExtensions]::AsTask($fileAsync).GetAwaiter().GetResult()
+  $file = Await-WinRtOperation $fileAsync ([Windows.Storage.StorageFile])
   $encoding = [Windows.Media.MediaProperties.ImageEncodingProperties]::CreateJpeg()
   $captureAsync = $mediaCapture.CapturePhotoToStorageFileAsync($encoding, $file)
-  [System.WindowsRuntimeSystemExtensions]::AsTask($captureAsync).GetAwaiter().GetResult() | Out-Null
+  Await-WinRtAction $captureAsync
 } finally {
   if ($null -ne $mediaCapture) {
     $mediaCapture.Dispose()
@@ -1521,8 +1594,10 @@ switch ($action) {
 #[cfg(test)]
 mod tests {
     use super::{
-        PlatformBackend, WindowsCameraCaptureHelperRequest, build_windows_modifier_key_codes,
-        normalize_windows_mouse_button_name, parse_windows_camera_capture_helper_request,
+        PlatformBackend, WINDOWS_CAMERA_CAPTURE_DEVICE_SCRIPT, WINDOWS_CAMERA_CAPTURE_SCRIPT,
+        WINDOWS_CAMERA_LIST_SCRIPT, WINDOWS_WINRT_ASYNC_BRIDGE, WindowsCameraCaptureHelperRequest,
+        build_windows_modifier_key_codes, normalize_windows_mouse_button_name,
+        normalize_windows_native_output_path, parse_windows_camera_capture_helper_request,
         parse_windows_camera_devices, resolve_optional_mouse_point,
         resolve_windows_modifier_key_code, resolve_windows_system_control,
         resolve_windows_virtual_key_code,
@@ -1611,6 +1686,69 @@ mod tests {
     }
 
     #[test]
+    fn camera_scripts_use_the_typed_winrt_await_bridge() {
+        assert!(WINDOWS_WINRT_ASYNC_BRIDGE.contains("Await-WinRtOperation"));
+        assert!(WINDOWS_WINRT_ASYNC_BRIDGE.contains("Await-WinRtAction"));
+        for script in [
+            WINDOWS_CAMERA_LIST_SCRIPT,
+            WINDOWS_CAMERA_CAPTURE_SCRIPT,
+            WINDOWS_CAMERA_CAPTURE_DEVICE_SCRIPT,
+        ] {
+            assert!(!script.contains("WindowsRuntimeSystemExtensions]::AsTask("));
+        }
+        assert!(WINDOWS_CAMERA_LIST_SCRIPT.contains("Await-WinRtOperation"));
+        assert!(WINDOWS_CAMERA_CAPTURE_SCRIPT.contains("Await-WinRtOperation"));
+        assert!(WINDOWS_CAMERA_CAPTURE_DEVICE_SCRIPT.contains("Await-WinRtAction"));
+    }
+
+    #[test]
+    fn explicit_camera_initializes_and_captures_exactly_once() {
+        let script = WINDOWS_CAMERA_CAPTURE_DEVICE_SCRIPT;
+        let initialization = script
+            .find("Await-WinRtAction $initializeAsync")
+            .expect("initialization await");
+        let capture = script
+            .find("CapturePhotoToStorageFileAsync")
+            .expect("photo effect");
+        assert!(initialization < capture);
+        assert_eq!(script.matches("InitializeAsync").count(), 1);
+        assert_eq!(
+            script.matches("CapturePhotoToStorageFileAsync").count(),
+            1,
+            "the photo effect itself must never be retried"
+        );
+    }
+
+    #[test]
+    fn native_capture_output_removes_local_extended_path_prefix() {
+        let normalized =
+            normalize_windows_native_output_path(std::path::Path::new(r"\\?\C:\Temp\capture.jpg"))
+                .expect("local extended path should normalize");
+        assert_eq!(normalized, std::path::Path::new(r"C:\Temp\capture.jpg"));
+    }
+
+    #[test]
+    fn native_capture_output_removes_unc_extended_path_prefix() {
+        let normalized = normalize_windows_native_output_path(std::path::Path::new(
+            r"\\?\UNC\server\share\capture.jpg",
+        ))
+        .expect("UNC extended path should normalize");
+        assert_eq!(
+            normalized,
+            std::path::Path::new(r"\\server\share\capture.jpg")
+        );
+    }
+
+    #[test]
+    fn native_capture_output_rejects_overlong_path_before_effect() {
+        let path = format!(r"C:\Temp\{}\capture.jpg", "a".repeat(260));
+        assert!(
+            normalize_windows_native_output_path(std::path::Path::new(&path)).is_none(),
+            "overlong native path must fail before capture dispatch"
+        );
+    }
+
+    #[test]
     fn windows_capabilities_report_camera_management() {
         let capabilities = PlatformBackend.capabilities();
         assert!(capabilities.camera_management);
@@ -1684,6 +1822,21 @@ mod tests {
                 output_path: "capture.jpg".to_string(),
                 device_id: Some("camera-1".to_string()),
                 inline_base64: true,
+            }
+        );
+    }
+
+    #[test]
+    fn camera_helper_without_device_keeps_the_explicit_ui_fallback_contract() {
+        let parsed = parse_windows_camera_capture_helper_request(vec!["capture.jpg".to_string()])
+            .expect("fallback helper args should parse");
+
+        assert_eq!(
+            parsed,
+            WindowsCameraCaptureHelperRequest {
+                output_path: "capture.jpg".to_string(),
+                device_id: None,
+                inline_base64: false,
             }
         );
     }

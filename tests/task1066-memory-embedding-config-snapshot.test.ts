@@ -29,11 +29,9 @@ describe("task1066 memory embedding config snapshot", () => {
     expect(embeddingSource).toContain("getVectorBackendStatus(memoryConfig?: EmbeddingMemoryConfig)")
     expect(typesSource).toContain("memoryConfig?: MemoryConfig")
     expect(legacyConfigAccesses(dispatcherSource)).toEqual([])
-    expect(functionParameterTypes(dispatcherSource, "buildRuntimeToolContext")).toEqual([[
-      "ToolContext",
-      "ToolRuntimeConfigSnapshot",
-    ]])
-    expect(callArgumentCounts(dispatcherSource, "buildRuntimeToolContext")).toEqual([2])
+    expect(functionParameterTypes(dispatcherSource, "buildRuntimeToolContext")[0]?.[0]).toContain("ctx: ToolContext")
+    expect(functionParameterTypes(dispatcherSource, "buildRuntimeToolContext")[0]?.[0]).toContain("config: ToolRuntimeConfigSnapshot")
+    expect(callArgumentCounts(dispatcherSource, "buildRuntimeToolContext")).toEqual([1])
     expect(storeSource).toContain("ensureChunkEmbeddings(result.documentId, result.chunkIds, params.memoryConfig)")
     expect(storeSource).toContain("getEmbeddingProvider(params.memoryConfig)")
     expect(searchSource).toContain("getEmbeddingProvider(options?.memoryConfig)")

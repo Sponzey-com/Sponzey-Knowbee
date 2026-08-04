@@ -308,7 +308,7 @@ describe("task124 live performance audit CLI", () => {
     const command = spawnSync(
       process.execPath,
       [
-        resolve("scripts/audit-live-flow-performance.mjs"),
+        resolve("scripts/self/audit-live-flow-performance.mjs"),
         "--database",
         databasePath,
         "--run-id",
@@ -330,7 +330,7 @@ describe("task124 live performance audit CLI", () => {
     const missing = spawnSync(
       process.execPath,
       [
-        resolve("scripts/audit-live-flow-performance.mjs"),
+        resolve("scripts/self/audit-live-flow-performance.mjs"),
         "--database",
         databasePath,
         "--run-id",

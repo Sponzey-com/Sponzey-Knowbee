@@ -103,6 +103,49 @@ describe("task034 Yeonjang public capability projection", () => {
     })
   })
 
+  it("keeps a healthy session runnable across heartbeat scheduling jitter", () => {
+    const result = buildYeonjangCapabilityProjection({
+      instances: [
+        instance({
+          lastSeenAt: 0,
+          lastHeartbeatAgeMs: 35_000,
+        }),
+      ],
+      now: 35_000,
+      publicRefForInstanceId: (id) => `ref-${id}`,
+    })
+
+    expect(result.items[0]).toMatchObject({
+      status: "ready",
+      stale: false,
+      runnable: true,
+      actionableIssue: null,
+    })
+  })
+
+  it("preserves canonical runnable admission for a degraded health projection", () => {
+    const result = buildYeonjangCapabilityProjection({
+      instances: [
+        instance({
+          state: "degraded",
+          runnableTarget: true,
+          trustState: "trusted",
+          scopeAccess: "allowed",
+        }),
+      ],
+      now: 1_000,
+      publicRefForInstanceId: (id) => `ref-${id}`,
+    })
+
+    expect(result.items[0]).toMatchObject({
+      status: "ready",
+      permissionState: "ready",
+      runnable: true,
+      actionableIssue: null,
+    })
+    expect(result.summary.computerControlAvailable).toBe(true)
+  })
+
   it("keeps Knowbee fallback explicit when no Yeonjang is installed", () => {
     const result = buildYeonjangCapabilityProjection({
       instances: [],

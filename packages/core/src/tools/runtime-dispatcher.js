@@ -37,6 +37,9 @@ export function grantRunSingleApproval(runId, toolName, params) {
 export function resolvePendingInteraction(runId, decision) {
     return getToolDispatcher().resolvePendingInteraction(runId, decision);
 }
+export function resolveApprovalDecision(command) {
+    return getToolDispatcher().resolveApprovalDecision(command);
+}
 export function listPendingInteractions() {
     return getToolDispatcher().listPendingInteractions();
 }

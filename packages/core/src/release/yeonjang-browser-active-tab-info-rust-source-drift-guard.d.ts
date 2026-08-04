@@ -18,6 +18,7 @@ export type YeonjangBrowserActiveTabInfoRustSourceDriftResult = {
 };
 export declare function validateYeonjangBrowserActiveTabInfoRustSourceDrift(input: {
     source: string;
+    descriptorSource?: string;
 }): YeonjangBrowserActiveTabInfoRustSourceDriftResult;
 export declare function hasYeonjangBrowserActiveTabInfoRuntimeInventoryExposure(source: string): boolean;
 //# sourceMappingURL=yeonjang-browser-active-tab-info-rust-source-drift-guard.d.ts.map

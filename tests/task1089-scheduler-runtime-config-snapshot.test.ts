@@ -18,15 +18,16 @@ describe("task1089 scheduler runtime config snapshot", () => {
       "KnowbeeConfig",
       "ArtifactStorageContext",
       "MemoryJournalRepository",
+      "AgentHierarchyStorage",
     ]])
     expect(functionParameterTypes(schedulerSource, "getHealth")).toEqual([["KnowbeeConfig"]])
     expect(functionParameterTypes(schedulerSource, "runNow")).toEqual([[
-      "string", "string", "KnowbeeConfig", "ArtifactStorageContext", "MemoryJournalRepository",
+      "string", "string", "KnowbeeConfig", "ArtifactStorageContext", "MemoryJournalRepository", "AgentHierarchyStorage",
     ]])
     expect(functionParameterTypes(schedulerSource, "runNowInternal")).toEqual([[
-      "string", "string", "KnowbeeConfig", "ArtifactStorageContext", "MemoryJournalRepository",
+      "string", "string", "KnowbeeConfig", "ArtifactStorageContext", "MemoryJournalRepository", "AgentHierarchyStorage",
     ]])
-    expect(callArgumentCounts(serverSource, "startScheduler")).toEqual([3])
+    expect(callArgumentCounts(serverSource, "startScheduler")).toEqual([4])
     expect(callArgumentCounts(schedulerRouteSource, "getHealth")).toEqual([1])
     expect(callArgumentCounts(schedulesRouteSource, "createArtifactStorageContext").every((count) => count === 1)).toBe(true)
   })

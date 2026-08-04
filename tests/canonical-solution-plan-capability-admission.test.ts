@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   buildSolutionPlanCapabilityAdmission,
   recordSolutionPlanCapabilityAdmission,
+  resolveOwnerScopedCapabilitySelectionTargets,
 } from "../packages/core/src/runs/solution-plan-capability-admission.ts"
 
 const base = {
@@ -22,6 +23,111 @@ const base = {
 }
 
 describe("canonical solution-plan capability admission", () => {
+  it("separates the canonical binding target from the exact external execution target", () => {
+    expect(buildSolutionPlanCapabilityAdmission({
+      runId: "run:external-target",
+      solutionPlanReceiptId: "receipt:solution-plan:external-target",
+      policyReceiptId: "receipt:policy:external-target",
+      capabilitySnapshot: {
+        snapshotId: "snapshot:external-target",
+        fingerprint: `sha256:${"a".repeat(64)}`,
+        bindings: [
+          {
+            capabilityId: "yeonjang_camera_capture",
+            targetId: "agent:registered-owner",
+            risk: "approval_required",
+          },
+        ],
+        exclusions: [],
+      },
+      selections: [
+        {
+          stepId: "capture",
+          capabilityRef: "capability:yeonjang_camera_capture",
+        },
+      ],
+      bindingTargetId: "agent:registered-owner",
+      executionTargetId: "yeonjang-main",
+      approvedCapabilityIds: [],
+    })).toMatchObject({
+      ok: true,
+      descriptor: {
+        outcome: "approval_required",
+        entries: [
+          {
+            capabilityId: "yeonjang_camera_capture",
+            targetId: "yeonjang-main",
+          },
+        ],
+      },
+    })
+  })
+
+  it("binds capture and delivery selections to their own targets", () => {
+    expect(buildSolutionPlanCapabilityAdmission({
+      runId: "run:camera-delivery-targets",
+      solutionPlanReceiptId: "receipt:solution-plan:camera-delivery-targets",
+      policyReceiptId: "receipt:policy:camera-delivery-targets",
+      capabilitySnapshot: {
+        snapshotId: "snapshot:camera-delivery-targets",
+        fingerprint: `sha256:${"c".repeat(64)}`,
+        bindings: [
+          {
+            capabilityId: "yeonjang_camera_capture",
+            targetId: "agent:camera-owner",
+            risk: "approval_required",
+          },
+          {
+            capabilityId: "telegram_send_file",
+            targetId: "agent:channel-owner",
+            risk: "approval_required",
+          },
+        ],
+        exclusions: [],
+      },
+      selections: [
+        {
+          stepId: "capture",
+          capabilityRef: "capability:yeonjang_camera_capture",
+        },
+        {
+          stepId: "deliver",
+          capabilityRef: "capability:telegram_send_file",
+        },
+      ],
+      selectionTargets: {
+        capture: {
+          bindingTargetId: "agent:camera-owner",
+          executionTargetId: "yeonjang:main",
+        },
+        deliver: {
+          bindingTargetId: "agent:channel-owner",
+          executionTargetId: "destination:telegram:current-chat",
+        },
+      },
+      approvedCapabilityIds: [
+        "yeonjang_camera_capture",
+        "telegram_send_file",
+      ],
+    })).toMatchObject({
+      ok: true,
+      descriptor: {
+        entries: [
+          {
+            stepId: "capture",
+            capabilityId: "yeonjang_camera_capture",
+            targetId: "yeonjang:main",
+          },
+          {
+            stepId: "deliver",
+            capabilityId: "telegram_send_file",
+            targetId: "destination:telegram:current-chat",
+          },
+        ],
+      },
+    })
+  })
+
   it("builds one deterministic, redacted receipt bound to the plan and snapshot", () => {
     const first = buildSolutionPlanCapabilityAdmission(base)
     const second = buildSolutionPlanCapabilityAdmission(base)
@@ -76,6 +182,40 @@ describe("canonical solution-plan capability admission", () => {
     expect(
       buildSolutionPlanCapabilityAdmission({ ...base, targetId: "agent:other" }),
     ).toEqual({ ok: false, reasonCode: "capability_admission_target_unavailable" })
+  })
+
+  it("binds topology-owned tools to their one canonical owner binding", () => {
+    const capabilitySnapshot = {
+      ...base.capabilitySnapshot,
+      bindings: [
+        ...base.capabilitySnapshot.bindings,
+        {
+          capabilityId: "web.search",
+          targetId: "agent:remote-worker",
+          risk: "safe" as const,
+        },
+      ],
+    }
+    const selectionTargets = resolveOwnerScopedCapabilitySelectionTargets({
+      capabilitySnapshot,
+      selections: base.selections,
+      ownerAgentId: "agent:knowbee",
+    })
+
+    expect(selectionTargets).toEqual({
+      research: { bindingTargetId: "agent:knowbee" },
+    })
+    expect(buildSolutionPlanCapabilityAdmission({
+      ...base,
+      targetId: undefined,
+      capabilitySnapshot,
+      selectionTargets,
+    })).toMatchObject({
+      ok: true,
+      descriptor: {
+        entries: [{ bindingTargetId: "agent:knowbee", targetId: "agent:knowbee" }],
+      },
+    })
   })
 
   it("preserves an approval-scoped binding for the existing execution approval boundary", () => {

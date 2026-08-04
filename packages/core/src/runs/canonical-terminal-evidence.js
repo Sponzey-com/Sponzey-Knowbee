@@ -1,5 +1,6 @@
 import { CANONICAL_EVENT_RECEIPT_KINDS, validateCanonicalWorkReceipt, } from "../contracts/canonical-work-receipt.js";
 const TERMINAL_CAUSE_EVENT_OUTCOMES = Object.freeze({
+    APPROVAL_DENIED_OR_EXPIRED: "blocked",
     INPUT_REQUIRED: "input_required",
     POLICY_BLOCKED: "policy_block",
     RESULT_BLOCKED: "blocked",

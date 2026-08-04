@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest"
 import {
   DEFAULT_PROJECT_EVIDENCE_PATH,
   auditProjectRequirements,
-} from "../scripts/audit-project-requirements.mjs"
+} from "../scripts/self/audit-project-requirements.mjs"
 
 describe("task009 tracked PROJECT section 1 evidence", () => {
   it("uses a tracked canonical evidence catalog and proves every catalog entry", () => {

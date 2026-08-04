@@ -61,6 +61,7 @@ export function normalizeLogPurposeVisibility(
 interface LoggerRuntimeEnvSnapshot {
   readonly logLevel: string | undefined
   readonly logPurpose: string | undefined
+  readonly fieldDebugUntil: string | undefined
   readonly noColorDisabled: boolean
   readonly stdoutIsTty: boolean
 }
@@ -71,11 +72,19 @@ const LOGGER_PROCESS: NodeJS.Process | undefined =
 const LOGGER_RUNTIME_ENV: LoggerRuntimeEnvSnapshot = Object.freeze({
   logLevel: LOGGER_PROCESS?.env["KNOWBEE_LOG_LEVEL"],
   logPurpose: LOGGER_PROCESS?.env["KNOWBEE_LOG_PURPOSE"],
+  fieldDebugUntil: LOGGER_PROCESS?.env["KNOWBEE_FIELD_DEBUG_UNTIL"],
   noColorDisabled: LOGGER_PROCESS?.env["KNOWBEE_NO_COLOR"] != null,
   stdoutIsTty: LOGGER_PROCESS?.stdout.isTTY === true,
 })
 
 const minLevel = normalizeLogLevel(LOGGER_RUNTIME_ENV.logLevel)
+
+function parseFieldDebugDeadline(value: string | undefined): number | undefined {
+  const normalized = value?.trim()
+  if (!normalized) return undefined
+  const deadline = Number(normalized)
+  return Number.isSafeInteger(deadline) && deadline > 0 ? deadline : undefined
+}
 
 const LOG_POLICY = {
   minLevel,
@@ -83,6 +92,7 @@ const LOG_POLICY = {
     LOGGER_RUNTIME_ENV.logPurpose,
     minLevel === "debug" ? "debug" : "product",
   ),
+  fieldDebugDeadline: parseFieldDebugDeadline(LOGGER_RUNTIME_ENV.fieldDebugUntil),
   color: !LOGGER_RUNTIME_ENV.noColorDisabled && LOGGER_RUNTIME_ENV.stdoutIsTty,
 }
 
@@ -203,9 +213,15 @@ export function createLogger(namespace: string): Logger {
     else console.log(line)
   }
 
+  function fieldDebug(message: string, ...args: unknown[]): void {
+    const deadline = LOG_POLICY.fieldDebugDeadline
+    if (deadline == null || Date.now() >= deadline) return
+    log("info", "debug", message, ...args)
+  }
+
   return {
     product: (msg, ...args) => log("info", "product", msg, ...args),
-    fieldDebug: (msg, ...args) => log("info", "debug", msg, ...args),
+    fieldDebug,
     development: (msg, ...args) => log("info", "development", msg, ...args),
     debug: (msg, ...args) => log("debug", "debug", msg, ...args),
     info: (msg, ...args) => log("info", "product", msg, ...args),

@@ -1143,7 +1143,7 @@ describe("task189 trusted release approval workflow", () => {
     const standardDryRun = spawnSync(
       process.execPath,
       [
-        resolve("scripts/run-release-dry-run-rehearsal.mjs"),
+        resolve("scripts/self/run-release-dry-run-rehearsal.mjs"),
         "--json",
         "--rollout-database",
         databasePath,

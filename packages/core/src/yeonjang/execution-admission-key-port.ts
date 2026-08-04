@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto"
+import { createHash, createHmac } from "node:crypto"
 
 export type YeonjangExecutionAdmissionKeyHandle = {
   readonly keyId: string
@@ -25,15 +25,30 @@ export function createYeonjangExecutionAdmissionPasswordHandle(input: {
   const keyId = input.keyId.trim()
   const connectionPassword = input.connectionPassword.trim()
   if (!extensionId || !keyId || !connectionPassword) return undefined
+  const authorizationKey = normalizeManagedAuthorizationSecret(
+    connectionPassword,
+  )
   return Object.freeze({
     keyId,
     extensionId,
     ...(sessionId ? { sessionId } : {}),
     sign: ({ canonicalPayload }: { readonly canonicalPayload: string }) =>
-      `hmac-sha256:${createHmac("sha256", connectionPassword)
+      `hmac-sha256:${createHmac("sha256", authorizationKey)
         .update(canonicalPayload, "utf8")
         .digest("hex")}`,
   })
+}
+
+function normalizeManagedAuthorizationSecret(
+  connectionPassword: string,
+): string | Buffer {
+  if (Buffer.byteLength(connectionPassword, "utf8") >= 16) {
+    return connectionPassword
+  }
+  return createHash("sha256")
+    .update("knowbee.yeonjang.execution-admission.v1\u0000", "utf8")
+    .update(connectionPassword, "utf8")
+    .digest()
 }
 
 /**

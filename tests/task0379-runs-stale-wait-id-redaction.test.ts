@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
 const source = readFileSync(
-  join(process.cwd(), "packages", "webui", "src", "pages", "RunsPage.tsx"),
+  join(process.cwd(), "packages", "webui", "src", "pages", "RunsDiagnosticPage.tsx"),
   "utf-8",
 )
 

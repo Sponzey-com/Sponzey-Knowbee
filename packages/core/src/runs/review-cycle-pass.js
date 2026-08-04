@@ -7,6 +7,7 @@ import { decideReviewGate } from "./review-gate.js";
 import { loadPromptValue } from "../memory/prompt-fragments.js";
 import { buildStructuredFollowupKey } from "./completion-application.js";
 import { resolveRuntimeToolMetadataFromDispatcher, validateAndAppendYeonjangSideEffectGoalValidationEvidence, } from "../yeonjang/side-effect-goal-validation-review.js";
+import { enforceDirectArtifactDeliveryFollowup } from "./direct-artifact-delivery-followup.js";
 const defaultModuleDependencies = {
     decideReviewGate,
     runReviewPass,
@@ -139,72 +140,95 @@ export async function runReviewCyclePass(params, dependencies, moduleDependencie
         requiresFilesystemMutation: params.requiresFilesystemMutation,
         truncatedOutputRecoveryAttempted: params.truncatedOutputRecoveryAttempted,
     });
-    const reviewPass = reviewGate.kind === "skip"
+    // A direct artifact delivery is an already-admitted deterministic next step.
+    // Do not ask completion review to assess a delivery receipt before the
+    // delivery tool has been allowed to create one.
+    const directDeliveryFollowup = enforceDirectArtifactDeliveryFollowup({
+        source: params.source,
+        deliveryOutcome: params.deliveryOutcome,
+        successfulTools: params.successfulTools,
+        review: null,
+    });
+    const reviewPass = directDeliveryFollowup
         ? {
-            review: null,
+            review: directDeliveryFollowup,
             syntheticApproval: null,
         }
-        : await moduleDependencies.runReviewPass({
-            instructionRuntime: params.instructionRuntime,
-            runId: params.runId,
-            sessionId: params.sessionId,
-            executionProfile: {
-                approvalRequired: params.approvalRequired,
-                approvalTool: params.approvalTool,
-            },
-            originalRequest: params.originalRequest,
-            preview: params.preview,
-            priorAssistantMessages: params.priorAssistantMessages,
-            ...(params.model ? { model: params.model } : {}),
-            ...(params.providerId ? { providerId: params.providerId } : {}),
-            ...(params.provider ? { provider: params.provider } : {}),
-            config: params.config,
-            ...(params.workDir ? { workDir: params.workDir } : {}),
-            usesWorkerRuntime: params.usesWorkerRuntime,
-            requiresPrivilegedToolExecution: params.requiresPrivilegedToolExecution,
-            successfulTools: params.successfulTools,
-            ...(params.requiresSuccessfulToolEvidence
-                ? { requiresSuccessfulToolEvidence: true }
-                : {}),
-            completionConditions: params.completionConditions,
-            seenFollowupTransitionKeys: params.seenFollowupPrompts,
-            operationalEvidence,
-            successfulFileDeliveries: params.successfulFileDeliveries,
-            sawRealFilesystemMutation: params.sawRealFilesystemMutation,
-            deliveryOutcome: params.deliveryOutcome,
-        }, {
-            ...defaultReviewPassDependencies,
-            ...(dependencies.onReviewError ? { onReviewError: dependencies.onReviewError } : {}),
-            onReviewRejected: (reasonCode, attempt) => {
-                dependencies.appendRunEvent(params.runId, `completion_review_rejected:${reasonCode}:attempt_${attempt}`);
-            },
-        });
+        : reviewGate.kind === "skip"
+            ? {
+                review: null,
+                syntheticApproval: null,
+            }
+            : await moduleDependencies.runReviewPass({
+                instructionRuntime: params.instructionRuntime,
+                runId: params.runId,
+                sessionId: params.sessionId,
+                executionProfile: {
+                    approvalRequired: params.approvalRequired,
+                    approvalTool: params.approvalTool,
+                },
+                originalRequest: params.originalRequest,
+                preview: params.preview,
+                priorAssistantMessages: params.priorAssistantMessages,
+                ...(params.model ? { model: params.model } : {}),
+                ...(params.providerId ? { providerId: params.providerId } : {}),
+                ...(params.provider ? { provider: params.provider } : {}),
+                config: params.config,
+                ...(params.workDir ? { workDir: params.workDir } : {}),
+                usesWorkerRuntime: params.usesWorkerRuntime,
+                requiresPrivilegedToolExecution: params.requiresPrivilegedToolExecution,
+                successfulTools: params.successfulTools,
+                ...(params.requiresSuccessfulToolEvidence
+                    ? { requiresSuccessfulToolEvidence: true }
+                    : {}),
+                completionConditions: params.completionConditions,
+                seenFollowupTransitionKeys: params.seenFollowupPrompts,
+                operationalEvidence,
+                successfulFileDeliveries: params.successfulFileDeliveries,
+                sawRealFilesystemMutation: params.sawRealFilesystemMutation,
+                deliveryOutcome: params.deliveryOutcome,
+            }, {
+                ...defaultReviewPassDependencies,
+                ...(dependencies.onReviewError ? { onReviewError: dependencies.onReviewError } : {}),
+                onReviewRejected: (reasonCode, attempt) => {
+                    dependencies.appendRunEvent(params.runId, `completion_review_rejected:${reasonCode}:attempt_${attempt}`);
+                },
+            });
+    const review = directDeliveryFollowup ?? enforceDirectArtifactDeliveryFollowup({
+        source: params.source,
+        deliveryOutcome: params.deliveryOutcome,
+        successfulTools: params.successfulTools,
+        review: reviewPass.review,
+    });
+    if (review !== reviewPass.review) {
+        dependencies.appendRunEvent(params.runId, "direct_artifact_delivery_followup_enforced");
+    }
     params.priorAssistantMessages.push(params.preview);
     if (reviewPass.reviewFailureReasonCode) {
         dependencies.appendRunEvent(params.runId, `completion_review_terminal_failure:${reviewPass.reviewFailureReasonCode}`);
     }
     const currentRun = moduleDependencies.getRootRun(params.runId);
-    const structuredFollowupKey = reviewPass.review?.status === "followup" && reviewPass.review.followupPrompt?.trim()
+    const structuredFollowupKey = review?.status === "followup" && review.followupPrompt?.trim()
         ? buildStructuredFollowupKey({
             kind: "followup",
-            summary: reviewPass.review.summary || "Follow-up required.",
-            reason: reviewPass.review.reason || "",
-            remainingItems: reviewPass.review.remainingItems ?? [],
-            followupPrompt: reviewPass.review.followupPrompt,
-            followupEvidenceRefs: reviewPass.review.followupEvidenceRefs ?? [],
-            evidenceRevisionRefs: reviewPass.review.contextReceipt?.evidenceRefs
-                ?? reviewPass.review.followupEvidenceRefs
+            summary: review.summary || "Follow-up required.",
+            reason: review.reason || "",
+            remainingItems: review.remainingItems ?? [],
+            followupPrompt: review.followupPrompt,
+            followupEvidenceRefs: review.followupEvidenceRefs ?? [],
+            evidenceRevisionRefs: review.contextReceipt?.evidenceRefs
+                ?? review.followupEvidenceRefs
                 ?? [],
-            ...(reviewPass.review.followupExecutionMode
-                ? { followupExecutionMode: reviewPass.review.followupExecutionMode }
+            ...(review.followupExecutionMode
+                ? { followupExecutionMode: review.followupExecutionMode }
                 : {}),
-            ...(reviewPass.review.followupRequiredToolNames?.length
-                ? { followupRequiredToolNames: reviewPass.review.followupRequiredToolNames }
+            ...(review.followupRequiredToolNames?.length
+                ? { followupRequiredToolNames: review.followupRequiredToolNames }
                 : {}),
-            ...(reviewPass.review.followupTargetRefs?.length
-                ? { followupTargetRefs: reviewPass.review.followupTargetRefs }
+            ...(review.followupTargetRefs?.length
+                ? { followupTargetRefs: review.followupTargetRefs }
                 : {}),
-        }, reviewPass.review.contextReceipt?.evidenceRefs)
+        }, review.contextReceipt?.evidenceRefs)
         : undefined;
     return moduleDependencies.runReviewOutcomePass({
         runId: params.runId,
@@ -215,7 +239,7 @@ export async function runReviewCyclePass(params, dependencies, moduleDependencie
         preview: params.preview,
         ...(params.previewSource ? { previewSource: params.previewSource } : {}),
         ...(params.deferredPreviewDelivery ? { deferredPreviewDelivery: true } : {}),
-        review: reviewPass.review,
+        review,
         ...(reviewPass.reviewFailureReasonCode
             ? { reviewFailureReasonCode: reviewPass.reviewFailureReasonCode }
             : {}),

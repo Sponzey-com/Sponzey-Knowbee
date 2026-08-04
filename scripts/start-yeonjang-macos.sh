@@ -11,14 +11,18 @@ TARGET_TRIPLE="${YEONJANG_TARGET_TRIPLE:-}"
 BINARY_NAME="knowbee-yeonjang"
 APP_NAME="Yeonjang"
 RESTART_YEONJANG="0"
+BUILD_YEONJANG="0"
 
 while (($# > 0)); do
   case "$1" in
     --restart)
       RESTART_YEONJANG="1"
       ;;
+    --build)
+      BUILD_YEONJANG="1"
+      ;;
     *)
-      echo "사용법: bash scripts/start-yeonjang-macos.sh [--restart]"
+      echo "사용법: bash scripts/start-yeonjang-macos.sh [--restart] [--build]"
       exit 1
       ;;
   esac
@@ -118,21 +122,47 @@ resolve_binary_path() {
   fi
 }
 
+validate_app_bundle() {
+  local app_bundle="${1:-}"
+  [[ -n "$app_bundle" ]] || return 1
+  [[ -x "$app_bundle/Contents/MacOS/$APP_NAME" ]] || return 1
+  command -v codesign >/dev/null 2>&1 || return 1
+  codesign --verify --deep --strict "$app_bundle" >/dev/null 2>&1
+}
+
 if [[ "$RESTART_YEONJANG" == "1" ]]; then
   echo "Yeonjang macOS GUI를 재시작합니다..."
 fi
 
-# The build script replaces the entire .app bundle. Terminate the owned app
-# before that replacement so no running binary is left detached from its bundle.
-stop_existing
-
-echo "Yeonjang macOS GUI 빌드를 확인합니다..."
-bash "$ROOT_DIR/scripts/build-yeonjang-macos.sh"
-
 APP_BUNDLE_PATH="$(resolve_app_bundle_path)"
+if [[ "$BUILD_YEONJANG" == "1" || -z "$APP_BUNDLE_PATH" ]]; then
+  if [[ "$BUILD_YEONJANG" == "1" ]]; then
+    echo "명시적으로 요청된 Yeonjang macOS GUI 빌드를 실행합니다..."
+  else
+    echo "Yeonjang 앱 번들이 없어 최초 빌드를 실행합니다..."
+  fi
+
+  # The build script replaces the entire .app bundle. Terminate the owned app
+  # before that replacement so no running binary is left detached from its bundle.
+  stop_existing
+  bash "$ROOT_DIR/scripts/build-yeonjang-macos.sh"
+  APP_BUNDLE_PATH="$(resolve_app_bundle_path)"
+else
+  if ! validate_app_bundle "$APP_BUNDLE_PATH"; then
+    echo "기존 Yeonjang 앱 번들 검증에 실패했습니다. --build 로 다시 빌드하세요."
+    exit 1
+  fi
+  echo "검증된 기존 Yeonjang 앱 번들을 재사용합니다."
+  stop_existing
+fi
+
 BINARY_PATH="$(resolve_binary_path)"
 if [[ -z "$APP_BUNDLE_PATH" && ! -x "$BINARY_PATH" ]]; then
   echo "Yeonjang 실행 파일을 찾을 수 없습니다: $BINARY_PATH"
+  exit 1
+fi
+if [[ -n "$APP_BUNDLE_PATH" ]] && ! validate_app_bundle "$APP_BUNDLE_PATH"; then
+  echo "Yeonjang 앱 번들 서명 검증에 실패했습니다: $APP_BUNDLE_PATH"
   exit 1
 fi
 

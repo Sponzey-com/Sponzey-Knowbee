@@ -9,6 +9,7 @@
 - `store.ts`: 메모리 저장/검색 API와 프롬프트 문맥 조립
 - `journal.ts`: `memory.db3` 실행 저널, FTS 검색, 성공/실패 요약 기록
 - `knowbee-md.ts`: 워크스페이스 메모리 파일과 `prompts/` 기반 시스템 프롬프트 source 로딩
+- `prompt-regression.ts`: 등록된 prompt source와 runtime assembly 계약의 정적 회귀 검증
 - `compressor.ts`: 문맥 압축 로직
 - `embedding.ts`, `search.ts`, `file-indexer.ts`: 시맨틱 검색과 파일 기반 검색 지원
 

@@ -66,7 +66,10 @@ describe("Task 196 Yeonjang browser.active_tab_info Rust inventory contract", ()
 
   it("opens Rust capability inventory while keeping dispatch closed until the observation backend exists", () => {
     const nodeSource = readFileSync("Yeonjang/src/node.rs", "utf8")
-    const nodeImplementation = nodeSource.split("#[cfg(test)]")[0] ?? nodeSource
+    const testModule = /^#\[cfg\(test\)\]\s*\r?\nmod tests\s*\{/mu.exec(nodeSource)
+    const nodeImplementation = testModule?.index === undefined
+      ? nodeSource
+      : nodeSource.slice(0, testModule.index)
 
     expect(nodeImplementation).toMatch(/"name"\s*:\s*"browser\.active_tab_info"/u)
     expect(nodeImplementation).toContain('"browser.active_tab_info": capability_entry')

@@ -12,6 +12,7 @@ import { canonicalWorkIdForRootRun } from "../contracts/canonical-work-aggregate
 import type { CanonicalTerminalCause } from "../contracts/canonical-work-receipt.js"
 import type { CanonicalWorkEvent } from "../contracts/canonical-work-state.js"
 import type { FinalDeliveryCommitResult } from "./channel-finalizer.js"
+import { parseUserInputRequirement } from "../contracts/user-input-requirement.js"
 import type { CompletionApplicationDecision } from "./completion-application.js"
 import type { CompletionStageState } from "./completion-state.js"
 import type { UserFacingTextSource } from "./loop-directive.js"
@@ -530,9 +531,18 @@ export function buildCanonicalCompletionOutcomeDescriptor(input: {
   }
 
   if (input.application.kind === "awaiting_user") {
+    const requirement = parseUserInputRequirement(
+      input.application.inputRequirement,
+    )
+    if (!requirement) {
+      return { ok: false, reasonCode: "canonical_user_input_evidence_missing" }
+    }
+    const missingFieldFingerprints = requirement.missingFields
+      .map((field) => `sha256:${hash(field)}` as const)
+      .sort()
     const requirementFingerprint = `sha256:${hash(JSON.stringify({
-      reason: input.application.reason ?? "",
-      remainingItems: input.application.remainingItems ?? [],
+      resolutionKind: requirement.resolutionKind,
+      missingFieldFingerprints,
     }))}`
     return {
       ok: true,
@@ -540,13 +550,25 @@ export function buildCanonicalCompletionOutcomeDescriptor(input: {
         runId,
         workId,
         event: "INPUT_REQUIRED",
+        waitingKind: "user_input",
         receipt: buildReceipt({
           runId,
           workId,
           stage: "input-requirement",
           kind: "input_requirement",
-          evidence: { previewFingerprint, requirementFingerprint },
-          evidenceRefs: [`input-requirement:${runId}:${requirementFingerprint.slice(-24)}`],
+          evidence: {
+            previewFingerprint,
+            requirementFingerprint,
+            resolutionKind: requirement.resolutionKind,
+            missingFieldFingerprints,
+          },
+          evidenceRefs: [
+            `input-requirement:${runId}:${requirementFingerprint.slice(-24)}`,
+            ...missingFieldFingerprints.map(
+              (fieldFingerprint) =>
+                `missing-field:${fieldFingerprint.slice(-24)}`,
+            ),
+          ],
         }),
       },
     }

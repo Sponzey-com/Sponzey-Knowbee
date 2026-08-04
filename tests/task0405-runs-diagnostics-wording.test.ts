@@ -2,11 +2,10 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
-const runsSource = readFileSync(join(process.cwd(), "packages", "webui", "src", "pages", "RunsPage.tsx"), "utf-8")
-
-const diagnosticsStart = runsSource.indexOf('text("운영 진단", "Operational diagnostics")')
-const diagnosticsEnd = runsSource.indexOf("function issueKindLabel(", diagnosticsStart)
-const diagnosticsSource = runsSource.slice(diagnosticsStart, diagnosticsEnd)
+const diagnosticsSource = readFileSync(
+  join(process.cwd(), "packages", "webui", "src", "pages", "RunsDiagnosticPage.tsx"),
+  "utf-8",
+)
 
 describe("task0405 runs diagnostics wording", () => {
   it("uses user-facing wording for internal instruction and activity diagnostics", () => {

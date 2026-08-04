@@ -51,6 +51,7 @@ export interface ExecutionAttemptPassResult {
     summary: string
     reason: string
     message: string
+    providerFailureReasonCode?: import("../ai/provider-failure.js").AIProviderFailureReasonCode
   } | null
   workerRuntimeRecovery: {
     summary: string
@@ -262,6 +263,7 @@ export async function runExecutionAttemptPass(
         }
         if (executionChunkPass.abortExecutionStream) {
           abortExecutionStream()
+          break
         }
       } else if (chunk.type === "error") {
         const currentRun = moduleDependencies.getRootRun(params.runId)

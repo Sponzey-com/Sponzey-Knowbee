@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
-const runsPageSource = readFileSync(join(process.cwd(), "packages", "webui", "src", "pages", "RunsPage.tsx"), "utf-8")
+const runsPageSource = readFileSync(join(process.cwd(), "packages", "webui", "src", "pages", "RunsDiagnosticPage.tsx"), "utf-8")
 
 describe("task0435 memory trace status wording", () => {
   it("maps memory trace scope, source, and reason through user-facing helpers", () => {
@@ -22,7 +22,8 @@ describe("task0435 memory trace status wording", () => {
     expect(runsPageSource).not.toContain('trace.score == null ? "n/a"')
     expect(runsPageSource).not.toContain("trace.latency_ms ?? 0")
 
-    expect(runsPageSource).toContain('trace.score == null ? text("확인 필요", "Needs check")')
+    expect(runsPageSource).toContain("trace.score == null")
+    expect(runsPageSource).toContain('? text("확인 필요", "Needs check")')
     expect(runsPageSource).toContain('trace.latency_ms == null ? text("확인 필요", "Needs check")')
   })
 
@@ -34,4 +35,3 @@ describe("task0435 memory trace status wording", () => {
     expect(runsPageSource).toContain('text("장기 기억", "Long-term memory")')
   })
 })
-

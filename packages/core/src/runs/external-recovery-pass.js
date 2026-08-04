@@ -23,6 +23,7 @@ export async function runExternalRecoveryPass(params, dependencies, moduleDepend
         source: params.source,
         onChunk: params.onChunk,
         preview: params.preview,
+        ...(params.responseContext ? { responseContext: params.responseContext } : {}),
         plan: recoveryPlan,
         seenKeys: params.seenKeys,
         finalizationDependencies: params.finalizationDependencies,
@@ -31,6 +32,9 @@ export async function runExternalRecoveryPass(params, dependencies, moduleDepend
     });
     if (appliedRecovery.kind === "stop") {
         return { kind: "stop" };
+    }
+    if (appliedRecovery.kind === "review") {
+        return { kind: "review" };
     }
     return {
         kind: "retry",

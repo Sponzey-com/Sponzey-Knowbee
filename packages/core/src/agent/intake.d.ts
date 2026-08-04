@@ -102,6 +102,7 @@ export declare function promotePromissoryDirectAnswer(result: TaskIntakeResult, 
 export interface AnalyzeTaskIntakeParams {
     instructionRuntime: InstructionRuntimeContext;
     userMessage: string;
+    runId?: string;
     sessionId?: string;
     requestGroupId?: string;
     model?: string;
@@ -125,8 +126,16 @@ export type TaskIntakeAnalysisOutcome = {
     status: "failure";
     reasonCode: TaskIntakeAnalysisFailureReason;
     retryable: boolean;
+    providerInvocationRef: string;
 };
 export declare function isTaskIntakeAnalysisOutcome(value: unknown): value is TaskIntakeAnalysisOutcome;
 export declare function analyzeTaskIntakeOutcome(params: AnalyzeTaskIntakeParams): Promise<TaskIntakeAnalysisOutcome>;
 export declare function analyzeTaskIntake(params: AnalyzeTaskIntakeParams): Promise<TaskIntakeResult | null>;
+export interface RuntimeIntakeExtensionSnapshot {
+    extensionId: string;
+    instanceId?: string | null | undefined;
+    displayName?: string | null | undefined;
+    state?: string | null | undefined;
+}
+export declare function projectRuntimeIntakeContext(snapshots: RuntimeIntakeExtensionSnapshot[]): string[];
 //# sourceMappingURL=intake.d.ts.map

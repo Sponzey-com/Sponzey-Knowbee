@@ -14,6 +14,10 @@ export function collectYeonjangSideEffectGoalValidationCandidate(input) {
         return false;
     if (typeof details.operationId !== "string" || !details.operationId.trim())
         return false;
+    if (sanitizedAttemptFailure(details.failure)
+        && !sanitizedRecoveryEvidence(details.recoveryEvidence)) {
+        return false;
+    }
     input.candidates.push({
         toolName: input.toolName,
         output: input.output,
@@ -113,21 +117,109 @@ function buildExpectedOutput(originalRequest, completionConditions) {
 }
 function buildSanitizedObservedStateSummary(candidate) {
     const output = candidate.output.trim();
+    const details = record(candidate.details);
+    const recoveryEvidence = sanitizedRecoveryEvidence(details?.recoveryEvidence);
+    const failure = sanitizedAttemptFailure(details?.failure);
     return [
         `tool_name: ${candidate.toolName}`,
         "manual_intervention_result: true",
         output ? `public_tool_output: ${output}` : "",
+        recoveryEvidence ? `artifact_ref: ${recoveryEvidence.artifactRef}` : "",
+        recoveryEvidence ? `artifact_mime: ${recoveryEvidence.mimeType}` : "",
+        recoveryEvidence ? `artifact_size_bytes: ${recoveryEvidence.sizeBytes}` : "",
+        recoveryEvidence ? `post_check_reason: ${recoveryEvidence.reasonCode}` : "",
+        recoveryEvidence
+            ? `resolved_device_present: ${recoveryEvidence.resolvedDevicePresent ? "true" : "false"}`
+            : "",
+        failure ? `command_failure_reason: ${failure.reasonCode}` : "",
+        failure ? `command_terminal_stage: ${failure.terminalStage}` : "",
+        failure ? `command_retry_safety: ${failure.retrySafety}` : "",
     ].filter(Boolean).join("\n");
 }
 function buildSanitizedManualResultDetails(details) {
     const value = record(details);
     if (!value)
         return {};
+    const recoveryEvidence = sanitizedRecoveryEvidence(value.recoveryEvidence);
+    const failure = sanitizedAttemptFailure(value.failure);
     return {
         kind: value.kind,
         ...(typeof value.operationId === "string" ? { operationId: value.operationId } : {}),
         ...(typeof value.reasonCode === "string" ? { reasonCode: value.reasonCode } : {}),
         ...(value.goalValidationCandidate === true ? { goalValidationCandidate: true } : {}),
+        ...(failure ? { failure } : {}),
+        ...(recoveryEvidence ? { recoveryEvidence } : {}),
+    };
+}
+function sanitizedAttemptFailure(value) {
+    const failure = record(value);
+    const allowedReasons = new Set([
+        "camera_response_timeout",
+        "camera_handler_timeout",
+        "camera_helper_timeout",
+        "camera_capture_timeout",
+        "camera_busy",
+        "camera_capture_cancelled",
+        "camera_permission_denied",
+        "camera_permission_restricted",
+        "camera_permission_not_determined",
+    ]);
+    const allowedStages = new Set([
+        "response_timeout",
+        "handler_timeout",
+        "helper_timeout",
+        "handler_failed",
+        "cancelled",
+        "rejected",
+    ]);
+    const allowedRetrySafety = new Set([
+        "safe_same_command",
+        "change_strategy",
+        "unknown_effect_state",
+        "completed",
+    ]);
+    if (typeof failure?.reasonCode !== "string"
+        || !allowedReasons.has(failure.reasonCode)
+        || typeof failure.terminalStage !== "string"
+        || !allowedStages.has(failure.terminalStage)
+        || typeof failure.retrySafety !== "string"
+        || !allowedRetrySafety.has(failure.retrySafety)
+        || failure.retrySameStrategy !== false) {
+        return undefined;
+    }
+    return {
+        reasonCode: failure.reasonCode,
+        terminalStage: failure.terminalStage,
+        retrySafety: failure.retrySafety,
+        retrySameStrategy: false,
+    };
+}
+function sanitizedRecoveryEvidence(value) {
+    const evidence = record(value);
+    if (evidence?.kind !== "artifact_candidate" ||
+        typeof evidence.artifactRef !== "string" ||
+        !/^artifact:[0-9a-f-]{36}$/iu.test(evidence.artifactRef) ||
+        typeof evidence.mimeType !== "string" ||
+        !["image/jpeg", "image/png", "image/webp"].includes(evidence.mimeType) ||
+        typeof evidence.sizeBytes !== "number" ||
+        !Number.isSafeInteger(evidence.sizeBytes) ||
+        evidence.sizeBytes <= 0 ||
+        typeof evidence.reasonCode !== "string" ||
+        ![
+            "camera_resolved_device_missing",
+            "camera_resolved_device_mismatch",
+            "camera_device_constraint_evidence_missing",
+        ].includes(evidence.reasonCode) ||
+        typeof evidence.resolvedDevicePresent !== "boolean") {
+        return undefined;
+    }
+    return {
+        kind: "artifact_candidate",
+        artifactRef: evidence.artifactRef,
+        mimeType: evidence.mimeType,
+        sizeBytes: evidence.sizeBytes,
+        reasonCode: evidence.reasonCode,
+        resolvedDevicePresent: evidence.resolvedDevicePresent,
     };
 }
 function inferToolGroup(toolName, methodIds) {

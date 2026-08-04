@@ -70,6 +70,7 @@ describe("logger policy", () => {
   it("allows field-debug logs when debug purpose visibility is selected", async () => {
     vi.stubEnv("KNOWBEE_NO_COLOR", "1")
     vi.stubEnv("KNOWBEE_LOG_PURPOSE", "debug")
+    vi.stubEnv("KNOWBEE_FIELD_DEBUG_UNTIL", "4102444800000")
     const stdout = captureStdout()
     const { createLogger } = await importLoggerForCase("debug-purpose")
     const log = createLogger("test:logger")
@@ -83,9 +84,38 @@ describe("logger policy", () => {
     expect(output).not.toContain("development detail")
   })
 
+  it("requires a future bootstrap deadline before emitting field-debug logs", async () => {
+    vi.stubEnv("KNOWBEE_NO_COLOR", "1")
+    vi.stubEnv("KNOWBEE_LOG_PURPOSE", "debug")
+    vi.stubEnv("KNOWBEE_FIELD_DEBUG_UNTIL", "")
+    const stdout = captureStdout()
+    const { createLogger } = await importLoggerForCase("field-debug-deadline-required")
+    const log = createLogger("test:logger")
+
+    log.fieldDebug("field diagnosis")
+
+    const output = stdout.mock.calls.map((call) => String(call[0])).join("")
+    expect(output).not.toContain("field diagnosis")
+  })
+
+  it("stops field-debug logs after the bootstrap deadline", async () => {
+    vi.stubEnv("KNOWBEE_NO_COLOR", "1")
+    vi.stubEnv("KNOWBEE_LOG_PURPOSE", "debug")
+    vi.stubEnv("KNOWBEE_FIELD_DEBUG_UNTIL", "1")
+    const stdout = captureStdout()
+    const { createLogger } = await importLoggerForCase("field-debug-deadline-expired")
+    const log = createLogger("test:logger")
+
+    log.fieldDebug("expired field diagnosis")
+
+    const output = stdout.mock.calls.map((call) => String(call[0])).join("")
+    expect(output).not.toContain("expired field diagnosis")
+  })
+
   it("allows development logs only when development purpose visibility is selected", async () => {
     vi.stubEnv("KNOWBEE_NO_COLOR", "1")
     vi.stubEnv("KNOWBEE_LOG_PURPOSE", "dev")
+    vi.stubEnv("KNOWBEE_FIELD_DEBUG_UNTIL", "4102444800000")
     const stdout = captureStdout()
     const { createLogger } = await importLoggerForCase("development-purpose")
     const log = createLogger("test:logger")
@@ -211,6 +241,7 @@ describe("logger policy", () => {
   it("preserves diagnostic identifiers in field-debug logs when debug visibility is enabled", async () => {
     vi.stubEnv("KNOWBEE_NO_COLOR", "1")
     vi.stubEnv("KNOWBEE_LOG_PURPOSE", "debug")
+    vi.stubEnv("KNOWBEE_FIELD_DEBUG_UNTIL", "4102444800000")
     const stdout = captureStdout()
     const { createLogger } = await importLoggerForCase("debug-identifiers")
     const log = createLogger("test:logger")

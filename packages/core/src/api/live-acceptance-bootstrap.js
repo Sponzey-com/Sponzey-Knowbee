@@ -12,6 +12,7 @@ import { createLiveAcceptanceSigningRequestFileSink } from "../release/live-acce
 import { invokeYeonjangMethod } from "../yeonjang/mqtt-client.js";
 import { listYeonjangRegistryInstances } from "../yeonjang/registry.js";
 import { createLiveAcceptanceRuntimeFactory } from "./live-acceptance-runtime-factory.js";
+import { createLiveAcceptanceRuntimeIdentityInspector } from "../runtime/live-acceptance-runtime-identity-adapter.js";
 const LIVE_MAX_AGE_MS = 60_000;
 const LIVE_YEONJANG_TIMEOUT_MS = 15_000;
 export function resolveConfiguredTelegramLiveSmokeTarget(config) {
@@ -32,6 +33,7 @@ export function createLiveAcceptanceBootstrapDependencies(input) {
     const ports = input.ports;
     const factory = createLiveAcceptanceRuntimeFactory({
         readers: ports.readers,
+        inspectRuntimeIdentity: ports.inspectRuntimeIdentity,
         dispatcher: input.dispatcher,
         webContextFor: ({ runId, scenario, signal }) => ({
             artifactStorage: ports.artifactStorage,
@@ -95,6 +97,7 @@ export function createLiveAcceptanceBootstrapDependencies(input) {
     return Object.freeze({
         liveAcceptanceExecutorFactory: factory,
         liveAcceptanceSelectionAvailabilityInspector,
+        liveAcceptanceRuntimeIdentityInspector: ports.inspectRuntimeIdentity,
     });
 }
 function findAuditEventId(input) {
@@ -147,6 +150,7 @@ export function createDefaultLiveAcceptanceBootstrapDependencies(input) {
     });
     const ports = Object.freeze({
         readers,
+        inspectRuntimeIdentity: createLiveAcceptanceRuntimeIdentityInspector(),
         llm: createFileBackedLiveAcceptanceLlmPorts({
             provider,
             model,

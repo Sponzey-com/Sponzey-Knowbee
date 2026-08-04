@@ -1,5 +1,5 @@
 import type { RunChunkDeliveryHandler } from "./delivery.js";
-import type { FinalizationDependencies, FinalizationSource } from "./finalization.js";
+import type { FinalizationDependencies, FinalizationSource, StandaloneAssistantMessageResponseContext } from "./finalization.js";
 import { runExternalRecoveryPass } from "./external-recovery-pass.js";
 import type { ExternalRecoveryKind, ExternalRecoveryPayload, ExternalRecoveryState } from "./external-recovery.js";
 import type { TaskProfile } from "./types.js";
@@ -7,6 +7,8 @@ export type ExternalRecoverySequenceResult = {
     kind: "none";
 } | {
     kind: "stop";
+} | {
+    kind: "review";
 } | {
     kind: "retry";
     nextState: ExternalRecoveryState;
@@ -34,6 +36,7 @@ export declare function runExternalRecoverySequence(params: {
     source: FinalizationSource;
     onChunk: RunChunkDeliveryHandler | undefined;
     preview: string;
+    responseContext?: StandaloneAssistantMessageResponseContext | undefined;
     finalizationDependencies: FinalizationDependencies;
 }, dependencies: ExternalRecoverySequenceDependencies, moduleDependencies?: ExternalRecoverySequenceModuleDependencies): Promise<ExternalRecoverySequenceResult>;
 export {};

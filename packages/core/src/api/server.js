@@ -328,6 +328,9 @@ export async function startServer(cfg, paths, runtime) {
             ? { execute: liveAcceptanceResolution.executor }
             : {}),
         inspectReadiness: inspectLiveAcceptanceReadiness,
+        ...(runtime.liveAcceptanceRuntimeIdentityInspector
+            ? { inspectRuntimeIdentity: runtime.liveAcceptanceRuntimeIdentityInspector }
+            : {}),
         now: Date.now,
     });
     registerDoctorRoute(server);

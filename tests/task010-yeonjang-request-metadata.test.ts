@@ -36,12 +36,14 @@ describe("yeonjang request metadata helper", () => {
   })
 
   it("merges request lineage metadata into yeonjang client options", () => {
-    expect(withYeonjangRequestMetadata(createContext(), {
+    const ctx = createContext()
+    expect(withYeonjangRequestMetadata(ctx, {
       extensionId: "yeonjang-main",
       timeoutMs: 15_000,
     })).toEqual({
       extensionId: "yeonjang-main",
       timeoutMs: 15_000,
+      signal: ctx.signal,
       metadata: {
         runId: "run-1",
         requestGroupId: "request-group-1",

@@ -2692,7 +2692,7 @@
           "kind": "rejection_test",
           "owner": "tests/canonical-plan-policy.test.ts",
           "assertions": [
-            "Unavailable exclusive methods, wrong targets and unapproved risky methods cannot execute."
+            "Unavailable exclusive methods and wrong targets are rejected while risky capabilities retain their execution-approval classification."
           ],
           "coveredScopes": [
             "target",
@@ -2702,7 +2702,7 @@
             "allows only a plan whose exclusive method and target have an available safe binding",
             "exclusive_method_unavailable",
             "target_binding_unavailable",
-            "capability_approval_required"
+            "preserves risky capability classification while deferring approval to execution"
           ],
           "claimRefs": [
             "obligation:fnv1a:fc8286ff"
@@ -2833,8 +2833,8 @@
           ],
           "markers": [
             "target_binding_unavailable",
-            "requires explicit approval for a risky capability",
-            "capability_approval_required"
+            "preserves risky capability classification while deferring approval to execution",
+            "risk: \"approval_required\""
           ],
           "claimRefs": [
             "obligation:fnv1a:595f6a0a"
@@ -3394,9 +3394,9 @@
             "adapter_isolation"
           ],
           "markers": [
-            "Apply Layered Architecture, Clean Architecture, SOLID, TDD, and Tidy First",
-            "Direct dependencies point inward: Presentation and Infrastructure depend on Application contracts",
-            "Keep Domain deterministic. Domain code must not import or call HTTP, database, filesystem, network"
+            "Separate Presentation/Delivery, Application/Use Case, Domain, Infrastructure, and External",
+            "Dependencies point inward. Domain depends only on values and rules. Application depends on",
+            "Domain and Application must not directly use framework, HTTP, database, filesystem, network,"
           ],
           "claimRefs": [
             "obligation:fnv1a:02bce4a3"
@@ -4578,9 +4578,9 @@
             "use_case"
           ],
           "markers": [
-            "Separate Domain, Application/Use Case, Interface Adapter, Infrastructure/Framework, and Presentation/Delivery responsibilities",
-            "Direct dependencies point inward: Presentation and Infrastructure depend on Application contracts",
-            "Keep Domain deterministic. Domain code must not import or call HTTP, database, filesystem, network"
+            "Separate Presentation/Delivery, Application/Use Case, Domain, Infrastructure, and External",
+            "Dependencies point inward. Domain depends only on values and rules. Application depends on",
+            "Domain and Application must not directly use framework, HTTP, database, filesystem, network,"
           ],
           "claimRefs": [
             "obligation:fnv1a:9f1d4c2c"
@@ -4769,8 +4769,8 @@
             "no_semantic_verdict"
           ],
           "markers": [
-            "Code owns schema validation, policy, permissions, state transitions, transport, persistence, and redaction",
-            "Do not let adapters decide natural-language meaning, market value freshness, user-goal completion, agent suitability, or final response wording"
+            "Code owns schemas, policy, permissions, state transitions,",
+            "The LLM owns request meaning, plan selection, evidence interpretation, result sufficiency, and"
           ],
           "claimRefs": [
             "obligation:fnv1a:70eddbb7"
@@ -5044,7 +5044,7 @@
           ],
           "markers": [
             "runLlmSolutionPlanProviderWithRepair",
-            "validationIssues: structuredClone",
+            "validationIssues: solutionPlanValidationIssues(initial.reasonCode)",
             "repairAttemptNumber: 1",
             "action: \"changed_strategy_reanalysis\""
           ],
@@ -5385,8 +5385,8 @@
             "user_response"
           ],
           "markers": [
-            "Keep prompt assembly, harness policy, runtime orchestration, persistence, channel delivery, WebUI projection, and extension transport in distinct modules",
-            "Give the LLM structured context and validate its structured output with the harness"
+            "Keep prompt assembly, LLM policy validation, runtime orchestration, persistence, channel",
+            "Parse `unknown` at external boundaries with a versioned schema;"
           ],
           "claimRefs": [
             "obligation:fnv1a:23a3f1c6"
@@ -16985,6 +16985,63 @@
           ],
           "claimRefs": [
             "obligation:fnv1a:b1cd7901"
+          ]
+        }
+      ]
+    },
+    "PRJ-59a99323": {
+      "obligationChecksum": "fnv1a:59a99323",
+      "requiredScopes": [
+        "semantic_boundary"
+      ],
+      "evidence": [
+        {
+          "kind": "authoritative_source",
+          "owner": "packages/core/src/contracts/diagnosis-action-routing.ts",
+          "assertions": [
+            "Request diagnosis routes are admitted from a bound structured LLM receipt without interpreting free-form language."
+          ],
+          "coveredScopes": [
+            "semantic_boundary"
+          ],
+          "markers": [
+            "createLlmDiagnosisReceipt",
+            "authorizeDiagnosisActionRoute"
+          ],
+          "claimRefs": [
+            "obligation:fnv1a:59a99323"
+          ]
+        },
+        {
+          "kind": "positive_test",
+          "owner": "tests/task011-no-semantic-regex-routing.test.ts",
+          "assertions": [
+            "Free-form risk and confidence wording cannot alter the structured LLM-selected execution route."
+          ],
+          "coveredScopes": [
+            "semantic_boundary"
+          ],
+          "markers": [
+            "does not reinterpret free-form risk or confidence text"
+          ],
+          "claimRefs": [
+            "obligation:fnv1a:59a99323"
+          ]
+        },
+        {
+          "kind": "rejection_test",
+          "owner": "tests/task022-no-keyword-execution-decision.test.ts",
+          "assertions": [
+            "The static execution-decision gate rejects untracked keyword and raw-message semantic routing."
+          ],
+          "coveredScopes": [
+            "semantic_boundary"
+          ],
+          "markers": [
+            "fails an untracked raw-message includes fixture"
+          ],
+          "claimRefs": [
+            "obligation:fnv1a:59a99323"
           ]
         }
       ]

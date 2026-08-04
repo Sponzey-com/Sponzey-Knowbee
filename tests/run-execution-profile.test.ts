@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest"
-import { buildResolvedExecutionProfile, createExecutionLoopRuntimeState } from "../packages/core/src/runs/execution-profile.ts"
+import {
+  buildResolvedExecutionProfile,
+  createExecutionLoopRuntimeState,
+  resolveCapabilityScopedArtifactDeliverySemantics,
+} from "../packages/core/src/runs/execution-profile.ts"
 
 describe("execution profile", () => {
   it("builds fallback structured request and intent envelope from a plain message", () => {
@@ -89,6 +93,54 @@ describe("execution profile", () => {
     expect(result.wantsDirectArtifactDelivery).toBe(false)
     expect(result.intentEnvelope.execution_semantics.artifactDelivery).toBe("none")
     expect(result.intentEnvelope.delivery_mode).toBe("none")
+  })
+
+  it("promotes an admitted Telegram file-delivery capability into the canonical delivery contract", () => {
+    const result = resolveCapabilityScopedArtifactDeliverySemantics({
+      source: "telegram",
+      executionSemantics: {
+        filesystemEffect: "none",
+        privilegedOperation: "required",
+        artifactDelivery: "none",
+        approvalRequired: true,
+        approvalTool: "yeonjang_camera_capture",
+      },
+      admittedCapabilityExecutionScope: {
+        selectedToolTargets: [{
+          stepId: "step-delivery",
+          capabilityId: "telegram_send_file",
+          bindingTargetId: "agent:knowbee",
+          targetId: `destination:telegram:sha256:${"a".repeat(64)}`,
+          toolNames: ["telegram_send_file"],
+        }],
+      },
+    })
+
+    expect(result.artifactDelivery).toBe("direct")
+  })
+
+  it("does not invent direct delivery without a matching admitted channel capability", () => {
+    const result = resolveCapabilityScopedArtifactDeliverySemantics({
+      source: "telegram",
+      executionSemantics: {
+        filesystemEffect: "none",
+        privilegedOperation: "required",
+        artifactDelivery: "none",
+        approvalRequired: true,
+        approvalTool: "yeonjang_camera_capture",
+      },
+      admittedCapabilityExecutionScope: {
+        selectedToolTargets: [{
+          stepId: "step-camera",
+          capabilityId: "yeonjang_camera_capture",
+          bindingTargetId: "agent:knowbee",
+          targetId: "yeonjang:instance-1",
+          toolNames: ["yeonjang_camera_capture"],
+        }],
+      },
+    })
+
+    expect(result.artifactDelivery).toBe("none")
   })
 
   it("keeps direct artifact delivery when the structured execution semantics say direct", () => {

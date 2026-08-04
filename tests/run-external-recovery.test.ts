@@ -2,7 +2,35 @@ import { describe, expect, it } from "vitest"
 import { planExternalRecovery } from "../packages/core/src/runs/external-recovery.ts"
 
 describe("external recovery planning", () => {
-  it("stops when the same ai recovery repeats on the same route", () => {
+  it("does not resend a deterministic provider contract rejection", () => {
+    const plan = planExternalRecovery({
+      kind: "ai",
+      taskProfile: "general_chat",
+      current: {
+        model: "gpt-5",
+        providerId: "openai",
+        provider: undefined,
+        targetId: "provider:openai",
+        targetLabel: "OpenAI",
+        workerRuntime: undefined,
+      },
+      payload: {
+        summary: "AI 실행 계약 오류",
+        reason: "AI provider invocation failed.",
+        message: "AI provider invocation failed.",
+        providerFailureReasonCode: "provider_contract_rejected",
+      },
+      seenKeys: new Set(),
+      originalRequest: "카메라로 사진을 찍어줘",
+      previousResult: "",
+    })
+
+    expect(plan.nextMessage).toBe("")
+    expect(plan.reviewRequired).toBe(true)
+    expect(plan.duplicateStop).toBeUndefined()
+  })
+
+  it("returns the same ai recovery to completion review instead of deciding terminal state", () => {
     const seenKeys = new Set<string>()
     const firstPlan = planExternalRecovery({
       kind: "ai",
@@ -66,8 +94,9 @@ describe("external recovery planning", () => {
       },
     })
 
-    expect(repeatedPlan.duplicateStop?.summary).toContain("같은 AI 오류")
-    expect(repeatedPlan.duplicateStop?.rawMessage).toBe("challenge")
+    expect(repeatedPlan.reviewRequired).toBe(true)
+    expect(repeatedPlan.nextMessage).toBe("")
+    expect(repeatedPlan.duplicateStop).toBeUndefined()
   })
 
   it("falls back from worker runtime to default inference path when route does not change", () => {

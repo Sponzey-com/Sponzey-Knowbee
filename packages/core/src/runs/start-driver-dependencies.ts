@@ -73,6 +73,7 @@ import {
   recordCanonicalIntakePlanPolicy,
 } from "./canonical-intake-plan-policy.js"
 import { planCanonicalSelfSolveCapabilities } from "./canonical-self-solve-capability-planning.js"
+import { resolveChannelArtifactDeliveryRequirement } from "./channel-artifact-delivery-requirement.js"
 import {
   buildCanonicalRecoveryReentryDescriptor,
   recordCanonicalRecoveryReentry,
@@ -98,12 +99,14 @@ import { resolveRunRoute } from "./routing.js"
 import { scheduleDelayedRootRun } from "./run-queueing.js"
 import {
   type AdmittedCapabilityExecutionScope,
+  createPolicyCapabilityExecutionScope,
   createPolicyMethodCapabilityExecutionScope,
   createSolutionPlanCapabilityExecutionScope,
 } from "./run-scoped-tool-admission.js"
 import {
   buildSolutionPlanCapabilityAdmission,
   recordSolutionPlanCapabilityAdmission,
+  resolveOwnerScopedCapabilitySelectionTargets,
 } from "./solution-plan-capability-admission.js"
 import { createRuntimeSolutionPlanProvider } from "./solution-plan-provider-runtime.js"
 import {
@@ -542,6 +545,16 @@ export function buildStartRootRunDriverDependencies(params: {
             reasonCode: "capability_admission_context_missing",
           }
         }
+        const policyTargetId =
+          pendingCapabilityAdmissionContext.policy.input.constraints.targetId
+        const ownerScopedSelectionTargets = policyTargetId
+          ? undefined
+          : resolveOwnerScopedCapabilitySelectionTargets({
+              capabilitySnapshot:
+                pendingCapabilityAdmissionContext.policy.input.capabilitySnapshot,
+              selections: capabilitySelections,
+              ownerAgentId: pendingCapabilityAdmissionContext.ownerAgentId,
+            })
         const capabilityAdmission = buildSolutionPlanCapabilityAdmission({
           runId,
           solutionPlanReceiptId,
@@ -550,11 +563,13 @@ export function buildStartRootRunDriverDependencies(params: {
           capabilitySnapshot:
             pendingCapabilityAdmissionContext.policy.input.capabilitySnapshot,
           selections: capabilitySelections,
-          ...(pendingCapabilityAdmissionContext.policy.input.constraints.targetId
+          ...(policyTargetId
             ? {
-                targetId:
-                  pendingCapabilityAdmissionContext.policy.input.constraints.targetId,
+                targetId: policyTargetId,
               }
+            : {}),
+          ...(ownerScopedSelectionTargets
+            ? { selectionTargets: ownerScopedSelectionTargets }
             : {}),
           approvedCapabilityIds:
             pendingCapabilityAdmissionContext.policy.input.constraints
@@ -851,15 +866,6 @@ export function buildStartRootRunDriverDependencies(params: {
                     snapshotAt: params.canonicalPolicySnapshotAt,
                     runtimeHealthObservations: params.canonicalRuntimeHealthObservations,
                     yeonjangAgentBindings: params.canonicalYeonjangAgentBindings,
-                    approvedCapabilityIds: canonicalPolicyTools
-                      .filter((tool) =>
-                        (tool.requiresApproval || tool.riskLevel !== "safe")
-                        && hasSyntheticApprovalScope(
-                          params.syntheticApprovalScopes,
-                          runId,
-                          tool.name,
-                        ))
-                      .map((tool) => tool.name),
                   })
                   if (!policy.ok) {
                     if (!policy.decision || !policy.input) return policy
@@ -904,33 +910,43 @@ export function buildStartRootRunDriverDependencies(params: {
                     exclusiveMethods.length > 0
                       ? exclusiveMethods
                       : preferredMethods
-                  if (policyMethodNames.length > 0) {
-                    const approvedCapabilityIds = new Set(
-                      policy.input.constraints.approvedCapabilityIds,
+                  const requiresSolutionPlan =
+                    intake.execution.needs_tools &&
+                    (
+                      policyMethodNames.length === 0 ||
+                      intake.execution.execution_semantics.artifactDelivery === "direct"
                     )
+                  if (policyMethodNames.length > 0 && !requiresSolutionPlan) {
                     const availableToolNames =
                       policy.input.capabilitySnapshot.bindings
                         .filter(
                           (binding) =>
                             binding.targetId === ownerAgentId &&
-                            (binding.risk === "safe" ||
-                              approvedCapabilityIds.has(binding.capabilityId)),
+                            binding.risk !== "denied",
                         )
                         .map((binding) => binding.capabilityId)
-                    const scopeResult =
-                      createPolicyMethodCapabilityExecutionScope({
-                        runId,
-                        ownerAgentId,
-                        policyReceiptId: policy.descriptor.receiptId,
-                        capabilitySnapshotFingerprint:
-                          policy.input.capabilitySnapshot.fingerprint,
-                        methodToolNames: policyMethodNames,
-                        availableToolNames,
-                        skillDefinitions:
-                          params.capabilitySelection?.skillDefinitions ?? [],
-                        skillBindings:
-                          params.capabilitySelection?.skillBindings ?? [],
-                    })
+                    const scopeResult = exclusiveMethods.length > 0
+                      ? createPolicyCapabilityExecutionScope({
+                          runId,
+                          ownerAgentId,
+                          policyReceiptId: policy.descriptor.receiptId,
+                          capabilitySnapshotFingerprint:
+                            policy.input.capabilitySnapshot.fingerprint,
+                          toolNames: exclusiveMethods,
+                        })
+                      : createPolicyMethodCapabilityExecutionScope({
+                          runId,
+                          ownerAgentId,
+                          policyReceiptId: policy.descriptor.receiptId,
+                          capabilitySnapshotFingerprint:
+                            policy.input.capabilitySnapshot.fingerprint,
+                          methodToolNames: preferredMethods,
+                          availableToolNames,
+                          skillDefinitions:
+                            params.capabilitySelection?.skillDefinitions ?? [],
+                          skillBindings:
+                            params.capabilitySelection?.skillBindings ?? [],
+                        })
                     if (!scopeResult.ok) return scopeResult
                     admittedCapabilityExecutionScope = scopeResult.scope
                     appendRunEvent(
@@ -965,10 +981,7 @@ export function buildStartRootRunDriverDependencies(params: {
                   })
                   if (!recordedPolicy.ok) return recordedPolicy
 
-                  if (
-                    intake.execution.needs_tools &&
-                    policyMethodNames.length === 0
-                  ) {
+                  if (requiresSolutionPlan) {
                     const runtimePlanning = params.solutionPlanning
                       ? {
                           status: "ready" as const,
@@ -1011,6 +1024,33 @@ export function buildStartRootRunDriverDependencies(params: {
                       )?.agentName ??
                       params.finalResponseIdentityContext?.mainAgentSelfName ??
                       "Knowbee"
+                    const approvalCapabilityId =
+                      intake.execution.execution_semantics.approvalTool
+                    const approvalCapabilityAvailable =
+                      policy.input.capabilitySnapshot.bindings.some(
+                        (binding) =>
+                          binding.capabilityId === approvalCapabilityId &&
+                          binding.risk !== "denied",
+                      )
+                    const approvalCapabilityApproved =
+                      policy.input.constraints.approvedCapabilityIds.includes(
+                        approvalCapabilityId,
+                      )
+                    appendRunEvent(
+                      runId,
+                      `solution_plan_approval_capability:available=${approvalCapabilityAvailable};approved=${approvalCapabilityApproved}`,
+                    )
+                    const deliveryRequirement =
+                      resolveChannelArtifactDeliveryRequirement({
+                        required:
+                          params.source === "telegram" &&
+                          intake.execution.execution_semantics.artifactDelivery === "direct",
+                        source: params.source,
+                        destinationId: params.sessionId,
+                        ownerAgentId,
+                        tools: canonicalPolicyTools,
+                      })
+                    if (!deliveryRequirement.ok) return deliveryRequirement
                     const planned =
                       await planCanonicalSelfSolveCapabilities({
                         runId,
@@ -1018,12 +1058,34 @@ export function buildStartRootRunDriverDependencies(params: {
                         policy,
                         ownerAgentId,
                         ownerAgentName,
+                        source: params.source,
+                        destinationId: params.sessionId,
                         requestDiagnosisReceiptId:
                           intakeDiagnosis.receiptId,
                         requestDiagnosisIssuedAt,
                         issuedAt,
                         provider:
                           runtimePlanning.solutionPlanProvider,
+                        capabilityMetadata: canonicalPolicyTools.map((tool) => ({
+                          capabilityId: tool.name,
+                          description: tool.description,
+                          effectClass:
+                            tool.sideEffect?.effectClass ?? "read_only",
+                          ...(tool.channelCapability
+                            ? {
+                                channelCapability: {
+                                  kind: tool.channelCapability.kind,
+                                  channel: tool.channelCapability.channel,
+                                },
+                              }
+                            : {}),
+                        })),
+                        ...(deliveryRequirement.requirement
+                          ? {
+                              artifactDeliveryRequirement:
+                                deliveryRequirement.requirement,
+                            }
+                          : {}),
                         ...(runtimePlanning.solutionPlanRepairProvider
                           ? {
                               repairProvider:
@@ -1037,7 +1099,15 @@ export function buildStartRootRunDriverDependencies(params: {
                         instructionSkills:
                           params.capabilitySelection?.instructionSkills ?? [],
                       })
-                    if (!planned.ok) return planned
+                    if (!planned.ok) {
+                      if (planned.repairFailureReasonCode) {
+                        appendRunEvent(
+                          runId,
+                          `solution_plan_repair_failure_reason:${planned.repairFailureReasonCode}`,
+                        )
+                      }
+                      return planned
+                    }
 
                     const recordedAdmission =
                       recordSolutionPlanCapabilityAdmission(

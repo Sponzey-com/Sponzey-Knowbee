@@ -13,6 +13,10 @@ export function createStartedChannelRecoveryRuntime(input) {
         }
         return undefined;
     };
-    return Object.freeze({ resolveDeliveryHandler });
+    return Object.freeze({
+        resolveDeliveryHandler,
+        resumeExistingRootRun: input.resumeExistingRootRun
+            ?? (async () => false),
+    });
 }
 //# sourceMappingURL=pending-response-delivery.js.map

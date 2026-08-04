@@ -133,8 +133,19 @@ vi.mock("../packages/core/src/db/index.js", async (importOriginal) => {
 })
 
 vi.mock("../packages/core/src/runs/store.js", () => ({
+  appendRunEvent: vi.fn(),
+  bindActiveRunController: vi.fn(),
   cancelRootRun: vi.fn(() => false),
+  createRootRun: vi.fn(),
+  findLatestWorkerSessionRun: vi.fn(() => undefined),
+  getRequestGroupDelegationTurnCount: vi.fn(() => 0),
   getRootRun: vi.fn(() => ({ requestGroupId: "request-group-1" })),
+  interruptOrphanWorkerSessionRuns: vi.fn(() => []),
+  isReusableRequestGroup: vi.fn(() => false),
+  listActiveSessionRequestGroups: vi.fn(() => []),
+  setRunStepStatus: vi.fn(),
+  updateRunStatus: vi.fn(),
+  updateRunSummary: vi.fn(),
 }))
 
 describe("task0790 Slack policy delivery boundary", () => {

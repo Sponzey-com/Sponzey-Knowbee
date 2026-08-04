@@ -107,6 +107,7 @@ describe("yeonjang action tools", () => {
       },
       {
         extensionId: "yeonjang-dongwooshinc28b-92049",
+        signal: expect.any(AbortSignal),
         displayName: "Yeonjang-windows",
         instanceId: "inst-remote-windows",
         instanceAlias: "windows-test-pc",
@@ -168,6 +169,7 @@ describe("yeonjang action tools", () => {
       "system.exec",
       {
         extensionId: "yeonjang-dongwooshinc28b-92049",
+        signal: expect.any(AbortSignal),
         metadata: {
           runId: "run-1",
           requestGroupId: "request-group-1",
@@ -189,6 +191,7 @@ describe("yeonjang action tools", () => {
       {
         timeoutMs: 12_000,
         extensionId: "yeonjang-dongwooshinc28b-92049",
+        signal: expect.any(AbortSignal),
         metadata: {
           runId: "run-1",
           requestGroupId: "request-group-1",
@@ -229,6 +232,7 @@ describe("yeonjang action tools", () => {
       {
         extensionId: "yeonjang-main",
         timeoutMs: 15_000,
+        signal: expect.any(AbortSignal),
         metadata: {
           runId: "run-1",
           requestGroupId: "request-group-1",
@@ -276,6 +280,7 @@ describe("yeonjang action tools", () => {
       {
         extensionId: "yeonjang-main",
         timeoutMs: 15_000,
+        signal: expect.any(AbortSignal),
         metadata: {
           runId: "run-1",
           requestGroupId: "request-group-1",

@@ -1,5 +1,6 @@
 import type { YeonjangBrowserFocusExecutionAdmissionIssuerPort } from "../tools/types.js";
 import type { YeonjangExecutionAdmissionKeyProvisionerPort } from "./pairing-execution-admission-provisioning.js";
+import { type YeonjangExecutionAuthorizationIssuerPort } from "./execution-authorization-receipt.js";
 export interface BrowserFocusRuntimeBootstrapOptions {
     readonly trustedExtensionIds: readonly string[];
     readonly connectionPassword: string;
@@ -9,6 +10,7 @@ export interface BrowserFocusRuntimeBootstrapOptions {
 }
 export interface BrowserFocusRuntimeBootstrap {
     readonly issuer?: YeonjangBrowserFocusExecutionAdmissionIssuerPort;
+    readonly executionAuthorizationIssuer?: YeonjangExecutionAuthorizationIssuerPort;
     readonly pairingExecutionAdmissionKeyProvisioner?: YeonjangExecutionAdmissionKeyProvisionerPort;
 }
 /**

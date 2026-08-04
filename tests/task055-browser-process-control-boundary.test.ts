@@ -68,12 +68,17 @@ describe("Task 055 browser/process control boundary", () => {
     expect(YEONJANG_SKILL_TOOL_NAMES).toContain("yeonjang_browser_focus")
   })
 
-  it("does not implement future browser/process control through Rust dispatch or system.exec fallback", () => {
+  it("keeps sensitive inventory separate from Rust dispatch and system.exec fallback", () => {
     const nodeSource = readFileSync("Yeonjang/src/node.rs", "utf8")
     const browserSource = readFileSync("Yeonjang/src/features/browser.rs", "utf8")
     const processSource = readFileSync("Yeonjang/src/features/process.rs", "utf8")
 
-    for (const method of FUTURE_CONTROL_OR_SENSITIVE_METHODS) {
+    expect(nodeSource).toContain('"name": "browser.active_tab_info"')
+    expect(nodeSource).toContain('"browser.active_tab_info": capability_entry')
+    expect(nodeSource).not.toContain(
+      '"browser.active_tab_info" => dispatch_browser_active_tab_info_request',
+    )
+    for (const method of ["process.kill", "process.focus_window"] as const) {
       expect(nodeSource).not.toContain(`"${method}" =>`)
       expect(nodeSource).not.toContain(`"${method}": capability_entry`)
     }

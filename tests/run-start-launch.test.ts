@@ -6,6 +6,88 @@ import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
 import { createTestStartPlanBoundaryDependencies } from "./fixtures/start-plan.ts"
 
 describe("prepare start launch", () => {
+  it("re-enters an exact existing run without creating or reinitializing it", async () => {
+    const existingRun = {
+      id: "run-recovered",
+      sessionId: "session-recovered",
+      requestGroupId: "group-recovered",
+      runScope: "root",
+      source: "telegram",
+      taskProfile: "general_chat",
+      contextMode: "isolated",
+      delegationTurnCount: 1,
+    } as never
+    const createRootRun = vi.fn()
+    const applyStartInitialization = vi.fn()
+    const bindActiveRunController = vi.fn()
+    const appendRunEvent = vi.fn()
+
+    const result = await prepareStartLaunch({
+      config: DEFAULT_CONFIG,
+      message: "Take one photo and send it here.",
+      sessionId: "session-recovered",
+      runId: "run-recovered",
+      requestGroupId: "group-recovered",
+      forceRequestGroupReuse: true,
+      source: "telegram",
+      controller: new AbortController(),
+      now: 123,
+      maxDelegationTurns: 3,
+      existingRun,
+      hasRequestGroupExecutionQueue: () => false,
+    }, {
+      ...createTestStartPlanBoundaryDependencies(),
+      buildStartPlan: vi.fn(async () => ({
+        entrySemantics: {
+          reuse_conversation_context: true,
+          active_queue_cancellation_mode: null,
+        },
+        requestedClosedRequestGroup: false,
+        shouldReconnectGroup: true,
+        reconnectCandidateCount: 1,
+        reconnectNeedsClarification: false,
+        requestIsolation: "continuation",
+        continuationSource: "explicit_force_request_group",
+        requestGroupId: "group-recovered",
+        isRootRequest: false,
+        effectiveTaskProfile: "general_chat",
+        initialDelegationTurnCount: 0,
+        shouldReuseContext: true,
+        effectiveContextMode: "request_group",
+        orchestrationMode: "single_knowbee",
+        orchestrationRegistrySnapshot: {},
+        orchestrationPlanSnapshot: {},
+        topologyRouting: {},
+        latencyEvents: [],
+      })) as never,
+      ensureSessionExists: vi.fn(),
+      createRootRun: createRootRun as never,
+      applyStartInitialization: applyStartInitialization as never,
+      rememberRunInstruction: vi.fn(),
+      bindActiveRunController,
+      interruptOrphanWorkerSessionRuns: vi.fn(),
+      appendRunEvent,
+      updateRunSummary: vi.fn(),
+      setRunStepStatus: vi.fn(),
+      updateRunStatus: vi.fn(),
+    })
+
+    expect(result.run).toBe(existingRun)
+    expect(result.startPlan).toMatchObject({
+      requestGroupId: "group-recovered",
+      isRootRequest: true,
+      effectiveContextMode: "handoff",
+      initialDelegationTurnCount: 1,
+    })
+    expect(createRootRun).not.toHaveBeenCalled()
+    expect(applyStartInitialization).not.toHaveBeenCalled()
+    expect(bindActiveRunController).toHaveBeenCalledOnce()
+    expect(appendRunEvent).toHaveBeenCalledWith(
+      "run-recovered",
+      "existing_root_run_reentered:recovered_attempt",
+    )
+  })
+
   it("creates the run and initializes it from the computed start plan", async () => {
     const buildStartPlan = vi.fn(async () => ({
       entrySemantics: {

@@ -276,6 +276,39 @@ describe("Task 060 Yeonjang screen side-effect ledger", () => {
     expect(receipts).not.toContain("knowbee-ocr")
   })
 
+  it("preserves an exact pre-effect screen rejection without parsing its human message", async () => {
+    const params = { extensionId: "yeonjang-main", display: 0 }
+    mqttMocks.invokeYeonjangMethod.mockRejectedValueOnce(Object.assign(
+      new Error("Side effect authorization is required."),
+      {
+        code: "side_effect_authorization_required",
+        attempt: {
+          schemaVersion: 1,
+          method: "screen.capture",
+          commandId: "screen-command-060",
+          operationId: "screen-operation-060",
+          terminalStage: "rejected",
+          reasonCode: "side_effect_authorization_required",
+          retrySafety: "change_strategy",
+        },
+      },
+    ))
+
+    const result = await screenCaptureTool.execute(params, createContext(params))
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "side_effect_authorization_required",
+      details: {
+        failureKind: "remote_rejected",
+        reasonCode: "side_effect_authorization_required",
+        terminalStage: "rejected",
+        retrySafety: "change_strategy",
+      },
+    })
+    expect(result.error).not.toContain("Side effect authorization")
+  })
+
   it("blocks screen.capture before remote invoke when approval receipt is missing", async () => {
     const params = { extensionId: "yeonjang-main", display: 0 }
 

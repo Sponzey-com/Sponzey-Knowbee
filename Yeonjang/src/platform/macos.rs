@@ -1,9 +1,15 @@
 use std::env;
 use std::fs;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Output, Stdio};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread::sleep;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
@@ -11,12 +17,14 @@ use serde_json::Value;
 
 use crate::automation::{
     ApplicationLaunchRequest, ApplicationLaunchResult, AutomationBackend, AutomationCapabilities,
-    CameraCaptureRequest, CameraCaptureResult, CameraDevice, CommandExecutionRequest,
-    CommandExecutionResult, FocusedTargetResult, KeyboardActionKind, KeyboardActionRequest,
-    KeyboardActionResult, KeyboardTypeRequest, KeyboardTypeResult, MouseActionKind,
-    MouseActionRequest, MouseActionResult, MouseClickRequest, MouseClickResult, MouseMoveRequest,
-    MouseMoveResult, MousePositionResult, PlatformKind, ScreenCaptureRequest, ScreenCaptureResult,
-    SystemControlRequest, SystemControlResult, SystemSnapshot,
+    BrowserFocusExecutionResult, CameraCaptureProcessError, CameraCaptureRequest,
+    CameraCaptureResult, CameraDevice, CameraPermissionState, CameraPermissionStatus,
+    CommandExecutionRequest, CommandExecutionResult, FocusedTargetResult, KeyboardActionKind,
+    KeyboardActionRequest, KeyboardActionResult, KeyboardTypeRequest, KeyboardTypeResult,
+    MouseActionKind, MouseActionRequest, MouseActionResult, MouseClickRequest, MouseClickResult,
+    MouseMoveRequest, MouseMoveResult, MousePositionResult, PlatformKind,
+    ScreenCaptureProcessError, ScreenCaptureRequest, ScreenCaptureResult, SystemControlRequest,
+    SystemControlResult, SystemSnapshot,
 };
 use crate::platform::shared;
 
@@ -173,9 +181,36 @@ impl AutomationBackend for PlatformBackend {
         Ok(cameras)
     }
 
+    fn camera_permission_status(&self) -> Result<CameraPermissionStatus> {
+        let executable_path = resolve_camera_capture_command_path()?;
+        let mut command = Command::new(&executable_path);
+        command
+            .arg("--camera-capture-helper")
+            .arg("--permission-status");
+        let output = run_camera_helper_command(
+            &mut command,
+            CameraHelperCommandOptions {
+                timeout: Duration::from_secs(5),
+                termination_grace: Duration::from_millis(250),
+            },
+        )?;
+        if !output.status.success() {
+            bail!("camera permission status helper failed");
+        }
+        serde_json::from_slice(&output.stdout)
+            .context("failed to parse camera permission status helper output")
+    }
+
     fn capture_camera(&self, request: CameraCaptureRequest) -> Result<CameraCaptureResult> {
         shared::validate_camera_request(&request)?;
+        let cancellation = Arc::clone(&request.cancellation);
+        if let Some(error) =
+            camera_capture_permission_error(self.camera_permission_status()?.status)
+        {
+            return Err(error.into());
+        }
         let inline_base64 = request.inline_base64;
+        let capture_budget = CameraCaptureBudget::from_millis(request.capture_timeout_ms);
 
         let output_path = resolve_camera_output_path(request.output_path.as_deref())?;
         let executable_path = resolve_camera_capture_command_path()?;
@@ -187,15 +222,27 @@ impl AutomationBackend for PlatformBackend {
         if inline_base64 {
             command.arg("--inline-base64");
         }
+        command
+            .arg("--capture-timeout-ms")
+            .arg(capture_budget.operation_millis().to_string());
 
-        let output = command.output().with_context(|| {
-            format!(
-                "failed to execute Yeonjang camera capture command: {}",
-                executable_path.display()
-            )
-        })?;
+        let output = match run_camera_helper_command_with_cancellation(
+            &mut command,
+            capture_budget.command_options(),
+            &cancellation,
+        ) {
+            Ok(output) => output,
+            Err(error) => {
+                let _ = fs::remove_file(&output_path);
+                return Err(error);
+            }
+        };
 
         if !output.status.success() {
+            if is_camera_capture_timeout_output(&output) {
+                let _ = fs::remove_file(&output_path);
+                return Err(CameraCaptureProcessError::timed_out().into());
+            }
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
             bail!(
@@ -236,6 +283,7 @@ impl AutomationBackend for PlatformBackend {
 
         Ok(CameraCaptureResult {
             device_id: actual_device_id,
+            artifact_ref: None,
             output_path: if inline_base64 {
                 None
             } else {
@@ -260,7 +308,8 @@ impl AutomationBackend for PlatformBackend {
         let inline_base64 = request.inline_base64;
         let (output_path, _explicit_output_path) =
             resolve_screen_output_path(request.output_path.as_deref())?;
-        let script_path = write_swift_screen_script()?;
+        let script_path = write_swift_screen_script()
+            .map_err(|_| ScreenCaptureProcessError::helper_spawn_failed())?;
 
         let mut command = Command::new("xcrun");
         command.arg("swift").arg(&script_path).arg(&output_path);
@@ -273,32 +322,18 @@ impl AutomationBackend for PlatformBackend {
             command.arg("--inline-base64");
         }
 
-        let output = command.output().with_context(|| {
-            format!(
-                "failed to execute screen capture helper: {}",
-                script_path.display()
-            )
-        })?;
+        let output = command
+            .output()
+            .map_err(|_| ScreenCaptureProcessError::helper_spawn_failed())?;
 
         let _ = fs::remove_file(&script_path);
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            bail!(
-                "screen capture failed: {}{}{}",
-                stderr.trim(),
-                if !stderr.trim().is_empty() && !stdout.trim().is_empty() {
-                    " | "
-                } else {
-                    ""
-                },
-                stdout.trim()
-            );
+            return Err(screen_capture_process_error(&output).into());
         }
 
         let parsed: Value = serde_json::from_slice(&output.stdout)
-            .context("failed to parse screen capture helper output")?;
+            .map_err(|_| ScreenCaptureProcessError::helper_protocol_invalid())?;
 
         let metadata = build_file_metadata(&output_path, inline_base64, "image/png");
         let base64_data = if inline_base64 {
@@ -307,7 +342,7 @@ impl AutomationBackend for PlatformBackend {
                     .get("base64Data")
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned)
-                    .context("screen capture must include inline base64 data")?,
+                    .ok_or_else(ScreenCaptureProcessError::helper_protocol_invalid)?,
             )
         } else {
             None
@@ -319,6 +354,7 @@ impl AutomationBackend for PlatformBackend {
 
         Ok(ScreenCaptureResult {
             display: request.display,
+            artifact_ref: None,
             output_path: if inline_base64 {
                 None
             } else {
@@ -506,6 +542,37 @@ impl AutomationBackend for PlatformBackend {
         ))
     }
 
+    fn focus_browser(
+        &self,
+        process_name: &str,
+        interactive_desktop_session: bool,
+    ) -> BrowserFocusExecutionResult {
+        let result = execute_macos_browser_focus_private(
+            MacosBrowserFocusPlanInput {
+                approval_granted: true,
+                capability_advertised: true,
+                command_backend_ready: true,
+                focused_target_observation_backend_ready: true,
+                interactive_desktop_session,
+                target_alias: None,
+                process_name: Some(process_name.trim().to_string()),
+                raw_window_title: None,
+                raw_url: None,
+                pid: None,
+                window_id: None,
+                tab_id: None,
+            },
+            |script| {
+                let output = Command::new("osascript").arg("-e").arg(script).output()?;
+                Ok(output.status.success())
+            },
+        );
+        BrowserFocusExecutionResult {
+            command_accepted: result.command_accepted,
+            reason_code: result.reason_code,
+        }
+    }
+
     fn perform_keyboard_action(
         &self,
         request: KeyboardActionRequest,
@@ -564,6 +631,150 @@ impl AutomationBackend for PlatformBackend {
             }
         }
     }
+}
+
+fn camera_capture_permission_error(
+    state: CameraPermissionState,
+) -> Option<CameraCaptureProcessError> {
+    match state {
+        CameraPermissionState::Denied => Some(CameraCaptureProcessError::permission_denied()),
+        CameraPermissionState::Restricted => {
+            Some(CameraCaptureProcessError::permission_restricted())
+        }
+        CameraPermissionState::Authorized
+        | CameraPermissionState::NotDetermined
+        | CameraPermissionState::Unavailable => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CameraHelperCommandOptions {
+    timeout: Duration,
+    termination_grace: Duration,
+}
+
+const DEFAULT_CAMERA_CAPTURE_OPERATION_BUDGET_MS: u64 = 60_000;
+const MIN_CAMERA_CAPTURE_OPERATION_BUDGET_MS: u64 = 1_000;
+const MAX_CAMERA_CAPTURE_OPERATION_BUDGET_MS: u64 = 60_000;
+const CAMERA_CAPTURE_CLEANUP_GRACE_MS: u64 = 2_000;
+
+#[derive(Debug, Clone, Copy)]
+struct CameraCaptureBudget {
+    operation: Duration,
+}
+
+impl CameraCaptureBudget {
+    fn from_millis(requested: Option<u64>) -> Self {
+        let millis = requested
+            .unwrap_or(DEFAULT_CAMERA_CAPTURE_OPERATION_BUDGET_MS)
+            .clamp(
+                MIN_CAMERA_CAPTURE_OPERATION_BUDGET_MS,
+                MAX_CAMERA_CAPTURE_OPERATION_BUDGET_MS,
+            );
+        Self {
+            operation: Duration::from_millis(millis),
+        }
+    }
+
+    fn operation_millis(self) -> u128 {
+        self.operation.as_millis()
+    }
+
+    fn command_options(self) -> CameraHelperCommandOptions {
+        CameraHelperCommandOptions {
+            timeout: self.operation + Duration::from_millis(CAMERA_CAPTURE_CLEANUP_GRACE_MS),
+            termination_grace: Duration::from_millis(250),
+        }
+    }
+}
+
+fn is_camera_capture_timeout_output(output: &Output) -> bool {
+    output.status.code() == Some(8)
+}
+
+fn run_camera_helper_command(
+    command: &mut Command,
+    options: CameraHelperCommandOptions,
+) -> Result<Output> {
+    let cancellation = AtomicBool::new(false);
+    run_camera_helper_command_with_cancellation(command, options, &cancellation)
+}
+
+fn run_camera_helper_command_with_cancellation(
+    command: &mut Command,
+    options: CameraHelperCommandOptions,
+    cancellation: &AtomicBool,
+) -> Result<Output> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0);
+
+    let mut child = command
+        .spawn()
+        .context("failed to start the bounded camera capture helper")?;
+    let started_at = Instant::now();
+
+    loop {
+        if cancellation.load(Ordering::SeqCst) {
+            terminate_process_group(&mut child, options.termination_grace)?;
+            return Err(CameraCaptureProcessError::cancelled().into());
+        }
+        if child
+            .try_wait()
+            .context("failed to observe the camera capture helper")?
+            .is_some()
+        {
+            return child
+                .wait_with_output()
+                .context("failed to collect the camera capture helper result");
+        }
+
+        if started_at.elapsed() >= options.timeout {
+            terminate_process_group(&mut child, options.termination_grace)?;
+            return Err(CameraCaptureProcessError::timed_out().into());
+        }
+
+        sleep(Duration::from_millis(25));
+    }
+}
+
+fn terminate_process_group(
+    child: &mut std::process::Child,
+    termination_grace: Duration,
+) -> Result<()> {
+    signal_process_group(child.id(), libc::SIGTERM)?;
+    let grace_started_at = Instant::now();
+    while grace_started_at.elapsed() < termination_grace {
+        if child
+            .try_wait()
+            .context("failed to observe camera helper termination")?
+            .is_some()
+        {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(10));
+    }
+
+    signal_process_group(child.id(), libc::SIGKILL)?;
+    child
+        .wait()
+        .context("failed to reap the timed-out camera capture helper")?;
+    Ok(())
+}
+
+fn signal_process_group(process_group_id: u32, signal: i32) -> Result<()> {
+    let result = unsafe { libc::kill(-(process_group_id as i32), signal) };
+    if result == 0 {
+        return Ok(());
+    }
+
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        return Ok(());
+    }
+    Err(error).context("failed to terminate the camera capture helper process group")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -737,40 +948,6 @@ where
     };
 
     execute_macos_browser_focus_command_plan(&plan, || runner(&script))
-}
-
-/// The caller owns authentication and replay protection. This boundary receives
-/// only the signed process identity and never exposes the generated AppleScript.
-pub(crate) fn execute_verified_browser_focus(
-    process_name: &str,
-    interactive_desktop_session: bool,
-) -> Value {
-    let result = execute_macos_browser_focus_private(
-        MacosBrowserFocusPlanInput {
-            approval_granted: true,
-            capability_advertised: true,
-            command_backend_ready: true,
-            focused_target_observation_backend_ready: true,
-            interactive_desktop_session,
-            target_alias: None,
-            process_name: Some(process_name.trim().to_string()),
-            raw_window_title: None,
-            raw_url: None,
-            pid: None,
-            window_id: None,
-            tab_id: None,
-        },
-        |script| {
-            let output = Command::new("osascript").arg("-e").arg(script).output()?;
-            Ok(output.status.success())
-        },
-    );
-    serde_json::json!({
-        "commandAccepted": result.command_accepted,
-        "reasonCode": result.reason_code,
-        "focusedTargetObservationRequired": result.focused_target_observation_required,
-        "goalSuccess": result.goal_success,
-    })
 }
 
 fn macos_browser_focus_sanitized_reason_code(error: &anyhow::Error) -> &'static str {
@@ -1162,11 +1339,7 @@ fn resolve_macos_keyboard_target(key: &str) -> Result<MacosKeyboardTarget> {
         return Ok(MacosKeyboardTarget::Keystroke(trimmed.to_string()));
     }
 
-    let normalized = trimmed
-        .to_lowercase()
-        .replace('_', "")
-        .replace('-', "")
-        .replace(' ', "");
+    let normalized = trimmed.to_lowercase().replace(['_', '-', ' '], "");
 
     let key_code = match normalized.as_str() {
         "enter" | "return" => Some(36),
@@ -1239,11 +1412,7 @@ fn resolve_macos_keyboard_key_code(key: &str) -> Result<u16> {
         bail!("keyboard key must not be empty");
     }
 
-    let normalized = trimmed
-        .to_lowercase()
-        .replace('_', "")
-        .replace('-', "")
-        .replace(' ', "");
+    let normalized = trimmed.to_lowercase().replace(['_', '-', ' '], "");
 
     let code = match normalized.as_str() {
         "a" => Some(0),
@@ -1359,10 +1528,7 @@ fn resolve_camera_output_path(output_path: Option<&str>) -> Result<String> {
                 Ok(path.to_string())
             }
         }
-        _ => {
-            let path = env::temp_dir().join(build_generated_capture_name("yeonjang-camera", "jpg"));
-            Ok(path.display().to_string())
-        }
+        _ => bail!("capture artifact output path is required"),
     }
 }
 
@@ -1382,10 +1548,7 @@ fn resolve_screen_output_path(output_path: Option<&str>) -> Result<(String, bool
                 Ok((path.to_string(), true))
             }
         }
-        _ => {
-            let path = env::temp_dir().join(build_generated_capture_name("yeonjang-screen", "png"));
-            Ok((path.display().to_string(), false))
-        }
+        _ => bail!("capture artifact output path is required"),
     }
 }
 
@@ -1464,6 +1627,14 @@ fn write_swift_screen_script() -> Result<PathBuf> {
 
 fn normalize_macos_screen_capture_display(display: u32) -> u32 {
     display.saturating_add(1)
+}
+
+fn screen_capture_process_error(output: &Output) -> ScreenCaptureProcessError {
+    match output.status.code() {
+        Some(10) => ScreenCaptureProcessError::permission_not_granted(),
+        Some(11) => ScreenCaptureProcessError::helper_spawn_failed(),
+        Some(12) | None | Some(_) => ScreenCaptureProcessError::helper_exited(),
+    }
 }
 
 fn write_swift_mouse_action_script() -> Result<PathBuf> {
@@ -1564,10 +1735,8 @@ while index < args.count {
 }
 
 if !CGPreflightScreenCaptureAccess() {
-    guard CGRequestScreenCaptureAccess() else {
-        fputs("Screen Recording permission was not granted\n", stderr)
-        exit(10)
-    }
+    fputs("SCREEN_PERMISSION_NOT_GRANTED\n", stderr)
+    exit(10)
 }
 
 let task = Process()
@@ -1906,15 +2075,26 @@ do {
 #[cfg(test)]
 mod tests {
     use super::{
-        MacosBrowserFocusCommandPlan, MacosBrowserFocusPlanInput, MacosKeyboardTarget,
-        PlatformBackend, build_macos_browser_focus_command_plan,
-        build_macos_browser_focus_osascript, build_modifier_clause, build_modifier_key_codes,
+        CameraCaptureBudget, CameraHelperCommandOptions, MacosBrowserFocusCommandPlan,
+        MacosBrowserFocusPlanInput, MacosKeyboardTarget, PlatformBackend,
+        build_macos_browser_focus_command_plan, build_macos_browser_focus_osascript,
+        build_modifier_clause, build_modifier_key_codes, camera_capture_permission_error,
         execute_macos_browser_focus_command_plan, execute_macos_browser_focus_private,
         normalize_macos_screen_capture_display, normalize_mouse_button_name,
         resolve_macos_keyboard_key_code, resolve_macos_keyboard_target,
-        resolve_macos_system_control, resolve_optional_mouse_point,
+        resolve_macos_system_control, resolve_optional_mouse_point, run_camera_helper_command,
+        run_camera_helper_command_with_cancellation,
     };
-    use crate::automation::{AutomationBackend, SystemControlRequest};
+    use crate::automation::{AutomationBackend, CameraPermissionState, SystemControlRequest};
+    use std::fs;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::Command;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
     fn resolves_letter_shortcut_to_keystroke() {
@@ -1992,6 +2172,218 @@ mod tests {
     fn normalizes_screen_capture_display_to_one_based_index() {
         assert_eq!(normalize_macos_screen_capture_display(0), 1);
         assert_eq!(normalize_macos_screen_capture_display(1), 2);
+    }
+
+    #[test]
+    fn camera_helper_timeout_terminates_its_process_group() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let pid_path = std::env::temp_dir().join(format!(
+            "yeonjang-camera-helper-child-{}-{suffix}.pid",
+            std::process::id()
+        ));
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("sleep 30 & child=$!; echo \"$child\" > \"$1\"; wait")
+            .arg("camera-helper-test")
+            .arg(&pid_path);
+
+        let error = run_camera_helper_command(
+            &mut command,
+            CameraHelperCommandOptions {
+                timeout: Duration::from_millis(150),
+                termination_grace: Duration::from_millis(100),
+            },
+        )
+        .expect_err("helper must time out");
+
+        assert_eq!(
+            error
+                .downcast_ref::<crate::automation::CameraCaptureProcessError>()
+                .map(|failure| failure.code()),
+            Some("camera_helper_timeout")
+        );
+
+        let child_pid = fs::read_to_string(&pid_path)
+            .expect("child pid")
+            .trim()
+            .parse::<i32>()
+            .expect("numeric child pid");
+        let mut alive = true;
+        for _ in 0..20 {
+            alive = unsafe { libc::kill(child_pid, 0) } == 0;
+            if !alive {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        let _ = fs::remove_file(pid_path);
+        assert!(!alive, "timed-out helper child must not remain alive");
+    }
+
+    #[test]
+    fn camera_helper_cancellation_terminates_its_process_group() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let pid_path = std::env::temp_dir().join(format!(
+            "yeonjang-camera-helper-cancel-child-{}-{suffix}.pid",
+            std::process::id()
+        ));
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("sleep 30 & child=$!; echo \"$child\" > \"$1\"; wait")
+            .arg("camera-helper-cancel-test")
+            .arg(&pid_path);
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let cancellation_trigger = Arc::clone(&cancellation);
+        let trigger = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(150));
+            cancellation_trigger.store(true, Ordering::SeqCst);
+        });
+
+        let error = run_camera_helper_command_with_cancellation(
+            &mut command,
+            CameraHelperCommandOptions {
+                timeout: Duration::from_secs(5),
+                termination_grace: Duration::from_millis(100),
+            },
+            &cancellation,
+        )
+        .expect_err("helper must be cancelled");
+        trigger.join().expect("cancellation trigger");
+
+        assert_eq!(
+            error
+                .downcast_ref::<crate::automation::CameraCaptureProcessError>()
+                .map(|failure| failure.code()),
+            Some("camera_capture_cancelled")
+        );
+        let child_pid = fs::read_to_string(&pid_path)
+            .expect("child pid")
+            .trim()
+            .parse::<i32>()
+            .expect("numeric child pid");
+        let mut alive = true;
+        for _ in 0..20 {
+            alive = unsafe { libc::kill(child_pid, 0) } == 0;
+            if !alive {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        let _ = fs::remove_file(pid_path);
+        assert!(!alive, "cancelled helper child must not remain alive");
+    }
+
+    #[test]
+    fn camera_helper_runner_preserves_completed_output_and_exit_status() {
+        let options = CameraHelperCommandOptions {
+            timeout: Duration::from_secs(1),
+            termination_grace: Duration::from_millis(100),
+        };
+        let mut successful = Command::new("/bin/sh");
+        successful.arg("-c").arg("printf camera-ok");
+        let success = run_camera_helper_command(&mut successful, options)
+            .expect("completed helper should return output");
+        assert!(success.status.success());
+        assert_eq!(success.stdout, b"camera-ok");
+
+        let mut failed = Command::new("/bin/sh");
+        failed.arg("-c").arg("printf camera-failed >&2; exit 7");
+        let failure = run_camera_helper_command(&mut failed, options)
+            .expect("non-zero helper should preserve its process result");
+        assert_eq!(failure.status.code(), Some(7));
+        assert_eq!(failure.stderr, b"camera-failed");
+    }
+
+    #[test]
+    fn camera_capture_budget_derives_watchdog_after_operation_deadline() {
+        let budget = CameraCaptureBudget::from_millis(Some(5_000));
+        let options = budget.command_options();
+
+        assert_eq!(budget.operation_millis(), 5_000);
+        assert_eq!(options.timeout, Duration::from_millis(7_000));
+        assert_eq!(options.termination_grace, Duration::from_millis(250));
+    }
+
+    #[test]
+    fn camera_capture_budget_applies_version_compatible_bounds() {
+        assert_eq!(
+            CameraCaptureBudget::from_millis(None).operation_millis(),
+            60_000
+        );
+        assert_eq!(
+            CameraCaptureBudget::from_millis(Some(1)).operation_millis(),
+            1_000
+        );
+        assert_eq!(
+            CameraCaptureBudget::from_millis(Some(90_000)).operation_millis(),
+            60_000
+        );
+    }
+
+    #[test]
+    fn camera_helper_timeout_exit_maps_to_the_typed_timeout_reason() {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(8 << 8),
+            stdout: Vec::new(),
+            stderr: b"Timed out while waiting for camera capture".to_vec(),
+        };
+
+        assert!(super::is_camera_capture_timeout_output(&output));
+    }
+
+    #[test]
+    fn screen_helper_never_requests_os_permission_during_capture() {
+        assert!(super::SWIFT_SCREEN_CAPTURE.contains("CGPreflightScreenCaptureAccess"));
+        assert!(!super::SWIFT_SCREEN_CAPTURE.contains("CGRequestScreenCaptureAccess"));
+    }
+
+    #[test]
+    fn screen_helper_exit_codes_map_without_reading_stderr_text() {
+        let permission = std::process::Output {
+            status: std::process::ExitStatus::from_raw(10 << 8),
+            stdout: Vec::new(),
+            stderr: b"/private/path must stay private".to_vec(),
+        };
+        let helper_exit = std::process::Output {
+            status: std::process::ExitStatus::from_raw(12 << 8),
+            stdout: Vec::new(),
+            stderr: b"token=private".to_vec(),
+        };
+
+        assert_eq!(
+            super::screen_capture_process_error(&permission).code(),
+            "screen_permission_not_granted"
+        );
+        assert_eq!(
+            super::screen_capture_process_error(&helper_exit).code(),
+            "screen_helper_exited"
+        );
+    }
+
+    #[test]
+    fn camera_capture_preflight_rejects_only_durable_denied_permission_states() {
+        assert_eq!(
+            camera_capture_permission_error(CameraPermissionState::Denied)
+                .expect("denied")
+                .code(),
+            "camera_permission_denied"
+        );
+        assert_eq!(
+            camera_capture_permission_error(CameraPermissionState::Restricted)
+                .expect("restricted")
+                .code(),
+            "camera_permission_restricted"
+        );
+        assert!(camera_capture_permission_error(CameraPermissionState::Authorized).is_none());
+        assert!(camera_capture_permission_error(CameraPermissionState::NotDetermined).is_none());
     }
 
     #[test]

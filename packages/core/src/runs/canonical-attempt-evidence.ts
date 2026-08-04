@@ -46,6 +46,48 @@ export function buildCanonicalAttemptEvidenceDescriptor(input: {
   }
 }
 
+export function buildCanonicalRecoveredAttemptEvidenceDescriptor(input: {
+  runId: string
+  continuationId: string
+  toolName: string
+  operationId: string
+  operationBindingHash: `sha256:${string}`
+  persistedToolResultContent: string
+  evidenceRefs?: readonly string[]
+}): CanonicalAttemptEvidenceDescriptor {
+  const runId = input.runId.trim()
+  const toolName = input.toolName.trim()
+  if (!runId || !toolName || !input.continuationId.trim()) {
+    throw new Error("Recovered attempt identity is required.")
+  }
+  const previewDigest = createHash("sha256")
+    .update(input.persistedToolResultContent)
+    .digest("hex")
+  const evidence = {
+    source: "approved_operation_continuation",
+    continuationId: input.continuationId,
+    toolName,
+    operationId: input.operationId,
+    operationBindingHash: input.operationBindingHash,
+    previewFingerprint: `sha256:${previewDigest}`,
+  }
+  const digest = createHash("sha256")
+    .update(JSON.stringify(evidence))
+    .digest("hex")
+  return {
+    runId,
+    workId: canonicalWorkIdForRootRun(runId),
+    receiptId: `receipt:attempt:${runId}:${digest.slice(0, 24)}`,
+    kind: "attempt",
+    evidenceFingerprint: `sha256:${digest}`,
+    evidenceRefs: [
+      `attempt-preview:${runId}:${previewDigest.slice(0, 24)}`,
+      `side-effect-operation:${input.operationId}`,
+      ...new Set(input.evidenceRefs ?? []),
+    ],
+  }
+}
+
 interface PersistedAttemptReceipt {
   workId: string
   kind: string

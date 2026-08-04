@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { auditGoalRequirements } from "../scripts/audit-goal-requirements.mjs"
+import { auditGoalRequirements } from "../scripts/self/audit-goal-requirements.mjs"
 
 describe("task1190 GOAL requirement audit CLI", () => {
   it("builds a reproducible matrix from explicit repository inputs", () => {

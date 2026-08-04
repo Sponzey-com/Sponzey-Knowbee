@@ -82,6 +82,49 @@ describe("contract failure resolution", () => {
   })
 
   it.each([
+    ["provider_unavailable", true, "adapter_unavailable", "adapter_retry", "retrying", "retry"],
+    ["transport_failed", true, "adapter_unavailable", "adapter_retry", "retrying", "retry"],
+    [
+      "provider_contract_rejected",
+      false,
+      "adapter_unavailable",
+      "none",
+      "blocked",
+      "contact_support",
+    ],
+  ] as const)(
+    "routes intake provider failure %s through the existing adapter recovery contract",
+    (reasonCode, retryable, failureClass, retryClass, publicStatus, publicAction) => {
+      const failure = projectCanonicalContractFailure({
+        failure: new CanonicalExecutionFailure({
+          phase: "intake",
+          reasonCode,
+          retryable,
+        }),
+        requestId: "request-telegram-camera",
+        workId: "work-telegram-camera",
+        auditRef: "audit:run-telegram-camera",
+      })
+
+      expect(failure).toMatchObject({
+        phase: "intake",
+        reasonCode,
+        failureClass,
+        retryClass,
+      })
+      expect(resolveExecutionFailure(failure)).toEqual(
+        retryable
+          ? { kind: "retry_adapter", retryClass: "adapter_retry" }
+          : { kind: "internal_fault", retryClass: "none", auditRef: "audit:run-telegram-camera" },
+      )
+      expect(projectPublicContractFailure(failure)).toEqual({
+        status: publicStatus,
+        action: publicAction,
+      })
+    },
+  )
+
+  it.each([
     "capability_selection_rejected",
     "capability_selection_invalid_output",
     "capability_selection_provider_unavailable",
@@ -89,6 +132,7 @@ describe("contract failure resolution", () => {
     "capability_selection_timed_out",
     "capability_selection_output_limit_exceeded",
     "capability_selection_snapshot_invalid",
+    "solution_plan_selected_capability_unavailable",
   ] as const)("returns capability failure %s to changed-strategy reanalysis", (reasonCode) => {
     const failure = project(reasonCode, true)
 
@@ -152,10 +196,12 @@ describe("contract failure resolution", () => {
       retryClass: "none",
       auditRef: "audit:run-1",
     })
-    expect(projectContractFailureRetryDirective({
-      failure,
-      originalRequest: "현재 정보를 알려줘",
-    })).toBeNull()
+    expect(
+      projectContractFailureRetryDirective({
+        failure,
+        originalRequest: "현재 정보를 알려줘",
+      }),
+    ).toBeNull()
   })
 
   it("keeps internal fields out of public projection and exposes only safe audit fields", () => {

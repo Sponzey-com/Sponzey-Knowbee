@@ -68,9 +68,9 @@ describe("task026 Yeonjang capability group labels", () => {
       }),
     )
 
-    expect(html).toContain("파일/디스크")
+    expect(html).toContain(">파일<")
     expect(html).toContain("화면 캡처")
-    expect(html).toContain("시스템/프로세스")
+    expect(html).toContain(">시스템<")
     expect(html).not.toContain(">files<")
     expect(html).not.toContain(">screen<")
     expect(html).not.toContain(">system<")

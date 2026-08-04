@@ -23,6 +23,7 @@ import { loadInstructionSkillSnapshots } from "./instruction-skill-snapshot.js";
 import { resolveStartContextPlan } from "./preflight.js";
 import { executeRootRunDriver } from "./root-run-driver.js";
 import { projectMcpRuntimeHealthObservations, projectYeonjangRuntimeHealthObservations, } from "./runtime-capability-health.js";
+import { resolveRunLlmRuntime, toRunLlmRuntimePreflightFailure, } from "./run-llm-runtime-resolution.js";
 import { buildStartRootRunDriverDependencies } from "./start-driver-dependencies.js";
 import { createFirstResponseDeadline } from "./first-response-deadline.js";
 import { prepareStartLaunch } from "./start-launch.js";
@@ -104,6 +105,13 @@ export function startRootRun(params) {
     const sessionId = params.sessionId ?? crypto.randomUUID();
     const runId = params.runId ?? crypto.randomUUID();
     const controller = new AbortController();
+    const abortFromParent = () => controller.abort();
+    if (params.signal?.aborted)
+        controller.abort();
+    else
+        params.signal?.addEventListener("abort", abortFromParent, {
+            once: true,
+        });
     const targetId = params.targetId?.trim() ? params.targetId : undefined;
     const now = Date.now();
     const workDir = params.workDir ?? params.config.profile.workspace;
@@ -131,6 +139,19 @@ export function startRootRun(params) {
             requestedProviderId: params.providerId,
             providerTrace,
         });
+        const attemptLlmRuntime = resolveRunLlmRuntime({
+            ...(params.provider ? { explicitProvider: params.provider } : {}),
+            ...(responseRuntime.providerId ? { providerId: responseRuntime.providerId } : {}),
+            ...(responseRuntime.model ? { model: responseRuntime.model } : {}),
+            resolver: {
+                resolveConfiguredProvider: ({ providerId }) => ({
+                    provider: getProvider(providerId, runtimeConfig),
+                    providerId,
+                }),
+            },
+        });
+        const attemptLlmRuntimeFailure = toRunLlmRuntimePreflightFailure(attemptLlmRuntime);
+        const attemptProvider = attemptLlmRuntime.status === "ready" ? attemptLlmRuntime.provider : undefined;
         const maxDelegationTurns = runtimeConfig.orchestration.maxDelegationTurns;
         const parentAgentName = resolveMainAgentSelfName(runtimeConfig, resolvePromptLocaleForRequest(runtimeConfig.profile.language, params.message));
         const finalResponseIdentityContext = buildFinalResponseIdentityContext({
@@ -178,6 +199,16 @@ export function startRootRun(params) {
             ...(params.inboundMessage ? { inboundMessage: params.inboundMessage } : {}),
             config: runtimeConfig,
             hasRequestGroupExecutionQueue,
+            ...(params.resumeExistingRun
+                ? {
+                    existingRun: (() => {
+                        const existing = getRootRun(runId);
+                        if (!existing)
+                            throw new Error("existing_root_run_resume_not_found");
+                        return existing;
+                    })(),
+                }
+                : {}),
         });
         appendRunEvent(runId, `preflight_ms=${Date.now() - now}`);
         if (providerTrace)
@@ -227,6 +258,7 @@ export function startRootRun(params) {
                 methodSnapshots: getMqttExtensionSnapshots().map((snapshot) => ({
                     instanceId: snapshot.instanceId?.trim() || snapshot.extensionId,
                     methods: [...snapshot.methods],
+                    ...(snapshot.toolHealth ? { toolHealth: snapshot.toolHealth } : {}),
                 })),
                 observedAt: canonicalPolicySnapshotAt,
             }),
@@ -267,17 +299,8 @@ export function startRootRun(params) {
             maxSourceBytes: 64 * 1024,
             maxTotalBytes: 256 * 1024,
         }, { readSource: readInstructionSkillSource });
-        let capabilitySelectionAiProvider = params.provider;
-        if (!capabilitySelectionAiProvider) {
-            try {
-                capabilitySelectionAiProvider = getProvider(responseRuntime.providerId, runtimeConfig);
-            }
-            catch {
-                capabilitySelectionAiProvider = undefined;
-            }
-        }
         const capabilitySelectionProvider = createRuntimeCapabilitySelectionProvider({
-            ...(capabilitySelectionAiProvider ? { provider: capabilitySelectionAiProvider } : {}),
+            ...(attemptProvider ? { provider: attemptProvider } : {}),
             ...(responseRuntime.model ? { model: responseRuntime.model } : {}),
             workDir,
             observabilityContext: { runId, requestGroupId, sessionId },
@@ -301,7 +324,7 @@ export function startRootRun(params) {
                 : {}),
             model: responseRuntime.model,
             ...(responseRuntime.providerId ? { providerId: responseRuntime.providerId } : {}),
-            ...(params.provider ? { provider: params.provider } : {}),
+            ...(attemptProvider ? { provider: attemptProvider } : {}),
             workDir,
             config: runtimeConfig,
             canonicalPolicyTools,
@@ -348,7 +371,7 @@ export function startRootRun(params) {
             message: params.message,
             ...(responseRuntime.model ? { model: responseRuntime.model } : {}),
             ...(responseRuntime.providerId ? { providerId: responseRuntime.providerId } : {}),
-            ...(params.provider ? { provider: params.provider } : {}),
+            ...(attemptProvider ? { provider: attemptProvider } : {}),
             ...(effectiveOnChunk ? { onChunk: effectiveOnChunk } : {}),
             ...(params.immediateCompletionText
                 ? { immediateCompletionText: params.immediateCompletionText }
@@ -365,8 +388,8 @@ export function startRootRun(params) {
             ...(params.skipIntake ? { skipIntake: params.skipIntake } : {}),
             config: runtimeConfig,
         });
-        appendRunEvent(runId, `context_plan: memory=${contextPlan.memoryScopes.join(",")}; tools=${contextPlan.toolPolicy.toolsEnabled ? "enabled" : "disabled"}; yeonjang=${contextPlan.toolPolicy.requiresYeonjang ? "required" : "not_required"}`);
-        const preflightFailure = contextPlan.preflightFailure;
+        appendRunEvent(runId, `context_plan: memory=${contextPlan.memoryScopes.join(",")}; tools=${contextPlan.toolPolicy.toolsEnabled ? "enabled" : "disabled"}; yeonjang=${contextPlan.toolPolicy.requiresYeonjang}`);
+        const preflightFailure = attemptLlmRuntimeFailure ?? contextPlan.preflightFailure;
         if (preflightFailure) {
             const preflightResponseContext = buildStartPreflightResponseContext({
                 originalRequest: params.message,
@@ -377,7 +400,7 @@ export function startRootRun(params) {
                     : {}),
                 model: responseRuntime.model,
                 ...(responseRuntime.providerId ? { providerId: responseRuntime.providerId } : {}),
-                ...(params.provider ? { provider: params.provider } : {}),
+                ...(attemptProvider ? { provider: attemptProvider } : {}),
                 config: runtimeConfig,
                 workDir,
                 identityContext: finalResponseIdentityContext,
@@ -407,7 +430,7 @@ export function startRootRun(params) {
                 const hasTopologyDelegatedTasks = startPlan.orchestrationPlanSnapshot.delegatedTasks.some((task) => task.assignedAgentId !== undefined && topologyAgentIds.has(task.assignedAgentId));
                 try {
                     if (shouldDispatchPreAnalyzedRootDelegation({
-                        isRootRequest,
+                        isRootRequest: isRootRequest && !params.resumeExistingRun,
                         hasParentRun: Boolean(params.parentRunId),
                         runScope: params.runScope,
                         skipIntake: params.skipIntake === true,
@@ -419,7 +442,7 @@ export function startRootRun(params) {
                             updateRunStatus(runId, "running", "서브 에이전트에게 작업을 위임했고 결과를 기다리고 있습니다.", false);
                             appendRunEvent(runId, "parent_run_awaiting_child_result:sub_agent_dispatch");
                             const diagnosisProviderResolution = createRuntimeDiagnosisProviderPair({
-                                provider: params.provider,
+                                provider: attemptProvider,
                                 model: responseRuntime.model,
                                 workDir,
                                 observabilityContext: { runId, requestGroupId, sessionId },
@@ -553,7 +576,7 @@ export function startRootRun(params) {
                         ...(params.intentEnvelope ? { intentEnvelope: params.intentEnvelope } : {}),
                         currentModel: responseRuntime.model,
                         currentProviderId: responseRuntime.providerId,
-                        currentProvider: params.provider,
+                        currentProvider: attemptProvider,
                         currentTargetId: targetId,
                         currentTargetLabel: params.targetLabel,
                         workDir,
@@ -581,6 +604,9 @@ export function startRootRun(params) {
                         ...(driverTopologyRouting ? { topologyRouting: driverTopologyRouting } : {}),
                         syntheticApprovalRuntimeDependencies,
                         defaultMaxDelegationTurns: maxDelegationTurns,
+                        ...(params.recoveredAttempt
+                            ? { recoveredAttempt: params.recoveredAttempt }
+                            : {}),
                     }, driverDependencies);
                 }
                 finally {
@@ -615,7 +641,7 @@ export function startRootRun(params) {
                         : {}),
                     model: responseRuntime.model,
                     ...(responseRuntime.providerId ? { providerId: responseRuntime.providerId } : {}),
-                    ...(params.provider ? { provider: params.provider } : {}),
+                    ...(attemptProvider ? { provider: attemptProvider } : {}),
                     config: runtimeConfig,
                     workDir,
                     identityContext: finalResponseIdentityContext,
@@ -643,6 +669,8 @@ export function startRootRun(params) {
             error: message,
         });
         return undefined;
+    }).finally(() => {
+        params.signal?.removeEventListener("abort", abortFromParent);
     });
     return {
         runId,

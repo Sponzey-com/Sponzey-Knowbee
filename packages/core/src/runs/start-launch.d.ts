@@ -82,6 +82,7 @@ export declare function prepareStartLaunch(params: {
     inboundMessage?: InboundMessageRecord | undefined;
     config: OrchestrationModeConfigSnapshot;
     hasRequestGroupExecutionQueue: (requestGroupId: string) => boolean;
+    existingRun?: RootRun;
 }, dependencies?: StartLaunchDependencies): Promise<PreparedStartLaunch>;
 export {};
 //# sourceMappingURL=start-launch.d.ts.map

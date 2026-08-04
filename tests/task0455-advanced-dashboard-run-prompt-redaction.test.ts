@@ -17,8 +17,7 @@ describe("task0455 advanced dashboard run prompt redaction", () => {
   })
 
   it("uses the sanitized run title helper for recent, pending, and warning cards", () => {
-    expect(source).toContain("recentRuns[0] ? dashboardRunTitle(recentRuns[0], input.language)")
-    expect(source).toContain("`${dashboardRunTitle(run, input.language)} · ${toRunStatusText(run.status, input.language)} · ${toRunSourceText(run.source, input.language)}`")
-    expect(source).toContain("`${dashboardRunTitle(run, input.language)} · ${toRunStatusText(run.status, input.language)}`")
+    expect(source).toContain("dashboardRunTitle(recentRuns[0], input.language)")
+    expect(source.match(/dashboardRunTitle\((?:recentRuns\[0\]|run), input\.language\)/gu)).toHaveLength(4)
   })
 })

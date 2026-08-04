@@ -18,7 +18,8 @@ describe("task0598 MQTT and Yeonjang error redaction", () => {
     expect(clientSource).not.toMatch(/error: error instanceof Error \? error\.message : String\(error\)/u)
     expect(clientSource).not.toMatch(/JSON 파싱 실패: \$\{error instanceof Error \? error\.message : String\(error\)\}/u)
     expect(clientSource).not.toMatch(/청크 응답 복원 실패: \$\{error instanceof Error \? error\.message : String\(error\)\}/u)
-    expect(clientSource).toContain("new Error(yeonjangMqttErrorMessage(error?.message ??")
+    expect(clientSource).toContain("message: yeonjangMqttErrorMessage(")
+    expect(clientSource).toContain("return new YeonjangCommandError(failure)")
   })
 
   it("preserves Yeonjang unavailable classification semantics", () => {

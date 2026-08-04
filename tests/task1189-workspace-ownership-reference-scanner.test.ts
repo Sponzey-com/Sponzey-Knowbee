@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { scanWorkspaceOwnershipReferences } from "../scripts/lib/repository-reference-scanner.mjs"
+import { scanWorkspaceOwnershipReferences } from "../scripts/self/lib/repository-reference-scanner.mjs"
 
 const roots: string[] = []
 const fixture = (): string => {

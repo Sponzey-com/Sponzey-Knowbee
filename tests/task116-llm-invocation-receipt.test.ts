@@ -102,7 +102,17 @@ describe("Task 116 LLM invocation receipt contract", () => {
       model: "stub-model",
       solutionPlanPromptSourceBlock: "planning",
       observabilityContext: correlation,
-    }).planSolution({} as never)
+    }).planSolution({
+      workId: "work:task116",
+      runId: "run:task116",
+      ownerAgentName: "Knowbee",
+      requestDiagnosisReceiptId: "receipt:diagnosis:task116",
+      goal: "Verify planning correlation.",
+      constraints: [],
+      capabilityRefs: [],
+      requiredCapabilityRefs: [],
+      completionCriteria: ["The planning invocation carries the expected correlation."],
+    })
 
     expect(diagnosisProvider.receivedParams[0]?.observability).toEqual({
       ...correlation,

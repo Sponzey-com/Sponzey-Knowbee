@@ -86,6 +86,7 @@ async function resolveStandaloneAssistantText(params) {
             config: responseContext.config,
             workDir: responseContext.workDir,
             ...(responseContext.identityContext ? { identityContext: responseContext.identityContext } : {}),
+            ...(responseContext.failureEvidence ? { failureEvidence: responseContext.failureEvidence } : {}),
             ...(params.contentKind !== "fixed_notice" ? { contentKind: params.contentKind } : {}),
         });
         if (rendered?.text.trim() && rendered.reviewReceipt) {
@@ -149,6 +150,7 @@ async function resolveCompletionAssistantText(params) {
             config: responseContext.config,
             workDir: responseContext.workDir,
             ...(responseContext.identityContext ? { identityContext: responseContext.identityContext } : {}),
+            ...(responseContext.failureEvidence ? { failureEvidence: responseContext.failureEvidence } : {}),
             ...(params.contentKind ? { contentKind: params.contentKind } : {}),
         });
         if (rendered?.text.trim() && rendered.reviewReceipt) {

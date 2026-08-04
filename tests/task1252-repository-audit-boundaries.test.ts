@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 
 describe("task1252 repository artifact audit boundaries", () => {
   it("requires retention and UI boundaries in the production artifact audit", () => {
-    const source = readFileSync("scripts/audit-repository-artifacts.mjs", "utf8")
+    const source = readFileSync("scripts/self/audit-repository-artifacts.mjs", "utf8")
     expect(source).toContain('"retention"')
     expect(source).toContain('"ui"')
     expect(source).toContain("retentionRecords")

@@ -2,7 +2,7 @@ import { eventBus } from "../../events/index.js";
 import { createLogger } from "../../logger/index.js";
 import { recordLatencyMetric } from "../../observability/latency.js";
 import { listRunsForActiveRequestGroups } from "../../runs/store.js";
-import { listPendingInteractions, resolvePendingInteraction } from "../../tools/runtime-dispatcher.js";
+import { listPendingInteractions, resolveApprovalDecision, resolvePendingInteraction, } from "../../tools/runtime-dispatcher.js";
 import { redactUiValue } from "../../ui/redaction.js";
 import { authMiddleware } from "../middleware/auth.js";
 const log = createLogger("api:ws");
@@ -103,7 +103,8 @@ function setupEventForwarding() {
     eventBus.on("tool.after", (e) => broadcast({ type: "tool.after", ...e }));
     eventBus.on("approval.request", (event) => {
         const { approvalId, runId, toolName, resolve } = event;
-        registerApprovalFromWs(runId, resolve, approvalId);
+        if (!approvalId)
+            registerApprovalFromWs(runId, resolve);
         log.info(`approval.request registered for approvalId=${approvalId ?? "none"} runId=${runId} tool=${toolName}`);
         broadcast(projectApprovalRequestForWebUi(event));
     });
@@ -128,6 +129,20 @@ export function registerApprovalFromWs(runId, resolve, approvalId) {
         pendingApprovals.set(approvalId, resolve);
 }
 export function resolveRegisteredWebUiApproval(input) {
+    if (input.approvalId) {
+        try {
+            return resolveApprovalDecision({
+                approvalId: input.approvalId,
+                runId: input.runId,
+                decision: input.decision,
+                decisionBy: "webui",
+                decisionSource: "user",
+            }).accepted;
+        }
+        catch {
+            return false;
+        }
+    }
     const resolve = input.approvalId
         ? (pendingApprovals.get(input.approvalId) ?? pendingApprovals.get(input.runId))
         : pendingApprovals.get(input.runId);

@@ -10,9 +10,11 @@ export interface ChannelPendingResponseDeliveryOwner {
 }
 export interface StartedChannelRecoveryRuntime {
     resolveDeliveryHandler: CanonicalPendingDeliveryHandlerResolver;
+    resumeExistingRootRun(runId: string, signal?: AbortSignal): Promise<boolean>;
 }
 export declare function createStartedChannelRecoveryRuntime(input: {
     telegram?: ChannelPendingResponseDeliveryOwner;
     slack?: ChannelPendingResponseDeliveryOwner;
+    resumeExistingRootRun?: (runId: string, signal?: AbortSignal) => Promise<boolean>;
 }): StartedChannelRecoveryRuntime;
 //# sourceMappingURL=pending-response-delivery.d.ts.map

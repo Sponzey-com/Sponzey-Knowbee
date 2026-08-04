@@ -68,6 +68,12 @@ export function decideExecutionPostPassRecovery(params) {
                 summary: genericExecutionRecovery.summary,
                 reason: genericExecutionRecovery.reason,
                 toolNames: params.executionRecovery?.toolNames ?? [],
+                ...(params.executionRecovery?.reasonCode
+                    ? { reasonCode: params.executionRecovery.reasonCode }
+                    : {}),
+                ...(params.executionRecovery?.evidenceRefs
+                    ? { evidenceRefs: params.executionRecovery.evidenceRefs }
+                    : {}),
                 alternatives: genericExecutionRecovery.alternatives,
             }),
             reviewStepStatus: "running",

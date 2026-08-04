@@ -34,6 +34,6 @@ describe("task1253 temporary artifact registry", () => {
       TEMPORARY_ARTIFACT_LIFECYCLES.map(
         (manifest) => evaluateTemporaryArtifactLifecycle(manifest).status,
       ),
-    ).toEqual(["active", "active", "active", "active"])
+    ).toEqual(TEMPORARY_ARTIFACT_LIFECYCLES.map(() => "active"))
   })
 })

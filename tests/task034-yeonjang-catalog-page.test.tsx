@@ -146,7 +146,7 @@ describe("task034 Yeonjang catalog page", () => {
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal)
   })
 
-  it("renders filters, one public row, and a redacted detail drawer", () => {
+  it("renders filters, one public row, and a redacted persistent detail panel", () => {
     const html = renderToStaticMarkup(
       createElement(YeonjangCatalogView, {
         ...callbacks,
@@ -164,7 +164,8 @@ describe("task034 Yeonjang catalog page", () => {
     )
     expect(html).toContain('aria-label="연장 검색"')
     expect(html).toContain(`data-yeonjang-ref="${item.yeonjangRef}"`)
-    expect(html).toContain('role="dialog"')
+    expect(html).toContain('aria-label="연장 운영 상세"')
+    expect(html).not.toContain('role="dialog"')
     expect(html).toContain("사용 가능한 범위")
     expect(html).not.toMatch(/instanceId|nodeId|mqtt|fingerprint|sessionId|supportedMethods/)
   })

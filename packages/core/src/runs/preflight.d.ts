@@ -16,7 +16,7 @@ export interface StartContextPlan {
     toolPolicy: {
         toolsEnabled: boolean;
         requiresApproval: boolean;
-        requiresYeonjang: boolean;
+        requiresYeonjang: "unknown" | "required" | "not_required";
     };
     preflightFailure: StartPreflightFailure | null;
 }

@@ -159,4 +159,144 @@ describe("canonical terminal cause persistence", () => {
       WHERE receipt_id = ?
     `).get("receipt:legacy:migration")).toEqual({ terminal_cause_json: null })
   })
+
+  it("migrates the receipt kind constraint to persist blocked result evidence", () => {
+    const db = new BetterSqlite3(":memory:")
+    databases.push(db)
+    db.exec(`
+      CREATE TABLE canonical_work_aggregates (
+        work_id TEXT PRIMARY KEY
+      );
+      INSERT INTO canonical_work_aggregates (work_id) VALUES ('work:1');
+      CREATE TABLE canonical_work_receipts (
+        receipt_id TEXT PRIMARY KEY,
+        work_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN (
+          'diagnosis', 'analysis_revision', 'policy', 'execution', 'attempt',
+          'verification', 'recovery', 'input_requirement', 'user_input',
+          'exhaustion', 'cancellation', 'delivery'
+        )),
+        evidence_fingerprint TEXT NOT NULL,
+        evidence_refs_json TEXT NOT NULL,
+        issued_at INTEGER NOT NULL,
+        consumed_revision INTEGER,
+        terminal_cause_json TEXT
+      );
+    `)
+    db.prepare(`
+      INSERT INTO canonical_work_receipts
+        (receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json, issued_at,
+         consumed_revision, terminal_cause_json)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+    `).run(
+      "receipt:policy:before-blocker",
+      "work:1",
+      "policy",
+      fingerprint,
+      JSON.stringify(["policy:evidence:before-blocker"]),
+      1_000,
+      JSON.stringify(terminalCause),
+    )
+
+    const migration = MIGRATIONS.find((candidate) => candidate.version === 71)
+    expect(migration).toBeDefined()
+    migration?.up(db as never)
+
+    const repository = new SqliteCanonicalWorkReceiptRepository(db as never, () => 2_000)
+    expect(repository.issue({
+      receiptId: "receipt:blocker:1",
+      workId: "work:1",
+      kind: "blocker",
+      evidenceFingerprint: fingerprint,
+      evidenceRefs: ["blocker:evidence:1"],
+      terminalCause: {
+        schemaVersion: 1,
+        originStage: "result_diagnosis",
+        outcomeKind: "blocked",
+        reasonCode: "verified_result_blocker",
+        safeAlternativesExhausted: false,
+      },
+    })).toEqual({ issued: true })
+    expect(repository.load("receipt:policy:before-blocker")).toMatchObject({
+      kind: "policy",
+      terminalCause,
+    })
+  })
+
+  it("migrates approval state and receipt constraints without losing existing evidence", () => {
+    const db = new BetterSqlite3(":memory:")
+    databases.push(db)
+    db.exec(`
+      CREATE TABLE root_runs (id TEXT PRIMARY KEY);
+      INSERT INTO root_runs (id) VALUES ('run:approval:migration');
+      CREATE TABLE canonical_work_aggregates (
+        work_id TEXT PRIMARY KEY,
+        root_run_id TEXT NOT NULL UNIQUE,
+        state TEXT NOT NULL CHECK(state IN (
+          'REQUEST_RECEIVED', 'SOLUTION_ANALYZED', 'POLICY_VALIDATED', 'EXECUTING',
+          'RESULT_REVIEW', 'SUCCEEDED', 'PARTIALLY_SUCCEEDED', 'USER_INPUT_REQUIRED',
+          'BLOCKED', 'EXHAUSTED', 'CANCELLED', 'USER_REPORT'
+        )),
+        revision INTEGER NOT NULL CHECK(revision >= 0),
+        transitions_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (root_run_id) REFERENCES root_runs(id) ON DELETE CASCADE
+      );
+      INSERT INTO canonical_work_aggregates
+        (work_id, root_run_id, state, revision, transitions_json, created_at, updated_at)
+      VALUES
+        ('work:approval:migration', 'run:approval:migration', 'EXECUTING', 3, '[]', 1, 1);
+      CREATE TABLE canonical_work_receipts (
+        receipt_id TEXT PRIMARY KEY,
+        work_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN (
+          'diagnosis', 'analysis_revision', 'policy', 'execution', 'attempt',
+          'verification', 'recovery', 'input_requirement', 'user_input',
+          'exhaustion', 'cancellation', 'delivery', 'blocker'
+        )),
+        evidence_fingerprint TEXT NOT NULL,
+        evidence_refs_json TEXT NOT NULL,
+        issued_at INTEGER NOT NULL,
+        consumed_revision INTEGER CHECK(consumed_revision IS NULL OR consumed_revision > 0),
+        terminal_cause_json TEXT,
+        FOREIGN KEY (work_id) REFERENCES canonical_work_aggregates(work_id) ON DELETE CASCADE
+      );
+      INSERT INTO canonical_work_receipts
+        (receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json, issued_at,
+         consumed_revision, terminal_cause_json)
+      VALUES
+        ('receipt:policy:preserved', 'work:approval:migration', 'policy',
+         '${fingerprint}', '["policy:evidence:preserved"]', 1, 3, NULL);
+    `)
+
+    const migration = MIGRATIONS.find((candidate) => candidate.version === 73)
+    expect(migration).toBeDefined()
+    migration?.up(db as never)
+
+    expect(db.prepare(`
+      SELECT state, revision
+      FROM canonical_work_aggregates
+      WHERE work_id = 'work:approval:migration'
+    `).get()).toEqual({ state: "EXECUTING", revision: 3 })
+    expect(db.prepare(`
+      SELECT kind, consumed_revision
+      FROM canonical_work_receipts
+      WHERE receipt_id = 'receipt:policy:preserved'
+    `).get()).toEqual({ kind: "policy", consumed_revision: 3 })
+
+    db.prepare(`
+      UPDATE canonical_work_aggregates
+      SET state = 'AWAITING_APPROVAL'
+      WHERE work_id = 'work:approval:migration'
+    `).run()
+    const repository = new SqliteCanonicalWorkReceiptRepository(db as never, () => 2_000)
+    expect(repository.issue({
+      receiptId: "receipt:approval:migrated",
+      workId: "work:approval:migration",
+      kind: "approval",
+      evidenceFingerprint: fingerprint,
+      evidenceRefs: ["approval:evidence:migrated"],
+    })).toEqual({ issued: true })
+  })
 })

@@ -1,5 +1,6 @@
 import type { ChannelSmokeRunnerOptions } from "../channels/smoke-runner.js";
 import type { LiveAcceptanceSelectionAvailability } from "../release/live-acceptance-selection-preflight.js";
+import type { LiveAcceptanceRuntimeIdentityAdmission } from "../release/live-acceptance-runtime-identity.js";
 import type { StartupProcessContext } from "../runtime/startup-process-context.js";
 import type { GatewayStartupProgressPort } from "../runtime/gateway-startup-coordinator.js";
 import type { UpdateRuntimeEnvironment } from "../update/service.js";
@@ -42,6 +43,7 @@ export interface ApiServerRuntimeContext {
     readonly liveAcceptanceExecutor?: LiveAcceptanceRouteExecutor;
     readonly liveAcceptanceExecutorFactory?: LiveAcceptanceExecutorFactory;
     readonly liveAcceptanceSelectionAvailabilityInspector?: LiveAcceptanceSelectionAvailabilityInspector;
+    readonly liveAcceptanceRuntimeIdentityInspector?: () => LiveAcceptanceRuntimeIdentityAdmission;
     readonly telegramLiveSmokeTarget?: TelegramLiveSmokeTarget;
     readonly slackLiveSmokeTarget?: SlackLiveSmokeTarget;
     readonly channelSmokeLiveExecutor?: ChannelSmokeRunnerOptions["executeScenario"];
@@ -57,6 +59,7 @@ export interface ApiServerRuntimeDependencies {
     readonly liveAcceptanceExecutor?: LiveAcceptanceRouteExecutor;
     readonly liveAcceptanceExecutorFactory?: LiveAcceptanceExecutorFactory;
     readonly liveAcceptanceSelectionAvailabilityInspector?: LiveAcceptanceSelectionAvailabilityInspector;
+    readonly liveAcceptanceRuntimeIdentityInspector?: () => LiveAcceptanceRuntimeIdentityAdmission;
     readonly channelSmokeLiveExecutor?: ChannelSmokeRunnerOptions["executeScenario"];
     readonly telegramLiveSmokeTarget?: TelegramLiveSmokeTarget;
     readonly slackLiveSmokeTarget?: SlackLiveSmokeTarget;

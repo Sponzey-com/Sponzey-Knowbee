@@ -39,9 +39,21 @@ function uniqueStrings(values) {
 function buildSnapshotIndex(snapshots) {
     const index = new Map();
     for (const snapshot of snapshots) {
-        index.set(snapshot.extensionId, snapshot);
+        index.set(`extension:${snapshot.extensionId}`, snapshot);
+        if (snapshot.instanceId)
+            index.set(`instance:${snapshot.instanceId}`, snapshot);
+        if (snapshot.nodeId)
+            index.set(`node:${snapshot.nodeId}`, snapshot);
+        if (snapshot.sessionId)
+            index.set(`session:${snapshot.sessionId}`, snapshot);
     }
     return index;
+}
+function findSnapshotForInstance(index, instance) {
+    return index.get(`instance:${instance.instanceId}`)
+        ?? (instance.session ? index.get(`session:${instance.session.sessionId}`) : undefined)
+        ?? index.get(`node:${instance.nodeId}`)
+        ?? index.get(`extension:${instance.nodeId}`);
 }
 function resolveProjectedLocation(input) {
     const reasonCodes = [];
@@ -80,7 +92,9 @@ function resolveProjectedLocation(input) {
 }
 function buildDefaultTargetEligibility(instance) {
     const reasonCodes = [];
-    if (instance.state !== "online") {
+    const hasRunnableConnection = instance.state === "online"
+        || (instance.state === "degraded" && instance.runnableTarget === true);
+    if (!hasRunnableConnection) {
         reasonCodes.push("state_not_online");
     }
     if (instance.location !== "local") {
@@ -115,7 +129,10 @@ export function projectYeonjangInstances(input = {}) {
     const now = input.now ?? Date.now();
     const gatewayHostPreview = getYeonjangGatewayHostFingerprintPreview();
     for (const snapshot of snapshots) {
-        if (instances.some((instance) => instance.nodeId === snapshot.extensionId))
+        if (instances.some((instance) => (instance.instanceId === snapshot.instanceId
+            || instance.session?.sessionId === snapshot.sessionId
+            || instance.nodeId === snapshot.nodeId
+            || instance.nodeId === snapshot.extensionId)))
             continue;
         const isSyntheticLocal = snapshot.extensionId === DEFAULT_LOCAL_NODE_ID;
         instances.push({
@@ -169,7 +186,7 @@ export function projectYeonjangInstances(input = {}) {
         });
     }
     return instances.map((instance) => {
-        const snapshot = snapshotIndex.get(instance.nodeId);
+        const snapshot = findSnapshotForInstance(snapshotIndex, instance);
         const supportProfile = normalizeYeonjangSupportProfile(snapshot?.supportProfile ?? instance.supportProfile);
         const location = resolveProjectedLocation({ instance, gatewayHostPreview });
         const supportedMethods = uniqueStrings(snapshot?.methods ?? []);

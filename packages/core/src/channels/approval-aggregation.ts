@@ -17,7 +17,7 @@ export interface ApprovalAggregateItem {
   riskSummary?: string
   guidance?: string
   paramsPreview: string
-  resolve: (decision: ApprovalDecision, reason?: ApprovalResolutionReason) => void
+  resolve?: (decision: ApprovalDecision, reason?: ApprovalResolutionReason) => void
 }
 
 export interface ApprovalAggregateContext {
@@ -78,7 +78,7 @@ export function resolveApprovalAggregate(
   reason: ApprovalResolutionReason = "user",
 ): ApprovalAggregateItem[] {
   for (const item of context.items) {
-    item.resolve(decision, reason)
+    item.resolve?.(decision, reason)
   }
   return [...context.items]
 }

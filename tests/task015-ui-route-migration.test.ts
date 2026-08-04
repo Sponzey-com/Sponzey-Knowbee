@@ -94,7 +94,12 @@ describe("task015 UI route migration and rollback", () => {
       }),
     )
     expect(
-      inventory.every((item) => item.apiCalls.length > 0 || item.component === "Navigate"),
+      inventory.every(
+        (item) =>
+          item.apiCalls.length > 0 ||
+          item.component === "Navigate" ||
+          item.component === "UnifiedRouteRedirect",
+      ),
     ).toBe(true)
     expect(
       getDeprecatedUiRoutes().every((item) => item.replacementPath?.startsWith("/advanced/")),

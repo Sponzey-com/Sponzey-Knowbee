@@ -1985,13 +1985,20 @@ dependencies = [
  "fs2",
  "hmac",
  "iced",
+ "libc",
  "png",
  "rumqttc",
+ "rustls-pemfile",
+ "security-framework",
+ "security-framework-sys",
  "serde",
  "serde_json",
  "sha2",
  "sysinfo",
+ "tokio",
  "tray-icon",
+ "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]
@@ -3902,6 +3909,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

@@ -115,6 +115,7 @@ describe("keyboard shortcut tool", () => {
 
     expect(canYeonjangHandleMethod).toHaveBeenCalledWith("keyboard.action", {
       extensionId: "yeonjang-main",
+      signal: expect.any(AbortSignal),
       metadata: {
         runId: "run-1",
         requestGroupId: "request-group-1",
@@ -132,6 +133,7 @@ describe("keyboard shortcut tool", () => {
       },
       {
         extensionId: "yeonjang-main",
+        signal: expect.any(AbortSignal),
         timeoutMs: 15_000,
         metadata: {
           runId: "run-1",

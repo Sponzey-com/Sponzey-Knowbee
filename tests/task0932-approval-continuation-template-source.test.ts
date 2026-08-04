@@ -33,7 +33,7 @@ describe("task0932 approval granted continuation prompt source", () => {
         userMessage: "화면 기록 권한을 허용해 주세요.",
       },
       usesWorkerRuntime: true,
-      requiresPrivilegedToolExecution: true,
+      requiresPrivilegedToolExecution: false,
       successfulTools: [],
       successfulFileDeliveries: [],
       sawRealFilesystemMutation: false,

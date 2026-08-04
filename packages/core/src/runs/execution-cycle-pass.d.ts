@@ -10,7 +10,7 @@ import { runExecutionAttemptPass, type ExecutionAttemptPassResult } from "./exec
 import { runRecoveryEntryPass } from "./recovery-entry-pass.js";
 import { runPostExecutionPass } from "./post-execution-pass.js";
 import { runReviewCyclePass } from "./review-cycle-pass.js";
-import type { logAssistantReply, RunChunkDeliveryHandler } from "./delivery.js";
+import type { logAssistantReply, RunChunkDeliveryHandler, SuccessfulFileDelivery } from "./delivery.js";
 import type { CanonicalPendingResponseConsumer, CanonicalPendingResponseStager, FinalizationDependencies, FinalizationSource } from "./finalization.js";
 import type { RecoveryBudgetUsage } from "./recovery-budget.js";
 import type { SuccessfulToolEvidence } from "./recovery.js";
@@ -45,6 +45,12 @@ export interface ExecutionCycleState {
     truncatedOutputRecoveryAttempted: boolean;
     successfulTools: SuccessfulToolEvidence[];
     webExecutionState: WebExecutionState;
+    recoveredAttempt?: RecoveredExecutionAttempt;
+}
+export interface RecoveredExecutionAttempt {
+    preview: string;
+    canonicalAttemptEvidenceRefs: string[];
+    successfulFileDeliveries?: SuccessfulFileDelivery[];
 }
 export type ExecutionCyclePassResult = {
     kind: "break";

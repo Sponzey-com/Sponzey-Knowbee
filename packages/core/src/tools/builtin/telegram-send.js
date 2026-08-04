@@ -80,6 +80,10 @@ export const telegramSendFileTool = {
     riskLevel: "moderate",
     requiresApproval: true,
     availableSources: ["telegram"],
+    channelCapability: {
+        kind: "direct_artifact_delivery",
+        channel: "telegram",
+    },
     async execute(params, ctx) {
         try {
             if (ctx.source !== "telegram") {

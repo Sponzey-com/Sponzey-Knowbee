@@ -63,7 +63,7 @@ describe("Task 037 agent workspace page", () => {
       }),
     )
     expect(html).toContain('data-agent-ref="agent_v1_')
-    expect(html).toContain('role="dialog"')
+    expect(html).not.toContain('role="dialog"')
     expect(html).toContain("마당쇠")
     expect(html).toContain("UI UX Pro Max")
     expect(html).toContain("Reviewer")

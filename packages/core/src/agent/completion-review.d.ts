@@ -1,3 +1,4 @@
+import { type UserInputRequirement } from "../contracts/user-input-requirement.js";
 import { type AIProvider } from "../ai/index.js";
 import type { KnowbeeConfig } from "../config/types.js";
 import type { InstructionRuntimeContext } from "../instructions/merge.js";
@@ -37,6 +38,7 @@ export interface CompletionReviewResult {
     followupRequiredToolNames?: string[];
     followupTargetRefs?: string[];
     userMessage?: string;
+    inputRequirement?: UserInputRequirement;
     remainingItems: string[];
     criterionAssessments?: CompletionReviewCriterionAssessment[];
     conditionAssessments?: CompletionReviewConditionAssessment[];

@@ -11,21 +11,17 @@ import { YEONJANG_TOOL_MAPPINGS } from "../packages/core/src/yeonjang/tool-mappi
 const METHOD = "browser.active_tab_info"
 const TOOL_NAME = "yeonjang_browser_active_tab_info"
 
-function implementationBeforeTests(path: string): string {
-  const source = readFileSync(path, "utf8")
-  return source.split("#[cfg(test)]")[0] ?? source
-}
-
 function productionExposureAudit(): Record<string, boolean> {
   const dispatcher = new ToolDispatcher({ config: DEFAULT_CONFIG })
   registerBuiltinTools(dispatcher)
-  const rustNode = implementationBeforeTests("Yeonjang/src/node.rs")
+  const rustNode = readFileSync("Yeonjang/src/node.rs", "utf8")
+  const rustDescriptor = readFileSync("Yeonjang/src/method_descriptor.rs", "utf8")
   const mappedMethods = YEONJANG_TOOL_MAPPINGS.flatMap((mapping) => mapping.methodIds)
   const mappedTools = YEONJANG_TOOL_MAPPINGS.map((mapping) => mapping.toolName)
   const registeredTools = dispatcher.getAll({ includeIsolated: true }).map((tool) => tool.name)
 
   return {
-    rustInventoryAdvertised: /"name"\s*:\s*"browser\.active_tab_info"/u.test(rustNode),
+    rustInventoryAdvertised: /"browser\.active_tab_info"/u.test(rustDescriptor),
     rustCapabilityMatrixAdvertised: /"browser\.active_tab_info"\s*:\s*capability_entry/u.test(rustNode),
     rustToolHealthAdvertised: /"browser\.active_tab_info"\s*:\s*browser_active_tab_info_tool_health_entry/u.test(rustNode),
     rustLiveHandlerRegistered: /"browser\.active_tab_info"\s*=>\s*dispatch_browser_active_tab_info_request/u.test(rustNode),

@@ -1,16 +1,28 @@
 import { eventBus } from "../../events/index.js";
 import { createLogger, redactLogText } from "../../logger/index.js";
 import { getRootRun } from "../../runs/store.js";
-import { attachApprovalChannelMessage, describeLateApproval, getLatestApprovalForRun } from "../../runs/approval-registry.js";
+import { attachApprovalChannelBinding, describeLateApproval, getLatestApprovalForRun, hashApprovalDecisionActor, listRequestedApprovalsForChannelCallback, } from "../../runs/approval-registry.js";
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js";
 import { recordLatencyMetric } from "../../observability/latency.js";
-import { appendApprovalAggregateItem, buildApprovalAggregateText, resolveApprovalAggregate, } from "../approval-aggregation.js";
+import { resolveApprovalDecision } from "../../tools/runtime-dispatcher.js";
+import { appendApprovalAggregateItem, buildApprovalAggregateText, } from "../approval-aggregation.js";
 import { buildTelegramApprovalCallbackNotice, buildTelegramApprovalResultLabel, resolveTelegramApprovalCallbackLanguage, } from "./approval-callback-notice.js";
 import { buildApprovalKeyboard, buildResultKeyboard } from "./keyboards.js";
 const log = createLogger("channel:telegram:approval");
 function telegramApprovalErrorMessage(error) {
     const raw = error instanceof Error ? error.message : String(error);
     return redactLogText(raw);
+}
+async function answerTelegramCallback(answerCallbackQuery, text) {
+    try {
+        if (text === undefined)
+            await answerCallbackQuery();
+        else
+            await answerCallbackQuery(text);
+    }
+    catch {
+        log.warn("Telegram callback acknowledgement failed; canonical callback processing will continue.");
+    }
 }
 // Map from runId → pending approval data
 const pending = new Map();
@@ -69,7 +81,7 @@ export function registerApprovalHandler(bot) {
             ...(riskSummary ? { riskSummary } : {}),
             ...(guidance ? { guidance } : {}),
             paramsPreview: paramsStr,
-            resolve,
+            ...(!approvalId ? { resolve } : {}),
         }, target.userId, observedAt);
         const text = buildApprovalAggregateText({ context: aggregated.context, channel: "telegram", language });
         let sentMsgId = existing?.messageId;
@@ -92,7 +104,14 @@ export function registerApprovalHandler(bot) {
             return;
         }
         if (approvalId && sentMsgId !== undefined) {
-            attachApprovalChannelMessage(approvalId, telegramApprovalChannelMessageId(target.chatId, target.threadId, sentMsgId));
+            attachApprovalChannelBinding({
+                approvalId,
+                channelMessageId: telegramApprovalChannelMessageId(target.chatId, target.threadId, sentMsgId),
+                decisionActorFingerprint: hashApprovalDecisionActor({
+                    channel: "telegram",
+                    actorId: String(target.userId),
+                }),
+            });
         }
         const timeout = existing?.timeout ?? (kind === "screen_confirmation"
             ? null
@@ -102,7 +121,7 @@ export function registerApprovalHandler(bot) {
                     return;
                 resolvedApprovalLanguages.set(runId, entry.language);
                 pending.delete(runId);
-                const resolvedItems = resolveApprovalAggregate(entry.context, "deny", "timeout");
+                const resolvedItems = resolveTelegramApprovalAggregate(entry.context, "deny", "timeout");
                 for (const item of resolvedItems) {
                     eventBus.emit("approval.resolved", { ...(item.approvalId ? { approvalId: item.approvalId } : {}), runId, decision: "deny", toolName: item.toolName, kind: item.kind, reason: "timeout" });
                 }
@@ -168,7 +187,7 @@ export function registerApprovalHandler(bot) {
         const from = ctx.from;
         const callbackLanguage = resolveTelegramApprovalCallbackLanguage(ctx.from?.language_code);
         if (data === "noop") {
-            await ctx.answerCallbackQuery();
+            await answerTelegramCallback(ctx.answerCallbackQuery.bind(ctx));
             return;
         }
         const approveOnceMatch = /^approve:([^:]+):once$/.exec(data);
@@ -176,15 +195,82 @@ export function registerApprovalHandler(bot) {
         const denyMatch = /^deny:([^:]+)$/.exec(data);
         const runId = approveOnceMatch?.[1] ?? approveAllMatch?.[1] ?? denyMatch?.[1];
         if (runId === undefined) {
-            await ctx.answerCallbackQuery();
+            await answerTelegramCallback(ctx.answerCallbackQuery.bind(ctx));
             return;
         }
+        const decision = approveAllMatch !== null
+            ? "allow_run"
+            : approveOnceMatch !== null
+                ? "allow_once"
+                : "deny";
         const entry = pending.get(runId);
         if (entry === undefined) {
             const language = resolvedApprovalLanguages.get(runId) ?? callbackLanguage;
+            const callbackMessage = ctx.callbackQuery.message;
+            const callbackMessageId = callbackMessage
+                ? telegramApprovalChannelMessageId(callbackMessage.chat.id, callbackMessage.message_thread_id, callbackMessage.message_id)
+                : undefined;
+            const restartBound = callbackMessageId
+                ? listRequestedApprovalsForChannelCallback({
+                    runId,
+                    channel: "telegram",
+                    channelMessageId: callbackMessageId,
+                    decisionActorFingerprint: hashApprovalDecisionActor({
+                        channel: "telegram",
+                        actorId: String(from.id),
+                    }),
+                })
+                : [];
+            const accepted = restartBound.filter((approval) => {
+                try {
+                    return resolveApprovalDecision({
+                        approvalId: approval.id,
+                        runId,
+                        decision,
+                        decisionBy: "telegram",
+                        decisionSource: "user",
+                    }).accepted;
+                }
+                catch {
+                    return false;
+                }
+            });
+            if (accepted.length > 0 && callbackMessage) {
+                const primaryKind = accepted[0]?.kind ?? "approval";
+                const username = from.first_name ?? from.username ?? String(from.id);
+                const resultLabel = buildTelegramApprovalResultLabel({
+                    language,
+                    approvalKind: primaryKind,
+                    decision,
+                    username,
+                });
+                try {
+                    await bot.api.editMessageReplyMarkup(callbackMessage.chat.id, callbackMessage.message_id, { reply_markup: buildResultKeyboard(resultLabel) });
+                }
+                catch {
+                    // best-effort
+                }
+                await answerTelegramCallback(ctx.answerCallbackQuery.bind(ctx), buildTelegramApprovalCallbackNotice({
+                    language,
+                    reason: "decision",
+                    approvalKind: primaryKind,
+                    decision,
+                }).text);
+                for (const approval of accepted) {
+                    eventBus.emit("approval.resolved", {
+                        approvalId: approval.id,
+                        runId,
+                        decision,
+                        toolName: approval.tool_name,
+                        kind: approval.kind,
+                        reason: "user",
+                    });
+                }
+                return;
+            }
             const lateMessage = describeLateApproval(getLatestApprovalForRun(runId), language);
             const notFoundMessage = describeLateApproval(undefined, language);
-            await ctx.answerCallbackQuery(buildTelegramApprovalCallbackNotice({
+            await answerTelegramCallback(ctx.answerCallbackQuery.bind(ctx), buildTelegramApprovalCallbackNotice({
                 language,
                 reason: "late",
                 text: lateMessage === notFoundMessage
@@ -194,7 +280,10 @@ export function registerApprovalHandler(bot) {
             return;
         }
         if (from.id !== entry.requesterId) {
-            await ctx.answerCallbackQuery(buildTelegramApprovalCallbackNotice({ language: callbackLanguage, reason: "unauthorized" }).text);
+            await answerTelegramCallback(ctx.answerCallbackQuery.bind(ctx), buildTelegramApprovalCallbackNotice({
+                language: callbackLanguage,
+                reason: "unauthorized",
+            }).text);
             return;
         }
         const language = entry.language;
@@ -202,11 +291,6 @@ export function registerApprovalHandler(bot) {
             clearTimeout(entry.timeout);
         resolvedApprovalLanguages.set(runId, entry.language);
         pending.delete(runId);
-        const decision = approveAllMatch !== null
-            ? "allow_run"
-            : approveOnceMatch !== null
-                ? "allow_once"
-                : "deny";
         const primary = entry.context.items[0];
         const primaryKind = primary?.kind ?? "approval";
         const username = from.first_name ?? from.username ?? String(from.id);
@@ -224,17 +308,39 @@ export function registerApprovalHandler(bot) {
         catch {
             // best-effort
         }
-        await ctx.answerCallbackQuery(buildTelegramApprovalCallbackNotice({
+        await answerTelegramCallback(ctx.answerCallbackQuery.bind(ctx), buildTelegramApprovalCallbackNotice({
             language,
             reason: "decision",
             approvalKind: primaryKind,
             decision,
         }).text);
-        const resolvedItems = resolveApprovalAggregate(entry.context, decision, "user");
+        const resolvedItems = resolveTelegramApprovalAggregate(entry.context, decision, "user");
         for (const item of resolvedItems) {
             eventBus.emit("approval.resolved", { ...(item.approvalId ? { approvalId: item.approvalId } : {}), runId, decision, toolName: item.toolName, kind: item.kind, reason: "user" });
         }
     });
+}
+function resolveTelegramApprovalAggregate(context, decision, reason) {
+    for (const item of context.items) {
+        if (item.approvalId) {
+            try {
+                resolveApprovalDecision({
+                    approvalId: item.approvalId,
+                    runId: item.runId,
+                    decision,
+                    decisionBy: "telegram",
+                    decisionSource: reason,
+                });
+            }
+            catch {
+                // The durable command remains authoritative; a missing live dispatcher
+                // must not turn the channel callback into an in-memory approval.
+            }
+            continue;
+        }
+        item.resolve?.(decision, reason);
+    }
+    return [...context.items];
 }
 export function resetTelegramApprovalStateForTest() {
     detachTelegramApprovalRequestListener?.();

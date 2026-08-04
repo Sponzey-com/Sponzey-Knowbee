@@ -19,9 +19,11 @@ function linesWithAny(sourceText: string, patterns: RegExp[]): string[] {
 describe("task001 unified settings policy", () => {
   it("keeps the tracked engineering policy aligned on the unified settings direction", () => {
     const agents = source("AGENTS.md")
+    const messageCatalog = source("packages/webui/src/lib/message-catalog.ts")
 
-    expect(agents).toContain("초보/고급 화면 분리는 제거")
-    expect(agents).toContain("하나의 통합 설정 화면")
+    expect(agents).toContain("Persisted user settings change only through a validated Use Case")
+    expect(messageCatalog).toContain("통합 설정에서 필요한 항목을 확인")
+    expect(messageCatalog).toContain("Review the required items in unified settings")
   })
 
   it("does not expose beginner or advanced mode as a product choice in user-facing notice copy", () => {

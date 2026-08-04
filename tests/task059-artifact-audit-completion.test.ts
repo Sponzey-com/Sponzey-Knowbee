@@ -3,8 +3,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { collectRepositoryArtifactInventory } from "../packages/core/src/maintenance/repository-filesystem-inventory.ts"
-import { decideRepositoryArtifactAuditCompletion } from "../scripts/audit-repository-artifacts.mjs"
-import { scanPackageManifestReferences } from "../scripts/lib/repository-reference-scanner.mjs"
+import { decideRepositoryArtifactAuditCompletion } from "../scripts/self/audit-repository-artifacts.mjs"
+import { scanPackageManifestReferences } from "../scripts/self/lib/repository-reference-scanner.mjs"
 
 const roots: string[] = []
 

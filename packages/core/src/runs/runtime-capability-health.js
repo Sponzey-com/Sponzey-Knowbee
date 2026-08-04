@@ -31,12 +31,31 @@ export function projectYeonjangRuntimeHealthObservations(input) {
         if (methodsByInstance.has(instanceId)) {
             throw new Error(`Duplicate Yeonjang method snapshot for instance: ${instanceId}`);
         }
-        methodsByInstance.set(instanceId, new Set(snapshot.methods.map((methodId) => methodId.trim()).filter(Boolean)));
+        methodsByInstance.set(instanceId, {
+            methods: new Set(snapshot.methods.map((methodId) => methodId.trim()).filter(Boolean)),
+            toolHealth: snapshot.toolHealth,
+        });
     }
     return input.instances.flatMap((instance) => capabilities.map(({ capabilityId, methodIds }) => {
-        const supportedMethods = methodsByInstance.get(instance.instanceId) ?? new Set();
-        const methodSupported = methodIds.some((methodId) => supportedMethods.has(methodId));
-        const ready = instance.runnableTarget && methodSupported;
+        const snapshot = methodsByInstance.get(instance.instanceId);
+        const supportedMethodIds = methodIds.filter((methodId) => snapshot?.methods.has(methodId));
+        const healthStatuses = supportedMethodIds.map((methodId) => {
+            const health = snapshot?.toolHealth?.[methodId];
+            if (!health || typeof health !== "object" || Array.isArray(health))
+                return null;
+            const status = health["status"];
+            return typeof status === "string" ? status.trim().toLowerCase() : null;
+        });
+        const methodSupported = supportedMethodIds.length > 0;
+        const permissionDisabled = methodSupported
+            && healthStatuses.every((status) => status === "permission_disabled");
+        const methodReady = methodSupported
+            && healthStatuses.some((status) => status === null
+                || status === "ok"
+                || status === "ready"
+                || status === "healthy"
+                || status === "warning");
+        const ready = instance.runnableTarget && methodReady;
         return {
             capabilityId,
             targetId: `yeonjang:${instance.instanceId}`,
@@ -49,7 +68,11 @@ export function projectYeonjangRuntimeHealthObservations(input) {
                     ? instance.runnableReasonCodes.length > 0
                         ? [...instance.runnableReasonCodes]
                         : ["yeonjang_target_unavailable"]
-                    : ["yeonjang_method_unsupported"],
+                    : !methodSupported
+                        ? ["yeonjang_method_unsupported"]
+                        : permissionDisabled
+                            ? ["yeonjang_method_permission_disabled"]
+                            : ["yeonjang_method_unavailable"],
         };
     }));
 }

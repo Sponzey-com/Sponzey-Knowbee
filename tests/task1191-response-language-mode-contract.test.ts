@@ -41,9 +41,7 @@ describe("task1191 response language mode contract", () => {
   it("assigns language-exception diagnosis to the intake LLM prompt", () => {
     const prompt = readFileSync("prompts/task_intake.md", "utf8")
 
-    expect(prompt).toContain(
-      '"response_language_mode": "same_as_request | translation | language_comparison | multilingual"',
-    )
+    expect(prompt).toContain("Use `translation`, `language_comparison`, or `multilingual`")
     expect(prompt).toContain(
       "Set response_language_mode to a non-default value only when the user explicitly requests that output form.",
     )
