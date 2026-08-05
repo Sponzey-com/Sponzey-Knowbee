@@ -1,44 +1,53 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { createArtifactStorageContext } from "../packages/core/src/artifacts/lifecycle.ts"
 import type { AgentExecutionContext } from "../packages/core/src/orchestration/execution-decision-contract.ts"
 import { runAgentExecutionHarness } from "../packages/core/src/orchestration/execution-harness.ts"
 import {
   buildExampleEnterpriseTopology,
   createEnterpriseTopologyRegistry,
 } from "../packages/core/src/index.ts"
-import { reloadConfig } from "../packages/core/src/config/index.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { runIntakeBridgePass } from "../packages/core/src/runs/intake-bridge-pass.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const now = Date.UTC(2026, 4, 7, 13, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-topology-flag-provider-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json")
-  writeFileSync(process.env.KNOWBEE_CONFIG, JSON.stringify({
-    orchestration: {
-      maxDelegationTurns: 5,
-      mode: "orchestration",
-      featureFlagEnabled: false,
-      subAgents: [],
-      teams: [],
-    },
-    ai: {
-      connection: {
-        provider: "openai",
-        model: "gpt-test",
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-topology-flag-provider-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: JSON.stringify(
+      {
+        orchestration: {
+          maxDelegationTurns: 5,
+          mode: "orchestration",
+          featureFlagEnabled: false,
+          subAgents: [],
+          teams: [],
+        },
+        ai: {
+          connection: {
+            provider: "openai",
+            model: "gpt-test",
+          },
+        },
       },
-    },
-  }, null, 2))
-  reloadConfig()
+      null,
+      2,
+    ),
+  })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 afterEach(() => {
@@ -46,11 +55,6 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
 })
 
 function createDependencies() {
@@ -63,6 +67,10 @@ function createDependencies() {
     scheduleDelayedRun: vi.fn(),
     startDelegatedRun: vi.fn(),
     normalizeTaskProfile: vi.fn((taskProfile: string | undefined) => taskProfile ?? "general_chat"),
+    recordCanonicalIntakeDiagnosis: vi.fn(async () => ({ ok: true as const })),
+    authorizeCanonicalIntakePlan: vi.fn(async () => ({ ok: true as const })),
+    recordCanonicalExecutionStart: vi.fn(async () => ({ ok: true as const })),
+    releaseCanonicalSimplePath: vi.fn(async () => ({ ok: true as const })),
     logInfo: vi.fn(),
   }
 }
@@ -78,16 +86,18 @@ function taskIntakeResult() {
       mode: "accepted_receipt" as const,
       text: "후속 실행을 시작합니다.",
     },
-    action_items: [{
-      id: "run-task-1",
-      type: "run_task" as const,
-      title: "채널 요청 후속 실행",
-      priority: "normal" as const,
-      reason: "needs follow-up",
-      payload: {
-        goal: "Process the channel request.",
+    action_items: [
+      {
+        id: "run-task-1",
+        type: "run_task" as const,
+        title: "채널 요청 후속 실행",
+        priority: "normal" as const,
+        reason: "needs follow-up",
+        payload: {
+          goal: "Process the channel request.",
+        },
       },
-    }],
+    ],
     structured_request: {
       source_language: "ko" as const,
       normalized_english: "Process the channel request.",
@@ -163,35 +173,43 @@ describe("topology runtime flag provider fallback guard", () => {
     const resolveRunRoute = vi.fn()
     let capturedContext: AgentExecutionContext | undefined
 
-    const result = await runIntakeBridgePass({
-      message: "저장된 실행자 기준으로 판단해줘",
-      originalRequest: "저장된 실행자 기준으로 판단해줘",
-      sessionId: "session:flag-off",
-      requestGroupId: "run:flag-off",
-      model: "gpt-test",
-      workDir: "/tmp",
-      source: "telegram",
-      runId: "run:flag-off",
-      onChunk: undefined,
-      reuseConversationContext: false,
-    }, dependencies, {
-      analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
-      resolveRunRoute,
-      executeScheduleActions: vi.fn(),
-      createDefaultScheduleActionDependencies: vi.fn(),
-      inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
-      buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\nflag off"),
-      runAgentExecutionHarness: (input) => {
-        capturedContext = input.context
-        return runAgentExecutionHarness(input)
+    const result = await runIntakeBridgePass(
+      {
+        config: runtimeFixture.config,
+        message: "저장된 실행자 기준으로 판단해줘",
+        originalRequest: "저장된 실행자 기준으로 판단해줘",
+        sessionId: "session:flag-off",
+        requestGroupId: "run:flag-off",
+        model: "gpt-test",
+        workDir: "/tmp",
+        source: "telegram",
+        runId: "run:flag-off",
+        artifactStorage: createArtifactStorageContext(runtimeFixture.paths),
+        onChunk: undefined,
+        reuseConversationContext: false,
       },
-    })
+      dependencies,
+      {
+        analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
+        resolveRunRoute,
+        executeScheduleActions: vi.fn(),
+        createDefaultScheduleActionDependencies: vi.fn(),
+        inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
+        buildFollowupPrompt: vi.fn().mockReturnValue("[Task Intake Bridge]\nflag off"),
+        runAgentExecutionHarness: (input) => {
+          capturedContext = input.context
+          return runAgentExecutionHarness(input)
+        },
+      },
+    )
 
-    expect(result).toEqual(expect.objectContaining({
-      kind: "awaiting_user",
-      eventLabel: "execution decision 사용자 확인 대기",
-      reason: "No execution decision model caller was provided.",
-    }))
+    expect(result).toEqual(
+      expect.objectContaining({
+        kind: "awaiting_user",
+        eventLabel: "execution decision 사용자 확인 대기",
+        reason: "No execution decision model caller was provided.",
+      }),
+    )
     expect(resolveRunRoute).not.toHaveBeenCalled()
     expect(dependencies.startDelegatedRun).not.toHaveBeenCalled()
     expect(capturedContext?.execution_graph?.available_executor_ids).toEqual([

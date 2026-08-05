@@ -2,7 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+import { createTestStartPlanBoundaryDependencies } from "./fixtures/start-plan.ts"
 import {
   CONTRACT_SCHEMA_VERSION,
   buildDeliveryKey,
@@ -17,7 +19,6 @@ import {
   getSchedule,
   insertScheduleRun,
 } from "../packages/core/src/db/index.js"
-import { createMemoryVectorProvider, runCandidateProviders } from "../packages/core/src/candidates/index.ts"
 import {
   buildLatencyEventLabel,
   getFastResponseHealthSnapshot,
@@ -29,16 +30,14 @@ import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
 import { executeScheduleContract } from "../packages/core/src/scheduler/contract-executor.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task008-latency-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task008-latency-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function scheduleContract(): ScheduleContract {
@@ -109,11 +108,6 @@ beforeEach(() => {
 afterEach(() => {
   resetLatencyMetrics()
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -144,33 +138,9 @@ describe("task008 fast response latency", () => {
     })
   })
 
-  it("records vector provider timeout as candidate latency without failing search", async () => {
-    const vector = createMemoryVectorProvider({
-      search: () => new Promise(() => undefined),
-    })
-
-    const result = await runCandidateProviders({
-      runId: "run-candidate-timeout",
-      sessionId: "session-candidate-timeout",
-      semanticQuery: "느린 벡터 조회",
-    }, [vector], {
-      providerTimeoutMs: 5,
-    })
-
-    expect(result.candidates).toEqual([])
-    expect(result.traces[0]?.timedOut).toBe(true)
-    expect(listLatencyMetrics()).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        name: "candidate_search_latency_ms",
-        runId: "run-candidate-timeout",
-        sessionId: "session-candidate-timeout",
-        status: "timeout",
-      }),
-    ]))
-  })
-
   it("returns start-plan latency events for normalizer, registry lookup, and candidate search", async () => {
     const dependencies: Parameters<typeof buildStartPlan>[1] = {
+      ...createTestStartPlanBoundaryDependencies(),
       analyzeRequestEntrySemantics: vi.fn(() => ({
         reuse_conversation_context: false,
         active_queue_cancellation_mode: null,
@@ -211,6 +181,7 @@ describe("task008 fast response latency", () => {
     }
 
     const plan = await buildStartPlan({
+      config: runtimeFixture.config,
       message: "새 작업 해줘",
       sessionId: "session-plan",
       runId: "run-plan",
@@ -243,6 +214,7 @@ describe("task008 fast response latency", () => {
     expect(schedule).toBeDefined()
 
     const result = await executeScheduleContract({
+      config: runtimeFixture.config,
       schedule: schedule!,
       scheduleRunId: "run-task008-literal",
       trigger: "scheduler tick (due: 2026-04-15T00:00:00.000Z)",

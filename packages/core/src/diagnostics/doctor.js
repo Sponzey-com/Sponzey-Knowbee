@@ -1,18 +1,16 @@
 import { existsSync, mkdirSync, accessSync, constants, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getConfig, PATHS } from "../config/index.js";
 import { buildRuntimeManifest } from "../runtime/manifest.js";
 import { buildQueueBackpressureSnapshot } from "../runs/queue-backpressure.js";
 import { eventBus } from "../events/index.js";
 import { listControlEvents } from "../db/index.js";
 import { mcpRegistry } from "../mcp/registry.js";
-import { buildExtensionRegistrySnapshot } from "../security/extension-governance.js";
+import { buildExtensionRegistrySnapshot, createExtensionGovernanceStorage, } from "../security/extension-governance.js";
 import { toolDispatcher } from "../tools/index.js";
-import { DEFAULT_EVIDENCE_CONFLICT_POLICY } from "../runs/web-conflict-resolver.js";
-import { DEFAULT_RETRIEVAL_CACHE_TTL_POLICY } from "../runs/web-retrieval-cache.js";
-import { buildWebSourceAdapterRegistrySnapshot } from "../runs/web-source-adapters/index.js";
+import { WEB_RETRIEVAL_EVIDENCE_CONTRACT_VERSION } from "../runs/web-retrieval-smoke.js";
 import { runPlanDriftCheck } from "./plan-drift.js";
 import { getYeonjangRegistrySummary } from "../yeonjang/registry.js";
+import { redactLogText } from "../logger/index.js";
 const SECRET_VALUE_PATTERNS = [
     /sk-[A-Za-z0-9_-]{12,}/g,
     /xox[abprs]-[A-Za-z0-9-]{12,}/g,
@@ -42,6 +40,10 @@ function sanitizeValue(value) {
         }));
     }
     return value;
+}
+function doctorErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
 }
 function hasSecretLeak(value) {
     const serialized = JSON.stringify(value);
@@ -78,24 +80,33 @@ function checkProviderChat(manifest) {
         return makeCheck("provider.chat", "blocked", "AI provider가 설정되어 있지 않습니다.", { resolverPath: provider.resolverPath }, "AI 연결 설정에서 provider를 저장하세요.");
     if (!provider.model)
         return makeCheck("provider.chat", "blocked", "기본 모델이 설정되어 있지 않습니다.", { provider: provider.provider }, "AI 연결 설정에서 기본 모델을 선택하세요.");
-    if (provider.capabilityMatrix.endpointMismatch.status === "warning") {
-        return makeCheck("provider.chat", "warning", "Provider endpoint 설정과 실행 경로가 완전히 일치하지 않습니다.", {
-            provider: provider.provider,
-            model: provider.model,
-            profileId: provider.profileId,
-            adapterType: provider.capabilityMatrix.adapterType,
-            baseUrlClass: provider.capabilityMatrix.baseUrlClass,
-            endpointMismatch: provider.capabilityMatrix.endpointMismatch,
-        }, "AI 연결 설정의 provider 종류, 인증 방식, endpoint를 다시 확인하세요.");
-    }
-    return makeCheck("provider.chat", "ok", "Chat provider 설정이 존재합니다.", {
+    const lastCheckResult = provider.capabilityMatrix.lastCheckResult;
+    const detail = {
         provider: provider.provider,
         model: provider.model,
         profileId: provider.profileId,
         adapterType: provider.capabilityMatrix.adapterType,
         authMode: provider.authMode,
         credentialConfigured: provider.credentialConfigured,
-    });
+        lastCheckResult,
+    };
+    if (lastCheckResult.status === "failed") {
+        return makeCheck("provider.chat", "blocked", "마지막 AI 연결 테스트가 실패했습니다.", detail, lastCheckResult.message);
+    }
+    if (lastCheckResult.status === "warning") {
+        return makeCheck("provider.chat", "warning", "AI 연결 테스트에서 확인이 필요한 응답이 있었습니다.", detail, lastCheckResult.message);
+    }
+    if (lastCheckResult.status === "not_checked") {
+        return makeCheck("provider.chat", "warning", "AI 설정은 저장되었지만 실제 응답 연결은 아직 확인되지 않았습니다.", detail, "AI 연결 설정에서 연결 테스트를 실행하세요.");
+    }
+    if (provider.capabilityMatrix.endpointMismatch.status === "warning") {
+        return makeCheck("provider.chat", "warning", "Provider endpoint 설정과 실행 경로가 완전히 일치하지 않습니다.", {
+            ...detail,
+            baseUrlClass: provider.capabilityMatrix.baseUrlClass,
+            endpointMismatch: provider.capabilityMatrix.endpointMismatch,
+        }, "AI 연결 설정의 provider 종류, 인증 방식, endpoint를 다시 확인하세요.");
+    }
+    return makeCheck("provider.chat", "ok", "실제 AI 응답 연결이 확인되었습니다.", detail);
 }
 function checkProviderResolver(manifest) {
     const provider = manifest.provider;
@@ -144,50 +155,25 @@ function countRecentWebRetrievalEvents() {
     }
     return { conflictCount, plannerSchemaFailureCount, failedAttemptCount };
 }
-function checkWebRetrievalCapability() {
+function checkWebRetrievalCapability(_config) {
     try {
-        const cfg = getConfig();
-        const adapters = buildWebSourceAdapterRegistrySnapshot();
         const recent = countRecentWebRetrievalEvents();
         const detail = {
-            searchProvider: cfg.search.web?.provider ?? "duckduckgo",
-            configuredMaxResults: cfg.search.web?.maxResults ?? 5,
+            webSearch: "removed",
             providerOrder: [
-                "web_search: selenium browser first",
-                "web_search: duckduckgo lite fallback",
                 "web_fetch: direct fetch",
-                "known_source_adapter: finance/weather parser",
-                "ai_assisted_planner: bounded next-source planner",
+                "llm_planner: next evidence-acquisition action",
+                "llm_result_diagnosis: completion or changed strategy",
             ],
-            cacheTtl: DEFAULT_RETRIEVAL_CACHE_TTL_POLICY,
-            conflictPolicy: DEFAULT_EVIDENCE_CONFLICT_POLICY,
-            browser: {
-                driver: "selenium-webdriver",
-                fallback: "duckduckgo_lite",
-                availability: "checked_at_runtime",
-            },
-            adapters: adapters.adapters.map((adapter) => ({
-                adapterId: adapter.adapterId,
-                adapterVersion: adapter.adapterVersion,
-                parserVersion: adapter.parserVersion,
-                checksum: adapter.checksum,
-                status: adapter.status,
-                domains: adapter.sourceDomains,
-                targetKinds: adapter.supportedTargetKinds,
-                degradedReason: adapter.degradedReason ?? null,
-            })),
-            activeAdapterCount: adapters.activeCount,
-            degradedAdapterCount: adapters.degradedCount,
+            evidenceContractVersion: WEB_RETRIEVAL_EVIDENCE_CONTRACT_VERSION,
             recent,
         };
-        if (adapters.activeCount === 0)
-            return makeCheck("web.retrieval", "blocked", "활성 web source adapter가 없습니다.", detail, "finance/weather adapter registry와 parser checksum을 확인하세요.");
-        if (adapters.degradedCount > 0 || recent.plannerSchemaFailureCount > 0)
-            return makeCheck("web.retrieval", "warning", "Web retrieval에 검토가 필요한 adapter/planner 상태가 있습니다.", detail);
-        return makeCheck("web.retrieval", "ok", "Web retrieval 검색, fallback, adapter 상태가 확인되었습니다.", detail);
+        if (recent.plannerSchemaFailureCount > 0)
+            return makeCheck("web.retrieval", "warning", "웹 페이지 조회 LLM planner schema 실패가 감지되었습니다.", detail);
+        return makeCheck("web.retrieval", "ok", "웹 페이지 조회 증거 수집 및 LLM 진단 계약이 확인되었습니다.", detail);
     }
     catch (error) {
-        return makeCheck("web.retrieval", "unknown", "Web retrieval capability를 확인하지 못했습니다.", { error: error instanceof Error ? error.message : String(error) });
+        return makeCheck("web.retrieval", "unknown", "웹 페이지 조회 capability를 확인하지 못했습니다.", { error: doctorErrorMessage(error) });
     }
 }
 function checkGatewayExposure(manifest) {
@@ -255,7 +241,7 @@ function checkAdminUi(manifest) {
 }
 function checkMqtt(manifest) {
     const mqtt = manifest.channels.mqtt;
-    const registry = getYeonjangRegistrySummary();
+    const registry = sanitizeYeonjangRegistrySummary(getYeonjangRegistrySummary());
     if (!mqtt.enabled)
         return makeCheck("yeonjang.mqtt", "unknown", "MQTT 브로커가 비활성화되어 있습니다.", { registry });
     if (!mqtt.running)
@@ -263,9 +249,9 @@ function checkMqtt(manifest) {
     return makeCheck("yeonjang.mqtt", "ok", "MQTT 브로커가 실행 중입니다.", { host: mqtt.host, port: mqtt.port, authEnabled: mqtt.authEnabled, registry });
 }
 function checkYeonjangProtocol(manifest) {
-    const registry = getYeonjangRegistrySummary();
+    const registry = sanitizeYeonjangRegistrySummary(getYeonjangRegistrySummary());
     if (manifest.yeonjang.nodeCount === 0)
-        return makeCheck("yeonjang.protocol", "unknown", "연장 노드가 연결되어 있지 않습니다.", { registry });
+        return makeCheck("yeonjang.protocol", "unknown", "연장 인스턴스가 연결되어 있지 않습니다.", { registry });
     const missing = manifest.yeonjang.nodes.filter((node) => !node.protocolVersion || !node.capabilityHash);
     const profileOverrides = manifest.yeonjang.nodes.filter((node) => node.configuredSupportProfile
         && node.supportProfile
@@ -273,13 +259,13 @@ function checkYeonjangProtocol(manifest) {
     const lifecycleMismatches = manifest.yeonjang.nodes.filter((node) => node.supportProfile === "desktop_interactive"
         && (node.windowMode !== "hidden" || node.trayState !== "visible"));
     if (missing.length > 0) {
-        return makeCheck("yeonjang.protocol", "warning", "일부 연장 노드의 protocol/capability 정보가 부족합니다.", {
+        return makeCheck("yeonjang.protocol", "warning", "일부 연장 인스턴스의 protocol/capability 정보가 부족합니다.", {
             missing: missing.map((node) => node.extensionId),
             registry,
         });
     }
     if (profileOverrides.length > 0) {
-        return makeCheck("yeonjang.protocol", "warning", "일부 연장 노드가 configured support profile보다 제한된 profile로 내려가 실행 중입니다.", {
+        return makeCheck("yeonjang.protocol", "warning", "일부 연장 인스턴스가 configured support profile보다 제한된 profile로 내려가 실행 중입니다.", {
             profileOverrides: profileOverrides.map((node) => ({
                 extensionId: node.extensionId,
                 configuredSupportProfile: node.configuredSupportProfile ?? null,
@@ -292,7 +278,7 @@ function checkYeonjangProtocol(manifest) {
         }, "headless/server 환경이면 headless_managed entrypoint를 사용하고, desktop 환경이면 tray/display availability를 확인하세요.");
     }
     if (lifecycleMismatches.length > 0) {
-        return makeCheck("yeonjang.protocol", "warning", "일부 연장 노드가 tray-first lifecycle 정책과 다르게 동작 중입니다.", {
+        return makeCheck("yeonjang.protocol", "warning", "일부 연장 인스턴스가 tray-first lifecycle 정책과 다르게 동작 중입니다.", {
             lifecycleMismatches: lifecycleMismatches.map((node) => ({
                 extensionId: node.extensionId,
                 supportProfile: node.supportProfile ?? null,
@@ -310,6 +296,10 @@ function checkYeonjangProtocol(manifest) {
             : true).length,
         registry,
     });
+}
+function sanitizeYeonjangRegistrySummary(summary) {
+    const { localMarkerInstanceId: _localMarkerInstanceId, ...publicSummary } = summary;
+    return publicSummary;
 }
 function checkDbMigration(manifest) {
     const db = manifest.database;
@@ -398,7 +388,7 @@ function checkPlanDrift() {
         return makeCheck("plan.drift", "ok", "Phase plan과 task evidence 상태가 현재 기준과 일치합니다.", detail);
     }
     catch (error) {
-        return makeCheck("plan.drift", "unknown", "Plan drift 상태를 확인하지 못했습니다.", { error: error instanceof Error ? error.message : String(error) });
+        return makeCheck("plan.drift", "unknown", "Plan drift 상태를 확인하지 못했습니다.", { error: doctorErrorMessage(error) });
     }
 }
 function checkPromptRegistry(manifest) {
@@ -451,12 +441,14 @@ function checkQueueBackpressure() {
         return makeCheck("queue.backpressure", "ok", "Queue backpressure 상태가 정상입니다.", detail);
     }
     catch (error) {
-        return makeCheck("queue.backpressure", "unknown", "Queue backpressure 상태를 확인하지 못했습니다.", { error: error instanceof Error ? error.message : String(error) });
+        return makeCheck("queue.backpressure", "unknown", "Queue backpressure 상태를 확인하지 못했습니다.", { error: doctorErrorMessage(error) });
     }
 }
-function checkExtensionRegistry() {
+function checkExtensionRegistry(config, paths) {
     try {
         const registry = buildExtensionRegistrySnapshot({
+            config,
+            storage: createExtensionGovernanceStorage(paths),
             tools: toolDispatcher.getAll({ includeIsolated: true }),
             mcpStatuses: mcpRegistry.getStatuses(),
         });
@@ -481,52 +473,65 @@ function checkExtensionRegistry() {
         return makeCheck("extension.registry", "ok", "Extension registry와 trust policy 상태가 정상입니다.", detail);
     }
     catch (error) {
-        return makeCheck("extension.registry", "unknown", "Extension registry 상태를 확인하지 못했습니다.", { error: error instanceof Error ? error.message : String(error) });
+        return makeCheck("extension.registry", "unknown", "Extension registry 상태를 확인하지 못했습니다.", { error: doctorErrorMessage(error) });
     }
 }
-function checkArtifactStorage() {
-    const artifactsDir = join(PATHS.stateDir, "artifacts");
+function checkArtifactStorage(paths) {
+    const artifactsDir = join(paths.stateDir, "artifacts");
+    const redactedArtifactsDir = redactLogText(artifactsDir);
     try {
         mkdirSync(artifactsDir, { recursive: true });
         accessSync(artifactsDir, constants.R_OK | constants.W_OK);
-        return makeCheck("artifact.storage", "ok", "Artifact 저장소를 읽고 쓸 수 있습니다.", { artifactsDir });
+        return makeCheck("artifact.storage", "ok", "Artifact 저장소를 읽고 쓸 수 있습니다.", { artifactsDir: redactedArtifactsDir });
     }
     catch (error) {
-        return makeCheck("artifact.storage", "blocked", "Artifact 저장소를 사용할 수 없습니다.", { artifactsDir, error: error instanceof Error ? error.message : String(error) });
+        return makeCheck("artifact.storage", "blocked", "Artifact 저장소를 사용할 수 없습니다.", { artifactsDir: redactedArtifactsDir, error: doctorErrorMessage(error) });
     }
 }
-function checkScheduleQueue(manifest) {
-    const cfg = getConfig();
-    if (!cfg.scheduler.enabled)
+function checkScheduleQueue(manifest, config) {
+    if (!config.scheduler.enabled)
         return makeCheck("schedule.queue", "unknown", "Scheduler가 비활성화되어 있습니다.");
     if (!manifest.database.exists)
         return makeCheck("schedule.queue", "warning", "DB가 없어 schedule queue 상태를 확인하지 못했습니다.");
-    return makeCheck("schedule.queue", "ok", "Scheduler가 활성화되어 있고 DB가 존재합니다.", { timezone: cfg.scheduler.timezone });
+    return makeCheck("schedule.queue", "ok", "Scheduler가 활성화되어 있고 DB가 존재합니다.", { timezone: config.scheduler.timezone });
 }
 function checkReleasePackage(manifest) {
     const releasePackage = manifest.releasePackage;
     if (!releasePackage.manifestId)
         return makeCheck("release.package", "unknown", "Release manifest 상태를 계산하지 못했습니다.");
+    const detail = {
+        manifestId: releasePackage.manifestId,
+        releaseVersion: releasePackage.releaseVersion,
+        yeonjangPlatformCapabilityReady: releasePackage.yeonjangPlatformCapabilityReady,
+        yeonjangPlatformCapabilityRequiredMethods: releasePackage.yeonjangPlatformCapabilityRequiredMethods,
+        yeonjangPlatformCapabilityEvidenceCount: releasePackage.yeonjangPlatformCapabilityEvidenceCount,
+        yeonjangPlatformCapabilityFailureCount: releasePackage.yeonjangPlatformCapabilityFailureCount,
+    };
     if ((releasePackage.requiredMissingCount ?? 0) > 0) {
-        return makeCheck("release.package", "warning", "Release package 필수 산출물이 일부 누락되어 있습니다.", { requiredMissingCount: releasePackage.requiredMissingCount });
+        return makeCheck("release.package", "warning", "Release package 필수 산출물이 일부 누락되어 있습니다.", { ...detail, requiredMissingCount: releasePackage.requiredMissingCount });
     }
-    return makeCheck("release.package", "ok", "Release package manifest preflight가 통과했습니다.", { manifestId: releasePackage.manifestId, releaseVersion: releasePackage.releaseVersion });
+    return makeCheck("release.package", "ok", "Release package manifest preflight가 통과했습니다.", detail);
 }
-export function runDoctor(options = {}) {
+export function runDoctor(options) {
     const mode = options.mode ?? "quick";
+    const config = options.config;
     const manifestOptions = {
         includeEnvironment: options.includeEnvironment ?? mode === "full",
         includeReleasePackage: options.includeReleasePackage ?? mode === "full",
+        config,
+        paths: options.paths,
     };
     if (options.now)
         manifestOptions.now = options.now;
+    if (options.adminActivation)
+        manifestOptions.adminActivation = options.adminActivation;
     const manifest = buildRuntimeManifest(manifestOptions);
     const checks = [
         checkRuntimeManifest(manifest),
         checkProviderChat(manifest),
         checkProviderResolver(manifest),
         checkProviderEmbedding(manifest),
-        checkWebRetrievalCapability(),
+        checkWebRetrievalCapability(config),
         checkGatewayExposure(manifest),
         checkCredentialRedaction(manifest),
         checkTelegram(manifest),
@@ -541,12 +546,12 @@ export function runDoctor(options = {}) {
         checkMemoryFts(manifest),
         checkMemoryVector(manifest),
         checkQueueBackpressure(),
-        checkExtensionRegistry(),
+        checkExtensionRegistry(config, options.paths),
         checkFeatureFlags(manifest),
         checkRolloutEvidence(manifest),
         checkPlanDrift(),
-        checkArtifactStorage(),
-        checkScheduleQueue(manifest),
+        checkArtifactStorage(options.paths),
+        checkScheduleQueue(manifest, config),
         checkReleasePackage(manifest),
     ];
     const summary = summarize(checks);
@@ -571,14 +576,14 @@ export function runDoctor(options = {}) {
     });
     return report;
 }
-export function writeDoctorReportArtifact(report) {
-    const dir = join(PATHS.stateDir, "diagnostics");
+export function writeDoctorReportArtifact(report, paths) {
+    const dir = join(paths.stateDir, "diagnostics");
     mkdirSync(dir, { recursive: true });
     const path = join(dir, `doctor-${report.createdAt.replace(/[:.]/g, "-")}.json`);
     writeFileSync(path, JSON.stringify(report, null, 2), "utf-8");
     return path;
 }
-export function lastDoctorReportExists() {
-    return existsSync(join(PATHS.stateDir, "diagnostics"));
+export function lastDoctorReportExists(paths) {
+    return existsSync(join(paths.stateDir, "diagnostics"));
 }
 //# sourceMappingURL=doctor.js.map

@@ -1,8 +1,5 @@
-import { condenseMemoryText, extractFocusedErrorMessage, insertMemoryJournalRecord, } from "../memory/journal.js";
-const defaultDependencies = {
-    insertRecord: insertMemoryJournalRecord,
-    onError: () => { },
-};
+import { condenseMemoryText, extractFocusedErrorMessage, } from "../memory/journal.js";
+import { redactLogText } from "../logger/index.js";
 export function buildRunInstructionJournalRecord(params) {
     return {
         kind: "instruction",
@@ -84,12 +81,12 @@ export function buildDataExchangeJournalRecord(params) {
     };
 }
 export function safeInsertRunJournalRecord(input, dependencies) {
-    const resolved = { ...defaultDependencies, ...dependencies };
     try {
-        resolved.insertRecord(input);
+        dependencies.insertRecord(input);
     }
     catch (error) {
-        resolved.onError(`memory journal insert failed: ${error instanceof Error ? error.message : String(error)}`);
+        const raw = error instanceof Error ? error.message : String(error);
+        dependencies.onError(`memory journal insert failed: ${redactLogText(raw)}`);
     }
 }
 //# sourceMappingURL=journaling.js.map

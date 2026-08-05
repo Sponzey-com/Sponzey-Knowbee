@@ -1,5 +1,6 @@
 import { insertMessage } from "../db/index.js";
 import { type DeliverySource } from "./delivery.js";
+import type { UserFacingTextSource } from "./loop-directive.js";
 import type { RunStepStatus } from "./types.js";
 interface ReviewTransitionDependencies {
     appendRunEvent: (runId: string, label: string) => void;
@@ -14,6 +15,7 @@ export declare function prepareRunForReview(params: {
     sessionId: string;
     source: DeliverySource;
     preview: string;
+    previewSource?: UserFacingTextSource;
     workerSessionId?: string;
     persistRuntimePreview: boolean;
     dependencies?: Partial<ReviewTransitionDependencies>;

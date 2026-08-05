@@ -1,7 +1,13 @@
+import { redactLogText } from "../../logger/index.js";
 import { buildUnsupportedCapabilityReceipt, createRawPayloadRef, defineChannelAdapter, defineChannelCapabilities, } from "../contracts.js";
+import { resolveUserFacingMessageLanguage } from "../language.js";
 import { buildSlackFailedDeliveryReceipt, buildSlackSentDeliveryReceipt, } from "./message-delivery.js";
 import { SlackChannel } from "./bot.js";
 import { getActiveSlackChannel, getSlackRuntimeStatus, setActiveSlackChannel, setSlackRuntimeError, stopActiveSlackChannel, } from "./runtime.js";
+function slackAdapterErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 const DEFAULT_CHANNEL_ID = "slack:workspace";
 const DEFAULT_CONNECTION_ID = "slack:primary";
 const SLACK_MAX_MESSAGE_LENGTH = 3000;
@@ -113,6 +119,7 @@ export function normalizeSlackInboundEvent(rawPayload, options = {}) {
     if (!text && !event.files?.length)
         return [];
     const threadId = event.thread_ts?.trim() || (eventType === "app_mention" ? messageId : "");
+    const replyToMessageId = threadId && threadId !== messageId ? threadId : undefined;
     const timestamp = parseSlackTimestamp(event.event_ts ?? event.ts, options.now);
     return [{
             channelId: options.channelId ?? DEFAULT_CHANNEL_ID,
@@ -120,6 +127,15 @@ export function normalizeSlackInboundEvent(rawPayload, options = {}) {
             connectionId: options.connectionId ?? DEFAULT_CONNECTION_ID,
             messageId,
             ...(threadId ? { threadId } : {}),
+            ...(replyToMessageId
+                ? {
+                    replyToMessageId,
+                    continuationContext: {
+                        parentMessageId: replyToMessageId,
+                        source: "thread",
+                    },
+                }
+                : {}),
             sender: {
                 id: userId,
                 providerType: "user",
@@ -131,6 +147,7 @@ export function normalizeSlackInboundEvent(rawPayload, options = {}) {
             mentions,
             timestamp,
             rawPayloadRef: createRawPayloadRef({ provider: "slack", payload: rawPayload, createdAt: timestamp }),
+            userFacingLanguage: resolveUserFacingMessageLanguage(text),
             dedupeKey: `slack:${roomId}:${messageId}`,
         }];
 }
@@ -190,6 +207,10 @@ export class SlackChannelAdapter {
     provider = "slack";
     connectionId;
     config;
+    runtimeConfig;
+    artifactStorage;
+    memoryJournal;
+    hierarchyStorage;
     connectionMode;
     transport;
     now;
@@ -202,6 +223,10 @@ export class SlackChannelAdapter {
         this.channelId = options.channelId ?? DEFAULT_CHANNEL_ID;
         this.connectionId = options.connectionId ?? DEFAULT_CONNECTION_ID;
         this.config = options.config;
+        this.runtimeConfig = options.runtimeConfig;
+        this.artifactStorage = options.artifactStorage;
+        this.memoryJournal = options.memoryJournal;
+        this.hierarchyStorage = options.hierarchyStorage;
         this.connectionMode = options.connectionMode ?? "socket";
         this.transport = options.transport;
         this.now = options.now ?? Date.now;
@@ -226,7 +251,18 @@ export class SlackChannelAdapter {
         }
         if (!this.config)
             throw new Error("Slack config is missing.");
-        const channel = new SlackChannel(this.config);
+        if (!this.runtimeConfig)
+            throw new Error("Slack runtime config snapshot is missing.");
+        if (!this.artifactStorage)
+            throw new Error("Slack artifact storage context is missing.");
+        if (!this.memoryJournal)
+            throw new Error("Slack memory journal context is missing.");
+        if (!this.hierarchyStorage)
+            throw new Error("Slack hierarchy storage context is missing.");
+        const channel = new SlackChannel(this.config, this.artifactStorage, {
+            config: this.runtimeConfig,
+            workDir: this.runtimeConfig.profile.workspace,
+        }, this.memoryJournal, this.hierarchyStorage);
         try {
             await channel.start();
             this.channel = channel;
@@ -234,7 +270,7 @@ export class SlackChannelAdapter {
             setSlackRuntimeError(null);
         }
         catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = slackAdapterErrorMessage(error);
             setSlackRuntimeError(message);
             throw error;
         }
@@ -251,6 +287,9 @@ export class SlackChannelAdapter {
             this.channel?.stop();
         }
         this.channel = null;
+    }
+    createPendingResponseDeliveryHandler(input) {
+        return this.channel?.createPendingResponseDeliveryHandler(input);
     }
     async healthCheck() {
         const runtime = getSlackRuntimeStatus();
@@ -306,6 +345,7 @@ export class SlackChannelAdapter {
                 capability: unsupportedCapability,
                 idempotencyKey: message.idempotencyKey,
                 timestamp: this.now(),
+                userFacingLanguage: message.userFacingLanguage,
             });
         }
         const outboundMessage = applySlackThreadPolicy(message);

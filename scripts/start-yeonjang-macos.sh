@@ -11,14 +11,18 @@ TARGET_TRIPLE="${YEONJANG_TARGET_TRIPLE:-}"
 BINARY_NAME="knowbee-yeonjang"
 APP_NAME="Yeonjang"
 RESTART_YEONJANG="0"
+BUILD_YEONJANG="0"
 
 while (($# > 0)); do
   case "$1" in
     --restart)
       RESTART_YEONJANG="1"
       ;;
+    --build)
+      BUILD_YEONJANG="1"
+      ;;
     *)
-      echo "사용법: bash scripts/start-yeonjang-macos.sh [--restart]"
+      echo "사용법: bash scripts/start-yeonjang-macos.sh [--restart] [--build]"
       exit 1
       ;;
   esac
@@ -44,29 +48,13 @@ cleanup_stale_pid() {
   fi
 }
 
-find_running_pid() {
-  local match="${1:-}"
-  if [[ -z "$match" ]]; then
-    return 1
-  fi
-
-  local pid
-  pid="$(pgrep -f "$match" | tail -n 1 || true)"
-  if [[ -z "$pid" ]]; then
-    return 1
-  fi
-
-  echo "$pid"
-}
-
 stop_existing() {
   cleanup_stale_pid
-  if [[ ! -f "$PID_FILE" ]]; then
-    return
-  fi
+  [[ ! -f "$PID_FILE" ]] && return
 
   local pid
   pid="$(cat "$PID_FILE")"
+  [[ -z "$pid" ]] && return
   echo "기존 Yeonjang GUI를 종료합니다. PID=$pid"
   kill "$pid" >/dev/null 2>&1 || true
 
@@ -111,26 +99,67 @@ resolve_binary_path() {
   fi
 }
 
-echo "Yeonjang macOS GUI 빌드를 확인합니다..."
-bash "$ROOT_DIR/scripts/build-yeonjang-macos.sh"
-
-APP_BUNDLE_PATH="$(resolve_app_bundle_path)"
-BINARY_PATH="$(resolve_binary_path)"
-if [[ -z "$APP_BUNDLE_PATH" && ! -x "$BINARY_PATH" ]]; then
-  echo "Yeonjang 실행 파일을 찾을 수 없습니다: $BINARY_PATH"
-  exit 1
-fi
+validate_app_bundle() {
+  local app_bundle="${1:-}"
+  [[ -n "$app_bundle" ]] || return 1
+  [[ -x "$app_bundle/Contents/MacOS/$APP_NAME" ]] || return 1
+  command -v codesign >/dev/null 2>&1 || return 1
+  codesign --verify --deep --strict "$app_bundle" >/dev/null 2>&1
+}
 
 if [[ "$RESTART_YEONJANG" == "1" ]]; then
   echo "Yeonjang macOS GUI를 재시작합니다..."
 fi
 
-stop_existing
-: > "$LOG_FILE"
+APP_BUNDLE_PATH="$(resolve_app_bundle_path)"
+if [[ "$BUILD_YEONJANG" == "1" || -z "$APP_BUNDLE_PATH" ]]; then
+  if [[ "$BUILD_YEONJANG" == "1" ]]; then
+    echo "명시적으로 요청된 Yeonjang macOS GUI 빌드를 실행합니다..."
+  else
+    echo "Yeonjang 앱 번들이 없어 최초 빌드를 실행합니다..."
+  fi
+
+  # The build script replaces the entire .app bundle. Terminate the owned app
+  # before that replacement so no running binary is left detached from its bundle.
+  stop_existing
+  bash "$ROOT_DIR/scripts/build-yeonjang-macos.sh"
+  APP_BUNDLE_PATH="$(resolve_app_bundle_path)"
+else
+  if ! validate_app_bundle "$APP_BUNDLE_PATH"; then
+    echo "기존 Yeonjang 앱 번들 검증에 실패했습니다. --build 로 다시 빌드하세요."
+    exit 1
+  fi
+  echo "검증된 기존 Yeonjang 앱 번들을 재사용합니다."
+  if [[ "$RESTART_YEONJANG" == "1" ]]; then
+    stop_existing
+  else
+    cleanup_stale_pid
+  fi
+fi
+
+BINARY_PATH="$(resolve_binary_path)"
+if [[ -z "$APP_BUNDLE_PATH" && ! -x "$BINARY_PATH" ]]; then
+  echo "Yeonjang 실행 파일을 찾을 수 없습니다: $BINARY_PATH"
+  exit 1
+fi
+if [[ -n "$APP_BUNDLE_PATH" ]] && ! validate_app_bundle "$APP_BUNDLE_PATH"; then
+  echo "Yeonjang 앱 번들 서명 검증에 실패했습니다: $APP_BUNDLE_PATH"
+  exit 1
+fi
+
+if [[ ! -f "$PID_FILE" ]]; then
+  : > "$LOG_FILE"
+fi
 
 echo "Yeonjang GUI를 시작합니다..."
 if [[ -n "$APP_BUNDLE_PATH" ]]; then
-  open -na "$APP_BUNDLE_PATH" >>"$LOG_FILE" 2>&1
+  # Launch the signed bundle executable directly so this launcher owns the
+  # exact child PID. `open` does not return that PID and would require a
+  # process scan that could mistake an existing runtime for this launch.
+  (
+    cd "$ROOT_DIR"
+    exec "$APP_BUNDLE_PATH/Contents/MacOS/$APP_NAME" </dev/null
+  ) >>"$LOG_FILE" 2>&1 &
 else
   (
     cd "$ROOT_DIR"
@@ -138,25 +167,14 @@ else
   ) >>"$LOG_FILE" 2>&1 &
 fi
 
-STARTED_PID=""
-MATCH_PATH="$BINARY_PATH"
-if [[ -n "$APP_BUNDLE_PATH" ]]; then
-  MATCH_PATH="$APP_BUNDLE_PATH/Contents/MacOS/$APP_NAME"
-fi
+STARTED_PID="$!"
 
-for _ in $(seq 1 40); do
-  STARTED_PID="$(find_running_pid "$MATCH_PATH" || true)"
-  if [[ -n "$STARTED_PID" ]] && kill -0 "$STARTED_PID" >/dev/null 2>&1; then
-    break
-  fi
-  sleep 0.25
-done
+sleep 2
 
-if [[ -z "$STARTED_PID" ]] || ! kill -0 "$STARTED_PID" >/dev/null 2>&1; then
+if ! kill -0 "$STARTED_PID" >/dev/null 2>&1; then
   echo "Yeonjang GUI가 시작 중 종료되었습니다."
   echo "로그:"
   tail -n 80 "$LOG_FILE" || true
-  rm -f "$PID_FILE"
   exit 1
 fi
 

@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
+import { loadPromptValue } from "../memory/prompt-fragments.js";
+const SUB_AGENT_RESULT_REVIEW_REQUIRED_CHANGES_SOURCE_ID = "sub_agent_result_review_required_changes_user";
 export function reviewSubAgentResult(input) {
     const retryBudgetLimit = getSubAgentResultRetryBudgetLimit(input.retryClass ?? "default");
     const issues = collectResultReviewIssues(input);
@@ -7,8 +9,11 @@ export function reviewSubAgentResult(input) {
     const normalizedReviewKey = issues.length > 0 ? normalizeResultReviewFailureKey(issues) : undefined;
     const normalizedBlockingFailureKey = blockingIssues.length > 0 ? normalizeResultReviewFailureKey(blockingIssues) : undefined;
     const normalizedFailureKey = normalizedBlockingFailureKey ?? normalizedReviewKey;
+    const strategyFingerprint = input.strategyFingerprint?.trim();
     const repeatedFailure = Boolean(normalizedBlockingFailureKey &&
-        (input.previousFailureKeys ?? []).includes(normalizedBlockingFailureKey));
+        strategyFingerprint &&
+        (input.previousAttempts ?? []).some((attempt) => attempt.normalizedFailureKey === normalizedBlockingFailureKey &&
+            attempt.strategyFingerprint === strategyFingerprint));
     const canRetry = blockingIssues.length > 0 &&
         !repeatedFailure &&
         !input.resultReport.impossibleReason;
@@ -241,6 +246,7 @@ export function buildFeedbackRequest(input) {
     const now = input.now?.() ?? Date.now();
     const feedbackRequestId = input.idProvider?.() ?? randomUUID();
     const synthesizedContextExchangeId = input.additionalContextRefs.find((ref) => ref.startsWith("exchange:"));
+    const sourceAgentName = agentAttributionSnapshotName(input.resultReport.source);
     const identity = {
         schemaVersion: CONTRACT_SCHEMA_VERSION,
         entityType: "sub_session",
@@ -267,8 +273,10 @@ export function buildFeedbackRequest(input) {
         ...(input.resultReport.identity.owner.ownerType === "sub_agent"
             ? { targetAgentId: input.resultReport.identity.owner.ownerId }
             : {}),
-        ...(input.resultReport.source?.nicknameSnapshot
-            ? { targetAgentNicknameSnapshot: input.resultReport.source.nicknameSnapshot }
+        ...(sourceAgentName
+            ? {
+                targetAgentNameSnapshot: sourceAgentName,
+            }
             : {}),
         ...(synthesizedContextExchangeId ? { synthesizedContextExchangeId } : {}),
         carryForwardOutputs: input.resultReport.outputs
@@ -317,12 +325,13 @@ export function summarizeChildResultForParent(input) {
     ]);
     const missingItems = uniqueNonEmpty(input.review.missingItems);
     const unverifiedItems = uniqueNonEmpty([...missingItems, ...reportUnverifiedItems]);
+    const sourceExecutorName = agentAttributionSnapshotName(report?.source);
     return {
         subSessionId: input.subSessionId,
         ...(report?.resultReportId ? { resultReportId: report.resultReportId } : {}),
         ...(report?.source?.entityId ? { sourceExecutorId: report.source.entityId } : {}),
-        ...(report?.source?.nicknameSnapshot
-            ? { sourceExecutorName: report.source.nicknameSnapshot }
+        ...(sourceExecutorName
+            ? { sourceExecutorName }
             : {}),
         ...(report?.status ? { resultStatus: report.status } : {}),
         status,
@@ -556,6 +565,11 @@ function summarizeOutputValue(outputId, value) {
         return `output:${outputId}:satisfied`;
     }
 }
+function agentAttributionSnapshotName(source) {
+    if (!source)
+        return undefined;
+    return source.agentNameSnapshot;
+}
 function uniqueNonEmpty(values) {
     return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
@@ -595,29 +609,50 @@ function describeMissingItem(issue) {
     }
 }
 function describeRequiredChange(issue) {
+    const variables = {
+        outputId: issue.outputId ?? "unknown",
+        evidenceKind: issue.evidenceKind ?? "unknown",
+        artifactId: issue.artifactId ?? "unknown",
+    };
     switch (issue.code) {
         case "required_output_missing":
-            return `Submit required output ${issue.outputId ?? "unknown"} with status=satisfied.`;
+            return requiredChangeTemplate("required_output_missing", variables);
         case "required_output_not_satisfied":
-            return `Revise output ${issue.outputId ?? "unknown"} until status=satisfied.`;
+            return requiredChangeTemplate("required_output_not_satisfied", variables);
         case "required_evidence_missing":
-            return `Attach explicit evidence kind ${issue.evidenceKind ?? "unknown"} for ${issue.outputId ?? "unknown"}.`;
+            return requiredChangeTemplate("required_evidence_missing", variables);
         case "evidence_source_missing":
-            return `Provide non-empty sourceRef for evidence kind ${issue.evidenceKind ?? "unknown"}.`;
+            return requiredChangeTemplate("evidence_source_missing", variables);
         case "artifact_missing":
-            return `Attach the required artifact for ${issue.outputId ?? "unknown"}.`;
+            return requiredChangeTemplate("artifact_missing", variables);
         case "artifact_path_missing":
-            return `Provide an artifact path for ${issue.artifactId ?? "unknown"}.`;
+            return requiredChangeTemplate("artifact_path_missing", variables);
         case "artifact_not_found":
-            return `Regenerate or attach an existing artifact for ${issue.artifactId ?? "unknown"}.`;
+            return requiredChangeTemplate("artifact_not_found", variables);
         case "reported_risk_or_gap":
-            return "Resolve the reported risk or gap, or explicitly mark it as a non-blocking reviewed gap in a revised result.";
+            return requiredChangeTemplate("reported_risk_or_gap", variables);
         case "impossible_reason_reported":
-            return "Review the structured impossible reason and decide whether the parent can integrate a limited success.";
+            return requiredChangeTemplate("impossible_reason_reported", variables);
         case "result_report_failed":
-            return "Retry the delegated work and return a non-failed ResultReport.";
+            return requiredChangeTemplate("result_report_failed", variables);
         default:
-            return "Return a completed ResultReport after addressing the typed completion criteria.";
+            return requiredChangeTemplate("default", variables);
     }
+}
+function requiredChangeTemplate(key, variables) {
+    const entries = loadPromptValue(SUB_AGENT_RESULT_REVIEW_REQUIRED_CHANGES_SOURCE_ID, variables, { required: true })
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map((line) => {
+        const separator = line.indexOf("=");
+        if (separator < 0)
+            return [line, ""];
+        return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()];
+    });
+    const value = new Map(entries).get(key);
+    if (!value)
+        throw new Error(`sub-agent result review required change missing: ${key}`);
+    return value;
 }
 //# sourceMappingURL=sub-agent-result-review.js.map

@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import { closeDb, getDb } from "../packages/core/src/db/index.js"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import type { MemoryPolicy, OwnerScope } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 import {
   MemoryIsolationError,
@@ -20,26 +20,17 @@ import { validateAgentPromptBundleContextScope } from "../packages/core/src/runs
 import { buildDataExchangeJournalRecord } from "../packages/core/src/runs/journaling.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task008-memory-isolation-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -65,6 +56,18 @@ function memoryPolicy(writeOwner: OwnerScope): MemoryPolicy {
   }
 }
 
+function longTermGate(targetOwner: OwnerScope, evidence = "test:task008") {
+  return {
+    targetOwner,
+    category: "approved_work_context" as const,
+    storageNeed: "durable_user_fact" as const,
+    sensitivity: "not_sensitive" as const,
+    userIntent: "trusted_setting" as const,
+    sourceEvidenceRefs: [evidence],
+    retentionPurpose: "memory isolation regression fixture",
+  }
+}
+
 describe("task008 memory isolation and data exchange", () => {
   it("keeps owner memory scoped and requires data exchange for cross-agent context", async () => {
     const knowbee = owner("knowbee", "agent:knowbee")
@@ -73,6 +76,7 @@ describe("task008 memory isolation and data exchange", () => {
       owner: knowbee,
       visibility: "private",
       retentionPolicy: "long_term",
+      longTermWriteGate: longTermGate(knowbee, "test:task008:knowbee"),
       rawText: "TASK008_KNOWBEE_PRIVATE_CONTEXT coordinator-only evidence",
       sourceType: "test",
       title: "coordinator memory",
@@ -270,6 +274,34 @@ describe("task008 memory isolation and data exchange", () => {
         content: "wrong owner",
       },
     })).toThrow(MemoryIsolationError)
+  })
+
+  it("rejects owner-scoped memory when retention policy and storage scope disagree", async () => {
+    const knowbee = owner("knowbee", "agent:knowbee")
+
+    await expect(Promise.resolve().then(() => storeOwnerScopedMemory({
+      owner: knowbee,
+      visibility: "private",
+      retentionPolicy: "short_term",
+      scope: "long-term",
+      longTermWriteGate: longTermGate(knowbee, "test:task008:short-as-long"),
+      rawText: "TASK008_SHORT_TERM_MUST_NOT_STORE_AS_LONG_TERM",
+      sourceType: "test",
+    }))).rejects.toMatchObject({
+      reasonCode: "memory_retention_scope_mismatch",
+    })
+
+    await expect(Promise.resolve().then(() => storeOwnerScopedMemory({
+      owner: knowbee,
+      visibility: "private",
+      retentionPolicy: "long_term",
+      scope: "short-term",
+      longTermWriteGate: longTermGate(knowbee, "test:task008:long-as-short"),
+      rawText: "TASK008_LONG_TERM_MUST_NOT_STORE_AS_SHORT_TERM",
+      sourceType: "test",
+    }))).rejects.toMatchObject({
+      reasonCode: "memory_retention_scope_mismatch",
+    })
   })
 
   it("records exchange id and source session in the run journal payload", () => {

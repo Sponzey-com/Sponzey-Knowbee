@@ -1,11 +1,11 @@
 import {
   condenseMemoryText,
   extractFocusedErrorMessage,
-  insertMemoryJournalRecord,
   type MemoryJournalRecordInput,
 } from "../memory/journal.js"
 import type { DataExchangePackage } from "../contracts/sub-agent-orchestration.js"
 import type { ChannelSource } from "../channels/contracts.js"
+import { redactLogText } from "../logger/index.js"
 
 export type RunJournalSource = ChannelSource
 
@@ -44,14 +44,9 @@ export interface DataExchangeJournalParams {
   sourceSessionId?: string
 }
 
-interface RunJournalDependencies {
+export interface RunJournalDependencies {
   insertRecord: (input: MemoryJournalRecordInput) => string
   onError: (message: string) => void
-}
-
-const defaultDependencies: RunJournalDependencies = {
-  insertRecord: insertMemoryJournalRecord,
-  onError: () => {},
 }
 
 export function buildRunInstructionJournalRecord(params: RunInstructionJournalParams): MemoryJournalRecordInput {
@@ -140,12 +135,12 @@ export function buildDataExchangeJournalRecord(params: DataExchangeJournalParams
 
 export function safeInsertRunJournalRecord(
   input: MemoryJournalRecordInput,
-  dependencies?: Partial<RunJournalDependencies>,
+  dependencies: RunJournalDependencies,
 ): void {
-  const resolved = { ...defaultDependencies, ...dependencies }
   try {
-    resolved.insertRecord(input)
+    dependencies.insertRecord(input)
   } catch (error) {
-    resolved.onError(`memory journal insert failed: ${error instanceof Error ? error.message : String(error)}`)
+    const raw = error instanceof Error ? error.message : String(error)
+    dependencies.onError(`memory journal insert failed: ${redactLogText(raw)}`)
   }
 }

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    { "id": "control-timeline-public", "owner": "packages/core/src/api/routes/control-timeline.ts", "routeMarker": "/api/control/timeline/export", "classification": "public_projection", "controls": ["authenticated", "user_audience_forced", "internal_data_redaction"] },
+    { "id": "control-timeline-audit", "owner": "packages/core/src/api/routes/control-timeline.ts", "routeMarker": "/api/audit/control/timeline/export", "classification": "audit_projection", "controls": ["authenticated", "audit_route", "access_recorded"] },
+    { "id": "retrieval-timeline-public", "owner": "packages/core/src/api/routes/runs.ts", "routeMarker": "/api/runs/:id/retrieval-timeline/export", "classification": "public_projection", "controls": ["authenticated", "user_audience_forced", "internal_data_redaction"] },
+    { "id": "run-audit-export", "owner": "packages/core/src/api/routes/audit.ts", "routeMarker": "/api/audit/runs/:runId/export", "classification": "audit_projection", "controls": ["authenticated", "audit_route", "redacted_audit_rows"] },
+    { "id": "database-backup", "owner": "packages/core/src/api/routes/config-operations.ts", "routeMarker": "/api/config/db/backup", "classification": "privileged_backup", "controls": ["authenticated", "explicit_post", "local_state_only", "redacted_response", "operation_lifecycle"] },
+    { "id": "database-export", "owner": "packages/core/src/api/routes/config-operations.ts", "routeMarker": "/api/config/db/export", "classification": "privileged_backup", "controls": ["authenticated", "explicit_post", "local_state_only", "redacted_response", "operation_lifecycle"] },
+    { "id": "masked-config-export", "owner": "packages/core/src/api/routes/config-operations.ts", "routeMarker": "/api/config/export", "classification": "privileged_backup", "controls": ["authenticated", "explicit_post", "local_state_only", "internal_data_redaction", "operation_lifecycle"] },
+    { "id": "prompt-source-export", "owner": "packages/core/src/api/routes/config-operations.ts", "routeMarker": "/api/config/prompt-sources/export", "classification": "privileged_backup", "controls": ["authenticated", "explicit_post", "local_state_only", "redacted_response", "operation_lifecycle"] },
+    { "id": "admin-diagnostic-bundle", "owner": "packages/core/src/api/routes/admin.ts", "routeMarker": "/api/admin/diagnostic-exports/:id/bundle", "classification": "public_projection", "controls": ["admin_authenticated", "internal_data_redaction", "secret_redaction"] },
+    { "id": "topology-export", "owner": "packages/core/src/api/routes/topologies.ts", "routeMarker": "/api/topologies/:topologyId/export", "classification": "domain_document", "controls": ["authenticated", "domain_document_only"] },
+    { "id": "artifact-download", "owner": "packages/core/src/api/routes/artifacts.ts", "routeMarker": "/api/artifacts/*", "classification": "user_artifact", "controls": ["authenticated", "state_root_only", "data_classification", "restricted_class_rejected"] }
+  ]
+}

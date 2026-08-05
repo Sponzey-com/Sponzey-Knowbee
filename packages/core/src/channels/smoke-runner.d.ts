@@ -1,8 +1,10 @@
 import type { KnowbeeConfig } from "../config/types.js";
 import type { ChannelSource } from "./contracts.js";
+import type { RequestExecutionOutcome } from "../runs/flow-contract.js";
 export type ChannelSmokeChannel = ChannelSource;
 export type ChannelSmokeRunMode = "dry-run" | "live-run";
-export type ChannelSmokeScenarioKind = "basic_query" | "approval_required_tool" | "artifact_delivery" | "failure_tool";
+export type ChannelSmokeScenarioKind = "basic_query" | "web_skill" | "approval_required_tool" | "artifact_delivery" | "failure_tool";
+export declare function channelSmokeScenarioRequiresCapabilityAdmission(kind: ChannelSmokeScenarioKind): boolean;
 export type ChannelSmokeReleaseGateMode = "automated" | "fixture" | "manual";
 export type ChannelSmokeStatus = "passed" | "failed" | "skipped";
 export type ChannelSmokeCorrelationKey = "webui_run_id" | "telegram_chat_thread" | "slack_thread" | "channel_thread";
@@ -56,21 +58,62 @@ export interface ChannelSmokeRequestFlowTrace {
     runId?: string;
     requestGroupId?: string;
     requestGroupMatchesRunId?: boolean;
+    flowKind?: "direct_response" | "execution";
+    directResponseReceiptId?: string;
     decisionTracePresent?: boolean;
+    requestDiagnosisReceiptId?: string;
+    solutionPlanReceiptId?: string;
+    resultReviewReceiptId?: string;
+    finalResponseReceiptId?: string;
+    decisionReceiptOrderValid?: boolean;
+    capabilityAdmissionRequired?: boolean;
+    capabilityAdmissionReceiptId?: string;
     topologyRunCreated?: boolean;
     providerDirectUsed?: boolean;
+}
+export interface ChannelSmokeFinalizationTrace {
+    rootOwnerFinalized: boolean;
+    finalAnswerCount: number;
+}
+export interface ChannelSmokeLatencyTrace {
+    metricId: string;
+    runId: string;
+    requestGroupId: string;
+    firstResponseLatencyMs: number;
+    firstResponseBudgetMs: number;
+    firstResponseStatus: "ok" | "slow" | "timeout";
+    terminalResponseLatencyMs: number;
+}
+export interface ChannelSmokeFinalDeliveryTrace {
+    delivered: boolean;
+    targetChannel: ChannelSmokeChannel;
+    correlationKey: ChannelSmokeCorrelationKey;
+    receiptRef: string;
+    userVisible: boolean;
+}
+export interface ChannelSmokeSemanticReviewTrace {
+    requiredCompletionConditionIds: readonly string[];
+    satisfiedCompletionConditionIds: readonly string[];
+    reasonCodes: readonly string[];
+    terminalReport: "delivered" | "blocked" | "failed" | "cancelled" | "additional_input_required";
+    evidenceRefs: readonly string[];
 }
 export interface ChannelSmokeTrace {
     sourceChannel: ChannelSmokeChannel;
     responseChannel?: ChannelSmokeChannel;
     correlationKey?: ChannelSmokeCorrelationKey;
     requestFlow?: ChannelSmokeRequestFlowTrace;
+    finalization?: ChannelSmokeFinalizationTrace;
+    latency?: ChannelSmokeLatencyTrace;
+    finalDelivery?: ChannelSmokeFinalDeliveryTrace;
+    semanticReview?: ChannelSmokeSemanticReviewTrace;
     toolCalls?: ChannelSmokeToolTrace[];
     approval?: ChannelSmokeApprovalTrace;
     artifacts?: ChannelSmokeArtifactTrace[];
     capabilityFallbacks?: ChannelSmokeCapabilityFallbackTrace[];
     finalText?: string;
     auditLogId?: string;
+    semanticOutcome?: RequestExecutionOutcome;
     skipped?: boolean;
     skipReason?: string;
 }
@@ -115,6 +158,12 @@ export interface PersistedChannelSmokeRunnerOptions extends Omit<ChannelSmokeRun
     metadata?: Record<string, unknown>;
     executeScenario?: (scenario: ChannelSmokeScenario) => Promise<ChannelSmokeTrace>;
 }
+export declare function recoverInterruptedGatewayChannelSmokeRuns(input: {
+    readonly gatewayStartedAt: number;
+    readonly recoveredAt: number;
+}): {
+    readonly recoveredCount: number;
+};
 export declare function getDefaultChannelSmokeScenarios(): ChannelSmokeScenario[];
 export declare function resolveChannelSmokeReadiness(config: KnowbeeConfig, scenario: ChannelSmokeScenario): ChannelSmokeReadiness;
 export declare function validateChannelSmokeTrace(scenario: ChannelSmokeScenario, trace: ChannelSmokeTrace): ChannelSmokeValidation;

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import { validateOrchestrationPlan } from "../packages/core/src/contracts/sub-agent-orchestration.js"
 import {
   closeDb,
@@ -38,8 +38,6 @@ import {
 } from "../packages/core/src/orchestration/registry.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 let now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
@@ -48,9 +46,7 @@ function useTempState(): void {
   now = Date.UTC(2026, 3, 24, 0, 0, 0)
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task010-planner-"))
   tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 function owner(agentId: string): RuntimeIdentity["owner"] {
@@ -174,7 +170,6 @@ function teamConfig(): TeamConfig {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     teamId: "team:research",
     displayName: "Research Team",
-    nickname: "Research Team",
     status: "enabled",
     purpose: "Research together.",
     ownerAgentId: "agent:knowbee",
@@ -236,7 +231,7 @@ function seedSkill(): void {
 
 function registrySnapshot() {
   return buildOrchestrationRegistrySnapshot({
-    getConfig: emptyRegistryConfig,
+    config: emptyRegistryConfig(),
     now: () => now,
   })
 }
@@ -285,11 +280,6 @@ beforeEach(() => {
 afterEach(() => {
   closeDb()
   clearAgentCapabilityIndexCache()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -315,6 +305,7 @@ describe("task010 planner fast path and explicit targets", () => {
 
   it("does not route simple text through a direct-request semantic fast path", () => {
     const result = buildOrchestrationPlan({
+      config: emptyRegistryConfig(),
       parentRunId: "run:direct",
       parentRequestId: "request:direct",
       userRequest: "안녕",
@@ -332,6 +323,7 @@ describe("task010 planner fast path and explicit targets", () => {
 
   it("does not turn repeated wording into deterministic workflow recommendations", () => {
     const result = buildOrchestrationPlan({
+      config: emptyRegistryConfig(),
       parentRunId: "run:workflow",
       parentRequestId: "request:workflow",
       userRequest: "매일 오전 9시에 요약을 보내줘",
@@ -355,6 +347,7 @@ describe("task010 planner fast path and explicit targets", () => {
     upsertAgentRelationship(relationship("agent:alpha", "agent:beta"), { now })
 
     const input = {
+      config: emptyRegistryConfig(),
       parentRunId: "run:delegate",
       parentRequestId: "request:delegate",
       userRequest: "시장 조사를 웹 검색으로 정리해줘",
@@ -386,6 +379,7 @@ describe("task010 planner fast path and explicit targets", () => {
     upsertAgentRelationship(relationship("agent:alpha", "agent:beta", 0), { now })
 
     const result = buildOrchestrationPlan({
+      config: emptyRegistryConfig(),
       parentRunId: "run:sub-agent",
       parentRequestId: "request:sub-agent",
       parentAgentId: "agent:alpha",
@@ -413,6 +407,7 @@ describe("task010 planner fast path and explicit targets", () => {
     upsertAgentRelationship(relationship("agent:alpha", "agent:beta"), { now })
 
     const result = buildOrchestrationPlan({
+      config: emptyRegistryConfig(),
       parentRunId: "run:explicit-grandchild",
       parentRequestId: "request:explicit-grandchild",
       userRequest: "agent beta에게 맡겨줘",
@@ -427,6 +422,8 @@ describe("task010 planner fast path and explicit targets", () => {
     expect(result.plan.delegatedTasks).toHaveLength(0)
     expect(result.plan.fallbackStrategy.mode).toBe("ask_user")
     expect(result.plan.fallbackStrategy.reasonCode).toBe("explicit_agent_target_unavailable")
+    expect(result.plan.fallbackStrategy.userMessage).toContain("직속 서브 에이전트 후보")
+    expect(result.plan.fallbackStrategy.userMessage).not.toContain("직접 하위 후보")
     expect(result.reasonCodes).toContain("explicit_agent_not_direct_child")
   })
 
@@ -447,6 +444,7 @@ describe("task010 planner fast path and explicit targets", () => {
     upsertAgentRelationship(relationship("agent:knowbee", "agent:other", 1), { now })
 
     const result = buildOrchestrationPlan({
+      config: emptyRegistryConfig(),
       parentRunId: "run:permission",
       parentRequestId: "request:permission",
       userRequest: "위험한 작업을 alpha에게 맡겨줘",
@@ -474,6 +472,7 @@ describe("task010 planner fast path and explicit targets", () => {
     upsertTeamConfig(teamConfig(), { source: "manual", now })
 
     const result = buildOrchestrationPlan({
+      config: emptyRegistryConfig(),
       parentRunId: "run:team",
       parentRequestId: "request:team",
       userRequest: "research team에게 맡겨줘",
@@ -510,6 +509,7 @@ describe("task010 planner fast path and explicit targets", () => {
     )
 
     const result = buildOrchestrationPlan({
+      config: emptyRegistryConfig(),
       parentRunId: "run:dev-team",
       parentRequestId: "request:dev-team",
       userRequest: "이 내용으로 개발팀에게 개발 시켜줘",
@@ -529,6 +529,7 @@ describe("task010 planner fast path and explicit targets", () => {
   it("falls back to degraded single Knowbee plan on planner timeout", () => {
     let tick = now
     const result = buildOrchestrationPlan({
+      config: emptyRegistryConfig(),
       parentRunId: "run:timeout",
       parentRequestId: "request:timeout",
       userRequest: "시장 조사를 웹 검색으로 정리해줘",

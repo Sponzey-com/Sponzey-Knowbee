@@ -60,7 +60,7 @@ export interface ControlTimelineExport {
     content: string;
     timeline: ControlTimeline;
 }
-export type RetrievalTimelineEventKind = "session" | "attempt" | "source" | "candidate" | "verdict" | "planner" | "delivery" | "dedupe" | "stop" | "diagnostic";
+export type RetrievalTimelineEventKind = "session" | "attempt" | "source" | "diagnosis" | "planner" | "delivery" | "dedupe" | "stop" | "diagnostic";
 export interface RetrievalTimelineEvent {
     id: string;
     at: number;
@@ -76,13 +76,6 @@ export interface RetrievalTimelineEvent {
         url: string | null;
         domain: string | null;
     };
-    verdict: {
-        canAnswer: boolean | null;
-        acceptedValue: string | null;
-        sufficiency: string | null;
-        rejectionReason: string | null;
-        conflicts: string[];
-    };
     diagnosticRef: {
         controlEventId: string;
         eventType: string;
@@ -95,13 +88,11 @@ export interface RetrievalTimelineSummary {
     sessionEvents: number;
     attempts: number;
     sources: number;
-    candidates: number;
-    verdicts: number;
+    diagnoses: number;
     plannerActions: number;
     deliveryEvents: number;
     dedupeSuppressed: number;
     stops: number;
-    conflicts: number;
     finalDeliveryStatus: string | null;
     stopReason: string | null;
     severityCounts: Record<ControlEventSeverity, number>;

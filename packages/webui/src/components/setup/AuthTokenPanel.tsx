@@ -2,6 +2,12 @@ import { useState } from "react"
 import { api } from "../../api/client"
 import { useUiI18n } from "../../lib/ui-i18n"
 
+function tokenStatusLabel(authToken: string, text: (ko: string, en: string) => string): string {
+  return authToken.trim()
+    ? text("토큰 저장됨 · 값 숨김", "Token saved · value hidden")
+    : text("토큰 없음", "No token")
+}
+
 export function AuthTokenPanel({
   authEnabled,
   authToken,
@@ -21,7 +27,7 @@ export function AuthTokenPanel({
     try {
       const response = await api.generateAuthToken()
       onGenerated(response.token)
-      setResult(text("새 로컬 auth token을 생성해 draft에 반영했습니다.", "Generated a new local auth token and applied it to the draft."))
+      setResult(text("새 로컬 인증 토큰을 생성해 설정 초안에 반영했습니다.", "Generated a new local authentication token and applied it to the draft."))
     } catch (error) {
       setResult(error instanceof Error ? error.message : String(error))
     } finally {
@@ -46,7 +52,7 @@ export function AuthTokenPanel({
       <div className="mt-4 rounded-xl bg-stone-50 px-4 py-3 text-sm text-stone-700">
         <div className="text-xs font-semibold uppercase tracking-wide text-stone-500">{text("현재 상태", "Current Status")}</div>
         <div className="mt-2">{authEnabled ? text("인증 사용", "Authentication enabled") : text("인증 비활성", "Authentication disabled")}</div>
-        <div className="mt-2 break-all font-mono text-xs text-stone-600">{authToken}</div>
+        <div className="mt-2 text-xs text-stone-600">{tokenStatusLabel(authToken, text)}</div>
       </div>
       {result ? (
         <div className={`mt-4 rounded-xl px-4 py-3 text-sm ${result.includes(text("반영", "applied")) ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>

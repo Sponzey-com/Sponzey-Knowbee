@@ -47,7 +47,6 @@ export function BackendComposer({
   const [testingConnection, setTestingConnection] = useState(false)
   const [discoveryError, setDiscoveryError] = useState("")
   const [successMessage, setSuccessMessage] = useState("")
-  const [sourceUrl, setSourceUrl] = useState("")
   const { text, displayText, language } = useUiI18n()
 
   function patch<K extends keyof NewAIBackendInput>(key: K, value: NewAIBackendInput[K]) {
@@ -57,7 +56,6 @@ export function BackendComposer({
   function clearDiscoveryState() {
     setDiscoveryError("")
     setSuccessMessage("")
-    setSourceUrl("")
   }
 
   async function runDiscovery(mode: "test" | "models") {
@@ -76,7 +74,6 @@ export function BackendComposer({
         availableModels: result.models,
         defaultModel: result.models.includes(current.defaultModel) ? current.defaultModel : result.models[0] ?? "",
       }))
-      setSourceUrl(result.sourceUrl)
       setSuccessMessage(
         result.models.length > 0
           ? text(
@@ -176,7 +173,7 @@ export function BackendComposer({
       </div>
 
       <div className="mt-4">
-        <label className="mb-1 block text-sm font-medium text-stone-700">{text("AI 종류 (Provider Type)", "AI Type (Provider Type)")}</label>
+        <label className="mb-1 block text-sm font-medium text-stone-700">{text("AI 종류", "AI type")}</label>
         <select
           className="input"
           value={form.providerType}
@@ -274,7 +271,6 @@ export function BackendComposer({
           </button>
         </div>
         {successMessage ? <p className="mt-2 text-xs leading-5 text-emerald-700">{successMessage}</p> : null}
-        {sourceUrl ? <p className="mt-1 text-xs text-emerald-700">{text("조회 경로", "Source URL")}: {sourceUrl}</p> : null}
         {discoveryError ? <p className="mt-2 text-xs leading-5 text-red-600">{displayText(discoveryError)}</p> : null}
         {!hasRequiredProviderCredentials(form.providerType, form.credentials, form.authMode ?? "api_key") ? (
           <p className="mt-2 text-xs leading-5 text-amber-700">{text("필수 인증 정보를 입력해야 연결 확인과 모델 조회를 진행할 수 있습니다.", "Enter the required credentials before checking the connection and loading models.")}</p>
@@ -341,7 +337,7 @@ export function BackendComposer({
           disabled={!form.label.trim() || !form.endpoint?.trim() || form.availableModels.length === 0 || !form.defaultModel}
           className="rounded-xl bg-stone-900 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {text("AI 연결 추가", "Add AI Backend")}
+          {text("AI 연결 추가", "Add AI connection")}
         </button>
       </div>
     </div>

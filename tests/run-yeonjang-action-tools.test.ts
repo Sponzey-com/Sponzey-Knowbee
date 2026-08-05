@@ -2,10 +2,11 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
 import type { ToolContext } from "../packages/core/src/tools/types.ts"
 import { upsertYeonjangRegistryObservation } from "../packages/core/src/yeonjang/registry.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const canYeonjangHandleMethod = vi.fn()
 const invokeYeonjangMethod = vi.fn()
@@ -27,17 +28,14 @@ const { shellExecTool } = await import("../packages/core/src/tools/builtin/shell
 const { mouseActionTool } = await import("../packages/core/src/tools/builtin/ui/mouse.ts")
 const { keyboardActionTool } = await import("../packages/core/src/tools/builtin/ui/keyboard.ts")
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-run-yeonjang-action-tools-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-run-yeonjang-action-tools-"))
+  tempDirs.push(rootDir)
+  const runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function seedObservation(overrides: Partial<Parameters<typeof upsertYeonjangRegistryObservation>[0]> = {}) {
@@ -109,6 +107,7 @@ describe("yeonjang action tools", () => {
       },
       {
         extensionId: "yeonjang-dongwooshinc28b-92049",
+        signal: expect.any(AbortSignal),
         displayName: "Yeonjang-windows",
         instanceId: "inst-remote-windows",
         instanceAlias: "windows-test-pc",
@@ -123,11 +122,6 @@ describe("yeonjang action tools", () => {
 
   afterEach(() => {
     closeDb()
-    if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-    else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-    if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-    else process.env["KNOWBEE_CONFIG"] = previousConfig
-    reloadConfig()
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop()
       if (dir) rmSync(dir, { recursive: true, force: true })
@@ -175,6 +169,7 @@ describe("yeonjang action tools", () => {
       "system.exec",
       {
         extensionId: "yeonjang-dongwooshinc28b-92049",
+        signal: expect.any(AbortSignal),
         metadata: {
           runId: "run-1",
           requestGroupId: "request-group-1",
@@ -196,6 +191,7 @@ describe("yeonjang action tools", () => {
       {
         timeoutMs: 12_000,
         extensionId: "yeonjang-dongwooshinc28b-92049",
+        signal: expect.any(AbortSignal),
         metadata: {
           runId: "run-1",
           requestGroupId: "request-group-1",
@@ -236,6 +232,7 @@ describe("yeonjang action tools", () => {
       {
         extensionId: "yeonjang-main",
         timeoutMs: 15_000,
+        signal: expect.any(AbortSignal),
         metadata: {
           runId: "run-1",
           requestGroupId: "request-group-1",
@@ -283,6 +280,7 @@ describe("yeonjang action tools", () => {
       {
         extensionId: "yeonjang-main",
         timeoutMs: 15_000,
+        signal: expect.any(AbortSignal),
         metadata: {
           runId: "run-1",
           requestGroupId: "request-group-1",

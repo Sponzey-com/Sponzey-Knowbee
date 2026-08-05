@@ -1,4 +1,5 @@
 import type { SetupDraft, SetupSubAgentDraftItem } from "../contracts/setup"
+import { canonicalizeLegacyAgentIdentity } from "../../../core/src/adapters/legacy-agent-identity.js"
 import {
   EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION,
   type ExecutorEdgeV2,
@@ -12,6 +13,7 @@ import {
   type ExecutorDraft,
   type ExecutorGraphWorkspace,
 } from "./executor-graph"
+import { DEFAULT_MAIN_AGENT_NAME_EN } from "./main-agent-copy"
 
 export type TopologySubAgentSummaryKind = "root" | "sub_agent"
 export type TopologySubAgentReadinessState = "ready" | "pending_runtime" | "needs_attention" | "disabled"
@@ -19,8 +21,7 @@ export type TopologySubAgentRuntimeState = "active" | "pending_runtime" | "inact
 
 export interface TopologySubAgentSummary {
   kind: TopologySubAgentSummaryKind
-  displayName: string
-  nickname: string
+  agentName: string
   role: string
   description: string
   parentDisplayName: string
@@ -46,7 +47,7 @@ export interface SubAgentTopologyProjection {
 }
 
 const KNOWBEE_AGENT_ID = "agent:knowbee"
-const KNOWBEE_DISPLAY_NAME = "Knowbee"
+const UNNAMED_SUB_AGENT_NAME = "Unnamed sub-agent"
 
 export function hasSetupSubAgentTopology(draft: SetupDraft): boolean {
   return (draft.subAgents?.items ?? []).some((item) => item.status !== "archived")
@@ -122,24 +123,23 @@ export function buildTopologySubAgentSummaryMap(input: {
   if (graphIds.has(KNOWBEE_AGENT_ID) || items.length > 0) {
     map.set(KNOWBEE_AGENT_ID, {
       kind: "root",
-      displayName: rootDisplayName,
-      nickname: rootDisplayName,
+      agentName: rootDisplayName,
       role: "메인 에이전트",
-      description: `${rootDisplayName}은 최상위에서 직접 하위 서브 에이전트에게만 일을 위임합니다.`,
+      description: `${rootDisplayName}은 최상위에서 직속 서브 에이전트에게만 일을 위임합니다.`,
       parentDisplayName: "",
-      directChildLabels: items.map((item) => item.displayName),
+      directChildLabels: items.map((item) => subAgentDisplayName(item)),
       childCount: items.length,
       readinessState: items.length > 0 ? "ready" : "pending_runtime",
-      readinessLabel: items.length > 0 ? "직접 하위 준비" : "하위 없음",
+      readinessLabel: items.length > 0 ? "직속 서브 에이전트 준비" : "하위 없음",
       runtimeState: "active",
       runtimeLabel: "메인 에이전트",
       savedLabel: "저장됨",
       lastRuntimeLabel: "항상 대기",
       modelLabel: "공통 모델 정책",
-      skillMcpLabel: "직접 하위에게 위임",
+      skillMcpLabel: "직속 서브 에이전트에게 위임",
       memoryLabel: "메인 메모리",
       permissionLabel: "제품 기본 권한",
-      delegationLabel: "직접 하위만 위임 가능",
+      delegationLabel: "직속 서브 에이전트만 위임 가능",
     })
   }
 
@@ -154,8 +154,7 @@ export function buildTopologySubAgentSummaryMap(input: {
         : "pending_runtime"
     map.set(item.agentId, {
       kind: "sub_agent",
-      displayName: item.displayName,
-      nickname: item.nickname || item.displayName,
+      agentName: subAgentDisplayName(item),
       role: item.role,
       description: item.description,
       parentDisplayName: rootDisplayName,
@@ -170,7 +169,7 @@ export function buildTopologySubAgentSummaryMap(input: {
         ? relativeRuntimeLabel(lastRuntimeSeenAtByAgentId[item.agentId], now)
         : "기록 없음",
       modelLabel: "공통 모델 상속",
-      skillMcpLabel: "공통 Skill/MCP 사용",
+      skillMcpLabel: "공통 작업 능력/외부 기능 사용",
       memoryLabel: "독립 메모리",
       permissionLabel: "안전 기본 권한",
       delegationLabel: "하위 위임 가능",
@@ -189,13 +188,15 @@ export function applyTopologyExecutorToSetupDraft(
   const updatedAt = typeof now === "number" ? now : Date.now()
   const items = draft.subAgents.items.map((item) => {
     if (item.agentId !== executor.id) return item
-    const displayName = executor.name.trim() || item.displayName
-    const role = executor.executorProfile?.roleName?.trim() || item.role
-    const description = executor.description.trim() || item.description
+    const agentName = executor.name
+    const role = executor.executorProfile?.roleName ?? item.role
+    const description = executor.description
+    const canonicalItem = canonicalizeLegacyAgentIdentity(
+      item as SetupSubAgentDraftItem & Record<string, unknown>,
+    )
     return {
-      ...item,
-      displayName,
-      nickname: displayName,
+      ...canonicalItem,
+      agentName,
       role,
       description,
       updatedAt,
@@ -211,16 +212,56 @@ export function applyTopologyExecutorToSetupDraft(
   }
 }
 
+export function archiveTopologySubAgentInSetupDraft(
+  draft: SetupDraft,
+  agentId: string,
+  now: number = Date.now(),
+): SetupDraft {
+  if (agentId === KNOWBEE_AGENT_ID || !draft.subAgents) return draft
+  const target = draft.subAgents.items.find((item) =>
+    item.agentId === agentId && item.status !== "archived"
+  )
+  if (!target) return draft
+
+  const nextParentAgentId = target.parentAgentId?.trim() || KNOWBEE_AGENT_ID
+  return {
+    ...draft,
+    subAgents: {
+      ...draft.subAgents,
+      items: draft.subAgents.items.map((item) => {
+        if (item.agentId === agentId) {
+          return {
+            ...item,
+            status: "archived",
+            updatedAt: now,
+            profileVersion: item.profileVersion + 1,
+          }
+        }
+        if (item.status !== "archived" && item.parentAgentId === agentId) {
+          return {
+            ...item,
+            parentAgentId: nextParentAgentId,
+            updatedAt: now,
+            profileVersion: item.profileVersion + 1,
+          }
+        }
+        return item
+      }),
+      runtimeActiveAgentIds: draft.subAgents.runtimeActiveAgentIds.filter((id) => id !== agentId),
+    },
+  }
+}
+
 function activeSubAgentItems(draft: SetupDraft): SetupSubAgentDraftItem[] {
   return (draft.subAgents?.items ?? []).filter((item) => item.status !== "archived")
 }
 
 function rootAgentDisplayName(draft: SetupDraft): string {
-  return draft.mainAgent?.name.trim() || KNOWBEE_DISPLAY_NAME
+  return draft.mainAgent?.name.trim() || DEFAULT_MAIN_AGENT_NAME_EN
 }
 
 function subAgentNode(item: SetupSubAgentDraftItem, index: number, now: number | string): ExecutorNodeV2 {
-  const display = item.nickname || item.displayName
+  const display = subAgentDisplayName(item)
   return {
     id: item.agentId,
     name: display,
@@ -243,6 +284,10 @@ function subAgentNode(item: SetupSubAgentDraftItem, index: number, now: number |
       updatedAt: String(now),
     },
   }
+}
+
+function subAgentDisplayName(item: SetupSubAgentDraftItem): string {
+  return item.agentName === undefined ? UNNAMED_SUB_AGENT_NAME : item.agentName
 }
 
 function graphFromSubAgentTopology(input: {

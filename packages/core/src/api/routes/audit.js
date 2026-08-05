@@ -1,13 +1,22 @@
+import { createHash } from "node:crypto";
 import { getDb, insertDiagnosticEvent } from "../../db/index.js";
+import { decideCleanupCandidate } from "../../maintenance/cleanup-decision.js";
 import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js";
+import { AUTHENTICATED_API_AUDIT_DEPENDENCIES, auditAccessHttpFailure, authorizeAndRecordAuditAccess, } from "../audit-access-runtime.js";
 import { authMiddleware } from "../middleware/auth.js";
-const SENSITIVE_KEYS = /api[_-]?key|authorization|auth|bearer|cookie|credential|password|refresh[_-]?token|secret|token|chat[_-]?id|external[_-]?chat[_-]?id|channel[_-]?target|raw[_-]?(body|response)|provider[_-]?raw/i;
+import { INTERNAL_EVIDENCE_REDACTION_MASK, isInternalEvidenceKey, redactInternalEvidenceText, } from "../../security/internal-evidence-redaction.js";
+const SENSITIVE_KEYS = /api[_-]?key|authorization|auth|bearer|base64|cookie|credential|password|refresh[_-]?token|secret|token|chat[_-]?id|external[_-]?chat[_-]?id|channel[_-]?target|raw[_-]?(body|response|payload)?|rawPayload|provider[_-]?raw/i;
+const INTERNAL_PATH_REDACTION = "[internal-path-redacted]";
 const TEXT_SECRET_PATTERNS = [
     [/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer ***"],
     [/(api[_-]?key|authorization|password|refresh[_-]?token|secret|token)(["'\s:=]+)([^"'\s,}]+)/gi, "$1$2***"],
     [/(chat[_-]?id|chatId|external[_-]?chat[_-]?id)(["'\s:=]+)([^"'\s,}]+)/gi, "$1$2***"],
     [/\b(telegram|chat)[:#-]\d{6,}\b/gi, "$1:***"],
     [/([A-Za-z0-9_-]{12,})\.([A-Za-z0-9_-]{12,})\.([A-Za-z0-9_-]{12,})/g, "***.***.***"],
+    [/\/(?:private\/)?var\/folders\/[^\s"'`<>]+/gi, INTERNAL_PATH_REDACTION],
+    [/\/tmp\/[^\s"'`<>]+/gi, INTERNAL_PATH_REDACTION],
+    [/\/Users\/[^\s"'`<>]+/gi, INTERNAL_PATH_REDACTION],
+    [/[A-Z]:\\[^\s"'`<>]+/gi, INTERNAL_PATH_REDACTION],
 ];
 const AUDIT_EVENTS_CTE = `
 WITH audit_events AS (
@@ -289,6 +298,10 @@ function redactDeep(value) {
         return typeof value === "string" ? sanitizeText(value) : value;
     const result = {};
     for (const [key, nested] of Object.entries(value)) {
+        if (isInternalEvidenceKey(key)) {
+            result.internalEvidence = INTERNAL_EVIDENCE_REDACTION_MASK;
+            continue;
+        }
         result[key] = SENSITIVE_KEYS.test(key) ? "***" : redactDeep(nested);
     }
     return result;
@@ -300,10 +313,17 @@ function sanitizeText(raw) {
     for (const [pattern, replacement] of TEXT_SECRET_PATTERNS) {
         value = value.replace(pattern, replacement);
     }
+    value = redactInternalEvidenceText(value);
     if (/(<!doctype\s+html|<html\b|<head\b|<body\b|<script\b)/i.test(value)) {
         value = sanitizeUserFacingError(value).userMessage;
     }
     return value.length > 4000 ? `${value.slice(0, 3990)}…` : value;
+}
+function sanitizeAuditOutput(row) {
+    if (row.tool_name?.startsWith("yeonjang_")) {
+        return row.output == null ? null : "[audit-output-redacted]";
+    }
+    return sanitizeText(row.output);
 }
 function sanitizeIdentifier(raw) {
     const sanitized = sanitizeText(raw);
@@ -336,7 +356,7 @@ function mapEvent(row) {
         channel: sanitizeText(row.channel),
         toolName: sanitizeText(row.tool_name),
         params: parseAndRedactJson(row.params),
-        output: sanitizeText(row.output),
+        output: sanitizeAuditOutput(row),
         durationMs: row.duration_ms,
         approvalRequired: Boolean(row.approval_required),
         approvedBy: sanitizeText(row.approved_by),
@@ -344,6 +364,31 @@ function mapEvent(row) {
         retryCount: row.retry_count,
         stopReason: sanitizeText(row.stop_reason),
         detail: parseAndRedactJson(row.detail_json),
+    };
+}
+function mapRawEvent(row) {
+    return {
+        id: row.id,
+        at: row.at,
+        kind: row.kind,
+        timelineKind: row.timeline_kind,
+        status: row.status,
+        visibility: "audit_only",
+        source: row.source,
+        sessionId: row.session_id,
+        runId: row.run_id,
+        requestGroupId: row.request_group_id,
+        channel: row.channel,
+        toolName: row.tool_name,
+        paramsRaw: row.params,
+        outputRaw: row.output,
+        detailRaw: row.detail_json,
+        durationMs: row.duration_ms,
+        approvalRequired: Boolean(row.approval_required),
+        approvedBy: row.approved_by,
+        errorCode: row.error_code,
+        retryCount: row.retry_count,
+        stopReason: row.stop_reason,
     };
 }
 function buildWhere(query) {
@@ -445,34 +490,55 @@ export function getAuditEventById(id) {
     const row = getAuditEventRowById(id);
     return row ? mapEvent(row) : null;
 }
+export function getRawAuditEventById(id) {
+    const row = getAuditEventRowById(id);
+    return row ? mapRawEvent(row) : null;
+}
+function resolveAuditEventAccessScope(row) {
+    if (row.run_id)
+        return { runId: row.run_id };
+    if (row.request_group_id)
+        return { requestGroupId: row.request_group_id };
+    return {
+        scopeRef: "instance:local",
+    };
+}
 export function promoteAuditEventToErrorCorpusCandidate(eventId, note) {
     const row = getAuditEventRowById(eventId);
     if (!row)
         return null;
     const event = mapEvent(row);
-    const diagnosticEventId = insertDiagnosticEvent({
-        kind: "error_corpus_candidate",
-        summary: `장애 샘플 후보: ${event.summary}`,
-        ...(row.run_id ? { runId: row.run_id } : {}),
-        ...(row.session_id ? { sessionId: row.session_id } : {}),
-        ...(row.request_group_id ? { requestGroupId: row.request_group_id } : {}),
-        recoveryKey: `error-corpus:${event.kind}:${event.id}`,
-        detail: {
-            sourceEventId: event.id,
-            eventKind: event.kind,
-            timelineKind: event.timelineKind,
-            status: event.status,
-            summary: event.summary,
-            channel: event.channel,
-            toolName: event.toolName,
-            errorCode: event.errorCode,
-            stopReason: event.stopReason,
-            params: event.params,
-            output: event.output,
-            detail: event.detail,
-            note: sanitizeText(note ?? null),
-        },
-    });
+    const recoveryKey = `error-corpus:${event.kind}:${event.id}`;
+    const diagnosticEventId = getDb().transaction(() => {
+        const existing = getDb()
+            .prepare("SELECT id FROM diagnostic_events WHERE recovery_key = ? AND kind = 'error_corpus_candidate' ORDER BY created_at ASC LIMIT 1")
+            .get(recoveryKey);
+        if (existing)
+            return existing.id;
+        return insertDiagnosticEvent({
+            kind: "error_corpus_candidate",
+            summary: `장애 샘플 후보: ${event.summary}`,
+            ...(row.run_id ? { runId: row.run_id } : {}),
+            ...(row.session_id ? { sessionId: row.session_id } : {}),
+            ...(row.request_group_id ? { requestGroupId: row.request_group_id } : {}),
+            recoveryKey,
+            detail: {
+                sourceEventId: event.id,
+                eventKind: event.kind,
+                timelineKind: event.timelineKind,
+                status: event.status,
+                summary: event.summary,
+                channel: event.channel,
+                toolName: event.toolName,
+                errorCode: event.errorCode,
+                stopReason: event.stopReason,
+                params: event.params,
+                output: event.output,
+                detail: event.detail,
+                note: sanitizeText(note ?? null),
+            },
+        });
+    })();
     return { diagnosticEventId, event };
 }
 function resolveRunTimelineQuery(runId, limit) {
@@ -500,10 +566,140 @@ function renderMarkdown(events) {
     }
     return `${lines.join("\n")}\n`;
 }
-export function registerAuditRoute(app) {
-    app.get("/api/audit", { preHandler: authMiddleware }, async (req) => listAuditEvents(req.query));
-    app.get("/api/audit/runs/:runId/timeline", { preHandler: authMiddleware }, async (req) => listAuditEvents(resolveRunTimelineQuery(req.params.runId, req.query.limit)));
-    app.get("/api/audit/runs/:runId/export", { preHandler: authMiddleware }, async (req) => {
+const AUDIT_CLEANUP_TABLES = [
+    { table: "audit_logs", timestampColumn: "timestamp", countKey: "auditLogs" },
+    { table: "diagnostic_events", timestampColumn: "created_at", countKey: "diagnosticEvents" },
+    { table: "decision_traces", timestampColumn: "created_at", countKey: "decisionTraces" },
+    { table: "message_ledger", timestampColumn: "created_at", countKey: "messageLedger" },
+];
+function buildAuditCleanupPreview(before) {
+    const db = getDb();
+    const existingRunIds = new Set(db.prepare("SELECT id FROM root_runs").all().map((row) => row.id));
+    const counts = {
+        auditLogs: 0,
+        diagnosticEvents: 0,
+        decisionTraces: 0,
+        messageLedger: 0,
+    };
+    const deletableIds = {
+        audit_logs: [],
+        diagnostic_events: [],
+        decision_traces: [],
+        message_ledger: [],
+    };
+    let protectedCount = 0;
+    for (const definition of AUDIT_CLEANUP_TABLES) {
+        const rows = db.prepare(`SELECT id, run_id FROM ${definition.table} WHERE ${definition.timestampColumn} < ? ORDER BY id ASC`).all(before);
+        counts[definition.countKey] = rows.length;
+        for (const row of rows) {
+            const activeReferenceCount = row.run_id && existingRunIds.has(row.run_id) ? 1 : 0;
+            const decision = decideCleanupCandidate({
+                candidateId: `${definition.table}:${row.id}`,
+                dataKind: definition.table === "audit_logs" ? "audit_log" : "diagnostic_event",
+                retentionClass: "expired",
+                activeReferenceCount,
+                referenceScanCompleted: true,
+                migrationRequired: false,
+                rollbackRequired: false,
+                deletionApproved: true,
+            });
+            if (decision.decision === "delete")
+                deletableIds[definition.table].push(row.id);
+            else
+                protectedCount += 1;
+        }
+    }
+    const tokenPayload = JSON.stringify({ before, deletableIds });
+    return {
+        before,
+        ...counts,
+        protectedCount,
+        deletableCount: Object.values(deletableIds).reduce((count, ids) => count + ids.length, 0),
+        confirmationToken: createHash("sha256").update(tokenPayload).digest("hex"),
+        deletableIds,
+    };
+}
+function deleteAuditCleanupPreview(preview) {
+    const db = getDb();
+    const deleted = {
+        auditLogs: 0,
+        diagnosticEvents: 0,
+        decisionTraces: 0,
+        messageLedger: 0,
+    };
+    const tx = db.transaction(() => {
+        for (const definition of AUDIT_CLEANUP_TABLES) {
+            const ids = preview.deletableIds[definition.table];
+            if (ids.length === 0)
+                continue;
+            const placeholders = ids.map(() => "?").join(", ");
+            deleted[definition.countKey] = db.prepare(`DELETE FROM ${definition.table} WHERE id IN (${placeholders})`).run(...ids).changes;
+        }
+    });
+    tx();
+    return deleted;
+}
+export function registerAuditRoute(app, auditDependencies = AUTHENTICATED_API_AUDIT_DEPENDENCIES) {
+    app.get("/api/audit", { preHandler: authMiddleware }, async (req, reply) => {
+        const decision = authorizeAndRecordAuditAccess({
+            request: req,
+            purpose: req.query.purpose,
+            operation: "view",
+            ...(req.query.runId ? { runId: req.query.runId } : {}),
+            ...(req.query.requestGroupId ? { requestGroupId: req.query.requestGroupId } : {}),
+            ...(req.query.scope === "local_instance" ? { scopeRef: "instance:local" } : {}),
+            dependencies: auditDependencies,
+        });
+        if (!decision.allowed) {
+            const failure = auditAccessHttpFailure(decision);
+            return reply.status(failure.statusCode).send(failure.body);
+        }
+        return listAuditEvents(req.query);
+    });
+    app.get("/api/audit/cleanup-preview", { preHandler: authMiddleware }, async (req, reply) => {
+        const access = authorizeAndRecordAuditAccess({
+            request: req,
+            purpose: req.query.purpose,
+            operation: "cleanup_preview",
+            ...(req.query.scope === "local_instance" ? { scopeRef: "instance:local" } : {}),
+            dependencies: auditDependencies,
+        });
+        if (!access.allowed) {
+            const failure = auditAccessHttpFailure(access);
+            return reply.status(failure.statusCode).send(failure.body);
+        }
+        const before = req.query.all === "true" ? Date.now() + 1 : parseTime(req.query.before);
+        if (before == null)
+            return reply.status(400).send({ ok: false, reasonCode: "cleanup_cutoff_required" });
+        const preview = buildAuditCleanupPreview(before);
+        return { ok: true, preview: { ...preview, deletableIds: undefined } };
+    });
+    app.get("/api/audit/runs/:runId/timeline", { preHandler: authMiddleware }, async (req, reply) => {
+        const decision = authorizeAndRecordAuditAccess({
+            request: req,
+            purpose: req.query.purpose,
+            operation: "view",
+            runId: req.params.runId,
+            dependencies: auditDependencies,
+        });
+        if (!decision.allowed) {
+            const failure = auditAccessHttpFailure(decision);
+            return reply.status(failure.statusCode).send(failure.body);
+        }
+        return listAuditEvents(resolveRunTimelineQuery(req.params.runId, req.query.limit));
+    });
+    app.get("/api/audit/runs/:runId/export", { preHandler: authMiddleware }, async (req, reply) => {
+        const decision = authorizeAndRecordAuditAccess({
+            request: req,
+            purpose: req.query.purpose,
+            operation: "export",
+            runId: req.params.runId,
+            dependencies: auditDependencies,
+        });
+        if (!decision.allowed) {
+            const failure = auditAccessHttpFailure(decision);
+            return reply.status(failure.statusCode).send(failure.body);
+        }
         const events = listAuditEvents(resolveRunTimelineQuery(req.params.runId, req.query.limit)).items;
         const format = req.query.format === "json" ? "json" : "markdown";
         return {
@@ -512,7 +708,35 @@ export function registerAuditRoute(app) {
             events,
         };
     });
+    app.get("/api/audit/events/:id/raw", { preHandler: authMiddleware }, async (req, reply) => {
+        const row = getAuditEventRowById(req.params.id);
+        if (!row)
+            return reply.status(404).send({ ok: false, message: "audit event not found" });
+        const decision = authorizeAndRecordAuditAccess({
+            request: req,
+            purpose: req.query.purpose,
+            operation: "export",
+            ...resolveAuditEventAccessScope(row),
+            dependencies: auditDependencies,
+        });
+        if (!decision.allowed) {
+            const failure = auditAccessHttpFailure(decision);
+            return reply.status(failure.statusCode).send(failure.body);
+        }
+        return { ok: true, event: mapRawEvent(row) };
+    });
     app.post("/api/audit/events/:id/promote-error-corpus", { preHandler: authMiddleware }, async (req, reply) => {
+        const access = authorizeAndRecordAuditAccess({
+            request: req,
+            purpose: req.query.purpose,
+            operation: "promote_error_corpus",
+            ...(req.query.scope === "local_instance" ? { scopeRef: "instance:local" } : {}),
+            dependencies: auditDependencies,
+        });
+        if (!access.allowed) {
+            const failure = auditAccessHttpFailure(access);
+            return reply.status(failure.statusCode).send(failure.body);
+        }
         const result = promoteAuditEventToErrorCorpusCandidate(req.params.id, req.body?.note);
         if (!result) {
             reply.code(404);
@@ -520,16 +744,37 @@ export function registerAuditRoute(app) {
         }
         return { ok: true, ...result };
     });
-    app.delete("/api/audit", { preHandler: authMiddleware }, async (req) => {
+    app.delete("/api/audit", { preHandler: authMiddleware }, async (req, reply) => {
+        const access = authorizeAndRecordAuditAccess({
+            request: req,
+            purpose: req.query.purpose,
+            operation: "cleanup_delete",
+            ...(req.query.scope === "local_instance" ? { scopeRef: "instance:local" } : {}),
+            dependencies: auditDependencies,
+        });
+        if (!access.allowed) {
+            const failure = auditAccessHttpFailure(access);
+            return reply.status(failure.statusCode).send(failure.body);
+        }
         const before = req.query.all === "true" ? Date.now() + 1 : parseTime(req.query.before);
         if (before == null)
             return { ok: false, deleted: { auditLogs: 0, diagnosticEvents: 0, decisionTraces: 0 }, message: "before 또는 all=true가 필요합니다." };
-        const db = getDb();
-        const auditLogs = db.prepare("DELETE FROM audit_logs WHERE timestamp < ?").run(before).changes;
-        const diagnosticEvents = db.prepare("DELETE FROM diagnostic_events WHERE created_at < ?").run(before).changes;
-        const decisionTraces = db.prepare("DELETE FROM decision_traces WHERE created_at < ?").run(before).changes;
-        const messageLedger = db.prepare("DELETE FROM message_ledger WHERE created_at < ?").run(before).changes;
-        return { ok: true, deleted: { auditLogs, diagnosticEvents, decisionTraces, messageLedger }, before };
+        const preview = buildAuditCleanupPreview(before);
+        if (!req.query.confirm) {
+            return reply.status(409).send({
+                ok: false,
+                reasonCode: "cleanup_confirmation_required",
+                preview: { ...preview, deletableIds: undefined },
+            });
+        }
+        if (req.query.confirm !== preview.confirmationToken) {
+            return reply.status(409).send({
+                ok: false,
+                reasonCode: "cleanup_preview_stale",
+                preview: { ...preview, deletableIds: undefined },
+            });
+        }
+        return { ok: true, deleted: deleteAuditCleanupPreview(preview), before };
     });
 }
 //# sourceMappingURL=audit.js.map

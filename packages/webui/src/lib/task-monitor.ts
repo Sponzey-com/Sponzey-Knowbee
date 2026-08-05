@@ -18,6 +18,7 @@ import type {
   TaskRequestIdentityModel,
   TaskRunRelationshipKind,
 } from "../contracts/tasks"
+import { sortWorkItemsActiveFirst } from "./work-route"
 
 type TextFn = (ko: string, en: string) => string
 
@@ -104,7 +105,12 @@ export interface TaskMonitorCard {
   duplicateExecutionRisk: boolean
 }
 
-const ACTIVE_STATUSES: RootRun["status"][] = ["queued", "running", "awaiting_approval", "awaiting_user"]
+const ACTIVE_STATUSES: RootRun["status"][] = [
+  "queued",
+  "running",
+  "awaiting_approval",
+  "awaiting_user",
+]
 
 function truncateText(value: string, maxLength = 120): string {
   const normalized = value.replace(/\s+/g, " ").trim()
@@ -206,19 +212,17 @@ function buildChecklist(taskChecklist: TaskChecklistModel, text: TextFn): TaskMo
   }
 }
 
-function runAgentLabel(attempt: TaskMonitorAttempt): string | undefined {
+export function runAgentName(attempt: TaskMonitorAttempt): string | undefined {
   const run = attempt.run
-  return [
-    run?.agentNickname,
-    run?.agentDisplayName,
-    run?.targetLabel,
-  ].find((value) => value?.trim())?.trim()
+  return [run?.agentName, run?.agentNameSnapshot, run?.targetLabel]
+    .find((value) => value?.trim())
+    ?.trim()
 }
 
 function describeRunScopeLabel(attempt: TaskMonitorAttempt, text: TextFn): string {
   switch (attempt.run?.runScope) {
     case "child":
-      return runAgentLabel(attempt) ?? text("서브 에이전트", "Sub-agent")
+      return runAgentName(attempt) ?? text("서브 에이전트", "Sub-agent")
     case "analysis":
       return text("분석", "Analysis")
     default:
@@ -232,16 +236,26 @@ function buildTreeNodes(attempts: TaskMonitorAttempt[], text: TextFn): TaskMonit
   return sourceAttempts.map((attempt, index) => ({
     id: attempt.id,
     label: `${describeRunScopeLabel(attempt, text)} · ${attempt.label}`,
-    summary: truncateText(attempt.run?.handoffSummary || attempt.summary || attempt.prompt || attempt.run?.prompt || attempt.label),
+    summary: truncateText(
+      attempt.run?.handoffSummary ||
+        attempt.summary ||
+        attempt.prompt ||
+        attempt.run?.prompt ||
+        attempt.label,
+    ),
     status: attempt.status,
     isRoot: (attempt.run?.runScope ?? "root") === "root" || index === 0,
   }))
 }
 
-function buildTimeline(task: TaskModel, attempts: TaskMonitorAttempt[], text: TextFn): TaskMonitorTimelineItem[] {
+function buildTimeline(
+  task: TaskModel,
+  attempts: TaskMonitorAttempt[],
+  text: TextFn,
+): TaskMonitorTimelineItem[] {
   const labelByAttemptId = new Map(attempts.map((attempt) => [attempt.id, attempt.label]))
   return [...task.activities]
-    .sort((a, b) => (b.at - a.at) || a.id.localeCompare(b.id))
+    .sort((a, b) => b.at - a.at || a.id.localeCompare(b.id))
     .slice(0, 20)
     .map((activity) => ({
       id: activity.id,
@@ -258,7 +272,8 @@ function buildRepresentativeRun(task: TaskModel, runsById: Map<string, RootRun>)
   const identityRun = anchorRun ?? latestRun
   if (!sourceRun || !identityRun) {
     const latestAttempt = [...task.attempts].sort((a, b) => b.updatedAt - a.updatedAt)[0]
-    const anchorAttempt = task.attempts.find((attempt) => attempt.id === task.anchorRunId) ?? task.attempts[0]
+    const anchorAttempt =
+      task.attempts.find((attempt) => attempt.id === task.anchorRunId) ?? task.attempts[0]
     if (!latestAttempt && !anchorAttempt) return null
 
     return {
@@ -303,7 +318,11 @@ function buildRepresentativeRun(task: TaskModel, runsById: Map<string, RootRun>)
   }
 }
 
-export function buildTaskMonitorCards(tasks: TaskModel[], runs: RootRun[], text: TextFn): TaskMonitorCard[] {
+export function buildTaskMonitorCards(
+  tasks: TaskModel[],
+  runs: RootRun[],
+  text: TextFn,
+): TaskMonitorCard[] {
   const runsById = new Map(runs.map((run) => [run.id, run]))
   const cards: TaskMonitorCard[] = []
 
@@ -371,10 +390,16 @@ export function buildTaskMonitorCards(tasks: TaskModel[], runs: RootRun[], text:
     })
   }
 
-  return cards.sort((a, b) =>
-    (b.representative.createdAt - a.representative.createdAt) ||
-    (b.representative.updatedAt - a.representative.updatedAt),
+  const ordered = sortWorkItemsActiveFirst(
+    cards.map((card) => ({
+      key: card.key,
+      status: card.representative.status,
+      createdAt: card.representative.createdAt,
+      updatedAt: card.representative.updatedAt,
+      card,
+    })),
   )
+  return ordered.map((item) => item.card)
 }
 
 export function filterActiveTaskMonitorCards(cards: TaskMonitorCard[]): TaskMonitorCard[] {
@@ -391,7 +416,9 @@ export function filterTaskTimelineForMode(
 
 function isDiagnosticTimelineItem(item: TaskMonitorTimelineItem): boolean {
   const label = `${item.runLabel}\n${item.label}`.toLowerCase()
-  return /(receipt|recovery|checksum|chunk|memory|vector|prompt source|status_transition_blocked|복구|체크섬|청크|메모리|벡터|프롬프트 출처|반복 중단 키)/i.test(label)
+  return /(receipt|recovery|checksum|chunk|memory|vector|prompt source|status_transition_blocked|복구|체크섬|청크|메모리|벡터|프롬프트 출처|반복 중단 키)/i.test(
+    label,
+  )
 }
 
 export function describeTaskDeliveryStatus(status: TaskDeliveryStatus, text: TextFn): string {
@@ -407,7 +434,10 @@ export function describeTaskDeliveryStatus(status: TaskDeliveryStatus, text: Tex
   }
 }
 
-export function describeTaskChecklistProgress(checklist: TaskMonitorChecklist, text: TextFn): string {
+export function describeTaskChecklistProgress(
+  checklist: TaskMonitorChecklist,
+  text: TextFn,
+): string {
   if (checklist.actionableCount === 0) return text("없음", "None")
   return `${checklist.completedCount}/${checklist.actionableCount}`
 }

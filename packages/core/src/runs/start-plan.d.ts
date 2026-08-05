@@ -3,7 +3,7 @@ import type { IntentContract } from "../contracts/index.js";
 import type { OrchestrationMode, OrchestrationPlan } from "../contracts/sub-agent-orchestration.js";
 import { buildOrchestrationPlan } from "../orchestration/planner.js";
 import type { OrchestrationPlannerIntent } from "../orchestration/planner.js";
-import { resolveOrchestrationModeSnapshot, type OrchestrationModeSnapshot } from "../orchestration/mode.js";
+import { resolveOrchestrationModeSnapshot, type OrchestrationModeConfigSnapshot, type OrchestrationModeSnapshot } from "../orchestration/mode.js";
 import { analyzeRequestEntrySemantics, type RequestEntrySemantics } from "./entry-semantics.js";
 import { type RequestContinuationDecision } from "./entry-comparison.js";
 import { buildIncomingIntentContract, type ActiveRunContractProjection } from "./active-run-projection.js";
@@ -38,7 +38,7 @@ export interface StartPlan {
     reusableWorkerSessionRun?: RootRun | undefined;
     latencyEvents: string[];
 }
-interface StartPlanDependencies {
+export interface StartPlanDependencies {
     analyzeRequestEntrySemantics: typeof analyzeRequestEntrySemantics;
     isReusableRequestGroup: typeof isReusableRequestGroup;
     listActiveSessionRequestGroups: typeof listActiveSessionRequestGroups;
@@ -59,9 +59,9 @@ interface StartPlanDependencies {
     }) => string | undefined;
     normalizeTaskProfile: (taskProfile: TaskProfile | undefined) => TaskProfile;
     findLatestWorkerSessionRun: typeof findLatestWorkerSessionRun;
-    resolveOrchestrationMode?: typeof resolveOrchestrationModeSnapshot;
-    buildOrchestrationPlan?: typeof buildOrchestrationPlan;
-    resolveTopologyRootRunRouting?: typeof resolveTopologyRootRunRouting;
+    resolveOrchestrationMode: typeof resolveOrchestrationModeSnapshot;
+    buildOrchestrationPlan: typeof buildOrchestrationPlan;
+    resolveTopologyRootRunRouting: typeof resolveTopologyRootRunRouting;
 }
 declare const defaultDependencies: StartPlanDependencies;
 export declare function buildStartPlan(params: {
@@ -78,9 +78,11 @@ export declare function buildStartPlan(params: {
     taskProfile?: TaskProfile | undefined;
     model?: string | undefined;
     targetId?: string | undefined;
+    mainAgentNameSnapshot?: string | undefined;
     workerRuntime?: WorkerRuntimeTarget | undefined;
     orchestrationPlannerIntent?: OrchestrationPlannerIntent | undefined;
     agentExecutionDecision?: AgentExecutionDecision | undefined;
+    config: OrchestrationModeConfigSnapshot;
 }, dependencies: StartPlanDependencies): Promise<StartPlan>;
 export { defaultDependencies as defaultStartPlanDependencies };
 //# sourceMappingURL=start-plan.d.ts.map

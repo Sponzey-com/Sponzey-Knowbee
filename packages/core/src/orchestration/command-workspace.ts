@@ -1,7 +1,11 @@
 import { createHash, randomUUID } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { PATHS } from "../config/index.js"
+import {
+  writeAtomicTextFile,
+  type PersistedConfigFileSystem,
+} from "../config/persisted-file.js"
+import type { RuntimePaths } from "../config/paths.js"
 import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js"
 import type {
   CapabilityRiskLevel,
@@ -14,6 +18,7 @@ import type {
   TeamMembership,
 } from "../contracts/sub-agent-orchestration.js"
 import {
+  normalizeAgentNameSnapshot,
   validateAgentConfig,
   validateTeamConfig,
 } from "../contracts/sub-agent-orchestration.js"
@@ -23,6 +28,7 @@ import type { OrchestrationPlannerIntent } from "./planner.js"
 import {
   type AgentRegistryEntry,
   type OrchestrationRegistrySnapshot,
+  type RegistryServiceDependencies,
   type TeamRegistryEntry,
   createAgentRegistryService,
   createTeamRegistryService,
@@ -35,6 +41,7 @@ import {
   sanitizeSubSessionControlText,
   spawnSubSessionAck,
 } from "./sub-session-control.js"
+import { loadPromptValue } from "../memory/prompt-fragments.js"
 
 export type CommandPaletteResultKind =
   | "agent"
@@ -152,8 +159,8 @@ type SubSessionRow = {
   parent_run_id: string
   parent_session_id: string
   agent_id: string
-  agent_display_name: string
-  agent_nickname: string | null
+  agent_name: string
+  agent_name_snapshot: string | null
   status: string
   contract_json: string
   created_at: number
@@ -162,7 +169,33 @@ type SubSessionRow = {
 
 const DEFAULT_PARENT_AGENT_ID = "agent:knowbee"
 const FOCUS_BINDINGS_FILE = "focus-bindings.json"
+
+export interface CommandWorkspaceStorage {
+  readonly focusBindingsFile: string
+  readonly fileSystem: PersistedConfigFileSystem
+}
+
+const NODE_COMMAND_WORKSPACE_FILE_SYSTEM: PersistedConfigFileSystem = Object.freeze({
+  exists: existsSync,
+  makeDirectory: (path: string) => { mkdirSync(path, { recursive: true }) },
+  readText: (path: string) => readFileSync(path, "utf-8"),
+  writeText: (path: string, content: string) => { writeFileSync(path, content, "utf-8") },
+  rename: renameSync,
+  remove: (path: string) => { rmSync(path, { force: true }) },
+})
+
+export function createCommandWorkspaceStorage(
+  paths: Pick<RuntimePaths, "stateDir">,
+  fileSystem: PersistedConfigFileSystem = NODE_COMMAND_WORKSPACE_FILE_SYSTEM,
+): CommandWorkspaceStorage {
+  return Object.freeze({
+    focusBindingsFile: join(paths.stateDir, FOCUS_BINDINGS_FILE),
+    fileSystem,
+  })
+}
 const COMMAND_LIMIT = 80
+const IMPORTED_AGENT_DRAFT_REVIEW_SUMMARY_SUFFIX_SOURCE_ID = "imported_agent_draft_review_summary_suffix_user"
+const IMPORTED_AGENT_DRAFT_AVOID_TASKS_SOURCE_ID = "imported_agent_draft_avoid_tasks_user"
 
 const COMMANDS: CommandPaletteSearchResult[] = [
   {
@@ -236,7 +269,7 @@ export const AGENT_TEMPLATES: AgentTemplateDefinition[] = [
     specialtyTags: ["research", "evidence", "sources"],
     riskCeiling: "moderate",
     enabledSkillIds: ["research"],
-    enabledToolNames: ["web_search"],
+    enabledToolNames: [],
   },
   {
     templateId: "writer",
@@ -299,6 +332,8 @@ export const AGENT_TEMPLATES: AgentTemplateDefinition[] = [
     enabledToolNames: [],
   },
 ]
+
+const UNNAMED_SUB_AGENT_LABEL = "Unnamed sub-agent"
 
 export const TEAM_TEMPLATES: TeamTemplateDefinition[] = [
   {
@@ -383,15 +418,11 @@ function nowMs(): number {
   return Date.now()
 }
 
-function focusFilePath(): string {
-  return join(PATHS.stateDir, FOCUS_BINDINGS_FILE)
-}
-
-function readFocusBindings(): FocusBindingsFile {
-  const filePath = focusFilePath()
-  if (!existsSync(filePath)) return { schemaVersion: 1, bindings: {} }
+function readFocusBindings(storage: CommandWorkspaceStorage): FocusBindingsFile {
+  const filePath = storage.focusBindingsFile
+  if (!storage.fileSystem.exists(filePath)) return { schemaVersion: 1, bindings: {} }
   try {
-    const parsed = JSON.parse(readFileSync(filePath, "utf-8")) as FocusBindingsFile
+    const parsed = JSON.parse(storage.fileSystem.readText(filePath)) as FocusBindingsFile
     if (parsed?.schemaVersion === 1 && isRecord(parsed.bindings)) return parsed
   } catch {
     // Fall through to an empty state. A malformed focus file must not affect routing.
@@ -399,9 +430,12 @@ function readFocusBindings(): FocusBindingsFile {
   return { schemaVersion: 1, bindings: {} }
 }
 
-function writeFocusBindings(file: FocusBindingsFile): void {
-  mkdirSync(PATHS.stateDir, { recursive: true })
-  writeFileSync(focusFilePath(), JSON.stringify(file, null, 2), "utf-8")
+function writeFocusBindings(file: FocusBindingsFile, storage: CommandWorkspaceStorage): void {
+  writeAtomicTextFile(
+    storage.focusBindingsFile,
+    `${JSON.stringify(file, null, 2)}\n`,
+    storage.fileSystem,
+  )
 }
 
 function normalizedThreadId(threadId: string | undefined): string {
@@ -442,27 +476,32 @@ function agentBlockedReasonCodes(
 }
 
 function agentResult(agent: AgentRegistryEntry): CommandPaletteSearchResult {
+  const label = agentCommandLabel(agent)
   return {
     id: agent.agentId,
     kind: "agent",
-    title: agent.nickname ? `${agent.displayName} (@${agent.nickname})` : agent.displayName,
+    title: label,
     subtitle: agent.role,
     status: agent.status,
-    target: { kind: "agent", id: agent.agentId, ...(agent.nickname ? { label: agent.nickname } : {}) },
+    target: { kind: "agent", id: agent.agentId, label },
     command: `/focus agent:${agent.agentId}`,
     route: `/advanced/topology?agent=${encodeURIComponent(agent.agentId)}`,
     reasonCodes: ["agent_registry_result"],
   }
 }
 
+function agentCommandLabel(agent: AgentRegistryEntry): string {
+  return normalizeAgentNameSnapshot(agent.config.agentName ?? "") || UNNAMED_SUB_AGENT_LABEL
+}
+
 function teamResult(team: TeamRegistryEntry): CommandPaletteSearchResult {
   return {
     id: team.teamId,
     kind: "team",
-    title: team.nickname ? `${team.displayName} (@${team.nickname})` : team.displayName,
+    title: team.displayName,
     subtitle: team.purpose,
     status: team.status,
-    target: { kind: "team", id: team.teamId, ...(team.nickname ? { label: team.nickname } : {}) },
+    target: { kind: "team", id: team.teamId, label: team.displayName },
     command: `/focus team:${team.teamId}`,
     route: `/advanced/topology?team=${encodeURIComponent(team.teamId)}`,
     reasonCodes: ["team_registry_result"],
@@ -480,7 +519,7 @@ function parseSubSessionContract(row: Pick<SubSessionRow, "contract_json">): Sub
 
 function subSessionResult(row: SubSessionRow): CommandPaletteSearchResult {
   const contract = parseSubSessionContract(row)
-  const label = contract?.agentNickname ?? row.agent_nickname ?? row.agent_display_name
+  const label = subSessionCommandLabel(contract)
   return {
     id: row.sub_session_id,
     kind: "sub_session",
@@ -494,11 +533,17 @@ function subSessionResult(row: SubSessionRow): CommandPaletteSearchResult {
   }
 }
 
+function subSessionCommandLabel(contract: SubSessionContract | undefined): string {
+  return normalizeAgentNameSnapshot(contract?.agentNameSnapshot ?? "") || UNNAMED_SUB_AGENT_LABEL
+}
+
 function recentSubSessionRows(limit = COMMAND_LIMIT): SubSessionRow[] {
   return getDb()
     .prepare<[], SubSessionRow>(
-      `SELECT sub_session_id, parent_run_id, parent_session_id, agent_id, agent_display_name,
-              agent_nickname, status, contract_json, created_at, updated_at
+      `SELECT sub_session_id, parent_run_id, parent_session_id, agent_id,
+              agent_name,
+              agent_name_snapshot,
+              status, contract_json, created_at, updated_at
        FROM run_subsessions
        ORDER BY updated_at DESC, sub_session_id ASC
        LIMIT ${Math.max(1, Math.min(200, Math.floor(limit)))}`,
@@ -525,13 +570,14 @@ function matchesQuery(result: CommandPaletteSearchResult, query: string): boolea
 }
 
 export function searchCommandPalette(input: {
+  config: RegistryServiceDependencies["config"]
   query?: string
   scope?: CommandPaletteResultKind | "all"
   limit?: number
-} = {}): CommandPaletteSearchResponse {
+}): CommandPaletteSearchResponse {
   const query = input.query?.trim() ?? ""
   const scope = input.scope ?? "all"
-  const registry = createAgentRegistryService().snapshot()
+  const registry = createAgentRegistryService({ config: input.config }).snapshot()
   const agentResults = registry.agents.map(agentResult)
   const teamResults = registry.teams.map(teamResult)
   const subSessionResults = recentSubSessionRows(input.limit).map(subSessionResult)
@@ -698,7 +744,7 @@ function validateSubSessionFocus(
   const agentValidation = validateAgentFocus(registry, parentAgentId, {
     kind: "agent",
     id: agentId,
-    label: contract?.agentNickname ?? row.agent_nickname ?? row.agent_display_name,
+    label: subSessionCommandLabel(contract),
   })
   if (!agentValidation.ok) {
     return {
@@ -732,11 +778,12 @@ function validateSubSessionFocus(
 }
 
 function validateFocusTarget(input: {
+  config: RegistryServiceDependencies["config"]
   target: FocusTarget
   parentAgentId?: string
 }): FocusResolveResult {
   const parentAgentId = defaultParentAgentId(input.parentAgentId)
-  const registry = createAgentRegistryService().snapshot()
+  const registry = createAgentRegistryService({ config: input.config }).snapshot()
   if (input.target.kind === "agent") {
     return validateAgentFocus(registry, parentAgentId, input.target)
   }
@@ -755,11 +802,12 @@ function bindValidationResult(
 }
 
 export function setFocusBinding(input: {
+  config: RegistryServiceDependencies["config"]
   threadId?: string
   parentAgentId?: string
   target: FocusTarget
   source?: FocusBinding["source"]
-}): FocusResolveResult {
+}, storage: CommandWorkspaceStorage): FocusResolveResult {
   const targetId = input.target.id.trim()
   if (!targetId) {
     return { ok: false, reasonCode: "focus_target_required", statusCode: 400 }
@@ -783,41 +831,45 @@ export function setFocusBinding(input: {
     createdAt: now,
     updatedAt: now,
   }
-  const validation = validateFocusTarget({ target: binding.target, parentAgentId })
+  const validation = validateFocusTarget({ config: input.config, target: binding.target, parentAgentId })
   if (!validation.ok) return bindValidationResult(validation, binding)
-  const file = readFocusBindings()
+  const file = readFocusBindings(storage)
   const previous = file.bindings[threadId]
   file.bindings[threadId] = {
     ...binding,
     createdAt: previous?.createdAt ?? binding.createdAt,
   }
-  writeFocusBindings(file)
+  writeFocusBindings(file, storage)
   return bindValidationResult(validation, file.bindings[threadId])
 }
 
-export function getFocusBinding(threadId?: string): FocusBinding | undefined {
-  return readFocusBindings().bindings[normalizedThreadId(threadId)]
+export function getFocusBinding(
+  threadId: string | undefined,
+  storage: CommandWorkspaceStorage,
+): FocusBinding | undefined {
+  return readFocusBindings(storage).bindings[normalizedThreadId(threadId)]
 }
 
-export function clearFocusBinding(threadId?: string): {
+export function clearFocusBinding(threadId: string | undefined, storage: CommandWorkspaceStorage): {
   ok: true
   threadId: string
   cleared: boolean
   reasonCode: "focus_binding_cleared"
 } {
   const normalized = normalizedThreadId(threadId)
-  const file = readFocusBindings()
+  const file = readFocusBindings(storage)
   const cleared = Boolean(file.bindings[normalized])
   delete file.bindings[normalized]
-  writeFocusBindings(file)
+  writeFocusBindings(file, storage)
   return { ok: true, threadId: normalized, cleared, reasonCode: "focus_binding_cleared" }
 }
 
 export function resolveFocusBinding(input: {
+  config: RegistryServiceDependencies["config"]
   threadId?: string
   parentAgentId?: string
-}): FocusResolveResult {
-  const binding = getFocusBinding(input.threadId)
+}, storage: CommandWorkspaceStorage): FocusResolveResult {
+  const binding = getFocusBinding(input.threadId, storage)
   if (!binding) {
     return {
       ok: false,
@@ -827,6 +879,7 @@ export function resolveFocusBinding(input: {
     }
   }
   const validation = validateFocusTarget({
+    config: input.config,
     target: binding.target,
     parentAgentId: input.parentAgentId ?? binding.parentAgentId,
   })
@@ -876,7 +929,7 @@ function templateAgentConfig(
   overrides: Record<string, unknown>,
 ): SubAgentConfig {
   const now = nowMs()
-  const displayName = asString(overrides.displayName) ?? template.displayName
+  const agentName = asString(overrides.agentName) ?? asString(overrides.displayName) ?? template.displayName
   const templateAgentId =
     asString(overrides.agentId) ?? `agent:template:${slug(template.templateId)}`
   const teamIds = asStringArray(overrides.teamIds) ?? [`team:template:${slug(template.templateId)}`]
@@ -884,8 +937,7 @@ function templateAgentConfig(
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     agentType: "sub_agent",
     agentId: templateAgentId,
-    displayName,
-    nickname: asString(overrides.nickname) ?? displayName,
+    agentName,
     status: "disabled",
     role: asString(overrides.role) ?? template.role,
     personality:
@@ -922,6 +974,7 @@ function templateAgentConfig(
 }
 
 export function instantiateAgentTemplate(input: {
+  config: RegistryServiceDependencies["config"]
   templateId: string
   overrides?: unknown
   persist?: boolean
@@ -950,7 +1003,7 @@ export function instantiateAgentTemplate(input: {
     return { ok: false, reasonCode: "invalid_agent_template_draft", issues: validation.issues }
   }
   if (input.persist !== false) {
-    createAgentRegistryService().createOrUpdate(validation.value, {
+    createAgentRegistryService({ config: input.config }).createOrUpdate(validation.value, {
       source: "manual",
       auditId: `agent-template:${template.templateId}`,
       idempotencyKey: `agent-template:${agent.agentId}`,
@@ -999,7 +1052,6 @@ function templateTeamConfig(
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     teamId,
     displayName,
-    nickname: asString(overrides.nickname) ?? displayName,
     status: "disabled",
     purpose: asString(overrides.purpose) ?? `${template.purpose} Draft team is disabled until reviewed.`,
     ownerAgentId: DEFAULT_PARENT_AGENT_ID,
@@ -1022,6 +1074,7 @@ function templateTeamConfig(
 }
 
 export function instantiateTeamTemplate(input: {
+  config: RegistryServiceDependencies["config"]
   templateId: string
   overrides?: unknown
   persist?: boolean
@@ -1050,7 +1103,7 @@ export function instantiateTeamTemplate(input: {
     return { ok: false, reasonCode: "invalid_team_template_draft", issues: validation.issues }
   }
   if (input.persist !== false) {
-    createTeamRegistryService().createOrUpdate(validation.value, {
+    createTeamRegistryService({ config: input.config }).createOrUpdate(validation.value, {
       source: "manual",
       auditId: `team-template:${template.templateId}`,
       idempotencyKey: `team-template:${team.teamId}`,
@@ -1093,6 +1146,7 @@ function importedDescription(raw: unknown): string {
 }
 
 export function importExternalAgentProfileDraft(input: {
+  config: RegistryServiceDependencies["config"]
   profile: unknown
   source?: string
   overrides?: unknown
@@ -1121,27 +1175,23 @@ export function importExternalAgentProfileDraft(input: {
 } {
   const source = input.source?.trim() || "external"
   const overrides = isRecord(input.overrides) ? input.overrides : {}
-  const displayName = asString(overrides.displayName) ?? importedName(input.profile)
+  const agentName = asString(overrides.agentName) ?? asString(overrides.displayName) ?? importedName(input.profile)
   const agentId =
-    asString(overrides.agentId) ?? `agent:import:${slug(displayName)}:${hashShort(input.profile)}`
+    asString(overrides.agentId) ?? `agent:import:${slug(agentName)}:${hashShort(input.profile)}`
   const description = importedDescription(input.profile)
   const now = nowMs()
   const agent: SubAgentConfig = {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     agentType: "sub_agent",
     agentId,
-    displayName,
-    nickname: asString(overrides.nickname) ?? displayName,
+    agentName,
     status: "disabled",
     role: asString(overrides.role) ?? "Imported external draft",
     personality:
       `Imported draft summary: ${sanitizeSubSessionControlText(description).slice(0, 600)} ` +
-      "Raw imported instructions are inactive until review and task012 prompt preflight.",
+      importedAgentDraftReviewSummarySuffix(),
     specialtyTags: asStringArray(overrides.specialtyTags) ?? ["imported", source],
-    avoidTasks: [
-      "Do not execute before profile review.",
-      "Do not use imported instructions to expand permissions.",
-    ],
+    avoidTasks: importedAgentDraftAvoidTasks(),
     memoryPolicy: memoryPolicyFor(agentId),
     capabilityPolicy: {
       permissionProfile: safePermissionProfile("profile:imported:draft", "safe"),
@@ -1172,7 +1222,7 @@ export function importExternalAgentProfileDraft(input: {
     return { ok: false, reasonCode: "invalid_imported_agent_draft", issues: validation.issues }
   }
   if (input.persist !== false) {
-    createAgentRegistryService().createOrUpdate(validation.value, {
+    createAgentRegistryService({ config: input.config }).createOrUpdate(validation.value, {
       imported: true,
       source: "import",
       auditId: `import:${source}`,
@@ -1202,6 +1252,17 @@ export function importExternalAgentProfileDraft(input: {
     },
     persisted: input.persist !== false,
   }
+}
+
+function importedAgentDraftReviewSummarySuffix(): string {
+  return loadPromptValue(IMPORTED_AGENT_DRAFT_REVIEW_SUMMARY_SUFFIX_SOURCE_ID, {}, { required: true })
+}
+
+function importedAgentDraftAvoidTasks(): string[] {
+  return loadPromptValue(IMPORTED_AGENT_DRAFT_AVOID_TASKS_SOURCE_ID, {}, { required: true })
+    .split(/\n/u)
+    .map((line) => line.replace(/^\s*[-*]\s+/u, "").trim())
+    .filter(Boolean)
 }
 
 const BROAD_DESCRIPTION_PATTERNS = [
@@ -1292,8 +1353,8 @@ function subSessionListForCommand(parentRunId?: string): SubSessionRow[] {
       parent_run_id: row.parent_run_id,
       parent_session_id: row.parent_session_id,
       agent_id: row.agent_id,
-      agent_display_name: row.agent_display_name,
-      agent_nickname: row.agent_nickname,
+      agent_name: row.agent_name,
+      agent_name_snapshot: row.agent_name_snapshot,
       status: row.status,
       contract_json: row.contract_json,
       created_at: row.created_at,
@@ -1304,11 +1365,12 @@ function subSessionListForCommand(parentRunId?: string): SubSessionRow[] {
 }
 
 export function executeWorkspaceCommand(input: {
+  config: RegistryServiceDependencies["config"]
   command: string
   threadId?: string
   parentAgentId?: string
   payload?: unknown
-}): {
+}, storage: CommandWorkspaceStorage): {
   ok: boolean
   command: string
   reasonCode: string
@@ -1327,7 +1389,7 @@ export function executeWorkspaceCommand(input: {
       ok: true,
       command,
       reasonCode: "agents_listed",
-      result: searchCommandPalette({ query: commandTail(command, 1), scope: "agent" }),
+      result: searchCommandPalette({ config: input.config, query: commandTail(command, 1), scope: "agent" }),
     }
   }
   if (root === "/teams") {
@@ -1335,7 +1397,7 @@ export function executeWorkspaceCommand(input: {
       ok: true,
       command,
       reasonCode: "teams_listed",
-      result: searchCommandPalette({ query: commandTail(command, 1), scope: "team" }),
+      result: searchCommandPalette({ config: input.config, query: commandTail(command, 1), scope: "team" }),
     }
   }
   if (root === "/focus") {
@@ -1346,11 +1408,12 @@ export function executeWorkspaceCommand(input: {
     const threadId = input.threadId?.trim()
     const parentAgentId = input.parentAgentId?.trim()
     const result = setFocusBinding({
+      config: input.config,
       ...(threadId ? { threadId } : {}),
       ...(parentAgentId ? { parentAgentId } : {}),
       target,
       source: "command_palette",
-    })
+    }, storage)
     return {
       ok: result.ok,
       command,
@@ -1364,7 +1427,7 @@ export function executeWorkspaceCommand(input: {
       ok: true,
       command,
       reasonCode: "focus_binding_cleared",
-      result: clearFocusBinding(input.threadId),
+      result: clearFocusBinding(input.threadId, storage),
     }
   }
   if (root === "/subsessions") {

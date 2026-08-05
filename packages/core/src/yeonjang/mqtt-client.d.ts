@@ -1,6 +1,13 @@
 import type { ChannelSource } from "../channels/contracts.js";
+import type { MqttConfig } from "../config/types.js";
 import { type MqttExtensionSnapshot } from "../mqtt/broker.js";
+import { type YeonjangCommandAttemptEvidence } from "./command-attempt.js";
+import type { YeonjangAuthorizationReceipt, YeonjangExecutionAuthorizationGrant, YeonjangExecutionAuthorizationIssuerPort } from "./execution-authorization-receipt.js";
+import { type YeonjangMqttV2CommandMethod } from "./mqtt-v2-contract.js";
+export type { YeonjangAuthorizationReceipt } from "./execution-authorization-receipt.js";
+export declare const YEONJANG_COMMAND_PROTOCOL_VERSION: 1;
 export interface YeonjangRequestEnvelope {
+    protocolVersion: typeof YEONJANG_COMMAND_PROTOCOL_VERSION;
     id: string;
     method: string;
     params: Record<string, unknown>;
@@ -12,6 +19,8 @@ export interface YeonjangRequestMetadata {
     sessionId?: string;
     targetSessionId?: string;
     commandId?: string;
+    operationId?: string;
+    targetFingerprint?: `sha256:${string}`;
     deliveryId?: string;
     idempotencyKey?: string;
     expiresAt?: number;
@@ -23,6 +32,7 @@ export interface YeonjangRequestMetadata {
     agentId?: string;
     auditId?: string;
     capabilityDelegationId?: string;
+    authorizationReceipt?: YeonjangAuthorizationReceipt;
 }
 export interface YeonjangErrorBody {
     code: string;
@@ -33,12 +43,62 @@ export interface YeonjangResponseEnvelope<T = unknown> {
     ok: boolean;
     result?: T;
     error?: YeonjangErrorBody;
+    attempt?: unknown;
 }
+export declare class YeonjangCommandError extends Error {
+    readonly code: string;
+    readonly attempt?: YeonjangCommandAttemptEvidence;
+    constructor(input: {
+        code: string;
+        message: string;
+        attempt?: YeonjangCommandAttemptEvidence;
+    });
+}
+/**
+ * Converts the signed MQTT v2 terminal failure into the existing command-attempt
+ * contract. The terminal, not user-facing prose, owns whether an effect started.
+ */
+export declare function projectYeonjangMqttV2TerminalFailure(input: {
+    readonly method: YeonjangMqttV2CommandMethod;
+    readonly commandId: string;
+    readonly operationId: string;
+    readonly targetFingerprint: string;
+    readonly executionOutcome: "blocked" | "failed" | "cancelled" | "effect_unknown";
+    readonly failure: Readonly<Record<string, unknown>> | null;
+}): {
+    readonly code: string;
+    readonly message: string;
+    readonly attempt?: YeonjangCommandAttemptEvidence;
+};
+export type YeonjangChunkAssemblyResult = {
+    kind: "pending";
+} | {
+    kind: "complete";
+    payload: Buffer;
+} | {
+    kind: "rejected";
+    code: "invalid_response_chunk" | "response_chunk_too_large";
+};
+export interface YeonjangChunkAssembler {
+    accept(value: unknown): YeonjangChunkAssemblyResult;
+}
+export declare function createYeonjangChunkAssembler(input: {
+    requestId: string;
+    maxTotalBytes?: number;
+    maxChunkCount?: number;
+}): YeonjangChunkAssembler;
 export interface YeonjangClientOptions {
     extensionId?: string;
     timeoutMs?: number;
     forceRefresh?: boolean;
+    signal?: AbortSignal;
     metadata?: YeonjangRequestMetadata;
+    mqttConfig?: MqttConfig;
+    executionAuthorization?: {
+        readonly issuer: YeonjangExecutionAuthorizationIssuerPort;
+        readonly resourceScope: string;
+        readonly grant: YeonjangExecutionAuthorizationGrant;
+    };
 }
 export interface YeonjangCommandDispatch {
     requestId: string;
@@ -50,6 +110,11 @@ export interface YeonjangCommandDispatch {
     metadata: YeonjangRequestMetadata;
     request: YeonjangRequestEnvelope;
 }
+export declare function createYeonjangCancellationRequest(input: {
+    commandId: string;
+    cancelToken: string;
+    targetSessionId?: string;
+}): YeonjangRequestEnvelope;
 export interface YeonjangMethodCapability {
     name: string;
     implemented: boolean;
@@ -67,6 +132,11 @@ export interface YeonjangMethodCapability {
     outputModes?: string[];
     lastCheckedAt?: number;
 }
+export interface ArmedYeonjangResponseWaiter<T> {
+    readonly response: Promise<T>;
+    cancel(): Promise<void>;
+}
+export declare function armYeonjangResponseWaiter<T>(createResponseWaiter: (cancellationSignal: AbortSignal) => Promise<T>): ArmedYeonjangResponseWaiter<T>;
 export interface YeonjangCapabilityMatrixEntry {
     supported?: boolean;
     supportState?: string;

@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
 import {
   ENTERPRISE_TOPOLOGY_SCHEMA_VERSION,
@@ -19,28 +18,26 @@ import {
   WORKSPACE_DRAFT_TOPOLOGY_ID,
 } from "../packages/core/src/orchestration/execution-graph-snapshot.ts"
 import { createEnterpriseTopologyRegistry } from "../packages/core/src/topology/registry.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const now = Date.UTC(2026, 4, 8, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 beforeEach(() => {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-topology-v2-no-default-entry-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-topology-v2-no-default-entry-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -126,6 +123,7 @@ describe("topology v2 direct child selection", () => {
     persistTopology()
 
     const graph = buildExecutionGraphSnapshot({
+      config: runtimeFixture.config,
       mode: "workspace",
       currentExecutorId: EXECUTION_GRAPH_ROOT_AGENT_ID,
       now: () => now,
@@ -149,6 +147,7 @@ describe("topology v2 direct child selection", () => {
     const backendId = `${WORKSPACE_DRAFT_TOPOLOGY_ID}:node:backend`
 
     const graph = buildExecutionGraphSnapshot({
+      config: runtimeFixture.config,
       mode: "workspace",
       currentExecutorId: leadId,
       now: () => now,

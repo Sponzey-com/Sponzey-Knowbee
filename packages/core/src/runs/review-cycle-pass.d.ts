@@ -1,19 +1,27 @@
 import type { AIProvider } from "../ai/index.js";
+import type { KnowbeeConfig } from "../config/types.js";
+import { getDb } from "../db/index.js";
+import type { LlmDiagnosisProvider } from "../contracts/llm-diagnosis-provider.js";
+import { createFileBackedDiagnosisProvider } from "../orchestration/prompt-policy-adapter.js";
 import { getRootRun } from "./store.js";
 import { runReviewPass } from "./review-pass.js";
-import { runReviewOutcomePass, type ReviewOutcomePassResult } from "./review-outcome-pass.js";
+import { runReviewOutcomePass, type CanonicalCompletionOutcomeRecorder, type ReviewOutcomePassResult } from "./review-outcome-pass.js";
 import type { RunChunkDeliveryHandler, DeliveryOutcome, SuccessfulFileDelivery } from "./delivery.js";
 import type { SuccessfulToolEvidence } from "./recovery.js";
-import type { TaskExecutionSemantics } from "../agent/intake.js";
-import type { FinalizationDependencies, FinalizationSource } from "./finalization.js";
+import type { ResponseLanguageMode, TaskExecutionSemantics } from "../agent/intake.js";
+import type { CanonicalDeliveryRecorder, CanonicalPendingResponseConsumer, CanonicalPendingResponseStager, FinalizationDependencies, FinalizationSource } from "./finalization.js";
+import type { UserFacingTextSource } from "./loop-directive.js";
 import type { RecoveryBudgetUsage } from "./recovery-budget.js";
 import type { SyntheticApprovalRuntimeDependencies } from "./approval.js";
 import { decideReviewGate } from "./review-gate.js";
 import type { FeedbackRequest } from "../contracts/sub-agent-orchestration.js";
+import type { FinalResponseIdentityContext } from "./final-response-renderer.js";
+import type { InstructionRuntimeContext } from "../instructions/merge.js";
+import { resolveRuntimeToolMetadataFromDispatcher, validateAndAppendYeonjangSideEffectGoalValidationEvidence, type YeonjangSideEffectGoalValidationCandidate } from "../yeonjang/side-effect-goal-validation-review.js";
 interface ReviewCyclePassDependencies {
-    rememberRunApprovalScope: (runId: string) => void;
-    grantRunApprovalScope: (runId: string) => void;
-    grantRunSingleApproval: (runId: string) => void;
+    rememberRunApprovalScope: (runId: string, toolName: string) => void;
+    grantRunApprovalScope: (runId: string, toolName: string) => void;
+    grantRunSingleApproval: (runId: string, toolName: string) => void;
     rememberRunFailure: (params: {
         runId: string;
         sessionId: string;
@@ -34,6 +42,10 @@ interface ReviewCyclePassModuleDependencies {
     runReviewPass: typeof runReviewPass;
     runReviewOutcomePass: typeof runReviewOutcomePass;
     getRootRun: typeof getRootRun;
+    getDb?: typeof getDb;
+    createFileBackedDiagnosisProvider?: typeof createFileBackedDiagnosisProvider;
+    validateAndAppendYeonjangSideEffectGoalValidationEvidence?: typeof validateAndAppendYeonjangSideEffectGoalValidationEvidence;
+    resolveRuntimeToolMetadataFromDispatcher?: typeof resolveRuntimeToolMetadataFromDispatcher;
 }
 export interface SubSessionFeedbackCycleDirective {
     kind: "retry_sub_session";
@@ -45,33 +57,48 @@ export interface SubSessionFeedbackCycleDirective {
 }
 export declare function buildSubSessionFeedbackCycleDirective(feedback: FeedbackRequest): SubSessionFeedbackCycleDirective;
 export declare function runReviewCyclePass(params: {
+    instructionRuntime: InstructionRuntimeContext;
     runId: string;
     sessionId: string;
     source: FinalizationSource;
     onChunk: RunChunkDeliveryHandler | undefined;
     signal: AbortSignal;
     preview: string;
+    previewSource?: UserFacingTextSource;
+    deferredPreviewDelivery?: boolean;
     priorAssistantMessages: string[];
     executionSemantics: TaskExecutionSemantics;
     requiresFilesystemMutation: boolean;
     originalRequest: string;
+    responseLanguageMode?: ResponseLanguageMode | undefined;
     model?: string;
     providerId?: string;
     provider?: AIProvider;
+    diagnosisProvider?: LlmDiagnosisProvider;
+    config: KnowbeeConfig;
     workDir?: string;
+    finalResponseIdentityContext?: FinalResponseIdentityContext | undefined;
     usesWorkerRuntime: boolean;
     workerRuntimeKind?: string;
     requiresPrivilegedToolExecution: boolean;
     successfulTools: SuccessfulToolEvidence[];
+    requiresSuccessfulToolEvidence?: boolean;
+    canonicalAttemptEvidenceRefs?: string[] | undefined;
+    completionConditions: string[];
     successfulFileDeliveries: SuccessfulFileDelivery[];
     sawRealFilesystemMutation: boolean;
     deliveryOutcome: DeliveryOutcome;
+    yeonjangSideEffectGoalValidationCandidates?: YeonjangSideEffectGoalValidationCandidate[];
     truncatedOutputRecoveryAttempted: boolean;
     recoveryBudgetUsage: RecoveryBudgetUsage;
     seenFollowupPrompts: Set<string>;
     syntheticApprovalAlreadyApproved: boolean;
     syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies;
     finalizationDependencies: FinalizationDependencies;
+    recordCanonicalCompletionOutcome?: CanonicalCompletionOutcomeRecorder | undefined;
+    recordCanonicalDelivery?: CanonicalDeliveryRecorder | undefined;
+    stageCanonicalPendingResponse?: CanonicalPendingResponseStager | undefined;
+    consumeCanonicalPendingResponse?: CanonicalPendingResponseConsumer | undefined;
     approvalRequired: boolean;
     approvalTool: string;
     defaultMaxDelegationTurns: number;

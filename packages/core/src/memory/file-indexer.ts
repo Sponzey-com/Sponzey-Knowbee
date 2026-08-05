@@ -7,11 +7,18 @@ import { readFileSync, statSync, readdirSync, type Dirent } from "node:fs"
 import { join, extname } from "node:path"
 import { getDb } from "../db/index.js"
 import { getEmbeddingProvider, encodeEmbedding } from "./embedding.js"
-import { logger } from "../logger/index.js"
+import { logger, redactLogText } from "../logger/index.js"
+import type { MemoryConfig } from "../config/types.js"
 
 const CHUNK_SIZE = 1500      // chars per chunk
 const CHUNK_OVERLAP = 200    // overlap between chunks
 const MAX_FILE_SIZE = 512 * 1024  // 512 KB max file size
+type MemoryEmbeddingConfig = Pick<MemoryConfig, "embedding">
+
+function fileIndexerErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 
 const SUPPORTED_EXTENSIONS = new Set([
   ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
@@ -35,7 +42,7 @@ function chunkText(text: string): string[] {
 }
 
 export class FileIndexer {
-  async indexFile(filePath: string): Promise<{ chunks: number; embedded: boolean }> {
+  async indexFile(filePath: string, options: { memoryConfig?: MemoryEmbeddingConfig } = {}): Promise<{ chunks: number; embedded: boolean }> {
     const ext = extname(filePath).toLowerCase()
     if (!SUPPORTED_EXTENSIONS.has(ext)) {
       return { chunks: 0, embedded: false }
@@ -63,7 +70,7 @@ export class FileIndexer {
     db.prepare("DELETE FROM file_chunks WHERE file_path = ?").run(filePath)
 
     const chunks = chunkText(content)
-    const provider = getEmbeddingProvider()
+    const provider = getEmbeddingProvider(options.memoryConfig)
     const canEmbed = provider.dimensions > 0
 
     let embeddings: number[][] = []
@@ -71,7 +78,7 @@ export class FileIndexer {
       try {
         embeddings = await provider.batchEmbed(chunks)
       } catch (err) {
-        logger.warn(`embedding failed for ${filePath}: ${err instanceof Error ? err.message : String(err)}`)
+        logger.warn(redactLogText(`embedding failed for ${filePath}: ${fileIndexerErrorMessage(err)}`))
       }
     }
 
@@ -97,6 +104,7 @@ export class FileIndexer {
     opts: {
       exclude?: string[]
       recursive?: boolean
+      memoryConfig?: MemoryEmbeddingConfig
       onProgress?: (file: string, chunks: number) => void
     } = {},
   ): Promise<{ files: number; chunks: number }> {
@@ -117,7 +125,7 @@ export class FileIndexer {
         if (entry.isDirectory() && recursive) {
           await walk(full)
         } else if (entry.isFile()) {
-          const { chunks } = await this.indexFile(full)
+          const { chunks } = await this.indexFile(full, opts.memoryConfig ? { memoryConfig: opts.memoryConfig } : undefined)
           if (chunks > 0) {
             totalFiles++
             totalChunks += chunks
@@ -170,8 +178,12 @@ export class FileIndexer {
     }
   }
 
-  async searchByVector(query: string, limit = 5): Promise<Array<{ file_path: string; chunk_index: number; content: string; score: number }>> {
-    const provider = getEmbeddingProvider()
+  async searchByVector(
+    query: string,
+    limit = 5,
+    options: { memoryConfig?: MemoryEmbeddingConfig } = {},
+  ): Promise<Array<{ file_path: string; chunk_index: number; content: string; score: number }>> {
+    const provider = getEmbeddingProvider(options.memoryConfig)
     if (provider.dimensions === 0) return []
 
     let queryVec: number[]

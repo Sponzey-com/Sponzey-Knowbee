@@ -28,6 +28,8 @@ import {
   planOrchestrationExecutionWaves,
   runParallelSubSessionGroup,
 } from "../packages/core/src/orchestration/sub-session-runner.ts"
+import { createTestSubSessionMemoryDependencies } from "./fixtures/sub-session-runtime.ts"
+import { createTestResultDiagnosisDependencies } from "./fixtures/agent-runtime.ts"
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
@@ -115,8 +117,6 @@ function promptBundle(): AgentPromptBundle {
     agentId: "agent:researcher",
     agentType: "sub_agent",
     role: "parallel worker",
-    displayNameSnapshot: "Researcher",
-    nicknameSnapshot: "Res",
     personalitySnapshot: "Precise",
     teamContext: [],
     memoryPolicy,
@@ -140,7 +140,7 @@ function command(id: string): CommandRequest {
     parentRunId: "run-parent",
     subSessionId: `sub:${id}`,
     targetAgentId: "agent:researcher",
-    targetNicknameSnapshot: "Res",
+    targetAgentNameSnapshot: "Res",
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
@@ -152,13 +152,11 @@ function runInput(id: string, overrides: Partial<RunSubSessionInput> = {}): RunS
     command: command(id),
     agent: {
       agentId: "agent:researcher",
-      displayName: "Researcher",
-      nickname: "Res",
+      agentName: "Res",
     },
     parentAgent: {
       agentId: "agent:knowbee",
-      displayName: "Knowbee",
-      nickname: "노비",
+      agentName: "노비",
     },
     parentSessionId: "session-parent",
     promptBundle: promptBundle(),
@@ -174,8 +172,8 @@ function outcome(taskId: string, status: SubSessionStatus = "completed"): SubSes
       parentSessionId: "session-parent",
       parentRunId: "run-parent",
       agentId: "agent:researcher",
-      agentDisplayName: "Researcher",
-      agentNickname: "Res",
+      agentName: "Researcher",
+      agentNameSnapshot: "Res",
       commandRequestId: `command:${taskId}`,
       status,
       promptBundleId: "prompt-bundle:task015",
@@ -210,6 +208,8 @@ function makeMemoryDependencies(input: { isParentFinalized?: () => boolean } = {
   let time = now
   const clone = <T>(value: T): T => structuredClone(value)
   const dependencies: SubSessionRuntimeDependencies = {
+    ...createTestSubSessionMemoryDependencies(),
+    ...createTestResultDiagnosisDependencies(),
     now: () => {
       time += 1
       return time

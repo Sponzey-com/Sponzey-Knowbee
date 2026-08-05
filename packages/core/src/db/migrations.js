@@ -1,8 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { normalizeNickname } from "../contracts/sub-agent-orchestration.js";
+import { normalizeAgentName } from "../contracts/sub-agent-orchestration.js";
+import { redactLogText } from "../logger/index.js";
 import { beginMigrationLock, ensureMigrationSafetyTables, failMigrationLock, getActiveMigrationLock, releaseMigrationLock, updateMigrationLockPhase, verifyMigrationState, } from "./migration-safety.js";
+function migrationErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 const MEMORY_SCOPE_SQL = "'global', 'session', 'task', 'artifact', 'diagnostic', 'long-term', 'short-term', 'schedule', 'flash-feedback'";
 function rebuildMemoryScopeTables(db) {
     db.exec(`
@@ -1865,7 +1870,7 @@ export const MIGRATIONS = [
          WHERE agent_id = ?`);
             for (const row of agentRows) {
                 const config = parseJsonRecord(row.config_json);
-                const normalizedNickname = row.nickname ? normalizeNickname(row.nickname) : null;
+                const normalizedNickname = row.nickname ? normalizeAgentName(row.nickname) : null;
                 const modelProfileJson = toJsonOrNull(config?.["modelProfile"]);
                 const delegationPolicy = isRecord(config?.["delegationPolicy"])
                     ? config["delegationPolicy"]
@@ -1914,7 +1919,7 @@ export const MIGRATIONS = [
                 const memberCountMin = asNumber(config?.["memberCountMin"]) ?? requiredCount;
                 const memberCountMax = asNumber(config?.["memberCountMax"]) ??
                     Math.max(memberCountMin, fallbackMemberAgentIds.length);
-                const normalizedNickname = row.nickname ? normalizeNickname(row.nickname) : null;
+                const normalizedNickname = row.nickname ? normalizeAgentName(row.nickname) : null;
                 updateTeamConfig.run(normalizedNickname, ownerAgentId, leadAgentId, memberCountMin, memberCountMax, JSON.stringify(requiredTeamRoles), JSON.stringify(asStringArray(config?.["requiredCapabilityTags"])), asString(config?.["resultPolicy"]) ?? "lead_synthesis", asString(config?.["conflictPolicy"]) ?? "lead_decides", row.team_id);
                 deleteNicknameNamespaceByEntity.run("team", row.team_id);
                 if (!normalizedNickname)
@@ -2935,6 +2940,942 @@ export const MIGRATIONS = [
       `);
         },
     },
+    {
+        version: 50,
+        up(db) {
+            db.exec(`
+        CREATE TABLE agent_configs_v50 (
+          agent_id TEXT PRIMARY KEY,
+          agent_type TEXT NOT NULL CHECK(agent_type IN ('knowbee', 'sub_agent')),
+          status TEXT NOT NULL CHECK(status IN ('enabled', 'disabled', 'archived', 'degraded')),
+          agent_name TEXT NOT NULL,
+          normalized_agent_name TEXT NOT NULL,
+          role TEXT NOT NULL,
+          personality TEXT NOT NULL,
+          specialty_tags_json TEXT NOT NULL,
+          avoid_tasks_json TEXT NOT NULL,
+          model_profile_json TEXT,
+          memory_policy_json TEXT NOT NULL,
+          capability_policy_json TEXT NOT NULL,
+          delegation_policy_json TEXT,
+          profile_version INTEGER NOT NULL,
+          config_json TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'import', 'system')),
+          audit_id TEXT,
+          idempotency_key TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          archived_at INTEGER
+        );
+
+        INSERT INTO agent_configs_v50
+          (agent_id, agent_type, status, agent_name, normalized_agent_name, role, personality,
+           specialty_tags_json, avoid_tasks_json, model_profile_json, memory_policy_json,
+           capability_policy_json, delegation_policy_json, profile_version, config_json,
+           schema_version, source, audit_id, idempotency_key, created_at, updated_at, archived_at)
+        SELECT agent_id, agent_type, status,
+               COALESCE(NULLIF(TRIM(json_extract(config_json, '$.agentName')), ''), NULLIF(TRIM(display_name), ''), NULLIF(TRIM(nickname), '')),
+               COALESCE(NULLIF(TRIM(normalized_nickname), ''), LOWER(COALESCE(NULLIF(TRIM(json_extract(config_json, '$.agentName')), ''), NULLIF(TRIM(display_name), ''), NULLIF(TRIM(nickname), '')))),
+               role, personality, specialty_tags_json, avoid_tasks_json, model_profile_json,
+               memory_policy_json, capability_policy_json, delegation_policy_json, profile_version,
+               config_json, schema_version, source, audit_id, idempotency_key, created_at, updated_at, archived_at
+        FROM agent_configs;
+
+        DROP TABLE agent_configs;
+        ALTER TABLE agent_configs_v50 RENAME TO agent_configs;
+
+        CREATE UNIQUE INDEX idx_agent_configs_idempotency
+          ON agent_configs(idempotency_key) WHERE idempotency_key IS NOT NULL;
+        CREATE INDEX idx_agent_configs_status ON agent_configs(status, updated_at DESC);
+        CREATE INDEX idx_agent_configs_type_status ON agent_configs(agent_type, status, updated_at DESC);
+        CREATE INDEX idx_agent_configs_audit ON agent_configs(audit_id) WHERE audit_id IS NOT NULL;
+        CREATE INDEX idx_agent_configs_normalized_agent_name ON agent_configs(normalized_agent_name);
+
+        CREATE TABLE agent_name_namespaces (
+          normalized_agent_name TEXT PRIMARY KEY,
+          entity_type TEXT NOT NULL CHECK(entity_type IN ('agent', 'team')),
+          entity_id TEXT NOT NULL,
+          agent_name_snapshot TEXT NOT NULL,
+          status TEXT NOT NULL,
+          source TEXT NOT NULL CHECK(source IN ('manual', 'import', 'system')),
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        INSERT INTO agent_name_namespaces
+          (normalized_agent_name, entity_type, entity_id, agent_name_snapshot, status, source, created_at, updated_at)
+        SELECT normalized_nickname, entity_type, entity_id, nickname_snapshot, status, source, created_at, updated_at
+        FROM nickname_namespaces;
+
+        DROP TABLE nickname_namespaces;
+        CREATE UNIQUE INDEX idx_agent_name_namespaces_entity
+          ON agent_name_namespaces(entity_type, entity_id);
+        CREATE INDEX idx_agent_name_namespaces_status
+          ON agent_name_namespaces(status, updated_at DESC);
+      `);
+        },
+    },
+    {
+        version: 51,
+        up(db) {
+            db.exec(`
+        CREATE TABLE run_subsessions_v51 (
+          sub_session_id TEXT PRIMARY KEY,
+          parent_run_id TEXT NOT NULL,
+          parent_session_id TEXT NOT NULL,
+          parent_request_id TEXT,
+          agent_id TEXT NOT NULL,
+          agent_name TEXT NOT NULL,
+          agent_name_snapshot TEXT,
+          command_request_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('created', 'queued', 'running', 'waiting_for_input', 'awaiting_approval', 'completed', 'needs_revision', 'failed', 'cancelled')),
+          prompt_bundle_id TEXT NOT NULL,
+          contract_json TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          audit_id TEXT,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          started_at INTEGER,
+          finished_at INTEGER,
+          parent_sub_session_id TEXT
+        );
+
+        INSERT INTO run_subsessions_v51
+          (sub_session_id, parent_run_id, parent_session_id, parent_request_id, agent_id,
+           agent_name, agent_name_snapshot, command_request_id, status, prompt_bundle_id,
+           contract_json, schema_version, audit_id, idempotency_key, created_at, updated_at,
+           started_at, finished_at, parent_sub_session_id)
+        SELECT sub_session_id, parent_run_id, parent_session_id, parent_request_id, agent_id,
+               agent_display_name, agent_nickname, command_request_id, status, prompt_bundle_id,
+               contract_json, schema_version, audit_id, idempotency_key, created_at, updated_at,
+               started_at, finished_at, parent_sub_session_id
+        FROM run_subsessions;
+
+        DROP TABLE run_subsessions;
+        ALTER TABLE run_subsessions_v51 RENAME TO run_subsessions;
+
+        CREATE INDEX idx_run_subsessions_parent_run
+          ON run_subsessions(parent_run_id, created_at ASC);
+        CREATE INDEX idx_run_subsessions_agent_status
+          ON run_subsessions(agent_id, status, updated_at DESC);
+        CREATE INDEX idx_run_subsessions_audit
+          ON run_subsessions(audit_id) WHERE audit_id IS NOT NULL;
+        CREATE INDEX idx_run_subsessions_parent_sub_session
+          ON run_subsessions(parent_sub_session_id, created_at ASC)
+          WHERE parent_sub_session_id IS NOT NULL;
+
+        CREATE TABLE agent_data_exchanges_v51 (
+          exchange_id TEXT PRIMARY KEY,
+          source_owner_type TEXT NOT NULL,
+          source_owner_id TEXT NOT NULL,
+          source_agent_name_snapshot TEXT,
+          recipient_owner_type TEXT NOT NULL,
+          recipient_owner_id TEXT NOT NULL,
+          recipient_agent_name_snapshot TEXT,
+          purpose TEXT NOT NULL,
+          allowed_use TEXT NOT NULL CHECK(allowed_use IN ('temporary_context', 'memory_candidate', 'verification_only')),
+          retention_policy TEXT NOT NULL CHECK(retention_policy IN ('session_only', 'short_term', 'long_term_candidate', 'discard_after_review')),
+          redaction_state TEXT NOT NULL CHECK(redaction_state IN ('redacted', 'not_sensitive', 'blocked')),
+          provenance_refs_json TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          contract_json TEXT,
+          schema_version INTEGER NOT NULL,
+          audit_id TEXT,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          expires_at INTEGER
+        );
+
+        INSERT INTO agent_data_exchanges_v51
+          (exchange_id, source_owner_type, source_owner_id, source_agent_name_snapshot,
+           recipient_owner_type, recipient_owner_id, recipient_agent_name_snapshot, purpose,
+           allowed_use, retention_policy, redaction_state, provenance_refs_json, payload_json,
+           contract_json, schema_version, audit_id, idempotency_key, created_at, updated_at, expires_at)
+        SELECT exchange_id, source_owner_type, source_owner_id, source_nickname_snapshot,
+               recipient_owner_type, recipient_owner_id, recipient_nickname_snapshot, purpose,
+               allowed_use, retention_policy, redaction_state, provenance_refs_json, payload_json,
+               contract_json, schema_version, audit_id, idempotency_key, created_at, updated_at, expires_at
+        FROM agent_data_exchanges;
+
+        DROP TABLE agent_data_exchanges;
+        ALTER TABLE agent_data_exchanges_v51 RENAME TO agent_data_exchanges;
+
+        CREATE INDEX idx_agent_data_exchanges_recipient
+          ON agent_data_exchanges(recipient_owner_type, recipient_owner_id, created_at DESC);
+        CREATE INDEX idx_agent_data_exchanges_source
+          ON agent_data_exchanges(source_owner_type, source_owner_id, created_at DESC);
+        CREATE INDEX idx_agent_data_exchanges_audit
+          ON agent_data_exchanges(audit_id) WHERE audit_id IS NOT NULL;
+        CREATE INDEX idx_agent_data_exchanges_expires
+          ON agent_data_exchanges(expires_at ASC) WHERE expires_at IS NOT NULL;
+      `);
+        },
+    },
+    {
+        version: 52,
+        up(db) {
+            db.exec(`
+        ALTER TABLE memory_capsules
+          RENAME COLUMN nickname_snapshot TO agent_name_snapshot;
+        ALTER TABLE agent_memory_state
+          RENAME COLUMN nickname_snapshot TO agent_name_snapshot;
+      `);
+        },
+    },
+    {
+        version: 53,
+        up(db) {
+            const occupiedNames = new Map();
+            const agentNames = db
+                .prepare("SELECT agent_id, agent_name FROM agent_configs ORDER BY agent_id ASC")
+                .all();
+            for (const row of agentNames) {
+                const normalized = normalizeAgentName(row.agent_name);
+                if (!normalized)
+                    throw new Error(`Agent ${row.agent_id} has no canonical name.`);
+                occupiedNames.set(normalized, { entityType: "agent", entityId: row.agent_id });
+            }
+            const teamNames = db
+                .prepare("SELECT team_id, display_name FROM team_configs ORDER BY team_id ASC")
+                .all();
+            for (const row of teamNames) {
+                const normalized = normalizeAgentName(row.display_name);
+                if (!normalized)
+                    throw new Error(`Team ${row.team_id} has no canonical display name.`);
+                const existing = occupiedNames.get(normalized);
+                if (existing) {
+                    throw new Error(`Team ${row.team_id} display name conflicts with ${existing.entityType} ${existing.entityId}.`);
+                }
+                occupiedNames.set(normalized, { entityType: "team", entityId: row.team_id });
+            }
+            db.exec(`
+        CREATE TABLE team_configs_v53 (
+          team_id TEXT PRIMARY KEY,
+          status TEXT NOT NULL CHECK(status IN ('enabled', 'disabled', 'archived')),
+          display_name TEXT NOT NULL,
+          purpose TEXT NOT NULL,
+          owner_agent_id TEXT,
+          lead_agent_id TEXT,
+          member_count_min INTEGER,
+          member_count_max INTEGER,
+          required_team_roles_json TEXT,
+          required_capability_tags_json TEXT,
+          result_policy TEXT,
+          conflict_policy TEXT,
+          role_hints_json TEXT NOT NULL,
+          member_agent_ids_json TEXT NOT NULL,
+          profile_version INTEGER NOT NULL,
+          config_json TEXT NOT NULL,
+          schema_version INTEGER NOT NULL,
+          source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'import', 'system')),
+          audit_id TEXT,
+          idempotency_key TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          archived_at INTEGER
+        );
+
+        INSERT INTO team_configs_v53
+          (team_id, status, display_name, purpose, owner_agent_id, lead_agent_id,
+           member_count_min, member_count_max, required_team_roles_json, required_capability_tags_json,
+           result_policy, conflict_policy, role_hints_json, member_agent_ids_json, profile_version,
+           config_json, schema_version, source, audit_id, idempotency_key, created_at, updated_at, archived_at)
+        SELECT team_id, status, display_name, purpose, owner_agent_id, lead_agent_id,
+               member_count_min, member_count_max, required_team_roles_json, required_capability_tags_json,
+               result_policy, conflict_policy, role_hints_json, member_agent_ids_json, profile_version,
+               config_json, schema_version, source, audit_id, idempotency_key, created_at, updated_at, archived_at
+        FROM team_configs;
+
+        DROP TABLE team_configs;
+        ALTER TABLE team_configs_v53 RENAME TO team_configs;
+
+        CREATE UNIQUE INDEX idx_team_configs_idempotency
+          ON team_configs(idempotency_key) WHERE idempotency_key IS NOT NULL;
+        CREATE INDEX idx_team_configs_status ON team_configs(status, updated_at DESC);
+        CREATE INDEX idx_team_configs_audit
+          ON team_configs(audit_id) WHERE audit_id IS NOT NULL;
+
+        ALTER TABLE team_execution_plans
+          RENAME COLUMN team_nickname_snapshot TO team_name_snapshot;
+      `);
+            const teamRows = db
+                .prepare(`SELECT team_id, display_name, status, source, config_json, created_at, updated_at
+           FROM team_configs ORDER BY team_id ASC`)
+                .all();
+            const updateConfig = db.prepare("UPDATE team_configs SET config_json = ? WHERE team_id = ?");
+            const insertNamespace = db.prepare(`INSERT INTO agent_name_namespaces
+         (normalized_agent_name, entity_type, entity_id, agent_name_snapshot, status, source, created_at, updated_at)
+         VALUES (?, 'team', ?, ?, ?, ?, ?, ?)`);
+            db.prepare("DELETE FROM agent_name_namespaces WHERE entity_type = 'team'").run();
+            for (const row of teamRows) {
+                const config = parseJsonRecord(row.config_json) ?? {};
+                const canonicalConfig = {
+                    ...config,
+                    displayName: row.display_name,
+                };
+                delete canonicalConfig["nickname"];
+                delete canonicalConfig["normalizedNickname"];
+                updateConfig.run(JSON.stringify(canonicalConfig), row.team_id);
+                insertNamespace.run(normalizeAgentName(row.display_name), row.team_id, row.display_name, row.status, row.source, row.created_at, row.updated_at);
+            }
+            const planRows = db
+                .prepare("SELECT team_execution_plan_id, contract_json FROM team_execution_plans")
+                .all();
+            const updatePlan = db.prepare("UPDATE team_execution_plans SET contract_json = ? WHERE team_execution_plan_id = ?");
+            for (const row of planRows) {
+                const contract = parseJsonRecord(row.contract_json);
+                if (!contract)
+                    continue;
+                if (!asString(contract["teamNameSnapshot"])) {
+                    const legacySnapshot = asString(contract["teamAgentNameSnapshot"]);
+                    if (legacySnapshot)
+                        contract["teamNameSnapshot"] = legacySnapshot;
+                }
+                delete contract["teamAgentNameSnapshot"];
+                updatePlan.run(JSON.stringify(contract), row.team_execution_plan_id);
+            }
+        },
+    },
+    {
+        version: 54,
+        up(db) {
+            db.exec(`
+        CREATE TABLE canonical_work_aggregates (
+          work_id TEXT PRIMARY KEY,
+          root_run_id TEXT NOT NULL UNIQUE,
+          state TEXT NOT NULL CHECK(state IN (
+            'REQUEST_RECEIVED', 'SOLUTION_ANALYZED', 'POLICY_VALIDATED', 'EXECUTING',
+            'RESULT_REVIEW', 'SUCCEEDED', 'PARTIALLY_SUCCEEDED', 'USER_INPUT_REQUIRED',
+            'BLOCKED', 'EXHAUSTED', 'CANCELLED', 'USER_REPORT'
+          )),
+          revision INTEGER NOT NULL CHECK(revision >= 0),
+          transitions_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (root_run_id) REFERENCES root_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_canonical_work_root_run
+          ON canonical_work_aggregates(root_run_id);
+      `);
+        },
+    },
+    {
+        version: 55,
+        up(db) {
+            db.exec(`
+        CREATE TABLE canonical_work_receipts (
+          receipt_id TEXT PRIMARY KEY,
+          work_id TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('diagnosis', 'policy', 'execution', 'attempt', 'verification', 'recovery', 'input_requirement', 'user_input', 'exhaustion', 'cancellation', 'delivery')),
+          evidence_fingerprint TEXT NOT NULL,
+          evidence_refs_json TEXT NOT NULL,
+          issued_at INTEGER NOT NULL,
+          consumed_revision INTEGER CHECK(consumed_revision IS NULL OR consumed_revision > 0),
+          FOREIGN KEY (work_id) REFERENCES canonical_work_aggregates(work_id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_canonical_work_receipts_work ON canonical_work_receipts(work_id, issued_at DESC);
+        CREATE INDEX idx_canonical_work_receipts_unconsumed ON canonical_work_receipts(work_id, kind) WHERE consumed_revision IS NULL;
+      `);
+        },
+    },
+    {
+        version: 56,
+        up(db) {
+            db.exec(`
+        CREATE TABLE canonical_pending_responses (
+          run_id TEXT PRIMARY KEY,
+          work_id TEXT NOT NULL UNIQUE,
+          session_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          response_text TEXT NOT NULL,
+          text_source TEXT NOT NULL CHECK(text_source IN ('llm_generated', 'llm_reviewed', 'runtime_deterministic', 'user_supplied_literal', 'mixed')),
+          final_outcome TEXT NOT NULL CHECK(final_outcome IN ('succeeded', 'partial', 'blocked', 'exhausted', 'cancelled')),
+          text_fingerprint TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('pending', 'consumed')),
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (run_id) REFERENCES root_runs(id) ON DELETE CASCADE,
+          FOREIGN KEY (work_id) REFERENCES canonical_work_aggregates(work_id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_canonical_pending_responses_status
+          ON canonical_pending_responses(status, updated_at ASC);
+      `);
+        },
+    },
+    {
+        version: 57,
+        up(db) {
+            db.exec(`
+        CREATE TABLE side_effect_operations (
+          operation_id TEXT PRIMARY KEY,
+          scope_id TEXT NOT NULL UNIQUE,
+          run_id TEXT NOT NULL,
+          work_id TEXT NOT NULL,
+          step_key TEXT NOT NULL,
+          adapter_id TEXT NOT NULL,
+          target_fingerprint TEXT NOT NULL,
+          params_fingerprint TEXT NOT NULL,
+          state TEXT NOT NULL CHECK(state IN (
+            'RESERVED', 'EFFECT_STARTED', 'EFFECT_RECORDED', 'VERIFYING', 'VERIFIED',
+            'VERIFY_FAILED', 'CANCEL_REQUESTED', 'COMPENSATING', 'COMPENSATED', 'MANUAL_INTERVENTION'
+          )),
+          revision INTEGER NOT NULL CHECK(revision >= 0),
+          transitions_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (run_id) REFERENCES root_runs(id) ON DELETE CASCADE,
+          FOREIGN KEY (work_id) REFERENCES canonical_work_aggregates(work_id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_side_effect_operations_run_state
+          ON side_effect_operations(run_id, state, updated_at DESC);
+      `);
+        },
+    },
+    {
+        version: 58,
+        up(db) {
+            db.exec(`
+        ALTER TABLE canonical_pending_responses
+          ADD COLUMN review_envelope_json TEXT;
+      `);
+        },
+    },
+    {
+        version: 59,
+        up(db) {
+            db.exec(`
+        CREATE TABLE side_effect_operation_receipts (
+          receipt_id TEXT PRIMARY KEY,
+          operation_id TEXT NOT NULL,
+          work_id TEXT NOT NULL,
+          event TEXT NOT NULL CHECK(event IN (
+            'START_EFFECT', 'RECORD_EFFECT', 'BEGIN_VERIFICATION', 'VERIFICATION_PASSED',
+            'VERIFICATION_FAILED', 'REQUEST_CANCEL', 'BEGIN_COMPENSATION',
+            'COMPENSATION_SUCCEEDED', 'COMPENSATION_FAILED', 'MARK_MANUAL'
+          )),
+          kind TEXT NOT NULL CHECK(kind IN (
+            'authorization', 'effect', 'observation', 'cancellation', 'compensation', 'manual'
+          )),
+          schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+          evidence_fingerprint TEXT NOT NULL,
+          evidence_refs_json TEXT NOT NULL,
+          operation_revision INTEGER NOT NULL CHECK(operation_revision > 0),
+          issued_at INTEGER NOT NULL,
+          UNIQUE(operation_id, operation_revision),
+          FOREIGN KEY (operation_id) REFERENCES side_effect_operations(operation_id) ON DELETE CASCADE,
+          FOREIGN KEY (work_id) REFERENCES canonical_work_aggregates(work_id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_side_effect_operation_receipts_operation
+          ON side_effect_operation_receipts(operation_id, operation_revision ASC);
+      `);
+        },
+    },
+    {
+        version: 60,
+        up(db) {
+            db.exec(`
+        CREATE TABLE release_policy_authorizations (
+          sequence_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          authorization_id TEXT NOT NULL UNIQUE,
+          schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+          decision TEXT NOT NULL CHECK(decision IN ('approved', 'denied', 'revoked')),
+          actor_type TEXT NOT NULL CHECK(actor_type = 'administrator'),
+          actor_id TEXT NOT NULL,
+          authentication_id TEXT NOT NULL,
+          scope TEXT NOT NULL CHECK(scope = 'sub_agent_rollout_thresholds'),
+          policy_id TEXT NOT NULL,
+          policy_version INTEGER NOT NULL CHECK(policy_version > 0),
+          release_mode TEXT NOT NULL CHECK(release_mode IN ('limited_beta', 'full_enable')),
+          threshold_snapshot_json TEXT NOT NULL,
+          decided_at INTEGER NOT NULL CHECK(decided_at >= 0)
+        );
+        CREATE INDEX idx_release_policy_authorizations_binding
+          ON release_policy_authorizations(
+            scope, policy_id, policy_version, release_mode, sequence_id DESC
+          );
+      `);
+        },
+    },
+    {
+        version: 61,
+        up(db) {
+            db.exec(`
+        CREATE TABLE performance_acceptance_authorizations (
+          sequence_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          authorization_id TEXT NOT NULL UNIQUE,
+          schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+          decision TEXT NOT NULL CHECK(decision IN ('approved', 'denied', 'revoked')),
+          actor_type TEXT NOT NULL CHECK(actor_type = 'administrator'),
+          actor_id TEXT NOT NULL,
+          authentication_id TEXT NOT NULL,
+          scope TEXT NOT NULL CHECK(scope = 'performance_release_gate'),
+          matrix_id TEXT NOT NULL,
+          matrix_version INTEGER NOT NULL CHECK(matrix_version > 0),
+          baseline_version TEXT NOT NULL,
+          threshold_snapshot_json TEXT NOT NULL,
+          decided_at INTEGER NOT NULL CHECK(decided_at >= 0)
+        );
+        CREATE INDEX idx_performance_acceptance_authorizations_binding
+          ON performance_acceptance_authorizations(
+            scope, matrix_id, matrix_version, baseline_version, sequence_id DESC
+          );
+      `);
+        },
+    },
+    {
+        version: 62,
+        up(db) {
+            db.exec(`
+        ALTER TABLE performance_acceptance_authorizations
+          ADD COLUMN baseline_snapshot_json TEXT;
+      `);
+        },
+    },
+    {
+        version: 63,
+        up(db) {
+            db.exec(`
+        CREATE TABLE capability_mutation_receipts (
+          mutation_id TEXT PRIMARY KEY,
+          nonce TEXT NOT NULL UNIQUE,
+          actor_ref TEXT NOT NULL,
+          scope TEXT NOT NULL,
+          purpose TEXT NOT NULL,
+          capability_kind TEXT NOT NULL CHECK(capability_kind IN ('skill', 'mcp_server', 'yeonjang')),
+          target_revision INTEGER NOT NULL,
+          state TEXT NOT NULL,
+          reason_code TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_capability_mutation_receipts_updated
+          ON capability_mutation_receipts(updated_at DESC);
+      `);
+        },
+    },
+    {
+        version: 64,
+        up(db) {
+            db.exec(`
+        CREATE TABLE agent_capability_bindings_v64 (
+          binding_id TEXT PRIMARY KEY,
+          agent_id TEXT NOT NULL,
+          capability_kind TEXT NOT NULL CHECK(capability_kind IN ('skill', 'mcp_server', 'yeonjang')),
+          catalog_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('enabled', 'disabled', 'archived')),
+          secret_scope_id TEXT,
+          enabled_tool_names_json TEXT NOT NULL,
+          disabled_tool_names_json TEXT NOT NULL,
+          permission_profile_json TEXT,
+          rate_limit_json TEXT,
+          approval_required_from TEXT,
+          schema_version INTEGER NOT NULL,
+          source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'import', 'system')),
+          audit_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          archived_at INTEGER,
+          UNIQUE(agent_id, capability_kind, catalog_id)
+        );
+
+        INSERT INTO agent_capability_bindings_v64
+          (binding_id, agent_id, capability_kind, catalog_id, status, secret_scope_id,
+           enabled_tool_names_json, disabled_tool_names_json, permission_profile_json,
+           rate_limit_json, approval_required_from, schema_version, source, audit_id,
+           created_at, updated_at, archived_at)
+        SELECT binding_id, agent_id, capability_kind, catalog_id, status, secret_scope_id,
+               enabled_tool_names_json, disabled_tool_names_json, permission_profile_json,
+               rate_limit_json, approval_required_from, schema_version, source, audit_id,
+               created_at, updated_at, archived_at
+        FROM agent_capability_bindings;
+
+        DROP TABLE agent_capability_bindings;
+        ALTER TABLE agent_capability_bindings_v64 RENAME TO agent_capability_bindings;
+
+        CREATE INDEX idx_agent_capability_bindings_agent
+          ON agent_capability_bindings(agent_id, status, capability_kind, catalog_id);
+        CREATE INDEX idx_agent_capability_bindings_catalog
+          ON agent_capability_bindings(capability_kind, catalog_id, status);
+        CREATE INDEX idx_agent_capability_bindings_audit
+          ON agent_capability_bindings(audit_id)
+          WHERE audit_id IS NOT NULL;
+      `);
+        },
+    },
+    {
+        version: 65,
+        up(db) {
+            db.exec(`
+        CREATE TABLE agent_identity_mutation_receipts (
+          mutation_id TEXT PRIMARY KEY,
+          nonce TEXT NOT NULL UNIQUE,
+          request_signature TEXT NOT NULL,
+          mutation_kind TEXT NOT NULL CHECK(mutation_kind IN ('create', 'update', 'archive')),
+          state TEXT NOT NULL,
+          receipt_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_agent_identity_mutation_receipts_updated
+          ON agent_identity_mutation_receipts(updated_at DESC);
+      `);
+        },
+    },
+    {
+        version: 66,
+        up(db) {
+            db.exec(`
+        ALTER TABLE capability_mutation_receipts ADD COLUMN request_fingerprint TEXT;
+        ALTER TABLE capability_mutation_receipts ADD COLUMN receipt_json TEXT;
+      `);
+        },
+    },
+    {
+        version: 67,
+        up(db) {
+            db.exec(`
+        CREATE TABLE agent_relationship_mutation_receipts (
+          mutation_id TEXT PRIMARY KEY,
+          nonce TEXT NOT NULL UNIQUE,
+          actor_ref TEXT NOT NULL,
+          scope TEXT NOT NULL,
+          purpose TEXT NOT NULL,
+          mutation_kind TEXT NOT NULL CHECK(mutation_kind IN ('connect', 'reparent', 'disconnect')),
+          target_revision INTEGER NOT NULL,
+          state TEXT NOT NULL,
+          reason_code TEXT,
+          request_fingerprint TEXT NOT NULL,
+          receipt_json TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_agent_relationship_mutation_receipts_updated
+          ON agent_relationship_mutation_receipts(updated_at DESC);
+      `);
+        },
+    },
+    {
+        version: 68,
+        up(db) {
+            db.exec(`
+        CREATE TABLE agent_operational_settings_mutation_receipts (
+          mutation_id TEXT PRIMARY KEY,
+          nonce TEXT NOT NULL UNIQUE,
+          actor_ref TEXT NOT NULL,
+          scope TEXT NOT NULL,
+          purpose TEXT NOT NULL,
+          mutation_kind TEXT NOT NULL CHECK(mutation_kind IN ('update_model', 'clear_model', 'update_memory', 'update_permission')),
+          target_revision INTEGER NOT NULL,
+          state TEXT NOT NULL,
+          reason_code TEXT,
+          request_fingerprint TEXT NOT NULL,
+          receipt_json TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_agent_operational_settings_mutation_receipts_updated
+          ON agent_operational_settings_mutation_receipts(updated_at DESC);
+      `);
+        },
+    },
+    {
+        version: 69,
+        up(db) {
+            db.exec(`
+        CREATE TABLE canonical_work_receipts_v69 (
+          receipt_id TEXT PRIMARY KEY,
+          work_id TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('diagnosis', 'analysis_revision', 'policy', 'execution', 'attempt', 'verification', 'recovery', 'input_requirement', 'user_input', 'exhaustion', 'cancellation', 'delivery')),
+          evidence_fingerprint TEXT NOT NULL,
+          evidence_refs_json TEXT NOT NULL,
+          issued_at INTEGER NOT NULL,
+          consumed_revision INTEGER CHECK(consumed_revision IS NULL OR consumed_revision > 0),
+          FOREIGN KEY (work_id) REFERENCES canonical_work_aggregates(work_id) ON DELETE CASCADE
+        );
+
+        INSERT INTO canonical_work_receipts_v69
+          (receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json, issued_at,
+           consumed_revision)
+        SELECT receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json, issued_at,
+               consumed_revision
+        FROM canonical_work_receipts;
+
+        DROP TABLE canonical_work_receipts;
+        ALTER TABLE canonical_work_receipts_v69 RENAME TO canonical_work_receipts;
+        CREATE INDEX idx_canonical_work_receipts_work
+          ON canonical_work_receipts(work_id, issued_at DESC);
+        CREATE INDEX idx_canonical_work_receipts_unconsumed
+          ON canonical_work_receipts(work_id, kind)
+          WHERE consumed_revision IS NULL;
+      `);
+        },
+    },
+    {
+        version: 70,
+        up(db) {
+            db.exec(`
+        ALTER TABLE canonical_work_receipts
+          ADD COLUMN terminal_cause_json TEXT;
+      `);
+        },
+    },
+    {
+        version: 71,
+        up(db) {
+            db.exec(`
+        CREATE TABLE canonical_work_receipts_v71 (
+          receipt_id TEXT PRIMARY KEY,
+          work_id TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('diagnosis', 'analysis_revision', 'policy', 'execution', 'attempt', 'verification', 'recovery', 'input_requirement', 'user_input', 'exhaustion', 'cancellation', 'delivery', 'blocker')),
+          evidence_fingerprint TEXT NOT NULL,
+          evidence_refs_json TEXT NOT NULL,
+          issued_at INTEGER NOT NULL,
+          consumed_revision INTEGER CHECK(consumed_revision IS NULL OR consumed_revision > 0),
+          terminal_cause_json TEXT,
+          FOREIGN KEY (work_id) REFERENCES canonical_work_aggregates(work_id) ON DELETE CASCADE
+        );
+
+        INSERT INTO canonical_work_receipts_v71
+          (receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json, issued_at,
+           consumed_revision, terminal_cause_json)
+        SELECT receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json, issued_at,
+               consumed_revision, terminal_cause_json
+        FROM canonical_work_receipts;
+
+        DROP TABLE canonical_work_receipts;
+        ALTER TABLE canonical_work_receipts_v71 RENAME TO canonical_work_receipts;
+        CREATE INDEX idx_canonical_work_receipts_work
+          ON canonical_work_receipts(work_id, issued_at DESC);
+        CREATE INDEX idx_canonical_work_receipts_unconsumed
+          ON canonical_work_receipts(work_id, kind)
+          WHERE consumed_revision IS NULL;
+      `);
+        },
+    },
+    {
+        version: 72,
+        up(db) {
+            db.exec(`
+        ALTER TABLE approval_registry
+          ADD COLUMN operation_id TEXT;
+        ALTER TABLE approval_registry
+          ADD COLUMN operation_binding_hash TEXT;
+        ALTER TABLE approval_registry
+          ADD COLUMN continuation_schema_version INTEGER;
+      `);
+        },
+    },
+    {
+        version: 73,
+        up(db) {
+            db.exec(`
+        CREATE TABLE canonical_work_aggregates_v73 (
+          work_id TEXT PRIMARY KEY,
+          root_run_id TEXT NOT NULL UNIQUE,
+          state TEXT NOT NULL CHECK(state IN (
+            'REQUEST_RECEIVED', 'SOLUTION_ANALYZED', 'POLICY_VALIDATED', 'EXECUTING',
+            'AWAITING_APPROVAL', 'RESULT_REVIEW', 'SUCCEEDED', 'PARTIALLY_SUCCEEDED',
+            'USER_INPUT_REQUIRED', 'BLOCKED', 'EXHAUSTED', 'CANCELLED', 'USER_REPORT'
+          )),
+          revision INTEGER NOT NULL CHECK(revision >= 0),
+          transitions_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (root_run_id) REFERENCES root_runs(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO canonical_work_aggregates_v73
+          (work_id, root_run_id, state, revision, transitions_json, created_at, updated_at)
+        SELECT work_id, root_run_id, state, revision, transitions_json, created_at, updated_at
+        FROM canonical_work_aggregates;
+
+        CREATE TABLE canonical_work_receipts_v73 (
+          receipt_id TEXT PRIMARY KEY,
+          work_id TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('diagnosis', 'analysis_revision', 'policy', 'execution', 'attempt', 'verification', 'recovery', 'input_requirement', 'user_input', 'exhaustion', 'cancellation', 'delivery', 'blocker', 'approval')),
+          evidence_fingerprint TEXT NOT NULL,
+          evidence_refs_json TEXT NOT NULL,
+          issued_at INTEGER NOT NULL,
+          consumed_revision INTEGER CHECK(consumed_revision IS NULL OR consumed_revision > 0),
+          terminal_cause_json TEXT,
+          FOREIGN KEY (work_id) REFERENCES canonical_work_aggregates_v73(work_id) ON DELETE CASCADE
+        );
+
+        INSERT INTO canonical_work_receipts_v73
+          (receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json, issued_at,
+           consumed_revision, terminal_cause_json)
+        SELECT receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json, issued_at,
+               consumed_revision, terminal_cause_json
+        FROM canonical_work_receipts;
+
+        DROP TABLE canonical_work_receipts;
+        DROP TABLE canonical_work_aggregates;
+        ALTER TABLE canonical_work_aggregates_v73 RENAME TO canonical_work_aggregates;
+        ALTER TABLE canonical_work_receipts_v73 RENAME TO canonical_work_receipts;
+        CREATE INDEX idx_canonical_work_root_run
+          ON canonical_work_aggregates(root_run_id);
+        CREATE INDEX idx_canonical_work_receipts_work
+          ON canonical_work_receipts(work_id, issued_at DESC);
+        CREATE INDEX idx_canonical_work_receipts_unconsumed
+          ON canonical_work_receipts(work_id, kind)
+          WHERE consumed_revision IS NULL;
+      `);
+        },
+    },
+    {
+        version: 74,
+        up(db) {
+            db.exec(`
+        CREATE TABLE approved_operation_continuations (
+          continuation_id TEXT PRIMARY KEY,
+          approval_id TEXT NOT NULL UNIQUE,
+          run_id TEXT NOT NULL,
+          request_group_id TEXT,
+          tool_name TEXT NOT NULL,
+          decision TEXT NOT NULL CHECK(decision IN ('allow_once', 'allow_run')),
+          operation_id TEXT NOT NULL,
+          operation_binding_hash TEXT NOT NULL,
+          schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+          status TEXT NOT NULL CHECK(status IN ('pending', 'claimed', 'completed', 'failed')),
+          claim_owner_id TEXT,
+          claim_expires_at INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          completed_at INTEGER,
+          FOREIGN KEY (approval_id) REFERENCES approval_registry(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_approved_operation_continuations_claim
+          ON approved_operation_continuations(status, claim_expires_at, created_at);
+        CREATE INDEX idx_approved_operation_continuations_run
+          ON approved_operation_continuations(run_id, status, created_at);
+      `);
+        },
+    },
+    {
+        version: 75,
+        up(db) {
+            db.exec(`
+        ALTER TABLE approval_registry
+          ADD COLUMN decision_actor_fingerprint TEXT;
+
+        CREATE INDEX idx_approval_registry_channel_callback
+          ON approval_registry(
+            channel,
+            channel_message_id,
+            decision_actor_fingerprint,
+            status,
+            created_at
+          );
+      `);
+        },
+    },
+    {
+        version: 76,
+        up(db) {
+            db.exec(`
+        CREATE TABLE approved_operation_continuations_v76 (
+          continuation_id TEXT PRIMARY KEY,
+          approval_id TEXT NOT NULL UNIQUE,
+          run_id TEXT NOT NULL,
+          request_group_id TEXT,
+          tool_name TEXT NOT NULL,
+          decision TEXT NOT NULL CHECK(decision IN ('allow_once', 'allow_run')),
+          operation_id TEXT NOT NULL,
+          operation_binding_hash TEXT NOT NULL,
+          schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+          status TEXT NOT NULL CHECK(status IN ('pending', 'claimed', 'completed', 'cancelled', 'failed')),
+          claim_owner_id TEXT,
+          claim_expires_at INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          completed_at INTEGER,
+          FOREIGN KEY (approval_id) REFERENCES approval_registry(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO approved_operation_continuations_v76
+        SELECT * FROM approved_operation_continuations;
+        DROP TABLE approved_operation_continuations;
+        ALTER TABLE approved_operation_continuations_v76
+          RENAME TO approved_operation_continuations;
+        CREATE INDEX idx_approved_operation_continuations_claim
+          ON approved_operation_continuations(status, claim_expires_at, created_at);
+        CREATE INDEX idx_approved_operation_continuations_run
+          ON approved_operation_continuations(run_id, status, created_at);
+      `);
+        },
+    },
+    {
+        version: 77,
+        up(db) {
+            db.exec(`
+        CREATE TABLE side_effect_operations_v77 (
+          operation_id TEXT PRIMARY KEY,
+          scope_id TEXT NOT NULL UNIQUE,
+          run_id TEXT NOT NULL,
+          work_id TEXT NOT NULL,
+          step_key TEXT NOT NULL,
+          adapter_id TEXT NOT NULL,
+          target_fingerprint TEXT NOT NULL,
+          params_fingerprint TEXT NOT NULL,
+          state TEXT NOT NULL CHECK(state IN (
+            'RESERVED', 'EFFECT_STARTED', 'EFFECT_REJECTED', 'EFFECT_RECORDED',
+            'VERIFYING', 'VERIFIED', 'VERIFY_FAILED', 'CANCEL_REQUESTED',
+            'COMPENSATING', 'COMPENSATED', 'MANUAL_INTERVENTION'
+          )),
+          revision INTEGER NOT NULL CHECK(revision >= 0),
+          transitions_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (run_id) REFERENCES root_runs(id) ON DELETE CASCADE,
+          FOREIGN KEY (work_id) REFERENCES canonical_work_aggregates(work_id) ON DELETE CASCADE
+        );
+
+        INSERT INTO side_effect_operations_v77
+        SELECT * FROM side_effect_operations;
+
+        CREATE TABLE side_effect_operation_receipts_v77 (
+          receipt_id TEXT PRIMARY KEY,
+          operation_id TEXT NOT NULL,
+          work_id TEXT NOT NULL,
+          event TEXT NOT NULL CHECK(event IN (
+            'START_EFFECT', 'RECORD_REJECTION', 'RECORD_EFFECT', 'BEGIN_VERIFICATION',
+            'VERIFICATION_PASSED', 'VERIFICATION_FAILED', 'REQUEST_CANCEL',
+            'BEGIN_COMPENSATION', 'COMPENSATION_SUCCEEDED', 'COMPENSATION_FAILED',
+            'MARK_MANUAL'
+          )),
+          kind TEXT NOT NULL CHECK(kind IN (
+            'authorization', 'effect', 'observation', 'cancellation', 'compensation', 'manual'
+          )),
+          schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+          evidence_fingerprint TEXT NOT NULL,
+          evidence_refs_json TEXT NOT NULL,
+          operation_revision INTEGER NOT NULL CHECK(operation_revision > 0),
+          issued_at INTEGER NOT NULL,
+          UNIQUE(operation_id, operation_revision),
+          FOREIGN KEY (operation_id) REFERENCES side_effect_operations_v77(operation_id) ON DELETE CASCADE,
+          FOREIGN KEY (work_id) REFERENCES canonical_work_aggregates(work_id) ON DELETE CASCADE
+        );
+
+        INSERT INTO side_effect_operation_receipts_v77
+        SELECT * FROM side_effect_operation_receipts;
+
+        DROP TABLE side_effect_operation_receipts;
+        DROP TABLE side_effect_operations;
+        ALTER TABLE side_effect_operations_v77 RENAME TO side_effect_operations;
+        ALTER TABLE side_effect_operation_receipts_v77 RENAME TO side_effect_operation_receipts;
+
+        CREATE INDEX idx_side_effect_operations_run_state
+          ON side_effect_operations(run_id, state, updated_at DESC);
+        CREATE INDEX idx_side_effect_operation_receipts_operation
+          ON side_effect_operation_receipts(operation_id, operation_revision ASC);
+      `);
+        },
+    },
 ];
 function schemaMigrationsTableExists(db) {
     return Boolean(db
@@ -3029,9 +3970,10 @@ export function runMigrations(db, options = {}) {
         catch {
             verifyReport = null;
         }
+        const message = migrationErrorMessage(error);
         failMigrationLock(db, {
             lockId: lock.id,
-            error: error instanceof Error ? error.message : String(error),
+            error: message,
             verifyReport,
         });
         throw error;

@@ -1,8 +1,54 @@
 import type { ChannelProvider, ChannelSource } from "../channels/contracts.js";
+export * from "./work-record.js";
+export * from "./work-handoff-projection.js";
+export * from "./work-result-projection.js";
+export * from "./structured-record-repair.js";
+export * from "./structured-work-audit.js";
+export * from "./llm-diagnosis-gate.js";
+export * from "./llm-diagnosis-provider.js";
+export * from "./llm-diagnosis-schema-repair-provider.js";
+export * from "./diagnosis-action-routing.js";
+export * from "./llm-capability-selection.js";
+export * from "./web-research-method.js";
+export * from "./web-research-ledger.js";
+export * from "./web-research-link-candidate.js";
+export * from "./llm-clarification-admission.js";
+export * from "./llm-request-intake.js";
+export * from "./structured-execution-contract.js";
+export * from "./llm-solution-plan-receipt.js";
+export * from "./llm-solution-plan-provider.js";
+export * from "./solution-path-exhaustion.js";
+export * from "./failure-recovery-decision.js";
+export * from "./failure-recovery-readiness.js";
+export * from "./recovery-alternative-confirmation.js";
+export * from "./execution-model-admission.js";
+export * from "./side-effect-evidence-gate.js";
+export * from "./final-success-admission.js";
+export * from "./user-method-first-admission.js";
+export * from "./user-method-constraint-admission.js";
+export * from "./user-report-continuation-admission.js";
+export * from "./recursive-resolution-admission.js";
+export * from "./recursive-resolution-governance.js";
+export * from "./structured-work-lifecycle.js";
+export * from "./llm-diagnosed-action-flow.js";
+export * from "./structured-work-decision-readiness.js";
+export * from "./work-record-continuity-recovery.js";
+export * from "./work-record-assembly.js";
+export * from "./work-record-state-decision.js";
+export * from "./canonical-work-state.js";
+export * from "./canonical-work-aggregate.js";
+export * from "./canonical-work-receipt.js";
+export * from "./work-record-schema-repair.js";
+export * from "./evidence-delegation.js";
+export * from "./process-control-trace.js";
+export * from "./product-parameters.js";
+export * from "./gateway-startup-state.js";
+export * from "./mcp-component-state.js";
 export declare const CONTRACT_SCHEMA_VERSION: 1;
 export type ContractSchemaVersion = typeof CONTRACT_SCHEMA_VERSION;
 export type ContractLocaleHint = "ko" | "en" | "mixed" | "unknown";
 export type ContractSource = ChannelSource | "scheduler" | "system";
+export type ResponseLanguageMode = "same_as_request" | "translation" | "language_comparison" | "multilingual";
 export type IntentType = "schedule_request" | "execute_now" | "cancel" | "update" | "question" | "impossible" | "clarification";
 export type ActionType = "create_schedule" | "update_schedule" | "cancel_schedule" | "run_tool" | "send_message" | "answer" | "ask_user" | "none";
 export type ToolTargetKind = "schedule" | "run" | "artifact" | "extension" | "display" | "camera" | "file" | "unknown";
@@ -89,6 +135,7 @@ export interface SchedulePayloadContract {
 export interface ScheduleContract {
     schemaVersion: ContractSchemaVersion;
     kind: ScheduleKind;
+    responseLanguageMode?: ResponseLanguageMode;
     time: ScheduleTimeContract;
     payload: SchedulePayloadContract;
     delivery: DeliveryContract;
@@ -101,7 +148,7 @@ export interface ScheduleContract {
     rawText?: string;
     summary?: string;
 }
-export type ContractValidationErrorCode = "contract_validation_failed" | "unsupported_contract_version" | "unknown_contract_action";
+export type ContractValidationErrorCode = "contract_validation_failed" | "unsupported_contract_version" | "unknown_contract_action" | "handoff_text_limit_exceeded" | "handoff_array_limit_exceeded" | "handoff_text_not_executable" | "structured_text_limit_exceeded" | "structured_text_aggregate_exceeded";
 export interface ContractValidationIssue {
     path: string;
     code: ContractValidationErrorCode;
@@ -150,4 +197,9 @@ export declare function buildDeliveryDedupeKey(params: {
 }): string;
 export declare function formatContractValidationFailureForUser(issues: ContractValidationIssue[]): string;
 export * from "./enterprise-topology.js";
+export * from "./child-result-trust.js";
+export * from "./delegated-execution-snapshot.js";
+export * from "./memory-exchange-owner-binding.js";
+export * from "./development-change-admission.js";
+export * from "./project-definition-of-done-admission.js";
 //# sourceMappingURL=index.d.ts.map

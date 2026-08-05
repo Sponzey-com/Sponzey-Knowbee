@@ -1,6 +1,10 @@
 import type { FastifyInstance, FastifyReply } from "fastify"
+import {
+  createArtifactStorageContext,
+  type ArtifactStorageContext,
+} from "../../artifacts/lifecycle.js"
 import { resolveProviderForConnection, type ResolvedAiProvider } from "../../ai/index.js"
-import { getConfig } from "../../config/index.js"
+import { getApiRuntimeConfig, getApiRuntimePaths } from "../runtime-context.js"
 import {
   validateEnterpriseTopology,
   type EnterpriseMetadata,
@@ -33,6 +37,7 @@ import { validateTopology, type TopologyValidationResult } from "../../topology/
 import { buildExecutorRunObservabilityMetadata } from "../../topology/executor-observability.js"
 import { buildExecutorGraphFromEnterpriseTopology } from "../../topology/executor-graph.js"
 import {
+  buildNodeDefinitionLlmNotConfiguredResult,
   createNodeDefinitionSuggestion,
   normalizeNodeDefinitionSuggestionRequest,
   type NodeDefinitionSuggestionRequest,
@@ -41,6 +46,7 @@ import {
 import { buildGraphExecutionPlan } from "../../topology/graph-execution-plan.js"
 import { persistGraphExecutionPlan } from "../../topology/graph-execution-store.js"
 import { runNodeRuntime } from "../../topology-runtime/node-runtime.js"
+import type { SolutionPathReview } from "../../topology-runtime/solution-path-exhaustion.js"
 import { getTopologyRunTraceProjection, recordTopologyRuntimeExecution } from "../../topology-runtime/trace.js"
 import { buildWorkOrder, createWorkOrderRuntimeEnvelope } from "../../topology-runtime/work-order.js"
 import {
@@ -49,7 +55,10 @@ import {
   type WorkOrderTemplateSimulationMode,
 } from "../../topology-runtime/work-order-templates.js"
 import type { ToolResult } from "../../tools/types.js"
+import { loadPromptValue } from "../../memory/prompt-fragments.js"
 import { authMiddleware } from "../middleware/auth.js"
+
+const NODE_DEFINITION_API_SYSTEM_SOURCE_ID = "node_definition_api_system_user"
 
 interface TopologyImportBody {
   topology?: unknown
@@ -439,7 +448,38 @@ function createManualTopologyToolDispatcher(simulationMode: WorkOrderTemplateSim
   }
 }
 
+function createManualFailureDrillDiagnosisProvider() {
+  const resultDiagnosis = {
+    diagnosis_summary: "The simulated recovery paths are exhausted.",
+    sufficiency: "insufficient",
+    missing_information: [],
+    conflicts: [],
+    risk: "low",
+    risks: ["manual_failure_drill"],
+    confidence: "high",
+    recommended_action: "stop_blocked",
+    reason: "The failure drill requires a terminal failure projection.",
+  }
+  return {
+    diagnoseRequest: () => ({
+      diagnosis_summary: "The manual failure drill is explicit.",
+      intent: "failure_drill",
+      goal: "Render the configured failure trace.",
+      constraints: ["Do not execute a production action."],
+      missing_information: [],
+      risk: "low",
+      confidence: "high",
+      recommended_action: "plan",
+      reason: "The simulator follows its configured fixture.",
+    }),
+    diagnoseResult: () => resultDiagnosis,
+    repairDiagnosis: () => resultDiagnosis,
+  }
+}
+
 async function runManualGuiDraftTopology(input: {
+  artifactStorage: ArtifactStorageContext
+  workDir: string
   draft: EnterpriseTopologyGuiDraft
   body: GuiDraftRunBody | undefined
 }): Promise<
@@ -574,6 +614,9 @@ async function runManualGuiDraftTopology(input: {
     }
   }
 
+  const failureDrillDiagnosisProvider = simulationMode === "failure"
+    ? createManualFailureDrillDiagnosisProvider()
+    : undefined
   const result = await runNodeRuntime({
     envelope: envelope.envelope,
     compiledTopologySnapshot: compiled.snapshot,
@@ -612,10 +655,11 @@ async function runManualGuiDraftTopology(input: {
       enabled: compiledNode.allowedToolIds.length > 0,
       dispatcher: createManualTopologyToolDispatcher(simulationMode),
       baseToolContext: {
+        artifactStorage: input.artifactStorage,
         sessionId: `session:${topologyRunId}`,
         runId: topologyRunId,
         requestGroupId: `request-group:${topologyRunId}`,
-        workDir: process.cwd(),
+        workDir: input.workDir,
         userMessage: template.objective,
         source: "webui",
         allowWebAccess: false,
@@ -633,7 +677,34 @@ async function runManualGuiDraftTopology(input: {
       fallbackAttempted: true,
       partialSuccessChecked: true,
       parentRecoveryPossibleChecked: true,
+      solutionPathReviews: [
+        { path: "direct_answer", disposition: "reviewed_unavailable", reasonCode: "manual_failure_drill" },
+        { path: "plan", disposition: "attempted", reasonCode: "template_plan_executed" },
+        { path: "tool", disposition: "attempted", reasonCode: "simulated_tool_paths_reviewed" },
+        { path: "sub_agent", disposition: "attempted", reasonCode: "simulated_child_paths_reviewed" },
+        {
+          path: "yeonjang",
+          disposition: compiledNode.allowedToolIds.some((toolId) => toolId.includes("yeonjang"))
+            ? "attempted"
+            : "reviewed_unavailable",
+          reasonCode: "simulated_yeonjang_path_reviewed",
+        },
+        { path: "ask_clarification", disposition: "reviewed_unavailable", reasonCode: "template_input_complete" },
+        { path: "partial_completion", disposition: "reviewed_unavailable", reasonCode: "all_outputs_missing" },
+        {
+          path: "workaround_guidance",
+          disposition: "guidance_ready",
+          reasonCode: "trace_review_available",
+          guidance: "Review retry and fallback candidates from the topology trace overlay.",
+        },
+      ] satisfies SolutionPathReview[],
       recommendedAction: "Review retry and fallback candidates from the topology trace overlay.",
+      ...(failureDrillDiagnosisProvider
+        ? {
+            diagnosisProvider: failureDrillDiagnosisProvider,
+            diagnosisRepairProvider: failureDrillDiagnosisProvider,
+          }
+        : {}),
     },
   })
 
@@ -1014,15 +1085,10 @@ export function registerTopologyRoutes(app: FastifyInstance): void {
         })
       }
 
-      const config = getConfig()
+      const config = getApiRuntimeConfig(req)
       const provider = resolveProviderForConnection(config.ai.connection, request.modelPreference?.providerId)
       if (!provider) {
-        return reply.status(503).send({
-          ok: false,
-          error: "llm_not_configured",
-          message: "등록된 LLM이 없습니다. 설정에서 기본 모델을 등록한 뒤 다시 시도하세요.",
-          warnings: [{ code: "llm_not_configured", message: "등록된 LLM이 없습니다." }],
-        })
+        return reply.status(503).send(buildNodeDefinitionLlmNotConfiguredResult())
       }
 
       const result = await createNodeDefinitionSuggestion(
@@ -1080,15 +1146,10 @@ export function registerTopologyRoutes(app: FastifyInstance): void {
         })
       }
 
-      const config = getConfig()
+      const config = getApiRuntimeConfig(req)
       const provider = resolveProviderForConnection(config.ai.connection, request.modelPreference?.providerId)
       if (!provider) {
-        return reply.status(503).send({
-          ok: false,
-          error: "llm_not_configured",
-          message: "등록된 LLM이 없습니다. 설정에서 기본 모델을 등록한 뒤 다시 시도하세요.",
-          warnings: [{ code: "llm_not_configured", message: "등록된 LLM이 없습니다." }],
-        })
+        return reply.status(503).send(buildNodeDefinitionLlmNotConfiguredResult())
       }
 
       const result = await createNodeDefinitionSuggestion(
@@ -1147,7 +1208,12 @@ export function registerTopologyRoutes(app: FastifyInstance): void {
     async (req, reply) => {
       const draft = guiDrafts.get(req.params.topologyId)
       if (!draft) return reply.status(404).send({ ok: false, error: "gui_draft_not_found" })
-      const result = await runManualGuiDraftTopology({ draft, body: req.body })
+      const result = await runManualGuiDraftTopology({
+        artifactStorage: createArtifactStorageContext(getApiRuntimePaths(req)),
+        workDir: getApiRuntimeConfig(req).profile.workspace,
+        draft,
+        body: req.body,
+      })
       if (!result.ok) {
         return reply.status(result.statusCode).send({
           ok: false,
@@ -1256,15 +1322,7 @@ async function generateNodeDefinitionSuggestionJson(input: {
   let text = ""
   for await (const chunk of input.provider.provider.chat({
     model: input.modelId,
-    system: [
-      "You return JSON only.",
-      "The JSON shape is {\"alternatives\":[{\"alternativeId\":\"...\",\"title\":\"...\",\"summary\":\"...\",\"patch\":{},\"rationale\":\"...\",\"riskNotes\":[],\"confidence\":0.7}]}",
-      "Use Korean user-facing text and avoid internal runtime terminology.",
-      "For every alternative, include patch.name as a short, explicit Korean role name that users can understand immediately.",
-      "Use the selected roles, selected styles, and node overview together when writing patch.description.",
-      "Before returning JSON, review each proposed description for missing responsibilities, decision criteria, work steps, handoff details, completion criteria, and risk or clarification points, then revise the description with any missing details.",
-      "Return only the final reviewed JSON. Do not include a separate checklist or prose outside JSON.",
-    ].join("\n"),
+    system: loadPromptValue(NODE_DEFINITION_API_SYSTEM_SOURCE_ID, {}, { required: true }),
     messages: [{ role: "user", content: input.prompt }],
     maxTokens: 2800,
   })) {

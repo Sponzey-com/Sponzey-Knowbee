@@ -188,6 +188,7 @@ describe("run post execution pass", () => {
     expect(result).toEqual({
       kind: "continue",
       preview: "verified preview",
+      previewSource: "runtime_deterministic",
       deliveryOutcome: {
         directArtifactDeliveryRequested: true,
         hasSuccessfulArtifactDelivery: true,

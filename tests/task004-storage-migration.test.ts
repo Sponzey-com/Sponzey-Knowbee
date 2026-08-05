@@ -3,9 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import {
-  NicknameNamespaceError,
+  AgentNameNamespaceError,
   closeDb,
   getAgentDataExchange,
   getAgentRelationship,
@@ -17,12 +18,12 @@ import {
   insertTeamExecutionPlan,
   listAgentRelationships,
   listAgentTeamMemberships,
-  listNicknameNamespaces,
+  listAgentNameNamespaces,
   listTeamExecutionPlansForParentRun,
   upsertAgentConfig,
   upsertAgentRelationship,
   upsertTeamConfig,
-} from "../packages/core/src/db/index.ts"
+} from "../packages/core/src/db/index.js"
 import { verifyMigrationState } from "../packages/core/src/db/migration-safety.ts"
 import { MIGRATIONS, runMigrations } from "../packages/core/src/db/migrations.ts"
 import {
@@ -58,17 +59,14 @@ const require = createRequire(import.meta.url)
 const BetterSqlite3 = require("../packages/core/node_modules/better-sqlite3") as BetterSqlite3Factory
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task004-storage-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task004-storage-"))
+  tempDirs.push(rootDir)
+  const runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function owner(ownerId = "agent:knowbee"): RuntimeIdentity["owner"] {
@@ -162,7 +160,6 @@ function teamConfig(overrides: Partial<TeamConfig> = {}): TeamConfig {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     teamId: "team:research",
     displayName: "Research Team",
-    nickname: "Research Team",
     status: "enabled",
     purpose: "Research and evidence collection",
     ownerAgentId: "agent:knowbee",
@@ -207,8 +204,9 @@ function subSession(): SubSessionContract {
     parentSessionId: "session:root",
     parentRunId: "run:root",
     agentId: "agent:researcher",
+    agentName: "Researcher",
     agentDisplayName: "Researcher",
-    agentNickname: "Researcher",
+    agentNameSnapshot: "Researcher",
     commandRequestId: "command:1",
     status: "queued",
     promptBundleId: "bundle:1",
@@ -238,11 +236,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -250,6 +243,96 @@ afterEach(() => {
 })
 
 describe("task004 storage migration", () => {
+  it("preserves canonical rows while adding approval state and receipt contracts", () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "knowbee-canonical-approval-v73-"))
+    tempDirs.push(rootDir)
+    const dbPath = join(rootDir, "legacy-v72.sqlite3")
+    const legacyDb = new BetterSqlite3(dbPath)
+    try {
+      applyMigrationsThrough(legacyDb, 72)
+      legacyDb.prepare(
+        `INSERT INTO sessions
+          (id, source, source_id, created_at, updated_at, summary, token_count)
+         VALUES (?, ?, NULL, ?, ?, NULL, 0)`,
+      ).run("session:approval-v73", "telegram", now, now)
+      legacyDb.prepare(
+        `INSERT INTO root_runs
+          (id, session_id, title, prompt, source, status, task_profile,
+           target_id, delegation_turn_count, max_delegation_turns,
+           current_step_key, current_step_index, total_steps, summary,
+           can_cancel, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 0, 5, ?, 0, 7, ?, 1, ?, ?)`,
+      ).run(
+        "run:approval-v73",
+        "session:approval-v73",
+        "approval",
+        "capture",
+        "telegram",
+        "running",
+        "standard",
+        "executing",
+        "executing",
+        now,
+        now,
+      )
+      legacyDb.prepare(
+        `INSERT INTO canonical_work_aggregates
+          (work_id, root_run_id, state, revision, transitions_json, created_at, updated_at)
+         VALUES (?, ?, 'EXECUTING', 3, '[]', ?, ?)`,
+      ).run("work:root:run:approval-v73", "run:approval-v73", now, now)
+      legacyDb.prepare(
+        `INSERT INTO canonical_work_receipts
+          (receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json,
+           issued_at, consumed_revision, terminal_cause_json)
+         VALUES (?, ?, 'blocker', ?, '["evidence:legacy"]', ?, NULL, NULL)`,
+      ).run(
+        "receipt:legacy:blocker",
+        "work:root:run:approval-v73",
+        `sha256:${"a".repeat(64)}`,
+        now,
+      )
+
+      runMigrations(legacyDb as unknown as Parameters<typeof runMigrations>[0])
+
+      expect(legacyDb.prepare(
+        "SELECT state, revision FROM canonical_work_aggregates WHERE work_id = ?",
+      ).get("work:root:run:approval-v73")).toEqual({
+        state: "EXECUTING",
+        revision: 3,
+      })
+      expect(legacyDb.prepare(
+        "SELECT kind FROM canonical_work_receipts WHERE receipt_id = ?",
+      ).get("receipt:legacy:blocker")).toEqual({ kind: "blocker" })
+      expect(() => legacyDb.prepare(
+        "UPDATE canonical_work_aggregates SET state = 'AWAITING_APPROVAL' WHERE work_id = ?",
+      ).run("work:root:run:approval-v73")).not.toThrow()
+      expect(() => legacyDb.prepare(
+        `INSERT INTO canonical_work_receipts
+          (receipt_id, work_id, kind, evidence_fingerprint, evidence_refs_json,
+           issued_at, consumed_revision, terminal_cause_json)
+         VALUES (?, ?, 'approval', ?, '["approval:test"]', ?, NULL, NULL)`,
+      ).run(
+        "receipt:approval:v73",
+        "work:root:run:approval-v73",
+        `sha256:${"b".repeat(64)}`,
+        now + 1,
+      )).not.toThrow()
+      expect(legacyDb.prepare(
+        `SELECT COUNT(*) AS count
+         FROM approved_operation_continuations`,
+      ).get()).toEqual({ count: 0 })
+      expect(legacyDb.prepare(
+        `SELECT sql FROM sqlite_master
+         WHERE type = 'table'
+           AND name = 'approved_operation_continuations'`,
+      ).get()).toMatchObject({
+        sql: expect.stringContaining("'cancelled'"),
+      })
+    } finally {
+      legacyDb.close()
+    }
+  })
+
   it("creates the extended schema and verification indexes on a fresh DB", () => {
     const db = getDb()
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name)
@@ -257,15 +340,20 @@ describe("task004 storage migration", () => {
     const exchangeColumns = (db.prepare("PRAGMA table_info(agent_data_exchanges)").all() as Array<{ name: string }>).map((row) => row.name)
 
     expect(tables).toEqual(expect.arrayContaining([
-      "nickname_namespaces",
+      "agent_name_namespaces",
       "agent_relationships",
       "team_execution_plans",
     ]))
     expect(subSessionColumns).toContain("parent_sub_session_id")
     expect(exchangeColumns).toEqual(expect.arrayContaining([
+      "source_agent_name_snapshot",
+      "recipient_agent_name_snapshot",
+      "contract_json",
+    ]))
+    expect(subSessionColumns).not.toEqual(expect.arrayContaining(["agent_display_name", "agent_nickname"]))
+    expect(exchangeColumns).not.toEqual(expect.arrayContaining([
       "source_nickname_snapshot",
       "recipient_nickname_snapshot",
-      "contract_json",
     ]))
     expect(verifyMigrationState(db).ok).toBe(true)
   })
@@ -396,15 +484,16 @@ describe("task004 storage migration", () => {
 
       const teamColumns = (legacyDb.prepare("PRAGMA table_info(team_configs)").all() as Array<{ name: string }>).map((row) => row.name)
       const membershipColumns = (legacyDb.prepare("PRAGMA table_info(agent_team_memberships)").all() as Array<{ name: string }>).map((row) => row.name)
-      const agentRow = legacyDb.prepare("SELECT normalized_nickname, model_profile_json, delegation_policy_json FROM agent_configs WHERE agent_id = ?").get("agent:researcher") as {
-        normalized_nickname: string | null
+      const agentRow = legacyDb.prepare("SELECT agent_name, normalized_agent_name, model_profile_json, delegation_policy_json FROM agent_configs WHERE agent_id = ?").get("agent:researcher") as {
+        agent_name: string
+        normalized_agent_name: string
         model_profile_json: string | null
         delegation_policy_json: string | null
       }
       const teamRow = legacyDb.prepare(
-        "SELECT normalized_nickname, owner_agent_id, lead_agent_id, result_policy, conflict_policy FROM team_configs WHERE team_id = ?",
+        "SELECT display_name, owner_agent_id, lead_agent_id, result_policy, conflict_policy FROM team_configs WHERE team_id = ?",
       ).get("team:research") as {
-        normalized_nickname: string | null
+        display_name: string
         owner_agent_id: string | null
         lead_agent_id: string | null
         result_policy: string | null
@@ -425,11 +514,11 @@ describe("task004 storage migration", () => {
         "SELECT contract_json FROM agent_data_exchanges WHERE exchange_id = ?",
       ).get("exchange:legacy") as { contract_json: string | null }
       const namespaceRows = legacyDb.prepare(
-        "SELECT normalized_nickname, entity_type, entity_id FROM nickname_namespaces ORDER BY entity_type ASC, entity_id ASC",
-      ).all() as Array<{ normalized_nickname: string; entity_type: string; entity_id: string }>
+        "SELECT normalized_agent_name, entity_type, entity_id FROM agent_name_namespaces ORDER BY entity_type ASC, entity_id ASC",
+      ).all() as Array<{ normalized_agent_name: string; entity_type: string; entity_id: string }>
 
       expect(teamColumns).toEqual(expect.arrayContaining([
-        "normalized_nickname",
+        "display_name",
         "owner_agent_id",
         "lead_agent_id",
         "required_team_roles_json",
@@ -444,11 +533,11 @@ describe("task004 storage migration", () => {
         "fallback_for_agent_id",
         "sort_order",
       ]))
-      expect(agentRow.normalized_nickname).toBe("researcher")
+      expect(agentRow).toMatchObject({ agent_name: "Researcher", normalized_agent_name: "researcher" })
       expect(agentRow.model_profile_json).toContain("gpt-5.4")
       expect(agentRow.delegation_policy_json).toContain("maxParallelSessions")
       expect(teamRow).toMatchObject({
-        normalized_nickname: "research team",
+        display_name: "Research Team",
         owner_agent_id: "agent:knowbee",
         lead_agent_id: "agent:researcher",
         result_policy: "lead_synthesis",
@@ -463,8 +552,8 @@ describe("task004 storage migration", () => {
       expect(subSessionRow.parent_sub_session_id).toBeNull()
       expect(exchangeRow.contract_json).toBeNull()
       expect(namespaceRows).toEqual(expect.arrayContaining([
-        { normalized_nickname: "researcher", entity_type: "agent", entity_id: "agent:researcher" },
-        { normalized_nickname: "research team", entity_type: "team", entity_id: "team:research" },
+        { normalized_agent_name: "researcher", entity_type: "agent", entity_id: "agent:researcher" },
+        { normalized_agent_name: "research team", entity_type: "team", entity_id: "team:research" },
       ]))
       expect((legacyDb.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version).toBe(
         MIGRATIONS[MIGRATIONS.length - 1]?.version,
@@ -476,27 +565,63 @@ describe("task004 storage migration", () => {
 
   it("enforces agent/team nickname uniqueness through the namespace table and keeps imported configs disabled", () => {
     upsertAgentConfig(subAgentConfig(), { imported: true, idempotencyKey: "import:agent:researcher", now })
-    upsertTeamConfig(teamConfig({ nickname: "Research Squad" }), { imported: true, idempotencyKey: "import:team:research", now })
+    upsertTeamConfig(teamConfig({ displayName: "Research Squad" }), { imported: true, idempotencyKey: "import:team:research", now })
 
-    const namespaces = listNicknameNamespaces()
+    const namespaces = listAgentNameNamespaces()
     expect(namespaces).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        normalized_nickname: "researcher",
+        normalized_agent_name: "researcher",
         entity_type: "agent",
         entity_id: "agent:researcher",
         status: "disabled",
       }),
       expect.objectContaining({
-        normalized_nickname: "research squad",
+        normalized_agent_name: "research squad",
         entity_type: "team",
         entity_id: "team:research",
         status: "disabled",
       }),
     ]))
 
-    expect(() => upsertTeamConfig(teamConfig({ teamId: "team:conflict", nickname: "Researcher" }), { now: now + 1 })).toThrow(
-      NicknameNamespaceError,
+    expect(() => upsertTeamConfig(teamConfig({ teamId: "team:conflict", displayName: "Researcher" }), { now: now + 1 })).toThrow(
+      AgentNameNamespaceError,
     )
+  })
+
+  it("persists displayName as the only canonical team name", () => {
+    const team = teamConfig({
+      teamId: "team:display-only",
+      displayName: "Display Only Team",
+      memberAgentIds: [],
+      memberships: [],
+    })
+    delete team.nickname
+    delete team.normalizedNickname
+
+    upsertTeamConfig(team, { now })
+
+    const row = getDb()
+      .prepare<[string], { display_name: string; config_json: string }>(
+        "SELECT display_name, config_json FROM team_configs WHERE team_id = ?",
+      )
+      .get("team:display-only")
+    expect(row).toBeDefined()
+    if (!row) throw new Error("Expected persisted team row.")
+    expect(row).toMatchObject({
+      display_name: "Display Only Team",
+    })
+    expect(JSON.parse(row.config_json)).toEqual(
+      expect.objectContaining({
+        displayName: "Display Only Team",
+      }),
+    )
+    expect(listAgentNameNamespaces()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        normalized_agent_name: "display only team",
+        entity_type: "team",
+        entity_id: "team:display-only",
+      }),
+    ]))
   })
 
   it("persists hierarchy, team execution plans, parent sub-session linkage, and data exchange contract snapshots", () => {
@@ -552,8 +677,8 @@ describe("task004 storage migration", () => {
       exchangeId: "exchange:1",
       sourceOwner: { ownerType: "knowbee", ownerId: "agent:knowbee" },
       recipientOwner: { ownerType: "sub_agent", ownerId: "agent:researcher" },
-      sourceNicknameSnapshot: "Knowbee",
-      recipientNicknameSnapshot: "Researcher",
+      sourceAgentNameSnapshot: "Knowbee",
+      recipientAgentNameSnapshot: "Researcher",
       purpose: "verification context",
       allowedUse: "verification_only",
       retentionPolicy: "session_only",
@@ -568,7 +693,7 @@ describe("task004 storage migration", () => {
       teamExecutionPlanId: "team-plan:1",
       parentRunId: "run:root",
       teamId: "team:research",
-      teamNicknameSnapshot: "Research Team",
+      teamNameSnapshot: "Research Team",
       ownerAgentId: "agent:knowbee",
       leadAgentId: "agent:researcher",
       memberTaskAssignments: [{ agentId: "agent:researcher", taskIds: ["task:1"], role: "lead researcher" }],
@@ -593,15 +718,21 @@ describe("task004 storage migration", () => {
       idempotency_key: "idempotency:sub_session:sub-session:child",
     })
     expect(getAgentDataExchange("exchange:1")).toMatchObject({
-      source_nickname_snapshot: "Knowbee",
-      recipient_nickname_snapshot: "Researcher",
+      source_agent_name: "Knowbee",
+      source_agent_name_snapshot: "Knowbee",
+      recipient_agent_name: "Researcher",
+      recipient_agent_name_snapshot: "Researcher",
     })
     expect(getAgentDataExchange("exchange:1")?.contract_json).toContain("\"exchangeId\":\"exchange:1\"")
     expect(getTeamExecutionPlan("team-plan:1")).toMatchObject({
       parent_run_id: "run:root",
-      team_nickname_snapshot: "Research Team",
+      team_name_snapshot: "Research Team",
     })
-    expect(listTeamExecutionPlansForParentRun("run:root")).toHaveLength(1)
+    expect(listTeamExecutionPlansForParentRun("run:root")).toEqual([
+      expect.objectContaining({
+        team_name_snapshot: "Research Team",
+      }),
+    ])
     expect(listAgentTeamMemberships("team:research")).toEqual(expect.arrayContaining([
       expect.objectContaining({
         membership_id: "team:research:membership:1",

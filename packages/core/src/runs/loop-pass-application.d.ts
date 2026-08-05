@@ -1,11 +1,12 @@
 import type { AIProvider } from "../ai/index.js";
 import type { DeliveryOutcome } from "./delivery.js";
-import type { LoopDirective } from "./loop-directive.js";
+import type { LoopDirective, UserFacingTextSource } from "./loop-directive.js";
 import type { LoopEntryPassResult } from "./loop-entry-pass.js";
 import type { PostExecutionPassResult } from "./post-execution-pass.js";
 import type { RecoveryEntryPassResult } from "./recovery-entry-pass.js";
 import type { ReviewOutcomePassResult } from "./review-outcome-pass.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
+import type { NextAttemptToolPolicy } from "./next-attempt-tool-policy.js";
 export interface LoopEntryApplicationState {
     pendingLoopDirective: LoopDirective | null;
     intakeProcessed: boolean;
@@ -15,6 +16,11 @@ export type LoopEntryApplicationResult = {
 } | {
     kind: "retry";
     nextMessage: string;
+    state: LoopEntryApplicationState;
+} | {
+    kind: "execute";
+    nextMessage: string;
+    requiredToolNames: string[];
     state: LoopEntryApplicationState;
 } | {
     kind: "continue";
@@ -56,6 +62,8 @@ export type PostExecutionApplicationResult = {
     kind: "continue";
     state: PostExecutionApplicationState;
     preview: string;
+    previewSource?: UserFacingTextSource;
+    deferredPreviewDelivery?: boolean;
     deliveryOutcome: DeliveryOutcome;
 };
 export declare function applyPostExecutionPassResult(params: {
@@ -69,6 +77,8 @@ export declare function applyPostExecutionPassResult(params: {
 }): PostExecutionApplicationResult;
 export interface ReviewCycleApplicationState {
     currentMessage: string;
+    requiredToolNames?: string[];
+    nextAttemptToolPolicy?: NextAttemptToolPolicy;
     truncatedOutputRecoveryAttempted: boolean;
     activeWorkerRuntime: WorkerRuntimeTarget | undefined;
     currentProvider: AIProvider | undefined;

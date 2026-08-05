@@ -1,4 +1,5 @@
 import type { SetupMcpServerDraft } from "../../contracts/setup"
+import { formatExternalToolDisplayName } from "../../lib/mcp-display"
 import { useUiI18n } from "../../lib/ui-i18n"
 import type { McpServerErrors } from "../../lib/setupFlow"
 
@@ -52,9 +53,9 @@ export function McpSetupForm({
     <div className="space-y-5 rounded-2xl border border-stone-200 bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="text-base font-semibold text-stone-900">{text("외부 기능 연결 (MCP)", "External Tool Connection (MCP)")}</div>
+          <div className="text-base font-semibold text-stone-900">{text("외부 기능 연결", "External feature connections")}</div>
           <div className="mt-1 text-sm leading-6 text-stone-600">
-            {text("외부 프로그램이 가진 기능을 Knowbee에 연결하는 단계입니다. 지금은 stdio 방식만 바로 사용할 수 있습니다.", "This step connects external program features to Knowbee. Right now, only stdio transport is available for direct use.")}
+            {text("외부 프로그램이 가진 기능을 메인 에이전트가 사용할 수 있게 연결하는 단계입니다. 지금은 stdio 방식만 바로 사용할 수 있습니다.", "This step connects external program features for the main agent. Right now, only stdio transport is available for direct use.")}
           </div>
         </div>
         <button
@@ -62,7 +63,7 @@ export function McpSetupForm({
           onClick={addServer}
           className="rounded-xl border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700"
         >
-          {text("새 MCP 추가", "Add MCP Server")}
+          {text("외부 기능 추가", "Add external feature")}
         </button>
       </div>
 
@@ -72,7 +73,7 @@ export function McpSetupForm({
 
       {value.servers.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-5 text-sm text-stone-500">
-          {text("아직 추가된 MCP 서버가 없습니다. 필요하면 추가하고 연결 확인을 진행해 주세요.", "No MCP servers have been added yet. Add one if needed, then run the connection check.")}
+          {text("아직 추가된 외부 기능 연결이 없습니다. 필요하면 추가하고 연결 확인을 진행해 주세요.", "No external feature connections have been added yet. Add one if needed, then run the connection check.")}
         </div>
       ) : null}
 
@@ -123,8 +124,8 @@ export function McpServerEditorCard({
     <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-stone-900">{server.name.trim() || text("새 MCP 서버", "New MCP Server")}</div>
-          <div className="mt-1 text-xs text-stone-500">{text("외부 기능 연결 서버 (MCP Server)", "MCP Server")}</div>
+          <div className="text-sm font-semibold text-stone-900">{server.name.trim() || text("새 외부 기능", "New external feature")}</div>
+          <div className="mt-1 text-xs text-stone-500">{text("외부 기능 연결", "External feature connection")}</div>
         </div>
         <div className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusTone}`}>
           {server.status === "ready" ? text("연결됨", "Connected") : server.status === "error" ? text("오류", "Error") : text("준비 전", "Not Ready")}
@@ -133,7 +134,7 @@ export function McpServerEditorCard({
 
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         <div>
-          <label className="mb-1 block text-sm font-medium text-stone-700">{text("서버 이름 (Server Name) *", "Server Name *")}</label>
+          <label className="mb-1 block text-sm font-medium text-stone-700">{text("연결 이름 *", "Connection name *")}</label>
           <input
             className="input"
             value={server.name}
@@ -143,7 +144,7 @@ export function McpServerEditorCard({
           {errors?.name ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.name}</p> : null}
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium text-stone-700">{text("연결 방식 (Transport) *", "Transport *")}</label>
+          <label className="mb-1 block text-sm font-medium text-stone-700">{text("연결 방식 *", "Connection type *")}</label>
           <select
             className="input"
             value={server.transport}
@@ -168,7 +169,7 @@ export function McpServerEditorCard({
             checked={server.enabled}
             onChange={(event) => onChange({ enabled: event.target.checked })}
           />
-          {text("이 서버 사용", "Use this server")}
+          {text("이 연결 사용", "Use this connection")}
         </label>
         <label className="flex items-center gap-3 text-sm font-medium text-stone-700">
           <input
@@ -176,14 +177,14 @@ export function McpServerEditorCard({
             checked={server.required}
             onChange={(event) => onChange({ required: event.target.checked })}
           />
-          {text("필수 서버로 표시", "Mark as required")}
+          {text("필수 연결로 표시", "Mark as required")}
         </label>
       </div>
 
       {server.transport === "stdio" ? (
         <div className="mt-4 space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-stone-700">{text("실행 명령 (Command) *", "Command *")}</label>
+            <label className="mb-1 block text-sm font-medium text-stone-700">{text("실행 명령 *", "Launch command *")}</label>
             <input
               className="input font-mono"
               value={server.command}
@@ -193,7 +194,7 @@ export function McpServerEditorCard({
             {errors?.command ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.command}</p> : null}
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-stone-700">{text("실행 인자 (Args)", "Args")}</label>
+            <label className="mb-1 block text-sm font-medium text-stone-700">{text("실행 인자", "Launch arguments")}</label>
             <textarea
               className="input min-h-[88px] font-mono text-sm"
               value={server.argsText}
@@ -202,7 +203,7 @@ export function McpServerEditorCard({
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-stone-700">{text("작업 폴더 (Working Directory)", "Working Directory")}</label>
+            <label className="mb-1 block text-sm font-medium text-stone-700">{text("작업 폴더", "Working folder")}</label>
             <input
               className="input font-mono"
               value={server.cwd}
@@ -213,7 +214,7 @@ export function McpServerEditorCard({
         </div>
       ) : (
         <div className="mt-4">
-          <label className="mb-1 block text-sm font-medium text-stone-700">{text("HTTP 주소 (URL) *", "HTTP URL *")}</label>
+          <label className="mb-1 block text-sm font-medium text-stone-700">{text("HTTP 주소 *", "HTTP address *")}</label>
           <input
             className="input font-mono"
             value={server.url}
@@ -250,18 +251,18 @@ export function McpServerEditorCard({
       </div>
 
       <div className="mt-4">
-        <div className="text-xs font-semibold uppercase tracking-wide text-stone-500">{text("도구 목록 (Tools)", "Tools")}</div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-stone-500">{text("사용 가능한 도구", "Available tools")}</div>
         {server.tools.length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-2">
-            {server.tools.map((tool) => (
-              <span key={tool} className="rounded-full bg-white px-3 py-1 text-xs text-stone-700">
-                {tool}
+            {server.tools.map((tool, index) => (
+              <span key={`${tool}-${index}`} className="rounded-full bg-white px-3 py-1 text-xs text-stone-700">
+                {formatExternalToolDisplayName(tool, index + 1, text)}
               </span>
             ))}
           </div>
         ) : (
           <div className="mt-2 rounded-xl border border-dashed border-stone-200 bg-white px-3 py-4 text-sm text-stone-500">
-            {text("연결 확인을 마치면 사용 가능한 도구 이름이 여기에 표시됩니다.", "Available tool names will appear here after the connection check completes.")}
+            {text("연결 확인을 마치면 사용 가능한 도구가 여기에 표시됩니다.", "Available tools will appear here after the connection check completes.")}
           </div>
         )}
       </div>

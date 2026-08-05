@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import {
+  createYeonjangCancellationRequest,
   createYeonjangCommandDispatch,
   isYeonjangSafeRetryMethod,
 } from "../packages/core/src/yeonjang/mqtt-client.ts"
@@ -40,6 +41,7 @@ describe("task009 yeonjang command delivery", () => {
       cancelToken: dispatch.cancelToken,
     }))
     expect(dispatch.request).toEqual(expect.objectContaining({
+      protocolVersion: 1,
       id: dispatch.deliveryId,
       method: "screen.capture",
       params: { display: 1 },
@@ -84,5 +86,51 @@ describe("task009 yeonjang command delivery", () => {
     expect(isYeonjangSafeRetryMethod("system.exec")).toBe(false)
     expect(isYeonjangSafeRetryMethod("mouse.action")).toBe(false)
     expect(isYeonjangSafeRetryMethod("keyboard.action")).toBe(false)
+  })
+
+  it("expands request-group cancellation externally into exact child commands", () => {
+    const children = [
+      createYeonjangCommandDispatch("camera.capture", {}, {
+        metadata: {
+          requestGroupId: "request-group-1",
+          targetSessionId: "session-camera",
+        },
+      }),
+      createYeonjangCommandDispatch("screen.capture", {}, {
+        metadata: {
+          requestGroupId: "request-group-1",
+          targetSessionId: "session-screen",
+        },
+      }),
+    ]
+
+    const cancellations = children.map((child) =>
+      createYeonjangCancellationRequest({
+        commandId: child.commandId,
+        cancelToken: child.cancelToken,
+        targetSessionId: String(child.metadata.targetSessionId),
+      }))
+
+    expect(cancellations).toHaveLength(2)
+    expect(cancellations.map((request) => request.protocolVersion)).toEqual([1, 1])
+    expect(cancellations.map((request) => request.params)).toEqual([
+      {
+        command_id: children[0]?.commandId,
+        cancel_token: children[0]?.cancelToken,
+      },
+      {
+        command_id: children[1]?.commandId,
+        cancel_token: children[1]?.cancelToken,
+      },
+    ])
+    expect(cancellations.map((request) => request.metadata?.targetSessionId))
+      .toEqual(["session-camera", "session-screen"])
+    expect(cancellations).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        params: expect.objectContaining({
+          request_group_id: "request-group-1",
+        }),
+      }),
+    ]))
   })
 })

@@ -10,7 +10,7 @@ import {
   resetTopologyGuiDraftStoreForTest,
 } from "../packages/core/src/api/routes/topologies.ts"
 import { registerTopologyRunRoutes } from "../packages/core/src/api/routes/topology-runs.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { buildExampleEnterpriseTopology } from "../packages/core/src/index.ts"
 import { WORK_ORDER_TEMPLATE_CATALOG } from "../packages/core/src/topology-runtime/work-order-templates.ts"
@@ -23,6 +23,8 @@ import {
   TopologyRunTraceOverlay,
   buildTopologyRunOverlayState,
 } from "../packages/webui/src/components/topology/TopologyRunTraceOverlay.tsx"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: {
@@ -40,8 +42,7 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 
 const now = Date.UTC(2026, 3, 30, 11, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 function topologyFixture() {
   return structuredClone(buildExampleEnterpriseTopology(now))
@@ -50,11 +51,10 @@ function topologyFixture() {
 function useTempState(): void {
   closeDb()
   resetTopologyGuiDraftStoreForTest()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task021-topology-run-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task021-topology-run-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 afterEach(() => {
@@ -63,11 +63,6 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
 })
 
 async function startDraft(app: ReturnType<typeof Fastify>) {
@@ -148,6 +143,7 @@ describe("task021 enterprise topology manual run and trace UI", () => {
   it("starts a manual topology run and exposes trace through the run APIs", async () => {
     useTempState()
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerTopologyRoutes(app)
     registerTopologyRunRoutes(app)
     await app.ready()
@@ -204,6 +200,7 @@ describe("task021 enterprise topology manual run and trace UI", () => {
   it("renders delegation path, tool calls, failed candidate, and FailureReport overlay state", async () => {
     useTempState()
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerTopologyRoutes(app)
     registerTopologyRunRoutes(app)
     await app.ready()

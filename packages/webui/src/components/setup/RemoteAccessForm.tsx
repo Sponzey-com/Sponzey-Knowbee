@@ -30,6 +30,8 @@ export function RemoteAccessForm({
             {text("인증 토큰", "Auth Token")}{value.authEnabled ? " *" : ""}
           </label>
           <input
+            type="password"
+            autoComplete="new-password"
             className="input font-mono"
             value={value.authToken}
             onChange={(event) => onChange({ authToken: event.target.value })}

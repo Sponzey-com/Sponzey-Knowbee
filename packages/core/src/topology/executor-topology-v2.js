@@ -557,7 +557,7 @@ function enterpriseEntityStatusFromExecutorStatus(status) {
 }
 function enterpriseNodeMetadataFromExecutorNodeV2(node) {
     const metadata = {
-        roleName: node.roleName ?? "실행자",
+        roleName: node.roleName ?? "서브 에이전트",
         executorTopologyV2: {
             schemaVersion: EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION,
             nodeId: node.id,

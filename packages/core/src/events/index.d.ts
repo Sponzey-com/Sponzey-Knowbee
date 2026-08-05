@@ -86,7 +86,6 @@ export interface KnowbeeEvents {
         previewUrl?: string;
         downloadUrl?: string;
         previewable?: boolean;
-        filePath: string;
         fileName: string;
         mimeType?: string;
         caption?: string;
@@ -174,6 +173,10 @@ export interface KnowbeeEvents {
         toolName: string;
         kind?: ApprovalKind;
         reason?: ApprovalResolutionReason;
+    };
+    "approval.continuation.enqueued": {
+        continuationId: string;
+        runId: string;
     };
     "schedule.created": {
         runId: string;

@@ -1,5 +1,6 @@
 import type { ExecutorConnectionDraft, ExecutorDraft } from "./executor-graph.js"
 import type { AgentExecutionRiskBoundary } from "../orchestration/execution-decision-contract.js"
+import { DEFAULT_MAIN_AGENT_NAME_KO } from "../agent/main-agent-identity.js"
 
 export type NodeTaskAnalysisSource = "rule_based" | "llm_assisted" | "user_confirmed" | "runtime_refined"
 
@@ -58,6 +59,7 @@ export function buildNodeTaskAnalysis(input: {
   now?: string
   source?: NodeTaskAnalysisSource
   riskBoundary?: AgentExecutionRiskBoundary
+  rootAgentNameSnapshot?: string
 }): NodeTaskAnalysis {
   const now = input.now ?? new Date(0).toISOString()
   const description = input.executor.description.trim()
@@ -84,7 +86,7 @@ export function buildNodeTaskAnalysis(input: {
       ? [...input.executor.inferredSuccessCriteria]
       : ["처리 결과가 기록됨"],
     failureBoundaries: riskBoundary.failureBoundaries,
-    safeAlternatives: buildSafeAlternatives(input.executor),
+    safeAlternatives: buildSafeAlternatives(input.executor, input.rootAgentNameSnapshot),
     confidence: input.executor.confidence,
     needsUserConfirmation,
     createdAt: now,
@@ -118,7 +120,7 @@ function buildTaskUnits(executor: ExecutorDraft, goals: string[]): NodeTaskUnit[
 
 function buildInputNeeds(connections: ExecutorConnectionDraft[]): string[] {
   if (connections.length === 0) return ["사용자 실행 입력"]
-  return connections.map((connection) => `이전 실행자 ${connection.fromExecutorId}의 ${connection.label}`)
+  return connections.map((connection) => `이전 서브 에이전트 ${connection.fromExecutorId}의 ${connection.label}`)
 }
 
 function structuredRiskBoundary(
@@ -147,7 +149,15 @@ function structuredRiskBoundary(
   }
 }
 
-function buildSafeAlternatives(executor: ExecutorDraft): RecoveryAlternative[] {
+function rootAgentDisplayName(value: string | undefined): string {
+  return value?.trim() || DEFAULT_MAIN_AGENT_NAME_KO
+}
+
+function buildSafeAlternatives(
+  executor: ExecutorDraft,
+  rootAgentNameSnapshot: string | undefined,
+): RecoveryAlternative[] {
+  const rootAgentName = rootAgentDisplayName(rootAgentNameSnapshot)
   return [
     {
       alternativeId: `alternative:${executor.id}:task-split`,
@@ -159,7 +169,7 @@ function buildSafeAlternatives(executor: ExecutorDraft): RecoveryAlternative[] {
       alternativeId: `alternative:${executor.id}:fallback-route`,
       title: "다른 실행 경로 찾기",
       changedDimension: "fallback_route",
-      description: "맞는 서브 에이전트, 연장, 노비 직접 처리 순서로 다른 경로를 찾는다.",
+      description: `맞는 서브 에이전트, 연장, ${rootAgentName} 직접 처리 순서로 다른 경로를 찾는다.`,
     },
   ]
 }

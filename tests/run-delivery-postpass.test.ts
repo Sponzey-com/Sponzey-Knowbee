@@ -64,7 +64,7 @@ describe("delivery post-pass helpers", () => {
     expect(decision.kind).toBe("complete")
   })
 
-  it("returns retry decision when direct delivery still needs recovery", () => {
+  it("does not consume a delivery recovery before an artifact exists", () => {
     const decision = decideDirectArtifactDeliveryFlow({
       deliveryOutcome: {
         directArtifactDeliveryRequested: true,
@@ -83,10 +83,36 @@ describe("delivery post-pass helpers", () => {
       successfulTools: [{ toolName: "screen_capture", output: "ok" }],
     })
 
-    expect(decision.kind).toBe("retry")
-    if (decision.kind === "retry") {
-      expect(decision.nextMessage).toContain("[Direct Artifact Delivery Recovery]")
-    }
+    expect(decision.kind).toBe("none")
+  })
+
+  it("defers a verified camera artifact to the run-scoped delivery handoff", () => {
+    const decision = decideDirectArtifactDeliveryFlow({
+      deliveryOutcome: {
+        directArtifactDeliveryRequested: true,
+        hasSuccessfulArtifactDelivery: false,
+        deliverySatisfied: false,
+        requiresDirectArtifactRecovery: true,
+      },
+      source: "telegram",
+      successfulFileDeliveries: [],
+      seenKeys: new Set(),
+      canRetry: true,
+      maxTurns: 5,
+      deliveryBudgetLimit: 5,
+      originalRequest: "보여줘",
+      previousResult: "캡처 완료",
+      successfulTools: [{
+        toolName: "yeonjang_camera_capture",
+        output: "artifact ready",
+        details: {
+          kind: "camera_artifact",
+          artifactRef: "artifact:8d0af7fa-ff4b-4c3d-b513-4db1cdb32d29",
+        },
+      }],
+    })
+
+    expect(decision.kind).toBe("none")
   })
 
   it("completes mistaken direct delivery for plain text information answers", () => {

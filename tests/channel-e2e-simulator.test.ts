@@ -1,6 +1,9 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createWebUiChunkDeliveryHandler } from "../packages/core/src/api/ws/chunk-delivery.ts"
+import { createArtifactStorageContextFromRoot } from "../packages/core/src/artifacts/lifecycle.ts"
 import {
   registerApprovalFromWs,
   resetWebUiApprovalStateForTest,
@@ -8,9 +11,11 @@ import {
 } from "../packages/core/src/api/ws/stream.ts"
 import { createSlackChunkDeliveryHandler } from "../packages/core/src/channels/slack/chunk-delivery.ts"
 import { createTelegramChunkDeliveryHandler } from "../packages/core/src/channels/telegram/chunk-delivery.ts"
-import { PATHS } from "../packages/core/src/config/index.js"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
+import { closeDb } from "../packages/core/src/db/index.js"
 import { eventBus, type ApprovalDecision, type ApprovalResolutionReason, type KnowbeeEvents } from "../packages/core/src/events/index.js"
 import { resetArtifactDeliveryDedupeForTest } from "../packages/core/src/runs/delivery.js"
+import { initializeToolDispatcher } from "../packages/core/src/tools/index.ts"
 import {
   createSlackInboundSimulation,
   createTelegramInboundSimulation,
@@ -18,9 +23,11 @@ import {
   createWebUiInboundSimulation,
   createYeonjangCapabilityMqttMock,
 } from "./fixtures/channel-e2e-simulator.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const getRootRunMock = vi.fn()
 const listRunsForActiveRequestGroupsMock = vi.fn(() => [])
+const tempDirs: string[] = []
 
 vi.mock("../packages/core/src/runs/store.js", () => ({
   getRootRun: (...args: unknown[]) => getRootRunMock(...args),
@@ -33,6 +40,18 @@ const {
   resetSlackApprovalStateForTest,
   setActiveSlackConversationForSession,
 } = await import("../packages/core/src/channels/slack/approval-handler.ts")
+
+function createPassThroughNoticeRendering() {
+  return {
+    getDefaultModel: () => "test-model",
+    renderFinalResponseText: vi.fn(async (input) => ({
+      text: input.rawText,
+      textSource: "llm_reviewed",
+      promptSourceId: "final_response",
+      rawTextSource: input.textSource,
+    })),
+  }
+}
 
 const {
   registerApprovalHandler: registerTelegramApprovalHandler,
@@ -48,6 +67,11 @@ async function flushMicrotasks(): Promise<void> {
 describe("channel E2E simulator", () => {
   beforeEach(() => {
     vi.useRealTimers()
+    closeDb()
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-channel-e2e-"))
+    tempDirs.push(stateDir)
+    initializeTestDbRuntime(stateDir)
+    initializeToolDispatcher(DEFAULT_CONFIG)
     getRootRunMock.mockReset()
     listRunsForActiveRequestGroupsMock.mockReset().mockReturnValue([])
     resetArtifactDeliveryDedupeForTest()
@@ -58,10 +82,15 @@ describe("channel E2E simulator", () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    closeDb()
     resetArtifactDeliveryDedupeForTest()
     resetSlackApprovalStateForTest()
     resetTelegramApprovalStateForTest()
     resetWebUiApprovalStateForTest()
+    while (tempDirs.length > 0) {
+      const dir = tempDirs.pop()
+      if (dir) rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it("keeps Slack approval state in the originating thread and ignores duplicate actions", async () => {
@@ -101,6 +130,7 @@ describe("channel E2E simulator", () => {
       channelId: slack.channelId,
       threadTs: slack.threadTs,
       userId: slack.userId,
+      noticeRendering: createPassThroughNoticeRendering(),
       reply,
     })).resolves.toBe(true)
 
@@ -110,20 +140,23 @@ describe("channel E2E simulator", () => {
       channelId: slack.channelId,
       threadTs: slack.threadTs,
       userId: slack.userId,
+      noticeRendering: createPassThroughNoticeRendering(),
       reply,
     })).resolves.toBe(false)
 
     expect(resolve).toHaveBeenCalledTimes(1)
     expect(resolve).toHaveBeenCalledWith("allow_once", "user")
-    expect(reply).toHaveBeenCalledTimes(1)
+    expect(reply).not.toHaveBeenCalled()
   })
 
   it("keeps Telegram approval state in the originating chat/topic and rejects late approval after timeout", async () => {
     vi.useFakeTimers()
     const telegram = createTelegramInboundSimulation()
+    const timeoutRun = "run-telegram-timeout"
+    const englishRun = "run-telegram-english"
     const callbackHandlers: Array<(ctx: {
       callbackQuery: { data: string }
-      from: { id: number; first_name?: string; username?: string }
+      from: { id: number; first_name?: string; username?: string; language_code?: string }
       answerCallbackQuery: (text?: string) => Promise<void>
     }) => Promise<void>> = []
     const bot = {
@@ -143,7 +176,11 @@ describe("channel E2E simulator", () => {
     try {
       getRootRunMock.mockImplementation((runId: string) => ({
         source: "telegram",
-        sessionId: runId === telegram.runId ? telegram.sessionId : `${telegram.sessionId}-timeout`,
+        sessionId: runId === telegram.runId
+          ? telegram.sessionId
+          : runId === timeoutRun
+            ? `${telegram.sessionId}-timeout`
+            : `${telegram.sessionId}-english`,
       }))
 
       registerTelegramApprovalHandler(bot as never)
@@ -183,7 +220,6 @@ describe("channel E2E simulator", () => {
       expect(resolve).toHaveBeenCalledTimes(1)
       expect(answerCallbackQuery).toHaveBeenLastCalledWith("이미 처리된 요청입니다.")
 
-      const timeoutRun = "run-telegram-timeout"
       setActiveChatForSession(`${telegram.sessionId}-timeout`, telegram.chatId, telegram.userId, telegram.threadId)
       eventBus.emit("approval.request", {
         runId: timeoutRun,
@@ -209,6 +245,26 @@ describe("channel E2E simulator", () => {
         expect.objectContaining({ runId: telegram.runId, decision: "deny", reason: "user" }),
         expect.objectContaining({ runId: timeoutRun, decision: "deny", reason: "timeout" }),
       ]))
+
+      const englishResolve = vi.fn()
+      setActiveChatForSession(`${telegram.sessionId}-english`, telegram.chatId, telegram.userId, telegram.threadId, "en")
+      eventBus.emit("approval.request", {
+        runId: englishRun,
+        toolName: "screen_capture",
+        params: { extensionId: "yeonjang-main" },
+        kind: "approval",
+        resolve: englishResolve,
+      })
+      await flushMicrotasks()
+
+      await callbackHandlers[0]?.({
+        callbackQuery: { data: `approve:${englishRun}:all` },
+        from: { id: telegram.userId, first_name: "Tester", language_code: "en-US" },
+        answerCallbackQuery,
+      })
+
+      expect(englishResolve).toHaveBeenCalledWith("allow_run", "user")
+      expect(answerCallbackQuery).toHaveBeenLastCalledWith("Approved for this request.")
     } finally {
       off()
     }
@@ -258,6 +314,7 @@ describe("channel E2E simulator", () => {
     }
     const artifacts: KnowbeeEvents["agent.artifact"][] = []
     const off = eventBus.on("agent.artifact", (artifact) => artifacts.push(artifact))
+    const artifactRoot = mkdtempSync(join(tmpdir(), "knowbee-channel-e2e-artifacts-"))
 
     try {
       const slackHandler = createSlackChunkDeliveryHandler({
@@ -279,6 +336,7 @@ describe("channel E2E simulator", () => {
         logError: vi.fn(),
       })
       const webuiHandler = createWebUiChunkDeliveryHandler({
+        artifactStorage: createArtifactStorageContextFromRoot(artifactRoot),
         sessionId: webui.sessionId,
         runId: webui.runId,
       })
@@ -324,7 +382,9 @@ describe("channel E2E simulator", () => {
       expect(slackResponder.sendFile).toHaveBeenCalledTimes(1)
       expect(artifacts).toHaveLength(0)
 
-      const webuiFilePath = join(PATHS.stateDir, "artifacts", "screens", "webui-routing.png")
+      const webuiFilePath = join(artifactRoot, "screens", "webui-routing.png")
+      mkdirSync(join(artifactRoot, "screens"), { recursive: true })
+      writeFileSync(webuiFilePath, "webui capture", "utf-8")
       const webuiChunk = {
         ...slackChunk,
         details: {
@@ -346,12 +406,14 @@ describe("channel E2E simulator", () => {
         sessionId: webui.sessionId,
         runId: webui.runId,
         url: "/api/artifacts/screens/webui-routing.png",
-        filePath: webuiFilePath,
       }))
+      expect("filePath" in artifacts[0]!).toBe(false)
+      expect(JSON.stringify(artifacts[0])).not.toContain(webuiFilePath)
       expect(slackResponder.sendFile).toHaveBeenCalledTimes(1)
       expect(telegramResponder.sendFile).toHaveBeenCalledTimes(1)
     } finally {
       off()
+      rmSync(artifactRoot, { recursive: true, force: true })
     }
   })
 

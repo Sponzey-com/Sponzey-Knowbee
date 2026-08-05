@@ -6,7 +6,7 @@
   <img src="./resource/knowbee-1-512.png" alt="Knowbee" width="220" />
 </p>
 
-Sponzey Knowbee is a local-first personal AI assistant that runs on the user's computer. Inside the product, the assistant is called `Knowbee`.
+Sponzey Knowbee is a local-first personal AI agent platform that runs on the user's computer. `Knowbee` is the English product name and the default main-agent name only when the user has not configured a main-agent `agent_name`; a configured `agent_name` becomes the main agent's self name. The Korean product and default main-agent name is `노비`.
 
 Knowbee is not meant to be only a chat bot. It receives a request, understands the intent, chooses an execution path, uses local tools and connected services, tracks progress, delivers the result, and decides whether the work is actually complete.
 
@@ -21,7 +21,7 @@ The work from `.tasks/phase001` through `.tasks/phase016` has moved Knowbee towa
 - prompts are split into role-specific source files under `prompts/`
 - memory, retrieval evidence, diagnostics, and task history are stored by purpose
 - schedules, delivery receipts, audit events, and rollback evidence are treated as structured records
-- topology and setup screens use visual scenes so users can see what is connected
+- setup and sub-agent settings screens use visual scenes so users can see connected capabilities and delegation flow
 - sub-agents and teams are represented as explicit contracts, hierarchy, permissions, memory scopes, and delegation sessions
 
 The current product should be understood as `Knowbee + local gateway + WebUI + optional channels + optional Yeonjang extension + optional sub-agent/team orchestration`.
@@ -35,7 +35,7 @@ The current product should be understood as `Knowbee + local gateway + WebUI + o
 - register MCP servers and Skills
 - configure communication channels
 - show runtime status, diagnostics, and advanced settings
-- visualize setup, capability, and topology state
+- visualize setup, capability, sub-agent settings, and delegation flow state
 
 ### AI and Prompt Runtime
 
@@ -76,20 +76,20 @@ The most validated operating system is `macOS`. Windows and Linux paths exist by
 
 - one-time and recurring schedules are modeled separately from normal user runs
 - schedule identity, payload, delivery, and migration use structured keys rather than natural-language comparison
-- web retrieval uses source candidates, evidence, verification, cache, degraded mode, and strict completion checks
+- direct URL fetch, external APIs, Yeonjang, Skills, and MCP results use source candidates, evidence, verification, cache, degraded mode, and strict completion checks
 - vector search is a candidate provider only, not the final decision maker
 
 ### Sub-Agents and Teams
 
 Sub-agent support is being built around explicit contracts rather than hidden extra bots.
 
-- `Knowbee` is the fixed top-level coordinator.
-- sub-agents have unique nicknames, roles, model/capability summaries, permissions, and memory scopes
+- the configured main agent is the top-level coordinator; when no user-defined name exists, it uses `Knowbee`.
+- sub-agents have unique `agent_name` values, roles, model/capability summaries, permissions, and memory scopes
 - hierarchy is a tree: an agent can delegate only to direct children
-- teams are planning groups owned by an agent, not independent executors
+- teams are planning groups owned by an agent, not independent agents
 - team members are drawn from the owner's direct child agents
 - delegation creates sub-sessions, data exchange packages, result reports, review verdicts, and monitoring events
-- final user delivery remains owned by Knowbee for user-started requests
+- final user delivery remains owned by the main agent for user-started requests
 
 ## Project Layout
 
@@ -98,7 +98,7 @@ Sub-agent support is being built around explicit contracts rather than hidden ex
 - `packages/cli`
   - daemon and local command entry points
 - `packages/webui`
-  - setup, settings, run monitor, topology, task cards, and diagnostics UI
+  - setup, settings, run monitor, sub-agent settings, task cards, and diagnostics UI
 - `prompts`
   - prompt source files used to assemble role-specific runtime prompts
 - `Yeonjang`
@@ -113,12 +113,12 @@ Sub-agent support is being built around explicit contracts rather than hidden ex
 ### Requirements
 
 - macOS is the currently supported primary environment
-- Node.js `22+`
+- Node.js `>=22.0.0 <26.0.0`
 - `corepack` enabled
 - `pnpm@8.10.2`
 - Rust / Cargo if running Yeonjang from source
 
-### Step 1. Prepare Node.js 22
+### Step 1. Prepare a supported Node.js version
 
 ```bash
 nvm install 22
@@ -126,9 +126,9 @@ nvm use 22
 node -v
 ```
 
-You should see a `v22.x.x` version.
+You should see a version from `v22.x.x` through `v25.x.x`. Node.js 22 is the recommended baseline.
 
-If you are on Windows and do not use `nvm`, install Node.js 22 first, open a new terminal, and verify with:
+If you are on Windows and do not use `nvm`, install Node.js 22 through 25, open a new terminal, and verify with:
 
 ```bash
 node -v
@@ -142,24 +142,17 @@ corepack prepare pnpm@8.10.2 --activate
 pnpm -v
 ```
 
-If `corepack` is missing, your Node installation is too old or incomplete. Reinstall Node.js 22 first.
+If `corepack` is missing, your Node installation is unsupported or incomplete. Reinstall a supported Node.js version first.
 
 This repository uses a `pnpm` workspace. Use `pnpm install`, not `npm install`.
 
 ### Step 3. Download the repository
 
-If the GitHub repository has already been renamed to `Sponzey-Knowbee`, use:
+Clone the current GitHub repository:
 
 ```bash
 git clone https://github.com/Sponzey-com/Sponzey-Knowbee.git
 cd Sponzey-Knowbee
-```
-
-If the remote repository has not been renamed yet, use the old URL and then continue with the same commands:
-
-```bash
-git clone https://github.com/Sponzey-com/Sponzey-Nobie.git
-cd Sponzey-Nobie
 ```
 
 ### Step 4. Install dependencies
@@ -216,7 +209,7 @@ For most users, the WebUI address is the one to open first.
 
 ### Quick install and start
 
-After Node.js 22 and pnpm are ready, the full first-run flow is:
+After a supported Node.js version and pnpm are ready, the full first-run flow is:
 
 ```bash
 git clone https://github.com/Sponzey-com/Sponzey-Knowbee.git
@@ -224,13 +217,6 @@ cd Sponzey-Knowbee
 pnpm install
 pnpm -r build
 bash scripts/knowbee-start.sh
-```
-
-If the repository is still named `Sponzey-Nobie` on GitHub, replace the first two lines with:
-
-```bash
-git clone https://github.com/Sponzey-com/Sponzey-Nobie.git
-cd Sponzey-Nobie
 ```
 
 ### Step 8. Useful local control commands
@@ -256,6 +242,19 @@ bash scripts/stop-local.sh
 Notes:
 
 - `knowbee-start.sh` builds the Gateway runtime packages it needs before launch.
+- Local and packaged startup use the verified `packages/core/dist/runtime/serve-bundle.js`
+
+  artifact.
+- Live acceptance is rejected before channel or device work when the running Gateway bundle,
+
+  its manifest, the built sources, and the process start order do not agree. Restart with
+  `bash scripts/knowbee-start.sh --restart` after rebuilding.
+- The script reports structured startup phases. The 30-second objective is a performance
+
+  signal; a running Gateway continues toward an explicit ready, failed, or cancelled result.
+- Success is printed only after the current Gateway PID, repository ownership, listener, health,
+
+  and WebUI startup checks pass.
 - If Gateway or WebUI is already running, `knowbee-start.sh` can stop and start them again.
 - Use `--restart` when you want the restart step to be explicit in logs and workflow.
 - Windows-native batch entry points are currently provided for Yeonjang. The local Gateway/WebUI flow uses shell scripts, so use a bash-compatible shell on Windows.
@@ -276,6 +275,61 @@ node packages/knowbee/bin/knowbee.js serve
 ```
 
 For normal local development and setup, prefer `bash scripts/knowbee-start.sh` because it manages the local WebUI and service lifecycle together.
+
+### Artifact cleanup
+
+Use the admin cleanup command when you want to inspect or remove old diagnostic exports, external signing requests, or an explicit release output folder.
+
+Preview does not delete files:
+
+```bash
+node packages/knowbee/bin/knowbee.js admin artifact-cleanup
+node packages/knowbee/bin/knowbee.js admin artifact-cleanup --json
+```
+
+After package installation, the same preview command is:
+
+```bash
+knowbee admin artifact-cleanup --json
+```
+
+Preview an explicit release output folder:
+
+```bash
+node packages/knowbee/bin/knowbee.js admin artifact-cleanup --release-output-dir ./release-output
+knowbee admin artifact-cleanup --release-output-dir ./release-output
+```
+
+Run cleanup only after reviewing the preview:
+
+```bash
+node packages/knowbee/bin/knowbee.js admin artifact-cleanup --execute --confirm "CONFIRM ARTIFACT CLEANUP"
+knowbee admin artifact-cleanup --execute --confirm "CONFIRM ARTIFACT CLEANUP"
+```
+
+Show audit-level reason aggregates only when you explicitly need them:
+
+```bash
+node packages/knowbee/bin/knowbee.js admin artifact-cleanup --audit --json
+knowbee admin artifact-cleanup --audit --json
+```
+
+The default output hides internal reason codes and file paths. `--audit` shows aggregate reason counts, but still must not expose raw file paths or artifact filenames.
+
+Smoke-check the installed CLI path without running destructive success cleanup:
+
+```bash
+pnpm run smoke:artifact-cleanup-cli
+node scripts/self/smoke-artifact-cleanup-cli.mjs
+```
+
+To also verify the successful delete path, run the isolated fixture smoke:
+
+```bash
+node scripts/self/smoke-artifact-cleanup-cli.mjs --destructive-fixture
+```
+
+The destructive fixture smoke uses only a temporary release output directory. It must not target your real release output or user state.
 
 ### Run Yeonjang
 
@@ -310,6 +364,17 @@ For a clean macOS restart:
 ```bash
 bash scripts/start-yeonjang-macos.sh --restart
 ```
+
+Normal start and restart reuse an existing verified app bundle so macOS code identity and
+camera permission remain stable. Rebuild explicitly after changing Yeonjang source or packaging:
+
+```bash
+bash scripts/start-yeonjang-macos.sh --restart --build
+```
+
+The build uses ad-hoc signing by default. Release and persistent development installations can
+set `YEONJANG_CODESIGN_IDENTITY` to an existing code-signing identity. Helper or app signing
+verification failure stops the build.
 
 To stop the macOS Yeonjang GUI without restarting:
 
@@ -349,15 +414,18 @@ cargo run --manifest-path Yeonjang/Cargo.toml
 
 Notes:
 
-- `start-yeonjang-macos.sh` checks and rebuilds the macOS app bundle before launch.
+- `start-yeonjang-macos.sh` builds only when the app bundle is missing or `--build` is explicit;
+
+  normal restart verifies and reuses the existing bundle.
 - `start-yeonjang-windows.bat` owns the Windows start and restart flow, and uses the build script only to prepare a missing binary.
 - `start-yeonjang-linux.sh` checks and rebuilds the Linux desktop binary before launch.
 - `start-yeonjang-linux-headless.sh` runs the `headless_managed` profile through the managed MQTT entrypoint with no tray/window expectation.
 - `build-yeonjang-windows.bat` and `build-yeonjang-linux.sh` stay focused on build output preparation.
+- A normal `start-yeonjang-*` never stops an existing runtime. If one is already effect-capable, the newly launched binary exits with its fixed OS-runtime lease result; the existing PID file and log remain its operator-facing projection. Only `--restart` (and an explicit macOS bundle rebuild) may stop the exact PID recorded by that launcher. A missing PID file never triggers process discovery or termination.
 - Yeonjang support profiles are:
   - `desktop_interactive`: tray-first desktop app
   - `desktop_limited`: desktop app without tray-first guarantees
-  - `headless_managed`: MQTT/runtime-only managed node
+  - `headless_managed`: MQTT/runtime-only managed instance
 - `desktop_interactive` starts hidden to the tray. Open the window from the tray menu, and on Windows you can also reopen it with a tray double-click.
 - Linux tray icon event support is limited, so Linux should be treated as tray-menu-first for reopening the window.
 - Linux desktop start requires `DISPLAY` or `WAYLAND_DISPLAY`. If neither exists, use the headless managed script instead of the GUI script.

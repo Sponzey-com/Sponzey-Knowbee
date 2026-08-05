@@ -1,6 +1,7 @@
 import { enqueueMemoryWritebackCandidate, getDb, getSession, getTaskContinuity, insertSession, upsertSessionSnapshot, upsertTaskContinuity } from "../db/index.js";
-import { createLogger } from "../logger/index.js";
+import { createLogger, redactLogText } from "../logger/index.js";
 import { buildActiveQueueCancellationMessage, } from "./entry-semantics.js";
+import { buildActiveQueueCancellationNotice } from "./active-cancellation-notice.js";
 import { buildFilesystemVerificationPrompt, verifyFilesystemTargets, } from "./filesystem-verification.js";
 import { runFilesystemVerificationSubtask as runAnalysisOnlyFilesystemVerificationSubtask, } from "./analysis-subrun.js";
 import { buildRunFailureJournalRecord, buildRunInstructionJournalRecord, buildRunSuccessJournalRecord, safeInsertRunJournalRecord, } from "./journaling.js";
@@ -10,6 +11,10 @@ import { recordFlashFeedback } from "../memory/flash-feedback.js";
 import { buildRunWritebackCandidates, isFlashFeedback, prepareMemoryWritebackQueueInput } from "../memory/writeback.js";
 import { appendRunEvent, cancelRootRun, createRootRun, getRootRun, listActiveSessionRequestGroups, setRunStepStatus, updateRunStatus, } from "./store.js";
 const log = createLogger("runs:start-support");
+function startSupportErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 function mapTaskProfileToWorkerRole(taskProfile) {
     switch (taskProfile) {
         case "coding":
@@ -86,6 +91,13 @@ export async function tryHandleActiveQueueCancellation(params) {
                 remainingCount: 0,
                 hadTargets: false,
             }),
+            textSource: "runtime_deterministic",
+            notice: buildActiveQueueCancellationNotice({
+                mode: params.mode,
+                hadTargets: false,
+                cancelledCount: 0,
+                remainingCount: 0,
+            }),
             eventLabel: "취소 요청 결과 전달",
         };
     }
@@ -105,6 +117,13 @@ export async function tryHandleActiveQueueCancellation(params) {
             cancelledTitles,
             remainingCount,
             hadTargets: cancelledTitles.length > 0,
+        }),
+        textSource: "runtime_deterministic",
+        notice: buildActiveQueueCancellationNotice({
+            mode: params.mode,
+            hadTargets: cancelledTitles.length > 0,
+            cancelledCount: cancelledTitles.length,
+            remainingCount,
         }),
         eventLabel: "취소 요청 결과 전달",
     };
@@ -131,6 +150,7 @@ export function rememberRunInstruction(params) {
     const latestInstructionSummary = condenseMemoryText(params.message, 280);
     const latestTargetContext = taskContinuityTargetContextForRun(run, params.source);
     safeInsertRunJournalRecord(buildRunInstructionJournalRecord(params), {
+        insertRecord: (input) => params.memoryJournal.insert(input),
         onError: (message) => log.warn(message),
     });
     if (isFlashFeedback(params.message)) {
@@ -170,6 +190,7 @@ export function rememberRunSuccess(params) {
         ...params,
         ...(requestGroupId ? { requestGroupId } : {}),
     }), {
+        insertRecord: (input) => params.memoryJournal.insert(input),
         onError: (message) => log.warn(message),
     });
     const summary = condenseMemoryText(params.summary || params.text, 360);
@@ -259,6 +280,7 @@ export function rememberRunFailure(params) {
         ...params,
         ...(requestGroupId ? { requestGroupId } : {}),
     }), {
+        insertRecord: (input) => params.memoryJournal.insert(input),
         onError: (message) => log.warn(message),
     });
     const detail = condenseMemoryText(params.detail || params.summary, 480);
@@ -345,7 +367,7 @@ function safeRecordFlashFeedback(input) {
         });
     }
     catch (error) {
-        log.warn(`flash-feedback record failed: ${error instanceof Error ? error.message : String(error)}`);
+        log.warn(`flash-feedback record failed: ${startSupportErrorMessage(error)}`);
     }
 }
 function safeEnqueueWriteback(input) {
@@ -353,7 +375,7 @@ function safeEnqueueWriteback(input) {
         enqueueMemoryWritebackCandidate(prepareMemoryWritebackQueueInput(input));
     }
     catch (error) {
-        log.warn(`memory writeback enqueue failed: ${error instanceof Error ? error.message : String(error)}`);
+        log.warn(`memory writeback enqueue failed: ${startSupportErrorMessage(error)}`);
     }
 }
 function safeEnqueueWritebackCandidates(input) {
@@ -369,7 +391,7 @@ function safeUpsertSessionSnapshot(input) {
         upsertSessionSnapshot(input);
     }
     catch (error) {
-        log.warn(`session snapshot upsert failed: ${error instanceof Error ? error.message : String(error)}`);
+        log.warn(`session snapshot upsert failed: ${startSupportErrorMessage(error)}`);
     }
 }
 function safeUpsertTaskContinuity(input) {
@@ -377,7 +399,7 @@ function safeUpsertTaskContinuity(input) {
         upsertTaskContinuity(input);
     }
     catch (error) {
-        log.warn(`task continuity upsert failed: ${error instanceof Error ? error.message : String(error)}`);
+        log.warn(`task continuity upsert failed: ${startSupportErrorMessage(error)}`);
     }
 }
 export async function runFilesystemVerificationSubtask(params) {

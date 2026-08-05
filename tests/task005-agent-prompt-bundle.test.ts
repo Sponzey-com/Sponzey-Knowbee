@@ -1,8 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type {
   DataExchangePackage,
@@ -16,7 +15,9 @@ import type {
   SubSessionContract,
   TeamConfig,
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
-import { closeDb, getDb, insertRunSubSession } from "../packages/core/src/db/index.ts"
+import { validateAgentPromptBundle } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
+import { closeDb, getDb, insertRunSubSession } from "../packages/core/src/db/index.js"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import type { LoadedPromptSource } from "../packages/core/src/memory/knowbee-md.ts"
 import {
   buildAgentPromptBundle,
@@ -27,8 +28,6 @@ import { loadMergedInstructions } from "../packages/core/src/instructions/merge.
 import { validateAgentPromptBundleContextScope } from "../packages/core/src/runs/context-preflight.ts"
 
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function owner(ownerId = "agent:researcher"): RuntimeIdentity["owner"] {
@@ -181,12 +180,19 @@ const taskScope: StructuredTaskScope = {
 }
 
 function promptSource(sourceId: string, usageScope: LoadedPromptSource["usageScope"] = "runtime"): LoadedPromptSource {
+  const priority = sourceId === "definitions"
+    ? 10
+    : sourceId === "sub_agent_base"
+      ? 130
+      : sourceId === "agent_persona"
+        ? 140
+        : 40
   return {
     sourceId,
     locale: "en",
     path: `/repo/prompts/${sourceId}.md`,
     version: "1",
-    priority: sourceId === "definitions" ? 10 : 40,
+    priority,
     enabled: true,
     required: sourceId !== "bootstrap",
     usageScope,
@@ -195,32 +201,19 @@ function promptSource(sourceId: string, usageScope: LoadedPromptSource["usageSco
   }
 }
 
-function useTempConfig(): void {
+function useTempDb(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task005-prompt-bundle-"))
   tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
-    ai: { connection: { provider: "ollama", model: "llama3.2", endpoint: "http://127.0.0.1:11434" } },
-    webui: { enabled: true, host: "127.0.0.1", port: 0, auth: { enabled: false } },
-    security: { approvalMode: "off" }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 beforeEach(() => {
-  useTempConfig()
+  useTempDb()
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -233,15 +226,38 @@ describe("task005 agent prompt bundle", () => {
       agent: knowbeeAgent(),
       taskScope,
       teams: [team()],
-      promptSources: [promptSource("identity"), promptSource("planner")],
+      promptSources: [
+        promptSource("system"),
+        promptSource("identity"),
+        promptSource("planner"),
+        promptSource("sub_agent_base"),
+        promptSource("agent_persona"),
+      ],
       now: () => now,
     })
 
     expect(result.bundle.agentType).toBe("knowbee")
     expect(result.bundle.agentId).toBe("agent:knowbee")
+    expect(result.bundle.agentName).toBe("Knowbee")
+    expect(result.bundle.agentNameSnapshot).toBe("Knowbee")
     expect(result.bundle.renderedPrompt).toContain("coordinator")
+    expect(result.bundle.renderedPrompt).toContain("agentName: Knowbee")
+    expect(result.bundle.renderedPrompt).not.toContain("agentNameSnapshot:")
+    expect(result.bundle.renderedPrompt).toContain("# system")
+    expect(result.bundle.renderedPrompt).not.toContain("Knowbee / 노비")
+    const sourceIds = result.bundle.sourceProvenance.map((item) => item.sourceId)
+    expect(sourceIds).toContain("prompt:system:en")
+    expect(sourceIds).not.toContain("prompt:sub_agent_base:en")
+    expect(sourceIds).not.toContain("prompt:agent_persona:en")
     expect(result.bundle.teamContext).toEqual([])
     expect(result.bundle.safetyRules.join(" ")).toContain("Agent profile text never overrides")
+
+    const invalid = validateAgentPromptBundle({
+      ...result.bundle,
+      agentName: "Different Agent Name",
+    })
+    expect(invalid.ok).toBe(false)
+    expect(invalid.issues.map((issue) => issue.path)).toContain("$.agentName")
   })
 
   it("builds a worker prompt bundle with profile, prompt source provenance, and completion criteria", () => {
@@ -250,6 +266,7 @@ describe("task005 agent prompt bundle", () => {
       taskScope,
       teams: [team()],
       promptSources: [
+        promptSource("system"),
         promptSource("definitions"),
         promptSource("identity"),
         promptSource("user"),
@@ -263,6 +280,8 @@ describe("task005 agent prompt bundle", () => {
         promptSource("completion_policy"),
         promptSource("output_policy"),
         promptSource("channel"),
+        promptSource("sub_agent_base"),
+        promptSource("agent_persona"),
         promptSource("bootstrap", "first_run"),
       ],
       now: () => now,
@@ -276,27 +295,25 @@ describe("task005 agent prompt bundle", () => {
     expect(sourceIds).toEqual(expect.arrayContaining([
       "profile:sub_agent:agent:researcher",
       "team:team:research",
+      "prompt:system:en",
       "prompt:identity:en",
+      "prompt:memory_policy:en",
+      "prompt:tool_policy:en",
+      "prompt:sub_agent_base:en",
+    ]))
+    expect(sourceIds).not.toEqual(expect.arrayContaining([
       "prompt:soul:en",
       "prompt:planner:en",
       "prompt:knowbee_execution:en",
-      "prompt:memory_policy:en",
-      "prompt:tool_policy:en",
-      "prompt:recovery_policy:en",
-      "prompt:topology_executor_policy:en",
-      "prompt:completion_policy:en",
-      "prompt:output_policy:en",
-      "prompt:channel:en",
+      "prompt:agent_persona:en",
     ]))
     expect(sourceIds).not.toContain("prompt:bootstrap:en")
     expect(result.bundle.fragments?.some((fragment) => fragment.sourceId === "prompt:bootstrap:en")).toBe(false)
     expect(result.bundle.fragments?.filter((fragment) => fragment.sourceId.startsWith("prompt:")).every((fragment) => fragment.status === "active")).toBe(true)
-    expect(result.bundle.renderedPrompt).toContain("# knowbee_execution")
-    expect(result.bundle.renderedPrompt).toContain("# recovery_policy")
-    expect(result.bundle.renderedPrompt).toContain("# topology_executor_policy")
-    expect(result.bundle.renderedPrompt).toContain("# completion_policy")
-    expect(result.bundle.renderedPrompt).toContain("# output_policy")
-    expect(result.bundle.renderedPrompt).toContain("# channel")
+    expect(sourceIds.indexOf("prompt:system:en")).toBeLessThan(sourceIds.indexOf("prompt:sub_agent_base:en"))
+    expect(result.bundle.renderedPrompt).toContain("# system")
+    expect(result.bundle.renderedPrompt).toContain("# sub_agent_base")
+    expect(result.bundle.renderedPrompt).not.toContain("# agent_persona")
     expect(result.bundle.renderedPrompt).not.toContain("# bootstrap")
   })
 
@@ -325,18 +342,68 @@ describe("task005 agent prompt bundle", () => {
     expect(result.bundle.renderedPrompt).toContain("disabledTools: none")
   })
 
-  it("keeps team context from overriding the agent personality snapshot", () => {
+  it("applies only explicit user traits and keeps team context from overriding them", () => {
     const result = buildAgentPromptBundle({
-      agent: subAgent({ personality: "Calm and terse." }),
+      agent: subAgent({ agentName: "Evidence Researcher", personality: "Legacy implicit personality." }),
       taskScope,
       teams: [team()],
-      promptSources: [promptSource("identity")],
+      promptSources: [
+        promptSource("system"),
+        promptSource("identity"),
+        promptSource("sub_agent_base"),
+        promptSource("agent_persona"),
+        promptSource("result_review"),
+        promptSource("final_response"),
+      ],
+      explicitTraits: {
+        agentName: "Evidence Researcher",
+        provenance: "explicit_user_input",
+        sourceRef: "user-request:trait-1",
+        text: "Calm and terse.",
+        protectedPolicyEffects: {
+          safety: "preserve",
+          permission: "preserve",
+          memory_isolation: "preserve",
+          response_language: "preserve",
+          identity: "preserve",
+          delegation: "preserve",
+        },
+      },
       now: () => now,
     })
 
     expect(result.bundle.personalitySnapshot).toBe("Calm and terse.")
+    expect(result.bundle.renderedPrompt).not.toContain("Legacy implicit personality.")
+    const kinds = result.bundle.fragments?.map((fragment) => fragment.kind) ?? []
+    const sourceIds = result.bundle.fragments?.map((fragment) => fragment.sourceId) ?? []
+    expect(sourceIds.indexOf("prompt:system:en")).toBeLessThan(sourceIds.indexOf("prompt:identity:en"))
+    expect(sourceIds.indexOf("prompt:identity:en")).toBeLessThan(sourceIds.indexOf("prompt:sub_agent_base:en"))
+    expect(sourceIds.indexOf("prompt:sub_agent_base:en")).toBeLessThan(sourceIds.indexOf("prompt:agent_persona:en"))
+    expect(sourceIds.indexOf("prompt:agent_persona:en")).toBeLessThan(kinds.indexOf("personality"))
+    expect(kinds.indexOf("personality")).toBeLessThan(kinds.indexOf("completion_criteria"))
+    expect(kinds.indexOf("completion_criteria")).toBeLessThan(sourceIds.indexOf("prompt:result_review:en"))
+    expect(sourceIds.indexOf("prompt:result_review:en")).toBeLessThan(sourceIds.indexOf("prompt:final_response:en"))
     expect(result.bundle.teamContext[0]?.roleHint).toContain("team personality")
     expect(result.bundle.renderedPrompt).toContain("policy: reference_only")
+  })
+
+  it("omits implicit personality from a bundle without explicit user trait provenance", () => {
+    const result = buildAgentPromptBundle({
+      agent: subAgent({ personality: "Legacy implicit personality." }),
+      taskScope,
+      promptSources: [promptSource("system"), promptSource("identity"), promptSource("sub_agent_base")],
+      now: () => now,
+    })
+
+    expect(result.bundle.personalitySnapshot).toBeUndefined()
+    expect(result.bundle.fragments?.some((fragment) => fragment.kind === "personality")).toBe(false)
+    expect(result.bundle.renderedPrompt).not.toContain("Legacy implicit personality.")
+    expect(result.bundle.promptLayerStack?.map((layer) => layer.kind)).toEqual([
+      "global_system",
+      "common_policy",
+      "agent_system",
+      "work_handoff",
+    ])
   })
 
   it("redacts secrets and blocks unsafe imported prompt fragments", () => {
@@ -444,10 +511,14 @@ describe("task005 agent prompt bundle", () => {
     const workDir = mkdtempSync(join(tmpdir(), "knowbee-task005-instructions-"))
     tempDirs.push(workDir)
     writeFileSync(join(workDir, "AGENTS.md"), "Project instruction", "utf-8")
+    const stateDir = join(workDir, ".state")
+    mkdirSync(stateDir, { recursive: true })
+    const instructionRuntime = { globalStateDir: stateDir, fallbackBoundaryDir: workDir }
 
-    const legacy = loadMergedInstructions(workDir)
-    const legacyAgain = loadMergedInstructions(workDir)
+    const legacy = loadMergedInstructions(workDir, instructionRuntime)
+    const legacyAgain = loadMergedInstructions(workDir, instructionRuntime)
     const withAgent = loadMergedInstructions(workDir, {
+      ...instructionRuntime,
       agentSources: [{
         agentId: "agent:researcher",
         agentType: "sub_agent",
@@ -476,8 +547,8 @@ describe("task005 agent prompt bundle", () => {
       parentSessionId: "session:parent",
       parentRunId: "run-parent",
       agentId: "agent:researcher",
-      agentDisplayName: "Researcher",
-      agentNickname: "Res",
+      agentName: "Researcher",
+      agentNameSnapshot: "Res",
       commandRequestId: "command:1",
       status: "queued",
       promptBundleId: bundle.bundleId,

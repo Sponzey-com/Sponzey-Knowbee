@@ -29,15 +29,15 @@ export interface ActiveRunContractProjection {
   source: RootRun["source"]
   displayName: string
   orchestrationMode?: RootRun["orchestrationMode"]
-  agentDisplayName?: string
-  agentNickname?: string
+  agentName?: string
+  agentNameSnapshot?: string
   subSessionIds?: string[]
   subSessions?: Array<{
     subSessionId: string
     parentRunId: string
     agentId: string
-    agentDisplayName: string
-    agentNickname?: string
+    agentName: string
+    agentNameSnapshot?: string
     status: string
   }>
   updatedAt: number
@@ -62,6 +62,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function textOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+function agentNameFromSnapshot(
+  agentNameSnapshot: unknown,
+  fallback: string,
+): string {
+  return textOrUndefined(agentNameSnapshot) ?? fallback
 }
 
 function readContractRecord(snapshot: Record<string, unknown> | undefined, keys: string[]): unknown {
@@ -207,6 +214,7 @@ export function buildActiveRunProjection(run: RootRun): ActiveRunContractProject
   const legacy = !persistedIntent && !persistedTarget && !persistedDelivery
   const comparisonProjection = buildIntentComparisonProjection(intentContract)
   const approvalId = readApprovalId(run.promptSourceSnapshot)
+  const agentName = agentNameFromSnapshot(run.agentName ?? run.agentNameSnapshot, "")
 
   return {
     runId: run.id,
@@ -217,19 +225,25 @@ export function buildActiveRunProjection(run: RootRun): ActiveRunContractProject
     source: run.source,
     displayName: run.title || run.targetLabel || run.id,
     ...(run.orchestrationMode ? { orchestrationMode: run.orchestrationMode } : {}),
-    ...(run.agentDisplayName ? { agentDisplayName: run.agentDisplayName } : {}),
-    ...(run.agentNickname ? { agentNickname: run.agentNickname } : {}),
+    ...(agentName ? { agentName } : {}),
+    ...(run.agentNameSnapshot ? { agentNameSnapshot: run.agentNameSnapshot } : {}),
     ...(run.subSessionIds?.length ? { subSessionIds: [...run.subSessionIds] } : {}),
     ...(run.subSessionsSnapshot?.length
       ? {
-        subSessions: run.subSessionsSnapshot.map((subSession) => ({
-          subSessionId: subSession.subSessionId,
-          parentRunId: subSession.parentRunId,
-          agentId: subSession.agentId,
-          agentDisplayName: subSession.agentDisplayName,
-          ...(subSession.agentNickname ? { agentNickname: subSession.agentNickname } : {}),
-          status: subSession.status,
-        })),
+        subSessions: run.subSessionsSnapshot.map((subSession) => {
+          const agentName = agentNameFromSnapshot(
+            subSession.agentNameSnapshot ?? subSession.agentName,
+            "Unnamed sub-agent",
+          )
+          return {
+            subSessionId: subSession.subSessionId,
+            parentRunId: subSession.parentRunId,
+            agentId: subSession.agentId,
+            agentName,
+            ...(subSession.agentNameSnapshot ? { agentNameSnapshot: subSession.agentNameSnapshot } : {}),
+            status: subSession.status,
+          }
+        }),
       }
       : {}),
     updatedAt: run.updatedAt,

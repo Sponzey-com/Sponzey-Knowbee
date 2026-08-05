@@ -5,11 +5,62 @@ import {
   validateYeonjangTargetSelector,
 } from "./yeonjang-target.js"
 
+export * from "./work-record.js"
+export * from "./work-handoff-projection.js"
+export * from "./work-result-projection.js"
+export * from "./structured-record-repair.js"
+export * from "./structured-work-audit.js"
+export * from "./llm-diagnosis-gate.js"
+export * from "./llm-diagnosis-provider.js"
+export * from "./llm-diagnosis-schema-repair-provider.js"
+export * from "./diagnosis-action-routing.js"
+export * from "./llm-capability-selection.js"
+export * from "./web-research-method.js"
+export * from "./web-research-ledger.js"
+export * from "./web-research-link-candidate.js"
+export * from "./llm-clarification-admission.js"
+export * from "./llm-request-intake.js"
+export * from "./structured-execution-contract.js"
+export * from "./llm-solution-plan-receipt.js"
+export * from "./llm-solution-plan-provider.js"
+export * from "./solution-path-exhaustion.js"
+export * from "./failure-recovery-decision.js"
+export * from "./failure-recovery-readiness.js"
+export * from "./recovery-alternative-confirmation.js"
+export * from "./execution-model-admission.js"
+export * from "./side-effect-evidence-gate.js"
+export * from "./final-success-admission.js"
+export * from "./user-method-first-admission.js"
+export * from "./user-method-constraint-admission.js"
+export * from "./user-report-continuation-admission.js"
+export * from "./recursive-resolution-admission.js"
+export * from "./recursive-resolution-governance.js"
+export * from "./structured-work-lifecycle.js"
+export * from "./llm-diagnosed-action-flow.js"
+export * from "./structured-work-decision-readiness.js"
+export * from "./work-record-continuity-recovery.js"
+export * from "./work-record-assembly.js"
+export * from "./work-record-state-decision.js"
+export * from "./canonical-work-state.js"
+export * from "./canonical-work-aggregate.js"
+export * from "./canonical-work-receipt.js"
+export * from "./work-record-schema-repair.js"
+export * from "./evidence-delegation.js"
+export * from "./process-control-trace.js"
+export * from "./product-parameters.js"
+export * from "./gateway-startup-state.js"
+export * from "./mcp-component-state.js"
+
 export const CONTRACT_SCHEMA_VERSION = 1 as const
 
 export type ContractSchemaVersion = typeof CONTRACT_SCHEMA_VERSION
 export type ContractLocaleHint = "ko" | "en" | "mixed" | "unknown"
 export type ContractSource = ChannelSource | "scheduler" | "system"
+export type ResponseLanguageMode =
+  | "same_as_request"
+  | "translation"
+  | "language_comparison"
+  | "multilingual"
 
 export type IntentType =
   | "schedule_request"
@@ -51,7 +102,11 @@ export type DeliveryChannel =
   | "none"
 export type ScheduleKind = "one_time" | "recurring"
 export type ScheduleMissedPolicy = "skip" | "catch_up_once" | "next_only"
-export type SchedulePayloadKind = "literal_message" | "agent_task" | "tool_task" | "artifact_delivery"
+export type SchedulePayloadKind =
+  | "literal_message"
+  | "agent_task"
+  | "tool_task"
+  | "artifact_delivery"
 
 export type JsonPrimitive = string | number | boolean | null
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue | undefined }
@@ -135,6 +190,7 @@ export interface SchedulePayloadContract {
 export interface ScheduleContract {
   schemaVersion: ContractSchemaVersion
   kind: ScheduleKind
+  responseLanguageMode?: ResponseLanguageMode
   time: ScheduleTimeContract
   payload: SchedulePayloadContract
   delivery: DeliveryContract
@@ -152,6 +208,11 @@ export type ContractValidationErrorCode =
   | "contract_validation_failed"
   | "unsupported_contract_version"
   | "unknown_contract_action"
+  | "handoff_text_limit_exceeded"
+  | "handoff_array_limit_exceeded"
+  | "handoff_text_not_executable"
+  | "structured_text_limit_exceeded"
+  | "structured_text_aggregate_exceeded"
 
 export interface ContractValidationIssue {
   path: string
@@ -191,12 +252,45 @@ const ACTION_TYPES = new Set<ActionType>([
   "ask_user",
   "none",
 ])
-const TARGET_KINDS = new Set<ToolTargetKind>(["schedule", "run", "artifact", "extension", "display", "camera", "file", "unknown"])
-const DELIVERY_MODES = new Set<DeliveryMode>(["reply", "direct_artifact", "channel_message", "none"])
-const DELIVERY_CHANNELS = new Set<DeliveryChannel>(["current_session", "telegram", "slack", "webui", "local", "agent", "none"])
+const TARGET_KINDS = new Set<ToolTargetKind>([
+  "schedule",
+  "run",
+  "artifact",
+  "extension",
+  "display",
+  "camera",
+  "file",
+  "unknown",
+])
+const DELIVERY_MODES = new Set<DeliveryMode>([
+  "reply",
+  "direct_artifact",
+  "channel_message",
+  "none",
+])
+const DELIVERY_CHANNELS = new Set<DeliveryChannel>([
+  "current_session",
+  "telegram",
+  "slack",
+  "webui",
+  "local",
+  "agent",
+  "none",
+])
 const SCHEDULE_KINDS = new Set<ScheduleKind>(["one_time", "recurring"])
 const MISSED_POLICIES = new Set<ScheduleMissedPolicy>(["skip", "catch_up_once", "next_only"])
-const PAYLOAD_KINDS = new Set<SchedulePayloadKind>(["literal_message", "agent_task", "tool_task", "artifact_delivery"])
+const RESPONSE_LANGUAGE_MODES = new Set<ResponseLanguageMode>([
+  "same_as_request",
+  "translation",
+  "language_comparison",
+  "multilingual",
+])
+const PAYLOAD_KINDS = new Set<SchedulePayloadKind>([
+  "literal_message",
+  "agent_task",
+  "tool_task",
+  "artifact_delivery",
+])
 const HASH_PREFIX = "knowbee-contract-v1"
 
 interface CanonicalizeOptions {
@@ -219,9 +313,18 @@ function addIssue(
   issues.push({ path, code, message })
 }
 
-function validateSchemaVersion(record: Record<string, unknown>, path: string, issues: ContractValidationIssue[]): void {
+function validateSchemaVersion(
+  record: Record<string, unknown>,
+  path: string,
+  issues: ContractValidationIssue[],
+): void {
   if (record.schemaVersion !== CONTRACT_SCHEMA_VERSION) {
-    addIssue(issues, `${path}.schemaVersion`, "unsupported_contract_version", "Unsupported contract schema version.")
+    addIssue(
+      issues,
+      `${path}.schemaVersion`,
+      "unsupported_contract_version",
+      "Unsupported contract schema version.",
+    )
   }
 }
 
@@ -237,39 +340,66 @@ function validateStringEnum<T extends string>(
   return false
 }
 
-function validateOptionalString(value: unknown, path: string, issues: ContractValidationIssue[]): void {
+function validateOptionalString(
+  value: unknown,
+  path: string,
+  issues: ContractValidationIssue[],
+): void {
   if (value == null || typeof value === "string") return
   addIssue(issues, path, "contract_validation_failed", `Expected optional string at ${path}.`)
 }
 
-function validateOptionalJsonObject(value: unknown, path: string, issues: ContractValidationIssue[]): void {
+function validateOptionalJsonObject(
+  value: unknown,
+  path: string,
+  issues: ContractValidationIssue[],
+): void {
   if (value == null || isJsonObject(value)) return
   addIssue(issues, path, "contract_validation_failed", `Expected optional JSON object at ${path}.`)
 }
 
 function isJsonValue(value: unknown): value is JsonValue {
-  if (value == null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return true
+  if (
+    value == null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  )
+    return true
   if (Array.isArray(value)) return value.every(isJsonValue)
   return isJsonObject(value)
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
-  return isRecord(value) && Object.values(value).every((item) => item === undefined || isJsonValue(item))
+  return (
+    isRecord(value) && Object.values(value).every((item) => item === undefined || isJsonValue(item))
+  )
 }
 
-export function validateToolTargetContract(value: unknown): ContractValidationResult<ToolTargetContract> {
+export function validateToolTargetContract(
+  value: unknown,
+): ContractValidationResult<ToolTargetContract> {
   const issues: ContractValidationIssue[] = []
   if (!isRecord(value)) {
-    return { ok: false, issues: [{ path: "$", code: "contract_validation_failed", message: "Tool target contract must be an object." }] }
+    return {
+      ok: false,
+      issues: [
+        {
+          path: "$",
+          code: "contract_validation_failed",
+          message: "Tool target contract must be an object.",
+        },
+      ],
+    }
   }
   validateSchemaVersion(value, "$", issues)
   validateStringEnum(value.kind, TARGET_KINDS, "$.kind", issues)
   validateOptionalString(value.id, "$.id", issues)
   validateOptionalJsonObject(value.selector, "$.selector", issues)
   if (
-    value.kind === "extension"
-    && value.selector != null
-    && isStructuredYeonjangTargetSelector(value.selector)
+    value.kind === "extension" &&
+    value.selector != null &&
+    isStructuredYeonjangTargetSelector(value.selector)
   ) {
     const selectorValidation = validateYeonjangTargetSelector(value.selector)
     if (!selectorValidation.ok) {
@@ -280,13 +410,26 @@ export function validateToolTargetContract(value: unknown): ContractValidationRe
   }
   validateOptionalString(value.displayName, "$.displayName", issues)
   validateOptionalString(value.rawText, "$.rawText", issues)
-  return issues.length === 0 ? { ok: true, value: value as unknown as ToolTargetContract, issues: [] } : { ok: false, issues }
+  return issues.length === 0
+    ? { ok: true, value: value as unknown as ToolTargetContract, issues: [] }
+    : { ok: false, issues }
 }
 
-export function validateDeliveryContract(value: unknown): ContractValidationResult<DeliveryContract> {
+export function validateDeliveryContract(
+  value: unknown,
+): ContractValidationResult<DeliveryContract> {
   const issues: ContractValidationIssue[] = []
   if (!isRecord(value)) {
-    return { ok: false, issues: [{ path: "$", code: "contract_validation_failed", message: "Delivery contract must be an object." }] }
+    return {
+      ok: false,
+      issues: [
+        {
+          path: "$",
+          code: "contract_validation_failed",
+          message: "Delivery contract must be an object.",
+        },
+      ],
+    }
   }
   validateSchemaVersion(value, "$", issues)
   validateStringEnum(value.mode, DELIVERY_MODES, "$.mode", issues)
@@ -295,34 +438,86 @@ export function validateDeliveryContract(value: unknown): ContractValidationResu
   validateOptionalString(value.threadId, "$.threadId", issues)
   validateOptionalString(value.artifactId, "$.artifactId", issues)
   if (value.explicitResend !== undefined && typeof value.explicitResend !== "boolean") {
-    addIssue(issues, "$.explicitResend", "contract_validation_failed", "explicitResend must be a boolean.")
+    addIssue(
+      issues,
+      "$.explicitResend",
+      "contract_validation_failed",
+      "explicitResend must be a boolean.",
+    )
   }
   validateOptionalString(value.displayName, "$.displayName", issues)
   validateOptionalString(value.rawText, "$.rawText", issues)
-  return issues.length === 0 ? { ok: true, value: value as unknown as DeliveryContract, issues: [] } : { ok: false, issues }
+  return issues.length === 0
+    ? { ok: true, value: value as unknown as DeliveryContract, issues: [] }
+    : { ok: false, issues }
 }
 
 export function validateIntentContract(value: unknown): ContractValidationResult<IntentContract> {
   const issues: ContractValidationIssue[] = []
   if (!isRecord(value)) {
-    return { ok: false, issues: [{ path: "$", code: "contract_validation_failed", message: "Intent contract must be an object." }] }
+    return {
+      ok: false,
+      issues: [
+        {
+          path: "$",
+          code: "contract_validation_failed",
+          message: "Intent contract must be an object.",
+        },
+      ],
+    }
   }
   validateSchemaVersion(value, "$", issues)
-  validateStringEnum(value.intentType, INTENT_TYPES, "$.intentType", issues, "unknown_contract_action")
-  validateStringEnum(value.actionType, ACTION_TYPES, "$.actionType", issues, "unknown_contract_action")
+  validateStringEnum(
+    value.intentType,
+    INTENT_TYPES,
+    "$.intentType",
+    issues,
+    "unknown_contract_action",
+  )
+  validateStringEnum(
+    value.actionType,
+    ACTION_TYPES,
+    "$.actionType",
+    issues,
+    "unknown_contract_action",
+  )
   const target = validateToolTargetContract(value.target)
-  if (!target.ok) issues.push(...target.issues.map((issue) => ({ ...issue, path: `$.target${issue.path.slice(1)}` })))
+  if (!target.ok)
+    issues.push(
+      ...target.issues.map((issue) => ({ ...issue, path: `$.target${issue.path.slice(1)}` })),
+    )
   const delivery = validateDeliveryContract(value.delivery)
-  if (!delivery.ok) issues.push(...delivery.issues.map((issue) => ({ ...issue, path: `$.delivery${issue.path.slice(1)}` })))
-  if (!Array.isArray(value.constraints) || !value.constraints.every((item) => typeof item === "string")) {
-    addIssue(issues, "$.constraints", "contract_validation_failed", "constraints must be a string array.")
+  if (!delivery.ok)
+    issues.push(
+      ...delivery.issues.map((issue) => ({ ...issue, path: `$.delivery${issue.path.slice(1)}` })),
+    )
+  if (
+    !Array.isArray(value.constraints) ||
+    !value.constraints.every((item) => typeof item === "string")
+  ) {
+    addIssue(
+      issues,
+      "$.constraints",
+      "contract_validation_failed",
+      "constraints must be a string array.",
+    )
   }
   if (typeof value.requiresApproval !== "boolean") {
-    addIssue(issues, "$.requiresApproval", "contract_validation_failed", "requiresApproval must be a boolean.")
+    addIssue(
+      issues,
+      "$.requiresApproval",
+      "contract_validation_failed",
+      "requiresApproval must be a boolean.",
+    )
   }
   if (value.impossibility != null) {
     if (!isRecord(value.impossibility)) {
-      addIssue(issues, "$.impossibility", "contract_validation_failed", "impossibility must be null or an object.")
+      addIssue(
+        issues,
+        "$.impossibility",
+        "contract_validation_failed",
+        "impossibility must be null or an object.",
+      )
     } else {
       validateOptionalString(value.impossibility.reasonCode, "$.impossibility.reasonCode", issues)
       validateOptionalString(value.impossibility.message, "$.impossibility.message", issues)
@@ -331,16 +526,37 @@ export function validateIntentContract(value: unknown): ContractValidationResult
   validateOptionalString(value.displayName, "$.displayName", issues)
   validateOptionalString(value.rawText, "$.rawText", issues)
   validateOptionalString(value.summary, "$.summary", issues)
-  return issues.length === 0 ? { ok: true, value: value as unknown as IntentContract, issues: [] } : { ok: false, issues }
+  return issues.length === 0
+    ? { ok: true, value: value as unknown as IntentContract, issues: [] }
+    : { ok: false, issues }
 }
 
-export function validateScheduleContract(value: unknown): ContractValidationResult<ScheduleContract> {
+export function validateScheduleContract(
+  value: unknown,
+): ContractValidationResult<ScheduleContract> {
   const issues: ContractValidationIssue[] = []
   if (!isRecord(value)) {
-    return { ok: false, issues: [{ path: "$", code: "contract_validation_failed", message: "Schedule contract must be an object." }] }
+    return {
+      ok: false,
+      issues: [
+        {
+          path: "$",
+          code: "contract_validation_failed",
+          message: "Schedule contract must be an object.",
+        },
+      ],
+    }
   }
   validateSchemaVersion(value, "$", issues)
   validateStringEnum(value.kind, SCHEDULE_KINDS, "$.kind", issues)
+  if (value.responseLanguageMode !== undefined) {
+    validateStringEnum(
+      value.responseLanguageMode,
+      RESPONSE_LANGUAGE_MODES,
+      "$.responseLanguageMode",
+      issues,
+    )
+  }
   if (!isRecord(value.time)) {
     addIssue(issues, "$.time", "contract_validation_failed", "time must be an object.")
   } else {
@@ -354,22 +570,39 @@ export function validateScheduleContract(value: unknown): ContractValidationResu
   if (!isRecord(value.payload)) {
     addIssue(issues, "$.payload", "contract_validation_failed", "payload must be an object.")
   } else {
-    validateStringEnum(value.payload.kind, PAYLOAD_KINDS, "$.payload.kind", issues, "unknown_contract_action")
+    validateStringEnum(
+      value.payload.kind,
+      PAYLOAD_KINDS,
+      "$.payload.kind",
+      issues,
+      "unknown_contract_action",
+    )
     validateOptionalString(value.payload.literalText, "$.payload.literalText", issues)
     validateOptionalString(value.payload.toolName, "$.payload.toolName", issues)
     validateOptionalJsonObject(value.payload.toolParams, "$.payload.toolParams", issues)
     validateOptionalString(value.payload.artifactId, "$.payload.artifactId", issues)
     if (value.payload.taskContract != null) {
       const task = validateIntentContract(value.payload.taskContract)
-      if (!task.ok) issues.push(...task.issues.map((issue) => ({ ...issue, path: `$.payload.taskContract${issue.path.slice(1)}` })))
+      if (!task.ok)
+        issues.push(
+          ...task.issues.map((issue) => ({
+            ...issue,
+            path: `$.payload.taskContract${issue.path.slice(1)}`,
+          })),
+        )
     }
   }
   const delivery = validateDeliveryContract(value.delivery)
-  if (!delivery.ok) issues.push(...delivery.issues.map((issue) => ({ ...issue, path: `$.delivery${issue.path.slice(1)}` })))
+  if (!delivery.ok)
+    issues.push(
+      ...delivery.issues.map((issue) => ({ ...issue, path: `$.delivery${issue.path.slice(1)}` })),
+    )
   validateOptionalString(value.displayName, "$.displayName", issues)
   validateOptionalString(value.rawText, "$.rawText", issues)
   validateOptionalString(value.summary, "$.summary", issues)
-  return issues.length === 0 ? { ok: true, value: value as unknown as ScheduleContract, issues: [] } : { ok: false, issues }
+  return issues.length === 0
+    ? { ok: true, value: value as unknown as ScheduleContract, issues: [] }
+    : { ok: false, issues }
 }
 
 function canonicalizeValue(value: unknown, options: CanonicalizeOptions): unknown {
@@ -412,7 +645,10 @@ export function toCanonicalJson(value: unknown, options: CanonicalizeOptions = {
 
 export function stableContractHash(value: unknown, namespace = "generic"): string {
   const canonical = toCanonicalJson(value)
-  const digest = crypto.createHash("sha256").update(`${HASH_PREFIX}:${namespace}:${canonical}`).digest("hex")
+  const digest = crypto
+    .createHash("sha256")
+    .update(`${HASH_PREFIX}:${namespace}:${canonical}`)
+    .digest("hex")
   return `${namespace}:v1:${digest}`
 }
 
@@ -463,6 +699,7 @@ export function buildScheduleIdentityProjection(contract: ScheduleContract): Jso
   return {
     schemaVersion: contract.schemaVersion,
     kind: contract.kind,
+    responseLanguageMode: contract.responseLanguageMode ?? "same_as_request",
     time: {
       runAt: contract.time.runAt ?? undefined,
       cron: contract.time.cron ?? undefined,
@@ -496,12 +733,15 @@ export function buildDeliveryDedupeKey(params: {
   delivery: DeliveryContract
   payloadHash: string
 }): string {
-  return stableContractHash({
-    scheduleId: params.scheduleId,
-    dueAt: String(params.dueAt),
-    delivery: buildDeliveryProjection(params.delivery),
-    payloadHash: params.payloadHash,
-  }, "delivery-dedupe")
+  return stableContractHash(
+    {
+      scheduleId: params.scheduleId,
+      dueAt: String(params.dueAt),
+      delivery: buildDeliveryProjection(params.delivery),
+      payloadHash: params.payloadHash,
+    },
+    "delivery-dedupe",
+  )
 }
 
 export function formatContractValidationFailureForUser(issues: ContractValidationIssue[]): string {
@@ -515,3 +755,8 @@ export function formatContractValidationFailureForUser(issues: ContractValidatio
 }
 
 export * from "./enterprise-topology.js"
+export * from "./child-result-trust.js"
+export * from "./delegated-execution-snapshot.js"
+export * from "./memory-exchange-owner-binding.js"
+export * from "./development-change-admission.js"
+export * from "./project-definition-of-done-admission.js"

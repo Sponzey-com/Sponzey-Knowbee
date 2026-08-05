@@ -1,6 +1,11 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { dirname, join } from "node:path"
-import { type OrchestrationConfig, PATHS, getConfig } from "../config/index.js"
+import { join } from "node:path"
+import {
+  NODE_PERSISTED_FILE_SYSTEM,
+  writeAtomicTextFile,
+  type PersistedConfigFileSystem,
+} from "../config/persisted-file.js"
+import type { RuntimePaths } from "../config/paths.js"
+import type { OrchestrationConfig } from "../config/types.js"
 import type { JsonObject } from "../contracts/index.js"
 import {
   type AgentConfig,
@@ -9,6 +14,8 @@ import {
   type AgentStatus,
   type RelationshipGraphEdge,
   type RelationshipGraphNode,
+  DEFAULT_KNOWBEE_AGENT_NAME,
+  resolveAgentConfigAgentName,
   validateAgentRelationship,
 } from "../contracts/sub-agent-orchestration.js"
 import {
@@ -23,6 +30,8 @@ const DEFAULT_ROOT_AGENT_ID = "agent:knowbee"
 const DEFAULT_MAX_DEPTH = 5
 const DEFAULT_MAX_CHILD_COUNT = 10
 const LAYOUT_SCHEMA_VERSION = 1
+
+export type AgentHierarchyConfigSnapshot = Pick<{ orchestration: OrchestrationConfig }, "orchestration">
 
 export type HierarchyDiagnosticSeverity = "info" | "warning" | "blocked"
 
@@ -47,8 +56,7 @@ export interface AgentHierarchyValidationResult {
 export interface AgentHierarchyAgentSummary {
   agentId: string
   agentType: AgentConfig["agentType"]
-  displayName: string
-  nickname?: string
+  agentName: string
   status: AgentStatus
   source: "db" | "config" | "topology" | "synthetic"
 }
@@ -80,10 +88,26 @@ export interface AgentTreeProjection {
 }
 
 export interface AgentHierarchyServiceDependencies extends RegistryServiceDependencies {
+  config: AgentHierarchyConfigSnapshot
+  storage: AgentHierarchyStorage
   rootAgentId?: string
   maxDepth?: number
   maxChildCount?: number
-  layoutPath?: string
+}
+
+export interface AgentHierarchyStorage {
+  readonly layoutFile: string
+  readonly fileSystem: PersistedConfigFileSystem
+}
+
+export function createAgentHierarchyStorage(
+  paths: Pick<RuntimePaths, "stateDir">,
+  fileSystem: PersistedConfigFileSystem = NODE_PERSISTED_FILE_SYSTEM,
+): AgentHierarchyStorage {
+  return Object.freeze({
+    layoutFile: join(paths.stateDir, "agent-tree-layout.json"),
+    fileSystem,
+  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -182,11 +206,11 @@ function relationshipSort(left: AgentRelationship, right: AgentRelationship): nu
 }
 
 function agentFromConfig(config: AgentConfig, source: "db" | "config" | "topology"): AgentHierarchyAgentSummary {
+  const agentName = resolveAgentConfigAgentName(config)
   return {
     agentId: config.agentId,
     agentType: config.agentType,
-    displayName: config.displayName,
-    ...(config.nickname ? { nickname: config.nickname } : {}),
+    agentName,
     status: config.status,
     source,
   }
@@ -209,10 +233,6 @@ function agentMetadata(input: {
     executionCandidate: input.executionCandidate,
     ...(input.blockedReason ? { blockedReason: input.blockedReason } : {}),
   }
-}
-
-function layoutPath(dependencies: AgentHierarchyServiceDependencies): string {
-  return dependencies.layoutPath ?? join(PATHS.stateDir, "agent-tree-layout.json")
 }
 
 function defaultLayoutPreference(): AgentTreeLayoutPreference {
@@ -352,29 +372,22 @@ function inactiveReasonFor(
   return undefined
 }
 
-function configFromDependencies(
-  dependencies: AgentHierarchyServiceDependencies,
-): Pick<{ orchestration: OrchestrationConfig }, "orchestration"> {
-  return dependencies.getConfig?.() ?? getConfig()
-}
-
 function positiveIntegerOrDefault(value: unknown, fallback: number): number {
-  if (value === 0) return Number.MAX_SAFE_INTEGER
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback
 }
 
-export function createAgentHierarchyService(dependencies: AgentHierarchyServiceDependencies = {}) {
+export function createAgentHierarchyService(dependencies: AgentHierarchyServiceDependencies) {
   const now = () => dependencies.now?.() ?? Date.now()
-  const config = () => configFromDependencies(dependencies)
+  const config = dependencies.config
   const rootAgentId = () =>
-    dependencies.rootAgentId ?? config().orchestration.knowbee?.agentId ?? DEFAULT_ROOT_AGENT_ID
+    dependencies.rootAgentId ?? config.orchestration.knowbee?.agentId ?? DEFAULT_ROOT_AGENT_ID
   const maxDepth = () =>
     positiveIntegerOrDefault(
-      dependencies.maxDepth ?? config().orchestration.maxDelegationTurns,
+      dependencies.maxDepth ?? config.orchestration.maxDelegationTurns,
       DEFAULT_MAX_DEPTH,
     )
   const maxChildCount = () => dependencies.maxChildCount ?? DEFAULT_MAX_CHILD_COUNT
-  const registry = () => createAgentRegistryService(dependencies)
+  const registry = () => createAgentRegistryService({ ...dependencies, config })
 
   function agentSummaries(): Map<string, AgentHierarchyAgentSummary> {
     const result = new Map<string, AgentHierarchyAgentSummary>()
@@ -383,15 +396,14 @@ export function createAgentHierarchyService(dependencies: AgentHierarchyServiceD
       result.set(entry.agentId, agentFromConfig(entry.config, entry.source))
     for (const agent of registry().list()) result.set(agent.agentId, agentFromConfig(agent, "db"))
 
-    const root = config().orchestration.knowbee
+    const root = config.orchestration.knowbee
     const resolvedRootAgentId = rootAgentId()
     if (root) result.set(root.agentId, agentFromConfig(root, "config"))
     if (!result.has(resolvedRootAgentId)) {
       result.set(resolvedRootAgentId, {
         agentId: resolvedRootAgentId,
         agentType: "knowbee",
-        displayName: "Knowbee",
-        nickname: "Knowbee",
+        agentName: DEFAULT_KNOWBEE_AGENT_NAME,
         status: "enabled",
         source: "synthetic",
       })
@@ -422,7 +434,7 @@ export function createAgentHierarchyService(dependencies: AgentHierarchyServiceD
       diagnostics.push({
         reasonCode: "knowbee_parent_forbidden",
         severity: "blocked",
-        message: "Knowbee must remain the parentless root and cannot be a child.",
+        message: "The root main agent must remain parentless and cannot be a child.",
         edgeId: relationship.edgeId,
         parentAgentId: relationship.parentAgentId,
         childAgentId: relationship.childAgentId,
@@ -685,7 +697,7 @@ export function createAgentHierarchyService(dependencies: AgentHierarchyServiceD
           agents.get(agentId) ?? {
             agentId,
             agentType: "sub_agent" as const,
-            displayName: agentId,
+            agentName: "Unnamed sub-agent",
             status: "disabled" as const,
             source: "synthetic" as const,
           },
@@ -701,7 +713,7 @@ export function createAgentHierarchyService(dependencies: AgentHierarchyServiceD
           nodeId: nodeIdForAgent(agent.agentId),
           entityType: agent.agentType,
           entityId: agent.agentId,
-          label: agent.nickname ?? agent.displayName,
+          label: agent.agentName,
           status: agent.status,
           metadata: agentMetadata({
             agent,
@@ -732,7 +744,7 @@ export function createAgentHierarchyService(dependencies: AgentHierarchyServiceD
 
   function readLayout(): AgentTreeLayoutPreference {
     try {
-      const parsed = JSON.parse(readFileSync(layoutPath(dependencies), "utf-8"))
+      const parsed = JSON.parse(dependencies.storage.fileSystem.readText(dependencies.storage.layoutFile))
       if (!isRecord(parsed)) return defaultLayoutPreference()
       const updatedAt = asFiniteNumber(parsed.updatedAt)
       return normalizeLayoutPreference(parsed, updatedAt ?? now())
@@ -743,9 +755,11 @@ export function createAgentHierarchyService(dependencies: AgentHierarchyServiceD
 
   function writeLayout(input: unknown): AgentTreeLayoutPreference {
     const preference = normalizeLayoutPreference(input, now())
-    const target = layoutPath(dependencies)
-    mkdirSync(dirname(target), { recursive: true })
-    writeFileSync(target, `${JSON.stringify(preference, null, 2)}\n`, "utf-8")
+    writeAtomicTextFile(
+      dependencies.storage.layoutFile,
+      `${JSON.stringify(preference, null, 2)}\n`,
+      dependencies.storage.fileSystem,
+    )
     return preference
   }
 

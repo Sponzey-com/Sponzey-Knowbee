@@ -1,5 +1,7 @@
 import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
 import { buildDefaultStructuredTaskScope, buildOrchestrationPlan, } from "./planner.js";
+import { authorizeDelegationInForest, validateDelegationForestSnapshot, } from "./delegation-forest.js";
+import { resolveAgentConfigAgentName } from "../contracts/sub-agent-orchestration.js";
 const DEFAULT_ROOT_AGENT_ID = "agent:knowbee";
 const DEFAULT_MAX_DEPTH = 5;
 const DEFAULT_MAX_CHILDREN_PER_AGENT = 10;
@@ -145,6 +147,40 @@ function blockedResult(input) {
         reasonCodes: [...new Set(input.reasonCodes)],
     };
 }
+function delegationForestFromRegistry(registry) {
+    const rootAgentId = rootAgentIdFor(registry);
+    const directChildrenByParent = registry.hierarchy?.directChildrenByParent ?? {};
+    const relationships = Object.entries(directChildrenByParent)
+        .flatMap(([parentAgentId, childAgentIds]) => childAgentIds.map((childAgentId, index) => ({
+        edgeId: `registry:${parentAgentId}:${childAgentId}`,
+        parentAgentId,
+        childAgentId,
+        relationshipType: "parent_child",
+        status: "active",
+        sortOrder: index,
+    })));
+    return validateDelegationForestSnapshot({
+        rootAgentId,
+        agents: [
+            {
+                agentId: rootAgentId,
+                agentName: "Knowbee",
+                agentType: "knowbee",
+                status: "enabled",
+            },
+            ...registry.agents
+                .filter((agent) => agent.agentId !== rootAgentId)
+                .map((agent) => ({
+                agentId: agent.agentId,
+                agentName: resolveAgentConfigAgentName(agent.config),
+                agentType: "sub_agent",
+                status: agent.status,
+                delegationPolicy: agent.config.delegation,
+            })),
+        ],
+        relationships,
+    });
+}
 export function buildNestedDelegationPlan(input) {
     const rootAgentId = rootAgentIdFor(input.registrySnapshot);
     const parentSubSessionDepth = normalizedDepth(input.parentSubSessionDepth);
@@ -183,6 +219,7 @@ export function buildNestedDelegationPlan(input) {
         });
     }
     const plannerResult = buildOrchestrationPlan({
+        config: input.config,
         parentRunId: input.parentRunId,
         parentRequestId: input.parentRequestId,
         userRequest: input.userRequest,
@@ -224,6 +261,42 @@ export function buildNestedDelegationPlan(input) {
             ],
         });
     }
+    let forest;
+    try {
+        forest = delegationForestFromRegistry(input.registrySnapshot);
+    }
+    catch {
+        return blockedResult({
+            parentAgentId: input.parentAgentId,
+            ...(input.parentSubSessionId ? { parentSubSessionId: input.parentSubSessionId } : {}),
+            parentSubSessionDepth,
+            childDepth,
+            budget,
+            reasonCodes: ["delegation_forest_invalid"],
+        });
+    }
+    const authorizationReceiptIds = [];
+    for (const task of plan.delegatedTasks) {
+        if (!task.assignedAgentId)
+            continue;
+        const authorization = authorizeDelegationInForest({
+            snapshot: forest,
+            expectedSnapshotFingerprint: forest.snapshotFingerprint,
+            callerAgentId: input.parentAgentId,
+            targetAgentId: task.assignedAgentId,
+        });
+        if (!authorization.ok) {
+            return blockedResult({
+                parentAgentId: input.parentAgentId,
+                ...(input.parentSubSessionId ? { parentSubSessionId: input.parentSubSessionId } : {}),
+                parentSubSessionDepth,
+                childDepth,
+                budget,
+                reasonCodes: [authorization.reasonCode],
+            });
+        }
+        authorizationReceiptIds.push(authorization.authorizationReceiptId);
+    }
     return {
         ok: true,
         status: budget.status === "shrunk" ? "shrunk" : "planned",
@@ -234,6 +307,7 @@ export function buildNestedDelegationPlan(input) {
         childDepth,
         budget,
         reasonCodes: [...new Set([...(plannerResult.reasonCodes ?? []), ...nestedReasonCodes])],
+        delegationAuthorizationReceiptIds: authorizationReceiptIds,
     };
 }
 //# sourceMappingURL=nested-delegation.js.map

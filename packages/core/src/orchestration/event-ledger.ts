@@ -48,6 +48,8 @@ export type OrchestrationEventKind =
   | "named_delivery_attributed"
   | "learning_recorded"
   | "history_restored"
+  | "structured_work_audit"
+  | "work_record_snapshot"
 
 export type OrchestrationEventSeverity = DbOrchestrationEventSeverity
 
@@ -193,6 +195,8 @@ export const ORCHESTRATION_EVENT_KINDS = [
   "named_delivery_attributed",
   "learning_recorded",
   "history_restored",
+  "structured_work_audit",
+  "work_record_snapshot",
 ] as const satisfies readonly OrchestrationEventKind[]
 
 const EVENT_KIND_SET = new Set<string>(ORCHESTRATION_EVENT_KINDS)

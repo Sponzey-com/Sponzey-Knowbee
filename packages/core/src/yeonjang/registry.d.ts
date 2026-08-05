@@ -41,13 +41,23 @@ export type YeonjangRegistryWriteResult = {
     replacedSessionIds?: string[];
 } | {
     ok: false;
-    code: "invalid_identity" | "reserved_call_name" | "call_name_conflict";
+    code: "invalid_identity" | "reserved_call_name" | "call_name_conflict" | "installation_identity_conflict";
     message: string;
 };
 export type YeonjangPairingApprovalResult = {
     ok: true;
     instanceId: string;
+    extensionId: string;
     trustState: YeonjangInstanceTrustState;
+} | {
+    ok: false;
+    code: "instance_not_found" | "pairing_secret_required" | "pairing_secret_unavailable" | "invalid_pairing_secret";
+    message: string;
+};
+export type YeonjangPairingVerificationResult = {
+    ok: true;
+    instanceId: string;
+    extensionId: string;
 } | {
     ok: false;
     code: "instance_not_found" | "pairing_secret_required" | "pairing_secret_unavailable" | "invalid_pairing_secret";
@@ -148,6 +158,19 @@ export interface YeonjangRegistrySummary {
     activeWorkspaceScopeId: string;
     localMarkerInstanceId: string | null;
 }
+export interface YeonjangMqttV2StartupFenceResult {
+    readonly fencedInstanceCount: number;
+}
+/**
+ * Fails closed any MQTT v2 liveness that survived only in SQLite across a
+ * Gateway restart. A fresh signed status observation is the sole operation
+ * allowed to make the instance live again; capability metadata remains useful
+ * for diagnosis but is not executable while methodCount is zero.
+ */
+export declare function fencePersistedYeonjangMqttV2LivenessAtStartup(input: {
+    readonly observedAt: number;
+    readonly db?: Database.Database;
+}): YeonjangMqttV2StartupFenceResult;
 export interface YeonjangGovernanceEventView {
     id: string;
     at: number;
@@ -188,6 +211,11 @@ export declare function approveYeonjangInstancePairing(input: {
     reason?: string | null;
     db?: Database.Database;
 }): YeonjangPairingApprovalResult;
+export declare function verifyYeonjangInstancePairing(input: {
+    instanceId: string;
+    pairingSecret: string;
+    db?: Database.Database;
+}): YeonjangPairingVerificationResult;
 export declare function updateYeonjangInstanceTrustState(input: {
     instanceId: string;
     trustState: YeonjangInstanceTrustState;

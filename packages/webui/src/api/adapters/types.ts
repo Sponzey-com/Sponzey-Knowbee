@@ -1,7 +1,56 @@
+import type {
+  AIAuthMode,
+  AIBackendCredentials,
+  AIProviderType,
+  ProviderCapabilityMatrix,
+} from "../../contracts/ai"
 import type { FeatureCapability } from "../../contracts/capabilities"
-import type { AIAuthMode, AIBackendCredentials, AIProviderType, ProviderCapabilityMatrix } from "../../contracts/ai"
-import type { McpServersResponse } from "../../contracts/mcp"
+import type {
+  McpBindingReceipt,
+  McpBindingRequest,
+  McpCatalogDetail,
+  McpCatalogPageResponse,
+  McpCatalogQueryInput,
+  McpConnectionDraft,
+  McpCreateRequest,
+  McpDeleteRequest,
+  McpLifecycleReceipt,
+  McpMutationReceipt,
+  McpProbeReceipt,
+  McpProtectedUpdateRequest,
+  McpRecoveryReceipt,
+  McpRecoveryRequest,
+  McpServersResponse,
+  McpStatusRequest,
+} from "../../contracts/mcp"
 import type { SetupDraft, SetupMcpServerDraft, SetupState } from "../../contracts/setup"
+import type {
+  SkillBindingReceipt,
+  SkillBindingRequest,
+  SkillCatalogPageResponse,
+  SkillCatalogQueryInput,
+  SkillCreateReceipt,
+  SkillCreateRequest,
+  SkillDeleteReceipt,
+  SkillDeleteRequest,
+  SkillDetailResponse,
+  SkillSourceValidationRequest,
+  SkillSourceValidationResponse,
+  SkillUpdateReceipt,
+  SkillUpdateRequest,
+} from "../../contracts/skills"
+import type {
+  YeonjangBindingReceipt,
+  YeonjangBindingRequest,
+  YeonjangBrowserActiveTabInfoPreDispatchPreview,
+  YeonjangBrowserActiveTabInfoPublicReadinessSummary,
+  YeonjangCapabilityDetail,
+  YeonjangCapabilityItem,
+  YeonjangCapabilityPage,
+  YeonjangCapabilityQueryInput,
+  YeonjangRecoveryReceipt,
+  YeonjangRecoveryRequest,
+} from "../../contracts/yeonjang"
 
 export interface StatusResponse {
   version: string
@@ -20,22 +69,21 @@ export interface StatusResponse {
   orchestratorStatus: {
     status: "ready" | "disabled" | "planned" | "error"
     reason: string | null
-    mode?: "single_knowbee" | "orchestration"
+    mode?: "direct_main_agent" | "single_knowbee" | "orchestration"
     reasonCode?: string
     activeSubAgentCount?: number
   }
   orchestration?: {
-    mode: "single_knowbee" | "orchestration"
+    mode: "direct_main_agent" | "single_knowbee" | "orchestration"
     status: "ready" | "disabled" | "degraded"
     featureFlagEnabled: boolean
-    requestedMode: "single_knowbee" | "orchestration"
+    requestedMode: "direct_main_agent" | "single_knowbee" | "orchestration"
     activeSubAgentCount: number
     totalSubAgentCount: number
     disabledSubAgentCount: number
     activeSubAgents: Array<{
       agentId: string
-      displayName: string
-      nickname?: string
+      agentName: string
       source: "topology" | "db" | "config"
       topologyId?: string
       executorId?: string
@@ -184,10 +232,7 @@ export interface MqttRuntimeResponse {
   logs: MqttExchangeLogEntry[]
 }
 
-export type YeonjangSupportProfile =
-  | "desktop_interactive"
-  | "desktop_limited"
-  | "headless_managed"
+export type YeonjangSupportProfile = "desktop_interactive" | "desktop_limited" | "headless_managed"
 
 export type YeonjangInstanceLocation = "local" | "remote"
 export type YeonjangTrustState = "trusted" | "pending" | "revoked" | "quarantined" | "unknown"
@@ -404,20 +449,101 @@ export interface ResetSetupResponse {
   draft: SetupDraft
   state: SetupState
   checks: SetupChecksResponse
+  restartRequired: true
+  appliesOn: "next_start"
+}
+
+export interface SetupDraftSaveResponse {
+  draft: SetupDraft
+  state: SetupState
+  restartRequired: true
+  appliesOn: "next_start"
 }
 
 export interface ControlPlaneAdapter {
   readonly name: "local"
   getStatus: () => Promise<StatusResponse>
-  getCapabilities: () => Promise<{ items: FeatureCapability[]; generatedAt: number; orchestration?: StatusResponse["orchestration"] }>
+  getCapabilities: () => Promise<{
+    items: FeatureCapability[]
+    generatedAt: number
+    orchestration?: StatusResponse["orchestration"]
+  }>
   getCapability: (key: string) => Promise<FeatureCapability>
+  getSkillCatalog: (
+    query: SkillCatalogQueryInput,
+    signal?: AbortSignal,
+  ) => Promise<SkillCatalogPageResponse>
+  getSkillDetail: (skillRef: string, signal?: AbortSignal) => Promise<SkillDetailResponse>
+  validateSkillSource: (
+    input: SkillSourceValidationRequest,
+    signal?: AbortSignal,
+  ) => Promise<SkillSourceValidationResponse>
+  createSkill: (input: SkillCreateRequest, signal?: AbortSignal) => Promise<SkillCreateReceipt>
+  updateSkill: (
+    skillRef: string,
+    input: SkillUpdateRequest,
+    signal?: AbortSignal,
+  ) => Promise<SkillUpdateReceipt>
+  updateSkillBinding: (
+    skillRef: string,
+    agentRef: string,
+    input: SkillBindingRequest,
+    signal?: AbortSignal,
+  ) => Promise<SkillBindingReceipt>
+  deleteSkill: (
+    skillRef: string,
+    input: SkillDeleteRequest,
+    signal?: AbortSignal,
+  ) => Promise<SkillDeleteReceipt>
+  getMcpCatalog: (
+    query: McpCatalogQueryInput,
+    signal?: AbortSignal,
+  ) => Promise<McpCatalogPageResponse>
+  getMcpCatalogDetail: (mcpRef: string, signal?: AbortSignal) => Promise<McpCatalogDetail>
+  probeMcpDraft: (draft: McpConnectionDraft, signal?: AbortSignal) => Promise<McpProbeReceipt>
+  probeExistingMcp: (mcpRef: string, signal?: AbortSignal) => Promise<McpProbeReceipt>
+  createMcp: (input: McpCreateRequest, signal?: AbortSignal) => Promise<McpMutationReceipt>
+  updateMcp: (
+    mcpRef: string,
+    input: McpProtectedUpdateRequest,
+    signal?: AbortSignal,
+  ) => Promise<McpMutationReceipt>
+  updateMcpBinding: (
+    mcpRef: string,
+    agentRef: string,
+    input: McpBindingRequest,
+    signal?: AbortSignal,
+  ) => Promise<McpBindingReceipt>
+  updateMcpStatus: (
+    mcpRef: string,
+    input: McpStatusRequest,
+    signal?: AbortSignal,
+  ) => Promise<McpLifecycleReceipt>
+  deleteMcp: (
+    mcpRef: string,
+    input: McpDeleteRequest,
+    signal?: AbortSignal,
+  ) => Promise<McpLifecycleReceipt>
+  recoverMcp: (
+    mcpRef: string,
+    input: McpRecoveryRequest,
+    signal?: AbortSignal,
+  ) => Promise<McpRecoveryReceipt>
   getSetupStatus: () => Promise<SetupState>
   getSetupChecks: () => Promise<SetupChecksResponse>
   getSetupDraft: () => Promise<SetupDraft>
-  saveSetupDraft: (payload: { draft: SetupDraft; state?: SetupState }) => Promise<{ draft: SetupDraft; state: SetupState }>
+  saveSetupDraft: (payload: {
+    draft: SetupDraft
+    state?: SetupState
+  }) => Promise<SetupDraftSaveResponse>
   resetSetup: () => Promise<ResetSetupResponse>
   completeSetup: () => Promise<SetupState>
-  testBackend: (endpoint: string, providerType: AIProviderType, credentials: AIBackendCredentials, authMode?: AIAuthMode) => Promise<TestBackendResponse>
+  testBackend: (
+    endpoint: string,
+    providerType: AIProviderType,
+    credentials: AIBackendCredentials,
+    authMode?: AIAuthMode,
+  ) => Promise<TestBackendResponse>
   testTelegram: (botToken: string) => Promise<TestTelegramResponse>
   testSlack: (botToken: string, appToken: string) => Promise<TestSlackResponse>
   testMcpServer: (server: SetupMcpServerDraft) => Promise<TestMcpServerResponse>
@@ -427,9 +553,60 @@ export interface ControlPlaneAdapter {
   reloadMcpServers: () => Promise<McpServersResponse>
   getMqttRuntime: () => Promise<MqttRuntimeResponse>
   getYeonjangFleet: () => Promise<YeonjangFleetResponse>
-  approveYeonjangPairing: (instanceId: string, payload: { pairingSecret: string; actor?: string; ownerUserId?: string; workspaceScopeId?: string; reason?: string }) => Promise<YeonjangFleetResponse>
-  updateYeonjangTrust: (instanceId: string, payload: { trustState: "pending" | "trusted" | "revoked" | "quarantined"; actor?: string; reason?: string }) => Promise<YeonjangFleetResponse>
-  renameYeonjangInstance: (instanceId: string, payload: { instanceAlias?: string; displayName?: string; actor?: string; reason?: string }) => Promise<YeonjangFleetResponse>
-  assignYeonjangLocalMarker: (instanceId: string, payload: { actor?: string; reason?: string }) => Promise<YeonjangFleetResponse>
+  getYeonjangBrowserActiveTabInfoReadiness: (
+    signal?: AbortSignal,
+  ) => Promise<YeonjangBrowserActiveTabInfoPublicReadinessSummary>
+  getYeonjangBrowserActiveTabInfoDiagnostics: (
+    signal?: AbortSignal,
+  ) => Promise<YeonjangBrowserActiveTabInfoPublicReadinessSummary>
+  previewYeonjangBrowserActiveTabInfoPreDispatch: (
+    input: unknown,
+    signal?: AbortSignal,
+  ) => Promise<YeonjangBrowserActiveTabInfoPreDispatchPreview>
+  getYeonjangCapabilities: (
+    query: YeonjangCapabilityQueryInput,
+    signal?: AbortSignal,
+  ) => Promise<YeonjangCapabilityPage>
+  getYeonjangCapabilityDetail: (
+    yeonjangRef: string,
+    signal?: AbortSignal,
+  ) => Promise<YeonjangCapabilityDetail>
+  recoverYeonjang: (
+    yeonjangRef: string,
+    input: YeonjangRecoveryRequest,
+    signal?: AbortSignal,
+  ) => Promise<YeonjangRecoveryReceipt>
+  updateYeonjangBinding: (
+    yeonjangRef: string,
+    agentRef: string,
+    input: YeonjangBindingRequest,
+    signal?: AbortSignal,
+  ) => Promise<YeonjangBindingReceipt>
+  approveYeonjangPairing: (
+    instanceId: string,
+    payload: {
+      pairingSecret: string
+      actor?: string
+      ownerUserId?: string
+      workspaceScopeId?: string
+      reason?: string
+    },
+  ) => Promise<YeonjangFleetResponse>
+  updateYeonjangTrust: (
+    instanceId: string,
+    payload: {
+      trustState: "pending" | "trusted" | "revoked" | "quarantined"
+      actor?: string
+      reason?: string
+    },
+  ) => Promise<YeonjangFleetResponse>
+  renameYeonjangInstance: (
+    instanceId: string,
+    payload: { instanceAlias?: string; displayName?: string; actor?: string; reason?: string },
+  ) => Promise<YeonjangFleetResponse>
+  assignYeonjangLocalMarker: (
+    instanceId: string,
+    payload: { actor?: string; reason?: string },
+  ) => Promise<YeonjangFleetResponse>
   disconnectMqttExtension: (extensionId: string) => Promise<{ ok: boolean; message: string }>
 }

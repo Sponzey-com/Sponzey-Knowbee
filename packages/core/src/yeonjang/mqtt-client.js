@@ -1,10 +1,278 @@
 import { createHash, randomUUID } from "node:crypto";
 import mqtt from "mqtt";
-import { getConfig } from "../config/index.js";
-import { createLogger } from "../logger/index.js";
+import { createLogger, redactLogText } from "../logger/index.js";
 import { getMqttBrokerSnapshot, getMqttExtensionSnapshots, validateMqttBrokerConfig } from "../mqtt/broker.js";
 import { recordMessageLedgerEvent } from "../runs/message-ledger.js";
+import { projectYeonjangResponseFailure, } from "./command-attempt.js";
+import { admitYeonjangMqttV2ArtifactFetchRejection, createYeonjangMqttV2ArtifactAssembler, createYeonjangMqttV2ArtifactControl, } from "./mqtt-v2-artifact.js";
+import { createYeonjangMqttV2Cancellation } from "./mqtt-v2-cancel.js";
+import { buildYeonjangMqttV2Topics, createYeonjangMqttV2Command, deriveYeonjangMqttV2HmacKey, mapYeonjangMqttV2WireIdentity, } from "./mqtt-v2-contract.js";
+import { admitYeonjangMqttV2CapturePermissionResponse, createYeonjangMqttV2CapturePermissionQuery, } from "./mqtt-v2-permission.js";
+import { admitYeonjangMqttV2ResponseAckResult, createYeonjangMqttV2ResponseAck } from "./mqtt-v2-response-ack.js";
+import { admitYeonjangMqttV2TerminalResponse } from "./mqtt-v2-response.js";
+import { resolveYeonjangMqttV2Target } from "./mqtt-v2-target.js";
 const log = createLogger("yeonjang:mqtt");
+export const YEONJANG_COMMAND_PROTOCOL_VERSION = 1;
+function yeonjangMqttErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
+export class YeonjangCommandError extends Error {
+    code;
+    attempt;
+    constructor(input) {
+        super(input.message);
+        this.name = "YeonjangCommandError";
+        this.code = input.code;
+        if (input.attempt)
+            this.attempt = input.attempt;
+    }
+}
+const MQTT_V2_CAMERA_FAILURE_CODES = Object.freeze({
+    permission_not_determined: "camera_permission_not_determined",
+    permission_denied: "camera_permission_denied",
+    permission_restricted: "camera_permission_restricted",
+    resource_busy: "camera_busy",
+    cancelled: "camera_capture_cancelled",
+    deadline_exceeded: "camera_capture_timeout",
+    helper_timed_out: "camera_helper_timeout",
+});
+const MQTT_V2_SCREEN_FAILURE_CODES = Object.freeze({
+    permission_denied: "screen_permission_denied",
+});
+function boundedTerminalFailureCode(value) {
+    return typeof value === "string" && /^[a-z][a-z0-9_]{0,127}$/u.test(value)
+        ? value
+        : null;
+}
+/**
+ * Produces the only terminal-failure fields permitted in scoped Field Debug.
+ * The signed envelope itself, paths, artifact data, and native helper text
+ * never cross this diagnostic boundary.
+ */
+function terminalFailureDebugFields(failure) {
+    const effectState = failure?.effect_state;
+    const retrySafety = failure?.retry_safety;
+    return {
+        terminalFailureReasonCode: boundedTerminalFailureCode(failure?.reason_code),
+        terminalFailureEffectState: effectState === "not_started" || effectState === "confirmed_not_applied"
+            || effectState === "confirmed_applied" || effectState === "unknown"
+            ? effectState
+            : null,
+        terminalFailureRetrySafety: retrySafety === "safe_redelivery_same_idempotency"
+            || retrySafety === "material_change_required"
+            || retrySafety === "local_action_required"
+            || retrySafety === "not_retryable"
+            || retrySafety === "manual_verification_required"
+            ? retrySafety
+            : null,
+    };
+}
+/**
+ * Converts the signed MQTT v2 terminal failure into the existing command-attempt
+ * contract. The terminal, not user-facing prose, owns whether an effect started.
+ */
+export function projectYeonjangMqttV2TerminalFailure(input) {
+    const rawReasonCode = boundedTerminalFailureCode(input.failure?.reason_code);
+    const reasonCode = input.method === "camera.capture" && rawReasonCode
+        && Object.hasOwn(MQTT_V2_CAMERA_FAILURE_CODES, rawReasonCode)
+        ? MQTT_V2_CAMERA_FAILURE_CODES[rawReasonCode]
+        : input.method === "screen.capture" && rawReasonCode
+            && Object.hasOwn(MQTT_V2_SCREEN_FAILURE_CODES, rawReasonCode)
+            ? MQTT_V2_SCREEN_FAILURE_CODES[rawReasonCode]
+            : rawReasonCode ?? `yeonjang_v2_${input.executionOutcome}`;
+    const effectState = input.failure?.effect_state;
+    const retrySafety = input.failure?.retry_safety;
+    const terminalStage = effectState === "not_started" || effectState === "confirmed_not_applied"
+        ? "rejected"
+        : input.executionOutcome === "cancelled"
+            ? "cancelled"
+            : input.failure?.stage === "helper_execution"
+                && rawReasonCode === "helper_timed_out"
+                ? "helper_timeout"
+                : "handler_failed";
+    const projectedRetrySafety = retrySafety === "safe_redelivery_same_idempotency"
+        ? "safe_same_command"
+        : retrySafety === "material_change_required"
+            || retrySafety === "local_action_required"
+            || retrySafety === "not_retryable"
+            ? "change_strategy"
+            : retrySafety === "manual_verification_required"
+                ? "unknown_effect_state"
+                : null;
+    const targetFingerprint = /^sha256:[a-f0-9]{64}$/u.test(input.targetFingerprint)
+        ? input.targetFingerprint
+        : null;
+    const attempt = rawReasonCode && projectedRetrySafety && targetFingerprint
+        ? {
+            schemaVersion: 1,
+            method: input.method,
+            commandId: input.commandId,
+            operationId: input.operationId,
+            targetFingerprint,
+            terminalStage,
+            reasonCode,
+            retrySafety: projectedRetrySafety,
+        }
+        : undefined;
+    return {
+        code: reasonCode,
+        message: "Yeonjang MQTT v2 execution did not succeed.",
+        ...(attempt ? { attempt } : {}),
+    };
+}
+const DEFAULT_MAX_YEONJANG_RESPONSE_BYTES = 4 * 1024 * 1024;
+const DEFAULT_MAX_YEONJANG_RESPONSE_CHUNKS = 1024;
+export function createYeonjangChunkAssembler(input) {
+    const maxTotalBytes = boundedPositiveInteger(input.maxTotalBytes, DEFAULT_MAX_YEONJANG_RESPONSE_BYTES);
+    const maxChunkCount = boundedPositiveInteger(input.maxChunkCount, DEFAULT_MAX_YEONJANG_RESPONSE_CHUNKS);
+    const parts = new Map();
+    let expected;
+    let terminal;
+    return {
+        accept(value) {
+            if (terminal)
+                return terminal;
+            const chunk = parseYeonjangChunkEnvelope(value);
+            if (!chunk || chunk.id !== input.requestId) {
+                terminal = rejectedChunk("invalid_response_chunk");
+                return terminal;
+            }
+            if (chunk.chunk_count > maxChunkCount
+                || chunk.total_size_bytes > maxTotalBytes
+                || chunk.base64_data.length > Math.ceil(maxTotalBytes / 3) * 4 + 4) {
+                terminal = rejectedChunk("response_chunk_too_large");
+                return terminal;
+            }
+            const normalizedDigest = chunk.payload_digest.toLowerCase();
+            if (!expected) {
+                expected = {
+                    chunkCount: chunk.chunk_count,
+                    totalSizeBytes: chunk.total_size_bytes,
+                    payloadDigest: normalizedDigest,
+                };
+            }
+            else if (expected.chunkCount !== chunk.chunk_count
+                || expected.totalSizeBytes !== chunk.total_size_bytes
+                || expected.payloadDigest !== normalizedDigest) {
+                terminal = rejectedChunk("invalid_response_chunk");
+                return terminal;
+            }
+            const decoded = decodeCanonicalBase64(chunk.base64_data);
+            if (!decoded) {
+                terminal = rejectedChunk("invalid_response_chunk");
+                return terminal;
+            }
+            const existing = parts.get(chunk.chunk_index);
+            if (existing && !existing.equals(decoded)) {
+                terminal = rejectedChunk("invalid_response_chunk");
+                return terminal;
+            }
+            parts.set(chunk.chunk_index, decoded);
+            const observedBytes = [...parts.values()].reduce((total, part) => total + part.length, 0);
+            if (observedBytes > expected.totalSizeBytes || observedBytes > maxTotalBytes) {
+                terminal = rejectedChunk("response_chunk_too_large");
+                return terminal;
+            }
+            if (parts.size < expected.chunkCount)
+                return { kind: "pending" };
+            const ordered = [];
+            for (let index = 0; index < expected.chunkCount; index += 1) {
+                const part = parts.get(index);
+                if (!part) {
+                    terminal = rejectedChunk("invalid_response_chunk");
+                    return terminal;
+                }
+                ordered.push(part);
+            }
+            const payload = Buffer.concat(ordered);
+            const actualDigest = `sha256:${createHash("sha256").update(payload).digest("hex")}`;
+            if (payload.length !== expected.totalSizeBytes
+                || actualDigest !== expected.payloadDigest) {
+                terminal = rejectedChunk("invalid_response_chunk");
+                return terminal;
+            }
+            terminal = { kind: "complete", payload };
+            return terminal;
+        },
+    };
+}
+function boundedPositiveInteger(value, fallback) {
+    return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+        ? value
+        : fallback;
+}
+function rejectedChunk(code) {
+    return { kind: "rejected", code };
+}
+function parseYeonjangChunkEnvelope(value) {
+    if (!isChunkEnvelope(value))
+        return null;
+    const candidate = value;
+    if (typeof candidate.id !== "string"
+        || candidate.id.length === 0
+        || !Number.isSafeInteger(candidate.chunk_index)
+        || !Number.isSafeInteger(candidate.chunk_count)
+        || !Number.isSafeInteger(candidate.total_size_bytes)
+        || candidate.chunk_index < 0
+        || candidate.chunk_count < 1
+        || candidate.chunk_index >= candidate.chunk_count
+        || candidate.total_size_bytes < 1
+        || typeof candidate.payload_digest !== "string"
+        || !/^sha256:[0-9a-f]{64}$/iu.test(candidate.payload_digest)
+        || candidate.encoding !== "base64"
+        || candidate.mime_type !== "application/json"
+        || typeof candidate.base64_data !== "string"
+        || candidate.base64_data.length === 0) {
+        return null;
+    }
+    return candidate;
+}
+function decodeCanonicalBase64(value) {
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) {
+        return null;
+    }
+    const decoded = Buffer.from(value, "base64");
+    return decoded.toString("base64") === value ? decoded : null;
+}
+export function createYeonjangCancellationRequest(input) {
+    const commandId = input.commandId.trim();
+    const cancelToken = input.cancelToken.trim();
+    if (!commandId || !cancelToken) {
+        throw new Error("Yeonjang cancellation requires an exact command and cancel token.");
+    }
+    const cancellationCommandId = randomUUID();
+    return {
+        protocolVersion: YEONJANG_COMMAND_PROTOCOL_VERSION,
+        id: randomUUID(),
+        method: "command.cancel",
+        params: {
+            command_id: commandId,
+            cancel_token: cancelToken,
+        },
+        metadata: {
+            commandId: cancellationCommandId,
+            expiresAt: Date.now() + 5_000,
+            ...(input.targetSessionId?.trim()
+                ? { targetSessionId: input.targetSessionId.trim() }
+                : {}),
+        },
+    };
+}
+export function armYeonjangResponseWaiter(createResponseWaiter) {
+    const cancellation = new AbortController();
+    const response = createResponseWaiter(cancellation.signal);
+    // Attach a rejection observer immediately so a publish failure cannot leave
+    // a temporarily unhandled response-waiter rejection.
+    void response.catch(() => undefined);
+    return {
+        response,
+        async cancel() {
+            cancellation.abort();
+            await response.catch(() => undefined);
+        },
+    };
+}
 export const DEFAULT_YEONJANG_EXTENSION_ID = "yeonjang-main";
 const YEONJANG_CAPABILITY_TTL_MS = 5_000;
 const capabilityCache = new Map();
@@ -23,12 +291,63 @@ export function buildYeonjangTopics(extensionId = DEFAULT_YEONJANG_EXTENSION_ID)
 export async function invokeYeonjangMethod(method, params = {}, options = {}) {
     const extensionId = options.extensionId?.trim() || DEFAULT_YEONJANG_EXTENSION_ID;
     const timeoutMs = clampTimeout(options.timeoutMs);
+    const mqttConfig = requireMqttClientConfig(options);
     const normalizedMetadata = normalizeYeonjangRequestMetadata(options.metadata);
     const dispatchBase = createYeonjangCommandDispatch(method, params, {
         extensionId,
         timeoutMs,
         ...(normalizedMetadata ? { metadata: normalizedMetadata } : {}),
+        ...(options.executionAuthorization
+            ? { executionAuthorization: options.executionAuthorization }
+            : {}),
     });
+    const v2Snapshots = getMqttExtensionSnapshots().filter((candidate) => candidate.protocolVersion === "2"
+        && (candidate.extensionId === extensionId || candidate.nodeId === extensionId || candidate.instanceId === extensionId));
+    if (v2Snapshots.length > 0) {
+        if (method !== "camera.capture"
+            && method !== "screen.capture"
+            && method !== "camera.permission_status") {
+            throw new YeonjangCommandError({
+                code: "yeonjang_v2_method_unsupported",
+                message: `Yeonjang MQTT v2 does not advertise ${method}.`,
+            });
+        }
+        const resolved = resolveYeonjangMqttV2Target({
+            snapshots: v2Snapshots,
+            requestedExtensionId: extensionId,
+            ...(dispatchBase.metadata.targetSessionId
+                ? { expectedSessionId: dispatchBase.metadata.targetSessionId }
+                : {}),
+        });
+        if (!resolved.ok) {
+            throw new YeonjangCommandError({ code: resolved.reasonCode, message: "Yeonjang MQTT v2 target resolution failed." });
+        }
+        const requesterId = mqttConfig.yeonjangV2?.requesterId.trim() ?? "";
+        if (!requesterId) {
+            throw new YeonjangCommandError({ code: "yeonjang_v2_requester_not_enrolled", message: "Gateway MQTT v2 requester enrollment is required." });
+        }
+        if (method === "camera.permission_status") {
+            return await invokeYeonjangMqttV2CapturePermissionStatus({
+                options,
+                mqttConfig,
+                timeoutMs,
+                dispatch: dispatchBase,
+                requesterId,
+                target: resolved.target,
+                platform: v2Snapshots.find((snapshot) => snapshot.instanceId === resolved.target.instanceId)?.platform ?? "unknown",
+            });
+        }
+        return await invokeYeonjangMqttV2Capture({
+            method,
+            params,
+            options,
+            mqttConfig,
+            timeoutMs,
+            dispatch: dispatchBase,
+            requesterId,
+            target: resolved.target,
+        });
+    }
     const execute = async () => {
         const topics = buildYeonjangTopics(extensionId);
         const autoRetryEligible = isYeonjangSafeRetryMethod(method);
@@ -58,6 +377,9 @@ export async function invokeYeonjangMethod(method, params = {}, options = {}) {
             const request = createYeonjangCommandDispatch(method, params, {
                 extensionId,
                 timeoutMs,
+                ...(options.executionAuthorization
+                    ? { executionAuthorization: options.executionAuthorization }
+                    : {}),
                 metadata: {
                     ...dispatchBase.metadata,
                     commandId: dispatchBase.commandId,
@@ -66,13 +388,32 @@ export async function invokeYeonjangMethod(method, params = {}, options = {}) {
                     cancelToken: dispatchBase.cancelToken,
                 },
             });
-            const client = createClient();
+            const client = createClient(mqttConfig);
             log.debug(`invoking ${method} on ${extensionId} (attempt ${attempt}/${maxAttempts})`);
             try {
+                throwIfYeonjangCancelled(options.signal, method, request.commandId);
                 const attemptTimeoutMs = clampAttemptTimeout(timeoutMs, remainingMs);
                 await waitForConnect(client, attemptTimeoutMs);
+                throwIfYeonjangCancelled(options.signal, method, request.commandId);
                 await subscribe(client, topics.responseTopic);
-                await publish(client, topics.requestTopic, request.request);
+                throwIfYeonjangCancelled(options.signal, method, request.commandId);
+                const responseWaiter = armYeonjangResponseWaiter((cancellationSignal) => waitForResponse(client, topics.responseTopic, request.requestId, method, request.commandId, attemptTimeoutMs, options.signal, cancellationSignal, async () => {
+                    const cancellationRequest = createYeonjangCancellationRequest({
+                        commandId: request.commandId,
+                        cancelToken: request.cancelToken,
+                        ...(request.metadata.targetSessionId
+                            ? { targetSessionId: request.metadata.targetSessionId }
+                            : {}),
+                    });
+                    await publishCancellationBestEffort(client, topics.requestTopic, cancellationRequest);
+                }));
+                try {
+                    await publish(client, topics.requestTopic, request.request);
+                }
+                catch (publishError) {
+                    await responseWaiter.cancel();
+                    throw publishError;
+                }
                 recordYeonjangDeliveryLedgerEvent({
                     metadata: request.metadata,
                     deliveryKey: request.commandId,
@@ -92,7 +433,7 @@ export async function invokeYeonjangMethod(method, params = {}, options = {}) {
                         autoRetryEligible,
                     },
                 });
-                const response = await waitForResponse(client, topics.responseTopic, request.requestId, attemptTimeoutMs);
+                const response = await responseWaiter.response;
                 recordYeonjangDeliveryLedgerEvent({
                     metadata: request.metadata,
                     deliveryKey: request.commandId,
@@ -131,7 +472,7 @@ export async function invokeYeonjangMethod(method, params = {}, options = {}) {
                             attempt,
                             maxAttempts,
                             autoRetryEligible,
-                            error: error instanceof Error ? error.message : String(error),
+                            error: yeonjangMqttErrorMessage(error),
                         },
                     });
                     continue;
@@ -152,7 +493,7 @@ export async function invokeYeonjangMethod(method, params = {}, options = {}) {
                         attempt,
                         maxAttempts,
                         autoRetryEligible,
-                        error: error instanceof Error ? error.message : String(error),
+                        error: yeonjangMqttErrorMessage(error),
                     },
                 });
             }
@@ -167,10 +508,104 @@ export async function invokeYeonjangMethod(method, params = {}, options = {}) {
     }
     return await enqueueYeonjangExtensionExecution(extensionId, execute);
 }
+async function invokeYeonjangMqttV2CapturePermissionStatus(input) {
+    const enrollment = { ...input.target, requesterId: input.requesterId };
+    const hmacKey = deriveYeonjangMqttV2HmacKey(Buffer.from(input.mqttConfig.password, "utf8"));
+    const client = createClient(input.mqttConfig);
+    const topics = buildYeonjangMqttV2Topics(enrollment);
+    const now = Date.now();
+    const expiresAt = Math.min(input.dispatch.expiresAt, now + input.timeoutMs);
+    const requestId = mapYeonjangMqttV2WireIdentity("request", input.dispatch.requestId);
+    const commandId = mapYeonjangMqttV2WireIdentity("command", input.dispatch.commandId);
+    const operationId = mapYeonjangMqttV2WireIdentity("permission", `${input.dispatch.requestId}:capture-permission`);
+    const idempotencyKey = mapYeonjangMqttV2WireIdentity("idempotency", `${input.dispatch.idempotencyKey}:capture-permission`);
+    const query = createYeonjangMqttV2CapturePermissionQuery({
+        enrollment,
+        targetFingerprint: input.target.targetFingerprint,
+        identity: {
+            messageId: mapYeonjangMqttV2WireIdentity("message", randomUUID()),
+            requestId,
+            commandId,
+            operationId,
+            correlationId: mapYeonjangMqttV2WireIdentity("correlation", input.dispatch.metadata.requestGroupId ?? input.dispatch.metadata.runId ?? input.dispatch.requestId),
+            causationId: mapYeonjangMqttV2WireIdentity("causation", input.dispatch.deliveryId),
+            idempotencyKey,
+            authorizationId: mapYeonjangMqttV2WireIdentity("authorization", randomUUID()),
+            nonce: mapYeonjangMqttV2WireIdentity("nonce", randomUUID()),
+        },
+        issuedAt: now,
+        expiresAt,
+        sequence: 1,
+        hmacKey,
+    });
+    try {
+        throwIfYeonjangCancelled(input.options.signal, "camera.permission_status", commandId);
+        await waitForConnect(client, input.timeoutMs);
+        await subscribe(client, topics.responseTopic);
+        const responsePayload = waitForExactMqttPayload({
+            client,
+            topic: topics.responseTopic,
+            timeoutMs: input.timeoutMs,
+            ...(input.options.signal ? { signal: input.options.signal } : {}),
+            predicate: (payload) => {
+                try {
+                    const value = JSON.parse(payload.toString("utf8"));
+                    return value.schema_id === "yeonjang.capture-permission-response.v2" && value.request_id === requestId;
+                }
+                catch {
+                    return false;
+                }
+            },
+        });
+        await publishJson(client, query.topic, query.envelope);
+        const admitted = admitYeonjangMqttV2CapturePermissionResponse({
+            payload: await responsePayload,
+            nowMs: Date.now(),
+            hmacKey,
+            expected: {
+                enrollment,
+                requestId,
+                commandId,
+                operationId,
+                idempotencyKey,
+                targetFingerprint: input.target.targetFingerprint,
+            },
+        });
+        if (!admitted.ok) {
+            throw new YeonjangCommandError({
+                code: admitted.reasonCode,
+                message: "Yeonjang MQTT v2 permission response verification failed.",
+            });
+        }
+        const camera = admitted.permission.permissions?.find((row) => row.method === "camera.capture");
+        if (admitted.permission.outcome !== "available" || !camera) {
+            throw new YeonjangCommandError({
+                code: "yeonjang_v2_permission_observation_unavailable",
+                message: "Yeonjang MQTT v2 camera permission observation was unavailable.",
+            });
+        }
+        const status = camera.osPermission === "granted"
+            ? "authorized"
+            : camera.osPermission;
+        return {
+            status,
+            reason: `mqtt_v2_permission_${admitted.permission.outcome}`,
+            platform: input.platform,
+            canAttemptCapture: camera.platformAvailable && camera.localPolicy === "allowed" && camera.osPermission === "granted",
+            requiresUserAction: camera.osPermission === "not_determined" || camera.osPermission === "denied" || camera.osPermission === "restricted",
+        };
+    }
+    finally {
+        await closeClient(client);
+        hmacKey.fill(0);
+    }
+}
 function normalizeYeonjangRequestMetadata(metadata) {
     if (!metadata)
         return undefined;
-    const normalizedEntries = Object.entries(metadata).filter(([, value]) => {
+    const normalizedEntries = Object.entries(metadata).filter(([key, value]) => {
+        if (key === "authorizationReceipt" || key === "authorization_receipt")
+            return false;
         if (typeof value === "string")
             return value.trim().length > 0;
         return value != null;
@@ -229,7 +664,7 @@ export function createYeonjangCommandDispatch(method, params = {}, options = {})
         targetSessionId,
         params,
     });
-    const nextMetadata = {
+    const unsignedMetadata = {
         ...metadata,
         ...(targetSessionId ? { targetSessionId } : {}),
         commandId,
@@ -237,6 +672,31 @@ export function createYeonjangCommandDispatch(method, params = {}, options = {})
         idempotencyKey,
         expiresAt,
         cancelToken,
+    };
+    const executionAuthorization = options.executionAuthorization;
+    const authorization = executionAuthorization
+        ? executionAuthorization.issuer.issue({
+            extensionId,
+            targetSessionId: targetSessionId ?? "",
+            method,
+            resourceScope: executionAuthorization.resourceScope,
+            commandId,
+            operationId: normalizeMetadataString(metadata.operationId) ?? "",
+            targetFingerprint: normalizeMetadataString(metadata.targetFingerprint) ?? "",
+            idempotencyKey,
+            expiresAt,
+            grant: executionAuthorization.grant,
+        })
+        : undefined;
+    if (authorization && !authorization.ok) {
+        throw new YeonjangCommandError({
+            code: authorization.reasonCode,
+            message: "Yeonjang execution authorization could not be issued.",
+        });
+    }
+    const nextMetadata = {
+        ...unsignedMetadata,
+        ...(authorization?.ok ? { authorizationReceipt: authorization.receipt } : {}),
     };
     return {
         requestId: deliveryId,
@@ -247,6 +707,7 @@ export function createYeonjangCommandDispatch(method, params = {}, options = {})
         cancelToken,
         metadata: nextMetadata,
         request: {
+            protocolVersion: YEONJANG_COMMAND_PROTOCOL_VERSION,
             id: deliveryId,
             method,
             params,
@@ -445,20 +906,35 @@ function getFreshCachedCapabilities(extensionId) {
 }
 function getFreshCapabilitySnapshot(extensionId) {
     const now = Date.now();
-    const snapshot = getMqttExtensionSnapshots().find((candidate) => candidate.extensionId === extensionId);
-    if (!snapshot)
+    const matches = getMqttExtensionSnapshots().filter((candidate) => candidate.extensionId === extensionId
+        || candidate.nodeId === extensionId
+        || candidate.instanceId === extensionId);
+    // An alias shared by multiple instances is never a valid execution target.
+    if (matches.length !== 1)
         return null;
+    const snapshot = matches[0];
     if (String(snapshot.state ?? "").toLowerCase() === "offline")
         return null;
     if (!snapshot.capabilityMatrix && snapshot.methods.length === 0)
         return null;
+    // MQTT v2 capabilities arrive as a separately signed retained projection.
+    // Its signed expiry, not the legacy five-second cache TTL, is the authority
+    // for reusing it between the extension's normal heartbeat publications.
+    if (snapshot.protocolVersion === "2" && snapshot.v2CapabilitiesExpiresAt != null) {
+        return now < snapshot.v2CapabilitiesExpiresAt ? snapshot : null;
+    }
     const refreshedAt = snapshot.lastCapabilityRefreshAt ?? snapshot.lastSeenAt;
     if (now - refreshedAt > YEONJANG_CAPABILITY_TTL_MS)
         return null;
     return snapshot;
 }
 export function isYeonjangUnavailableError(error) {
-    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof YeonjangCommandError
+        && (error.code === "yeonjang_response_timeout"
+            || error.code === "camera_response_timeout")) {
+        return true;
+    }
+    const message = yeonjangMqttErrorMessage(error);
     const normalized = message.toLowerCase();
     return [
         "mqtt 브로커가 비활성화되어 있습니다",
@@ -475,8 +951,525 @@ export function isYeonjangUnavailableError(error) {
         "authentication",
     ].some((pattern) => normalized.includes(pattern));
 }
-function createClient() {
-    const config = getConfig().mqtt;
+async function invokeYeonjangMqttV2Capture(input) {
+    const operationCanonical = input.dispatch.metadata.operationId?.trim();
+    if (!operationCanonical) {
+        throw new YeonjangCommandError({ code: "yeonjang_v2_operation_identity_required", message: "Canonical side-effect operation identity is required." });
+    }
+    const enrollment = { ...input.target, requesterId: input.requesterId };
+    const hmacKey = deriveYeonjangMqttV2HmacKey(Buffer.from(input.mqttConfig.password, "utf8"));
+    const client = createClient(input.mqttConfig);
+    const topics = buildYeonjangMqttV2Topics(enrollment);
+    const wire = {
+        requestId: mapYeonjangMqttV2WireIdentity("request", input.dispatch.requestId),
+        commandId: mapYeonjangMqttV2WireIdentity("command", input.dispatch.commandId),
+        operationId: mapYeonjangMqttV2WireIdentity("operation", operationCanonical),
+        idempotencyKey: mapYeonjangMqttV2WireIdentity("idempotency", input.dispatch.idempotencyKey),
+        cancellationId: mapYeonjangMqttV2WireIdentity("cancellation", input.dispatch.commandId),
+        cancelToken: mapYeonjangMqttV2WireIdentity("cancel", input.dispatch.cancelToken),
+    };
+    const now = Date.now();
+    const expiresAt = Math.min(input.dispatch.expiresAt, now + input.timeoutMs);
+    const command = createYeonjangMqttV2Command({
+        enrollment,
+        targetFingerprint: input.target.targetFingerprint,
+        method: input.method,
+        params: input.method === "camera.capture"
+            ? {
+                ...(typeof input.params.device_id === "string" ? { device_id: input.params.device_id } : {}),
+                ...(typeof input.params.capture_timeout_ms === "number" ? { capture_timeout_ms: input.params.capture_timeout_ms } : {}),
+            }
+            : { ...(typeof input.params.display === "number" ? { display: input.params.display } : {}) },
+        identity: {
+            messageId: mapYeonjangMqttV2WireIdentity("message", randomUUID()),
+            requestId: wire.requestId,
+            commandId: wire.commandId,
+            operationId: wire.operationId,
+            correlationId: mapYeonjangMqttV2WireIdentity("correlation", input.dispatch.metadata.requestGroupId ?? input.dispatch.metadata.runId ?? input.dispatch.requestId),
+            causationId: mapYeonjangMqttV2WireIdentity("causation", input.dispatch.deliveryId),
+            idempotencyKey: wire.idempotencyKey,
+            cancellationId: wire.cancellationId,
+            cancelToken: wire.cancelToken,
+            authorizationId: mapYeonjangMqttV2WireIdentity("authorization", randomUUID()),
+            nonce: mapYeonjangMqttV2WireIdentity("nonce", randomUUID()),
+        },
+        issuedAt: now,
+        expiresAt,
+        sequence: 1,
+        hmacKey,
+    });
+    let commandDispatched = false;
+    let commandTerminal = false;
+    let artifactTransferActive = false;
+    let artifactCancellation = null;
+    const terminalWaitStartedAt = Date.now();
+    let terminalWaitTrace = createMqttV2TerminalWaitTrace(wire.requestId);
+    try {
+        throwIfYeonjangCancelled(input.options.signal, input.method, wire.commandId);
+        await waitForConnect(client, input.timeoutMs);
+        await subscribe(client, topics.responseTopic);
+        await subscribe(client, topics.artifactChunkFilter);
+        log.fieldDebug("mqtt_v2_terminal_dispatch", {
+            stage: "response_waiter_ready",
+            correlationIdHash: terminalWaitTrace.correlationIdHash,
+            elapsedMs: Math.max(0, Date.now() - terminalWaitStartedAt),
+        });
+        const responsePayload = waitForExactMqttPayload({
+            client,
+            topic: topics.responseTopic,
+            timeoutMs: input.timeoutMs,
+            ...(input.options.signal ? { signal: input.options.signal } : {}),
+            onDiagnostic: (event) => {
+                terminalWaitTrace = recordMqttV2TerminalWaitTrace(terminalWaitTrace, event);
+                if (event.kind === "settled") {
+                    log.fieldDebug("mqtt_v2_terminal_waiter", {
+                        stage: "terminal_waiter",
+                        ...terminalWaitTrace,
+                    });
+                }
+            },
+            predicate: (payload) => {
+                try {
+                    const value = JSON.parse(payload.toString("utf8"));
+                    return value.request_id === wire.requestId;
+                }
+                catch {
+                    return false;
+                }
+            },
+        });
+        commandDispatched = true;
+        await publishJson(client, command.topic, command.envelope);
+        log.fieldDebug("mqtt_v2_terminal_dispatch", {
+            stage: "command_published",
+            correlationIdHash: terminalWaitTrace.correlationIdHash,
+            elapsedMs: Math.max(0, Date.now() - terminalWaitStartedAt),
+        });
+        const terminalPayload = await responsePayload;
+        const admitted = admitYeonjangMqttV2TerminalResponse({
+            payload: terminalPayload,
+            nowMs: Date.now(),
+            hmacKey,
+            expected: {
+                enrollment,
+                requestId: wire.requestId,
+                commandId: wire.commandId,
+                operationId: wire.operationId,
+                idempotencyKey: wire.idempotencyKey,
+                targetFingerprint: input.target.targetFingerprint,
+            },
+        });
+        log.fieldDebug("mqtt_v2_terminal_admission", {
+            stage: "terminal_admission",
+            correlationIdHash: terminalWaitTrace.correlationIdHash,
+            elapsedMs: Math.max(0, Date.now() - terminalWaitStartedAt),
+            outcome: admitted.ok ? "admitted" : "rejected",
+            ...(admitted.ok
+                ? {
+                    executionOutcome: admitted.terminal.executionOutcome,
+                    ...terminalFailureDebugFields(admitted.terminal.failure),
+                }
+                : { reasonCode: admitted.reasonCode }),
+        });
+        if (!admitted.ok)
+            throw new YeonjangCommandError({ code: admitted.reasonCode, message: "Yeonjang MQTT v2 terminal verification failed." });
+        commandTerminal = true;
+        if (admitted.terminal.executionOutcome !== "succeeded") {
+            const failure = projectYeonjangMqttV2TerminalFailure({
+                method: input.method,
+                commandId: wire.commandId,
+                operationId: wire.operationId,
+                targetFingerprint: input.target.targetFingerprint,
+                executionOutcome: admitted.terminal.executionOutcome,
+                failure: admitted.terminal.failure,
+            });
+            throw new YeonjangCommandError(failure);
+        }
+        const artifact = admitted.terminal.artifact;
+        if (!artifact)
+            throw new YeonjangCommandError({ code: "yeonjang_v2_artifact_missing", message: "Successful capture terminal did not contain an artifact." });
+        const transferId = mapYeonjangMqttV2WireIdentity("transfer", randomUUID());
+        const artifactIdentityBase = {
+            messageId: mapYeonjangMqttV2WireIdentity("message", randomUUID()),
+            requestId: mapYeonjangMqttV2WireIdentity("request", randomUUID()),
+            commandId: mapYeonjangMqttV2WireIdentity("command", randomUUID()),
+            operationId: mapYeonjangMqttV2WireIdentity("operation", `${operationCanonical}:artifact`),
+            correlationId: mapYeonjangMqttV2WireIdentity("correlation", wire.requestId),
+            causationId: command.envelope.message_id,
+            idempotencyKey: mapYeonjangMqttV2WireIdentity("idempotency", `${wire.idempotencyKey}:artifact`),
+            authorizationId: mapYeonjangMqttV2WireIdentity("authorization", randomUUID()),
+            nonce: mapYeonjangMqttV2WireIdentity("nonce", randomUUID()),
+        };
+        const fetch = createYeonjangMqttV2ArtifactControl({
+            kind: "fetch", enrollment, targetFingerprint: input.target.targetFingerprint,
+            ownerRequestId: wire.requestId, ownerOperationId: wire.operationId,
+            descriptor: artifact, transferId, expectedRevision: artifact.lifecycleRevision,
+            identity: artifactIdentityBase, issuedAt: Date.now(), expiresAt, sequence: 1, hmacKey,
+        });
+        artifactCancellation = createYeonjangMqttV2ArtifactControl({
+            kind: "cancel", enrollment, targetFingerprint: input.target.targetFingerprint,
+            ownerRequestId: wire.requestId, ownerOperationId: wire.operationId,
+            descriptor: artifact, transferId, expectedRevision: artifact.lifecycleRevision + 1,
+            identity: {
+                ...artifactIdentityBase,
+                messageId: mapYeonjangMqttV2WireIdentity("message", randomUUID()),
+                requestId: mapYeonjangMqttV2WireIdentity("request", randomUUID()),
+                commandId: mapYeonjangMqttV2WireIdentity("command", randomUUID()),
+                operationId: mapYeonjangMqttV2WireIdentity("operation", `${operationCanonical}:artifact-cancel`),
+                idempotencyKey: mapYeonjangMqttV2WireIdentity("idempotency", `${wire.idempotencyKey}:artifact-cancel`),
+                authorizationId: mapYeonjangMqttV2WireIdentity("authorization", randomUUID()),
+                nonce: mapYeonjangMqttV2WireIdentity("nonce", randomUUID()),
+            },
+            issuedAt: Date.now(), expiresAt, sequence: 2, hmacKey,
+        });
+        const assembler = createYeonjangMqttV2ArtifactAssembler({
+            transferId, artifactRef: artifact.artifactRef, ownerRequesterId: input.requesterId,
+            ownerRequestId: wire.requestId, fullDigest: artifact.fullDigest, totalSize: artifact.sizeBytes,
+            expiresAtMs: artifact.expiresAtMs, nowMs: Date.now,
+        });
+        const artifactWaitStartedAt = Date.now();
+        const artifactTrace = createMqttV2TerminalWaitTrace(wire.requestId);
+        const bytesPromise = waitForArtifactBytes({
+            client,
+            filter: topics.artifactChunkFilter,
+            responseTopic: topics.responseTopic,
+            transferId,
+            assembler,
+            hmacKey,
+            fetchResponseExpected: {
+                enrollment,
+                targetFingerprint: input.target.targetFingerprint,
+                messageId: fetch.envelope.message_id,
+                requestId: fetch.envelope.request_id,
+                commandId: fetch.envelope.command_id,
+                operationId: fetch.envelope.operation_id,
+                correlationId: fetch.envelope.correlation_id,
+                idempotencyKey: fetch.envelope.idempotency_key,
+                artifactRef: artifact.artifactRef,
+                ownerRequestId: wire.requestId,
+                ownerOperationId: wire.operationId,
+                transferId,
+                expectedRevision: artifact.lifecycleRevision,
+            },
+            timeoutMs: input.timeoutMs,
+            ...(input.options.signal ? { signal: input.options.signal } : {}),
+            onDiagnostic: (event) => {
+                log.fieldDebug("mqtt_v2_artifact_waiter", {
+                    stage: "artifact_waiter",
+                    correlationIdHash: artifactTrace.correlationIdHash,
+                    ...event,
+                });
+            },
+        });
+        artifactTransferActive = true;
+        log.fieldDebug("mqtt_v2_artifact_dispatch", {
+            stage: "artifact_waiter_ready",
+            correlationIdHash: artifactTrace.correlationIdHash,
+            elapsedMs: Math.max(0, Date.now() - artifactWaitStartedAt),
+        });
+        await publishJson(client, fetch.topic, fetch.envelope);
+        log.fieldDebug("mqtt_v2_artifact_dispatch", {
+            stage: "artifact_fetch_published",
+            correlationIdHash: artifactTrace.correlationIdHash,
+            elapsedMs: Math.max(0, Date.now() - artifactWaitStartedAt),
+        });
+        let bytes;
+        try {
+            bytes = await bytesPromise;
+        }
+        catch (error) {
+            if (error instanceof AdmittedArtifactFetchRejectionError)
+                artifactTransferActive = false;
+            throw error;
+        }
+        artifactTransferActive = false;
+        const ack = createYeonjangMqttV2ArtifactControl({
+            kind: "ack", enrollment, targetFingerprint: input.target.targetFingerprint,
+            ownerRequestId: wire.requestId, ownerOperationId: wire.operationId,
+            descriptor: artifact, transferId, expectedRevision: artifact.lifecycleRevision + 1,
+            identity: { ...artifactIdentityBase, messageId: mapYeonjangMqttV2WireIdentity("message", randomUUID()), requestId: mapYeonjangMqttV2WireIdentity("request", randomUUID()), commandId: mapYeonjangMqttV2WireIdentity("command", randomUUID()), operationId: mapYeonjangMqttV2WireIdentity("operation", `${operationCanonical}:artifact-ack`), idempotencyKey: mapYeonjangMqttV2WireIdentity("idempotency", `${wire.idempotencyKey}:artifact-ack`), authorizationId: mapYeonjangMqttV2WireIdentity("authorization", randomUUID()), nonce: mapYeonjangMqttV2WireIdentity("nonce", randomUUID()) },
+            issuedAt: Date.now(), expiresAt, sequence: 2, hmacKey,
+        });
+        await publishJson(client, ack.topic, ack.envelope);
+        const responseAckIdentity = {
+            messageId: mapYeonjangMqttV2WireIdentity("message", randomUUID()),
+            requestId: mapYeonjangMqttV2WireIdentity("request", randomUUID()),
+            commandId: mapYeonjangMqttV2WireIdentity("command", randomUUID()),
+            operationId: mapYeonjangMqttV2WireIdentity("operation", `${operationCanonical}:response-ack`),
+            correlationId: mapYeonjangMqttV2WireIdentity("correlation", wire.requestId),
+            causationId: command.envelope.message_id,
+            idempotencyKey: mapYeonjangMqttV2WireIdentity("idempotency", `${wire.idempotencyKey}:response-ack`),
+            authorizationId: mapYeonjangMqttV2WireIdentity("authorization", randomUUID()),
+            nonce: mapYeonjangMqttV2WireIdentity("nonce", randomUUID()),
+        };
+        const responseAck = createYeonjangMqttV2ResponseAck({
+            enrollment,
+            targetFingerprint: input.target.targetFingerprint,
+            terminalIdentity: {
+                requestId: wire.requestId,
+                commandId: wire.commandId,
+                operationId: wire.operationId,
+                idempotencyKey: wire.idempotencyKey,
+            },
+            terminal: admitted.terminal,
+            identity: responseAckIdentity,
+            issuedAt: Date.now(), expiresAt, sequence: 3, hmacKey,
+        });
+        const responseAckResultPromise = waitForExactMqttPayload({
+            client, topic: topics.responseTopic, timeoutMs: input.timeoutMs,
+            ...(input.options.signal ? { signal: input.options.signal } : {}),
+            predicate: (payload) => {
+                try {
+                    const value = JSON.parse(payload.toString("utf8"));
+                    return value.schema_id === "yeonjang.response-ack-result.v2" && value.request_id === responseAckIdentity.requestId;
+                }
+                catch {
+                    return false;
+                }
+            },
+        });
+        await publishJson(client, responseAck.topic, responseAck.envelope);
+        const responseAckResult = admitYeonjangMqttV2ResponseAckResult({
+            payload: await responseAckResultPromise,
+            nowMs: Date.now(),
+            hmacKey,
+            expected: {
+                enrollment,
+                requestId: responseAckIdentity.requestId,
+                commandId: responseAckIdentity.commandId,
+                operationId: responseAckIdentity.operationId,
+                idempotencyKey: responseAckIdentity.idempotencyKey,
+                targetFingerprint: input.target.targetFingerprint,
+                receiptId: admitted.terminal.receiptId,
+                targetRequestId: wire.requestId,
+                targetCommandId: wire.commandId,
+                targetOperationId: wire.operationId,
+                targetIdempotencyKey: wire.idempotencyKey,
+                terminalRevision: admitted.terminal.terminalRevision,
+                responseDigest: admitted.terminal.responseDigest,
+            },
+        });
+        if (!responseAckResult.ok)
+            throw new YeonjangCommandError({ code: responseAckResult.reasonCode, message: "Yeonjang MQTT v2 response acknowledgement was not confirmed." });
+        const extension = artifact.mediaType === "image/png" ? "png" : "jpg";
+        return {
+            ...(typeof input.params.device_id === "string" ? { device_id: input.params.device_id } : {}),
+            file_name: `${input.method === "camera.capture" ? "camera" : "screen"}-${wire.requestId}.${extension}`,
+            file_extension: extension,
+            mime_type: artifact.mediaType,
+            size_bytes: bytes.length,
+            transfer_encoding: "base64",
+            base64_data: bytes.toString("base64"),
+            message: "Yeonjang MQTT v2 capture artifact verified.",
+        };
+    }
+    catch (error) {
+        if (artifactTransferActive && artifactCancellation) {
+            try {
+                await publishJson(client, artifactCancellation.topic, artifactCancellation.envelope);
+            }
+            catch {
+                // Preserve the typed primary failure; the caller must not see a
+                // transport-cleanup failure as execution success.
+            }
+        }
+        else if (commandDispatched
+            && !commandTerminal
+            && (input.options.signal?.aborted || (error instanceof YeonjangCommandError && error.code === "yeonjang_response_timeout"))) {
+            const cancelIssuedAt = Date.now();
+            const cancellation = createYeonjangMqttV2Cancellation({
+                enrollment,
+                targetFingerprint: input.target.targetFingerprint,
+                target: {
+                    requestId: wire.requestId,
+                    commandId: wire.commandId,
+                    operationId: wire.operationId,
+                    idempotencyKey: wire.idempotencyKey,
+                    cancellationId: wire.cancellationId,
+                    cancelToken: wire.cancelToken,
+                },
+                identity: {
+                    messageId: mapYeonjangMqttV2WireIdentity("message", randomUUID()),
+                    requestId: mapYeonjangMqttV2WireIdentity("request", randomUUID()),
+                    commandId: mapYeonjangMqttV2WireIdentity("command", randomUUID()),
+                    operationId: mapYeonjangMqttV2WireIdentity("operation", `${operationCanonical}:cancel`),
+                    correlationId: mapYeonjangMqttV2WireIdentity("correlation", wire.requestId),
+                    causationId: command.envelope.message_id,
+                    idempotencyKey: mapYeonjangMqttV2WireIdentity("idempotency", `${wire.idempotencyKey}:cancel`),
+                    authorizationId: mapYeonjangMqttV2WireIdentity("authorization", randomUUID()),
+                    nonce: mapYeonjangMqttV2WireIdentity("nonce", randomUUID()),
+                },
+                issuedAt: cancelIssuedAt,
+                expiresAt: cancelIssuedAt + 5_000,
+                sequence: 2,
+                hmacKey,
+                reason: input.options.signal?.aborted ? "user_requested" : "deadline_exceeded",
+            });
+            try {
+                await publishJson(client, cancellation.topic, cancellation.envelope);
+            }
+            catch {
+                // Cancellation delivery is best-effort after the caller has already
+                // withdrawn authority; the original typed cancellation remains final.
+            }
+        }
+        throw error;
+    }
+    finally {
+        await closeClient(client);
+        hmacKey.fill(0);
+    }
+}
+async function publishJson(client, topic, value) {
+    await new Promise((resolve, reject) => client.publish(topic, JSON.stringify(value), { qos: 1, retain: false }, (error) => error ? reject(error) : resolve()));
+}
+function createMqttV2TerminalWaitTrace(requestId) {
+    return {
+        correlationIdHash: `sha256:${createHash("sha256").update(requestId).digest("hex").slice(0, 16)}`,
+        otherTopicCandidateCount: 0,
+        unmatchedExpectedTopicCandidateCount: 0,
+        matchedExpectedTopicCandidateCount: 0,
+    };
+}
+function recordMqttV2TerminalWaitTrace(trace, event) {
+    if (event.kind === "settled") {
+        return { ...trace, outcome: event.outcome, elapsedMs: event.elapsedMs };
+    }
+    if (event.category === "other_topic") {
+        return { ...trace, otherTopicCandidateCount: Math.min(16, trace.otherTopicCandidateCount + 1) };
+    }
+    if (event.category === "unmatched_expected_topic") {
+        return {
+            ...trace,
+            unmatchedExpectedTopicCandidateCount: Math.min(16, trace.unmatchedExpectedTopicCandidateCount + 1),
+        };
+    }
+    return {
+        ...trace,
+        matchedExpectedTopicCandidateCount: Math.min(16, trace.matchedExpectedTopicCandidateCount + 1),
+    };
+}
+function waitForExactMqttPayload(input) {
+    return new Promise((resolve, reject) => {
+        const startedAt = Date.now();
+        const observe = (event) => {
+            try {
+                input.onDiagnostic?.({ ...event, elapsedMs: Math.max(0, Date.now() - startedAt) });
+            }
+            catch {
+                // Field diagnosis must not alter command admission, timeout, or cancellation.
+            }
+        };
+        const cleanup = () => { clearTimeout(timer); input.client.off("message", onMessage); input.client.off("error", onError); input.signal?.removeEventListener("abort", onAbort); };
+        const onMessage = (topic, payload) => {
+            if (topic !== input.topic) {
+                observe({ kind: "candidate", category: "other_topic" });
+                return;
+            }
+            const matches = input.predicate(payload);
+            observe({ kind: "candidate", category: matches ? "matched_expected_topic" : "unmatched_expected_topic" });
+            if (matches) {
+                cleanup();
+                observe({ kind: "settled", outcome: "matched" });
+                resolve(payload);
+            }
+        };
+        const onError = (error) => { cleanup(); observe({ kind: "settled", outcome: "transport_failure" }); reject(error); };
+        const onAbort = () => { cleanup(); observe({ kind: "settled", outcome: "cancelled" }); reject(new YeonjangCommandError({ code: "cancelled", message: "Yeonjang MQTT v2 request cancelled." })); };
+        const timer = setTimeout(() => { cleanup(); observe({ kind: "settled", outcome: "timeout" }); reject(new YeonjangCommandError({ code: "yeonjang_response_timeout", message: "Yeonjang MQTT v2 response timed out." })); }, input.timeoutMs);
+        input.client.on("message", onMessage);
+        input.client.once("error", onError);
+        input.signal?.addEventListener("abort", onAbort, { once: true });
+    });
+}
+class AdmittedArtifactFetchRejectionError extends YeonjangCommandError {
+}
+async function waitForArtifactBytes(input) {
+    const suffix = `/artifact/${input.transferId}/chunk`;
+    return await new Promise((resolve, reject) => {
+        const startedAt = Date.now();
+        let matchingChunkCount = 0;
+        const observe = (outcome, reasonCode) => {
+            try {
+                input.onDiagnostic?.({
+                    elapsedMs: Math.max(0, Date.now() - startedAt),
+                    matchingChunkCount: Math.min(16, matchingChunkCount),
+                    outcome,
+                    ...(reasonCode ? { reasonCode } : {}),
+                });
+            }
+            catch {
+                // Field diagnosis must not change artifact transfer, cancellation, or verification.
+            }
+        };
+        const cleanup = () => { clearTimeout(timer); input.client.off("message", onMessage); input.client.off("error", onError); input.signal?.removeEventListener("abort", onAbort); };
+        const onMessage = (topic, payload) => {
+            if (topic === input.responseTopic) {
+                let candidate;
+                try {
+                    candidate = JSON.parse(payload.toString("utf8"));
+                }
+                catch {
+                    return;
+                }
+                if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+                    return;
+                const record = candidate;
+                if (record.schema_id !== "yeonjang.artifact-fetch-result.v2"
+                    || record.request_id !== input.fetchResponseExpected.requestId)
+                    return;
+                const admitted = admitYeonjangMqttV2ArtifactFetchRejection({
+                    payload,
+                    nowMs: Date.now(),
+                    hmacKey: input.hmacKey,
+                    expected: input.fetchResponseExpected,
+                });
+                cleanup();
+                if (!admitted.ok) {
+                    observe("rejected", admitted.reasonCode);
+                    reject(new YeonjangCommandError({
+                        code: admitted.reasonCode,
+                        message: "Yeonjang MQTT v2 artifact fetch response verification failed.",
+                    }));
+                    return;
+                }
+                const reasonCode = `yeonjang_v2_artifact_fetch_${admitted.rejection.reason}`;
+                observe("rejected", reasonCode);
+                reject(new AdmittedArtifactFetchRejectionError({
+                    code: reasonCode,
+                    message: "Yeonjang MQTT v2 artifact fetch was rejected.",
+                }));
+                return;
+            }
+            if (!topic.endsWith(suffix) || !topic.startsWith(input.filter.slice(0, input.filter.indexOf("+"))))
+                return;
+            matchingChunkCount += 1;
+            const result = input.assembler.accept(payload);
+            if (!result.ok) {
+                cleanup();
+                observe("rejected", result.reasonCode);
+                reject(new YeonjangCommandError({ code: result.reasonCode, message: "Yeonjang MQTT v2 artifact verification failed." }));
+            }
+            else if (result.state === "complete") {
+                cleanup();
+                observe("completed");
+                resolve(result.bytes);
+            }
+        };
+        const onError = (error) => { cleanup(); observe("transport_failure"); reject(error); };
+        const onAbort = () => { cleanup(); observe("cancelled"); reject(new YeonjangCommandError({ code: "cancelled", message: "Yeonjang MQTT v2 artifact fetch cancelled." })); };
+        const timer = setTimeout(() => { cleanup(); observe("timeout"); reject(new YeonjangCommandError({ code: "yeonjang_v2_artifact_timeout", message: "Yeonjang MQTT v2 artifact fetch timed out." })); }, input.timeoutMs);
+        input.client.on("message", onMessage);
+        input.client.once("error", onError);
+        input.signal?.addEventListener("abort", onAbort, { once: true });
+    });
+}
+function requireMqttClientConfig(options) {
+    if (options.mqttConfig)
+        return options.mqttConfig;
+    throw new Error("Yeonjang MQTT config snapshot is required.");
+}
+function createClient(config) {
     const snapshot = getMqttBrokerSnapshot();
     const validationError = validateMqttBrokerConfig(config);
     if (!config.enabled) {
@@ -573,13 +1566,40 @@ async function publish(client, topic, request) {
         });
     });
 }
-async function waitForResponse(client, responseTopic, requestId, timeoutMs) {
+async function waitForResponse(client, responseTopic, requestId, method, commandId, timeoutMs, callerSignal, waiterCancellationSignal, onCallerCancel) {
     return await new Promise((resolve, reject) => {
-        const chunkParts = new Map();
+        const chunkAssembler = createYeonjangChunkAssembler({ requestId });
+        let lastObservedStage;
         const timer = setTimeout(() => {
             cleanup();
-            reject(new Error("Yeonjang MQTT 응답 시간이 초과되었습니다."));
+            const failure = projectYeonjangResponseFailure({
+                kind: "response_timeout",
+                method,
+                commandId,
+                ...(lastObservedStage ? { lastObservedStage } : {}),
+            });
+            reject(new YeonjangCommandError(failure));
         }, timeoutMs);
+        const cancellationError = () => new YeonjangCommandError(projectYeonjangResponseFailure({
+            kind: "cancelled",
+            method,
+            commandId,
+        }));
+        const onCallerAbort = () => {
+            cleanup();
+            void (async () => {
+                try {
+                    await onCallerCancel?.();
+                }
+                finally {
+                    reject(cancellationError());
+                }
+            })();
+        };
+        const onWaiterCancellation = () => {
+            cleanup();
+            reject(cancellationError());
+        };
         const onMessage = (topic, payload) => {
             if (topic !== responseTopic)
                 return;
@@ -589,45 +1609,48 @@ async function waitForResponse(client, responseTopic, requestId, timeoutMs) {
             }
             catch (error) {
                 cleanup();
-                reject(new Error(`Yeonjang 응답 JSON 파싱 실패: ${error instanceof Error ? error.message : String(error)}`));
+                reject(new Error(`Yeonjang 응답 JSON 파싱 실패: ${yeonjangMqttErrorMessage(error)}`));
+                return;
+            }
+            if (isAttemptStageEnvelope(parsed)) {
+                if (parsed.id && parsed.id !== requestId)
+                    return;
+                if (parsed.method !== method || parsed.command_id !== commandId)
+                    return;
+                lastObservedStage = parsed.stage;
                 return;
             }
             if (isChunkEnvelope(parsed)) {
-                if (parsed.id && parsed.id !== requestId)
+                const assembly = chunkAssembler.accept(parsed);
+                if (assembly.kind === "pending")
                     return;
-                if (typeof parsed.chunk_index !== "number" || typeof parsed.chunk_count !== "number" || !parsed.base64_data) {
+                if (assembly.kind === "rejected") {
                     cleanup();
-                    reject(new Error("Yeonjang 청크 응답 형식이 올바르지 않습니다."));
+                    reject(new YeonjangCommandError({
+                        code: assembly.code,
+                        message: "Yeonjang response chunk verification failed.",
+                    }));
                     return;
-                }
-                chunkParts.set(parsed.chunk_index, parsed.base64_data);
-                if (chunkParts.size < parsed.chunk_count)
-                    return;
-                const orderedParts = [];
-                for (let index = 0; index < parsed.chunk_count; index += 1) {
-                    const part = chunkParts.get(index);
-                    if (!part) {
-                        cleanup();
-                        reject(new Error(`Yeonjang 청크 응답이 누락되었습니다. (${index + 1}/${parsed.chunk_count})`));
-                        return;
-                    }
-                    orderedParts.push(part);
                 }
                 let response;
                 try {
-                    const bytes = Buffer.concat(orderedParts.map((part) => Buffer.from(part, "base64")));
-                    response = JSON.parse(bytes.toString("utf8"));
+                    response = JSON.parse(assembly.payload.toString("utf8"));
                 }
                 catch (error) {
                     cleanup();
-                    reject(new Error(`Yeonjang 청크 응답 복원 실패: ${error instanceof Error ? error.message : String(error)}`));
+                    reject(new Error(`Yeonjang 청크 응답 복원 실패: ${yeonjangMqttErrorMessage(error)}`));
                     return;
                 }
                 if (response.id && response.id !== requestId)
                     return;
                 cleanup();
                 if (!response.ok) {
-                    reject(createYeonjangResponseError(response.error));
+                    reject(createYeonjangResponseError({
+                        error: response.error,
+                        attempt: response.attempt,
+                        method,
+                        commandId,
+                    }));
                     return;
                 }
                 resolve((response.result ?? null));
@@ -638,7 +1661,12 @@ async function waitForResponse(client, responseTopic, requestId, timeoutMs) {
                 return;
             cleanup();
             if (!response.ok) {
-                reject(createYeonjangResponseError(response.error));
+                reject(createYeonjangResponseError({
+                    error: response.error,
+                    attempt: response.attempt,
+                    method,
+                    commandId,
+                }));
                 return;
             }
             resolve((response.result ?? null));
@@ -656,12 +1684,55 @@ async function waitForResponse(client, responseTopic, requestId, timeoutMs) {
             client.off("message", onMessage);
             client.off("error", onError);
             client.off("close", onClose);
-            chunkParts.clear();
+            callerSignal?.removeEventListener("abort", onCallerAbort);
+            waiterCancellationSignal?.removeEventListener("abort", onWaiterCancellation);
         };
+        if (callerSignal?.aborted) {
+            onCallerAbort();
+            return;
+        }
+        if (waiterCancellationSignal?.aborted) {
+            onWaiterCancellation();
+            return;
+        }
+        callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+        waiterCancellationSignal?.addEventListener("abort", onWaiterCancellation, { once: true });
         client.on("message", onMessage);
         client.once("error", onError);
         client.once("close", onClose);
     });
+}
+async function publishCancellationBestEffort(client, topic, request) {
+    await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 750);
+        client.publish(topic, JSON.stringify(request), { qos: 1 }, () => {
+            clearTimeout(timer);
+            resolve();
+        });
+    });
+}
+function throwIfYeonjangCancelled(signal, method, commandId) {
+    if (!signal?.aborted)
+        return;
+    throw new YeonjangCommandError(projectYeonjangResponseFailure({
+        kind: "cancelled",
+        method,
+        commandId,
+    }));
+}
+function isAttemptStageEnvelope(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return false;
+    const candidate = value;
+    return (candidate.transport === "attempt_stage"
+        && candidate.schema_version === 1
+        && typeof candidate.method === "string"
+        && candidate.method.length > 0
+        && typeof candidate.command_id === "string"
+        && candidate.command_id.length > 0
+        && (candidate.stage === "received"
+            || candidate.stage === "handler_started"
+            || candidate.stage === "helper_started"));
 }
 function isChunkEnvelope(value) {
     return Boolean(value &&
@@ -669,13 +1740,18 @@ function isChunkEnvelope(value) {
         !Array.isArray(value) &&
         value.transport === "chunk");
 }
-function createYeonjangResponseError(error) {
-    const instance = new Error(error?.message ?? "Yeonjang 요청이 실패했습니다.");
-    if (error?.code) {
-        ;
-        instance.code = error.code;
-    }
-    return instance;
+function createYeonjangResponseError(input) {
+    const failure = projectYeonjangResponseFailure({
+        kind: "response_error",
+        method: input.method,
+        commandId: input.commandId,
+        error: {
+            ...(input.error?.code ? { code: input.error.code } : {}),
+            message: yeonjangMqttErrorMessage(input.error?.message ?? "Yeonjang 요청이 실패했습니다."),
+        },
+        attempt: input.attempt,
+    });
+    return new YeonjangCommandError(failure);
 }
 async function closeClient(client) {
     await new Promise((resolve) => {

@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useState } from "react"
 import { api, type AuditEvent, type ControlExportAudience, type ControlTimeline } from "../api/client"
+import { ActiveInstructionsPanel } from "../components/ActiveInstructionsPanel"
 import { EmptyState } from "../components/EmptyState"
 import { ErrorState } from "../components/ErrorState"
 import { FeatureGate } from "../components/FeatureGate"
+import {
+  buildApprovalParamSummary,
+  buildToolResultSummary,
+  describeApprovalToolName,
+} from "../lib/approval-preview"
 import { useUiI18n } from "../lib/ui-i18n"
 
 type AuditStatusFilter = "" | "success" | "failed" | "denied" | "partial" | "info" | "blocked" | "pending"
 type AuditKindFilter = "" | AuditEvent["kind"]
 type AuditTimelineKindFilter = "" | AuditEvent["timelineKind"]
+type TextFn = (ko: string, en: string) => string
 
 function formatTime(value: number): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -17,16 +24,6 @@ function formatTime(value: number): string {
     minute: "2-digit",
     second: "2-digit",
   }).format(new Date(value))
-}
-
-function stringifyMeta(value: unknown): string {
-  if (value == null) return ""
-  if (typeof value === "string") return value
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
 }
 
 function downloadText(filename: string, content: string): void {
@@ -44,6 +41,91 @@ function statusClass(status: string): string {
   if (status === "failed" || status === "denied" || status === "blocked") return "border-red-200 bg-red-50 text-red-700"
   if (status === "pending" || status === "partial") return "border-amber-200 bg-amber-50 text-amber-700"
   return "border-stone-200 bg-stone-50 text-stone-600"
+}
+
+function auditStatusLabel(status: string, text: TextFn): string {
+  switch (status) {
+    case "success":
+      return text("성공", "Success")
+    case "failed":
+      return text("실패", "Failed")
+    case "denied":
+      return text("거부됨", "Denied")
+    case "partial":
+      return text("일부 완료", "Partial")
+    case "info":
+      return text("정보", "Info")
+    case "blocked":
+      return text("차단됨", "Blocked")
+    case "pending":
+      return text("대기 중", "Pending")
+    default:
+      return text("상태 확인 필요", "State needs review")
+  }
+}
+
+function auditKindLabel(kind: string, text: TextFn): string {
+  switch (kind) {
+    case "tool_call":
+      return text("외부 도구 활동", "External tool activity")
+    case "diagnostic":
+      return text("진단", "Diagnostics")
+    case "run_event":
+      return text("실행 이벤트", "Run event")
+    case "artifact":
+      return text("결과물", "Artifact")
+    case "delivery":
+      return text("결과 전달", "Delivery")
+    case "decision_trace":
+      return text("결정 흐름", "Decision flow")
+    default:
+      return text("기록 유형 확인 필요", "Record kind needs review")
+  }
+}
+
+function auditTimelineKindLabel(kind: string, text: TextFn): string {
+  switch (kind) {
+    case "ingress":
+      return text("요청 접수", "Request intake")
+    case "intake":
+      return text("요청 분석", "Request analysis")
+    case "contract":
+      return text("처리 기준", "Processing contract")
+    case "memory":
+      return text("메모리", "Memory")
+    case "tool":
+      return text("외부 도구", "External tool")
+    case "delivery":
+      return text("결과 전달", "Delivery")
+    case "recovery":
+      return text("복구", "Recovery")
+    case "completion":
+      return text("완료", "Completion")
+    default:
+      return text("단계 확인 필요", "Timeline stage needs review")
+  }
+}
+
+function auditReasonLabel(event: AuditEvent, text: TextFn): string {
+  if (event.stopReason || event.errorCode) return text("이유 기록 있음", "Reason recorded")
+  return "-"
+}
+
+function buildAuditDetailSummary(event: AuditEvent, text: TextFn): string[] {
+  const lines: string[] = []
+  if (event.params != null) {
+    lines.push(text("입력 요약", "Input summary"))
+    lines.push(...buildApprovalParamSummary(event.params, text))
+  }
+  if (event.detail != null) {
+    lines.push(text("상세 기록", "Detail record"))
+    lines.push(...buildToolResultSummary(event.detail, true, text))
+  }
+  if (event.output != null) {
+    lines.push(text("출력 요약", "Output summary"))
+    lines.push(...buildToolResultSummary(event.output, event.status !== "failed", text))
+  }
+  return lines.length > 0 ? lines : [text("추가 세부 정보 없음", "No extra detail")]
 }
 
 export function AuditPage() {
@@ -69,15 +151,12 @@ export function AuditPage() {
   const [controlAudience, setControlAudience] = useState<ControlExportAudience>("user")
   const [controlLoading, setControlLoading] = useState(false)
   const [controlError, setControlError] = useState<string | null>(null)
+  const [instructionsOpen, setInstructionsOpen] = useState(false)
 
-  const selectedMeta = useMemo(() => {
-    if (!selected) return ""
-    return stringifyMeta({
-      params: selected.params,
-      detail: selected.detail,
-      output: selected.output,
-    })
-  }, [selected])
+  const selectedDetailSummary = useMemo(
+    () => selected ? buildAuditDetailSummary(selected, text) : [],
+    [selected, text],
+  )
 
   async function load(): Promise<void> {
     setLoading(true)
@@ -154,10 +233,17 @@ export function AuditPage() {
   }
 
   async function cleanupOldAudit(): Promise<void> {
-    const ok = window.confirm(text("30일보다 오래된 감사/진단 로그를 정리할까요? 실행 타임라인과 아티팩트 기록은 유지됩니다.", "Clean audit and diagnostic logs older than 30 days? Run timelines and artifact metadata are kept."))
-    if (!ok) return
     const before = Date.now() - 30 * 24 * 60 * 60 * 1000
-    const response = await api.cleanupAudit({ before })
+    const { preview } = await api.previewAuditCleanup({ before })
+    const ok = window.confirm(text(
+      `30일보다 오래된 기록 ${preview.deletableCount}건을 정리할까요? 참조 중인 ${preview.protectedCount}건은 유지됩니다.`,
+      `Clean ${preview.deletableCount} records older than 30 days? ${preview.protectedCount} referenced records will be retained.`,
+    ))
+    if (!ok) return
+    const response = await api.cleanupAudit({
+      before: preview.before,
+      confirm: preview.confirmationToken,
+    })
     setCleanupMessage(text(
       `정리 완료: 감사 ${response.deleted.auditLogs}건, 진단 ${response.deleted.diagnosticEvents}건, 판단 ${response.deleted.decisionTraces ?? 0}건`,
       `Cleanup complete: ${response.deleted.auditLogs} audit logs, ${response.deleted.diagnosticEvents} diagnostic events, ${response.deleted.decisionTraces ?? 0} decision traces`,
@@ -189,7 +275,7 @@ export function AuditPage() {
             <p className="mt-2 max-w-3xl text-sm leading-7 text-stone-600">
               {text(
                 "도구 실행, 승인, 실행 이벤트, 진단, 아티팩트 전달 흐름을 하나의 타임라인으로 확인합니다.",
-                "Inspect tool calls, approvals, run events, diagnostics, and artifact delivery in one timeline.",
+                "Inspect external tool activity, approvals, run events, diagnostics, and artifact delivery in one timeline.",
               )}
             </p>
           </div>
@@ -213,33 +299,57 @@ export function AuditPage() {
       </div>
 
       <FeatureGate capabilityKey="audit.viewer" title={text("감사 로그", "Audit Logs")}>
+        <section className="mt-6 rounded-[1.75rem] border border-stone-200 bg-white p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-stone-900">{text("시스템 지침 검토", "System instruction review")}</h2>
+              <p className="mt-1 text-xs leading-5 text-stone-500">
+                {text("관리 및 감사 작업에서만 지침 상태와 변경 검증 결과를 확인합니다.", "Review instruction status and change checks only for administration and audit work.")}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-100"
+              aria-expanded={instructionsOpen}
+              onClick={() => setInstructionsOpen((open) => !open)}
+            >
+              {instructionsOpen ? text("검토 닫기", "Close review") : text("검토 열기", "Open review")}
+            </button>
+          </div>
+        </section>
+        {instructionsOpen ? (
+          <div className="mt-4">
+            <ActiveInstructionsPanel allowRawPromptEditing />
+          </div>
+        ) : null}
+
         <div className="mt-6 grid gap-4 rounded-[1.75rem] border border-stone-200 bg-white p-4 lg:grid-cols-10">
           <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder={text("검색어", "Search")} value={query} onChange={(event) => setQuery(event.target.value)} />
-          <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder="run id" value={runId} onChange={(event) => setRunId(event.target.value)} />
-          <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder="agent id" value={agentId} onChange={(event) => setAgentId(event.target.value)} />
-          <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder="team id" value={teamId} onChange={(event) => setTeamId(event.target.value)} />
-          <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder="session id" value={sessionId} onChange={(event) => setSessionId(event.target.value)} />
-          <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder={text("도구명", "Tool name")} value={toolName} onChange={(event) => setToolName(event.target.value)} />
+          <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder={text("실행 범위", "Run scope")} value={runId} onChange={(event) => setRunId(event.target.value)} />
+          <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder={text("에이전트 범위", "Agent scope")} value={agentId} onChange={(event) => setAgentId(event.target.value)} />
+          <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder={text("팀 범위", "Team scope")} value={teamId} onChange={(event) => setTeamId(event.target.value)} />
+          <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder={text("대화 범위", "Conversation scope")} value={sessionId} onChange={(event) => setSessionId(event.target.value)} />
+          <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder={text("외부 도구 이름", "External tool name")} value={toolName} onChange={(event) => setToolName(event.target.value)} />
           <input className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" placeholder={text("채널", "Channel")} value={channel} onChange={(event) => setChannel(event.target.value)} />
           <select className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" value={kind} onChange={(event) => setKind(event.target.value as AuditKindFilter)}>
             <option value="">{text("모든 유형", "All kinds")}</option>
-            <option value="tool_call">tool_call</option>
-            <option value="diagnostic">diagnostic</option>
-            <option value="run_event">run_event</option>
-            <option value="artifact">artifact</option>
-            <option value="delivery">delivery</option>
-            <option value="decision_trace">decision_trace</option>
+            <option value="tool_call">{text("외부 도구 활동", "External tool activity")}</option>
+            <option value="diagnostic">{text("진단", "Diagnostics")}</option>
+            <option value="run_event">{text("실행 이벤트", "Run events")}</option>
+            <option value="artifact">{text("결과물", "Artifacts")}</option>
+            <option value="delivery">{text("결과 전달", "Delivery")}</option>
+            <option value="decision_trace">{text("결정 흐름", "Decision flow")}</option>
           </select>
           <select className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" value={timelineKind} onChange={(event) => setTimelineKind(event.target.value as AuditTimelineKindFilter)}>
             <option value="">{text("모든 단계", "All timeline stages")}</option>
-            <option value="ingress">ingress</option>
-            <option value="intake">intake</option>
-            <option value="contract">contract</option>
-            <option value="memory">memory</option>
-            <option value="tool">tool</option>
-            <option value="delivery">delivery</option>
-            <option value="recovery">recovery</option>
-            <option value="completion">completion</option>
+            <option value="ingress">{text("요청 접수", "Request intake")}</option>
+            <option value="intake">{text("요청 분석", "Request analysis")}</option>
+            <option value="contract">{text("처리 기준", "Processing contract")}</option>
+            <option value="memory">{text("메모리", "Memory")}</option>
+            <option value="tool">{text("외부 도구", "External tools")}</option>
+            <option value="delivery">{text("결과 전달", "Delivery")}</option>
+            <option value="recovery">{text("복구", "Recovery")}</option>
+            <option value="completion">{text("완료", "Completion")}</option>
           </select>
           <select className="rounded-2xl border border-stone-200 px-4 py-3 text-sm outline-none focus:border-stone-400" value={status} onChange={(event) => setStatus(event.target.value as AuditStatusFilter)}>
             <option value="">{text("모든 상태", "All statuses")}</option>
@@ -283,11 +393,11 @@ export function AuditPage() {
           {controlTimeline ? (
             <div className="mt-4">
               <div className="grid gap-2 text-xs sm:grid-cols-5">
-                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">total</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.total}</div></div>
-                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">tool duplicates</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.duplicateToolCount}</div></div>
-                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">answer duplicates</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.duplicateAnswerCount}</div></div>
-                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">delivery retries</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.deliveryRetryCount}</div></div>
-                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">recovery reentries</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.recoveryReentryCount}</div></div>
+                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">{text("전체", "Total")}</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.total}</div></div>
+                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">{text("중복 외부 도구", "Duplicate external tools")}</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.duplicateToolCount}</div></div>
+                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">{text("중복 답변", "Duplicate answers")}</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.duplicateAnswerCount}</div></div>
+                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">{text("전달 재시도", "Delivery retries")}</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.deliveryRetryCount}</div></div>
+                <div className="rounded-xl bg-stone-50 px-3 py-2"><div className="text-stone-500">{text("복구 재진입", "Recovery reentries")}</div><div className="text-sm font-semibold text-stone-900">{controlTimeline.summary.recoveryReentryCount}</div></div>
               </div>
               <div className="mt-4 max-h-72 space-y-2 overflow-auto">
                 {controlTimeline.events.length === 0 ? (
@@ -322,17 +432,17 @@ export function AuditPage() {
                 {events.map((event) => (
                   <button key={event.id} className={`w-full rounded-3xl border p-4 text-left transition ${selected?.id === event.id ? "border-stone-900 bg-stone-50" : "border-stone-200 bg-white hover:bg-stone-50"}`} onClick={() => setSelected(event)}>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(event.status)}`}>{event.status}</span>
-                      <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs font-semibold text-stone-600">{event.kind}</span>
-                      <span className="rounded-full bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700">{event.timelineKind}</span>
+                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(event.status)}`}>{auditStatusLabel(event.status, text)}</span>
+                      <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs font-semibold text-stone-600">{auditKindLabel(event.kind, text)}</span>
+                      <span className="rounded-full bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700">{auditTimelineKindLabel(event.timelineKind, text)}</span>
                       {event.channel ? <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">{event.channel}</span> : null}
                       <span className="ml-auto text-xs text-stone-500">{formatTime(event.at)}</span>
                     </div>
                     <div className="mt-3 text-sm font-semibold text-stone-900">{event.summary}</div>
                     <div className="mt-2 flex flex-wrap gap-2 text-xs text-stone-500">
-                      {event.toolName ? <span>tool={event.toolName}</span> : null}
-                      {event.runId ? <span>run={event.runId}</span> : null}
-                      {event.requestGroupId ? <span>group={event.requestGroupId}</span> : null}
+                      {event.toolName ? <span>{text("외부 도구", "External tool")}: {describeApprovalToolName(event.toolName, text)}</span> : null}
+                      {event.runId ? <span>{text("실행 연결됨", "Run linked")}</span> : null}
+                      {event.requestGroupId ? <span>{text("요청 흐름 연결됨", "Request flow linked")}</span> : null}
                     </div>
                   </button>
                 ))}
@@ -347,19 +457,26 @@ export function AuditPage() {
                 <h2 className="mt-2 text-lg font-semibold text-stone-900">{selected.summary}</h2>
                 <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
                   <dt className="text-stone-500">{text("시각", "Time")}</dt><dd className="text-right text-stone-800">{formatTime(selected.at)}</dd>
-                  <dt className="text-stone-500">Status</dt><dd className="text-right text-stone-800">{selected.status}</dd>
-                  <dt className="text-stone-500">Kind</dt><dd className="text-right text-stone-800">{selected.kind}</dd>
-                  <dt className="text-stone-500">Timeline</dt><dd className="text-right text-stone-800">{selected.timelineKind}</dd>
-                  <dt className="text-stone-500">Channel</dt><dd className="text-right text-stone-800">{selected.channel ?? "-"}</dd>
-                  <dt className="text-stone-500">Tool</dt><dd className="text-right text-stone-800">{selected.toolName ?? "-"}</dd>
-                  <dt className="text-stone-500">Duration</dt><dd className="text-right text-stone-800">{selected.durationMs != null ? `${selected.durationMs}ms` : "-"}</dd>
-                  <dt className="text-stone-500">Approval</dt><dd className="text-right text-stone-800">{selected.approvalRequired ? selected.approvedBy ?? "required" : "-"}</dd>
-                  <dt className="text-stone-500">Reason</dt><dd className="text-right text-stone-800">{selected.stopReason ?? selected.errorCode ?? "-"}</dd>
+                  <dt className="text-stone-500">{text("상태", "Status")}</dt><dd className="text-right text-stone-800">{auditStatusLabel(selected.status, text)}</dd>
+                  <dt className="text-stone-500">{text("유형", "Kind")}</dt><dd className="text-right text-stone-800">{auditKindLabel(selected.kind, text)}</dd>
+                  <dt className="text-stone-500">{text("단계", "Timeline stage")}</dt><dd className="text-right text-stone-800">{auditTimelineKindLabel(selected.timelineKind, text)}</dd>
+                  <dt className="text-stone-500">{text("채널", "Channel")}</dt><dd className="text-right text-stone-800">{selected.channel ?? "-"}</dd>
+                  <dt className="text-stone-500">{text("외부 도구", "External tool")}</dt><dd className="text-right text-stone-800">{selected.toolName ? describeApprovalToolName(selected.toolName, text) : "-"}</dd>
+                  <dt className="text-stone-500">{text("걸린 시간", "Duration")}</dt><dd className="text-right text-stone-800">{selected.durationMs != null ? `${selected.durationMs}ms` : "-"}</dd>
+                  <dt className="text-stone-500">{text("승인", "Approval")}</dt><dd className="text-right text-stone-800">{selected.approvalRequired ? selected.approvedBy ? text("승인됨", "Approved") : text("필요", "Required") : "-"}</dd>
+                  <dt className="text-stone-500">{text("이유", "Reason")}</dt><dd className="text-right text-stone-800">{auditReasonLabel(selected, text)}</dd>
                 </dl>
                 <button className="mt-5 w-full rounded-2xl border border-blue-200 px-4 py-3 text-sm font-semibold text-blue-700 hover:bg-blue-50" onClick={() => void promoteSelected()}>
                   {text("장애 샘플 후보로 저장", "Save as error corpus candidate")}
                 </button>
-                <pre className="mt-5 max-h-[420px] overflow-auto rounded-3xl bg-stone-950 p-4 text-xs leading-6 text-stone-100">{selectedMeta || "{}"}</pre>
+                <div className="mt-5 rounded-3xl bg-stone-50 p-4 text-xs leading-6 text-stone-700">
+                  <div className="font-semibold text-stone-900">{text("세부 요약", "Detail summary")}</div>
+                  <ul className="mt-2 list-disc space-y-1 pl-4">
+                    {selectedDetailSummary.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             ) : (
               <EmptyState title={text("선택된 항목 없음", "No event selected")} description={text("왼쪽 목록에서 이벤트를 선택하세요.", "Select an event from the list.")} />

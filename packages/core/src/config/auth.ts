@@ -2,11 +2,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 import { randomBytes } from "node:crypto"
 import JSON5 from "json5"
-import { PATHS } from "./paths.js"
+import type { RuntimePaths } from "./paths.js"
 
-export function generateAuthToken(): { token: string } {
+export function generateAuthToken(paths: Pick<RuntimePaths, "configFile">): { token: string } {
   const token = randomBytes(32).toString("hex")
-  const configPath = PATHS.configFile
+  const configPath = paths.configFile
 
   let raw: Record<string, unknown> = {}
   if (existsSync(configPath)) {

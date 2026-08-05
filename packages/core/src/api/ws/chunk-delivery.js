@@ -1,24 +1,27 @@
 import { basename } from "node:path";
-import { buildArtifactAccessDescriptor } from "../../artifacts/lifecycle.js";
+import { buildArtifactAccessDescriptor, resolveArtifactReference, } from "../../artifacts/lifecycle.js";
 import { eventBus } from "../../events/index.js";
 import { deliverArtifactOnce, } from "../../runs/delivery.js";
 import { decideIsolatedToolResponse } from "../../runs/isolated-tool-response.js";
+import { sanitizeCompletionAwaitingUserText } from "../../runs/completion-application.js";
+import { isArtifactDeliveryResultDetails, } from "../../tools/types.js";
 function isWebUiArtifactDeliveryDetails(value) {
     if (!value || typeof value !== "object")
         return false;
     const candidate = value;
-    return (candidate.kind === "artifact_delivery" &&
+    return (isArtifactDeliveryResultDetails(value) &&
         candidate.channel === "webui" &&
-        typeof candidate.filePath === "string" &&
-        typeof candidate.size === "number" &&
-        typeof candidate.source === "string");
+        typeof candidate.size === "number");
 }
 export function createWebUiChunkDeliveryHandler(params) {
     let bufferedText = "";
     let toolOwnedResponseActive = false;
+    let canonicalFinalDelivered = false;
     return async (chunk) => {
         if (chunk.type === "text") {
-            if (toolOwnedResponseActive)
+            if (canonicalFinalDelivered)
+                return;
+            if (chunk.textSource !== "llm_reviewed")
                 return;
             bufferedText += chunk.delta;
             return;
@@ -29,19 +32,42 @@ export function createWebUiChunkDeliveryHandler(params) {
                 chunk.success &&
                 isWebUiArtifactDeliveryDetails(chunk.details)) {
                 const details = chunk.details;
+                const artifactRef = "artifactRef" in details ? details.artifactRef : undefined;
+                if (!details.filePath && !artifactRef)
+                    return undefined;
+                const resolvedArtifact = "filePath" in details && details.filePath
+                    ? {
+                        ok: true,
+                        filePath: details.filePath,
+                        mimeType: details.mimeType,
+                        sizeBytes: details.size,
+                    }
+                    : resolveArtifactReference({
+                        artifactRef: artifactRef,
+                        runId: params.runId,
+                    }, params.artifactStorage);
+                if (!resolvedArtifact.ok)
+                    return undefined;
+                const filePath = resolvedArtifact.filePath;
+                const mimeType = details.mimeType ?? resolvedArtifact.mimeType;
+                const sizeBytes = details.size || resolvedArtifact.sizeBytes;
+                const caption = details.caption
+                    ? sanitizeCompletionAwaitingUserText(details.caption)
+                    : undefined;
                 const receipt = await deliverArtifactOnce({
+                    artifactStorage: params.artifactStorage,
                     runId: params.runId,
                     channel: "webui",
-                    filePath: details.filePath,
+                    filePath,
                     channelTarget: params.sessionId,
-                    sizeBytes: details.size,
-                    ...(details.mimeType ? { mimeType: details.mimeType } : {}),
+                    sizeBytes,
+                    ...(mimeType ? { mimeType } : {}),
                     task: async () => {
                         const artifact = buildArtifactAccessDescriptor({
-                            filePath: details.filePath,
-                            sizeBytes: details.size,
-                            ...(details.mimeType ? { mimeType: details.mimeType } : {}),
-                        });
+                            filePath,
+                            sizeBytes,
+                            ...(mimeType ? { mimeType } : {}),
+                        }, params.artifactStorage);
                         if (!artifact.ok || !artifact.url)
                             return undefined;
                         eventBus.emit("agent.artifact", {
@@ -51,24 +77,23 @@ export function createWebUiChunkDeliveryHandler(params) {
                             ...(artifact.previewUrl ? { previewUrl: artifact.previewUrl } : {}),
                             ...(artifact.downloadUrl ? { downloadUrl: artifact.downloadUrl } : {}),
                             previewable: artifact.previewable,
-                            filePath: details.filePath,
                             fileName: basename(artifact.filePath),
                             mimeType: artifact.mimeType,
-                            ...(details.caption ? { caption: details.caption } : {}),
+                            ...(caption ? { caption } : {}),
                         });
                         return {
                             artifactDeliveries: [
                                 {
                                     toolName: chunk.toolName,
                                     channel: "webui",
-                                    filePath: details.filePath,
+                                    filePath,
                                     url: artifact.url,
                                     ...(artifact.previewUrl ? { previewUrl: artifact.previewUrl } : {}),
                                     ...(artifact.downloadUrl ? { downloadUrl: artifact.downloadUrl } : {}),
                                     previewable: artifact.previewable,
                                     mimeType: artifact.mimeType,
                                     sizeBytes: details.size,
-                                    ...(details.caption ? { caption: details.caption } : {}),
+                                    ...(caption ? { caption } : {}),
                                 },
                             ],
                         };
@@ -82,14 +107,17 @@ export function createWebUiChunkDeliveryHandler(params) {
             }
             if (isolatedToolResponse.kind === "text" && isolatedToolResponse.text) {
                 toolOwnedResponseActive = true;
-                bufferedText = isolatedToolResponse.text;
+                bufferedText = sanitizeCompletionAwaitingUserText(isolatedToolResponse.text);
             }
         }
         if (chunk.type === "done") {
+            if (canonicalFinalDelivered)
+                return;
             if (!bufferedText.trim())
                 return;
             const deliveredText = bufferedText;
             bufferedText = "";
+            canonicalFinalDelivered = true;
             return {
                 textDeliveries: [
                     {

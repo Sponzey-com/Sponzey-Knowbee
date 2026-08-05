@@ -2,6 +2,8 @@ import { authMiddleware } from "../middleware/auth.js";
 import { listMemoryWritebackReviewItems, reviewMemoryWritebackCandidate, } from "../../memory/writeback.js";
 import { buildMemoryQualitySnapshot } from "../../memory/quality.js";
 import { buildMemoryInspectorSnapshot, runMemoryInspectorControl, } from "../../memory/inspector.js";
+import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js";
+import { redactLogText } from "../../logger/index.js";
 const ALLOWED_STATUSES = new Set(["pending", "writing", "failed", "completed", "discarded", "all"]);
 const ALLOWED_ACTIONS = new Set(["approve_long_term", "approve_edited", "keep_session", "discard"]);
 const ALLOWED_OWNER_TYPES = new Set(["main_agent", "sub_agent"]);
@@ -27,7 +29,14 @@ function normalizeOwnerType(value) {
         ? value
         : undefined;
 }
-export function registerMemoryRoute(app) {
+function memoryWritebackReviewErrorMessage(error) {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    return redactLogText(rawMessage);
+}
+function memoryWritebackReviewErrorStatus(message) {
+    return /not found/i.test(message) ? 404 : 400;
+}
+export function registerMemoryRoute(app, config) {
     app.get("/api/memory/quality", { preHandler: authMiddleware }, async () => {
         return { snapshot: buildMemoryQualitySnapshot() };
     });
@@ -46,6 +55,7 @@ export function registerMemoryRoute(app) {
                     ? { requestGroupId: req.query.requestGroupId.trim() }
                     : {}),
                 limit: normalizeLimit(req.query.limit),
+                config,
             }),
         };
     });
@@ -69,6 +79,7 @@ export function registerMemoryRoute(app) {
                     ? { requestGroupId: req.body.requestGroupId.trim() }
                     : {}),
                 ...(typeof req.body?.limit === "number" ? { limit: req.body.limit } : {}),
+                config,
             }),
         };
     });
@@ -95,9 +106,13 @@ export function registerMemoryRoute(app) {
             return result;
         }
         catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            const status = /not found/i.test(message) ? 404 : 400;
-            return reply.status(status).send({ error: message });
+            const message = memoryWritebackReviewErrorMessage(error);
+            const sanitized = sanitizeUserFacingError(message);
+            return reply.status(memoryWritebackReviewErrorStatus(message)).send({
+                error: sanitized.userMessage,
+                kind: sanitized.kind,
+                actionHint: sanitized.actionHint,
+            });
         }
     });
 }

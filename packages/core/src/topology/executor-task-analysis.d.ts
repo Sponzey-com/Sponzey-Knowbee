@@ -44,5 +44,6 @@ export declare function buildNodeTaskAnalysis(input: {
     now?: string;
     source?: NodeTaskAnalysisSource;
     riskBoundary?: AgentExecutionRiskBoundary;
+    rootAgentNameSnapshot?: string;
 }): NodeTaskAnalysis;
 //# sourceMappingURL=executor-task-analysis.d.ts.map

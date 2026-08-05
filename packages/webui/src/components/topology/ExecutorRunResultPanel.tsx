@@ -200,7 +200,7 @@ export function ExecutorRunResultPanel({
                   testId="executor-result-failure-reason"
                 />
                 <div className="rounded-md bg-white/80 px-2.5 py-2" data-testid="executor-result-tried-list">
-                  <div className="text-[11px] font-semibold text-red-900">{text("노비가 시도한 것", "What Knowbee tried")}</div>
+                  <div className="text-[11px] font-semibold text-red-900">{text("메인 에이전트가 시도한 것", "What the main agent tried")}</div>
                   <div className="mt-1 flex flex-wrap gap-1">
                     {failure.triedKo.map((item, index) => (
                       <span key={`${item}:${index}`} className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-900">
@@ -256,14 +256,14 @@ export function ExecutorRunResultPanel({
           {text("고급 실행 기록", "Advanced trace")}
         </summary>
         {isAdvancedOpen ? (
-          <div className="mt-3 grid gap-3" data-testid="executor-result-raw-trace">
+          <div className="mt-3 grid gap-3" data-testid="executor-result-diagnostic-trace">
             <button
               type="button"
               onClick={onTraceLayerRequest}
               className="h-8 w-fit rounded-md border border-sky-200 bg-sky-50 px-3 text-xs font-semibold text-sky-800"
               data-testid="executor-result-open-trace-layer"
             >
-              {text("Trace 화면으로 이동", "Open trace view")}
+              {text("실행 기록 화면으로 이동", "Open run history")}
             </button>
             {observabilityEvidence.length > 0 ? (
               <section
@@ -271,7 +271,7 @@ export function ExecutorRunResultPanel({
                 data-testid="executor-result-observability-evidence"
               >
                 <div className="font-semibold text-stone-800">
-                  {text("Executor evidence", "Executor evidence")}
+                  {text("실행 근거", "Run evidence")}
                 </div>
                 <div className="mt-1 grid gap-1">
                   {observabilityEvidence.map((item) => (
@@ -280,15 +280,15 @@ export function ExecutorRunResultPanel({
                       data-testid="executor-result-observability-evidence-item"
                       data-source={item.source}
                     >
-                      {item.source}: {item.evidenceId}
-                      {item.inferenceEvidenceRef ? ` / ${item.inferenceEvidenceRef}` : ""}
+                      {evidenceSourceLabel(item.source, text)}: {text("근거 연결됨", "Evidence linked")}
+                      {item.inferenceEvidenceRef ? text(" / 추론 근거 연결됨", " / Inference evidence linked") : ""}
                     </div>
                   ))}
                 </div>
               </section>
             ) : null}
-            <RawTraceList overlay={overlay} />
-            <TopologyRunTraceOverlay overlay={overlay} />
+            <TraceReceiptList overlay={overlay} text={text} />
+            <TopologyRunTraceOverlay overlay={overlay} topology={topology ?? null} />
           </div>
         ) : null}
       </details>
@@ -333,6 +333,20 @@ function evidenceItem(
     source,
     evidenceId,
     ...(inferenceEvidenceRef ? { inferenceEvidenceRef } : {}),
+  }
+}
+
+function evidenceSourceLabel(
+  source: ExecutorObservabilityEvidenceItem["source"],
+  text: ReturnType<typeof useUiI18n>["text"],
+): string {
+  switch (source) {
+    case "run":
+      return text("전체 실행", "Full run")
+    case "trace":
+      return text("실행 단계", "Run step")
+    case "failure":
+      return text("실패 진단", "Failure diagnosis")
   }
 }
 
@@ -401,7 +415,7 @@ function nodeResult(executor: ExecutorDraft, status: ExecutorRunNodeStatus): Exe
     statusLabelKo: "대기",
     statusLabelEn: "Waiting",
     detailKo: "아직 실행 경로에 도달하지 않았습니다.",
-    detailEn: "This executor has not been reached yet.",
+    detailEn: "This sub-agent has not been reached yet.",
   }
 }
 
@@ -410,7 +424,7 @@ function failureExplanation(input: {
   graph: ExecutorGraphWorkspace | null
   overlay: TopologyRunTraceOverlayInput | null
 }): ExecutorFailureExplanation {
-  const executor = input.graph?.executors.find((item) => item.id === input.failure.nodeId)
+  const nodeLabels = executorNodeLabels(input.graph)
   const path = failurePath(input.failure, input.overlay, input.graph)
   const report = input.failure.report
   const reason = failureIssueText(report.issueKind)
@@ -420,7 +434,7 @@ function failureExplanation(input: {
   return {
     failureReportId: input.failure.failureReportId,
     nodeId: input.failure.nodeId,
-    nodeName: executor?.name ?? input.failure.nodeId,
+    nodeName: nodeLabels.get(input.failure.nodeId) ?? "서브 에이전트",
     pathKo: path.join(" -> "),
     pathEn: path.join(" -> "),
     reasonKo: reason.ko,
@@ -437,7 +451,7 @@ function failurePath(
   overlay: TopologyRunTraceOverlayInput | null,
   graph: ExecutorGraphWorkspace | null,
 ): string[] {
-  const byId = new Map(graph?.executors.map((executor) => [executor.id, executor.name]) ?? [])
+  const byId = executorNodeLabels(graph)
   const path = overlay?.traceEvents
     .find((event) => event.nodeRunId === failure.nodeRunId && event.phase === failure.failurePhase)
     ?.delegationPath ??
@@ -446,7 +460,18 @@ function failurePath(
       .at(-1)
       ?.delegationPath ??
     [failure.nodeId]
-  return path.map((nodeId) => byId.get(nodeId) ?? nodeId)
+  return path.map((nodeId) => byId.get(nodeId) ?? "서브 에이전트")
+}
+
+function executorNodeLabels(graph: ExecutorGraphWorkspace | null): Map<string, string> {
+  const labels = new Map<string, string>()
+  for (const executor of graph?.executors ?? []) {
+    const label = executor.name.trim()
+    if (!label) continue
+    labels.set(executor.id, label)
+    if (executor.sourceNodeId) labels.set(executor.sourceNodeId, label)
+  }
+  return labels
 }
 
 function triedActions(
@@ -462,15 +487,16 @@ function triedActions(
   }
   if (summary.selfExecutionAttempted) add("직접 처리", "Self execution")
   if (summary.childDelegationAttempted) add("다음 서브 에이전트에게 넘기기", "Child delegation")
-  if (summary.toolExecutionAttempted) add("도구 실행", "Tool execution")
+  if (summary.toolExecutionAttempted) add("외부 도구 실행", "External tool execution")
   if (summary.retryAttempted) add("재시도", "Retry")
   if (summary.fallbackAttempted) add("예외 처리 경로 확인", "Fallback path")
   if (summary.partialSuccessChecked) add("부분 성공 가능성 확인", "Partial success check")
   if (summary.parentRecoveryPossibleChecked) add("상위 복구 가능성 확인", "Parent recovery check")
-  for (const toolCall of overlay?.toolCalls.filter((item) => item.nodeRunId === nodeRunId) ?? []) {
-    add(`${toolCall.toolId} 실행`, `Tool ${toolCall.toolId}`)
+  const toolExecutionAttempts = overlay?.toolCalls.filter((item) => item.nodeRunId === nodeRunId).length ?? 0
+  for (let index = 0; index < toolExecutionAttempts; index += 1) {
+    add("외부 도구 실행", "External tool execution")
   }
-  return ko.length > 0 ? { ko, en } : { ko: ["실행 상태 확인"], en: ["Checked runtime state"] }
+  return ko.length > 0 ? { ko, en } : { ko: ["실행 상태 확인"], en: ["Checked run state"] }
 }
 
 function buildQuickActions(input: {
@@ -501,7 +527,7 @@ function buildQuickActions(input: {
       patch: {
         allowedToolIds: [...new Set([...(failedNode?.allowedToolIds ?? []), toolId])],
       },
-    }]),
+    }], input),
     quickAction("pass_partial", "부분 정보로 넘기기", "Pass partial info", [{
       ...createGuiDraftOperationBase("updateNode", {
         operationId: `executor-result:partial:${failure.nodeId}`,
@@ -522,12 +548,13 @@ function buildQuickActions(input: {
           partialSuccessAllowed: true,
         },
       },
-    }]),
+    }], input),
     quickAction(
       "move_to_exception",
       "예외 처리로 이동",
       "Move to exception handler",
       fallbackPlan?.operations ?? fallbackOperations(failure.nodeId),
+      input,
     ),
     quickAction("revise_description", "설명 수정", "Revise description", [{
       ...createGuiDraftOperationBase("updateNode", {
@@ -539,7 +566,7 @@ function buildQuickActions(input: {
       patch: {
         description: `${failedNode?.description ?? ""}`.trim() || "실패 조건과 필요한 입력을 더 구체적으로 설명합니다.",
       },
-    }]),
+    }], input),
   ]
 
   return actions
@@ -578,23 +605,70 @@ function quickAction(
   labelKo: ExecutorRunQuickAction["labelKo"],
   labelEn: ExecutorRunQuickAction["labelEn"],
   operations: EnterpriseTopologyGuiOperation[],
+  context: { topology?: EnterpriseTopology; graph: ExecutorGraphWorkspace | null },
 ): ExecutorRunQuickAction {
+  const previewContext = operationPreviewContext({
+    operations,
+    topology: context.topology,
+    graph: context.graph,
+  })
   return {
     actionId,
     labelKo,
     labelEn,
     operations,
-    preview: operations.map(operationPreview),
+    preview: operations.map((operation) => operationPreview(operation, previewContext)),
   }
 }
 
-function operationPreview(operation: EnterpriseTopologyGuiOperation): EnterpriseTopologyQuickFixOperationPreview {
+interface OperationPreviewContext {
+  nodeLabels: Map<string, string>
+  relationLabels: Map<string, string>
+}
+
+function operationPreviewContext(input: {
+  operations: EnterpriseTopologyGuiOperation[]
+  topology?: EnterpriseTopology
+  graph: ExecutorGraphWorkspace | null
+}): OperationPreviewContext {
+  const nodeLabels = new Map<string, string>()
+  const relationLabels = new Map<string, string>()
+  for (const node of input.topology?.nodes ?? []) {
+    const label = node.name?.trim()
+    if (label) nodeLabels.set(node.id, label)
+  }
+  for (const executor of input.graph?.executors ?? []) {
+    const label = executor.name.trim()
+    if (label) nodeLabels.set(executor.sourceNodeId ?? executor.id, label)
+    if (label) nodeLabels.set(executor.id, label)
+  }
+  for (const relation of input.topology?.relations ?? []) {
+    const label = relation.label?.trim()
+    if (label) relationLabels.set(relation.id, label)
+  }
+  for (const operation of input.operations) {
+    if (operation.op === "createNode") {
+      const label = operation.name?.trim()
+      if (label) nodeLabels.set(operation.nodeId, label)
+    }
+    if (operation.op === "createRelation") {
+      const label = operation.label?.trim()
+      if (label) relationLabels.set(operation.relationId, label)
+    }
+  }
+  return { nodeLabels, relationLabels }
+}
+
+function operationPreview(
+  operation: EnterpriseTopologyGuiOperation,
+  context: OperationPreviewContext,
+): EnterpriseTopologyQuickFixOperationPreview {
   if (operation.op === "createNode") {
     return {
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.nodeId,
-      summary: `node 생성: ${operation.name ?? operation.nodeId}`,
+      summary: `서브 에이전트 추가: ${nodePreviewLabel(operation.nodeId, context)}`,
     }
   }
   if (operation.op === "updateNode") {
@@ -602,7 +676,7 @@ function operationPreview(operation: EnterpriseTopologyGuiOperation): Enterprise
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.nodeId,
-      summary: `node 수정: ${operation.nodeId}`,
+      summary: `서브 에이전트 설정 수정: ${nodePreviewLabel(operation.nodeId, context)}`,
     }
   }
   if (operation.op === "moveNode") {
@@ -610,7 +684,7 @@ function operationPreview(operation: EnterpriseTopologyGuiOperation): Enterprise
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.nodeId,
-      summary: `node 이동: ${operation.nodeId}`,
+      summary: `서브 에이전트 위치 조정: ${nodePreviewLabel(operation.nodeId, context)}`,
     }
   }
   if (operation.op === "deleteNode") {
@@ -618,7 +692,7 @@ function operationPreview(operation: EnterpriseTopologyGuiOperation): Enterprise
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.nodeId,
-      summary: `node 삭제: ${operation.nodeId}`,
+      summary: `서브 에이전트 삭제: ${nodePreviewLabel(operation.nodeId, context)}`,
     }
   }
   if (operation.op === "createRelation") {
@@ -626,7 +700,7 @@ function operationPreview(operation: EnterpriseTopologyGuiOperation): Enterprise
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.relationId,
-      summary: `관계 생성: ${operation.from.id} -> ${operation.to.id}`,
+      summary: `연결 추가: ${relationEndpointLabel(operation.from.id, context)} -> ${relationEndpointLabel(operation.to.id, context)}`,
     }
   }
   if (operation.op === "updateRelation") {
@@ -634,28 +708,64 @@ function operationPreview(operation: EnterpriseTopologyGuiOperation): Enterprise
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.relationId,
-      summary: `관계 수정: ${operation.relationId}`,
+      summary: `연결 수정: ${relationPreviewLabel(operation.relationId, context)}`,
     }
   }
   return {
     operationId: operation.operationId,
     op: operation.op,
     targetId: operation.relationId,
-    summary: `관계 보관: ${operation.relationId}`,
+    summary: `연결 보관: ${relationPreviewLabel(operation.relationId, context)}`,
   }
 }
 
-function RawTraceList({ overlay }: { overlay?: TopologyRunTraceOverlayInput | null }) {
+function nodePreviewLabel(nodeId: string, context: OperationPreviewContext): string {
+  return context.nodeLabels.get(nodeId)?.trim() || "서브 에이전트"
+}
+
+function relationEndpointLabel(entityId: string, context: OperationPreviewContext): string {
+  return context.nodeLabels.get(entityId)?.trim() || "서브 에이전트"
+}
+
+function relationPreviewLabel(relationId: string, context: OperationPreviewContext): string {
+  return context.relationLabels.get(relationId)?.trim() || "연결"
+}
+
+function tracePhaseLabel(phase: string | undefined, text: ReturnType<typeof useUiI18n>["text"]): string {
+  if (phase === "dispatch") return text("위임", "Delegation")
+  if (phase === "tool_execution") return text("외부 도구", "External tool")
+  if (phase === "result_review") return text("결과 검토", "Result review")
+  if (phase === "exhaustion") return text("복구 진단", "Recovery diagnosis")
+  if (phase === "finalize") return text("마무리", "Finalization")
+  return text("실행 단계", "Run step")
+}
+
+function TraceReceiptList({
+  overlay,
+  text,
+}: {
+  overlay?: TopologyRunTraceOverlayInput | null
+  text: ReturnType<typeof useUiI18n>["text"]
+}) {
+  const traceEvents = overlay?.traceEvents ?? []
+  const failureReports = overlay?.failureReports ?? []
+  if (traceEvents.length === 0 && failureReports.length === 0) {
+    return (
+      <div className="rounded-md border border-stone-200 bg-stone-50 p-2 text-[11px] leading-4 text-stone-600">
+        {text("진단 기록 없음", "No diagnostic records")}
+      </div>
+    )
+  }
   return (
     <div className="rounded-md border border-stone-200 bg-stone-50 p-2 text-[11px] leading-4 text-stone-600">
-      {(overlay?.traceEvents ?? []).map((event) => (
-        <div key={event.traceEventId} data-testid="executor-result-raw-trace-event">
-          {event.traceEventId} / {event.nodeRunId} / {event.workOrderId}
+      {traceEvents.map((event, index) => (
+        <div key={event.traceEventId} data-testid="executor-result-trace-receipt-event">
+          {text("실행 단계 기록", "Run step record")} {index + 1} · {tracePhaseLabel(event.phase, text)}
         </div>
       ))}
-      {(overlay?.failureReports ?? []).map((failure) => (
-        <div key={failure.failureReportId} data-testid="executor-result-raw-failure-report">
-          {failure.failureReportId} / {failure.nodeRunId} / {failure.workOrderId}
+      {failureReports.map((failure, index) => (
+        <div key={failure.failureReportId} data-testid="executor-result-failure-receipt">
+          {text("실패 진단 기록", "Failure diagnosis record")} {index + 1} · {tracePhaseLabel(failure.failurePhase, text)}
         </div>
       ))}
     </div>
@@ -715,7 +825,7 @@ function failureNextActionText(
     case "pass_partial":
       return {
         ko: "부분 결과를 다음 서브 에이전트에게 넘길지 결정하세요.",
-        en: "Decide whether to pass the partial result to the next executor.",
+        en: "Decide whether to pass the partial result to the next sub-agent.",
       }
     case "add_fallback":
       return {

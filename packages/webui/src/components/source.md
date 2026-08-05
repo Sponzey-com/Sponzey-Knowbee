@@ -9,7 +9,7 @@
 - `runs`: 실행 카드, 요약, 승인, 타임라인, 대상 배지
 - `setup`: 설정용 폼과 런타임 패널
 - `chat`: 채팅 전용 보조 패널
-- `Layout`, `ApprovalModal`, `MessageBubble`, `UpdatePanel` 같은 상위 공용 컴포넌트
+- `Layout`, `ApprovalModal`, `MessageBubble` 같은 상위 공용 컴포넌트
 
 ## 메모
 

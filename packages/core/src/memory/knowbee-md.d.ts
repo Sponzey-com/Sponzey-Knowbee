@@ -1,4 +1,6 @@
+import { type PromptImprovementActivationState, type PromptImprovementHarnessBlockedDecision, type PromptImprovementHarnessInput, type PromptImprovementHarnessReport, type PromptImprovementHarnessValidationResult, type PromptImprovementMutableSourceAuditRecord, type PromptImprovementSourceWriteState } from "./prompt-improvement-harness.js";
 export type PromptSourceUsageScope = "runtime" | "first_run" | "planner" | "diagnostic" | "internal";
+export type SystemPromptAssemblyProfile = "full" | "execution";
 export type PromptTemplateVariables = Record<string, string | number | boolean | null | undefined>;
 export interface PromptSourceMetadata {
     sourceId: string;
@@ -30,6 +32,20 @@ export interface PromptSourceAssembly {
     snapshot: PromptSourceSnapshot;
     sources: LoadedPromptSource[];
 }
+export interface PromptSourceAssemblyCoverageItem {
+    sourceId: string;
+    locale: "ko" | "en";
+    version: string;
+    headerPresent: boolean;
+    fullFragmentPresent: boolean;
+}
+export interface PromptSourceAssemblyCoverageReport {
+    ok: boolean;
+    totalSources: number;
+    omittedSourceIds: string[];
+    truncatedSourceIds: string[];
+    items: PromptSourceAssemblyCoverageItem[];
+}
 export interface PromptSourceDiffLine {
     kind: "unchanged" | "added" | "removed" | "changed";
     beforeLine?: number;
@@ -57,11 +73,25 @@ export interface PromptSourceWriteResult {
     source: LoadedPromptSource;
     diff: PromptSourceDiffResult;
 }
+export interface PromptSourceHarnessWriteResult extends PromptSourceWriteResult {
+    harnessValidation: PromptImprovementHarnessValidationResult;
+    sourceWriteState: PromptImprovementSourceWriteState;
+    activationState: PromptImprovementActivationState;
+    harnessReport: PromptImprovementHarnessReport;
+}
 export interface PromptSourceRollbackResult {
     sourcePath: string;
     backupPath: string;
     restoredChecksum: string;
     previousChecksum: string;
+    rolledBackFiles: Array<{
+        sourcePath: string;
+        backupPath: string;
+    }>;
+    reason: string;
+    activationStateAfterRollback: "rolled_back";
+    remainingRisk: string;
+    nextRecommendedAction: string;
 }
 export interface PromptSourceExportFile {
     kind: "knowbee.prompt-sources.export";
@@ -112,6 +142,18 @@ export interface PromptSourceDiagnostic {
     locale: "ko" | "en";
     message: string;
 }
+export interface PromptSourceDefinition {
+    sourceId: string;
+    filenames: {
+        ko: string;
+        en: string;
+    };
+    priority: number;
+    required: boolean;
+    usageScope: PromptSourceUsageScope;
+    defaultRuntime: boolean;
+}
+export declare function listPromptSourceDefinitions(): PromptSourceDefinition[];
 export declare const REQUIRED_RUNTIME_PROMPT_SOURCE_IDS: string[];
 export interface PromptSourceSeedResult {
     promptsDir: string;
@@ -130,13 +172,19 @@ export declare function isPromptSourceContentSafe(content: string): boolean;
 export declare function ensurePromptSourceFiles(workDir: string): PromptSourceSeedResult;
 export declare function loadPromptSourceRegistry(workDir: string): LoadedPromptSource[];
 export declare function renderPromptTemplate(content: string, variables?: PromptTemplateVariables): string;
+export declare function inspectPromptSourceAssemblyCoverage(assembly: PromptSourceAssembly, variables?: PromptTemplateVariables): PromptSourceAssemblyCoverageReport;
 export declare function loadPromptTemplate(input: {
     sourceId: string;
     workDir?: string | undefined;
     locale?: "ko" | "en" | undefined;
     variables?: PromptTemplateVariables | undefined;
 }): string;
-export declare function loadSystemPromptSourceAssembly(workDir: string, locale?: "ko" | "en", states?: PromptSourceState[], variables?: PromptTemplateVariables): PromptSourceAssembly | null;
+export declare function loadBundledPromptTemplate(input: {
+    sourceId: string;
+    locale?: "ko" | "en" | undefined;
+    variables?: PromptTemplateVariables | undefined;
+}): string;
+export declare function loadSystemPromptSourceAssembly(workDir: string, locale?: "ko" | "en", states?: PromptSourceState[], variables?: PromptTemplateVariables, profile?: SystemPromptAssemblyProfile): PromptSourceAssembly | null;
 export declare function loadFirstRunPromptSourceAssembly(workDir: string, locale?: "ko" | "en", states?: PromptSourceState[]): PromptSourceAssembly | null;
 /**
  * Load canonical runtime prompt sources from prompts/.
@@ -162,9 +210,24 @@ export declare function writePromptSourceWithBackup(input: {
     content: string;
     createBackup?: boolean;
 }): PromptSourceWriteResult;
+export declare class PromptSourceHarnessValidationError extends Error {
+    readonly validation: PromptImprovementHarnessValidationResult;
+    readonly decision: PromptImprovementHarnessBlockedDecision;
+    constructor(validation: PromptImprovementHarnessValidationResult, decision?: PromptImprovementHarnessBlockedDecision);
+}
+export declare function writePromptSourceWithHarness(input: {
+    workDir: string;
+    sourceId: string;
+    locale: "ko" | "en";
+    content: string;
+    harnessInput: Partial<PromptImprovementHarnessInput>;
+    createBackup?: boolean;
+    recordMutableSourceAudit?: (record: PromptImprovementMutableSourceAuditRecord) => void;
+}): PromptSourceHarnessWriteResult;
 export declare function rollbackPromptSourceBackup(input: {
     sourcePath: string;
     backupPath: string;
+    reason?: string;
 }): PromptSourceRollbackResult;
 export declare function dryRunPromptSourceAssembly(workDir: string, locale?: "ko" | "en", states?: PromptSourceState[]): PromptSourceDryRunResult;
 export declare function checkPromptSourceLocaleParity(workDir: string): PromptSourceLocaleParityResult;

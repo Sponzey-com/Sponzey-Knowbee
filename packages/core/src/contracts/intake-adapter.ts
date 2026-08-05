@@ -9,8 +9,6 @@ function mapIntentType(value: TaskIntentEnvelope["intent_type"]): IntentContract
       return "question"
     case "clarification":
       return "clarification"
-    case "reject":
-      return "impossible"
     default:
       return "execute_now"
   }
@@ -23,7 +21,6 @@ function inferActionType(envelope: TaskIntentEnvelope): IntentContract["actionTy
   }
   if (envelope.intent_type === "direct_answer") return "answer"
   if (envelope.intent_type === "clarification") return "ask_user"
-  if (envelope.intent_type === "reject") return "none"
   return envelope.needs_tools ? "run_tool" : "answer"
 }
 
@@ -57,12 +54,7 @@ export function intentContractFromTaskIntentEnvelope(envelope: TaskIntentEnvelop
     delivery,
     constraints: envelope.complete_condition,
     requiresApproval: envelope.requires_approval,
-    impossibility: envelope.intent_type === "reject"
-      ? {
-          reasonCode: "rejected_by_intake",
-          message: envelope.normalized_english.trim() || "The request was rejected by intake.",
-        }
-      : null,
+    impossibility: null,
     ...(envelope.normalized_english.trim() ? { summary: envelope.normalized_english.trim() } : {}),
   }
 }

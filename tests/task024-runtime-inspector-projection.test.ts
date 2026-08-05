@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type {
   AgentPromptBundle,
@@ -17,7 +16,6 @@ import type {
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 import {
   closeDb,
-  getDb,
   insertAgentDataExchange,
   insertRunSubSession,
   insertSession,
@@ -26,10 +24,9 @@ import { recordOrchestrationEvent } from "../packages/core/src/orchestration/eve
 import { recordMessageLedgerEvent } from "../packages/core/src/runs/message-ledger.ts"
 import { buildRunRuntimeInspectorProjection } from "../packages/core/src/runs/runtime-inspector-projection.ts"
 import { createRootRun, getRootRun } from "../packages/core/src/runs/store.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 24, 1, 0, 0)
 
 const expectedOutput: ExpectedOutputContract = {
@@ -95,8 +92,6 @@ function promptBundle(agentId: string, nickname: string): AgentPromptBundle {
     agentId,
     agentType: "sub_agent",
     role: "runtime inspector worker",
-    displayNameSnapshot: nickname,
-    nicknameSnapshot: nickname,
     personalitySnapshot: "precise",
     teamContext: [],
     memoryPolicy: {
@@ -153,11 +148,11 @@ function subSession(
     parentSessionId: "session:task024",
     parentRunId: "run:task024",
     parentAgentId: "agent:knowbee",
-    parentAgentDisplayName: "Knowbee",
-    parentAgentNickname: "노비",
+    parentAgentName: "노비",
+    parentAgentNameSnapshot: "노비",
     agentId,
-    agentDisplayName: nickname,
-    agentNickname: nickname,
+    agentName: nickname,
+    agentNameSnapshot: nickname,
     commandRequestId: `command:${id}`,
     status,
     promptBundleId: `bundle:${agentId}`,
@@ -166,6 +161,15 @@ function subSession(
     startedAt: now + 10,
     ...(status === "running" ? {} : { finishedAt: now + 100 }),
   }
+}
+
+function legacyNamedSubSession(): SubSessionContract {
+  const contract = subSession("sub:legacy-name", "running", "agent:legacy", "Legacy Runtime Display")
+  delete (contract as Partial<SubSessionContract>).agentNameSnapshot
+  delete (contract as Partial<SubSessionContract>).agentName
+  contract.agentDisplayName = "Legacy Runtime Display"
+  ;(contract as SubSessionContract & { agentNickname?: string }).agentNickname = "Legacy Runtime Nick"
+  return contract
 }
 
 function orchestrationPlan(): OrchestrationPlan {
@@ -222,8 +226,8 @@ function dataExchange(): DataExchangePackage {
     exchangeId: "exchange:task024",
     sourceOwner: { ownerType: "sub_agent", ownerId: "agent:researcher" },
     recipientOwner: { ownerType: "sub_agent", ownerId: "agent:reviewer" },
-    sourceNicknameSnapshot: "Researcher",
-    recipientNicknameSnapshot: "Reviewer",
+    sourceAgentNameSnapshot: "Researcher",
+    recipientAgentNameSnapshot: "Reviewer",
     purpose: "Share redacted research summary with reviewer.",
     allowedUse: "temporary_context",
     retentionPolicy: "session_only",
@@ -264,20 +268,12 @@ beforeEach(() => {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task024-state-"))
   tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
-  getDb()
+  initializeTestDbRuntime(stateDir)
   setupRun()
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_STATE_DIR")
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_CONFIG")
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -290,6 +286,7 @@ describe("task024 runtime inspector projection", () => {
     insertRunSubSession(
       subSession("sub:revision", "needs_revision", "agent:reviewer", "Reviewer"),
     )
+    insertRunSubSession(legacyNamedSubSession())
     insertAgentDataExchange(dataExchange())
 
     recordMessageLedgerEvent({
@@ -364,6 +361,7 @@ describe("task024 runtime inspector projection", () => {
       summary: "feedback requested",
       payload: {
         feedbackRequestId: "feedback:revision",
+        targetAgentNameSnapshot: "Reviewer Agent",
         reasonCode: "blocked_insufficient_evidence",
         missingItems: ["source"],
         requiredChanges: ["add evidence"],
@@ -414,12 +412,16 @@ describe("task024 runtime inspector projection", () => {
     if (!run) return
     const projection = buildRunRuntimeInspectorProjection(run, {
       now: now + 100,
+      rootAgentNameSnapshot: "마당쇠",
     })
     const running = projection.subSessions.find((item) => item.subSessionId === "sub:running")
     const revision = projection.subSessions.find((item) => item.subSessionId === "sub:revision")
+    const legacy = projection.subSessions.find((item) => item.subSessionId === "sub:legacy-name")
     const serialized = JSON.stringify(projection)
 
     expect(projection.orchestrationMode).toBe("orchestration")
+    expect(projection.topologyRouting.executionDecisionExecutorNameById["agent:knowbee"]).toBe("마당쇠")
+    expect(projection.topologyRouting.executionDecisionExecutorNameById).toHaveProperty("agent:knowbee")
     expect(projection.requestIdentity).toMatchObject({
       runId: "run:task024",
       requestGroupId: "group:task024",
@@ -430,25 +432,42 @@ describe("task024 runtime inspector projection", () => {
       expect.arrayContaining(["send", "steer", "kill"]),
     )
     expect(running?.approvalState).toBe("pending")
+    expect(running?.agentName).toBe("Researcher")
+    expect(running?.agentNameSnapshot).toBe("Researcher")
+    expect(running).not.toHaveProperty("parentAgentDisplayName")
+    expect(running).not.toHaveProperty("agentNickname")
+    expect(legacy?.agentName).toBe("Unnamed sub-agent")
+    expect(legacy?.agentNameSnapshot).toBeUndefined()
+    expect(legacy).not.toHaveProperty("agentDisplayName")
     expect(running?.model?.estimatedCost).toBeGreaterThan(0)
     expect(revision?.review?.verdict).toBe("insufficient_evidence")
     expect(revision?.review?.parentIntegrationStatus).toBe("blocked_insufficient_evidence")
     expect(revision?.feedback.status).toBe("requested")
+    expect(revision?.feedback.targetAgentNameSnapshot).toBe("Reviewer Agent")
+    expect(revision?.feedback).not.toHaveProperty("targetAgentNickname")
     expect(revision?.allowedControlActions.map((item) => item.action)).toEqual(
       expect.arrayContaining(["retry", "feedback", "redelegate"]),
     )
     expect(projection.dataExchanges).toEqual([
       expect.objectContaining({
         exchangeId: "exchange:task024",
+        sourceAgentName: "Researcher",
+        sourceAgentNameSnapshot: "Researcher",
+        recipientAgentName: "Reviewer",
+        recipientAgentNameSnapshot: "Reviewer",
         purpose: "Share redacted research summary with reviewer.",
         redactionState: "redacted",
         provenanceCount: 1,
       }),
     ])
+    expect(projection.dataExchanges[0]).not.toHaveProperty("sourceNickname")
+    expect(projection.dataExchanges[0]).not.toHaveProperty("recipientNickname")
     expect(projection.finalizer.status).toBe("delivered")
     expect(projection.timeline.some((event) => event.kind === "result_reviewed")).toBe(true)
     expect(serialized).not.toContain("sk-task024-secret-value")
     expect(serialized).not.toContain("private raw memory")
+    expect(serialized).not.toContain("Legacy Runtime Display")
+    expect(serialized).not.toContain("Legacy Runtime Nick")
     expect(serialized).not.toContain('"rawPayload":')
   })
 })

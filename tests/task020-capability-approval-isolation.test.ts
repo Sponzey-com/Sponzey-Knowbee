@@ -2,8 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type {
@@ -42,35 +41,37 @@ import {
   resetAgentCapabilityRateLimitsForTest,
 } from "../packages/core/src/security/capability-isolation.ts"
 import { ToolDispatcher } from "../packages/core/src/tools/dispatcher.ts"
-import { toolDispatcher } from "../packages/core/src/tools/index.js"
+import {
+  initializeToolDispatcher,
+  toolDispatcher,
+} from "../packages/core/src/tools/index.js"
 import type { ToolContext } from "../packages/core/src/tools/types.ts"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const fixture = resolve(__dirname, "fixtures/fake-mcp-server.mjs")
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
+
+beforeAll(() => {
+  initializeToolDispatcher(DEFAULT_CONFIG)
+})
 
 function useTempState(): void {
   closeDb()
   resetAgentCapabilityRateLimitsForTest()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task020-capability-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = undefined
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task020-capability-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 async function restoreState(): Promise<void> {
   await mcpRegistry.closeAll()
   closeDb()
   resetAgentCapabilityRateLimitsForTest()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -168,11 +169,11 @@ function subSession(): SubSessionContract {
     parentSessionId: "session:task020",
     parentRunId: "run:task020",
     parentAgentId: "agent:knowbee",
-    parentAgentDisplayName: "Knowbee",
-    parentAgentNickname: "노비",
+    parentAgentName: "노비",
+    parentAgentNameSnapshot: "노비",
     agentId: "agent:a",
-    agentDisplayName: "Agent A",
-    agentNickname: "A",
+    agentName: "A",
+    agentNameSnapshot: "A",
     commandRequestId: "command:task020",
     status: "awaiting_approval",
     promptBundleId: "prompt:task020",
@@ -213,7 +214,7 @@ afterEach(async () => {
 describe("task020 skill, MCP, tool permission isolation and approval", () => {
   it("dispatches only with the owning agent capability binding and records denied audit", async () => {
     registerBinding({ bindingId: "binding:agent:a:echo", agentId: "agent:a" })
-    const dispatcher = new ToolDispatcher()
+    const dispatcher = new ToolDispatcher({ config: runtimeFixture.config })
     let calls = 0
     dispatcher.register({
       name: "task020_echo",

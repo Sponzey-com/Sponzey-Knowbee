@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "id": "webui-api-agent-run",
+      "kind": "external_ingress",
+      "owner": "packages/core/src/api/routes/agent.ts",
+      "entryMarker": "/api/agent/run",
+      "executionOwner": "packages/core/src/api/routes/runs.ts",
+      "executionMarker": "submitUserRequest({",
+      "classification": "canonical",
+      "finalResponseBinding": "webui_chunk_delivery",
+      "cancellationBinding": "root_run_controller"
+    },
+    {
+      "id": "api-runs",
+      "kind": "external_ingress",
+      "owner": "packages/core/src/api/routes/runs.ts",
+      "entryMarker": "startLocalRun",
+      "executionOwner": "packages/core/src/api/routes/runs.ts",
+      "executionMarker": "submitUserRequest({",
+      "classification": "canonical",
+      "finalResponseBinding": "caller_or_webui_chunk_delivery",
+      "cancellationBinding": "root_run_controller"
+    },
+    {
+      "id": "cli-run",
+      "kind": "external_ingress",
+      "owner": "packages/cli/src/commands/run.ts",
+      "entryMarker": "startIngressRun({",
+      "executionOwner": "packages/cli/src/commands/run.ts",
+      "executionMarker": "startIngressRun({",
+      "classification": "canonical",
+      "finalResponseBinding": "cli_chunk_delivery",
+      "cancellationBinding": "process_signal_to_root_run"
+    },
+    {
+      "id": "telegram-message",
+      "kind": "external_ingress",
+      "owner": "packages/core/src/channels/telegram/bot.ts",
+      "entryMarker": "submitUserRequest({",
+      "executionOwner": "packages/core/src/channels/telegram/bot.ts",
+      "executionMarker": "submitUserRequest({",
+      "classification": "canonical",
+      "finalResponseBinding": "telegram_chunk_delivery",
+      "cancellationBinding": "root_run_controller"
+    },
+    {
+      "id": "slack-message",
+      "kind": "external_ingress",
+      "owner": "packages/core/src/channels/slack/bot.ts",
+      "entryMarker": "startIngressRun({",
+      "executionOwner": "packages/core/src/channels/slack/bot.ts",
+      "executionMarker": "startIngressRun({",
+      "classification": "canonical",
+      "finalResponseBinding": "slack_chunk_delivery",
+      "cancellationBinding": "root_run_controller"
+    },
+    {
+      "id": "scheduler",
+      "kind": "external_ingress",
+      "owner": "packages/core/src/scheduler/index.ts",
+      "entryMarker": "dependencies.startIngressRunImpl({",
+      "executionOwner": "packages/core/src/scheduler/index.ts",
+      "executionMarker": "await started.finished",
+      "classification": "canonical",
+      "finalResponseBinding": "scheduled_delivery_queue",
+      "cancellationBinding": "schedule_run_id_to_root_run_controller"
+    },
+    {
+      "id": "discord-adapter",
+      "kind": "adapter_only",
+      "owner": "packages/core/src/channels/discord/adapter.ts",
+      "entryMarker": "async normalizeInbound(rawPayload: unknown)",
+      "executionOwner": null,
+      "executionMarker": null,
+      "classification": "no_runtime_ingress",
+      "finalResponseBinding": "adapter_delivery_only",
+      "cancellationBinding": "not_applicable"
+    },
+    {
+      "id": "google-chat-adapter",
+      "kind": "adapter_only",
+      "owner": "packages/core/src/channels/google-chat/adapter.ts",
+      "entryMarker": "async normalizeInbound(rawPayload: unknown)",
+      "executionOwner": null,
+      "executionMarker": null,
+      "classification": "no_runtime_ingress",
+      "finalResponseBinding": "adapter_delivery_only",
+      "cancellationBinding": "not_applicable"
+    },
+    {
+      "id": "local-bridge-adapters",
+      "kind": "adapter_only",
+      "owner": "packages/core/src/channels/local-bridge/adapter.ts",
+      "entryMarker": "async normalizeInbound(_rawPayload: unknown)",
+      "executionOwner": null,
+      "executionMarker": null,
+      "classification": "outbound_only",
+      "finalResponseBinding": "adapter_delivery_only",
+      "cancellationBinding": "not_applicable"
+    },
+    {
+      "id": "internal-delegation",
+      "kind": "internal_child_execution",
+      "owner": "packages/core/src/runs/run-queueing.ts",
+      "entryMarker": "dependencies.startRootRun({",
+      "executionOwner": "packages/core/src/runs/orchestration-dispatch.ts",
+      "executionMarker": "dispatchDelegatedSubAgentTasks",
+      "classification": "canonical_child_run",
+      "finalResponseBinding": "parent_result_review_and_aggregation",
+      "cancellationBinding": "parent_root_run_controller"
+    }
+  ]
+}

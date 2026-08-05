@@ -1,11 +1,19 @@
 import * as React from "react"
-import type { RunRuntimeInspectorProjection } from "../../contracts/runs"
+import type {
+  RunRuntimeInspectorModel,
+  RunRuntimeInspectorPlanTask,
+  RunRuntimeInspectorProjection,
+  RunRuntimeInspectorTopologyRouting,
+  RunRuntimeInspectorTopologyRun,
+} from "../../contracts/runs"
 import {
   buildRuntimeInspectorViewModels,
   buildRuntimeInspectorSummaryCards,
   describeRuntimeApprovalState,
   describeRuntimeFinalizerStatus,
+  runtimeFinalizerSummary,
   runtimeControlActionLabels,
+  runtimeSubSessionAgentName,
   selectRuntimeSubSession,
 } from "../../lib/runtime-inspector"
 import { useUiI18n } from "../../lib/ui-i18n"
@@ -37,6 +45,127 @@ function statusToneClassName(status: string): string {
     return "border-amber-100 bg-amber-50 text-amber-800"
   }
   return "border-stone-200 bg-stone-50 text-stone-700"
+}
+
+function runtimeStatusLabel(status: string, text: ReturnType<typeof useUiI18n>["text"]): string {
+  if (status === "running" || status === "pending") return text("진행 중", "Running")
+  if (status === "completed" || status === "approved" || status === "delivered") return text("완료", "Done")
+  if (status === "failed") return text("실패", "Failed")
+  if (status === "denied") return text("거부됨", "Denied")
+  if (status === "needs_revision") return text("수정 필요", "Needs revision")
+  if (status === "awaiting_approval") return text("승인 대기", "Awaiting approval")
+  if (status === "cancelled") return text("취소됨", "Cancelled")
+  return text("상태 확인 필요", "Review state")
+}
+
+function expectedOutputKindLabel(kind: string, text: ReturnType<typeof useUiI18n>["text"]): string {
+  if (kind === "text") return text("텍스트", "Text")
+  if (kind === "artifact") return text("파일 또는 산출물", "Artifact")
+  if (kind === "tool_result") return text("외부 도구 결과", "External tool result")
+  if (kind === "data_package") return text("전달 데이터", "Data package")
+  if (kind === "state_change") return text("상태 변경", "State change")
+  return text("산출물", "Output")
+}
+
+function runtimeModelIdentitySummary(model: RunRuntimeInspectorModel, text: ReturnType<typeof useUiI18n>["text"]): string {
+  if (model.fallbackApplied) return text("AI 실행 기록 있음 · 대안 모델 사용", "AI execution recorded · fallback model used")
+  return text("AI 실행 기록 있음", "AI execution recorded")
+}
+
+function runtimeResultStatusLabel(status: string | undefined, text: ReturnType<typeof useUiI18n>["text"]): string {
+  if (!status) return text("없음", "None")
+  if (status === "completed" || status === "success" || status === "delivered") return text("완료", "Done")
+  if (status === "partial" || status === "partial_success") return text("부분 완료", "Partial")
+  if (status === "failed") return text("실패", "Failed")
+  if (status === "impossible") return text("처리 불가", "Impossible")
+  if (status === "needs_revision") return text("수정 필요", "Needs revision")
+  return text("결과 기록 있음", "Result recorded")
+}
+
+function runtimeReviewVerdictLabel(verdict: string | undefined, text: ReturnType<typeof useUiI18n>["text"]): string {
+  if (!verdict) return text("없음", "None")
+  if (verdict === "accepted" || verdict === "approved" || verdict === "pass") return text("검토 통과", "Review passed")
+  if (verdict === "needs_revision") return text("수정 필요", "Needs revision")
+  if (verdict === "rejected" || verdict === "failed") return text("검토 실패", "Review failed")
+  if (verdict === "insufficient_evidence") return text("근거 부족", "Insufficient evidence")
+  return text("검토 기록 있음", "Review recorded")
+}
+
+function runtimeParentIntegrationStatusLabel(status: string | undefined, text: ReturnType<typeof useUiI18n>["text"]): string {
+  if (!status) return text("없음", "None")
+  if (status === "integrated" || status === "completed" || status === "accepted") return text("취합 완료", "Integrated")
+  if (status === "pending") return text("취합 대기", "Integration pending")
+  if (status === "needs_revision" || status === "redelegated") return text("재위임 필요", "Redelegation needed")
+  if (status === "blocked_insufficient_evidence" || status === "blocked") return text("취합 보류", "Integration blocked")
+  return text("취합 기록 있음", "Integration recorded")
+}
+
+function dataExchangeAllowedUseLabel(allowedUse: string, text: ReturnType<typeof useUiI18n>["text"]): string {
+  if (allowedUse === "temporary_context") return text("이번 실행에서만 사용", "Used only for this run")
+  if (allowedUse === "memory_candidate") return text("메모리 후보", "Memory candidate")
+  if (allowedUse === "verification_only") return text("검증 전용", "Verification only")
+  return text("사용 범위 확인 필요", "Review allowed use")
+}
+
+function dataExchangeRedactionStateLabel(redactionState: string, text: ReturnType<typeof useUiI18n>["text"]): string {
+  if (redactionState === "redacted") return text("민감 내용 숨김", "Sensitive content hidden")
+  if (redactionState === "not_sensitive") return text("민감 내용 없음", "No sensitive content")
+  if (redactionState === "blocked") return text("전달 차단", "Exchange blocked")
+  return text("보호 상태 확인 필요", "Review protection state")
+}
+
+function taskExecutionKindLabel(kind: string, text: ReturnType<typeof useUiI18n>["text"]): string {
+  if (kind === "delegated_sub_agent" || kind === "sub_agent") return text("서브 에이전트 위임", "Sub-agent delegation")
+  if (kind === "direct" || kind === "direct_current_agent") return text("직접 처리", "Direct handling")
+  if (kind === "root_knowbee_direct" || kind === "knowbee_direct") return text("메인 에이전트 직접 처리", "Main-agent direct handling")
+  if (kind === "tool" || kind === "tool_execution") return text("외부 도구 실행", "External tool execution")
+  if (kind === "approval" || kind === "human_check") return text("사람 검토", "Human review")
+  return text("작업", "Task")
+}
+
+function assignmentSourceLabel(
+  source: string | undefined,
+  text: ReturnType<typeof useUiI18n>["text"],
+): string {
+  if (source === "topology") return text("저장된 구성", "Saved setup")
+  if (source === "agent") return text("에이전트 판단", "Agent decision")
+  if (source === "team") return text("팀 구성", "Team setup")
+  if (source === "direct") return text("직접 처리", "Direct")
+  return ""
+}
+
+function runtimeExecutorUserLabel(
+  routing: RunRuntimeInspectorTopologyRouting,
+  executorId: string | undefined,
+): string | undefined {
+  if (!executorId) return undefined
+  const name = routing.executionDecisionExecutorNameById?.[executorId]?.trim()
+  return name || undefined
+}
+
+function runtimeAssignedTaskAgentLabel(
+  task: RunRuntimeInspectorPlanTask,
+  routing: RunRuntimeInspectorTopologyRouting,
+  text: ReturnType<typeof useUiI18n>["text"],
+): string {
+  return (
+    task.assignedExecutorName?.trim() ||
+    runtimeExecutorUserLabel(routing, task.assignedExecutorId) ||
+    runtimeExecutorUserLabel(routing, task.assignedAgentId) ||
+    text("서브 에이전트", "Sub-agent")
+  )
+}
+
+function runtimeTopologyEntryLabel(
+  topologyRun: RunRuntimeInspectorTopologyRun,
+  routing: RunRuntimeInspectorTopologyRouting,
+  text: ReturnType<typeof useUiI18n>["text"],
+): string {
+  return (
+    routing.entryNodeName?.trim() ||
+    runtimeExecutorUserLabel(routing, topologyRun.entryNodeId) ||
+    text("시작 서브 에이전트", "Entry sub-agent")
+  )
 }
 
 function shortenRuntimeIdentifier(value: string): string {
@@ -134,12 +263,12 @@ export function RunRuntimeInspectorPanel({
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-stone-900">
-            {text("Runtime Inspector", "Runtime Inspector")}
+            {text("실행 현황 상세", "Run details")}
           </div>
           <div className="mt-1 text-xs leading-5 text-stone-500">
             {text(
-              "Parent run, sub-session, review, approval, data exchange 상태를 projection으로 표시합니다.",
-              "Shows parent run, sub-session, review, approval, and data exchange projection.",
+              "상위 실행, 서브 에이전트 실행, 검토, 승인, 데이터 교환 상태를 한곳에서 확인합니다.",
+              "Review parent run, sub-agent run, review, approval, and data exchange state in one place.",
             )}
           </div>
         </div>
@@ -163,7 +292,7 @@ export function RunRuntimeInspectorPanel({
             className={`rounded-xl border px-3 py-2 ${summaryToneClassName(card.tone)}`}
           >
             <div className="text-[11px] font-semibold opacity-80">{card.label}</div>
-            <div className="mt-1 break-words text-sm font-semibold [overflow-wrap:anywhere]">
+            <div className="mt-1 text-sm font-semibold break-words [overflow-wrap:anywhere]">
               {displayText(card.value)}
             </div>
           </div>
@@ -173,8 +302,8 @@ export function RunRuntimeInspectorPanel({
       {!projection ? (
         <div className="mt-4 rounded-xl border border-dashed border-stone-200 bg-stone-50 px-3 py-3 text-xs text-stone-500">
           {loading
-            ? text("Runtime projection을 불러오는 중입니다.", "Loading runtime projection.")
-            : text("Runtime projection이 없습니다.", "No runtime projection.")}
+            ? text("실행 상태 정보를 불러오는 중입니다.", "Loading run state.")
+            : text("실행 상태 정보가 없습니다.", "No run state.")}
         </div>
       ) : (
         <div className="mt-4 space-y-4">
@@ -292,7 +421,7 @@ export function RunRuntimeInspectorPanel({
 
           <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3 text-xs leading-5 text-stone-600">
             <div className="font-semibold text-stone-900">
-              {text("Orchestration plan", "Orchestration plan")}
+              {text("실행 계획", "Execution plan")}
             </div>
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
               <div>
@@ -323,20 +452,13 @@ export function RunRuntimeInspectorPanel({
                       buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
                     />
                     <div className="mt-1 break-words text-[11px] text-stone-500 [overflow-wrap:anywhere]">
-                      {task.executionKind}
+                      {taskExecutionKindLabel(task.executionKind, text)}
                       {task.assignedExecutorName || task.assignedExecutorId || task.assignedAgentId
                         ? ` · ${displayText(
-                          task.assignedExecutorName ??
-                          (task.assignedExecutorId
-                            ? projection.topologyRouting.executionDecisionExecutorNameById?.[task.assignedExecutorId]
-                            : undefined) ??
-                          (task.assignedAgentId
-                            ? projection.topologyRouting.executionDecisionExecutorNameById?.[task.assignedAgentId]
-                            : undefined) ??
-                          text("서브 에이전트", "Sub-agent"),
+                          runtimeAssignedTaskAgentLabel(task, projection.topologyRouting, text),
                         )}`
                         : ""}
-                      {task.assignmentSource ? ` · ${task.assignmentSource}` : ""}
+                      {task.assignmentSource ? ` · ${assignmentSourceLabel(task.assignmentSource, text)}` : ""}
                     </div>
                   </div>
                 ))}
@@ -346,7 +468,7 @@ export function RunRuntimeInspectorPanel({
 
           <div>
             <div className="mb-2 text-xs font-semibold text-stone-700">
-              {text("Sub-session list", "Sub-session list")}
+              {text("서브 에이전트 실행 목록", "Sub-agent runs")}
             </div>
             {projection.subSessions.length > 0 ? (
               <div className="grid gap-2">
@@ -364,7 +486,7 @@ export function RunRuntimeInspectorPanel({
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
                         <div className="break-words text-sm font-semibold text-stone-900 [overflow-wrap:anywhere]">
-                          {displayText(subSession.agentNickname ?? subSession.agentDisplayName)}
+                          {displayText(runtimeSubSessionAgentName(subSession))}
                         </div>
                         <div className="mt-1 break-words text-xs text-stone-500 [overflow-wrap:anywhere]">
                           {displayText(subSession.commandSummary)}
@@ -373,7 +495,7 @@ export function RunRuntimeInspectorPanel({
                       <span
                         className={`shrink-0 rounded-full border px-2 py-1 text-[11px] ${statusToneClassName(subSession.status)}`}
                       >
-                        {subSession.status}
+                        {runtimeStatusLabel(subSession.status, text)}
                       </span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-stone-500">
@@ -386,7 +508,7 @@ export function RunRuntimeInspectorPanel({
               </div>
             ) : (
               <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 px-3 py-3 text-xs text-stone-500">
-                {text("이 run에는 sub-session이 없습니다.", "This run has no sub-sessions.")}
+                {text("이 실행에는 하위 서브 에이전트 실행이 없습니다.", "This run has no child sub-agent runs.")}
               </div>
             )}
           </div>
@@ -396,22 +518,20 @@ export function RunRuntimeInspectorPanel({
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="font-semibold text-stone-900">
-                    {displayText(
-                      selectedSubSession.agentNickname ?? selectedSubSession.agentDisplayName,
-                    )}
+                    {displayText(runtimeSubSessionAgentName(selectedSubSession))}
                   </div>
                 </div>
                 <span
                   className={`rounded-full border px-2 py-1 text-[11px] ${statusToneClassName(selectedSubSession.status)}`}
                 >
-                  {selectedSubSession.status}
+                  {runtimeStatusLabel(selectedSubSession.status, text)}
                 </span>
               </div>
 
               <div className="mt-4 grid gap-3 md:grid-cols-2">
                 <div className="rounded-lg bg-white px-3 py-2">
                   <div className="font-semibold text-stone-900">
-                    {text("Expected output", "Expected output")}
+                    {text("예상 결과", "Expected output")}
                   </div>
                   <div className="mt-2 space-y-2">
                     {selectedSubSession.expectedOutputs.length > 0 ? (
@@ -427,7 +547,7 @@ export function RunRuntimeInspectorPanel({
                             buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
                           />
                           <div className="text-[11px] text-stone-500">
-                            {output.kind} ·{" "}
+                            {expectedOutputKindLabel(output.kind, text)} ·{" "}
                             {output.required ? text("필수", "required") : text("선택", "optional")}
                           </div>
                         </div>
@@ -441,25 +561,25 @@ export function RunRuntimeInspectorPanel({
                 </div>
 
                 <div className="rounded-lg bg-white px-3 py-2">
-                  <div className="font-semibold text-stone-900">{text("Model", "Model")}</div>
+                  <div className="font-semibold text-stone-900">{text("AI 모델", "AI model")}</div>
                   {selectedSubSession.model ? (
                     <div className="mt-2 space-y-1">
                       <div>
-                        {selectedSubSession.model.providerId} / {selectedSubSession.model.modelId}
+                        {runtimeModelIdentitySummary(selectedSubSession.model, text)}
                       </div>
                       <div>
-                        {text("tokens", "tokens")}:{" "}
+                        {text("토큰", "tokens")}:{" "}
                         {selectedSubSession.model.estimatedInputTokens +
                           selectedSubSession.model.estimatedOutputTokens}
                       </div>
                       <div>
-                        {text("cost", "cost")}: {selectedSubSession.model.estimatedCost.toFixed(6)}
+                        {text("예상 비용", "cost")}: {selectedSubSession.model.estimatedCost.toFixed(6)}
                       </div>
                       <div>
-                        {text("latency", "latency")}: {selectedSubSession.model.latencyMs ?? 0}ms
+                        {text("지연 시간", "latency")}: {selectedSubSession.model.latencyMs ?? 0}ms
                       </div>
                       <div>
-                        {text("fallback", "fallback")}:{" "}
+                        {text("대안 모델", "fallback")}:{" "}
                         {selectedSubSession.model.fallbackApplied
                           ? text("사용", "used")
                           : text("없음", "none")}
@@ -475,23 +595,23 @@ export function RunRuntimeInspectorPanel({
 
               <div className="mt-3 rounded-lg bg-white px-3 py-2">
                 <div className="font-semibold text-stone-900">
-                  {text("Result review", "Result review")}
+                  {text("결과 검토", "Result review")}
                 </div>
                 <div className="mt-2 grid gap-2 md:grid-cols-2">
                   <div>
-                    {text("result", "result")}:{" "}
-                    {selectedSubSession.result?.status ?? text("없음", "none")}
+                    {text("결과", "result")}:{" "}
+                    {runtimeResultStatusLabel(selectedSubSession.result?.status, text)}
                   </div>
                   <div>
-                    {text("verdict", "verdict")}:{" "}
-                    {selectedSubSession.review?.verdict ?? text("없음", "none")}
+                    {text("판정", "verdict")}:{" "}
+                    {runtimeReviewVerdictLabel(selectedSubSession.review?.verdict, text)}
                   </div>
                   <div>
-                    {text("integration", "integration")}:{" "}
-                    {selectedSubSession.review?.parentIntegrationStatus ?? text("없음", "none")}
+                    {text("취합", "integration")}:{" "}
+                    {runtimeParentIntegrationStatusLabel(selectedSubSession.review?.parentIntegrationStatus, text)}
                   </div>
                   <div>
-                    {text("feedback", "feedback")}: {selectedSubSession.feedback.status}
+                    {text("피드백", "feedback")}: {runtimeStatusLabel(selectedSubSession.feedback.status, text)}
                   </div>
                 </div>
                 {selectedSubSession.review?.issueCodes.length ? (
@@ -526,7 +646,7 @@ export function RunRuntimeInspectorPanel({
 
               <div className="mt-3 rounded-lg bg-white px-3 py-2">
                 <div className="font-semibold text-stone-900">
-                  {text("Allowed controls", "Allowed controls")}
+                  {text("허용된 제어", "Allowed controls")}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {actionLabels.length > 0 ? (
@@ -551,7 +671,7 @@ export function RunRuntimeInspectorPanel({
           <div className="grid gap-3 md:grid-cols-2">
             <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3 text-xs leading-5 text-stone-600">
               <div className="font-semibold text-stone-900">
-                {text("Data exchange", "Data exchange")}
+                {text("데이터 교환", "Data exchange")}
               </div>
               <div className="mt-2 space-y-2">
                 {projection.dataExchanges.length > 0 ? (
@@ -567,8 +687,8 @@ export function RunRuntimeInspectorPanel({
                         buttonClassName="mt-1 inline-flex text-[11px] font-semibold text-stone-600 underline-offset-2 hover:underline"
                       />
                       <div className="mt-1 text-[11px] text-stone-500">
-                        {exchange.allowedUse} · {exchange.redactionState} ·{" "}
-                        {text("provenance", "provenance")} {exchange.provenanceCount}
+                        {dataExchangeAllowedUseLabel(exchange.allowedUse, text)} · {dataExchangeRedactionStateLabel(exchange.redactionState, text)} ·{" "}
+                        {text("출처 기록", "provenance")} {exchange.provenanceCount}
                       </div>
                     </div>
                   ))
@@ -581,7 +701,7 @@ export function RunRuntimeInspectorPanel({
             </div>
 
             <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3 text-xs leading-5 text-stone-600">
-              <div className="font-semibold text-stone-900">{text("Approvals", "Approvals")}</div>
+              <div className="font-semibold text-stone-900">{text("승인", "Approvals")}</div>
               <div className="mt-2 space-y-2">
                 {projection.approvals.length > 0 ? (
                   projection.approvals.map((approval) => (
@@ -614,14 +734,7 @@ export function RunRuntimeInspectorPanel({
               {describeRuntimeFinalizerStatus(projection, text)}
             </div>
             <CollapsibleText
-              value={
-                projection.finalizer.summary
-                  ? displayText(projection.finalizer.summary)
-                  : text(
-                      "최종 답변은 parent run finalizer만 사용자에게 전달합니다.",
-                      "Only the parent run finalizer delivers the final answer to the user.",
-                    )
-              }
+              value={displayText(runtimeFinalizerSummary(projection, text))}
               threshold={180}
               clampLines={3}
               showMoreLabel={text("전체 보기", "Show more")}
@@ -633,7 +746,7 @@ export function RunRuntimeInspectorPanel({
 
           <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3 text-xs leading-5 text-stone-600">
             <div className="font-semibold text-stone-900">
-              {text("Runtime timeline", "Runtime timeline")}
+              {text("실행 시간순 기록", "Runtime timeline")}
             </div>
             <div className="mt-2 max-h-72 space-y-2 overflow-y-auto pr-1">
               {projection.timeline.length > 0 ? (
@@ -645,7 +758,7 @@ export function RunRuntimeInspectorPanel({
                         <span
                           className={`rounded-full border px-2 py-0.5 text-[11px] ${statusToneClassName(event.status)}`}
                         >
-                          {event.status}
+                          {runtimeStatusLabel(event.status, text)}
                         </span>
                       ) : null}
                       <span className="text-[11px] text-stone-400">{formatTime(event.at)}</span>
@@ -672,7 +785,7 @@ export function RunRuntimeInspectorPanel({
           {projection.topologyRuns.length > 0 ? (
             <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3 text-xs leading-5 text-stone-600">
               <div className="font-semibold text-stone-900">
-                {text("Topology run trace", "Topology run trace")}
+                {text("서브 에이전트 실행 기록", "Sub-agent run history")}
               </div>
               <div className="mt-2 space-y-2">
                 {projection.topologyRuns.map((topologyRun) => (
@@ -684,22 +797,20 @@ export function RunRuntimeInspectorPanel({
                       <span
                         className={`rounded-full border px-2 py-0.5 text-[11px] ${statusToneClassName(topologyRun.status)}`}
                       >
-                        {topologyRun.status}
+                        {runtimeStatusLabel(topologyRun.status, text)}
                       </span>
                       {topologyRun.entryNodeId ? (
                         <span className="rounded-full bg-stone-50 px-2 py-0.5 text-[11px] font-semibold text-stone-600">
                           {displayText(
-                            projection.topologyRouting.entryNodeName ??
-                              projection.topologyRouting.executionDecisionExecutorNameById?.[topologyRun.entryNodeId] ??
-                              topologyRun.entryNodeId,
+                            runtimeTopologyEntryLabel(topologyRun, projection.topologyRouting, text),
                           )}
                         </span>
                       ) : null}
                     </div>
                     <div className="mt-1 text-[11px] text-stone-500">
-                      {text("서브 에이전트", "sub-agents")} {topologyRun.nodeRunCount} ·{" "}
-                      {text("연결", "edges")} {topologyRun.observedEdgeCount} ·{" "}
-                      {text("실패", "failures")} {topologyRun.failureCount}
+                      {text("서브 에이전트 실행", "sub-agent runs")} {topologyRun.nodeRunCount} ·{" "}
+                      {text("연결", "connections")} {topologyRun.observedEdgeCount} ·{" "}
+                      {text("실패 항목", "failures")} {topologyRun.failureCount}
                     </div>
                   </div>
                 ))}
@@ -743,7 +854,7 @@ export function RunRuntimeInspectorPanel({
                 data-testid="runtime-inspector-executor-scope"
               >
                 <div className="font-semibold text-stone-900">
-                  {text("서브 에이전트 ID", "Sub-agent IDs")}
+                  {text("진단용 내부 식별자", "Diagnostic internal identifiers")}
                 </div>
                 <div className="mt-2 grid gap-2 md:grid-cols-2">
                   {viewModels.diagnostic.executorIds.map((item) => (

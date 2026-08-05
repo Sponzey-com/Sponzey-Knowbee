@@ -1,8 +1,22 @@
 import { discoverInstructionChain } from "./discovery.js";
+import { loadPromptValue } from "../memory/prompt-fragments.js";
+import { dirname } from "node:path";
 const CACHE_TTL_MS = 5_000;
+const INSTRUCTION_MERGE_CONTEXT_LABELS_SOURCE_ID = "instruction_merge_context_labels_user";
+export function createInstructionRuntimeContext(stateDir) {
+    return Object.freeze({
+        globalStateDir: stateDir,
+        fallbackBoundaryDir: dirname(stateDir),
+    });
+}
 const bundleCache = new Map();
-export function loadMergedInstructions(workDir = process.cwd(), options = {}) {
-    const chain = discoverInstructionChain(workDir, options.agentSources ? { agentSources: options.agentSources } : {});
+export function loadMergedInstructions(workDir, options) {
+    const chain = discoverInstructionChain({
+        workDir,
+        globalStateDir: options.globalStateDir,
+        fallbackBoundaryDir: options.fallbackBoundaryDir,
+        ...(options.agentSources ? { agentSources: options.agentSources } : {}),
+    });
     const signature = buildChainSignature(chain);
     const cacheKey = buildCacheKey(workDir, options);
     const cached = bundleCache.get(cacheKey);
@@ -12,7 +26,7 @@ export function loadMergedInstructions(workDir = process.cwd(), options = {}) {
     const mergedText = chain.sources
         .filter((source) => source.loaded && source.content?.trim())
         .map((source, index) => [
-        source.sourceKind === "agent_prompt" ? `[Agent Instruction Source ${index + 1}]` : `[Instruction Source ${index + 1}]`,
+        instructionMergeContextLabel(source.sourceKind === "agent_prompt" ? "agent_instruction_source_header" : "instruction_source_header", { index: index + 1 }),
         `path: ${source.path}`,
         `scope: ${source.scope}`,
         source.agentId ? `agentId: ${source.agentId}` : "",
@@ -27,6 +41,17 @@ export function loadMergedInstructions(workDir = process.cwd(), options = {}) {
         bundle,
     });
     return bundle;
+}
+function instructionMergeContextLabel(key, variables = {}) {
+    const value = loadPromptValue(INSTRUCTION_MERGE_CONTEXT_LABELS_SOURCE_ID, variables, { required: true })
+        .split(/\r?\n/u)
+        .find((line) => line.startsWith(`${key}=`))
+        ?.slice(key.length + 1)
+        .trim();
+    if (!value) {
+        throw new Error(`instruction merge context label missing: ${key}`);
+    }
+    return value;
 }
 function buildCacheKey(workDir, options) {
     if (!options.agentSources?.length)

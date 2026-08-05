@@ -2,6 +2,20 @@ import { randomUUID } from "node:crypto"
 import type { ParentAggregationNextAction } from "../agent/sub-agent-result-review.js"
 import { CONTRACT_SCHEMA_VERSION, type JsonValue } from "../contracts/index.js"
 import {
+  runRequestDiagnosisProviderWithRepair,
+  type LlmDiagnosisProvider,
+} from "../contracts/llm-diagnosis-provider.js"
+import type { LlmDiagnosisSchemaRepairProvider } from "../contracts/llm-diagnosis-schema-repair-provider.js"
+import { buildDelegatedExecutionSnapshot } from "../contracts/delegated-execution-snapshot.js"
+import { authorizeDiagnosisActionRoute } from "../contracts/diagnosis-action-routing.js"
+import type { KnowbeeConfig } from "../config/types.js"
+import type { MemoryJournalRepository } from "../memory/journal.js"
+import { createAgentHierarchyService, type AgentHierarchyStorage } from "../orchestration/hierarchy.js"
+import {
+  auditRuntimeWorkHandoffProjection,
+} from "../contracts/structured-work-audit.js"
+import type { LlmRequestDiagnosisRecord } from "../contracts/work-record.js"
+import {
   type CommandRequest,
   type OrchestrationPlan,
   type OrchestrationTask,
@@ -9,8 +23,15 @@ import {
   type RuntimeIdentity,
   type StructuredTaskScope,
   type TeamExecutionTaskSnapshot,
+  resolveAgentConfigAgentName,
 } from "../contracts/sub-agent-orchestration.js"
 import { buildAgentPromptBundle } from "../orchestration/prompt-bundle.js"
+import { evaluateDelegationEligibility } from "../orchestration/delegation-eligibility.js"
+import {
+  authorizeDelegationInForest,
+  validateDelegationForestSnapshot,
+  type DelegationForestSnapshot,
+} from "../orchestration/delegation-forest.js"
 import {
   buildOrchestrationRegistrySnapshot,
   type AgentRegistryEntry,
@@ -19,7 +40,14 @@ import {
   createSubSessionRunner,
   type RunSubSessionInput,
 } from "../orchestration/sub-session-runner.js"
-import { buildTeamExecutionPlan } from "../orchestration/team-execution-plan.js"
+import { recordStructuredWorkAuditEventSafely } from "../orchestration/structured-work-audit-ledger.js"
+import { recordRuntimeWorkRecordSnapshotSafely } from "../orchestration/work-record-snapshot-ledger.js"
+import {
+  buildTeamExecutionPlan,
+  type TeamExecutionPlanServiceDependencies,
+} from "../orchestration/team-execution-plan.js"
+import { redactLogText } from "../logger/index.js"
+import { loadPromptTemplate } from "../memory/knowbee-md.js"
 import type { StartRootRunParams, StartedRootRun } from "./start.js"
 import type { RootRun, TaskProfile } from "./types.js"
 
@@ -45,7 +73,7 @@ export interface DelegatedTaskDispatchOutcome {
   taskId: string
   subSessionId?: string
   agentId?: string
-  agentDisplayName?: string
+  agentName?: string
   agentSource?: AgentRegistryEntry["source"]
   topologyId?: string
   topologyExecutorId?: string
@@ -68,9 +96,52 @@ export interface DelegatedTaskDispatchResult {
   outcomes: DelegatedTaskDispatchOutcome[]
 }
 
+export type DelegatedTaskDispatchOrder =
+  | { ok: true; tasks: OrchestrationTask[] }
+  | { ok: false; reasonCode: "dependency_missing" | "dependency_cycle" }
+
+export function orderDelegatedTasksForDispatch(
+  plan: Pick<OrchestrationPlan, "directKnowbeeTasks" | "delegatedTasks" | "dependencyEdges">,
+): DelegatedTaskDispatchOrder {
+  const allTasks = [...plan.directKnowbeeTasks, ...plan.delegatedTasks]
+  const taskById = new Map(allTasks.map((task) => [task.taskId, task]))
+  if (taskById.size !== allTasks.length) return { ok: false, reasonCode: "dependency_cycle" }
+  const outgoing = new Map<string, string[]>()
+  const indegree = new Map(allTasks.map((task) => [task.taskId, 0]))
+  for (const edge of plan.dependencyEdges) {
+    if (!taskById.has(edge.fromTaskId) || !taskById.has(edge.toTaskId)) {
+      return { ok: false, reasonCode: "dependency_missing" }
+    }
+    outgoing.set(edge.fromTaskId, [...(outgoing.get(edge.fromTaskId) ?? []), edge.toTaskId])
+    indegree.set(edge.toTaskId, (indegree.get(edge.toTaskId) ?? 0) + 1)
+  }
+  const queue = allTasks
+    .filter((task) => indegree.get(task.taskId) === 0)
+    .map((task) => task.taskId)
+  const ordered: OrchestrationTask[] = []
+  while (queue.length > 0) {
+    const taskId = queue.shift()
+    if (!taskId) break
+    const task = taskById.get(taskId)
+    if (task) ordered.push(task)
+    for (const next of outgoing.get(taskId) ?? []) {
+      const remaining = (indegree.get(next) ?? 0) - 1
+      indegree.set(next, remaining)
+      if (remaining === 0) queue.push(next)
+    }
+  }
+  if (ordered.length !== allTasks.length) return { ok: false, reasonCode: "dependency_cycle" }
+  const delegatedIds = new Set(plan.delegatedTasks.map((task) => task.taskId))
+  return { ok: true, tasks: ordered.filter((task) => delegatedIds.has(task.taskId)) }
+}
+
 export interface DelegatedTaskDispatchParams {
+  artifactStorage: StartRootRunParams["artifactStorage"]
+  memoryJournal: MemoryJournalRepository
+  hierarchyStorage: AgentHierarchyStorage
   plan: OrchestrationPlan
   parentRunId: string
+  parentAgentName: string
   parentSessionId: string
   parentRequestGroupId: string
   source: StartRootRunParams["source"]
@@ -81,17 +152,101 @@ export interface DelegatedTaskDispatchParams {
 }
 
 export interface DelegatedTaskDispatchDependencies {
+  config: KnowbeeConfig
   startSubAgentRun: (params: StartRootRunParams) => StartedRootRun
   appendParentEvent?: (runId: string, label: string) => void
   updateParentSummary?: (runId: string, summary: string) => RootRun | undefined
   now?: () => number
   idProvider?: () => string
+  diagnosisProvider?: LlmDiagnosisProvider
+  diagnosisRepairProvider?: LlmDiagnosisSchemaRepairProvider
 }
 
 const ROOT_AGENT_ID = "agent:knowbee"
 
+function orchestrationDispatchErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
+
+function orchestrationDispatchReasonDetail(error: unknown): string {
+  return orchestrationDispatchErrorMessage(error).trim().replace(/\s+/g, "_").slice(0, 80) || "unknown_error"
+}
+
 function uniqueStrings(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value?.trim())))]
+}
+
+async function resolvePreDispatchRequestDiagnosis(input: {
+  dependencies: DelegatedTaskDispatchDependencies
+  appendParentEvent: (runId: string, label: string) => void
+  parentRunId: string
+  parentAgentName: string
+  task: OrchestrationTask
+  originalRequest: string
+}): Promise<LlmRequestDiagnosisRecord | undefined> {
+  if (!input.dependencies.diagnosisProvider || !input.dependencies.diagnosisRepairProvider) {
+    input.appendParentEvent(
+      input.parentRunId,
+      `request_diagnosis_unavailable:${input.task.taskId}:provider_missing`,
+    )
+    return undefined
+  }
+
+  try {
+    const diagnosisInput = {
+      provider: input.dependencies.diagnosisProvider,
+      repairProvider: input.dependencies.diagnosisRepairProvider,
+      ownerAgentName: input.parentAgentName,
+      userRequestSummary: input.originalRequest,
+      context: [
+        `task_id:${input.task.taskId}`,
+        `task_goal:${input.task.scope.goal}`,
+        `task_action:${input.task.scope.actionType}`,
+        ...input.task.scope.reasonCodes.map((reasonCode) => `reason:${reasonCode}`),
+      ],
+      constraints: input.task.scope.constraints,
+      workId: `work:${input.parentRunId}`,
+      stepId: input.task.taskId,
+    }
+    const result = await runRequestDiagnosisProviderWithRepair(diagnosisInput)
+
+    if (result.status === "valid" && result.target === "request_diagnosis") {
+      const route = authorizeDiagnosisActionRoute({
+        receipt: result.receipt,
+        subjectPayload: {
+          ownerAgentName: diagnosisInput.ownerAgentName,
+          userRequestSummary: diagnosisInput.userRequestSummary,
+          context: diagnosisInput.context,
+          constraints: diagnosisInput.constraints,
+          workId: diagnosisInput.workId,
+          stepId: diagnosisInput.stepId,
+        },
+        diagnosis: result.diagnosis,
+      })
+      if (route.routeKind !== "delegation") {
+        input.appendParentEvent(
+          input.parentRunId,
+          `request_diagnosis_unavailable:${input.task.taskId}:route_not_delegation`,
+        )
+        return undefined
+      }
+      return result.diagnosis
+    }
+
+    input.appendParentEvent(
+      input.parentRunId,
+      `request_diagnosis_unavailable:${input.task.taskId}:${result.status}`,
+    )
+    return undefined
+  } catch (error) {
+    const reason = orchestrationDispatchReasonDetail(error)
+    input.appendParentEvent(
+      input.parentRunId,
+      `request_diagnosis_unavailable:${input.task.taskId}:provider_error:${reason}`,
+    )
+    return undefined
+  }
 }
 
 function taskProfileForScope(scope: StructuredTaskScope): TaskProfile {
@@ -112,7 +267,7 @@ function taskProfileForScope(scope: StructuredTaskScope): TaskProfile {
   return "general_chat"
 }
 
-function executionPrompt(input: {
+export function buildDelegatedTaskExecutionPrompt(input: {
   renderedPrompt: string
   task: OrchestrationTask
   originalRequest: string
@@ -121,25 +276,18 @@ function executionPrompt(input: {
     .map((output) => `- ${output.outputId}: ${output.description}`)
     .join("\n")
   const constraints = input.task.scope.constraints.map((item) => `- ${item}`).join("\n")
-  return [
-    input.renderedPrompt,
-    "",
-    "# Delegated task",
-    `Task ID: ${input.task.taskId}`,
-    `Goal: ${input.task.scope.goal}`,
-    `Action: ${input.task.scope.actionType}`,
-    "",
-    "# Original user request",
-    input.originalRequest,
-    "",
-    "# Expected outputs",
-    expectedOutputs || "- Complete the delegated scope and report concrete results.",
-    "",
-    "# Constraints",
-    constraints || "- Stay within the delegated scope.",
-    "",
-    "Work as the assigned sub-agent. Complete the task directly when possible, then report results, changed files or artifacts, evidence, and remaining risks. Keep the response concise and in the user's language.",
-  ].join("\n")
+  return loadPromptTemplate({
+    sourceId: "delegated_task_dispatch_user",
+    variables: {
+      renderedPrompt: input.renderedPrompt.trim(),
+      taskId: input.task.taskId,
+      goal: input.task.scope.goal,
+      actionType: input.task.scope.actionType,
+      originalRequest: input.originalRequest.trim(),
+      expectedOutputs: expectedOutputs || "- Complete the delegated scope and report concrete results.",
+      constraints: constraints || "- Stay within the delegated scope.",
+    },
+  }).replace(/\n{3,}/g, "\n\n").trim()
 }
 
 function identityFor(input: {
@@ -175,6 +323,7 @@ function commandRequestFor(input: {
   parentRequestId: string
 }): CommandRequest {
   const topologyAssignment = topologyAssignmentFromAgentId(input.agent)
+  const agentName = dispatchAgentName(input.agent)
   return {
     identity: identityFor({
       entityType: "sub_session",
@@ -190,7 +339,8 @@ function commandRequestFor(input: {
     parentRunId: input.parentRunId,
     subSessionId: input.subSessionId,
     targetAgentId: input.agent.agentId,
-    ...(input.agent.nickname ? { targetNicknameSnapshot: input.agent.nickname } : {}),
+    targetAgentName: agentName,
+    targetAgentNameSnapshot: agentName,
     ...(topologyAssignment.topologyId
       ? {
           topologyExecutor: {
@@ -205,6 +355,10 @@ function commandRequestFor(input: {
     contextPackageIds: [],
     expectedOutputs: input.task.scope.expectedOutputs,
   }
+}
+
+function dispatchAgentName(agent: AgentRegistryEntry): string {
+  return agent.config.agentName?.trim() || "Unnamed sub-agent"
 }
 
 function reportFor(input: {
@@ -242,7 +396,7 @@ function reportFor(input: {
     source: {
       entityType: "sub_agent",
       entityId: input.agent.agentId,
-      nicknameSnapshot: input.agent.nickname ?? input.agent.displayName,
+      agentNameSnapshot: resolveAgentConfigAgentName(input.agent.config),
     },
     status: input.status,
     outputs: input.command.expectedOutputs.map((output) => ({
@@ -314,7 +468,22 @@ export function validateDispatchToChildExecutorInput(input: {
   agent: AgentRegistryEntry
 }): DispatchToChildExecutorValidation {
   if (input.agent.source !== "topology") {
-    return { ok: true, reasonCodes: ["registry_executor_selected"] }
+    const eligibility = evaluateDelegationEligibility(input)
+    if (eligibility.state === "rejected") {
+      const reasonCode = eligibility.reasonCodes[0] ?? "delegation_policy_rejected"
+      return {
+        ok: false,
+        reasonCode,
+        summary: `Sub-agent dispatch was blocked by the current delegation policy (${reasonCode}).`,
+        ...(input.task.planningTrace?.selectedExecutorId
+          ? { selectedExecutorId: input.task.planningTrace.selectedExecutorId }
+          : {}),
+      }
+    }
+    return {
+      ok: true,
+      reasonCodes: ["registry_executor_selected", ...eligibility.reasonCodes],
+    }
   }
 
   const selectedExecutorId = input.task.planningTrace?.selectedExecutorId?.trim()
@@ -428,13 +597,69 @@ export async function dispatchDelegatedSubAgentTasks(
   if (!isDelegationDispatchEligible(params)) {
     return { attempted: 0, completed: 0, failed: 0, skipped: 0, outcomes: [] }
   }
+  const dispatchOrder = orderDelegatedTasksForDispatch(params.plan)
+  if (!dispatchOrder.ok) {
+    const failedAt = dependencies.now?.() ?? Date.now()
+    return {
+      attempted: 0,
+      completed: 0,
+      failed: 1,
+      skipped: 0,
+      outcomes: [{
+        taskId: params.plan.planId,
+        status: "failed",
+        reasonCode: dispatchOrder.reasonCode,
+        summary: `Workflow dispatch was blocked before execution (${dispatchOrder.reasonCode}).`,
+        completedAt: failedAt,
+      }],
+    }
+  }
 
-  const registry = buildOrchestrationRegistrySnapshot()
+  const registry = buildOrchestrationRegistrySnapshot({ config: dependencies.config })
   const agentsById = new Map(registry.agents.map((agent) => [agent.agentId, agent]))
   const teams = registry.teams.map((team) => team.config)
+  const hierarchy = createAgentHierarchyService({
+    config: dependencies.config,
+    storage: params.hierarchyStorage,
+  })
+  let delegationForest: DelegationForestSnapshot | undefined
+  let delegationForestIssue: string | undefined
+  try {
+    const configuredRoot = dependencies.config.orchestration.knowbee
+    delegationForest = validateDelegationForestSnapshot({
+      rootAgentId: hierarchy.rootAgentId,
+      agents: [
+        {
+          agentId: hierarchy.rootAgentId,
+          agentName: configuredRoot
+            ? resolveAgentConfigAgentName(configuredRoot)
+            : params.parentAgentName,
+          agentType: "knowbee",
+          status: configuredRoot?.status ?? "enabled",
+          ...(configuredRoot?.delegationPolicy
+            ? { delegationPolicy: configuredRoot.delegationPolicy }
+            : {}),
+        },
+        ...registry.agents
+          .filter((agent) => agent.agentId !== hierarchy.rootAgentId)
+          .map((agent) => ({
+            agentId: agent.agentId,
+            agentName: dispatchAgentName(agent),
+            agentType: "sub_agent" as const,
+            status: agent.status,
+            delegationPolicy: agent.config.delegation,
+          })),
+      ],
+      relationships: hierarchy.list(),
+    })
+  } catch (error) {
+    delegationForestIssue = error instanceof Error ? error.message : "invalid delegation forest"
+  }
   const runner = createSubSessionRunner({
     ...(dependencies.now ? { now: dependencies.now } : {}),
     ...(dependencies.idProvider ? { idProvider: dependencies.idProvider } : {}),
+    ...(dependencies.diagnosisProvider ? { diagnosisProvider: dependencies.diagnosisProvider } : {}),
+    ...(dependencies.diagnosisRepairProvider ? { diagnosisRepairProvider: dependencies.diagnosisRepairProvider } : {}),
   })
   const originalRequest = params.originalRequest?.trim() || params.message
   const outcomes: DelegatedTaskDispatchOutcome[] = []
@@ -447,14 +672,33 @@ export async function dispatchDelegatedSubAgentTasks(
     agent: AgentRegistryEntry,
   ): Promise<void> => {
     const topologyAssignment = topologyAssignmentFromAgentId(agent)
-    const validation = childDispatch.validate({ task, agent })
+    const agentName = dispatchAgentName(agent)
+    const forestAuthorization = agent.source === "topology"
+      ? undefined
+      : delegationForest
+        ? authorizeDelegationInForest({
+            snapshot: delegationForest,
+            expectedSnapshotFingerprint: delegationForest.snapshotFingerprint,
+            callerAgentId: delegationForest.rootAgentId,
+            targetAgentId: agent.agentId,
+          })
+        : { ok: false as const, reasonCode: "delegation_forest_invalid" as const }
+    const validation: DispatchToChildExecutorValidation = forestAuthorization && !forestAuthorization.ok
+      ? {
+          ok: false,
+          reasonCode: forestAuthorization.reasonCode,
+          summary: delegationForestIssue
+            ? `Sub-agent dispatch was blocked because the delegation forest is invalid (${redactLogText(delegationForestIssue)}).`
+            : `Sub-agent dispatch was blocked by the delegation forest policy (${forestAuthorization.reasonCode}).`,
+        }
+      : childDispatch.validate({ task, agent })
     if (!validation.ok) {
       const failedAt = now()
       attempted += 1
       outcomes.push({
         taskId: task.taskId,
         agentId: agent.agentId,
-        agentDisplayName: agent.displayName,
+        agentName,
         agentSource: agent.source,
         ...topologyAssignment,
         status: "failed",
@@ -503,18 +747,139 @@ export async function dispatchDelegatedSubAgentTasks(
       parentRequestId: params.plan.parentRequestId,
       auditCorrelationId: params.parentRunId,
     })
-    const prompt = executionPrompt({
+    const prompt = buildDelegatedTaskExecutionPrompt({
       renderedPrompt: bundle.renderedPrompt,
       task,
       originalRequest,
     })
+    const requestDiagnosis = await resolvePreDispatchRequestDiagnosis({
+      dependencies,
+      appendParentEvent,
+      parentRunId: params.parentRunId,
+      parentAgentName: params.parentAgentName,
+      task,
+      originalRequest,
+    })
+    const handoffAudit = auditRuntimeWorkHandoffProjection({
+      command,
+      parentWorkId: `work:${params.parentRunId}`,
+      parentStepId: task.taskId,
+      parentAgentName: params.parentAgentName,
+      targetAgentName: agentName,
+      userRequestSummary: originalRequest,
+      ...(requestDiagnosis ? { requestDiagnosis } : {}),
+      retryLimit: Number.MAX_SAFE_INTEGER,
+      stopCondition:
+        "Stop when the delegated completion criteria are verified, an explicit policy or safety boundary blocks execution, cancellation or a user decision is required, or no materially changed strategy remains.",
+    })
+    recordStructuredWorkAuditEventSafely({
+      audit: handoffAudit,
+      runId: params.parentRunId,
+      subSessionId,
+      agentId: agent.agentId,
+      stage: "pre_dispatch_handoff",
+      source: "orchestration-dispatch",
+      dedupeKey: [
+        "orchestration:structured-work-audit",
+        "pre_dispatch_handoff",
+        params.parentRunId,
+        subSessionId,
+        task.taskId,
+      ].join(":"),
+      payload: {
+        taskId: task.taskId,
+      },
+    })
+    if (handoffAudit.status === "valid" && handoffAudit.value) {
+      recordRuntimeWorkRecordSnapshotSafely({
+        snapshotKind: "work_handoff_package",
+        stage: "pre_dispatch_handoff",
+        record: handoffAudit.value,
+        parentRunId: params.parentRunId,
+        subSessionId,
+        agentId: agent.agentId,
+        taskId: task.taskId,
+        source: "orchestration-dispatch",
+      })
+    }
+    if (handoffAudit.status !== "valid" || !handoffAudit.value) {
+      const failedAt = now()
+      attempted += 1
+      const reasonCode = "request_diagnosis_required"
+      const summary = [
+        "Sub-agent dispatch was blocked because a valid request diagnosis is required before delegation.",
+        handoffAudit.reasonCode ? `audit=${handoffAudit.reasonCode}` : undefined,
+      ].filter(Boolean).join(" ")
+      outcomes.push({
+        taskId: task.taskId,
+        subSessionId,
+        agentId: agent.agentId,
+        agentName,
+        agentSource: agent.source,
+        ...topologyAssignment,
+        status: "failed",
+        reasonCode,
+        summary,
+        completedAt: failedAt,
+        lifecycle: [{
+          status: "failed",
+          at: failedAt,
+          reasonCode,
+          parentRunId: params.parentRunId,
+          selectedExecutorId: validation.selectedExecutorId ?? agent.agentId,
+          subSessionId,
+          summary,
+        }],
+      })
+      appendParentEvent(
+        params.parentRunId,
+        [
+          "sub_agent_dispatch_blocked",
+          task.taskId,
+          agent.source,
+          agent.agentId,
+          reasonCode,
+          handoffAudit.reasonCode ? `audit=${handoffAudit.reasonCode}` : undefined,
+          topologyAssignment.topologyId ? `topology=${topologyAssignment.topologyId}` : undefined,
+          topologyAssignment.topologyExecutorId ? `executor=${topologyAssignment.topologyExecutorId}` : undefined,
+        ].filter(Boolean).join(":"),
+      )
+      return
+    }
+    const delegationSnapshot = buildDelegatedExecutionSnapshot({
+      command,
+      handoff: handoffAudit.value,
+      agent: { agentId: agent.agentId, agentName },
+      promptBundle: bundle.bundle,
+    })
+    if (!delegationSnapshot.ok) {
+      const failedAt = now()
+      attempted += 1
+      outcomes.push({
+        taskId: task.taskId,
+        subSessionId,
+        agentId: agent.agentId,
+        agentName,
+        agentSource: agent.source,
+        ...topologyAssignment,
+        status: "failed",
+        reasonCode: delegationSnapshot.reasonCode,
+        summary: "Sub-agent dispatch was blocked by execution snapshot validation.",
+        completedAt: failedAt,
+      })
+      appendParentEvent(
+        params.parentRunId,
+        `sub_agent_dispatch_snapshot_blocked:${task.taskId}:${agent.agentId}:${delegationSnapshot.reasonCode}`,
+      )
+      return
+    }
     attempted += 1
     const startedAt = now()
     const outcomeRecord: DelegatedTaskDispatchOutcome = {
       taskId: task.taskId,
       subSessionId,
       agentId: agent.agentId,
-      agentDisplayName: agent.displayName,
+      agentName,
       agentSource: agent.source,
       ...topologyAssignment,
       status: "running",
@@ -557,11 +922,15 @@ export async function dispatchDelegatedSubAgentTasks(
         command,
         agent: {
           agentId: agent.agentId,
-          displayName: agent.displayName,
-          ...(agent.nickname ? { nickname: agent.nickname } : {}),
+          agentName,
+        },
+        parentAgent: {
+          agentId: delegationForest?.rootAgentId ?? ROOT_AGENT_ID,
+          agentName: params.parentAgentName,
         },
         parentSessionId: params.parentSessionId,
         promptBundle: bundle.bundle,
+        delegationSnapshot: delegationSnapshot.snapshot,
         parentAbortSignal: params.controller.signal,
       },
       async (input: RunSubSessionInput, controls) => {
@@ -569,6 +938,9 @@ export async function dispatchDelegatedSubAgentTasks(
         let started: StartedRootRun
         try {
           started = dependencies.startSubAgentRun({
+            artifactStorage: params.artifactStorage,
+            memoryJournal: params.memoryJournal,
+            hierarchyStorage: params.hierarchyStorage,
             message: prompt,
             sessionId: params.parentSessionId,
             requestGroupId: `${params.parentRunId}:${input.command.subSessionId}`,
@@ -579,21 +951,22 @@ export async function dispatchDelegatedSubAgentTasks(
             originRequestGroupId: params.parentRequestGroupId,
             model: controls.modelExecution.modelId,
             providerId: controls.modelExecution.providerId,
+            config: dependencies.config,
             targetId: agent.agentId,
-            targetLabel: agent.displayName,
+            targetLabel: agentName,
             source: params.source,
             skipIntake: true,
             toolsEnabled: true,
             contextMode: "handoff",
             taskProfile: taskProfileForScope(task.scope),
             runScope: "child",
-            handoffSummary: task.scope.goal,
+            handoffSummary: input.delegationSnapshot?.handoff.task_goal ?? task.scope.goal,
             originalRequest,
             workDir: params.workDir,
           })
         } catch (error) {
           const failedAt = now()
-          const safeMessage = error instanceof Error ? error.message : String(error)
+          const safeMessage = orchestrationDispatchErrorMessage(error)
           outcomeRecord.status = "failed"
           outcomeRecord.reasonCode = "child_run_creation_failed"
           outcomeRecord.completedAt = failedAt
@@ -708,7 +1081,7 @@ export async function dispatchDelegatedSubAgentTasks(
         task.taskId,
         agent.source,
         agent.agentId,
-        agent.displayName,
+        agentName,
         outcome.status === "completed" ? "completed" : "failed",
         topologyAssignment.topologyId ? `topology=${topologyAssignment.topologyId}` : undefined,
         topologyAssignment.topologyExecutorId ? `executor=${topologyAssignment.topologyExecutorId}` : undefined,
@@ -738,6 +1111,8 @@ export async function dispatchDelegatedSubAgentTasks(
       persist: true,
       auditId: params.parentRunId,
     }, {
+      config: dependencies.config,
+      storage: params.hierarchyStorage,
       ...(dependencies.now ? { now: dependencies.now } : {}),
       ...(dependencies.idProvider
         ? { idProvider: (prefix: string) => `${prefix}:${dependencies.idProvider?.()}` }
@@ -795,10 +1170,10 @@ export async function dispatchDelegatedSubAgentTasks(
     }
   }
 
-  appendParentEvent(params.parentRunId, `sub_agent_dispatch_started:${params.plan.delegatedTasks.length}`)
+  appendParentEvent(params.parentRunId, `sub_agent_dispatch_started:${dispatchOrder.tasks.length}`)
   updateParentSummary(params.parentRunId, "서브 에이전트에게 작업을 위임하고 있습니다.")
 
-  for (const task of params.plan.delegatedTasks) {
+  for (const task of dispatchOrder.tasks) {
     const agentId = task.assignedAgentId
     const agent = agentId ? agentsById.get(agentId) : undefined
     if (agentId && agent) {

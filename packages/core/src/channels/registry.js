@@ -1,4 +1,4 @@
-import { createLogger } from "../logger/index.js";
+import { createLogger, redactLogText } from "../logger/index.js";
 import { getTelegramRuntimeStatus } from "./telegram/runtime.js";
 import { TelegramChannelAdapter } from "./telegram/adapter.js";
 import { SlackChannelAdapter } from "./slack/adapter.js";
@@ -10,17 +10,26 @@ import { getGoogleChatRuntimeStatus } from "./google-chat/runtime.js";
 import { buildCompatChannelConnectionsFromConfig, persistChannelConnections, } from "./connections.js";
 import { buildChannelRuntimeSummary, recordChannelRuntimeEvent, updateConnectionRuntimeHealth, } from "./runtime.js";
 const log = createLogger("channel:registry");
+function channelRegistryErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 export class ChannelRegistry {
     config;
     now;
     factories = new Map();
     adapters = new Map();
+    startedConnectionIds = new Set();
     fixedConnections;
     constructor(options) {
         this.config = options.config;
         this.now = options.now ?? Date.now;
         this.fixedConnections = options.connections;
-        for (const factory of options.factories ?? createBuiltInChannelProviderFactories()) {
+        const factories = options.factories
+            ?? (options.artifactStorage && options.memoryJournal && options.hierarchyStorage
+                ? createBuiltInChannelProviderFactories(options.artifactStorage, options.memoryJournal, options.hierarchyStorage)
+                : []);
+        for (const factory of factories) {
             this.registerFactory(factory);
         }
     }
@@ -98,6 +107,7 @@ export class ChannelRegistry {
             this.adapters.set(item.connection.connectionId, adapter);
             try {
                 await adapter.start();
+                this.startedConnectionIds.add(item.connection.connectionId);
                 const health = await adapter.healthCheck();
                 recordChannelRuntimeEvent({
                     connection: item.connection,
@@ -116,7 +126,8 @@ export class ChannelRegistry {
                 }));
             }
             catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
+                this.startedConnectionIds.delete(item.connection.connectionId);
+                const message = channelRegistryErrorMessage(error);
                 const health = this.health("failed", message);
                 recordChannelRuntimeEvent({
                     connection: item.connection,
@@ -179,6 +190,7 @@ export class ChannelRegistry {
                 }));
             }
             finally {
+                this.startedConnectionIds.delete(connection.connectionId);
                 this.adapters.delete(connection.connectionId);
             }
         }
@@ -200,6 +212,19 @@ export class ChannelRegistry {
             });
         });
     }
+    getPendingResponseDeliveryOwner(provider) {
+        const candidates = [...this.adapters.values()].filter((adapter) => adapter.provider === provider &&
+            this.startedConnectionIds.has(adapter.connectionId) &&
+            typeof adapter.createPendingResponseDeliveryHandler === "function");
+        if (candidates.length !== 1)
+            return undefined;
+        const adapter = candidates[0];
+        if (!adapter?.createPendingResponseDeliveryHandler)
+            return undefined;
+        return Object.freeze({
+            createPendingResponseDeliveryHandler: (input) => adapter.createPendingResponseDeliveryHandler?.(input),
+        });
+    }
     health(status, message) {
         return {
             status,
@@ -208,15 +233,15 @@ export class ChannelRegistry {
         };
     }
 }
-export function createBuiltInChannelProviderFactories() {
+export function createBuiltInChannelProviderFactories(artifactStorage, memoryJournal, hierarchyStorage) {
     return [
         {
             provider: "telegram",
-            create: ({ config, connection }) => createTelegramRuntimeAdapter(config, connection),
+            create: ({ config, connection }) => createTelegramRuntimeAdapter(config, connection, artifactStorage, memoryJournal, hierarchyStorage),
         },
         {
             provider: "slack",
-            create: ({ config, connection }) => createSlackRuntimeAdapter(config, connection),
+            create: ({ config, connection }) => createSlackRuntimeAdapter(config, connection, artifactStorage, memoryJournal, hierarchyStorage),
         },
         {
             provider: "discord",
@@ -228,13 +253,17 @@ export function createBuiltInChannelProviderFactories() {
         },
     ];
 }
-export function buildChannelRegistryRuntimeDiagnostics(config) {
-    return new ChannelRegistry({ config }).getCapabilitySummaries();
+export function buildChannelRegistryRuntimeDiagnostics(config, artifactStorage) {
+    return new ChannelRegistry({ config, artifactStorage }).getCapabilitySummaries();
 }
-function createTelegramRuntimeAdapter(config, connection) {
+function createTelegramRuntimeAdapter(config, connection, artifactStorage, memoryJournal, hierarchyStorage) {
     const adapter = new TelegramChannelAdapter({
         config: config.telegram,
+        runtimeConfig: config,
         connectionId: connection.connectionId,
+        artifactStorage,
+        memoryJournal,
+        hierarchyStorage,
     });
     return {
         provider: "telegram",
@@ -242,6 +271,7 @@ function createTelegramRuntimeAdapter(config, connection) {
         start: () => adapter.start(),
         stop: () => adapter.stop(),
         getCapabilities: () => adapter.getCapabilities(),
+        createPendingResponseDeliveryHandler: (input) => adapter.createPendingResponseDeliveryHandler(input),
         healthCheck: async () => {
             const health = await adapter.healthCheck();
             const detail = isRecord(health.detail) ? health.detail : undefined;
@@ -254,10 +284,14 @@ function createTelegramRuntimeAdapter(config, connection) {
         },
     };
 }
-function createSlackRuntimeAdapter(config, connection) {
+function createSlackRuntimeAdapter(config, connection, artifactStorage, memoryJournal, hierarchyStorage) {
     const adapter = new SlackChannelAdapter({
         config: config.slack,
+        runtimeConfig: config,
         connectionId: connection.connectionId,
+        artifactStorage,
+        memoryJournal,
+        hierarchyStorage,
     });
     return {
         provider: "slack",
@@ -265,6 +299,7 @@ function createSlackRuntimeAdapter(config, connection) {
         start: () => adapter.start(),
         stop: () => adapter.stop(),
         getCapabilities: () => adapter.getCapabilities(),
+        createPendingResponseDeliveryHandler: (input) => adapter.createPendingResponseDeliveryHandler(input),
         healthCheck: async () => {
             const health = await adapter.healthCheck();
             const detail = isRecord(health.detail) ? health.detail : undefined;

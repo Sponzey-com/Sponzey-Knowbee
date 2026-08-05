@@ -2,7 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, w
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { PATHS, reloadConfig } from "../packages/core/src/config/index.js"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+import type { RuntimePaths } from "../packages/core/src/config/paths.ts"
 import {
   createDatabaseBackup,
   dryRunDatabaseMigrations,
@@ -14,13 +16,12 @@ import {
   maskSecretsDeep,
   recoverPromptSources,
 } from "../packages/core/src/config/operations.ts"
-import { closeDb, getDb, getSession, insertSession } from "../packages/core/src/db/index.ts"
+import { closeDb, getDb, getSession, insertSession } from "../packages/core/src/db/index.js"
 import { MIGRATIONS } from "../packages/core/src/db/migrations.ts"
 import { ensurePromptSourceFiles, loadPromptSourceRegistry } from "../packages/core/src/memory/knowbee-md.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
+let runtimePaths: RuntimePaths
 
 function makeTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -28,13 +29,14 @@ function makeTempDir(prefix: string): string {
   return dir
 }
 
-function useTempState(prefix = "knowbee-task010-state-"): string {
+function useTempState(prefix = "knowbee-task010-state-"): RuntimePaths {
   closeDb()
-  const stateDir = makeTempDir(prefix)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
-  reloadConfig()
-  return stateDir
+  const runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir: makeTempDir(prefix),
+  })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
+  runtimePaths = runtimeFixture.paths
+  return runtimeFixture.paths
 }
 
 beforeEach(() => {
@@ -43,11 +45,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -59,7 +56,7 @@ describe("task010 configuration, migration, backup", () => {
     getDb()
     getDb().prepare("DELETE FROM schema_migrations WHERE version > ?").run(1)
     const before = getDb().prepare("SELECT version FROM schema_migrations ORDER BY version").all()
-    const dryRun = dryRunDatabaseMigrations(PATHS.dbFile)
+    const dryRun = dryRunDatabaseMigrations(runtimePaths.dbFile)
     const after = getDb().prepare("SELECT version FROM schema_migrations ORDER BY version").all()
 
     expect(dryRun.changesDatabase).toBe(false)
@@ -79,8 +76,9 @@ describe("task010 configuration, migration, backup", () => {
       summary: null,
     })
 
-    const backup = createDatabaseBackup("backup")
-    const exported = createDatabaseBackup("export")
+    const paths = runtimePaths
+    const backup = createDatabaseBackup("backup", paths)
+    const exported = createDatabaseBackup("export", paths)
     expect(existsSync(backup.backupPath)).toBe(true)
     expect(existsSync(exported.backupPath)).toBe(true)
 
@@ -94,7 +92,7 @@ describe("task010 configuration, migration, backup", () => {
     })
     expect(getSession("session-after-backup")?.id).toBe("session-after-backup")
 
-    const imported = importDatabaseFromBackup({ backupPath: backup.backupPath })
+    const imported = importDatabaseFromBackup({ backupPath: backup.backupPath }, paths)
     expect(imported.status.upToDate).toBe(true)
     expect(existsSync(imported.rollbackBackup.backupPath)).toBe(true)
     expect(getSession("session-before-backup")?.id).toBe("session-before-backup")
@@ -102,8 +100,8 @@ describe("task010 configuration, migration, backup", () => {
   })
 
   it("masks secrets in config exports while preserving channel/user routing ids", () => {
-    mkdirSync(PATHS.stateDir, { recursive: true })
-    writeFileSync(PATHS.configFile, `{
+    mkdirSync(runtimePaths.stateDir, { recursive: true })
+    writeFileSync(runtimePaths.configFile, `{
       ai: { connection: { provider: "openai", model: "gpt-test", auth: { apiKey: "sk-testsecretvalue1234567890" } } },
       telegram: { enabled: true, botToken: "123456:telegramtokenabcdefghijklmnopqrstuvwxyz", allowedUserIds: [42120565] },
       slack: { enabled: true, appToken: "xapp-verylongslackapptoken-1234567890", allowedChannelIds: ["C12345"] },
@@ -113,7 +111,7 @@ describe("task010 configuration, migration, backup", () => {
     const masked = maskSecretsDeep({ token: "123456:telegramtokenabcdefghijklmnopqrstuvwxyz", channelId: "C12345" })
     expect(masked.value).toEqual({ token: "***MASKED***", channelId: "C12345" })
 
-    const exported = exportMaskedConfig()
+    const exported = exportMaskedConfig(runtimePaths)
     const payload = readFileSync(exported.exportPath, "utf-8")
     expect(payload).not.toContain("sk-testsecretvalue")
     expect(payload).not.toContain("telegramtoken")
@@ -138,7 +136,7 @@ describe("task010 configuration, migration, backup", () => {
     expect(recovery.created).toContain("identity.md")
     expect(readFileSync(editedUserPrompt, "utf-8")).toContain("custom-edit")
 
-    const exported = exportPromptSources(sourceRoot)
+    const exported = exportPromptSources(sourceRoot, runtimePaths)
     expect(existsSync(exported.exportPath)).toBe(true)
 
     rmSync(join(targetRoot, "prompts", "channel.md"), { force: true })
@@ -150,7 +148,7 @@ describe("task010 configuration, migration, backup", () => {
 
   it("reports the current migrated DB as up to date", () => {
     getDb()
-    const status = getDatabaseMigrationStatus()
+    const status = getDatabaseMigrationStatus(runtimePaths.dbFile)
     expect(status.upToDate).toBe(true)
     expect(status.currentVersion).toBe(status.latestVersion)
   })

@@ -1,3 +1,6 @@
 import type { FastifyInstance } from "fastify";
-export declare function registerUiModeRoute(app: FastifyInstance): void;
+import { type UiModeRuntimeInput } from "../../ui/mode.js";
+export interface UiModeRouteOptions extends Omit<UiModeRuntimeInput, "config"> {
+}
+export declare function registerUiModeRoute(app: FastifyInstance, options?: UiModeRouteOptions): void;
 //# sourceMappingURL=ui-mode.d.ts.map

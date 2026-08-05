@@ -2,7 +2,7 @@ import type { RunChunkDeliveryHandler } from "./delivery.js";
 import { runExternalRecoverySequence } from "./external-recovery-sequence.js";
 import { enqueueRunRecovery } from "./recovery-queue.js";
 import type { ExternalRecoveryPayload, ExternalRecoveryState } from "./external-recovery.js";
-import type { FinalizationDependencies, FinalizationSource } from "./finalization.js";
+import type { FinalizationDependencies, FinalizationSource, StandaloneAssistantMessageResponseContext } from "./finalization.js";
 import type { TaskProfile } from "./types.js";
 import { applyTerminalApplication } from "./terminal-application.js";
 export type RecoveryEntryPassResult = {
@@ -51,6 +51,7 @@ export declare function runRecoveryEntryPass(params: {
     seenKeys: Set<string>;
     originalRequest: string;
     previousResult: string;
+    responseContext?: StandaloneAssistantMessageResponseContext | undefined;
     finalizationDependencies: FinalizationDependencies;
 }, dependencies: RecoveryEntryPassDependencies, moduleDependencies?: RecoveryEntryPassModuleDependencies): Promise<RecoveryEntryPassResult>;
 export {};

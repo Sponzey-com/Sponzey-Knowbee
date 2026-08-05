@@ -6,12 +6,62 @@ import { checkFinalFailureExhaustion, } from "./exhaustion-checker.js";
 import { generateFailureReport, } from "./failure-report.js";
 import { checkNodeRuntimePermission, } from "./permission-checker.js";
 import { buildNodeRecoveryReview, } from "./recovery-controller.js";
+import { assessSolutionPathExhaustion, } from "./solution-path-exhaustion.js";
 import { createLegacyResultReportFromNodeResult, createNodeResultReportFromRuntime, } from "./reporter.js";
 import { createNodeRuntimeProfileSnapshot, } from "./runtime-profile.js";
 import { createNodeRuntimeTraceEvent, } from "./trace.js";
 import { validateAggregatedNodeResult, } from "./validation.js";
 import { dispatchPlannedNodeTools, } from "./tool-dispatcher.js";
 import { planNodeToolExecution, } from "./tool-planner.js";
+import { runResultDiagnosisProvider, } from "../contracts/llm-diagnosis-provider.js";
+import { assessAuthorizedSolutionPathExhaustion, } from "../contracts/solution-path-exhaustion.js";
+import { evaluateBlockedStopReportDecision, } from "../contracts/stop-report-decision.js";
+function reviewsWithObservedPartialOutputs(reviews, outputs) {
+    const partialResultRefs = outputs
+        .filter((output) => output.status === "partial" || output.status === "satisfied")
+        .map((output) => output.outputId);
+    if (partialResultRefs.length === 0)
+        return [...reviews];
+    return reviews.map((review) => review.path === "partial_completion"
+        ? {
+            path: "partial_completion",
+            disposition: "completed_partial",
+            reasonCode: "runtime_partial_outputs_preserved",
+            resultRefs: partialResultRefs,
+        }
+        : review);
+}
+function authorizedReviewsForRuntime(reviews, input) {
+    return reviews.map((review) => {
+        const attemptSignature = review.disposition === "attempted"
+            ? `${review.path}:${input.workOrder.workOrderId}:${review.reasonCode}`
+            : undefined;
+        const evidenceRefs = uniqueRuntimeEvidenceRefs([
+            `work-order:${input.workOrder.workOrderId}`,
+            `path-reason:${review.reasonCode}`,
+            `solution-path-review:${review.path}:${review.disposition}`,
+            ...(attemptSignature ? [`attempt-strategy:${attemptSignature}`] : []),
+            ...(review.path === "tool" && input.toolExecution
+                ? [`tool-execution:${input.toolExecution.status}`]
+                : []),
+            ...(review.path === "sub_agent" && input.childDelegation
+                ? [`child-delegation:${input.childDelegation.status}`]
+                : []),
+            ...(review.path === "partial_completion"
+                ? input.outputs.map((output) => `output:${output.outputId}:${output.status}`)
+                : []),
+        ]);
+        return {
+            ...review,
+            applicable: review.disposition !== "reviewed_unavailable",
+            evidenceRefs,
+            ...(attemptSignature ? { attemptSignature } : {}),
+        };
+    });
+}
+function uniqueRuntimeEvidenceRefs(values) {
+    return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
 export async function runNodeRuntime(input) {
     const now = input.now ?? Date.now;
     const envelope = input.envelope;
@@ -28,6 +78,7 @@ export async function runNodeRuntime(input) {
     let recovery;
     let exhaustion;
     let failureReport;
+    let terminalStopDecision;
     let traceSequence = 0;
     const recordState = (state, reasonCode, payload) => {
         const at = now();
@@ -88,7 +139,7 @@ export async function runNodeRuntime(input) {
         workOrder,
         expectedOutputIds: envelope.expectedOutputs.map((expectedOutput) => expectedOutput.outputId),
     });
-    const completeWithReport = (inputReport) => {
+    const completeWithReport = async (inputReport) => {
         let reportStatus = inputReport.status;
         let reportReasonCode = inputReport.reasonCode;
         let reportRisksOrGaps = [...inputReport.risksOrGaps];
@@ -114,10 +165,12 @@ export async function runNodeRuntime(input) {
                     options: input.recovery,
                     now,
                 });
+                const solutionPathReviews = reviewsWithObservedPartialOutputs(input.recovery.solutionPathReviews ?? [], inputReport.outputs);
                 exhaustion = checkFinalFailureExhaustion({
                     workOrder,
                     outputs: inputReport.outputs,
                     recoveryReview: recovery,
+                    solutionPathAssessment: assessSolutionPathExhaustion(solutionPathReviews),
                 });
                 recordTrace({
                     state: "exhaustion_checking",
@@ -128,14 +181,119 @@ export async function runNodeRuntime(input) {
                         successCriteriaStillNotMet: exhaustion.successCriteriaStillNotMet,
                         untriedOptions: exhaustion.untriedOptions,
                         blockingUntriedOptions: exhaustion.blockingUntriedOptions,
+                        missingSolutionPaths: exhaustion.solutionPathAssessment.missingPaths,
                     },
                 });
                 reportRisksOrGaps = [
                     ...reportRisksOrGaps,
                     ...exhaustion.reasonCodes,
                     ...exhaustion.blockingUntriedOptions.map((option) => `untried_option:${option}`),
+                    ...exhaustion.solutionPathAssessment.missingPaths.map((path) => `untried_solution_path:${path}`),
                 ];
-                if (exhaustion.canFinalizeFailure) {
+                let diagnosisAuthorized = false;
+                if (exhaustion.canFinalizeFailure &&
+                    input.recovery.diagnosisProvider) {
+                    try {
+                        const diagnosisInput = {
+                            provider: input.recovery.diagnosisProvider,
+                            repairAttempted: false,
+                            ownerAgentName: nodeContractSnapshot.name,
+                            resultSummary: JSON.stringify({
+                                status: inputReport.status,
+                                reasonCode: inputReport.reasonCode,
+                                outputs: inputReport.outputs,
+                            }),
+                            expectedOutput: workOrder.successCriteria
+                                .map((criterion) => `${criterion.criterionId}:${criterion.description}`)
+                                .join("\n"),
+                            evidence: solutionPathReviews.flatMap((review) => [
+                                `path:${review.path}:${review.disposition}:${review.reasonCode}`,
+                                ...(review.resultRefs ?? []),
+                            ]),
+                            risks: reportRisksOrGaps,
+                            workId: workOrder.workOrderId,
+                            stepId: `exhaustion:${nodeRunId}`,
+                            diagnosisSubjectKind: "validation_result",
+                        };
+                        const diagnosisResult = await runResultDiagnosisProvider(diagnosisInput);
+                        if (diagnosisResult.status === "valid" && diagnosisResult.target === "result_diagnosis") {
+                            const authorized = assessAuthorizedSolutionPathExhaustion({
+                                receipt: diagnosisResult.receipt,
+                                subjectPayload: {
+                                    ownerAgentName: diagnosisInput.ownerAgentName,
+                                    resultSummary: diagnosisInput.resultSummary,
+                                    expectedOutput: diagnosisInput.expectedOutput,
+                                    evidence: diagnosisInput.evidence,
+                                    risks: diagnosisInput.risks,
+                                    workId: diagnosisInput.workId,
+                                    stepId: diagnosisInput.stepId,
+                                },
+                                diagnosis: diagnosisResult.diagnosis,
+                                reviews: authorizedReviewsForRuntime(solutionPathReviews, {
+                                    workOrder,
+                                    outputs: inputReport.outputs,
+                                    ...(childDelegation ? { childDelegation } : {}),
+                                    ...(toolExecution ? { toolExecution } : {}),
+                                }),
+                            });
+                            if (authorized.canFinalizeFailure) {
+                                const pathEvidenceRefs = uniqueRuntimeEvidenceRefs(authorized.reviews.flatMap((review) => review.evidenceRefs));
+                                const stopDecision = evaluateBlockedStopReportDecision({
+                                    goalId: workOrder.workOrderId,
+                                    exhaustion: {
+                                        receiptId: authorized.receiptId,
+                                        complete: authorized.complete,
+                                        canFinalizeFailure: authorized.canFinalizeFailure,
+                                        missingPaths: authorized.missingPaths,
+                                        evidenceRefs: pathEvidenceRefs,
+                                        partialResultRefs: authorized.partialResultRefs,
+                                        workaroundGuidance: authorized.workaroundGuidance,
+                                    },
+                                    unresolvedItemIds: exhaustion.unmetSuccessCriteriaIds,
+                                    ...(!permissionDecision.allowed
+                                        ? {
+                                            permissionDenial: {
+                                                permissionKind: "node_runtime_scope",
+                                                targetRef: `node:${nodeContractSnapshot.id}`,
+                                                decisionSource: "policy",
+                                                evidenceRefs: uniqueRuntimeEvidenceRefs([
+                                                    ...permissionDecision.missingToolIds.map((id) => `permission:tool:${id}`),
+                                                    ...permissionDecision.missingSystemIds.map((id) => `permission:system:${id}`),
+                                                    ...permissionDecision.missingDataDomainIds.map((id) => `permission:data:${id}`),
+                                                ]),
+                                                safeAlternativePathIds: [],
+                                            },
+                                        }
+                                        : {}),
+                                    ...(inputReport.impossibility ? { impossibility: inputReport.impossibility } : {}),
+                                });
+                                if (stopDecision.status === "stop_and_report") {
+                                    diagnosisAuthorized = true;
+                                    terminalStopDecision = stopDecision;
+                                }
+                                else {
+                                    reportRisksOrGaps.push(stopDecision.reasonCode);
+                                }
+                            }
+                        }
+                    }
+                    catch {
+                        recordTrace({
+                            state: "exhaustion_checking",
+                            phase: "exhaustion",
+                            reasonCode: "final_failure_diagnosis_unavailable",
+                        });
+                    }
+                }
+                if (exhaustion.canFinalizeFailure && !diagnosisAuthorized) {
+                    reportRisksOrGaps.push("final_failure_diagnosis_authorization_missing");
+                    recordTrace({
+                        state: "exhaustion_checking",
+                        phase: "exhaustion",
+                        reasonCode: "final_failure_diagnosis_guard_blocked",
+                    });
+                }
+                if (exhaustion.canFinalizeFailure && diagnosisAuthorized) {
                     failureReport = generateFailureReport({
                         workOrder,
                         nodeContractSnapshot,
@@ -194,6 +352,7 @@ export async function runNodeRuntime(input) {
             ...(recovery !== undefined ? { recovery } : {}),
             ...(exhaustion !== undefined ? { exhaustion } : {}),
             ...(failureReport !== undefined ? { failureReport } : {}),
+            ...(terminalStopDecision !== undefined ? { terminalStopDecision } : {}),
         };
     };
     if (!inputValidation.ok) {
@@ -402,6 +561,7 @@ export async function runNodeRuntime(input) {
             reasonCode: `aggregation_${validation.status}`,
             outputs: validation.outputs,
             risksOrGaps: validation.risksOrGaps,
+            ...(selfExecution.impossibility ? { impossibility: selfExecution.impossibility } : {}),
         });
     }
     const delegationRisks = childDelegationRiskCodes(childDelegation);
@@ -434,6 +594,7 @@ export async function runNodeRuntime(input) {
             ...(selfExecution.risksOrGaps ?? []),
         ],
         ...(selfExecution.partialResult !== undefined ? { partialResult: selfExecution.partialResult } : {}),
+        ...(selfExecution.impossibility ? { impossibility: selfExecution.impossibility } : {}),
     });
 }
 export function validateNodeRuntimeInputSchema(nodeContractSnapshot, workOrder) {

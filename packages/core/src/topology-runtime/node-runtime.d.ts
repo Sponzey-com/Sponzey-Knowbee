@@ -12,6 +12,9 @@ import { type NodeToolExecutionSummary, type TopologyToolDispatcher } from "./to
 import { type NodeToolRequest } from "./tool-planner.js";
 import type { WorkOrderAuthorityPreflightInput, WorkOrderRuntimeEnvelope } from "./work-order.js";
 import type { ToolContext } from "../tools/types.js";
+import { type LlmDiagnosisProvider } from "../contracts/llm-diagnosis-provider.js";
+import type { LlmDiagnosisSchemaRepairProvider } from "../contracts/llm-diagnosis-schema-repair-provider.js";
+import { type BlockedStopReportDecision, type ConcreteImpossibilityReceipt } from "../contracts/stop-report-decision.js";
 export type NodeRuntimeSelfExecutionStatus = NodeResultStatus;
 export interface NodeRuntimeStateTransition {
     state: NodeRuntimeState;
@@ -42,6 +45,7 @@ export interface NodeRuntimeSelfExecutionResult {
     risksOrGaps?: string[];
     partialResult?: EnterpriseMetadata;
     reasonCode?: string;
+    impossibility?: ConcreteImpossibilityReceipt;
 }
 export type NodeRuntimeSelfExecutor = (context: NodeRuntimeSelfExecutionContext) => NodeRuntimeSelfExecutionResult | Promise<NodeRuntimeSelfExecutionResult>;
 export interface RunNodeRuntimeInput {
@@ -91,6 +95,8 @@ export interface NodeRuntimeAggregationOptions {
 }
 export interface NodeRuntimeRecoveryOptions extends NodeRecoveryControllerOptions {
     enabled: boolean;
+    diagnosisProvider?: LlmDiagnosisProvider;
+    diagnosisRepairProvider?: LlmDiagnosisSchemaRepairProvider;
 }
 export interface NodeRuntimeExecutionResult {
     status: NodeResultStatus;
@@ -111,6 +117,9 @@ export interface NodeRuntimeExecutionResult {
     recovery?: NodeRecoveryControllerResult;
     exhaustion?: NodeExhaustionCheckResult;
     failureReport?: FailureReport;
+    terminalStopDecision?: Extract<BlockedStopReportDecision, {
+        status: "stop_and_report";
+    }>;
 }
 export declare function runNodeRuntime(input: RunNodeRuntimeInput): Promise<NodeRuntimeExecutionResult>;
 export declare function validateNodeRuntimeInputSchema(nodeContractSnapshot: NodeContract, workOrder: WorkOrder): NodeRuntimeInputValidationResult;

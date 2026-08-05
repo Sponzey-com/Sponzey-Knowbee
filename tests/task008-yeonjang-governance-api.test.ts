@@ -1,13 +1,14 @@
 import { createRequire } from "node:module"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerAuditRoute } from "../packages/core/src/api/routes/audit.ts"
 import { registerYeonjangInstancesRoute } from "../packages/core/src/api/routes/yeonjang-instances.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { hashYeonjangPairingSecret, upsertYeonjangRegistryObservation } from "../packages/core/src/yeonjang/registry.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: { logger: boolean }) => {
@@ -16,21 +17,19 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
   inject(options: { method: string; url: string; payload?: unknown }): Promise<{ statusCode: number; json(): any }>
 }
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempConfig(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task008-yeonjang-api-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task008-yeonjang-api-"))
+  tempDirs.push(rootDir)
+  const runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: `{
     webui: { enabled: true, host: "127.0.0.1", port: 18891, auth: { enabled: false } }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  }`,
+  })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 beforeEach(() => {
@@ -39,11 +38,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -110,8 +104,26 @@ describe("task008 yeonjang governance api and audit", () => {
     })).toEqual(expect.objectContaining({ ok: true }))
 
     const app = Fastify({ logger: false })
-    registerYeonjangInstancesRoute(app)
-    registerAuditRoute(app)
+    const keyProvisionCalls: Array<{ extensionId: string }> = []
+    registerYeonjangInstancesRoute(app, {
+      pairingExecutionAdmissionKeyProvisioner: {
+        provision: (input) => {
+          keyProvisionCalls.push(input)
+          return { ok: true }
+        },
+        remove: () => ({ ok: true }),
+      },
+    })
+    registerAuditRoute(app, {
+      resolvePrincipal: () => ({
+        principalRef: "test:task008-auditor",
+        role: "audit_reader",
+        runIds: [],
+        requestGroupIds: [],
+        scopeRefs: ["instance:local"],
+      }),
+      recordAccess: () => ({ recorded: true }),
+    })
     await app.ready()
     try {
       const pairing = await app.inject({
@@ -137,6 +149,9 @@ describe("task008 yeonjang governance api and audit", () => {
       expect(pairingBody.governanceHistory).toEqual(expect.arrayContaining([
         expect.objectContaining({ action: "yeonjang_pairing_approved", instanceId: "inst-remote" }),
       ]))
+      expect(keyProvisionCalls).toEqual([{
+        extensionId: "yeonjang-windows",
+      }])
 
       const renamed = await app.inject({
         method: "POST",
@@ -185,7 +200,10 @@ describe("task008 yeonjang governance api and audit", () => {
         }),
       ]))
 
-      const audit = await app.inject({ method: "GET", url: "/api/audit?q=yeonjang_" })
+      const audit = await app.inject({
+        method: "GET",
+        url: "/api/audit?q=yeonjang_&purpose=security_review&scope=local_instance",
+      })
       expect(audit.statusCode).toBe(200)
       const auditBody = audit.json()
       expect(JSON.stringify(auditBody)).not.toContain("my-secret-value")

@@ -1,12 +1,19 @@
 import { createHash, randomUUID } from "node:crypto"
 import type Database from "better-sqlite3"
 import { getDb, insertAuditLog } from "../db/index.js"
+import {
+  getDefaultYeonjangOwnerUserId,
+  getDefaultYeonjangWorkspaceScopeId,
+  getYeonjangGatewayHostFingerprint,
+} from "./runtime-identity.js"
+import { YEONJANG_SESSION_STALE_AFTER_MS } from "../contracts/yeonjang-liveness-contract.js"
 
 const DEFAULT_LOCAL_NODE_ID = "yeonjang-main"
 const CURRENT_YEONJANG_PROTOCOL_VERSION = "2026-04-16.capability-matrix.v1"
-const YEONJANG_SESSION_STALE_MS = 90_000
-const DEFAULT_WORKSPACE_SCOPE_ID = "workspace:local-default"
-const DEFAULT_OWNER_USER_ID = "local:operator"
+const SUPPORTED_YEONJANG_PROTOCOL_VERSIONS = new Set([
+  CURRENT_YEONJANG_PROTOCOL_VERSION,
+  "2",
+])
 const RESERVED_CALL_NAMES = new Set([
   "local",
   "remote",
@@ -70,13 +77,30 @@ export type YeonjangRegistryWriteResult =
         | "invalid_identity"
         | "reserved_call_name"
         | "call_name_conflict"
+        | "installation_identity_conflict"
       message: string
     }
 
-type YeonjangRegistryWriteError = Extract<YeonjangRegistryWriteResult, { ok: false }>
+type YeonjangRegistryWriteError = {
+  ok: false
+  code: "invalid_identity" | "reserved_call_name" | "call_name_conflict"
+  message: string
+}
 
 export type YeonjangPairingApprovalResult =
-  | { ok: true; instanceId: string; trustState: YeonjangInstanceTrustState }
+  | { ok: true; instanceId: string; extensionId: string; trustState: YeonjangInstanceTrustState }
+  | {
+      ok: false
+      code:
+        | "instance_not_found"
+        | "pairing_secret_required"
+        | "pairing_secret_unavailable"
+        | "invalid_pairing_secret"
+      message: string
+    }
+
+export type YeonjangPairingVerificationResult =
+  | { ok: true; instanceId: string; extensionId: string }
   | {
       ok: false
       code:
@@ -95,11 +119,7 @@ export type YeonjangRenameResult =
   | { ok: true; instanceId: string; instanceAlias: string; displayName: string }
   | {
       ok: false
-      code:
-        | "instance_not_found"
-        | "invalid_identity"
-        | "reserved_call_name"
-        | "call_name_conflict"
+      code: "instance_not_found" | "invalid_identity" | "reserved_call_name" | "call_name_conflict"
       message: string
     }
 
@@ -193,7 +213,13 @@ export interface YeonjangRegistryInstanceView {
   protocolVersion: string | null
   capabilityHash: string | null
   methodCount: number
-  state: "discovered" | "online" | "degraded" | "offline" | "update_required" | "permission_required"
+  state:
+    | "discovered"
+    | "online"
+    | "degraded"
+    | "offline"
+    | "update_required"
+    | "permission_required"
   stateMessage: string | null
   lastSeenAt: number | null
   liveSessionCount: number
@@ -235,6 +261,81 @@ export interface YeonjangRegistrySummary {
   unassignedScopeInstances: number
   activeWorkspaceScopeId: string
   localMarkerInstanceId: string | null
+}
+
+export interface YeonjangMqttV2StartupFenceResult {
+  readonly fencedInstanceCount: number
+}
+
+/**
+ * Fails closed any MQTT v2 liveness that survived only in SQLite across a
+ * Gateway restart. A fresh signed status observation is the sole operation
+ * allowed to make the instance live again; capability metadata remains useful
+ * for diagnosis but is not executable while methodCount is zero.
+ */
+export function fencePersistedYeonjangMqttV2LivenessAtStartup(
+  input: { readonly observedAt: number; readonly db?: Database.Database },
+): YeonjangMqttV2StartupFenceResult {
+  if (!Number.isSafeInteger(input.observedAt) || input.observedAt < 0) {
+    throw new Error("yeonjang_mqtt_v2_startup_fence_time_invalid")
+  }
+  const db = input.db ?? getDb()
+  const candidates = db
+    .prepare<[], { instance_id: string; protocol_version: string | null; transport_json: string | null }>(
+      "SELECT instance_id, protocol_version, transport_json FROM yeonjang_instances",
+    )
+    .all()
+    .filter((candidate) => {
+      const transport = parseJson<unknown>(candidate.transport_json)
+      return candidate.protocol_version === "2"
+        || (Array.isArray(transport) && transport.includes("mqtt_v2"))
+    })
+
+  let fencedInstanceCount = 0
+  const transaction = db.transaction(() => {
+    for (const candidate of candidates) {
+      const instanceWrite = db.prepare(
+        `UPDATE yeonjang_instances
+         SET connection_state = 'offline',
+             state_message = 'MQTT v2 fresh status required after broker startup.',
+             capability_hash = NULL,
+             method_count = 0,
+             updated_at = ?
+         WHERE instance_id = ?
+           AND (connection_state <> 'offline'
+             OR state_message <> 'MQTT v2 fresh status required after broker startup.'
+             OR state_message IS NULL
+             OR capability_hash IS NOT NULL
+             OR method_count <> 0)`,
+      ).run(input.observedAt, candidate.instance_id)
+      const sessionWrite = db.prepare(
+        `UPDATE yeonjang_instance_sessions
+         SET client_id = NULL,
+             session_state = 'offline',
+             session_message = 'MQTT v2 fresh status required after broker startup.',
+             last_seen_at = ?,
+             ended_at = COALESCE(ended_at, ?),
+             updated_at = ?
+         WHERE session_id = (
+           SELECT session_id
+           FROM yeonjang_instance_sessions
+           WHERE instance_id = ?
+           ORDER BY last_seen_at DESC, started_at DESC
+           LIMIT 1
+         )
+           AND (client_id IS NOT NULL
+             OR session_state <> 'offline'
+             OR session_message <> 'MQTT v2 fresh status required after broker startup.'
+             OR session_message IS NULL
+             OR ended_at IS NULL)`,
+      ).run(input.observedAt, input.observedAt, input.observedAt, candidate.instance_id)
+      if (instanceWrite.changes > 0 || sessionWrite.changes > 0) {
+        fencedInstanceCount += 1
+      }
+    }
+  })
+  transaction()
+  return Object.freeze({ fencedInstanceCount })
 }
 
 export interface YeonjangGovernanceEventView {
@@ -304,7 +405,7 @@ function asTransport(value: string[] | undefined): string[] {
 
 function isSessionLive(session: YeonjangSessionRow, now: number): boolean {
   if (session.ended_at != null) return false
-  return now - session.last_seen_at <= YEONJANG_SESSION_STALE_MS
+  return now - session.last_seen_at <= YEONJANG_SESSION_STALE_AFTER_MS
 }
 
 function isConflictSessionState(sessionState: string | null | undefined): boolean {
@@ -316,10 +417,11 @@ function selectPreferredSession(
   sessions: YeonjangSessionRow[],
   now: number,
 ): YeonjangSessionRow | null {
-  const preferredLive = sessions.find((session) =>
-    isSessionLive(session, now)
-      && !["offline", "disconnected"].includes(normalizeString(session.session_state).toLowerCase())
-      && !isConflictSessionState(session.session_state),
+  const preferredLive = sessions.find(
+    (session) =>
+      isSessionLive(session, now) &&
+      !["offline", "disconnected"].includes(normalizeString(session.session_state).toLowerCase()) &&
+      !isConflictSessionState(session.session_state),
   )
   if (preferredLive) return preferredLive
   return sessions[0] ?? null
@@ -330,15 +432,28 @@ function computePermissionRequired(
   capabilityMatrix: Record<string, unknown> | null,
 ): boolean {
   if (!permissions || !capabilityMatrix) return false
+
+  let hasPermissionGatedCapability = false
+  let hasRunnableCapability = false
   for (const entry of Object.values(capabilityMatrix)) {
     if (!isRecord(entry)) continue
     const supported = entry["supported"]
     const permissionSetting = entry["permissionSetting"]
     if (supported === false) continue
-    if (typeof permissionSetting !== "string" || permissionSetting.trim().length === 0) continue
-    if (permissions[permissionSetting] === false) return true
+    if (typeof permissionSetting !== "string" || permissionSetting.trim().length === 0) {
+      hasRunnableCapability = true
+      continue
+    }
+    hasPermissionGatedCapability = true
+    if (permissions[permissionSetting] !== false) {
+      hasRunnableCapability = true
+    }
   }
-  return false
+
+  // An instance-level permission state means that every supported capability
+  // is blocked. Individual disabled capabilities are enforced by their own
+  // capability health and runtime permission gates.
+  return hasPermissionGatedCapability && !hasRunnableCapability
 }
 
 function computeDegraded(
@@ -352,63 +467,24 @@ function computeDegraded(
   if (!instance.capability_hash || instance.method_count <= 0) return true
   if (!permissions || !capabilityMatrix) return true
   if (!toolHealth) return false
-  return Object.values(toolHealth).some((entry) => {
+  const nonRunnableCapabilityMethods = new Set(
+    Object.entries(capabilityMatrix)
+      .filter(([, capability]) => {
+        if (!isRecord(capability)) return false
+        if (capability["supported"] === false) return true
+        const permissionSetting = capability["permissionSetting"]
+        return typeof permissionSetting === "string"
+          && permissionSetting.trim().length > 0
+          && permissions[permissionSetting] === false
+      })
+      .map(([method]) => method),
+  )
+  return Object.entries(toolHealth).some(([method, entry]) => {
+    if (nonRunnableCapabilityMethods.has(method)) return false
     if (!isRecord(entry)) return false
     const status = sanitizeOptionalString(entry["status"])
     return Boolean(status) && !["ok", "ready", "healthy", "warning"].includes(status!.toLowerCase())
   })
-}
-
-function normalizeGatewayOs(): string {
-  switch (process.platform) {
-    case "darwin":
-      return "macos"
-    case "win32":
-      return "windows"
-    default:
-      return process.platform
-  }
-}
-
-function normalizeGatewayArch(): string {
-  switch (process.arch) {
-    case "x64":
-      return "x86_64"
-    case "arm64":
-      return "aarch64"
-    case "ia32":
-      return "x86"
-    default:
-      return process.arch
-  }
-}
-
-function hostnameCandidate(): string {
-  return normalizeString(process.env["KNOWBEE_HOSTNAME"])
-    || normalizeString(process.env["COMPUTERNAME"])
-    || normalizeString(process.env["HOSTNAME"])
-    || "localhost"
-}
-
-function stableHexHash(value: string): string {
-  let hash = 0xcbf29ce484222325n
-  for (const byte of Buffer.from(value, "utf-8")) {
-    hash ^= BigInt(byte)
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n)
-  }
-  return hash.toString(16).padStart(16, "0")
-}
-
-function gatewayHostFingerprint(): string {
-  return stableHexHash(`${hostnameCandidate()}|${normalizeGatewayOs()}|${normalizeGatewayArch()}`)
-}
-
-function defaultWorkspaceScopeId(): string {
-  return normalizeString(process.env["KNOWBEE_YEONJANG_WORKSPACE_SCOPE_ID"]) || DEFAULT_WORKSPACE_SCOPE_ID
-}
-
-function defaultOwnerUserId(): string {
-  return normalizeString(process.env["KNOWBEE_YEONJANG_OWNER_USER_ID"]) || DEFAULT_OWNER_USER_ID
 }
 
 export function hashYeonjangPairingSecret(secret: string): string {
@@ -438,7 +514,9 @@ function isAutoLocalIdentity(input: {
   hostFingerprint: string | null
 }): boolean {
   if (input.nodeId === DEFAULT_LOCAL_NODE_ID) return true
-  return Boolean(input.hostFingerprint && input.hostFingerprint === gatewayHostFingerprint())
+  return Boolean(
+    input.hostFingerprint && input.hostFingerprint === getYeonjangGatewayHostFingerprint(),
+  )
 }
 
 export function normalizeYeonjangCallName(value: string): string {
@@ -450,32 +528,51 @@ export function normalizeYeonjangCallName(value: string): string {
     .replace(/^-+|-+$/g, "")
 }
 
-function validateObservationIdentity(input: YeonjangRegistryObservation): {
-  instanceId: string
-  instanceAlias: string
-  displayName: string
-  nodeId: string
-  sessionId: string
-  normalizedCallName: string
-} | YeonjangRegistryWriteError {
+function validateObservationIdentity(input: YeonjangRegistryObservation):
+  | {
+      instanceId: string
+      instanceAlias: string
+      displayName: string
+      nodeId: string
+      sessionId: string
+      normalizedCallName: string
+    }
+  | YeonjangRegistryWriteError {
   const instanceId = normalizeString(input.instanceId)
   const instanceAlias = normalizeString(input.instanceAlias)
   const displayName = normalizeString(input.displayName)
   const nodeId = normalizeString(input.nodeId)
   const sessionId = normalizeString(input.sessionId)
   if (!instanceId || !instanceAlias || !displayName || !nodeId || !sessionId) {
-    return { ok: false, code: "invalid_identity", message: "Yeonjang instance identity 필수값이 비어 있습니다." }
+    return {
+      ok: false,
+      code: "invalid_identity",
+      message: "Yeonjang instance identity 필수값이 비어 있습니다.",
+    }
   }
   const normalizedAlias = normalizeYeonjangCallName(instanceAlias)
   const normalizedDisplayName = normalizeYeonjangCallName(displayName)
   if (!normalizedAlias || !normalizedDisplayName) {
-    return { ok: false, code: "invalid_identity", message: "호출명으로 사용할 수 없는 instance alias/display name 입니다." }
+    return {
+      ok: false,
+      code: "invalid_identity",
+      message: "호출명으로 사용할 수 없는 instance alias/display name 입니다.",
+    }
   }
   if (normalizedAlias === normalizedDisplayName) {
-    return { ok: false, code: "call_name_conflict", message: "instance alias와 display name은 같은 호출명 namespace를 공유하므로 중복될 수 없습니다." }
+    return {
+      ok: false,
+      code: "call_name_conflict",
+      message:
+        "instance alias와 display name은 같은 호출명 namespace를 공유하므로 중복될 수 없습니다.",
+    }
   }
   if (RESERVED_CALL_NAMES.has(normalizedAlias) || RESERVED_CALL_NAMES.has(normalizedDisplayName)) {
-    return { ok: false, code: "reserved_call_name", message: "예약어는 instance alias/display name으로 사용할 수 없습니다." }
+    return {
+      ok: false,
+      code: "reserved_call_name",
+      message: "예약어는 instance alias/display name으로 사용할 수 없습니다.",
+    }
   }
   return {
     instanceId,
@@ -522,14 +619,34 @@ function resolveInstanceState(
   const duplicateLiveSessionDetected = liveSessions.length > 1
 
   if (!latestSession) return "discovered"
-  if (!instance.protocol_version || instance.protocol_version !== CURRENT_YEONJANG_PROTOCOL_VERSION) return "update_required"
-  if (!isSessionLive(latestSession, now) || ["offline", "disconnected"].includes(latestSession.session_state.toLowerCase())) return "offline"
+  if (
+    !instance.protocol_version
+    || !SUPPORTED_YEONJANG_PROTOCOL_VERSIONS.has(instance.protocol_version)
+  )
+    return "update_required"
+  if (
+    !isSessionLive(latestSession, now) ||
+    ["offline", "disconnected"].includes(latestSession.session_state.toLowerCase())
+  )
+    return "offline"
   if (computePermissionRequired(permissions, capabilityMatrix)) return "permission_required"
-  if (computeDegraded(instance, permissions, toolHealth, capabilityMatrix, duplicateLiveSessionDetected)) return "degraded"
+  if (
+    computeDegraded(
+      instance,
+      permissions,
+      toolHealth,
+      capabilityMatrix,
+      duplicateLiveSessionDetected,
+    )
+  )
+    return "degraded"
   return "online"
 }
 
-function toSessionView(session: YeonjangSessionRow | null, now: number): YeonjangRegistrySessionView | null {
+function toSessionView(
+  session: YeonjangSessionRow | null,
+  now: number,
+): YeonjangRegistrySessionView | null {
   if (!session) return null
   return {
     sessionId: session.session_id,
@@ -548,14 +665,27 @@ function toSessionView(session: YeonjangSessionRow | null, now: number): Yeonjan
 
 function resolveActiveWorkspaceScopeId(rows: YeonjangInstanceRow[]): string {
   const candidates = [
-    rows.find((row) => row.local_marker === 1 && row.trust_state === "trusted" && row.workspace_scope_id),
-    rows.find((row) => isAutoLocalIdentity({ nodeId: row.node_id, hostFingerprint: row.host_fingerprint }) && row.trust_state === "trusted" && row.workspace_scope_id),
+    rows.find(
+      (row) => row.local_marker === 1 && row.trust_state === "trusted" && row.workspace_scope_id,
+    ),
+    rows.find(
+      (row) =>
+        isAutoLocalIdentity({ nodeId: row.node_id, hostFingerprint: row.host_fingerprint }) &&
+        row.trust_state === "trusted" &&
+        row.workspace_scope_id,
+    ),
     rows.find((row) => row.workspace_scope_id),
   ].filter(Boolean)
-  return sanitizeOptionalString(candidates[0]?.workspace_scope_id) ?? defaultWorkspaceScopeId()
+  return (
+    sanitizeOptionalString(candidates[0]?.workspace_scope_id) ??
+    getDefaultYeonjangWorkspaceScopeId()
+  )
 }
 
-function resolveScopeAccess(workspaceScopeId: string | null, activeWorkspaceScopeId: string): YeonjangScopeAccess {
+function resolveScopeAccess(
+  workspaceScopeId: string | null,
+  activeWorkspaceScopeId: string,
+): YeonjangScopeAccess {
   if (!workspaceScopeId) return "unassigned"
   return workspaceScopeId === activeWorkspaceScopeId ? "allowed" : "foreign"
 }
@@ -617,8 +747,22 @@ function writeCallNames(
       instance_id, name_kind, raw_name, normalized_name, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?)`,
   )
-  insertCallName.run(instanceId, "instance_alias", instanceAlias, aliasNormalized, updatedAt, updatedAt)
-  insertCallName.run(instanceId, "display_name", displayName, displayNormalized, updatedAt, updatedAt)
+  insertCallName.run(
+    instanceId,
+    "instance_alias",
+    instanceAlias,
+    aliasNormalized,
+    updatedAt,
+    updatedAt,
+  )
+  insertCallName.run(
+    instanceId,
+    "display_name",
+    displayName,
+    displayNormalized,
+    updatedAt,
+    updatedAt,
+  )
 }
 
 function evaluateYeonjangSessionClaim(params: {
@@ -639,7 +783,9 @@ function evaluateYeonjangSessionClaim(params: {
     return { outcome: "accepted" }
   }
 
-  const liveSessions = params.existingSessions.filter((session) => isSessionLive(session, params.incomingObservedAt))
+  const liveSessions = params.existingSessions.filter((session) =>
+    isSessionLive(session, params.incomingObservedAt),
+  )
   if (liveSessions.length === 0) {
     return { outcome: "accepted" }
   }
@@ -650,32 +796,40 @@ function evaluateYeonjangSessionClaim(params: {
 
   const existing = params.existingInstance
   const sameInstallFingerprint = Boolean(
-    params.incomingInstallFingerprint
-      && existing.install_fingerprint
-      && params.incomingInstallFingerprint === existing.install_fingerprint,
+    params.incomingInstallFingerprint &&
+      existing.install_fingerprint &&
+      params.incomingInstallFingerprint === existing.install_fingerprint,
   )
   const sameHostFingerprint = Boolean(
-    params.incomingHostFingerprint
-      && existing.host_fingerprint
-      && params.incomingHostFingerprint === existing.host_fingerprint,
+    params.incomingHostFingerprint &&
+      existing.host_fingerprint &&
+      params.incomingHostFingerprint === existing.host_fingerprint,
   )
-  const sameWorkspaceScope = params.incomingWorkspaceScopeId == null
-    || existing.workspace_scope_id == null
-    || params.incomingWorkspaceScopeId === existing.workspace_scope_id
-  const trustedOwner = existing.trust_state === "trusted" && sanitizeOptionalString(existing.owner_user_id) != null
+  const sameWorkspaceScope =
+    params.incomingWorkspaceScopeId == null ||
+    existing.workspace_scope_id == null ||
+    params.incomingWorkspaceScopeId === existing.workspace_scope_id
+  const trustedOwner =
+    existing.trust_state === "trusted" && sanitizeOptionalString(existing.owner_user_id) != null
   const validPairingFingerprint = Boolean(
-    params.incomingPairingFingerprint
-      && existing.pairing_fingerprint
-      && params.incomingPairingFingerprint === existing.pairing_fingerprint,
+    params.incomingPairingFingerprint &&
+      existing.pairing_fingerprint &&
+      params.incomingPairingFingerprint === existing.pairing_fingerprint,
   )
   const existingOrdinal = Math.max(
     ...liveSessions.map((session) => parseSessionOrdinal(session.session_id) ?? 0),
   )
   const incomingOrdinal = parseSessionOrdinal(params.incomingSessionId) ?? params.incomingObservedAt
-  const newerSession = incomingOrdinal > existingOrdinal
-    || params.incomingObservedAt >= Math.max(...liveSessions.map((session) => session.last_seen_at))
+  const newerSession =
+    incomingOrdinal > existingOrdinal ||
+    params.incomingObservedAt >= Math.max(...liveSessions.map((session) => session.last_seen_at))
 
-  if (sameInstallFingerprint && sameWorkspaceScope && newerSession && (trustedOwner || validPairingFingerprint || sameHostFingerprint)) {
+  if (
+    sameInstallFingerprint &&
+    sameWorkspaceScope &&
+    newerSession &&
+    (trustedOwner || validPairingFingerprint || sameHostFingerprint)
+  ) {
     return {
       outcome: "replaced",
       reasonCode: "session_replaced",
@@ -687,12 +841,18 @@ function evaluateYeonjangSessionClaim(params: {
     return { outcome: "quarantined", reasonCode: "duplicate_instance_conflict:foreign_scope" }
   }
   if (!sameInstallFingerprint) {
-    return { outcome: "quarantined", reasonCode: "duplicate_instance_conflict:install_fingerprint_mismatch" }
+    return {
+      outcome: "quarantined",
+      reasonCode: "duplicate_instance_conflict:install_fingerprint_mismatch",
+    }
   }
   if (!newerSession) {
     return { outcome: "quarantined", reasonCode: "duplicate_instance_conflict:stale_session" }
   }
-  return { outcome: "quarantined", reasonCode: "duplicate_instance_conflict:claim_validation_failed" }
+  return {
+    outcome: "quarantined",
+    reasonCode: "duplicate_instance_conflict:claim_validation_failed",
+  }
 }
 
 function writeYeonjangSessionRow(
@@ -713,7 +873,9 @@ function writeYeonjangSessionRow(
   },
 ): void {
   const existingSession = db
-    .prepare<[string], { started_at: number }>("SELECT started_at FROM yeonjang_instance_sessions WHERE session_id = ?")
+    .prepare<[string], { started_at: number }>(
+      "SELECT started_at FROM yeonjang_instance_sessions WHERE session_id = ?",
+    )
     .get(input.sessionId)
   const startedAt = existingSession?.started_at ?? input.startedAt
   db.prepare(
@@ -824,7 +986,9 @@ export function recordYeonjangGovernanceAudit(input: {
         ...(input.instanceId !== undefined ? { instanceId: input.instanceId } : {}),
         ...(input.instanceAlias !== undefined ? { instanceAlias: input.instanceAlias } : {}),
         ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
-        ...(input.workspaceScopeId !== undefined ? { workspaceScopeId: input.workspaceScopeId } : {}),
+        ...(input.workspaceScopeId !== undefined
+          ? { workspaceScopeId: input.workspaceScopeId }
+          : {}),
         ...(input.trustState !== undefined ? { trustState: input.trustState } : {}),
         ...(input.reason !== undefined ? { reason: input.reason } : {}),
         ...(input.detail ?? {}),
@@ -853,32 +1017,56 @@ export function upsertYeonjangRegistryObservation(
   const toolHealth = isRecord(input.toolHealth) ? input.toolHealth : null
   const capabilityMatrix = isRecord(input.capabilityMatrix) ? input.capabilityMatrix : null
   const displayNormalized = normalizeYeonjangCallName(validated.displayName)
-  const availability = ensureCallNameAvailability(db, validated.instanceId, validated.normalizedCallName, displayNormalized)
+  const availability = ensureCallNameAvailability(
+    db,
+    validated.instanceId,
+    validated.normalizedCallName,
+    displayNormalized,
+  )
   if (availability) return availability
 
-  const initialLocalIdentity = isAutoLocalIdentity({
-    nodeId: validated.nodeId,
-    hostFingerprint: sanitizeOptionalString(input.hostFingerprint),
-  })
-  const initialTrustState = normalizeYeonjangTrustState(
-    input.trustState ?? (initialLocalIdentity ? "trusted" : "pending"),
-  )
-  const initialWorkspaceScopeId = sanitizeOptionalString(input.workspaceScopeId)
-    ?? (initialLocalIdentity ? defaultWorkspaceScopeId() : null)
-  const initialOwnerUserId = initialTrustState === "trusted"
-    ? defaultOwnerUserId()
-    : null
   const incomingHostFingerprint = sanitizeOptionalString(input.hostFingerprint)
   const incomingInstallFingerprint = sanitizeOptionalString(input.installFingerprint)
   const incomingWorkspaceScopeId = sanitizeOptionalString(input.workspaceScopeId)
   const incomingPairingFingerprint = sanitizeOptionalString(input.pairingFingerprint)
+  const initialLocalIdentity = isAutoLocalIdentity({
+    nodeId: validated.nodeId,
+    hostFingerprint: incomingHostFingerprint,
+  })
+  const initialTrustState = initialLocalIdentity
+    ? "trusted"
+    : incomingInstallFingerprint
+      ? normalizeYeonjangTrustState(input.trustState ?? "pending")
+      : "pending"
+  const initialWorkspaceScopeId =
+    incomingWorkspaceScopeId ?? (initialLocalIdentity ? getDefaultYeonjangWorkspaceScopeId() : null)
+  const initialOwnerUserId =
+    initialTrustState === "trusted" ? getDefaultYeonjangOwnerUserId() : null
   let claimOutcome: YeonjangSessionClaimOutcome = "accepted"
   let claimReasonCode: string | null = null
   let replacedSessionIds: string[] = []
+  const installationConflict: { owner: YeonjangInstanceRow | null } = { owner: null }
 
   const tx = db.transaction(() => {
+    const installationOwner = incomingInstallFingerprint
+      ? db
+          .prepare<[string, string], YeonjangInstanceRow>(
+            `SELECT * FROM yeonjang_instances
+             WHERE install_fingerprint = ? AND instance_id <> ?
+             ORDER BY created_at ASC
+             LIMIT 1`,
+          )
+          .get(incomingInstallFingerprint, validated.instanceId)
+      : undefined
+    if (installationOwner) {
+      installationConflict.owner = installationOwner
+      return
+    }
+
     const existing = db
-      .prepare<[string], YeonjangInstanceRow>("SELECT * FROM yeonjang_instances WHERE instance_id = ?")
+      .prepare<[string], YeonjangInstanceRow>(
+        "SELECT * FROM yeonjang_instances WHERE instance_id = ?",
+      )
       .get(validated.instanceId)
     const existingSessions = db
       .prepare<[string], YeonjangSessionRow>(
@@ -903,14 +1091,17 @@ export function upsertYeonjangRegistryObservation(
     claimReasonCode = claim.reasonCode ?? null
     replacedSessionIds = claim.replaceSessionIds ?? []
     const createdAt = existing?.created_at ?? observedAt
-    const hasLocalMarker = db
-      .prepare<[], { count: number }>("SELECT COUNT(1) as count FROM yeonjang_instances WHERE local_marker = 1")
-      .get()
-      ?.count
-      ?? 0
+    const hasLocalMarker =
+      db
+        .prepare<[], { count: number }>(
+          "SELECT COUNT(1) as count FROM yeonjang_instances WHERE local_marker = 1",
+        )
+        .get()?.count ?? 0
     const initialLocalMarker = existing
       ? undefined
-      : (initialLocalIdentity && hasLocalMarker === 0 ? 1 : 0)
+      : initialLocalIdentity && hasLocalMarker === 0
+        ? 1
+        : 0
     const sessionState = sanitizeOptionalString(input.connectionState) ?? "discovered"
     const incomingSessionMessage = sanitizeOptionalString(input.message)
     const transport = asTransport(input.transport)
@@ -1019,7 +1210,13 @@ export function upsertYeonjangRegistryObservation(
         updated_at: observedAt,
       })
 
-      writeCallNames(db, validated.instanceId, validated.instanceAlias, validated.displayName, observedAt)
+      writeCallNames(
+        db,
+        validated.instanceId,
+        validated.instanceAlias,
+        validated.displayName,
+        observedAt,
+      )
 
       writeYeonjangSessionRow(db, {
         sessionId: validated.sessionId,
@@ -1033,7 +1230,9 @@ export function upsertYeonjangRegistryObservation(
         sessionMessage: incomingSessionMessage,
         startedAt: observedAt,
         lastSeenAt: observedAt,
-        endedAt: ["offline", "disconnected"].includes(sessionState.toLowerCase()) ? observedAt : null,
+        endedAt: ["offline", "disconnected"].includes(sessionState.toLowerCase())
+          ? observedAt
+          : null,
       })
     } else {
       writeYeonjangSessionRow(db, {
@@ -1073,9 +1272,10 @@ export function upsertYeonjangRegistryObservation(
       sessionId: validated.sessionId,
       instanceId: validated.instanceId,
       sessionState: claimOutcome === "quarantined" ? "duplicate_instance_conflict" : sessionState,
-      message: claimOutcome === "quarantined"
-        ? (claimReasonCode ?? "Duplicate instance claim rejected.")
-        : incomingSessionMessage,
+      message:
+        claimOutcome === "quarantined"
+          ? (claimReasonCode ?? "Duplicate instance claim rejected.")
+          : incomingSessionMessage,
       methodCount,
       capabilityHash,
       nodeId: validated.nodeId,
@@ -1089,6 +1289,29 @@ export function upsertYeonjangRegistryObservation(
   })
 
   tx()
+  if (installationConflict.owner) {
+    recordYeonjangGovernanceAudit({
+      action: "yeonjang_installation_identity_conflict_rejected",
+      result: "failure",
+      actor: "system:claim-validation",
+      instanceId: validated.instanceId,
+      instanceAlias: validated.instanceAlias,
+      displayName: validated.displayName,
+      workspaceScopeId: incomingWorkspaceScopeId,
+      trustState: initialTrustState,
+      reason: "installation_identity_conflict",
+      detail: {
+        existingInstanceId: installationConflict.owner.instance_id,
+        rejectedSessionId: validated.sessionId,
+        installFingerprint: previewFingerprint(incomingInstallFingerprint),
+      },
+    })
+    return {
+      ok: false,
+      code: "installation_identity_conflict",
+      message: "동일한 연장 설치 identity가 다른 인스턴스 ID에 이미 등록되어 있습니다.",
+    }
+  }
   return {
     ok: true,
     instanceId: validated.instanceId,
@@ -1104,7 +1327,9 @@ function getInstanceRow(
   instanceId: string,
 ): YeonjangInstanceRow | undefined {
   return db
-    .prepare<[string], YeonjangInstanceRow>("SELECT * FROM yeonjang_instances WHERE instance_id = ?")
+    .prepare<[string], YeonjangInstanceRow>(
+      "SELECT * FROM yeonjang_instances WHERE instance_id = ?",
+    )
     .get(instanceId)
 }
 
@@ -1118,26 +1343,21 @@ export function approveYeonjangInstancePairing(input: {
   db?: Database.Database
 }): YeonjangPairingApprovalResult {
   const db = input.db ?? getDb()
-  const instance = getInstanceRow(db, normalizeString(input.instanceId))
-  if (!instance) {
-    return { ok: false, code: "instance_not_found", message: "대상 Yeonjang 인스턴스를 찾지 못했습니다." }
-  }
-  const pairingSecret = normalizeString(input.pairingSecret)
-  if (!pairingSecret) {
-    return { ok: false, code: "pairing_secret_required", message: "pairing secret이 필요합니다." }
-  }
+  const verification = verifyYeonjangInstancePairing({
+    instanceId: input.instanceId,
+    pairingSecret: input.pairingSecret,
+    db,
+  })
+  if (!verification.ok) return verification
+  const instance = getInstanceRow(db, verification.instanceId)
+  if (!instance) return { ok: false, code: "instance_not_found", message: "대상 Yeonjang 인스턴스를 찾지 못했습니다." }
   const fingerprint = sanitizeOptionalString(instance.pairing_fingerprint)
-  if (!fingerprint) {
-    return { ok: false, code: "pairing_secret_unavailable", message: "인스턴스가 pairing fingerprint를 아직 보고하지 않았습니다." }
-  }
-  if (hashYeonjangPairingSecret(pairingSecret) !== fingerprint) {
-    return { ok: false, code: "invalid_pairing_secret", message: "pairing secret 검증에 실패했습니다." }
-  }
   const actor = normalizeString(input.actor) || "system:unknown"
   const ownerUserId = sanitizeOptionalString(input.ownerUserId) ?? actor
-  const workspaceScopeId = sanitizeOptionalString(input.workspaceScopeId)
-    ?? sanitizeOptionalString(instance.workspace_scope_id)
-    ?? defaultWorkspaceScopeId()
+  const workspaceScopeId =
+    sanitizeOptionalString(input.workspaceScopeId) ??
+    sanitizeOptionalString(instance.workspace_scope_id) ??
+    getDefaultYeonjangWorkspaceScopeId()
   const reason = sanitizeOptionalString(input.reason) ?? "pairing_approved"
   const updatedAt = nowMs()
   db.prepare(
@@ -1166,7 +1386,35 @@ export function approveYeonjangInstancePairing(input: {
       pairingFingerprint: previewFingerprint(fingerprint),
     },
   })
-  return { ok: true, instanceId: instance.instance_id, trustState: "trusted" }
+  return { ok: true, instanceId: instance.instance_id, extensionId: instance.node_id, trustState: "trusted" }
+}
+
+export function verifyYeonjangInstancePairing(input: {
+  instanceId: string
+  pairingSecret: string
+  db?: Database.Database
+}): YeonjangPairingVerificationResult {
+  const db = input.db ?? getDb()
+  const instance = getInstanceRow(db, normalizeString(input.instanceId))
+  if (!instance) {
+    return { ok: false, code: "instance_not_found", message: "대상 Yeonjang 인스턴스를 찾지 못했습니다." }
+  }
+  const pairingSecret = normalizeString(input.pairingSecret)
+  if (!pairingSecret) {
+    return { ok: false, code: "pairing_secret_required", message: "pairing secret이 필요합니다." }
+  }
+  const fingerprint = sanitizeOptionalString(instance.pairing_fingerprint)
+  if (!fingerprint) {
+    return {
+      ok: false,
+      code: "pairing_secret_unavailable",
+      message: "인스턴스가 pairing fingerprint를 아직 보고하지 않았습니다.",
+    }
+  }
+  if (hashYeonjangPairingSecret(pairingSecret) !== fingerprint) {
+    return { ok: false, code: "invalid_pairing_secret", message: "pairing secret 검증에 실패했습니다." }
+  }
+  return { ok: true, instanceId: instance.instance_id, extensionId: instance.node_id }
 }
 
 export function updateYeonjangInstanceTrustState(input: {
@@ -1179,7 +1427,11 @@ export function updateYeonjangInstanceTrustState(input: {
   const db = input.db ?? getDb()
   const instance = getInstanceRow(db, normalizeString(input.instanceId))
   if (!instance) {
-    return { ok: false, code: "instance_not_found", message: "대상 Yeonjang 인스턴스를 찾지 못했습니다." }
+    return {
+      ok: false,
+      code: "instance_not_found",
+      message: "대상 Yeonjang 인스턴스를 찾지 못했습니다.",
+    }
   }
   const trustState = normalizeYeonjangTrustState(input.trustState)
   if (!trustState) {
@@ -1197,7 +1449,17 @@ export function updateYeonjangInstanceTrustState(input: {
          approved_at = CASE WHEN ? = 'trusted' THEN COALESCE(approved_at, ?) ELSE approved_at END,
          revoked_at = CASE WHEN ? IN ('revoked', 'quarantined') THEN ? ELSE revoked_at END
      WHERE instance_id = ?`,
-  ).run(trustState, reason, updatedAt, actor, trustState, updatedAt, trustState, updatedAt, instance.instance_id)
+  ).run(
+    trustState,
+    reason,
+    updatedAt,
+    actor,
+    trustState,
+    updatedAt,
+    trustState,
+    updatedAt,
+    instance.instance_id,
+  )
   recordYeonjangGovernanceAudit({
     action: "yeonjang_trust_state_changed",
     actor,
@@ -1222,7 +1484,11 @@ export function renameYeonjangRegistryInstance(input: {
   const db = input.db ?? getDb()
   const instance = getInstanceRow(db, normalizeString(input.instanceId))
   if (!instance) {
-    return { ok: false, code: "instance_not_found", message: "대상 Yeonjang 인스턴스를 찾지 못했습니다." }
+    return {
+      ok: false,
+      code: "instance_not_found",
+      message: "대상 Yeonjang 인스턴스를 찾지 못했습니다.",
+    }
   }
   const nextAlias = normalizeString(input.instanceAlias) || instance.instance_alias
   const nextDisplayName = normalizeString(input.displayName) || instance.display_name
@@ -1242,7 +1508,12 @@ export function renameYeonjangRegistryInstance(input: {
     }
   }
   const displayNormalized = normalizeYeonjangCallName(validated.displayName)
-  const availability = ensureCallNameAvailability(db, validated.instanceId, validated.normalizedCallName, displayNormalized)
+  const availability = ensureCallNameAvailability(
+    db,
+    validated.instanceId,
+    validated.normalizedCallName,
+    displayNormalized,
+  )
   if (availability) return availability
   const updatedAt = nowMs()
   db.prepare(
@@ -1264,7 +1535,12 @@ export function renameYeonjangRegistryInstance(input: {
     trustState: instance.trust_state,
     reason: sanitizeOptionalString(input.reason) ?? "rename",
   })
-  return { ok: true, instanceId: instance.instance_id, instanceAlias: nextAlias, displayName: nextDisplayName }
+  return {
+    ok: true,
+    instanceId: instance.instance_id,
+    instanceAlias: nextAlias,
+    displayName: nextDisplayName,
+  }
 }
 
 export function assignYeonjangLocalMarker(input: {
@@ -1276,11 +1552,17 @@ export function assignYeonjangLocalMarker(input: {
   const db = input.db ?? getDb()
   const instance = getInstanceRow(db, normalizeString(input.instanceId))
   if (!instance) {
-    return { ok: false, code: "instance_not_found", message: "대상 Yeonjang 인스턴스를 찾지 못했습니다." }
+    return {
+      ok: false,
+      code: "instance_not_found",
+      message: "대상 Yeonjang 인스턴스를 찾지 못했습니다.",
+    }
   }
   const tx = db.transaction(() => {
     db.prepare("UPDATE yeonjang_instances SET local_marker = 0 WHERE local_marker = 1").run()
-    db.prepare("UPDATE yeonjang_instances SET local_marker = 1, updated_at = ? WHERE instance_id = ?").run(nowMs(), instance.instance_id)
+    db.prepare(
+      "UPDATE yeonjang_instances SET local_marker = 1, updated_at = ? WHERE instance_id = ?",
+    ).run(nowMs(), instance.instance_id)
   })
   tx()
   recordYeonjangGovernanceAudit({
@@ -1334,7 +1616,9 @@ export function listYeonjangRegistryInstances(
   const db = options.db ?? getDb()
   const now = options.now ?? nowMs()
   const instances = db
-    .prepare<[], YeonjangInstanceRow>("SELECT * FROM yeonjang_instances ORDER BY updated_at DESC, created_at DESC")
+    .prepare<[], YeonjangInstanceRow>(
+      "SELECT * FROM yeonjang_instances ORDER BY updated_at DESC, created_at DESC",
+    )
     .all()
   const sessions = db
     .prepare<[], YeonjangSessionRow>(
@@ -1355,10 +1639,14 @@ export function listYeonjangRegistryInstances(
   const items = instances.map<YeonjangRegistryInstanceView>((instance) => {
     const instanceSessions = sessionsByInstance.get(instance.instance_id) ?? []
     const latestSession = selectPreferredSession(instanceSessions, now)
-    const liveSessionCount = instanceSessions.filter((session) => isSessionLive(session, now)).length
+    const liveSessionCount = instanceSessions.filter((session) =>
+      isSessionLive(session, now),
+    ).length
     const state = resolveInstanceState(instance, instanceSessions, now)
     const localMarker = instance.local_marker === 1
-    const isLocalCandidate = localMarker || isAutoLocalIdentity({ nodeId: instance.node_id, hostFingerprint: instance.host_fingerprint })
+    const isLocalCandidate =
+      localMarker ||
+      isAutoLocalIdentity({ nodeId: instance.node_id, hostFingerprint: instance.host_fingerprint })
     const sessionView = toSessionView(latestSession, now)
     const scopeAccess = resolveScopeAccess(instance.workspace_scope_id, activeWorkspaceScopeId)
     const runnableState = buildRunnableState({
@@ -1411,7 +1699,10 @@ export function listYeonjangRegistryInstances(
     const leftOnline = left.state === "online" ? 1 : 0
     const rightOnline = right.state === "online" ? 1 : 0
     if (leftOnline !== rightOnline) return rightOnline - leftOnline
-    return `${left.displayName}\u0000${left.instanceAlias}`.localeCompare(`${right.displayName}\u0000${right.instanceAlias}`, "ko")
+    return `${left.displayName}\u0000${left.instanceAlias}`.localeCompare(
+      `${right.displayName}\u0000${right.instanceAlias}`,
+      "ko",
+    )
   })
 }
 
@@ -1420,11 +1711,12 @@ export function getYeonjangRegistrySummary(
 ): YeonjangRegistrySummary {
   const db = options.db ?? getDb()
   const instances = listYeonjangRegistryInstances(options)
-  const duplicateConflictCount = db
-    .prepare<[], { count: number }>(
-      "SELECT count(*) AS count FROM yeonjang_instance_sessions WHERE session_state = 'duplicate_instance_conflict'",
-    )
-    .get()?.count ?? 0
+  const duplicateConflictCount =
+    db
+      .prepare<[], { count: number }>(
+        "SELECT count(*) AS count FROM yeonjang_instance_sessions WHERE session_state = 'duplicate_instance_conflict'",
+      )
+      .get()?.count ?? 0
   return {
     totalInstances: instances.length,
     online: instances.filter((item) => item.state === "online").length,
@@ -1433,7 +1725,8 @@ export function getYeonjangRegistrySummary(
     permissionRequired: instances.filter((item) => item.state === "permission_required").length,
     updateRequired: instances.filter((item) => item.state === "update_required").length,
     discovered: instances.filter((item) => item.state === "discovered").length,
-    duplicateLiveSessionInstances: instances.filter((item) => item.duplicateLiveSessionDetected).length,
+    duplicateLiveSessionInstances: instances.filter((item) => item.duplicateLiveSessionDetected)
+      .length,
     duplicateConflictCount,
     localCandidates: instances.filter((item) => item.isLocalCandidate).length,
     localInstances: instances.filter((item) => item.isLocalCandidate).length,
@@ -1444,7 +1737,9 @@ export function getYeonjangRegistrySummary(
     quarantined: instances.filter((item) => item.trustState === "quarantined").length,
     foreignInstances: instances.filter((item) => item.scopeAccess === "foreign").length,
     unassignedScopeInstances: instances.filter((item) => item.scopeAccess === "unassigned").length,
-    activeWorkspaceScopeId: instances.find((item) => item.scopeAccess === "allowed")?.workspaceScopeId ?? defaultWorkspaceScopeId(),
+    activeWorkspaceScopeId:
+      instances.find((item) => item.scopeAccess === "allowed")?.workspaceScopeId ??
+      getDefaultYeonjangWorkspaceScopeId(),
     localMarkerInstanceId: instances.find((item) => item.localMarker)?.instanceId ?? null,
   }
 }

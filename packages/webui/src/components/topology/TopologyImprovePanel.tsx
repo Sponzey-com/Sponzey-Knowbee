@@ -89,11 +89,36 @@ function relationTypeForObservedEdge(edge: EnterpriseTopologyObservedEdgeRecord)
 
 function nodeLabel(topology: EnterpriseTopology | null | undefined, nodeId: string): string {
   const node = topology?.nodes.find((item) => item.id === nodeId)
-  return node?.displayName ?? node?.name ?? nodeId
+  return node?.displayName ?? node?.name ?? "서브 에이전트"
 }
 
-function entityLabel(ref: EnterpriseEntityRef, topology?: EnterpriseTopology | null): string {
-  if (ref.entityType === "node") return nodeLabel(topology, ref.id)
+function userSafeEntityFallback(ref: EnterpriseEntityRef): string {
+  if (ref.entityType === "node") return "서브 에이전트"
+  if (ref.entityType === "enterprise_tool") return "도구"
+  if (ref.entityType === "enterprise_system") return "시스템"
+  if (ref.entityType === "relation") return "연결"
+  return ref.id
+}
+
+function createdNodeNames(operations: readonly EnterpriseTopologyGuiOperation[]): Map<string, string> {
+  const names = new Map<string, string>()
+  for (const operation of operations) {
+    if (operation.op === "createNode") {
+      names.set(operation.nodeId, operation.name ?? "새 서브 에이전트")
+    }
+  }
+  return names
+}
+
+function entityLabel(
+  ref: EnterpriseEntityRef,
+  topology?: EnterpriseTopology | null,
+  createdNames = new Map<string, string>(),
+): string {
+  if (ref.entityType === "node") {
+    const label = createdNames.get(ref.id) ?? nodeLabel(topology, ref.id)
+    return label === ref.id ? userSafeEntityFallback(ref) : label
+  }
   return ref.id
 }
 
@@ -146,13 +171,17 @@ function targetIdForEntities(entities: readonly EnterpriseEntityRef[]): string |
   return first ? `${first.entityType}:${first.id}` : null
 }
 
-function preview(operation: EnterpriseTopologyGuiOperation): EnterpriseTopologyQuickFixOperationPreview {
+function preview(
+  operation: EnterpriseTopologyGuiOperation,
+  topology?: EnterpriseTopology | null,
+  createdNames = new Map<string, string>(),
+): EnterpriseTopologyQuickFixOperationPreview {
   if (operation.op === "createNode") {
     return {
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.nodeId,
-      summary: `node 생성: ${operation.name ?? operation.nodeId}`,
+      summary: `서브 에이전트 추가: ${operation.name ?? "새 서브 에이전트"}`,
     }
   }
   if (operation.op === "updateNode") {
@@ -160,7 +189,7 @@ function preview(operation: EnterpriseTopologyGuiOperation): EnterpriseTopologyQ
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.nodeId,
-      summary: `node 수정: ${operation.nodeId}`,
+      summary: `서브 에이전트 설정 수정: ${entityLabel({ entityType: "node", id: operation.nodeId }, topology, createdNames)}`,
     }
   }
   if (operation.op === "moveNode") {
@@ -168,7 +197,7 @@ function preview(operation: EnterpriseTopologyGuiOperation): EnterpriseTopologyQ
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.nodeId,
-      summary: `node 이동: ${operation.nodeId}`,
+      summary: `서브 에이전트 위치 변경: ${entityLabel({ entityType: "node", id: operation.nodeId }, topology, createdNames)}`,
     }
   }
   if (operation.op === "deleteNode") {
@@ -176,7 +205,7 @@ function preview(operation: EnterpriseTopologyGuiOperation): EnterpriseTopologyQ
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.nodeId,
-      summary: `node 삭제: ${operation.nodeId}`,
+      summary: `서브 에이전트 보관: ${entityLabel({ entityType: "node", id: operation.nodeId }, topology, createdNames)}`,
     }
   }
   if (operation.op === "createRelation") {
@@ -184,7 +213,7 @@ function preview(operation: EnterpriseTopologyGuiOperation): EnterpriseTopologyQ
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.relationId,
-      summary: `관계 후보: ${operation.from.id} -> ${operation.to.id}`,
+      summary: `연결 추가: ${entityLabel(operation.from, topology, createdNames)} -> ${entityLabel(operation.to, topology, createdNames)}`,
     }
   }
   if (operation.op === "updateRelation") {
@@ -192,14 +221,14 @@ function preview(operation: EnterpriseTopologyGuiOperation): EnterpriseTopologyQ
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.relationId,
-      summary: `관계 수정: ${operation.relationId}`,
+      summary: "연결 설정 수정",
     }
   }
   return {
     operationId: operation.operationId,
     op: operation.op,
     targetId: "delete",
-    summary: operation.label ?? operation.op,
+    summary: operation.label ?? "연결 보관",
   }
 }
 
@@ -207,12 +236,14 @@ function plan(
   quickFixId: EnterpriseTopologyQuickFixId,
   label: string,
   operations: EnterpriseTopologyGuiOperation[],
+  topology?: EnterpriseTopology | null,
 ): EnterpriseTopologyQuickFixOperationPlan {
+  const createdNames = createdNodeNames(operations)
   return {
     quickFixId,
     label,
     operations,
-    preview: operations.map(preview),
+    preview: operations.map((operation) => preview(operation, topology, createdNames)),
   }
 }
 
@@ -221,6 +252,7 @@ function createRelationPlan(input: {
   relationType: EnterpriseRelationType
   label: string
   at: number
+  topology?: EnterpriseTopology | null
 }): EnterpriseTopologyQuickFixOperationPlan | null {
   const [from, to] = input.entities
   if (!from || !to) return null
@@ -236,10 +268,10 @@ function createRelationPlan(input: {
     from,
     to,
     label: input.label,
-  }])
+  }], input.topology)
 }
 
-function fallbackPlan(nodeId: string, at: number): EnterpriseTopologyQuickFixOperationPlan {
+function fallbackPlan(nodeId: string, at: number, topology?: EnterpriseTopology | null): EnterpriseTopologyQuickFixOperationPlan {
   const fallbackNodeId = sanitizeId(`node:fallback:${nodeId}`)
   const operations: EnterpriseTopologyGuiOperation[] = [
     {
@@ -247,28 +279,28 @@ function fallbackPlan(nodeId: string, at: number): EnterpriseTopologyQuickFixOpe
       operationId: `improve:fallback-node:${nodeId}`,
       op: "createNode",
       at,
-      label: "fallback path 추가",
+      label: "예외 처리 경로 추가",
       nodeId: fallbackNodeId,
-      name: "Fallback 처리",
+      name: "예외 처리",
       nodeType: "review_node",
     },
     {
       ...createGuiDraftOperationBase("createRelation", {
         operationId: `improve:fallback-relation:${nodeId}`,
         at,
-        label: "fallback path 연결",
+        label: "예외 처리 경로 연결",
       }),
       relationId: sanitizeId(`relation:fallback:${nodeId}:${fallbackNodeId}`),
       relationType: "delegates_to",
       from: { entityType: "node", id: nodeId },
       to: { entityType: "node", id: fallbackNodeId },
-      label: "fallback",
+      label: "예외 처리",
     },
     {
       ...createGuiDraftOperationBase("updateNode", {
         operationId: `improve:fallback-policy:${nodeId}`,
         at,
-        label: "fallback 정책 설정",
+        label: "예외 처리 정책 설정",
       }),
       nodeId,
       patch: {
@@ -286,38 +318,38 @@ function fallbackPlan(nodeId: string, at: number): EnterpriseTopologyQuickFixOpe
       },
     },
   ]
-  return plan("add_fallback_path", "fallback path 추가", operations)
+  return plan("add_fallback_path", "예외 처리 경로 추가", operations, topology)
 }
 
-function backupNodePlan(nodeId: string, at: number): EnterpriseTopologyQuickFixOperationPlan {
+function backupNodePlan(nodeId: string, at: number, topology?: EnterpriseTopology | null): EnterpriseTopologyQuickFixOperationPlan {
   const backupNodeId = sanitizeId(`node:backup:${nodeId}`)
-  return plan("add_child_task", "backup node 연결", [
+  return plan("add_child_task", "대체 서브 에이전트 연결", [
     {
       schemaVersion: ENTERPRISE_TOPOLOGY_GUI_DRAFT_SCHEMA_VERSION,
       operationId: `improve:backup-node:${nodeId}`,
       op: "createNode",
       at,
-      label: "backup node 추가",
+      label: "대체 서브 에이전트 추가",
       nodeId: backupNodeId,
-      name: "Backup 처리",
+      name: "대체 처리",
       nodeType: "function",
     },
     {
       ...createGuiDraftOperationBase("createRelation", {
         operationId: `improve:backup-relation:${nodeId}`,
         at,
-        label: "backup node 연결",
+        label: "대체 서브 에이전트 연결",
       }),
       relationId: sanitizeId(`relation:backup:${nodeId}:${backupNodeId}`),
       relationType: "delegates_to",
       from: { entityType: "node", id: nodeId },
       to: { entityType: "node", id: backupNodeId },
-      label: "backup",
+      label: "대체",
     },
-  ])
+  ], topology)
 }
 
-function approvalPlan(nodeId: string, at: number): EnterpriseTopologyQuickFixOperationPlan {
+function approvalPlan(nodeId: string, at: number, topology?: EnterpriseTopology | null): EnterpriseTopologyQuickFixOperationPlan {
   const approvalNodeId = sanitizeId(`node:approval:${nodeId}`)
   return plan("add_approval_step", "승인 단계 추가", [
     {
@@ -342,7 +374,7 @@ function approvalPlan(nodeId: string, at: number): EnterpriseTopologyQuickFixOpe
       to: { entityType: "node", id: nodeId },
       label: "승인",
     },
-  ])
+  ], topology)
 }
 
 function permissionPlan(input: {
@@ -364,7 +396,7 @@ function permissionPlan(input: {
     }),
     nodeId: input.nodeId,
     patch,
-  }])
+  }], input.topology)
 }
 
 export function buildTopologyImproveActionPlans(input: {
@@ -400,6 +432,7 @@ export function buildTopologyImproveActionPlans(input: {
       relationType: relationType(detail.relationType),
       label: "실제 경로를 연결 후보로 추가",
       at,
+      topology: input.topology,
     })
     if (relationPlan) plans.push(relationPlan)
   }
@@ -425,7 +458,7 @@ export function buildTopologyImproveActionPlans(input: {
     reasonCode === "execution_node_without_backup" ||
     reasonCode === "failure_node_missing_fallback"
   )) {
-    plans.push(fallbackPlan(targetNode.id, at), backupNodePlan(targetNode.id, at))
+    plans.push(fallbackPlan(targetNode.id, at, input.topology), backupNodePlan(targetNode.id, at, input.topology))
   }
 
   if (targetNode && (
@@ -433,10 +466,10 @@ export function buildTopologyImproveActionPlans(input: {
     reasonCode === "single_approver_multiple_targets" ||
     reasonCode === "approval_missing"
   )) {
-    plans.push(approvalPlan(targetNode.id, at))
+    plans.push(approvalPlan(targetNode.id, at, input.topology))
   }
 
-  if (plans.length === 0 && targetNode) plans.push(fallbackPlan(targetNode.id, at))
+  if (plans.length === 0 && targetNode) plans.push(fallbackPlan(targetNode.id, at, input.topology))
   return plans
 }
 
@@ -608,7 +641,7 @@ function findingViewFromObservedEdge(edge: EnterpriseTopologyObservedEdgeRecord,
     findingId: `observed:${edge.edgeId}`,
     findingKind: "observed_only_relation",
     severity: "medium",
-    summary: `실제 실행 연결 후보: ${edge.fromNodeId} -> ${edge.toNodeId}`,
+    summary: `실제 실행 연결 후보: ${entityPathLabel(relatedEntities, topology)}`,
     recommendation: "실제 실행 경로가 맞다면 선언된 관계 후보로 추가하세요.",
     relatedEntities,
     detail: { reasonCode: "observed_relation_not_declared", relationType: relation },
@@ -617,6 +650,12 @@ function findingViewFromObservedEdge(edge: EnterpriseTopologyObservedEdgeRecord,
     ...findingViewFromGap(synthetic, index, topology),
     targetId: `observed:${edge.edgeId}`,
   }
+}
+
+function observedEdgeKindLabel(edgeKind: EnterpriseTopologyObservedEdgeRecord["edgeKind"]): string {
+  if (edgeKind === "tool_call") return "도구 사용"
+  if (edgeKind === "observed_owner") return "소유/담당"
+  return "위임 흐름"
 }
 
 export function buildTopologyImproveFindings(input: {
@@ -902,12 +941,15 @@ export function TopologyImprovePanel({
           <div className="mt-2 grid gap-2 text-[11px] leading-4 text-stone-600" data-testid="topology-improve-advanced-debug">
             {findings.map((finding) => (
               <div key={`debug:${finding.id}`} className="rounded-md bg-stone-50 p-2" data-testid="topology-improve-raw-finding">
-                {finding.id} / {finding.kind} / {finding.severity} / {finding.targetId ?? "no-target"}
+                분류: {text(finding.categoryLabelKo, finding.categoryLabelEn)} / 심각도: {finding.severity} / 대상: {entityPathLabel(finding.relatedEntities, topology)}
               </div>
             ))}
             {observedEdges.map((edge) => (
               <div key={`edge:${edge.edgeId}`} className="rounded-md bg-stone-50 p-2" data-testid="topology-improve-raw-observed-edge">
-                {edge.edgeId} / {edge.edgeKind} / {edge.fromNodeId} -&gt; {edge.toNodeId}
+                실제 연결: {entityPathLabel([
+                  { entityType: "node", id: edge.fromNodeId },
+                  { entityType: relationTypeForObservedEdge(edge) === "uses_tool" ? "enterprise_tool" : "node", id: edge.toNodeId },
+                ], topology)} / 종류: {observedEdgeKindLabel(edge.edgeKind)}
               </div>
             ))}
           </div>

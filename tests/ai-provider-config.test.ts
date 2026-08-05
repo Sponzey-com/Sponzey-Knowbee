@@ -3,26 +3,23 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { detectAvailableProvider, getDefaultModel, getProvider, resetAIProviderCache, resolveProviderResolutionSnapshot } from "../packages/core/src/ai/index.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousAnthropicApiKey = process.env["ANTHROPIC_API_KEY"]
-const previousOpenAIKey = process.env["OPENAI_API_KEY"]
-const previousGeminiKey = process.env["GEMINI_API_KEY"]
-const previousCodexHome = process.env["CODEX_HOME"]
+
+function createFixture(
+  configText?: string,
+  env: Readonly<Record<string, string | undefined>> = {},
+): TestRuntimeConfigFixture {
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
+  tempDirs.push(rootDir)
+  return createTestRuntimeConfigFixture({ rootDir, configText, env })
+}
 
 afterEach(() => {
-  process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousAnthropicApiKey === undefined) delete process.env["ANTHROPIC_API_KEY"]
-  else process.env["ANTHROPIC_API_KEY"] = previousAnthropicApiKey
-  if (previousOpenAIKey === undefined) delete process.env["OPENAI_API_KEY"]
-  else process.env["OPENAI_API_KEY"] = previousOpenAIKey
-  if (previousGeminiKey === undefined) delete process.env["GEMINI_API_KEY"]
-  else process.env["GEMINI_API_KEY"] = previousGeminiKey
-  if (previousCodexHome === undefined) delete process.env["CODEX_HOME"]
-  else process.env["CODEX_HOME"] = previousCodexHome
-  reloadConfig()
   resetAIProviderCache()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
@@ -32,25 +29,21 @@ afterEach(() => {
 
 describe("ai provider configuration", () => {
   it("does not auto-select an unconfigured external AI backend", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
-    tempDirs.push(stateDir)
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-    process.env["ANTHROPIC_API_KEY"] = ""
-    process.env["OPENAI_API_KEY"] = ""
-    process.env["GEMINI_API_KEY"] = ""
-    process.env["CODEX_HOME"] = stateDir
-    reloadConfig()
+    const fixture = createFixture(undefined, {
+      ANTHROPIC_API_KEY: "",
+      OPENAI_API_KEY: "",
+      GEMINI_API_KEY: "",
+      CODEX_HOME: "",
+    })
+    const config = fixture.config
 
-    expect(detectAvailableProvider()).toBe("")
-    expect(getDefaultModel()).toBe("")
-    expect(() => getProvider()).toThrow("No configured AI backend is available")
+    expect(detectAvailableProvider(config)).toBe("")
+    expect(getDefaultModel(config)).toBe("")
+    expect(() => getProvider(undefined, config)).toThrow("No configured AI backend is available")
   })
 
   it("does not read removed legacy llm provider settings", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
-    tempDirs.push(stateDir)
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-    writeFileSync(join(stateDir, "config.json5"), `
+    const config = createFixture(`
       {
         llm: {
           defaultProvider: "openai",
@@ -62,20 +55,15 @@ describe("ai provider configuration", () => {
           }
         }
       }
-    `, "utf-8")
+    `).config
 
-    reloadConfig()
-
-    expect(detectAvailableProvider()).toBe("")
-    expect(getDefaultModel()).toBe("")
-    expect(() => getProvider()).toThrow("No configured AI backend is available")
+    expect(detectAvailableProvider(config)).toBe("")
+    expect(getDefaultModel(config)).toBe("")
+    expect(() => getProvider(undefined, config)).toThrow("No configured AI backend is available")
   })
 
   it("derives a single ai connection from legacy builtin backend cards", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
-    tempDirs.push(stateDir)
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-    writeFileSync(join(stateDir, "config.json5"), `
+    const config = createFixture(`
       {
         ai: {
           backends: {
@@ -91,20 +79,15 @@ describe("ai provider configuration", () => {
           }
         }
       }
-    `, "utf-8")
+    `).config
 
-    reloadConfig()
-
-    expect(detectAvailableProvider()).toBe("openai")
-    expect(getDefaultModel()).toBe("gpt-4.1")
-    expect(() => getProvider()).not.toThrow()
+    expect(detectAvailableProvider(config)).toBe("openai")
+    expect(getDefaultModel(config)).toBe("gpt-4.1")
+    expect(() => getProvider(undefined, config)).not.toThrow()
   })
 
   it("extracts only one active ai connection from legacy multi-backend config", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
-    tempDirs.push(stateDir)
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-    writeFileSync(join(stateDir, "config.json5"), `
+    const config = createFixture(`
       {
         ai: {
           backends: {
@@ -128,20 +111,15 @@ describe("ai provider configuration", () => {
           }
         }
       }
-    `, "utf-8")
+    `).config
 
-    reloadConfig()
-
-    expect(detectAvailableProvider()).toBe("openai")
-    expect(getDefaultModel()).toBe("gpt-5")
-    expect(() => getProvider()).not.toThrow()
+    expect(detectAvailableProvider(config)).toBe("openai")
+    expect(getDefaultModel(config)).toBe("gpt-5")
+    expect(() => getProvider(undefined, config)).not.toThrow()
   })
 
   it("does not invent a fallback model when the configured single ai connection has no model", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
-    tempDirs.push(stateDir)
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-    writeFileSync(join(stateDir, "config.json5"), `
+    const config = createFixture(`
       {
         ai: {
           connection: {
@@ -153,19 +131,14 @@ describe("ai provider configuration", () => {
           }
         }
       }
-    `, "utf-8")
+    `).config
 
-    reloadConfig()
-
-    expect(detectAvailableProvider()).toBe("openai")
-    expect(getDefaultModel()).toBe("")
+    expect(detectAvailableProvider(config)).toBe("openai")
+    expect(getDefaultModel(config)).toBe("")
   })
 
   it("allows an ollama connection without requiring an OpenAI API key", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
-    tempDirs.push(stateDir)
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-    writeFileSync(join(stateDir, "config.json5"), `
+    const config = createFixture(`
       {
         ai: {
           connection: {
@@ -178,13 +151,11 @@ describe("ai provider configuration", () => {
           }
         }
       }
-    `, "utf-8")
+    `).config
 
-    reloadConfig()
-
-    expect(detectAvailableProvider()).toBe("ollama")
-    expect(getDefaultModel()).toBe("gemma4:26b")
-    expect(resolveProviderResolutionSnapshot()).toMatchObject({
+    expect(detectAvailableProvider(config)).toBe("ollama")
+    expect(getDefaultModel(config)).toBe("gemma4:26b")
+    expect(resolveProviderResolutionSnapshot(undefined, config)).toMatchObject({
       source: "config.ai.connection",
       providerId: "ollama",
       credentialKind: "local_endpoint",
@@ -194,14 +165,11 @@ describe("ai provider configuration", () => {
       healthy: true,
       fallbackReason: null,
     })
-    expect(() => getProvider()).not.toThrow()
+    expect(() => getProvider(undefined, config)).not.toThrow()
   })
 
   it("allows a llama connection through the same OpenAI-compatible provider path", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
-    tempDirs.push(stateDir)
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-    writeFileSync(join(stateDir, "config.json5"), `
+    const config = createFixture(`
       {
         ai: {
           connection: {
@@ -214,13 +182,11 @@ describe("ai provider configuration", () => {
           }
         }
       }
-    `, "utf-8")
+    `).config
 
-    reloadConfig()
-
-    expect(detectAvailableProvider()).toBe("llama")
-    expect(getDefaultModel()).toBe("llama-3.1-8b")
-    expect(resolveProviderResolutionSnapshot()).toMatchObject({
+    expect(detectAvailableProvider(config)).toBe("llama")
+    expect(getDefaultModel(config)).toBe("llama-3.1-8b")
+    expect(resolveProviderResolutionSnapshot(undefined, config)).toMatchObject({
       providerId: "llama",
       credentialKind: "local_endpoint",
       endpoint: "http://127.0.0.1:8080/v1",
@@ -228,14 +194,11 @@ describe("ai provider configuration", () => {
       healthy: true,
       fallbackReason: null,
     })
-    expect(() => getProvider()).not.toThrow()
+    expect(() => getProvider(undefined, config)).not.toThrow()
   })
 
   it("normalizes an ollama endpoint to /v1 for OpenAI-compatible requests", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
-    tempDirs.push(stateDir)
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-    writeFileSync(join(stateDir, "config.json5"), `
+    const config = createFixture(`
       {
         ai: {
           connection: {
@@ -248,23 +211,15 @@ describe("ai provider configuration", () => {
           }
         }
       }
-    `, "utf-8")
+    `).config
 
-    reloadConfig()
-
-    const provider = getProvider() as { baseUrl?: string }
-    expect(provider.baseUrl).toBe("http://127.0.0.1:11434/v1")
+    expect(resolveProviderResolutionSnapshot(undefined, config).endpoint).toBe(
+      "http://127.0.0.1:11434/v1",
+    )
   })
 
   it("rebuilds the openai provider when auth mode switches to chatgpt oauth", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
-    tempDirs.push(stateDir)
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-
-    const authFilePath = join(stateDir, "codex-auth.json")
-    writeFileSync(authFilePath, JSON.stringify({ accessToken: "test" }), "utf-8")
-
-    writeFileSync(join(stateDir, "config.json5"), `
+    const fixture = createFixture(`
       {
         ai: {
           connection: {
@@ -278,15 +233,17 @@ describe("ai provider configuration", () => {
           }
         }
       }
-    `, "utf-8")
+    `)
+    const authFilePath = join(fixture.rootDir, "codex-auth.json")
+    writeFileSync(authFilePath, JSON.stringify({ accessToken: "test" }), "utf-8")
 
-    reloadConfig()
+    const apiKeyConfig = fixture.config
     resetAIProviderCache()
 
-    const apiKeyProvider = getProvider() as { oauthConfig?: { authFilePath?: string } }
+    const apiKeyProvider = getProvider(undefined, apiKeyConfig) as { oauthConfig?: { authFilePath?: string } }
     expect(apiKeyProvider.oauthConfig).toBeUndefined()
 
-    writeFileSync(join(stateDir, "config.json5"), `
+    writeFileSync(fixture.paths.configFile, `
       {
         ai: {
           connection: {
@@ -302,21 +259,22 @@ describe("ai provider configuration", () => {
       }
     `, "utf-8")
 
-    reloadConfig()
+    const oauthConfigSnapshot = fixture.load()
 
-    const oauthProvider = getProvider() as { oauthConfig?: { authFilePath?: string } }
+    const oauthProvider = getProvider(undefined, oauthConfigSnapshot)
     expect(oauthProvider).not.toBe(apiKeyProvider)
-    expect(oauthProvider.oauthConfig?.authFilePath).toBe(authFilePath)
+    expect(oauthConfigSnapshot.ai.connection.auth?.oauthAuthFilePath).toBe(authFilePath)
+    expect(resolveProviderResolutionSnapshot(undefined, oauthConfigSnapshot)).toMatchObject({
+      adapterType: "openai_codex_oauth",
+      authType: "chatgpt_oauth",
+    })
   })
 
   it("normalizes legacy ChatGPT/Codex OAuth provider aliases to the OpenAI Codex OAuth connection", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-ai-config-"))
-    tempDirs.push(stateDir)
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-
-    const authFilePath = join(stateDir, "codex-auth.json")
+    const fixture = createFixture()
+    const authFilePath = join(fixture.rootDir, "codex-auth.json")
     writeFileSync(authFilePath, JSON.stringify({ tokens: { access_token: "test-access-token" } }), "utf-8")
-    writeFileSync(join(stateDir, "config.json5"), `
+    writeFileSync(fixture.paths.configFile, `
       {
         ai: {
           connection: {
@@ -331,13 +289,13 @@ describe("ai provider configuration", () => {
       }
     `, "utf-8")
 
-    reloadConfig()
+    const config = fixture.load()
     resetAIProviderCache()
 
-    const provider = getProvider("openai") as { oauthConfig?: { authFilePath?: string }; profile?: { apiKeys: string[] }; baseUrl?: string }
-    expect(detectAvailableProvider()).toBe("openai")
-    expect(getDefaultModel()).toBe("gpt-5.4")
-    expect(resolveProviderResolutionSnapshot()).toMatchObject({
+    expect(() => getProvider("openai", config)).not.toThrow()
+    expect(detectAvailableProvider(config)).toBe("openai")
+    expect(getDefaultModel(config)).toBe("gpt-5.4")
+    expect(resolveProviderResolutionSnapshot(undefined, config)).toMatchObject({
       providerId: "openai",
       adapterType: "openai_codex_oauth",
       authType: "chatgpt_oauth",
@@ -346,8 +304,9 @@ describe("ai provider configuration", () => {
       configured: true,
       healthy: true,
     })
-    expect(provider.oauthConfig?.authFilePath).toBe(authFilePath)
-    expect(provider.profile?.apiKeys).toEqual([])
-    expect(provider.baseUrl).toBe("https://chatgpt.com/backend-api/codex")
+    expect(config.ai.connection.auth?.oauthAuthFilePath).toBe(authFilePath)
+    expect(resolveProviderResolutionSnapshot(undefined, config).endpoint).toBe(
+      "https://chatgpt.com/backend-api/codex",
+    )
   })
 })

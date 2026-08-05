@@ -103,6 +103,12 @@ describe("prepare root loop bootstrap state", () => {
   it("returns initial loop state and bootstrap directive state", () => {
     const result = prepareRootLoopBootstrapState(createParams() as any, createDependencies() as any)
 
+    expect(result.state.webExecutionState).toEqual({
+      discovery: { status: "not_attempted" },
+      validatedEvidence: { status: "none" },
+      observedFetchCandidates: [],
+      observedSearchResults: [],
+    })
     expect(result.intakeProcessed).toBe(false)
     expect(result.pendingLoopDirective).toBeNull()
     expect(result.state).toEqual(expect.objectContaining({

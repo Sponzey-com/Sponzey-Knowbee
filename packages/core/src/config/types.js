@@ -106,16 +106,17 @@ export const DEFAULT_CONFIG = {
         username: "",
         password: "",
         allowAnonymous: false,
-    },
-    search: {
-        web: {
-            provider: "duckduckgo",
-            maxResults: 5,
+        yeonjangV2: {
+            requesterId: "",
         },
     },
+    search: {},
     memory: {
         compaction: {
             minContextTokens: 3000,
+            tokenThreshold: 120_000,
+            messageThreshold: 40,
+            protectedRecentMessageCount: 8,
         },
         sessionRetentionDays: 30,
     },

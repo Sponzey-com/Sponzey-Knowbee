@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import { closeDb, getDb } from "../packages/core/src/db/index.js"
 import type { AIChunk, AIProvider, ChatParams, Message, MessageContent } from "../packages/core/src/ai/types.js"
 import {
@@ -12,8 +13,6 @@ import {
 } from "../packages/core/src/runs/context-preflight.ts"
 import { persistSessionCompactionMaintenance } from "../packages/core/src/memory/compaction.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 class FakeProvider implements AIProvider {
@@ -36,17 +35,10 @@ class FakeProvider implements AIProvider {
 
 function useTempConfig(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task006-context-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
-    ai: { connection: { provider: "ollama", model: "llama3.2", endpoint: "http://127.0.0.1:11434" } },
-    webui: { enabled: true, host: "127.0.0.1", port: 0, auth: { enabled: false } },
-    security: { approvalMode: "off" }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task006-context-"))
+  tempDirs.push(rootDir)
+  const runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 async function collectChunks(generator: AsyncGenerator<AIChunk>): Promise<AIChunk[]> {
@@ -61,11 +53,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })

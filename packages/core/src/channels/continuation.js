@@ -23,11 +23,10 @@ export function resolveChannelContinuation(input) {
         });
         pushCandidate(candidates, candidateFromMessageRef(exactIncomingRef, "message_ref_exact", "exact"));
         if (exactIncomingRef)
-            return finalizeContinuationResult(candidates);
-        const parentMessageId = input.envelope.replyToMessageId
-            ?? (input.envelope.continuationContext?.source === "thread"
-                ? undefined
-                : input.envelope.continuationContext?.parentMessageId);
+            return finalizeContinuationResult(candidates, input.language);
+        const parentMessageId = input.envelope.continuationContext?.source === "thread"
+            ? undefined
+            : input.envelope.replyToMessageId ?? input.envelope.continuationContext?.parentMessageId;
         if (parentMessageId) {
             const parentRef = findChannelMessageRef({
                 source: input.envelope.provider,
@@ -37,16 +36,35 @@ export function resolveChannelContinuation(input) {
             });
             pushCandidate(candidates, candidateFromMessageRef(parentRef, "message_ref_parent", "exact"));
             if (parentRef)
-                return finalizeContinuationResult(candidates);
+                return finalizeContinuationResult(candidates, input.language);
         }
     }
-    return finalizeContinuationResult(candidates);
+    return finalizeContinuationResult(candidates, input.language);
 }
-export function buildContinuationConfirmationPrompt(candidates) {
+export function resolveChannelContinuationNoticeLanguage(languageCode) {
+    return languageCode?.toLowerCase().startsWith("ko") ? "ko" : "en";
+}
+export function buildContinuationConfirmationNotice(candidates, options = {}) {
     const count = candidates.length;
-    return `Found ${count} possible previous Knowbee contexts. Please choose which task to continue before this message is attached.`;
+    const language = options.language ?? "en";
+    return {
+        kind: "channel_continuation_confirmation_required",
+        candidateCount: count,
+        language,
+        text: language === "ko"
+            ? `이 메시지를 연결할 수 있는 이전 작업이 ${count}개 있습니다. 어느 작업을 이어갈지 먼저 선택해 주세요.`
+            : `Found ${count} possible previous contexts. Please choose which task to continue before this message is attached.`,
+        deliveryMode: "receipt",
+        textSource: "channel_continuation_control_notice",
+        renderingRequired: "llm_final_response",
+        finalAnswer: false,
+        assistantIdentityClaim: false,
+    };
 }
-function finalizeContinuationResult(candidates) {
+export function buildContinuationConfirmationPrompt(candidates, options = {}) {
+    return buildContinuationConfirmationNotice(candidates, options).text;
+}
+function finalizeContinuationResult(candidates, language) {
     const unique = uniqueCandidates(candidates);
     if (unique.length === 0) {
         return {
@@ -80,11 +98,13 @@ function finalizeContinuationResult(candidates) {
                 : "message_match",
         };
     }
+    const confirmationNotice = buildContinuationConfirmationNotice(unique, { language });
     return {
         status: "ambiguous",
         candidates: unique,
         confirmationRequired: true,
-        confirmationPrompt: buildContinuationConfirmationPrompt(unique),
+        confirmationNotice,
+        confirmationPrompt: confirmationNotice.text,
         reasonCode: "ambiguous_candidates",
     };
 }

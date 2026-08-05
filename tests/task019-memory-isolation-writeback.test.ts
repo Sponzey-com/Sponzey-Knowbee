@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import type {
   MemoryPolicy,
   OwnerScope,
@@ -30,26 +30,17 @@ import {
 import { validateAgentPromptBundleContextScope } from "../packages/core/src/runs/context-preflight.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task019-memory-isolation-"))
   tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = undefined
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 function restoreState(): void {
   closeDb()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -71,6 +62,18 @@ function memoryPolicy(writeOwner: OwnerScope): MemoryPolicy {
   }
 }
 
+function longTermGate(targetOwner: OwnerScope, evidence = "test:task019") {
+  return {
+    targetOwner,
+    category: "approved_work_context" as const,
+    storageNeed: "durable_user_fact" as const,
+    sensitivity: "not_sensitive" as const,
+    userIntent: "trusted_setting" as const,
+    sourceEvidenceRefs: [evidence],
+    retentionPurpose: "memory isolation regression fixture",
+  }
+}
+
 beforeEach(() => {
   useTempState()
 })
@@ -80,6 +83,68 @@ afterEach(() => {
 })
 
 describe("task019 memory isolation and writeback policy", () => {
+  it("requires a long-term write gate before owner-scoped long-term memory storage", async () => {
+    const knowbee = owner("knowbee", "agent:knowbee")
+    const child = owner("sub_agent", "agent:child")
+
+    expect(() =>
+      storeOwnerScopedMemory({
+        owner: knowbee,
+        visibility: "private",
+        retentionPolicy: "long_term",
+        rawText: "TASK019_GATE_MISSING",
+        sourceType: "test",
+      }),
+    ).toThrow(MemoryIsolationError)
+
+    expect(() =>
+      storeOwnerScopedMemory({
+        owner: knowbee,
+        visibility: "private",
+        retentionPolicy: "long_term",
+        longTermWriteGate: {
+          ...longTermGate(knowbee, "test:task019:secret"),
+          sensitivity: "secret",
+        },
+        rawText: "TASK019_GATE_SECRET",
+        sourceType: "test",
+      }),
+    ).toThrow(MemoryIsolationError)
+
+    expect(() =>
+      storeOwnerScopedMemory({
+        owner: knowbee,
+        visibility: "private",
+        retentionPolicy: "long_term",
+        longTermWriteGate: longTermGate(child, "test:task019:mismatch"),
+        rawText: "TASK019_GATE_OWNER_MISMATCH",
+        sourceType: "test",
+      }),
+    ).toThrow(MemoryIsolationError)
+
+    const stored = await storeOwnerScopedMemory({
+      owner: knowbee,
+      visibility: "private",
+      retentionPolicy: "long_term",
+      longTermWriteGate: longTermGate(knowbee, "test:task019:approved"),
+      rawText: "TASK019_GATE_APPROVED",
+      sourceType: "test",
+    })
+    const row = getDb()
+      .prepare<[string], { metadata_json: string | null }>(
+        "SELECT metadata_json FROM memory_documents WHERE id = ?",
+      )
+      .get(stored.documentId)
+    expect(JSON.parse(row?.metadata_json ?? "{}")).toMatchObject({
+      longTermWriteGate: "approved",
+      longTermWriteGateStorageNeed: "durable_user_fact",
+      longTermWriteGateSensitivity: "not_sensitive",
+      longTermWriteGateUserIntent: "trusted_setting",
+      longTermWriteGateSourceEvidenceRefs: ["test:task019:approved"],
+      longTermWriteGateRetentionPurpose: "memory isolation regression fixture",
+    })
+  })
+
   it("blocks sibling and Knowbee private memory reads, and records denied memory access audit", async () => {
     const knowbee = owner("knowbee", "agent:knowbee")
     const writer = owner("sub_agent", "agent:writer")
@@ -89,6 +154,7 @@ describe("task019 memory isolation and writeback policy", () => {
       owner: writer,
       visibility: "private",
       retentionPolicy: "long_term",
+      longTermWriteGate: longTermGate(writer, "test:task019:writer"),
       rawText: "TASK019_WRITER_PRIVATE sibling-only memory",
       sourceType: "test",
     })
@@ -96,6 +162,7 @@ describe("task019 memory isolation and writeback policy", () => {
       owner: knowbee,
       visibility: "private",
       retentionPolicy: "long_term",
+      longTermWriteGate: longTermGate(knowbee, "test:task019:knowbee"),
       rawText: "TASK019_KNOWBEE_PRIVATE parent-only memory",
       sourceType: "test",
     })
@@ -135,6 +202,7 @@ describe("task019 memory isolation and writeback policy", () => {
       owner: knowbee,
       visibility: "private",
       retentionPolicy: "long_term",
+      longTermWriteGate: longTermGate(knowbee, "test:task019:exchange"),
       rawText: "TASK019_PACKAGED_CONTEXT parent context for bounded sharing",
       sourceType: "test",
     })
@@ -149,8 +217,8 @@ describe("task019 memory isolation and writeback policy", () => {
     const exchange = buildMemorySummaryDataExchange({
       sourceOwner: knowbee,
       recipientOwner: child,
-      sourceNicknameSnapshot: "Knowbee",
-      recipientNicknameSnapshot: "Researcher",
+      sourceAgentNameSnapshot: "Knowbee",
+      recipientAgentNameSnapshot: "Researcher",
       purpose: "parent-shared bounded context",
       allowedUse: "temporary_context",
       retentionPolicy: "session_only",
@@ -273,6 +341,9 @@ describe("task019 memory isolation and writeback policy", () => {
     expect(JSON.parse(stored?.metadata_json ?? "{}")).toMatchObject({
       targetOwnerScopeKey: "knowbee:agent:knowbee",
       crossOwnerWriteback: true,
+      longTermWriteGate: "approved",
+      longTermWriteGateStorageNeed: "approved_child_result",
+      longTermWriteGateUserIntent: "admin_review_approved",
     })
 
     const allowed = preparePolicyControlledMemoryWritebackQueueInput({

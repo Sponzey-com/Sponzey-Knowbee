@@ -1,12 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { buildHistoryVersion, recordHistoryVersion } from "../packages/core/src/agent/learning.ts"
 import { registerAgentRoutes } from "../packages/core/src/api/routes/agent.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { PATHS } from "../packages/core/src/config/paths.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import {
   CONTRACT_SCHEMA_VERSION,
@@ -18,6 +17,11 @@ import {
   type TeamConfig,
   type TeamMembership,
 } from "../packages/core/src/index.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: {
@@ -35,23 +39,22 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task005-agent-team-api-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task005-agent-team-api-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function writeConfig(value: unknown): void {
-  mkdirSync(dirname(PATHS.configFile), { recursive: true })
-  writeFileSync(PATHS.configFile, JSON.stringify(value, null, 2), "utf-8")
-  reloadConfig()
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir: runtimeFixture.rootDir,
+    configText: JSON.stringify(value, null, 2),
+  })
 }
 
 function owner(
@@ -92,13 +95,12 @@ function memoryPolicy(agentId: string): MemoryPolicy {
 
 function subAgentConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
   const agentId = overrides.agentId ?? "agent:researcher"
-  const nickname = overrides.nickname ?? "Researcher"
+  const agentName = overrides.agentName ?? "Researcher"
   return {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     agentType: "sub_agent",
     agentId,
-    displayName: overrides.displayName ?? nickname,
-    nickname,
+    agentName,
     status: "enabled",
     role: "research worker",
     personality: "Evidence-first and concise",
@@ -155,7 +157,6 @@ function teamConfig(overrides: Partial<TeamConfig> = {}): TeamConfig {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     teamId,
     displayName: "Research Team",
-    nickname: "Research Team",
     status: "enabled",
     purpose: "Collect evidence and draft verified findings.",
     ownerAgentId: "agent:knowbee",
@@ -182,11 +183,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -194,8 +190,9 @@ afterEach(() => {
 })
 
 describe("task005 agent and team CRUD API", () => {
-  it("supports agent CRUD, nickname conflict errors, disable/archive, and history restore dry-runs", async () => {
+  it("supports agent CRUD, agent-name conflict errors, disable/archive, and history restore dry-runs", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -209,10 +206,13 @@ describe("task005 agent and team CRUD API", () => {
       expect(createdAgent).toEqual(
         expect.objectContaining({
           agentId: "agent:researcher",
-          normalizedNickname: "researcher",
+          agentName: "Researcher",
           status: "enabled",
         }),
       )
+      expect(createdAgent).not.toHaveProperty("displayName")
+      expect(createdAgent).not.toHaveProperty("nickname")
+      expect(createdAgent).not.toHaveProperty("normalizedNickname")
 
       const listed = await app.inject({ method: "GET", url: "/api/agents" })
       expect(listed.statusCode).toBe(200)
@@ -248,8 +248,7 @@ describe("task005 agent and team CRUD API", () => {
         payload: {
           agent: subAgentConfig({
             agentId: "agent:writer",
-            displayName: "Writer",
-            nickname: "Researcher",
+            agentName: "Researcher",
           }),
         },
       })
@@ -257,11 +256,12 @@ describe("task005 agent and team CRUD API", () => {
       expect(duplicate.json()).toEqual(
         expect.objectContaining({
           ok: false,
-          reasonCode: "nickname_conflict",
+          reasonCode: "agent_name_conflict",
           details: expect.objectContaining({
             attemptedEntityType: "agent",
             attemptedEntityId: "agent:writer",
             existingEntityId: "agent:researcher",
+            normalizedAgentName: "researcher",
           }),
         }),
       )
@@ -328,6 +328,7 @@ describe("task005 agent and team CRUD API", () => {
 
   it("supports team CRUD, membership updates, and explicit diagnostics for unresolved members and invalid leads", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -344,12 +345,12 @@ describe("task005 agent and team CRUD API", () => {
       const nicknameConflict = await app.inject({
         method: "POST",
         url: "/api/teams",
-        payload: { team: teamConfig({ teamId: "team:conflict", nickname: "Researcher" }) },
+        payload: { team: teamConfig({ teamId: "team:conflict", displayName: "Researcher" }) },
       })
       expect(nicknameConflict.statusCode).toBe(409)
       expect(nicknameConflict.json()).toEqual(
         expect.objectContaining({
-          reasonCode: "nickname_conflict",
+          reasonCode: "agent_name_conflict",
           details: expect.objectContaining({
             existingEntityType: "agent",
             existingEntityId: "agent:researcher",
@@ -461,6 +462,7 @@ describe("task005 agent and team CRUD API", () => {
 
   it("stores imported agents and teams as disabled by default", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -469,7 +471,7 @@ describe("task005 agent and team CRUD API", () => {
         url: "/api/agents",
         payload: {
           imported: true,
-          agent: subAgentConfig({ agentId: "agent:imported", nickname: "Imported Agent" }),
+          agent: subAgentConfig({ agentId: "agent:imported", agentName: "Imported Agent" }),
         },
       })
       expect(agent.statusCode).toBe(200)
@@ -502,6 +504,7 @@ describe("task005 agent and team CRUD API", () => {
 
   it("returns stable validation error bodies", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -529,6 +532,7 @@ describe("task005 agent and team CRUD API", () => {
   it("keeps CRUD routes behind the static auth guard for remote clients", async () => {
     writeConfig({ webui: { auth: { enabled: true, token: "task005-token" } } })
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {

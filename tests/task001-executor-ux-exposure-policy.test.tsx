@@ -2,6 +2,7 @@ import { createElement } from "../packages/webui/node_modules/react/index.js"
 import { renderToStaticMarkup } from "../packages/webui/node_modules/react-dom/server.js"
 import { afterEach, describe, expect, it } from "vitest"
 import { createCapabilities } from "../packages/core/src/control-plane/index.ts"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.js"
 import { WORK_ORDER_TEMPLATE_CATALOG } from "../packages/core/src/topology-runtime/work-order-templates.ts"
 import {
   EnterpriseTopologyCanvasShell,
@@ -29,7 +30,6 @@ import {
 import { useCapabilitiesStore } from "../packages/webui/src/stores/capabilities"
 
 const now = Date.UTC(2026, 4, 1, 9, 0, 0)
-const previousEnterpriseBuilderFlag = process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
 
 function disabledBuilderCapability(): FeatureCapability {
   return {
@@ -45,11 +45,6 @@ function disabledBuilderCapability(): FeatureCapability {
 
 afterEach(() => {
   useCapabilitiesStore.getState().setItems([])
-  if (previousEnterpriseBuilderFlag === undefined) {
-    delete process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
-  } else {
-    process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = previousEnterpriseBuilderFlag
-  }
 })
 
 describe("task001 executor-first UX exposure policy", () => {
@@ -187,9 +182,12 @@ describe("task001 executor-first UX exposure policy", () => {
   })
 
   it("keeps the feature-flag fallback outside the simple workspace content", () => {
-    process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = "off"
     useCapabilitiesStore.getState().setItems([disabledBuilderCapability()])
-    const apiCapability = createCapabilities().find((item) => item.key === "enterprise_topology_builder_ui")
+    const apiCapability = createCapabilities({
+      enterpriseTopologyBuilderEnabled: false,
+      config: DEFAULT_CONFIG,
+    })
+      .find((item) => item.key === "enterprise_topology_builder_ui")
     const html = renderToStaticMarkup(
       createElement(
         FeatureGate,
@@ -203,7 +201,7 @@ describe("task001 executor-first UX exposure policy", () => {
       status: "disabled",
     }))
     expect(html).toContain("서브 에이전트 설정")
-    expect(html).toContain("기능 플래그")
+    expect(html).toContain("기능 상태를 확인할 수 없습니다")
     expect(html).not.toContain("simple workspace content")
   })
 })

@@ -1,7 +1,7 @@
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { PATHS } from "../../../config/index.js";
 import { doesYeonjangCapabilitySupportMethod, doesYeonjangCapabilitySupportOutputMode, getYeonjangCapabilities, hasYeonjangCapabilityMatrix, invokeYeonjangMethod, isYeonjangUnavailableError, } from "../../../yeonjang/mqtt-client.js";
+import { buildYeonjangRequiredFailure } from "../yeonjang-required-failure.js";
 export const DEFAULT_SCREEN_CAPTURE_TIMEOUT_MS = 60_000;
 export function extensionFromScreenCaptureMimeType(mimeType) {
     switch ((mimeType ?? "").toLowerCase()) {
@@ -15,7 +15,7 @@ export function extensionFromScreenCaptureMimeType(mimeType) {
             return "png";
     }
 }
-export function saveInlineScreenCapture(base64, mimeType, rootDir = join(PATHS.stateDir, "artifacts", "screens")) {
+export function saveInlineScreenCapture(base64, mimeType, rootDir) {
     mkdirSync(rootDir, { recursive: true });
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const filePath = join(rootDir, `screen-capture-${timestamp}.${extensionFromScreenCaptureMimeType(mimeType)}`);
@@ -32,15 +32,7 @@ export function validateYeonjangScreenCaptureBinaryResult(remote) {
     return remote.base64_data;
 }
 export function yeonjangRequiredFailure(method) {
-    return {
-        success: false,
-        output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 현재 연결된 연장이 \`${method}\` 메서드를 지원하지 않거나 연결되어 있지 않습니다.`,
-        error: "YEONJANG_REQUIRED",
-        details: {
-            requiredExecutor: "yeonjang",
-            requiredMethod: method,
-        },
-    };
+    return buildYeonjangRequiredFailure({ method });
 }
 export function yeonjangCapabilityMatrixRequiredFailure(method) {
     return {
@@ -51,6 +43,20 @@ export function yeonjangCapabilityMatrixRequiredFailure(method) {
         ].join("\n"),
         error: "YEONJANG_CAPABILITY_MATRIX_REQUIRED",
         details: {
+            via: "yeonjang",
+            // This is a pre-dispatch contract rejection. It has no device effect,
+            // so a same-request capture retry cannot establish new evidence.
+            stopAfterFailure: true,
+            failureKind: "remote_rejected",
+            reasonCode: "yeonjang_capability_matrix_required",
+            terminalStage: "rejected",
+            retrySafety: "change_strategy",
+            failure: {
+                reasonCode: "yeonjang_capability_matrix_required",
+                retrySameStrategy: false,
+                terminalStage: "rejected",
+                retrySafety: "change_strategy",
+            },
             requiredExecutor: "yeonjang",
             requiredMethod: method,
             requiredCapabilityMatrix: true,
@@ -97,11 +103,16 @@ export async function preflightYeonjangScreenCapture(options) {
         if (!hasYeonjangCapabilityMatrix(capabilities)) {
             return yeonjangCapabilityMatrixRequiredFailure(method);
         }
-        const base64Support = doesYeonjangCapabilitySupportOutputMode(capabilities, method, "base64");
-        if (base64Support === false)
-            return yeonjangOutputModeFailure(method, "base64");
-        if (base64Support === null)
-            return yeonjangOutputModeUnknownFailure(method, "base64");
+        // MQTT v2 exposes a verified artifact transfer. mqtt-client consumes that
+        // transfer, verifies its receipt and digest, then normalizes it to this
+        // tool's in-memory base64 result. Legacy transports still return base64
+        // directly, so their advertised capability remains the required contract.
+        const requiredOutputMode = capabilities.protocolVersion === "2" ? "artifact" : "base64";
+        const outputModeSupport = doesYeonjangCapabilitySupportOutputMode(capabilities, method, requiredOutputMode);
+        if (outputModeSupport === false)
+            return yeonjangOutputModeFailure(method, requiredOutputMode);
+        if (outputModeSupport === null)
+            return yeonjangOutputModeUnknownFailure(method, requiredOutputMode);
         return null;
     }
     catch (error) {
@@ -110,34 +121,66 @@ export async function preflightYeonjangScreenCapture(options) {
         throw error;
     }
 }
-export function classifyYeonjangScreenCaptureFailure(message) {
-    if (/(getdirectoryname|output path is empty|argumentexception|directory name is invalid)/i.test(message)
-        || /디렉터리 이름이 올바르지|경로 처리/.test(message)) {
+export function classifyYeonjangScreenCaptureFailure(error, message) {
+    const candidate = error instanceof Error
+        ? error
+        : null;
+    const code = typeof candidate?.code === "string" ? candidate.code.trim() : "";
+    const attempt = candidate?.attempt
+        && typeof candidate.attempt === "object"
+        && !Array.isArray(candidate.attempt)
+        ? candidate.attempt
+        : null;
+    const terminalStage = attempt?.["terminalStage"];
+    const retrySafety = attempt?.["retrySafety"];
+    const boundAttempt = code.length > 0
+        && attempt?.["schemaVersion"] === 1
+        && attempt["method"] === "screen.capture"
+        && attempt["reasonCode"] === code;
+    if (boundAttempt) {
+        const output = code === "screen_permission_denied"
+            ? "Yeonjang 화면 캡처는 운영 체제의 화면 캡처 권한이 거부되어 시작되지 않았습니다. 시스템 설정에서 Yeonjang의 화면 캡처 권한을 허용한 뒤 다시 요청해 주세요."
+            : `Yeonjang 화면 캡처 실패: ${message}`;
         return {
-            code: "YEONJANG_SCREEN_CAPTURE_PATH_BUG",
-            output: [
-                "Windows 연장의 `screen.capture` 내부 경로 처리 오류 때문에 화면 캡처가 실패했습니다.",
-                "이 문제는 다른 도구 조합으로 우회하기보다 Windows Yeonjang을 최신 버전으로 다시 빌드하고 재시작해야 해결됩니다.",
-                "Windows에서 `build-yeonjang-windows.bat`로 재빌드하고 `start-yeonjang-windows.bat --restart` 후 다시 시도해 주세요.",
-            ].join("\n"),
+            code,
+            output,
             details: {
                 via: "yeonjang",
                 stopAfterFailure: true,
-                failureKind: "path_bug",
-            },
-        };
-    }
-    if (/(응답 시간이 초과되었습니다|연결 시간이 초과되었습니다|timed out|timeout)/i.test(message)) {
-        return {
-            code: "YEONJANG_SCREEN_CAPTURE_TIMEOUT",
-            output: [
-                "연장의 화면 캡처가 제한 시간 안에 끝나지 않았습니다.",
-                "Windows Yeonjang을 다시 시작한 뒤 다시 시도해 주세요.",
-            ].join("\n"),
-            details: {
-                via: "yeonjang",
-                stopAfterFailure: true,
-                failureKind: "timeout",
+                failureKind: terminalStage === "rejected" ? "remote_rejected" : "remote_failure",
+                reasonCode: code,
+                ...(terminalStage === "response_timeout"
+                    || terminalStage === "handler_timeout"
+                    || terminalStage === "helper_timeout"
+                    || terminalStage === "handler_failed"
+                    || terminalStage === "cancelled"
+                    || terminalStage === "rejected"
+                    ? { terminalStage }
+                    : {}),
+                ...(retrySafety === "safe_same_command"
+                    || retrySafety === "change_strategy"
+                    || retrySafety === "unknown_effect_state"
+                    || retrySafety === "completed"
+                    ? { retrySafety }
+                    : {}),
+                failure: {
+                    reasonCode: code,
+                    retrySameStrategy: false,
+                    ...(terminalStage === "response_timeout"
+                        || terminalStage === "handler_timeout"
+                        || terminalStage === "helper_timeout"
+                        || terminalStage === "handler_failed"
+                        || terminalStage === "cancelled"
+                        || terminalStage === "rejected"
+                        ? { terminalStage }
+                        : {}),
+                    ...(retrySafety === "safe_same_command"
+                        || retrySafety === "change_strategy"
+                        || retrySafety === "unknown_effect_state"
+                        || retrySafety === "completed"
+                        ? { retrySafety }
+                        : {}),
+                },
             },
         };
     }
@@ -148,6 +191,15 @@ export function classifyYeonjangScreenCaptureFailure(message) {
             via: "yeonjang",
             stopAfterFailure: true,
             failureKind: "remote_failure",
+            reasonCode: "yeonjang_screen_capture_remote_failure",
+            terminalStage: "handler_failed",
+            retrySafety: "unknown_effect_state",
+            failure: {
+                reasonCode: "yeonjang_screen_capture_remote_failure",
+                retrySameStrategy: false,
+                terminalStage: "handler_failed",
+                retrySafety: "unknown_effect_state",
+            },
         },
     };
 }

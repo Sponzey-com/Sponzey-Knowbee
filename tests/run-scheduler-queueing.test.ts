@@ -68,4 +68,30 @@ describe("scheduler queueing", () => {
     expect(hasScheduleExecutionQueue("schedule-1")).toBe(false)
     expect(listScheduleExecutionQueueIds()).not.toContain("schedule-1")
   })
+
+  it("redacts schedule queue task failure payloads", async () => {
+    const rawToken = "sk-scheduler-secret-1234567890"
+    const rawPath = "/Users/example/private/schedule.log"
+    const dependencies = {
+      logInfo: vi.fn(),
+      logWarn: vi.fn(),
+      logError: vi.fn(),
+    }
+
+    const result = enqueueScheduleExecution({
+      scheduleId: "schedule-redaction",
+      scheduleName: "오류 일정",
+      trigger: "manual",
+      task: async () => {
+        throw new Error(`schedule queue failed token=${rawToken} path=${rawPath}`)
+      },
+    }, dependencies)
+
+    await expect(result).rejects.toThrow("schedule queue failed")
+    const payload = JSON.stringify(dependencies.logError.mock.calls)
+    expect(payload).not.toContain(rawToken)
+    expect(payload).not.toContain(rawPath)
+    expect(payload).toContain("***")
+    expect(payload).toContain("[internal-path-redacted]")
+  })
 })

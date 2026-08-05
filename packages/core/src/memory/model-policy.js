@@ -1,4 +1,3 @@
-import { getConfig } from "../config/index.js";
 function safeResolveContextTokens(provider, modelId) {
     try {
         const resolved = provider.maxContextTokens(modelId);
@@ -15,10 +14,9 @@ function normalizeModelId(value) {
     return trimmed ? trimmed : undefined;
 }
 export function resolveMemoryCompactionPolicy(input) {
-    const config = getConfig();
-    const explicitModelId = normalizeModelId(config.memory.compaction?.modelId);
-    const fallbackModelId = normalizeModelId(config.memory.compaction?.fallbackModelId);
-    const minContextTokens = Math.max(512, Math.floor(config.memory.compaction?.minContextTokens ?? 3000));
+    const explicitModelId = normalizeModelId(input.memoryConfig?.compaction?.modelId);
+    const fallbackModelId = normalizeModelId(input.memoryConfig?.compaction?.fallbackModelId);
+    const minContextTokens = Math.max(512, Math.floor(input.memoryConfig?.compaction?.minContextTokens ?? 3000));
     const selectedModelId = explicitModelId ?? input.executionModelId;
     const selectionSource = explicitModelId
         ? "explicit_override"

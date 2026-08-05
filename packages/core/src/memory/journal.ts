@@ -1,13 +1,22 @@
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
 import BetterSqlite3 from "better-sqlite3"
-import { PATHS } from "../config/index.js"
+import type { RuntimePaths } from "../config/paths.js"
+import { loadPromptValue } from "./prompt-fragments.js"
 
 const MAX_STORED_CONTENT_CHARS = 4_000
 const MAX_SUMMARY_CHARS = 320
 const ERROR_LINE_PATTERN = /(error|failed?|exception|invalid|timeout|timed out|not found|permission|unauthorized|forbidden|refused|disconnect|offline|denied|cannot|unable|권한|실패|오류|예외|끊김|중단|거부|찾을 수 없|시간 초과|연결)/i
+const MEMORY_RESTORE_PROMPT_CONTEXT_LABELS_SOURCE_ID = "memory_restore_prompt_context_labels_user"
 
-let _memoryDb: BetterSqlite3.Database | null = null
+function memoryRestorePromptContextLabel(key: string): string {
+  const value = loadPromptValue(MEMORY_RESTORE_PROMPT_CONTEXT_LABELS_SOURCE_ID, {}, { required: true })
+    .split(/\r?\n/u)
+    .find((line) => line.startsWith(`${key}=`))
+    ?.slice(key.length + 1)
+    .trim()
+  return value ?? key
+}
 
 export type MemoryJournalKind = "instruction" | "success" | "failure" | "response"
 export type MemoryJournalScope = "global" | "session" | "task"
@@ -41,15 +50,44 @@ export interface MemoryJournalRecordInput {
   tags?: string[]
 }
 
-function getMemoryJournalDb(): BetterSqlite3.Database {
-  if (_memoryDb) return _memoryDb
+export interface MemoryJournalStorageDependencies {
+  makeDirectory(path: string): void
+  openDatabase(path: string): BetterSqlite3.Database
+}
 
-  mkdirSync(dirname(PATHS.memoryDbFile), { recursive: true })
-  _memoryDb = new BetterSqlite3(PATHS.memoryDbFile)
-  _memoryDb.pragma("journal_mode = WAL")
-  _memoryDb.pragma("synchronous = NORMAL")
-  _memoryDb.pragma("foreign_keys = ON")
-  _memoryDb.exec(`
+export interface MemoryJournalRepository {
+  readonly memoryDbFile: string
+  insert(input: MemoryJournalRecordInput): string
+  search(query: string, options?: MemoryJournalSearchOptions): MemoryJournalRecord[]
+  buildContext(query: string, options?: MemoryJournalContextOptions): string
+  close(): void
+}
+
+export interface MemoryJournalSearchOptions {
+  limit?: number
+  kinds?: MemoryJournalKind[]
+  sessionId?: string
+  requestGroupId?: string
+  runId?: string
+}
+
+export interface MemoryJournalContextOptions {
+  limit?: number
+  sessionId?: string
+  requestGroupId?: string
+  runId?: string
+}
+
+export const NODE_MEMORY_JOURNAL_STORAGE: MemoryJournalStorageDependencies = Object.freeze({
+  makeDirectory: (path: string) => { mkdirSync(path, { recursive: true }) },
+  openDatabase: (path: string) => new BetterSqlite3(path),
+})
+
+function initializeMemoryJournalDb(db: BetterSqlite3.Database): void {
+  db.pragma("journal_mode = WAL")
+  db.pragma("synchronous = NORMAL")
+  db.pragma("foreign_keys = ON")
+  db.exec(`
     CREATE TABLE IF NOT EXISTS memory_records (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
@@ -76,11 +114,11 @@ function getMemoryJournalDb(): BetterSqlite3.Database {
       USING fts5(title, content, summary, tags, content='memory_records', content_rowid='rowid');
   `)
 
-  const columns = _memoryDb.prepare(`PRAGMA table_info(memory_records)`).all() as Array<{ name: string }>
+  const columns = db.prepare(`PRAGMA table_info(memory_records)`).all() as Array<{ name: string }>
   if (!columns.some((column) => column.name === "scope")) {
-    _memoryDb.exec(`ALTER TABLE memory_records ADD COLUMN scope TEXT DEFAULT 'session'`)
+    db.exec(`ALTER TABLE memory_records ADD COLUMN scope TEXT DEFAULT 'session'`)
   }
-  _memoryDb.exec(`
+  db.exec(`
     UPDATE memory_records
     SET scope = CASE
       WHEN session_id IS NULL OR session_id = '' THEN 'global'
@@ -90,12 +128,6 @@ function getMemoryJournalDb(): BetterSqlite3.Database {
     WHERE scope IS NULL OR scope = ''
   `)
 
-  return _memoryDb
-}
-
-export function closeMemoryJournalDb(): void {
-  _memoryDb?.close()
-  _memoryDb = null
 }
 
 function normalizeWhitespace(text: string): string {
@@ -154,8 +186,10 @@ function defaultTitle(kind: MemoryJournalKind, summary: string): string {
   return condensed ? `${prefix}: ${condensed}` : prefix
 }
 
-export function insertMemoryJournalRecord(input: MemoryJournalRecordInput): string {
-  const db = getMemoryJournalDb()
+function insertMemoryJournalRecordWithDb(
+  db: BetterSqlite3.Database,
+  input: MemoryJournalRecordInput,
+): string {
   const id = crypto.randomUUID()
   const now = Date.now()
   const content = buildStoredContent(input.content)
@@ -166,32 +200,34 @@ export function insertMemoryJournalRecord(input: MemoryJournalRecordInput): stri
   const title = input.title?.trim() || defaultTitle(input.kind, summary)
   const tags = JSON.stringify(input.tags ?? [])
 
-  db.prepare(
-    `INSERT INTO memory_records
-      (id, kind, scope, session_id, run_id, request_group_id, title, content, summary, tags, source, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    input.kind,
-    input.scope ?? (input.runId ? "task" : input.sessionId ? "session" : "global"),
-    input.sessionId ?? null,
-    input.runId ?? null,
-    input.requestGroupId ?? null,
-    title,
-    content,
-    summary,
-    tags,
-    input.source ?? "knowbee",
-    now,
-    now,
-  )
+  db.transaction(() => {
+    db.prepare(
+      `INSERT INTO memory_records
+        (id, kind, scope, session_id, run_id, request_group_id, title, content, summary, tags, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      input.kind,
+      input.scope ?? (input.runId ? "task" : input.sessionId ? "session" : "global"),
+      input.sessionId ?? null,
+      input.runId ?? null,
+      input.requestGroupId ?? null,
+      title,
+      content,
+      summary,
+      tags,
+      input.source ?? "knowbee",
+      now,
+      now,
+    )
 
-  db.prepare(
-    `INSERT INTO memory_records_fts(rowid, title, content, summary, tags)
-     SELECT rowid, title, content, summary, tags
-     FROM memory_records
-     WHERE id = ?`,
-  ).run(id)
+    db.prepare(
+      `INSERT INTO memory_records_fts(rowid, title, content, summary, tags)
+       SELECT rowid, title, content, summary, tags
+       FROM memory_records
+       WHERE id = ?`,
+    ).run(id)
+  })()
 
   return id
 }
@@ -220,15 +256,10 @@ function buildFtsQuery(query: string): string {
   return condensed ? condensed.split(/\s+/).map((token) => `${token}*`).join(" OR ") : ""
 }
 
-export function searchMemoryJournal(
+function searchMemoryJournalWithDb(
+  db: BetterSqlite3.Database,
   query: string,
-  options?: {
-    limit?: number
-    kinds?: MemoryJournalKind[]
-    sessionId?: string
-    requestGroupId?: string
-    runId?: string
-  },
+  options?: MemoryJournalSearchOptions,
 ): MemoryJournalRecord[] {
   try {
     const ftsQuery = buildFtsQuery(query)
@@ -236,7 +267,6 @@ export function searchMemoryJournal(
 
     const limit = options?.limit ?? 6
     const kinds = options?.kinds ?? []
-    const db = getMemoryJournalDb()
     const whereKind = kinds.length > 0 ? `AND m.kind IN (${kinds.map(() => "?").join(", ")})` : ""
     const scopeClauses = [`m.scope = 'global'`]
     const scopeValues: string[] = []
@@ -284,14 +314,13 @@ function kindLabel(kind: MemoryJournalKind): string {
   }
 }
 
-export function buildMemoryJournalContext(query: string, options?: {
-  limit?: number
-  sessionId?: string
-  requestGroupId?: string
-  runId?: string
-}): string {
+function buildMemoryJournalContextWithDb(
+  db: BetterSqlite3.Database,
+  query: string,
+  options?: MemoryJournalContextOptions,
+): string {
   try {
-    const records = searchMemoryJournal(query, {
+    const records = searchMemoryJournalWithDb(db, query, {
       limit: options?.limit ?? 6,
       kinds: ["instruction", "failure", "success", "response"],
       ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
@@ -301,8 +330,66 @@ export function buildMemoryJournalContext(query: string, options?: {
     if (!records.length) return ""
 
     const lines = records.map((record) => `- [${kindLabel(record.kind)}] ${record.summary}`)
-    return `[Execution Reference Memory]\n${lines.join("\n")}`
+    return `${memoryRestorePromptContextLabel("execution_reference_memory_header")}\n${lines.join("\n")}`
   } catch {
     return ""
   }
+}
+
+export function createMemoryJournalRepository(
+  paths: Pick<RuntimePaths, "memoryDbFile">,
+  dependencies: MemoryJournalStorageDependencies = NODE_MEMORY_JOURNAL_STORAGE,
+): MemoryJournalRepository {
+  const memoryDbFile = paths.memoryDbFile
+  let db: BetterSqlite3.Database | null = null
+
+  const database = (): BetterSqlite3.Database => {
+    if (db) return db
+    dependencies.makeDirectory(dirname(memoryDbFile))
+    const opened = dependencies.openDatabase(memoryDbFile)
+    try {
+      initializeMemoryJournalDb(opened)
+      db = opened
+      return opened
+    } catch (error) {
+      opened.close()
+      throw error
+    }
+  }
+
+  return Object.freeze({
+    memoryDbFile,
+    insert: (input: MemoryJournalRecordInput) => insertMemoryJournalRecordWithDb(database(), input),
+    search: (query: string, options?: MemoryJournalSearchOptions) =>
+      searchMemoryJournalWithDb(database(), query, options),
+    buildContext: (query: string, options?: MemoryJournalContextOptions) =>
+      buildMemoryJournalContextWithDb(database(), query, options),
+    close: () => {
+      db?.close()
+      db = null
+    },
+  })
+}
+
+export function insertMemoryJournalRecord(
+  input: MemoryJournalRecordInput,
+  repository: MemoryJournalRepository,
+): string {
+  return repository.insert(input)
+}
+
+export function searchMemoryJournal(
+  query: string,
+  options: MemoryJournalSearchOptions | undefined,
+  repository: MemoryJournalRepository,
+): MemoryJournalRecord[] {
+  return repository.search(query, options)
+}
+
+export function buildMemoryJournalContext(
+  query: string,
+  options: MemoryJournalContextOptions | undefined,
+  repository: MemoryJournalRepository,
+): string {
+  return repository.buildContext(query, options)
 }

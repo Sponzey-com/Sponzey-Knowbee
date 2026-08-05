@@ -3,6 +3,7 @@ import { createElement } from "../packages/webui/node_modules/react/index.js"
 import { renderToStaticMarkup } from "../packages/webui/node_modules/react-dom/server.js"
 import { afterEach, describe, expect, it } from "vitest"
 import { createCapabilities } from "../packages/core/src/control-plane/index.ts"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.js"
 import { FeatureGate } from "../packages/webui/src/components/FeatureGate.tsx"
 import {
   EnterpriseTopologyCanvasShell,
@@ -16,8 +17,6 @@ import {
   resolveModeSwitchRoute,
 } from "../packages/webui/src/lib/ui-mode.js"
 import { useCapabilitiesStore } from "../packages/webui/src/stores/capabilities"
-
-const previousEnterpriseBuilderFlag = process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
 
 function capability(status: FeatureCapability["status"]): FeatureCapability {
   return {
@@ -33,17 +32,12 @@ function capability(status: FeatureCapability["status"]): FeatureCapability {
 
 afterEach(() => {
   useCapabilitiesStore.getState().setItems([])
-  if (previousEnterpriseBuilderFlag === undefined) {
-    delete process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]
-  } else {
-    process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = previousEnterpriseBuilderFlag
-  }
 })
 
 describe("task016 enterprise topology UI shell", () => {
   it("unifies Runtime Resource Topology and Enterprise Builder behind the Topology workspace route", () => {
     const nav = getUiNavigation("advanced", false)
-    const topologyNav = nav.find((item) => item.path === "/sub-agents")
+    const topologyNav = nav.find((item) => item.path === "/agents")
     const oldBuilderNav = nav.find((item) => item.path === "/advanced/enterprise-topology")
     const inventory = getUiRouteInventory()
     const workspaceRoute = inventory.find((item) => item.path === "/advanced/topology")
@@ -55,22 +49,27 @@ describe("task016 enterprise topology UI shell", () => {
     }))
     expect(oldBuilderNav).toBeUndefined()
     expect(workspaceRoute).toEqual(expect.objectContaining({
-      component: "TopologyWorkspacePage",
-      apiCalls: expect.arrayContaining(["/api/topologies", "/api/agent-topology"]),
+      component: "UnifiedRouteRedirect",
+      apiCalls: [],
+      status: "redirect",
+      replacementPath: "/agents",
     }))
     expect(builderAlias).toEqual(expect.objectContaining({
-      component: "Navigate",
-      status: "compatibility",
-      replacementPath: "/advanced/topology?mode=build",
+      component: "UnifiedRouteRedirect",
+      status: "redirect",
+      replacementPath: "/agents",
     }))
-    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/sub-agents")
-    expect(resolveModeSwitchRoute("/advanced/enterprise-topology", "beginner")).toBe("/sub-agents")
+    expect(resolveLegacyAdvancedRoute("/enterprise-topology")).toBe("/agents")
+    expect(resolveModeSwitchRoute("/advanced/enterprise-topology", "beginner")).toBe("/agents")
   })
 
-  it("keeps the Enterprise Builder route behind its feature gate", () => {
-    process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"] = "off"
+  it("keeps the standalone capability gate while legacy routes redirect to the canonical workspace", () => {
     useCapabilitiesStore.getState().setItems([capability("disabled")])
-    const apiCapability = createCapabilities().find((item) => item.key === "enterprise_topology_builder_ui")
+    const apiCapability = createCapabilities({
+      enterpriseTopologyBuilderEnabled: false,
+      config: DEFAULT_CONFIG,
+    })
+      .find((item) => item.key === "enterprise_topology_builder_ui")
 
     const html = renderToStaticMarkup(
       createElement(
@@ -86,9 +85,9 @@ describe("task016 enterprise topology UI shell", () => {
       enabled: false,
     }))
     expect(appSource).toContain('path="/advanced/topology"')
-    expect(appSource).toContain('capabilityKey="enterprise_topology_builder_ui"')
+    expect(appSource).toContain('<UnifiedRouteRedirect fallback="/agents" />')
     expect(html).toContain("Enterprise Topology Builder")
-    expect(html).toContain("기능 플래그")
+    expect(html).toContain("기능 상태를 확인할 수 없습니다")
     expect(html).not.toContain("builder route content")
   })
 
@@ -127,12 +126,37 @@ describe("task016 enterprise topology UI shell", () => {
     expect(html).not.toContain('data-testid="topology-advanced-import-export"')
   })
 
-  it("keeps the existing TopologyPage scoped to runtime resources", () => {
+  it("keeps the existing TopologyPage scoped to user-facing sub-agent composition copy", () => {
     const source = readFileSync(new URL("../packages/webui/src/pages/TopologyPage.tsx", import.meta.url), "utf-8")
 
     expect(source).toContain("api.agentTopology")
-    expect(source).toContain("Runtime Resource Topology")
-    expect(source).toContain("Agent와 Team의 실행 리소스")
+    expect(source).toContain("서브 에이전트 구성")
+    expect(source).toContain("서브 에이전트와 팀의 위임 구조")
+    expect(source).toContain("서브 에이전트 이름")
+    expect(source).toContain("서브 에이전트 또는 팀을 선택하세요.")
+    expect(source).toContain("구성 저장")
+    expect(source).toContain("연결 정보")
+    expect(source).toContain("메인 에이전트는 삭제할 수 없습니다.")
+    expect(source).toContain("이 서브 에이전트를 아카이브할까요?")
+    expect(source).toContain("팀 구성은 선택한 서브 에이전트 또는 팀 설정에서 관리합니다.")
+    expect(source).not.toContain("Runtime Resource Topology")
+    expect(source).not.toContain("Agent와 Team의 실행 리소스")
+    expect(source).not.toContain('text("에이전트 이름"')
+    expect(source).not.toContain('text("에이전트 추가"')
+    expect(source).not.toContain("Layout 저장")
+    expect(source).not.toContain("Connection Inspector")
+    expect(source).not.toContain("Agent Inspector")
+    expect(source).not.toContain("Team Inspector")
+    expect(source).not.toContain("별칭")
+    expect(source).not.toContain("Nickname")
+    expect(source).not.toContain("대화 표시 이름")
+    expect(source).not.toContain("Conversation name")
+    expect(source).not.toContain("노드를 선택하세요.")
+    expect(source).not.toContain("노드 이름이 필요합니다.")
+    expect(source).not.toContain("메인 노비 노드")
+    expect(source).not.toContain("팀 노드")
+    expect(source).not.toContain("서브 에이전트 노드")
+    expect(source).not.toContain("선택한 노드의 설정")
     expect(source).not.toContain("EnterpriseTopologyCanvas")
   })
 })

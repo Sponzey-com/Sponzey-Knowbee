@@ -150,8 +150,12 @@ describe("task008 topology workspace run strip", () => {
 
   it("shows trace handoff CTA and recent run mini history after a run", () => {
     const latestRun = runRecord()
+    const topology = buildTopologyWorkspaceStarterDraft("tool-assisted-flow", { now })
+    const entryNode = topology.nodes.find((node) => node.id === latestRun.entryNodeId)
+    const entryNodeLabel = entryNode?.displayName ?? entryNode?.name ?? "서브 에이전트 실행"
     const html = renderToStaticMarkup(
       createElement(TopologyRunStrip, {
+        topology,
         templates: WORK_ORDER_TEMPLATE_CATALOG.templates,
         selectedTemplateId: template.templateId,
         selectedContextPresetId: template.contextPresets[0]!.id,
@@ -173,6 +177,7 @@ describe("task008 topology workspace run strip", () => {
     expect(html).toContain("기록 보기")
     expect(html).toContain('data-testid="topology-run-history"')
     expect(html).toContain('data-testid="topology-run-history-item"')
-    expect(html).toContain("node:tool-assisted-work")
+    expect(html).toContain(entryNodeLabel)
+    expect(html).not.toContain("node:tool-assisted-work")
   })
 })

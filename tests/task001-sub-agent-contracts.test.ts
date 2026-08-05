@@ -19,8 +19,8 @@ import {
 
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 
-function owner(ownerId = "agent:knowbee"): RuntimeIdentity["owner"] {
-  return { ownerType: "knowbee", ownerId }
+function owner(ownerId = "agent:knowbee", ownerType: RuntimeIdentity["owner"]["ownerType"] = "knowbee"): RuntimeIdentity["owner"] {
+  return { ownerType, ownerId }
 }
 
 function identity(entityType: RuntimeIdentity["entityType"], entityId: string): RuntimeIdentity {
@@ -66,12 +66,23 @@ const memoryPolicy: MemoryPolicy = {
   writebackReviewRequired: true,
 }
 
+function agentMemoryPolicy(agentId: string, ownerType: RuntimeIdentity["owner"]["ownerType"]): MemoryPolicy {
+  const scopedOwner = owner(agentId, ownerType)
+  return {
+    owner: scopedOwner,
+    visibility: "private",
+    readScopes: [scopedOwner],
+    writeScope: scopedOwner,
+    retentionPolicy: "long_term",
+    writebackReviewRequired: true,
+  }
+}
+
 const knowbeeConfig: KnowbeeAgentConfig = {
   schemaVersion: CONTRACT_SCHEMA_VERSION,
   agentType: "knowbee",
   agentId: "agent:knowbee",
-  displayName: "Knowbee",
-  nickname: "Knowbee",
+  agentName: "Knowbee",
   status: "enabled",
   role: "coordinator",
   personality: "Pragmatic coordinator",
@@ -97,10 +108,10 @@ const subAgentConfig: SubAgentConfig = {
   ...knowbeeConfig,
   agentType: "sub_agent",
   agentId: "agent:researcher",
-  displayName: "Researcher",
-  nickname: "Researcher",
+  agentName: "Researcher",
   role: "research worker",
   specialtyTags: ["research"],
+  memoryPolicy: agentMemoryPolicy("agent:researcher", "sub_agent"),
   teamIds: ["team:research"],
   delegation: {
     enabled: true,
@@ -115,7 +126,6 @@ function teamConfig(): TeamConfig {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     teamId: "team:research",
     displayName: "Research Team",
-    nickname: "Research",
     status: "enabled",
     purpose: "Research and evidence collection",
     memberAgentIds: ["agent:researcher"],
@@ -189,11 +199,10 @@ function promptBundle(): AgentPromptBundle {
     agentId: "agent:researcher",
     agentType: "sub_agent",
     role: "research worker",
-    displayNameSnapshot: "Researcher",
-    nicknameSnapshot: "Researcher",
+    agentNameSnapshot: "Researcher",
     personalitySnapshot: "Precise and evidence first",
     teamContext: [{ teamId: "team:research", displayName: "Research Team", roleHint: "research" }],
-    memoryPolicy,
+    memoryPolicy: agentMemoryPolicy("agent:researcher", "sub_agent"),
     capabilityPolicy: {
       permissionProfile,
       skillMcpAllowlist: allowlist,
@@ -212,8 +221,11 @@ function promptBundle(): AgentPromptBundle {
 describe("task001 sub-agent orchestration contracts", () => {
   it("defines and validates Knowbee and sub-agent config contracts", () => {
     expect(SUB_AGENT_CONTRACT_SCHEMA_VERSION).toBe(CONTRACT_SCHEMA_VERSION)
-    expect(validateAgentConfig(knowbeeConfig).ok).toBe(true)
-    expect(validateAgentConfig(subAgentConfig).ok).toBe(true)
+    const knowbeeValidation = validateAgentConfig(knowbeeConfig)
+    const subAgentValidation = validateAgentConfig(subAgentConfig)
+
+    expect(knowbeeValidation.ok, JSON.stringify(knowbeeValidation.issues, null, 2)).toBe(true)
+    expect(subAgentValidation.ok, JSON.stringify(subAgentValidation.issues, null, 2)).toBe(true)
   })
 
   it("rejects agent-only fields on the wrong entity type", () => {
@@ -242,6 +254,16 @@ describe("task001 sub-agent orchestration contracts", () => {
     }
   })
 
+  it("accepts canonical team contracts and rejects legacy naming aliases", () => {
+    const team = teamConfig()
+    const result = validateTeamConfig(team)
+
+    expect(result.ok).toBe(true)
+    expect(team).not.toHaveProperty("nickname")
+    expect(validateTeamConfig({ ...team, nickname: "Research" }).ok).toBe(false)
+    expect(validateTeamConfig({ ...team, normalizedNickname: "research" }).ok).toBe(false)
+  })
+
   it("validates OrchestrationPlan with direct tasks, delegated tasks, locks, dependencies, and fallback", () => {
     const plan = validateOrchestrationPlan(orchestrationPlan())
     expect(plan.ok).toBe(true)
@@ -258,8 +280,68 @@ describe("task001 sub-agent orchestration contracts", () => {
     expect(validation.ok).toBe(true)
     if (validation.ok) {
       expect(validation.value.identity.idempotencyKey).toBeTruthy()
-      expect(validation.value.memoryPolicy.owner.ownerId).toBe("agent:knowbee")
+      expect(validation.value.memoryPolicy.owner.ownerId).toBe("agent:researcher")
       expect(validation.value.safetyRules.join(" ")).toContain("private memory")
+    }
+  })
+
+  it("rejects sub-agent configs that directly use another agent memory owner", () => {
+    const validation = validateAgentConfig({
+      ...subAgentConfig,
+      memoryPolicy,
+    })
+
+    expect(validation.ok).toBe(false)
+    if (!validation.ok) {
+      expect(validation.issues).toContainEqual({
+        path: "$.memoryPolicy.owner",
+        code: "contract_validation_failed",
+        message: "memoryPolicy.owner must match the agent owner scope.",
+      })
+    }
+  })
+
+  it("rejects memory policies that directly read or write another agent owner scope", () => {
+    const writer = owner("agent:writer", "sub_agent")
+    const validation = validateAgentConfig({
+      ...subAgentConfig,
+      memoryPolicy: {
+        ...agentMemoryPolicy("agent:researcher", "sub_agent"),
+        readScopes: [writer],
+        writeScope: writer,
+      },
+    })
+
+    expect(validation.ok).toBe(false)
+    if (!validation.ok) {
+      expect(validation.issues).toEqual(expect.arrayContaining([
+        {
+          path: "$.memoryPolicy.readScopes[0]",
+          code: "contract_validation_failed",
+          message: "memoryPolicy.readScopes must include only the agent owner scope.",
+        },
+        {
+          path: "$.memoryPolicy.writeScope",
+          code: "contract_validation_failed",
+          message: "memoryPolicy.writeScope must match the agent owner scope.",
+        },
+      ]))
+    }
+  })
+
+  it("rejects prompt bundles that directly use another agent memory owner", () => {
+    const validation = validateAgentPromptBundle({
+      ...promptBundle(),
+      memoryPolicy,
+    })
+
+    expect(validation.ok).toBe(false)
+    if (!validation.ok) {
+      expect(validation.issues).toContainEqual({
+        path: "$.memoryPolicy.owner",
+        code: "contract_validation_failed",
+        message: "memoryPolicy.owner must match the agent owner scope.",
+      })
     }
   })
 

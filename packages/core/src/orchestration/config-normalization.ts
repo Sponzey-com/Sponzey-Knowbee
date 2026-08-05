@@ -1,5 +1,6 @@
 import { normalizeSkillMcpAllowlist } from "../security/capability-isolation.js"
-import { normalizeNickname, type TeamMembershipStatus } from "../contracts/sub-agent-orchestration.js"
+import { normalizeAgentName, type TeamMembershipStatus } from "../contracts/sub-agent-orchestration.js"
+import { canonicalizeLegacyTeamIdentity } from "../adapters/legacy-team-identity.js"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value)
@@ -36,16 +37,29 @@ function normalizeMembershipStatus(value: unknown, fallback: TeamMembershipStatu
 
 export function normalizeLegacyAgentConfigRow(value: unknown): unknown {
   if (!isRecord(value)) return value
+  const normalizedValue: Record<string, unknown> = { ...value }
+  delete normalizedValue.displayName
+  delete normalizedValue.display_name
+  delete normalizedValue.nameForDisplay
+  delete normalizedValue.nickname
+  delete normalizedValue.normalizedNickname
+
   const capabilityPolicy = isRecord(value.capabilityPolicy) ? value.capabilityPolicy : {}
   const permissionProfile = isRecord(capabilityPolicy.permissionProfile) ? capabilityPolicy.permissionProfile : {}
   const allowlist = normalizeSkillMcpAllowlist(
     isRecord(capabilityPolicy.skillMcpAllowlist) ? capabilityPolicy.skillMcpAllowlist : {},
   )
-  const nickname = asString(value.nickname)
+  const legacyAgentName =
+    asString(value.agentName) ??
+    asString(value.nickname) ??
+    asString(value.displayName) ??
+    asString(value.display_name) ??
+    asString(value.nameForDisplay)
   const delegation = isRecord(value.delegation) ? value.delegation : {}
   const coordinator = isRecord(value.coordinator) ? value.coordinator : {}
   const modelProfile = isRecord(value.modelProfile) ? value.modelProfile : {}
-  const normalizedNickname = asString(value.normalizedNickname) ?? (nickname ? normalizeNickname(nickname) : undefined)
+  const normalizedAgentName =
+    asString(value.normalizedAgentName) ?? (legacyAgentName ? normalizeAgentName(legacyAgentName) : undefined)
   const delegationPolicy = isRecord(value.delegationPolicy)
     ? value.delegationPolicy
     : {
@@ -53,8 +67,9 @@ export function normalizeLegacyAgentConfigRow(value: unknown): unknown {
         maxParallelSessions: asNumber(delegation.maxParallelSessions) ?? asNumber(coordinator.maxDelegatedSubSessions) ?? 1,
       }
   return {
-    ...value,
-    ...(normalizedNickname ? { normalizedNickname } : {}),
+    ...normalizedValue,
+    ...(legacyAgentName ? { agentName: legacyAgentName } : {}),
+    ...(normalizedAgentName ? { normalizedAgentName } : {}),
     specialtyTags: asStringArray(value.specialtyTags),
     avoidTasks: asStringArray(value.avoidTasks),
     teamIds: asStringArray(value.teamIds),
@@ -82,8 +97,9 @@ export function normalizeLegacyAgentConfigRow(value: unknown): unknown {
 
 export function normalizeLegacyTeamConfigRow(value: unknown): unknown {
   if (!isRecord(value)) return value
-  const memberAgentIds = asStringArray(value.memberAgentIds)
-  const roleHints = asStringArray(value.roleHints)
+  const canonical = canonicalizeLegacyTeamIdentity(value)
+  const memberAgentIds = asStringArray(canonical.memberAgentIds)
+  const roleHints = asStringArray(canonical.roleHints)
   const memberships = Array.isArray(value.memberships)
     ? value.memberships
         .filter(isRecord)
@@ -123,10 +139,8 @@ export function normalizeLegacyTeamConfigRow(value: unknown): unknown {
   ]))
   const memberCountMin = asNumber(value.memberCountMin) ?? memberships.filter((membership) => membership.required).length
   const memberCountMax = asNumber(value.memberCountMax) ?? Math.max(memberCountMin, memberships.length)
-  const nickname = asString(value.nickname)
   return {
-    ...value,
-    ...(nickname ? { normalizedNickname: asString(value.normalizedNickname) ?? normalizeNickname(nickname) } : {}),
+    ...canonical,
     ownerAgentId,
     leadAgentId,
     memberCountMin,

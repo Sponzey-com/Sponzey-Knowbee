@@ -11,7 +11,6 @@ import {
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js"
 import type { AgentTool, ToolContext, ToolResult } from "../types.js"
 import { getMqttExtensionSnapshots } from "../../mqtt/broker.js"
-import { PATHS } from "../../config/index.js"
 import { withYeonjangRequestMetadata } from "./yeonjang-request-metadata.js"
 import {
   buildYeonjangBroadcastAggregateSummary,
@@ -29,6 +28,8 @@ import {
   statArtifactSize,
 } from "./ui/yeonjang-screen-shared.js"
 import { buildYeonjangTargetSelectorSchemaProperty, type YeonjangTargetSelector } from "../../contracts/yeonjang-target.js"
+import { toolUserFacingErrorMessage } from "./error-redaction.js"
+import { hashApprovalParams } from "../../runs/approval-registry.js"
 
 interface YeonjangBroadcastRunParams {
   toolName: YeonjangBroadcastToolName
@@ -36,6 +37,33 @@ interface YeonjangBroadcastRunParams {
   targetSelector: YeonjangTargetSelector
   broadcastIntent: YeonjangBroadcastIntent
   retryReceipt?: YeonjangBroadcastRetryReceipt
+}
+
+function validateBroadcastAuthorization(
+  params: YeonjangBroadcastRunParams,
+  ctx: ToolContext,
+): ToolResult | undefined {
+  const receipt = ctx.authorizationReceipt
+  const requestGroupId = ctx.requestGroupId ?? ctx.runId
+  if (
+    !receipt
+    || receipt.toolName !== "yeonjang_broadcast_run"
+    || receipt.runId !== ctx.runId
+    || receipt.requestGroupId !== requestGroupId
+    || receipt.paramsHash !== hashApprovalParams(params as unknown as Record<string, unknown>)
+    || (receipt.approvalDecision !== "allow_once" && receipt.approvalDecision !== "allow_run")
+  ) {
+    return {
+      success: false,
+      output: "연장 전체 실행에 필요한 현재 요청의 승인을 확인하지 못했습니다.",
+      error: "YEONJANG_BROADCAST_AUTHORIZATION_REQUIRED",
+      details: {
+        kind: "yeonjang_broadcast_authorization_denied",
+        reasonCode: "missing_or_scope_mismatched_authorization_receipt",
+      },
+    }
+  }
+  return undefined
 }
 
 function sanitizeFileName(value: string): string {
@@ -105,7 +133,7 @@ async function executeBroadcastScreenCapture(
     }
   }
 
-  const rootDir = join(PATHS.stateDir, "artifacts", "yeonjang", "broadcast")
+  const rootDir = join(ctx.artifactStorage.rootDir, "yeonjang", "broadcast")
   const executionRecords: YeonjangBroadcastTargetExecutionRecord[] = []
   recordBroadcastLedgerEvent({
     ctx,
@@ -223,12 +251,12 @@ async function executeBroadcastScreenCapture(
           extensionId: target.extensionId,
           sessionId: target.sessionId,
         },
-      })
+      }, ctx.artifactStorage)
       const artifact = buildArtifactAccessDescriptor({
         filePath: artifactPath,
         mimeType: remote.mime_type ?? "image/png",
         sizeBytes,
-      })
+      }, ctx.artifactStorage)
       executionRecords.push({
         status: "succeeded",
         broadcastIndex: target.broadcastIndex,
@@ -258,8 +286,8 @@ async function executeBroadcastScreenCapture(
         },
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      const classified = classifyYeonjangScreenCaptureFailure(message)
+      const message = toolUserFacingErrorMessage(error)
+      const classified = classifyYeonjangScreenCaptureFailure(error, message)
       executionRecords.push({
         status: "failed",
         broadcastIndex: target.broadcastIndex,
@@ -322,6 +350,9 @@ async function executeBroadcastScreenCapture(
 }
 
 export const yeonjangBroadcastRunTool: AgentTool<YeonjangBroadcastRunParams> = {
+  evidenceSourceKind: "yeonjang",
+  runtimeHealthMode: "required",
+  runtimeMethodIds: ["screen.capture", "mouse.action", "keyboard.action", "system.exec"],
   name: "yeonjang_broadcast_run",
   description: "명시적 broadcast intent가 있을 때 같은 Yeonjang 작업을 여러 인스턴스에 fan-out 하고 결과를 취합합니다.",
   parameters: {
@@ -343,9 +374,12 @@ export const yeonjangBroadcastRunTool: AgentTool<YeonjangBroadcastRunParams> = {
     },
     required: ["toolName", "targetSelector", "broadcastIntent"],
   },
-  riskLevel: "safe",
-  requiresApproval: false,
+  riskLevel: "moderate",
+  requiresApproval: true,
   async execute(params, ctx): Promise<ToolResult> {
+    const authorizationFailure = validateBroadcastAuthorization(params, ctx)
+    if (authorizationFailure) return authorizationFailure
+
     const policy = getYeonjangBroadcastPolicy(params.toolName)
     if (policy.defaultDecision === "deny") {
       return {
@@ -363,7 +397,7 @@ export const yeonjangBroadcastRunTool: AgentTool<YeonjangBroadcastRunParams> = {
     if (params.toolName !== "screen_capture") {
       return {
         success: false,
-        output: `${params.toolName} broadcast는 아직 구현되지 않았습니다. task004 baseline에서는 screen_capture만 fan-out 실행합니다.`,
+        output: `${params.toolName} broadcast는 현재 사용할 수 없습니다. 지금은 screen_capture만 전체 실행을 지원합니다.`,
         error: "YEONJANG_BROADCAST_NOT_IMPLEMENTED",
         details: {
           kind: "yeonjang_broadcast_not_implemented",

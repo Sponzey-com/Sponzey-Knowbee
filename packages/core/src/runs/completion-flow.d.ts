@@ -1,4 +1,5 @@
 import type { CompletionReviewResult } from "../agent/completion-review.js";
+import type { UserInputRequirement } from "../contracts/user-input-requirement.js";
 import type { TaskExecutionSemantics } from "../agent/intake.js";
 import { type SuccessfulToolEvidence } from "./recovery.js";
 export type CompletionFlowDecision = {
@@ -22,6 +23,11 @@ export type CompletionFlowDecision = {
     reason: string;
     remainingItems: string[];
     followupPrompt: string;
+    followupEvidenceRefs: string[];
+    evidenceRevisionRefs?: string[];
+    followupExecutionMode?: "tool" | "response_only";
+    followupRequiredToolNames?: string[];
+    followupTargetRefs?: string[];
 } | {
     kind: "retry_truncated";
     summary: string;
@@ -33,9 +39,16 @@ export type CompletionFlowDecision = {
     reason?: string;
     remainingItems?: string[];
     userMessage?: string;
+    inputRequirement: UserInputRequirement;
+} | {
+    kind: "blocked";
+    summary: string;
+    reason: string;
+    remainingItems: string[];
 };
 export declare function decideCompletionFlow(params: {
     review: CompletionReviewResult | null;
+    reviewFailureReasonCode?: "completion_review_provider_failed" | "completion_review_contract_invalid";
     executionSemantics: TaskExecutionSemantics;
     preview: string;
     deliverySatisfied: boolean;

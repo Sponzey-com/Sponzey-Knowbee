@@ -1,4 +1,5 @@
 import type { AIProvider } from "../ai/types.js";
+import type { MemoryConfig } from "../config/types.js";
 export type MemoryCompactionModelSource = "explicit_override" | "fallback_override" | "execution_model";
 export type MemoryCompactionModelAttemptStatus = "selected" | "provider_budget_blocked" | "provider_call_failed" | "invalid_json" | "skipped_duplicate";
 export interface MemoryCompactionModelAttempt {
@@ -39,6 +40,7 @@ export interface ResolvedMemoryCompactionPolicy {
 export declare function resolveMemoryCompactionPolicy(input: {
     provider: AIProvider;
     executionModelId: string;
+    memoryConfig?: MemoryConfig;
 }): ResolvedMemoryCompactionPolicy;
 export declare function buildDefaultMemoryCompactionAudit(input: {
     executionModelId: string;

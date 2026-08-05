@@ -1,3 +1,4 @@
+import { redactLogText } from "../logger/index.js";
 import { createNodeRuntimeTraceEvent, } from "./trace.js";
 export async function dispatchPlannedNodeTools(input) {
     const now = input.now ?? Date.now;
@@ -191,8 +192,12 @@ function reasonCodeForExecutionStatus(status, input) {
     if (status === "timeout")
         return "tool_execution_timeout";
     if (status === "denied")
-        return input.result?.error ?? "tool_execution_denied";
-    return input.result?.error ?? (input.thrown instanceof Error ? input.thrown.message : "tool_execution_error");
+        return input.result?.error ? redactLogText(input.result.error) : "tool_execution_denied";
+    return input.result?.error
+        ? redactLogText(input.result.error)
+        : input.thrown instanceof Error
+            ? redactLogText(input.thrown.message)
+            : "tool_execution_error";
 }
 function isDeniedToolResult(result) {
     if (result?.success !== false)

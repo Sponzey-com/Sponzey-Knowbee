@@ -11,6 +11,7 @@ export const LATENCY_BUDGET_MS = {
     sub_session_spawn_ack_ms: 300,
     sub_session_queue_wait_ms: 500,
     first_progress_latency_ms: 3_000,
+    first_response_latency_ms: 30_000,
     model_execution_latency_ms: 5_000,
     monitoring_snapshot_latency_ms: 1_000,
     approval_aggregation_latency_ms: 1_000,

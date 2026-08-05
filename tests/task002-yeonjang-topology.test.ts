@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
 import type { MqttExtensionSnapshot } from "../packages/core/src/mqtt/broker.ts"
 import {
@@ -11,18 +10,17 @@ import {
   resolveYeonjangDefaultTargetSelection,
 } from "../packages/core/src/yeonjang/topology.ts"
 import { upsertYeonjangRegistryObservation } from "../packages/core/src/yeonjang/registry.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task002-yeonjang-topology-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task002-yeonjang-topology-"))
+  tempDirs.push(rootDir)
+  const runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function stableHexHash(value: string): string {
@@ -65,11 +63,21 @@ function seedObservation(overrides: Partial<Parameters<typeof upsertYeonjangRegi
     protocolVersion: overrides.protocolVersion ?? "2026-04-16.capability-matrix.v1",
     capabilityHash: overrides.capabilityHash ?? "cap-local-1",
     transport: overrides.transport ?? ["mqtt-json"],
-    permissions: overrides.permissions ?? { allow_screen_capture: true, allow_shell_exec: true },
-    toolHealth: overrides.toolHealth ?? { "screen.capture": { status: "ready" } },
-    capabilityMatrix: overrides.capabilityMatrix ?? {
-      "screen.capture": { supported: true, requiresPermission: true, permissionSetting: "allow_screen_capture" },
-    },
+    permissions: Object.hasOwn(overrides, "permissions")
+      ? overrides.permissions ?? null
+      : { allow_screen_capture: true, allow_shell_exec: true },
+    toolHealth: Object.hasOwn(overrides, "toolHealth")
+      ? overrides.toolHealth ?? null
+      : { "screen.capture": { status: "ready" } },
+    capabilityMatrix: Object.hasOwn(overrides, "capabilityMatrix")
+      ? overrides.capabilityMatrix ?? null
+      : {
+          "screen.capture": {
+            supported: true,
+            requiresPermission: true,
+            permissionSetting: "allow_screen_capture",
+          },
+        },
     methodCount: overrides.methodCount ?? 1,
     startupMode: overrides.startupMode ?? "manual",
     windowMode: overrides.windowMode ?? "visible",
@@ -86,11 +94,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -300,6 +303,79 @@ describe("task002 yeonjang topology projection", () => {
       status: "auto_selected_pinned_remote",
       extensionId: "yeonjang-remote-only",
       instanceId: "inst-remote-only",
+    }))
+  })
+
+  it("does not duplicate a persisted v2 instance when its MQTT extension id differs from the registry node id", () => {
+    const now = Date.now()
+    expect(seedObservation({
+      instanceId: "instance-v2",
+      nodeId: "yeonjang-main",
+      sessionId: "session-v2",
+      protocolVersion: "2",
+      permissions: { allow_camera_access: false },
+      observedAt: now,
+    })).toEqual(expect.objectContaining({ ok: true }))
+
+    const snapshots: MqttExtensionSnapshot[] = [{
+      extensionId: "instance-v2",
+      clientId: "client-v2",
+      displayName: "Yeonjang v2",
+      instanceId: "instance-v2",
+      instanceAlias: "local-box",
+      nodeId: "instance-v2",
+      supportProfile: "desktop_interactive",
+      state: "online",
+      message: "mqtt_v2_capabilities_verified",
+      version: "0.3.0",
+      protocolVersion: "2",
+      platform: "macos",
+      os: "macos",
+      arch: "arm64",
+      methods: ["camera.capture"],
+      sessionId: "session-v2",
+      transport: ["mqtt_v2"],
+      lastSeenAt: now,
+    }]
+
+    const projection = buildYeonjangFleetProjection({ snapshots, now })
+
+    expect(projection.instances).toHaveLength(1)
+    expect(projection.instances[0]).toEqual(expect.objectContaining({
+      instanceId: "instance-v2",
+      nodeId: "yeonjang-main",
+      protocolVersion: "2",
+      supportedMethods: ["camera.capture"],
+      trustState: "trusted",
+      scopeAccess: "allowed",
+    }))
+  })
+
+  it("auto-selects the only trusted runnable local instance when optional health metadata is incomplete", () => {
+    const now = Date.now()
+    expect(seedObservation({
+      permissions: null,
+      toolHealth: null,
+      capabilityMatrix: null,
+      observedAt: now,
+    })).toEqual(expect.objectContaining({ ok: true }))
+
+    const projection = buildYeonjangFleetProjection({ now })
+    expect(projection.instances).toEqual([
+      expect.objectContaining({
+        state: "degraded",
+        trustState: "trusted",
+        scopeAccess: "allowed",
+        runnableTarget: true,
+        runnableReasonCodes: [],
+        defaultTargetEligible: true,
+      }),
+    ])
+    expect(projection.summary.defaultTarget).toEqual(expect.objectContaining({
+      ok: true,
+      status: "auto_selected_local_interactive",
+      extensionId: "yeonjang-main",
+      instanceId: "inst-local-1",
     }))
   })
 

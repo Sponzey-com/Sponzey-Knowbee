@@ -1,15 +1,32 @@
+import { DEFAULT_MAIN_AGENT_NAME_KO } from "../agent/main-agent-identity.js";
 import { decideSubSessionCompletionIntegration } from "../agent/sub-agent-result-review.js";
+import { isExternalChannelProvider } from "../channels/contracts.js";
 import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
-import { normalizeNicknameSnapshot, validateNamedDeliveryEvent, validateUserVisibleAgentMessage, } from "../contracts/sub-agent-orchestration.js";
+import { normalizeAgentNameSnapshot, validateNamedDeliveryEvent, validateUserVisibleAgentMessage, } from "../contracts/sub-agent-orchestration.js";
+import { projectUserFacingAgentMessage } from "../contracts/user-facing-agent-identity.js";
 import { listMessageLedgerEvents } from "../db/index.js";
 import { recordOrchestrationEvent } from "../orchestration/event-ledger.js";
 import { emitAssistantTextDelivery, resolveAssistantTextDeliveryOutcome, } from "./delivery.js";
-import { hashLedgerValue, recordMessageLedgerEvent } from "./message-ledger.js";
-const KNOWBEE_SPEAKER = {
+import { buildFinalAnswerNotice } from "./final-answer-notice.js";
+import { hashLedgerValue, messageLedgerEventHasRequiredDeliveryEvidence, recordMessageLedgerEvent, } from "./message-ledger.js";
+import { authorizePersistedUserFacingResponse, authorizeUserFacingResponse, } from "./user-facing-response-gate.js";
+import { sanitizeCompletionAwaitingUserText } from "./completion-application.js";
+const FALLBACK_KNOWBEE_ATTRIBUTION_SOURCE = {
     entityType: "knowbee",
     entityId: "agent:knowbee",
-    nicknameSnapshot: "노비",
+    agentName: DEFAULT_MAIN_AGENT_NAME_KO,
+    agentNameSnapshot: DEFAULT_MAIN_AGENT_NAME_KO,
 };
+function knowbeeAttributionSource(rootAgentNameSnapshot) {
+    const agentNameSnapshot = normalizeAgentNameSnapshot(rootAgentNameSnapshot ?? "");
+    const agentName = agentNameSnapshot || FALLBACK_KNOWBEE_ATTRIBUTION_SOURCE.agentNameSnapshot;
+    return {
+        entityType: "knowbee",
+        entityId: "agent:knowbee",
+        agentName,
+        agentNameSnapshot: agentName,
+    };
+}
 function finalDeliveryTargetKey(input) {
     return `${input.parentRunId}:${input.source}:${hashLedgerValue(input.sessionId).slice(0, 16)}`;
 }
@@ -19,11 +36,21 @@ function finalDeliveryKey(input) {
 function finalDeliveryIdempotencyKey(input) {
     return `final-delivery:${finalDeliveryTargetKey(input)}`;
 }
-function normalizeSpeaker(speaker) {
-    if (!speaker)
-        return KNOWBEE_SPEAKER;
-    const nicknameSnapshot = normalizeNicknameSnapshot(speaker.nicknameSnapshot);
-    return nicknameSnapshot ? { ...speaker, nicknameSnapshot } : KNOWBEE_SPEAKER;
+function normalizeAttributionSource(source, rootAgentNameSnapshot) {
+    const agentNameSnapshot = normalizeAgentNameSnapshot(source.agentName ?? source.agentNameSnapshot);
+    return agentNameSnapshot
+        ? {
+            entityType: source.entityType,
+            entityId: source.entityId,
+            agentName: agentNameSnapshot,
+            agentNameSnapshot,
+        }
+        : knowbeeAttributionSource(rootAgentNameSnapshot);
+}
+function normalizeOptionalAttributionSource(source, rootAgentNameSnapshot) {
+    return source
+        ? normalizeAttributionSource(source, rootAgentNameSnapshot)
+        : knowbeeAttributionSource(rootAgentNameSnapshot);
 }
 function recordOrchestrationEventSafely(input) {
     try {
@@ -59,14 +86,14 @@ function outputSummary(report) {
         return JSON.stringify(first).slice(0, 240);
     return report.status;
 }
-export function buildFinalDeliveryAttributions(resultReports = []) {
+export function buildFinalDeliveryAttributions(resultReports = [], rootAgentNameSnapshot) {
     const attributions = [];
     const seen = new Set();
     for (const report of resultReports) {
         if (!report.source)
             continue;
-        const source = normalizeSpeaker(report.source);
-        const key = `${report.resultReportId}:${source.entityId}:${source.nicknameSnapshot}`;
+        const source = normalizeAttributionSource(report.source, rootAgentNameSnapshot);
+        const key = `${report.resultReportId}:${source.entityId}:${source.agentNameSnapshot}`;
         if (seen.has(key))
             continue;
         seen.add(key);
@@ -81,10 +108,13 @@ export function buildFinalDeliveryAttributions(resultReports = []) {
 }
 export function buildKnowbeeFinalAnswer(input) {
     const text = input.text.trim();
-    const attributions = buildFinalDeliveryAttributions(input.resultReports);
+    const attributions = buildFinalDeliveryAttributions(input.resultReports, input.rootAgentNameSnapshot);
     if (attributions.length === 0)
         return { text, attributions };
-    const lines = attributions.map((item) => `- ${item.source.nicknameSnapshot}: ${item.summary}`);
+    const lines = attributions.map((item) => {
+        const agentName = item.source.agentName ?? item.source.agentNameSnapshot;
+        return `- ${agentName}: ${item.summary}`;
+    });
     return {
         text: [text, `참고한 서브 에이전트 결과:\n${lines.join("\n")}`].filter(Boolean).join("\n\n"),
         attributions,
@@ -96,7 +126,8 @@ export function findCommittedFinalDelivery(parentRunId, options = {}) {
         : undefined;
     return listMessageLedgerEvents({ runId: parentRunId, limit: 1000 }).find((event) => event.delivery_key === (scopedDeliveryKey ?? event.delivery_key) &&
         event.event_kind === "final_answer_delivered" &&
-        eventSucceeded(event));
+        eventSucceeded(event) &&
+        messageLedgerEventHasRequiredDeliveryEvidence(event));
 }
 function blockingApprovalReasonCodes(approvals) {
     const blocking = approvals.filter((approval) => approval.status === "requested" ||
@@ -137,10 +168,17 @@ function commitBlocked(input) {
     };
 }
 export async function commitFinalDelivery(input) {
-    const speaker = normalizeSpeaker(input.speaker);
+    const speaker = normalizeOptionalAttributionSource(input.speaker, input.rootAgentNameSnapshot);
     const answer = buildKnowbeeFinalAnswer({
         text: input.text,
         ...(input.resultReports ? { resultReports: input.resultReports } : {}),
+        ...(input.rootAgentNameSnapshot
+            ? { rootAgentNameSnapshot: input.rootAgentNameSnapshot }
+            : {}),
+    });
+    const finalAnswerNotice = buildFinalAnswerNotice({
+        speaker,
+        attributionCount: answer.attributions.length,
     });
     const deliveryKey = finalDeliveryKey({
         parentRunId: input.parentRunId,
@@ -155,6 +193,53 @@ export async function commitFinalDelivery(input) {
     const reasonCodes = [];
     if (!answer.text.trim())
         reasonCodes.push("final_answer_empty");
+    if (!input.responseReview) {
+        reasonCodes.push("final_llm_review_receipt_required");
+    }
+    else {
+        const review = input.responseReview;
+        const responseAuthorization = "rawText" in review
+            ? authorizeUserFacingResponse({
+                rawText: review.rawText,
+                responseText: input.text,
+                rawTextSource: review.rawTextSource,
+                contentKind: review.contentKind,
+                expectedLanguage: review.expectedLanguage,
+                receipt: review.receipt,
+            })
+            : authorizePersistedUserFacingResponse({
+                rawTextSha256: review.rawTextSha256,
+                responseText: input.text,
+                rawTextSource: review.rawTextSource,
+                contentKind: review.contentKind,
+                expectedLanguage: review.expectedLanguage,
+                receipt: review.receipt,
+            });
+        if (!responseAuthorization.ok) {
+            reasonCodes.push(`final_llm_${responseAuthorization.reasonCode ?? "review_receipt_missing"}`);
+        }
+    }
+    if ((input.resultReports?.length ?? 0) > 0) {
+        const aggregate = input.resultReviewAggregate;
+        if (!aggregate) {
+            reasonCodes.push("result_review_aggregate_required");
+        }
+        else {
+            const missingReportRefs = input.resultReports
+                ?.map((report) => `report:${report.resultReportId}`)
+                .filter((reference) => !aggregate.sourceRefs.includes(reference)) ?? [];
+            if (missingReportRefs.length > 0)
+                reasonCodes.push("result_review_aggregate_source_mismatch");
+            if (aggregate.nextAction === "redelegate" || aggregate.nextAction === "verify_more") {
+                reasonCodes.push(`result_review_action_pending:${aggregate.nextAction}`);
+            }
+            if (!aggregate.finalizationEligible
+                && aggregate.nextAction !== "report_partial"
+                && aggregate.nextAction !== "terminate") {
+                reasonCodes.push("result_review_aggregate_not_deliverable");
+            }
+        }
+    }
     const integration = input.reviews
         ? decideSubSessionCompletionIntegration([...input.reviews])
         : undefined;
@@ -241,17 +326,21 @@ export async function commitFinalDelivery(input) {
             speaker,
         });
     }
+    const publicMessage = projectUserFacingAgentMessage(visibleValidation.value);
+    const deliveryText = sanitizeCompletionAwaitingUserText(publicMessage.text);
     recordMessageLedgerEvent({
         runId: input.parentRunId,
         sessionKey: input.sessionId,
         channel: input.source,
         eventKind: "final_answer_generated",
         deliveryKind: "final",
+        ...(input.monotonicNow ? { monotonicNow: input.monotonicNow } : {}),
         deliveryKey,
         idempotencyKey: `final-answer:${input.parentRunId}:${input.source}:${hashLedgerValue(input.sessionId).slice(0, 16)}`,
         status: "generated",
         summary: "parent finalizer가 최종 응답을 생성했습니다.",
         detail: {
+            finalAnswerNotice,
             textLength: answer.text.length,
             speaker,
             sourceAttributions: answer.attributions,
@@ -261,12 +350,15 @@ export async function commitFinalDelivery(input) {
     const receipt = await emitAssistantTextDelivery({
         runId: input.parentRunId,
         sessionId: input.sessionId,
-        text: answer.text,
+        text: deliveryText,
         source: input.source,
         onChunk: input.onChunk,
         deliveryKind: "final",
         speaker,
         sourceAttributions: answer.attributions,
+        ...(input.cancellationReportAuthorization
+            ? { cancellationReportAuthorization: input.cancellationReportAuthorization }
+            : {}),
         ...(input.onDeliveryError ? { onError: input.onDeliveryError } : {}),
         ...(input.deliveryDependencies ? { dependencies: input.deliveryDependencies } : {}),
     });
@@ -278,7 +370,9 @@ export async function commitFinalDelivery(input) {
             deliveryKey,
             text: answer.text,
             attributions: answer.attributions,
-            reasonCodes: [`delivery_${deliveryOutcome.failureStage}_failed`],
+            reasonCodes: [
+                deliveryOutcome.reasonCode ?? `delivery_${deliveryOutcome.failureStage}_failed`,
+            ],
             deliveryOutcome,
         };
     }
@@ -293,9 +387,11 @@ export async function commitFinalDelivery(input) {
         status: "delivered",
         summary: "parent finalizer가 최종 응답을 한 번 전달했습니다.",
         detail: {
+            finalAnswerNotice,
             speaker,
             sourceAttributions: answer.attributions,
             textLength: answer.text.length,
+            providerEvidence: isExternalChannelProvider(input.source) ? "confirmed" : "not_required",
         },
     });
     recordOrchestrationEventSafely({
@@ -340,6 +436,7 @@ export async function commitFinalDelivery(input) {
         attributions: answer.attributions,
         reasonCodes: ["final_delivery_committed"],
         deliveryOutcome,
+        deliveryReceipt: receipt,
     };
 }
 export function buildNamedResultDeliveryEvent(input) {
@@ -353,8 +450,8 @@ export function buildNamedResultDeliveryEvent(input) {
         deliveryId: `named-delivery:${input.resultReportId}`,
         parentRunId: input.parentRunId,
         deliveryKind: "result_report",
-        sender: normalizeSpeaker(input.sender),
-        recipient: normalizeSpeaker(input.recipient),
+        sender: normalizeAttributionSource(input.sender),
+        recipient: normalizeAttributionSource(input.recipient),
         summary: input.summary,
         resultReportId: input.resultReportId,
         createdAt: Date.now(),
@@ -366,7 +463,9 @@ export function buildNamedResultDeliveryEvent(input) {
     return event;
 }
 export function recordApprovalAggregation(input) {
-    const speaker = normalizeSpeaker(input.speaker);
+    const speaker = input.speaker
+        ? normalizeAttributionSource(input.speaker)
+        : knowbeeAttributionSource();
     const pendingApprovalIds = input.approvals
         .filter((approval) => approval.status === "requested")
         .map((approval) => approval.approvalId);
@@ -382,7 +481,7 @@ export function recordApprovalAggregation(input) {
         approval.status === "consumed")
         .map((approval) => approval.approvalId);
     const text = [
-        `${speaker.nicknameSnapshot} 승인 요청 요약`,
+        `${speaker.agentNameSnapshot} 승인 요청 요약`,
         ...input.approvals.map((approval) => `- ${approval.approvalId}: ${approval.status}${approval.summary ? ` - ${approval.summary}` : ""}`),
     ].join("\n");
     const eventId = recordMessageLedgerEvent({
@@ -432,7 +531,9 @@ export function listPendingFinalizers(input = {}) {
         limit: input.limit ?? 1000,
     });
     const deliveredKeys = new Set(events
-        .filter((event) => event.event_kind === "final_answer_delivered" && eventSucceeded(event))
+        .filter((event) => event.event_kind === "final_answer_delivered" &&
+        eventSucceeded(event) &&
+        messageLedgerEventHasRequiredDeliveryEvidence(event))
         .map((event) => event.delivery_key)
         .filter((value) => Boolean(value)));
     return events

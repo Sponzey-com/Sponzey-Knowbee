@@ -5,7 +5,7 @@
 - date: `2026-05-18`
 - decision:
   - `.tasks/phase031/plan.md` remains the source of truth for the memory compaction feature design.
-  - `.tasks/plan.md` remains the source of truth for governance, persistence hardening, retention, and backup policy.
+  - `.tasks/phase002/plan.md` remains the source of truth for governance, persistence hardening, retention, and backup policy.
 - reason:
   - feature design and operational governance were diverging in scope and should not overwrite each other.
 

@@ -2,6 +2,10 @@
 
 This file covers only user-facing responses and error presentation.
 
+## Purpose
+
+Own user-visible presentation structure for errors, artifacts, sub-agent attribution, and concise formatting after final response rendering has selected the user-facing language.
+
 ---
 
 ## Error Presentation
@@ -23,16 +27,20 @@ This file covers only user-facing responses and error presentation.
 
 ## Sub-Agent Presentation
 
-- User-facing progress reports, result summaries, and review opinions use the nickname snapshot of the agent that produced the result.
+- User-facing progress reports, result summaries, and review opinions use the `agent_name` snapshot of the agent that produced the result.
 - Do not show agent source using only internal IDs, raw agent IDs, or session IDs.
-- When Knowbee includes sub-agent results in the final answer, attribute each result to the producing nickname in one short phrase or sentence.
-- Do not forward intermediate sub-agent output as a final answer. Show it only after Knowbee or the ParentAgent reviews and synthesizes it.
-- Do not present Team output as if the Team itself spoke. Attribute it to the TeamLead, owner, or member nicknames.
+- When the MainAgent includes sub-agent results in the final answer, attribute each result to the producing `agent_name` in one short phrase or sentence.
+- Do not forward intermediate sub-agent output as a final answer. Show it only after the MainAgent or ParentAgent reviews and synthesizes it.
+- Do not present Team output as if the Team itself spoke. Attribute it to the TeamLead, owner, or member `agent_name`.
 
 ---
 
 ## Language And Format
 
-- Preserve the user's request language.
+- Follow `final_response.md` for response language selection.
 - Do not describe unfinished work as completed.
 - Do not attach long internal analysis logs to user-facing replies.
+
+## Out Of Scope
+
+- This module does not own final natural-language answer generation, answer language selection, raw prompt-source disclosure policy, request diagnosis, result diagnosis, execution routing, or recovery strategy.

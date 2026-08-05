@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { closeDb, getDb } from "../packages/core/src/db/index.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import type { RuntimePaths } from "../packages/core/src/config/paths.ts"
+import { closeDb, getDb } from "../packages/core/src/db/index.js"
 import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
 import { buildReleaseManifest } from "../packages/core/src/release/package.ts"
 import {
@@ -13,8 +14,7 @@ import {
 } from "../packages/core/src/runs/web-retrieval-smoke.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
+let runtimePaths: RuntimePaths
 
 function tempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -54,20 +54,15 @@ function createReleaseRoot(): string {
 
 beforeEach(() => {
   closeDb()
-  const stateDir = tempDir("knowbee-task008-state-")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
-  reloadConfig()
-  getDb()
+  const runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir: tempDir("knowbee-task008-state-"),
+  })
+  runtimePaths = runtimeFixture.paths
+  getDb({ paths: runtimeFixture.paths })
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -75,7 +70,7 @@ afterEach(() => {
 })
 
 describe("task008 release gate summary", () => {
-  it("includes retrieval policy, adapter checksum, fixture regression, and warning-only live smoke absence", () => {
+  it("includes the evidence contract, fixture regression, and warning-only live smoke absence", () => {
     const rootDir = createReleaseRoot()
     const sourceFixtures = loadWebRetrievalFixturesFromDir(join(process.cwd(), "tests", "fixtures", "web-retrieval"))
     mkdirSync(join(rootDir, "tests", "fixtures", "web-retrieval"), { recursive: true })
@@ -88,10 +83,10 @@ describe("task008 release gate summary", () => {
       gitCommit: "abc1234",
       targetPlatforms: ["macos"],
       now: new Date("2026-04-18T00:00:00.000Z"),
+      runtimePaths,
     })
 
-    expect(manifest.webRetrievalEvidence.policyVersion).toContain("task009")
-    expect(manifest.webRetrievalEvidence.sourceAdapters.adapters[0]).toEqual(expect.objectContaining({ checksum: expect.any(String), parserVersion: expect.any(String) }))
+    expect(manifest.webRetrievalEvidence.policyVersion).toBe("web-evidence-llm-diagnosis-v2")
     expect(manifest.webRetrievalEvidence.fixtureRegression?.status).toBe("passed")
     expect(manifest.webRetrievalEvidence.gateStatus).toBe("warning")
     expect(manifest.webRetrievalEvidence.warnings).toContain("live_smoke_not_run")
@@ -109,6 +104,6 @@ describe("task008 release gate summary", () => {
     const gate = buildWebRetrievalReleaseGateSummary({ fixtureRegression: regression, liveSmoke: null })
 
     expect(gate.gateStatus).toBe("failed")
-    expect(gate.blockingFailures.join("\n")).toContain("early_stop_before_minimum_ladder")
+    expect(gate.blockingFailures.join("\n")).toContain("minimum_attempts_not_met")
   })
 })

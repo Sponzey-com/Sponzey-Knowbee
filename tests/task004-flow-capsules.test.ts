@@ -58,7 +58,7 @@ function command(): CommandRequest {
     parentRunId: "run:task004",
     subSessionId: "sub:task004",
     targetAgentId: "agent:researcher",
-    targetNicknameSnapshot: "Res",
+    targetAgentNameSnapshot: "Res",
     taskScope,
     contextPackageIds: ["exchange:ctx-1", "artifact:screen-1"],
     expectedOutputs: [expectedOutput],

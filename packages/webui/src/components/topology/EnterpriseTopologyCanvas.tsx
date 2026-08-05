@@ -272,8 +272,8 @@ function TopologyWorkspaceSimpleCreatePanel({
       </div>
       <div className="mt-1 text-xs leading-5 text-stone-500">
         {text(
-          "서브 에이전트를 추가하고 연결하면 내부 구조는 노비가 정리합니다.",
-          "Add executors and connect them; Knowbee organizes the internal structure.",
+          "서브 에이전트를 추가하고 연결하면 내부 구조는 메인 에이전트가 정리합니다.",
+          "Add sub-agents and connect them; the main agent organizes the internal structure.",
         )}
       </div>
       <div className="mt-4 grid gap-2">
@@ -612,7 +612,7 @@ export function EnterpriseTopologyCanvasShell({
             className="border-b border-stone-200 bg-stone-50 px-4 py-2 text-xs font-medium text-stone-600"
             data-testid="topology-simple-relation-policy"
           >
-            {text("연결 의미는 노비가 자동으로 추천합니다.", "Knowbee recommends connection meaning automatically.")}
+            {text("연결 의미는 메인 에이전트가 자동으로 추천합니다.", "The main agent recommends connection meaning automatically.")}
           </div>
         )}
         <div className="min-h-0 flex-1">
@@ -677,12 +677,12 @@ export function EnterpriseTopologyCanvasShell({
         {showAdvancedSurface ? (
           <section className="rounded-lg border border-stone-200 bg-white p-4" data-testid="topology-run-target-panel">
             <div className="text-sm font-semibold text-stone-950">
-              {text("Run Target", "Run Target")}
+              {text("실행 시작점", "Run start point")}
             </div>
             <div className="mt-1 text-xs text-stone-500">
               {selectedData?.entityType === "node"
                 ? selectedData.entityId
-                : text("업무 node를 선택합니다.", "Select a work node.")}
+                : text("업무 항목을 선택합니다.", "Select a work item.")}
             </div>
             <button
               type="button"
@@ -693,12 +693,12 @@ export function EnterpriseTopologyCanvasShell({
               className="mt-3 h-9 w-full rounded-lg bg-stone-900 px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
               data-testid="topology-run-target-select"
             >
-              {text("선택 node를 Entry로 지정", "Set selected node as entry")}
+              {text("선택 항목을 시작점으로 지정", "Set selected item as start point")}
             </button>
           </section>
         ) : null}
 
-        <TopologyRunTraceOverlay overlay={traceOverlay} />
+        <TopologyRunTraceOverlay overlay={traceOverlay} topology={topology} />
 
         {showAdvancedSurface ? (
           <TopologyCompilePreview preview={compilePreview} loading={compilePreviewLoading} />

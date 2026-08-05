@@ -1,11 +1,15 @@
+import { loadPromptTemplate } from "../memory/knowbee-md.js";
 export function detectSyntheticApprovalRequest(params) {
     if (!params.preview.trim() && params.review?.status !== "ask_user")
         return null;
-    if (params.successfulTools.length > 0 || params.successfulFileDeliveries.length > 0 || params.sawRealFilesystemMutation) {
+    if (params.successfulFileDeliveries.length > 0 || params.sawRealFilesystemMutation) {
+        return null;
+    }
+    if (params.requiresPrivilegedToolExecution) {
         return null;
     }
     const reviewExplicitlyNeedsApproval = params.review?.status === "ask_user";
-    const privilegedRequestNeedsApproval = params.executionProfile.approvalRequired || params.requiresPrivilegedToolExecution;
+    const privilegedRequestNeedsApproval = params.executionProfile.approvalRequired;
     if (!reviewExplicitlyNeedsApproval && !privilegedRequestNeedsApproval)
         return null;
     if (!params.usesWorkerRuntime && !params.requiresPrivilegedToolExecution)
@@ -48,6 +52,18 @@ export function describeSyntheticApprovalDenial(toolName, reason) {
     };
 }
 export async function requestSyntheticApproval(params, dependencies) {
+    if (params.signal.aborted) {
+        const denial = describeSyntheticApprovalDenial(params.toolName, "abort");
+        dependencies.setRunStepStatus(params.runId, "awaiting_approval", "cancelled", denial.stepSummary);
+        dependencies.cancelRun(params.runId, denial);
+        dependencies.emitApprovalResolved({
+            runId: params.runId,
+            decision: "deny",
+            toolName: params.toolName,
+            reason: "abort",
+        });
+        return "deny";
+    }
     dependencies.appendRunEvent(params.runId, `${params.toolName} 승인 요청`);
     dependencies.setRunStepStatus(params.runId, "reviewing", "completed", params.summary);
     dependencies.setRunStepStatus(params.runId, "awaiting_approval", "running", params.summary);
@@ -85,6 +101,15 @@ export async function requestSyntheticApproval(params, dependencies) {
                 return;
             resolved = true;
             clearTimeout(timeout);
+            const denial = describeSyntheticApprovalDenial(params.toolName, "abort");
+            dependencies.setRunStepStatus(params.runId, "awaiting_approval", "cancelled", denial.stepSummary);
+            dependencies.cancelRun(params.runId, denial);
+            dependencies.emitApprovalResolved({
+                runId: params.runId,
+                decision: "deny",
+                toolName: params.toolName,
+                reason: "abort",
+            });
             resolve("deny");
         }, { once: true });
         dependencies.emitApprovalRequest({
@@ -114,17 +139,14 @@ export async function requestSyntheticApproval(params, dependencies) {
     });
 }
 function buildSyntheticApprovalContinuationPrompt(params) {
-    return [
-        "[Approval Granted Continuation]",
-        "사용자가 앞서 요청된 로컬 작업을 승인했습니다.",
-        `원래 사용자 요청: ${params.originalRequest}`,
-        `이전 승인 요청 응답: ${params.preview}`,
-        "이제 실제 작업을 계속 진행하세요.",
-        "같은 권한 요청을 다시 반복하지 마세요.",
-        `승인 대상 작업: ${params.toolName}`,
-        "설명이나 수동 해결 방법을 다시 제시하지 말고, 사용 가능한 Knowbee/Yeonjang 도구를 이용해 승인된 작업을 실제로 수행하고 마무리하세요.",
-        "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요. 사용자가 번역을 요청하지 않았다면 언어를 바꾸지 마세요.",
-    ].join("\n\n");
+    return loadPromptTemplate({
+        sourceId: "approval_granted_continuation_user",
+        variables: {
+            originalRequest: params.originalRequest,
+            approvalPreview: params.preview,
+            toolName: params.toolName,
+        },
+    });
 }
 function extractSyntheticApprovalGuidance(preview) {
     const trimmed = preview.trim();

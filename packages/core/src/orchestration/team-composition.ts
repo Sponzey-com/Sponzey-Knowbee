@@ -12,7 +12,11 @@ import {
   CAPABILITY_RISK_ORDER,
   normalizeSkillMcpAllowlist,
 } from "../security/capability-isolation.js"
-import { createAgentHierarchyService } from "./hierarchy.js"
+import {
+  type AgentHierarchyConfigSnapshot,
+  type AgentHierarchyStorage,
+  createAgentHierarchyService,
+} from "./hierarchy.js"
 import {
   type AgentRegistryEntry,
   type RegistryServiceDependencies,
@@ -114,6 +118,8 @@ export interface TeamCompositionValidationResult {
 }
 
 export interface TeamCompositionServiceDependencies extends RegistryServiceDependencies {
+  config: AgentHierarchyConfigSnapshot
+  storage: AgentHierarchyStorage
   now?: () => number
 }
 
@@ -335,12 +341,13 @@ function healthFromCoverage(coverage: TeamCoverageReport): TeamHealthReport {
 }
 
 export function createTeamCompositionService(
-  dependencies: TeamCompositionServiceDependencies = {},
+  dependencies: TeamCompositionServiceDependencies,
 ) {
+  const config = dependencies.config
   const now = () => dependencies.now?.() ?? Date.now()
-  const agentRegistry = () => createAgentRegistryService(dependencies)
-  const teamRegistry = () => createTeamRegistryService(dependencies)
-  const hierarchy = () => createAgentHierarchyService(dependencies)
+  const agentRegistry = () => createAgentRegistryService({ ...dependencies, config })
+  const teamRegistry = () => createTeamRegistryService({ ...dependencies, config })
+  const hierarchy = () => createAgentHierarchyService({ ...dependencies, config })
 
   function agentSummaries(): Map<string, AgentCompositionSummary> {
     const result = new Map<string, AgentCompositionSummary>()

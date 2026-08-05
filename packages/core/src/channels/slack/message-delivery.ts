@@ -4,6 +4,7 @@ import {
   type ChannelTarget,
   type DeliveryReceipt,
 } from "../contracts.js"
+import { redactLogText } from "../../logger/index.js"
 
 export interface SlackDeliveryTarget {
   channelId: string
@@ -17,6 +18,11 @@ export interface SlackDeliveryReceiptParams {
   fileId?: string
   providerResponse?: unknown
   timestamp?: number | undefined
+}
+
+function slackDeliveryErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
 }
 
 export interface SlackTextPartsDeliveryResult {
@@ -121,11 +127,11 @@ export function buildSlackFailedDeliveryReceipt(params: {
       idempotencyKey: params.idempotencyKey,
       retryAfterMs: params.error.retryAfterMs,
       errorCode: "slack_rate_limited",
-      errorMessage: params.error.message,
+      errorMessage: slackDeliveryErrorMessage(params.error),
     }
   }
 
-  const message = params.error instanceof Error ? params.error.message : String(params.error)
+  const message = slackDeliveryErrorMessage(params.error)
   return {
     channelId: "slack:workspace",
     provider: "slack",

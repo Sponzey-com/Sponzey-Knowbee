@@ -3,6 +3,7 @@ import { type DbChannelConnectionHealthStatus } from "../db/index.js";
 import { type RuntimeFeatureFlag } from "../runtime/rollout-safety.js";
 import { type ChannelConnectionRecord } from "./connections.js";
 import type { ChannelCapabilities, ChannelProvider } from "./contracts.js";
+import type { ChannelPendingResponseDeliveryOwner } from "./pending-response-delivery.js";
 export declare const CHANNEL_REGISTRY_RUNTIME_FEATURE_KEY = "channel_registry_runtime";
 export type ChannelRegistryRuntimeMode = "legacy" | "registry";
 export type ChannelRuntimeStartDisposition = "ready" | "started" | "skipped_disabled" | "skipped_unconfigured" | "unsupported_provider" | "failed";
@@ -13,6 +14,7 @@ export interface ChannelRuntimeAdapter {
     stop(): Promise<void> | void;
     healthCheck(): Promise<ChannelRuntimeHealth>;
     getCapabilities(): ChannelCapabilities;
+    createPendingResponseDeliveryHandler?: ChannelPendingResponseDeliveryOwner["createPendingResponseDeliveryHandler"];
 }
 export interface ChannelRuntimeHealth {
     status: DbChannelConnectionHealthStatus;

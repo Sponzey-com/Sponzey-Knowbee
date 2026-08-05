@@ -65,10 +65,14 @@ if not exist "%BINARY_PATH%" (
 
 if "%RESTART_YEONJANG%"=="1" (
   echo Restarting the Yeonjang GUI...
+  call :stop_existing
+) else (
+  rem A PID file is only a restart projection. Normal starts keep a running
+  rem runtime alive so its fixed binary lease decides the duplicate outcome.
+  call :cleanup_stale_pid
 )
 
-call :stop_existing
-break > "%LOG_FILE%"
+if not exist "%PID_FILE%" break > "%LOG_FILE%"
 
 echo Starting the Yeonjang GUI...
 for /f %%P in ('powershell -NoProfile -Command "$p = Start-Process -FilePath \"%BINARY_PATH%\" -WindowStyle Hidden -PassThru; $p.Id"') do (
@@ -80,15 +84,15 @@ if "%STARTED_PID%"=="" (
   exit /b 1
 )
 
-> "%PID_FILE%" echo %STARTED_PID%
 timeout /t 2 /nobreak >nul
 
 call :process_exists %STARTED_PID%
 if errorlevel 1 (
   echo The Yeonjang GUI exited during startup.
-  del /f /q "%PID_FILE%" >nul 2>nul
   exit /b 1
 )
+
+> "%PID_FILE%" echo %STARTED_PID%
 
 echo Yeonjang GUI started
 echo   PID  : %STARTED_PID%
@@ -126,6 +130,7 @@ if "%BINARY_PATH%"=="" (
 goto :eof
 
 :stop_existing
+call :cleanup_stale_pid
 if not exist "%PID_FILE%" goto :eof
 
 set /p EXISTING_PID=<"%PID_FILE%"
@@ -155,6 +160,19 @@ for /L %%I in (1,1,20) do (
 echo The existing Yeonjang GUI is still running, forcing termination.
 taskkill /F /T /PID %EXISTING_PID% >nul 2>nul
 del /f /q "%PID_FILE%" >nul 2>nul
+goto :eof
+
+:cleanup_stale_pid
+if not exist "%PID_FILE%" goto :eof
+
+set /p EXISTING_PID=<"%PID_FILE%"
+if "%EXISTING_PID%"=="" (
+  del /f /q "%PID_FILE%" >nul 2>nul
+  goto :eof
+)
+
+call :process_exists %EXISTING_PID%
+if errorlevel 1 del /f /q "%PID_FILE%" >nul 2>nul
 goto :eof
 
 :process_exists

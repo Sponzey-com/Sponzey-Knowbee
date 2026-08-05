@@ -4,6 +4,14 @@ import type { AgentCapabilityCallContext } from "../security/capability-isolatio
 
 const log = createLogger("mcp:client")
 const DEFAULT_PROTOCOL_VERSION = "2024-11-05"
+const MCP_BASE_ENV: NodeJS.ProcessEnv = { ...process.env }
+const MCP_LOG_SECRET_MASK = "***"
+const MCP_LOG_PATH_MASK = "[internal-path-redacted]"
+
+function mcpClientErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactMcpLogText(raw)
+}
 
 export type McpTransport = "stdio" | "http"
 
@@ -118,7 +126,24 @@ function normalizeInputSchema(value: unknown): McpDiscoveredTool["inputSchema"] 
   }
 }
 
-function extractToolOutput(payload: unknown): string {
+function validateInitializeResponse(value: unknown): void {
+  const response = toObject(value)
+  const serverInfo = toObject(response.serverInfo)
+  if (
+    typeof response.protocolVersion !== "string" ||
+    !response.protocolVersion.trim() ||
+    !response.capabilities ||
+    typeof response.capabilities !== "object" ||
+    Array.isArray(response.capabilities) ||
+    typeof serverInfo.name !== "string" ||
+    !serverInfo.name.trim() ||
+    typeof serverInfo.version !== "string" ||
+    !serverInfo.version.trim()
+  )
+    throw new Error("External feature connection handshake is invalid.")
+}
+
+export function extractMcpToolOutput(payload: unknown): string {
   const raw = toObject(payload)
   const textParts = toArray(raw.content)
     .map((item) => {
@@ -144,6 +169,20 @@ function isAbortSignal(value: unknown): value is AbortSignal {
       "aborted" in value &&
       typeof (value as AbortSignal).addEventListener === "function",
   )
+}
+
+export function redactMcpLogText(value: string): string {
+  return value
+    .replace(/https?:\/\/[^\s"'`<>]+/giu, "[external-endpoint-redacted]")
+    .replace(
+      /((?:api[_-]?key|token|secret|password|credential|authorization)(?:["'\s:=]+))([^"'\s,}]+)/gi,
+      `$1${MCP_LOG_SECRET_MASK}`,
+    )
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, `Bearer ${MCP_LOG_SECRET_MASK}`)
+    .replace(/\/(?:private\/)?var\/folders\/[^\s"'`<>]+/gi, MCP_LOG_PATH_MASK)
+    .replace(/\/tmp\/[^\s"'`<>]+/gi, MCP_LOG_PATH_MASK)
+    .replace(/\/Users\/[^\s"'`<>]+/gi, MCP_LOG_PATH_MASK)
+    .replace(/[A-Z]:\\[^\s"'`<>]+/gi, MCP_LOG_PATH_MASK)
 }
 
 export function buildMcpToolCallPayload(
@@ -189,28 +228,36 @@ export class McpStdioClient {
   private readonly name: string
   private readonly config: McpServerConfig
   private readonly onExit: ((error: string) => void) | undefined
+  private readonly baseEnv: NodeJS.ProcessEnv
+  private readonly defaultCwd: string
   private process: ChildProcessWithoutNullStreams | null = null
   private stdoutBuffer = Buffer.alloc(0)
   private requestId = 0
   private initialized = false
   private pending = new Map<number, PendingRequest>()
   private closedByUser = false
+  private lifecycleState: "created" | "starting" | "ready" | "closing" | "closed" | "failed" =
+    "created"
 
   constructor(options: {
     name: string
     config: McpServerConfig
     onExit?: (error: string) => void
+    baseEnv?: NodeJS.ProcessEnv
+    defaultCwd: string
   }) {
     this.name = options.name
     this.config = options.config
     this.onExit = options.onExit
+    this.baseEnv = { ...(options.baseEnv ?? MCP_BASE_ENV) }
+    this.defaultCwd = options.defaultCwd
   }
 
   async initialize(): Promise<void> {
     if (this.initialized) return
     await this.ensureProcess()
 
-    await this.request(
+    const initialized = await this.request(
       "initialize",
       {
         protocolVersion: DEFAULT_PROTOCOL_VERSION,
@@ -222,9 +269,11 @@ export class McpStdioClient {
       },
       this.startupTimeoutMs(),
     )
+    validateInitializeResponse(initialized)
 
     await this.notify("notifications/initialized", {})
     this.initialized = true
+    this.lifecycleState = "ready"
   }
 
   async listTools(): Promise<McpDiscoveredTool[]> {
@@ -260,7 +309,7 @@ export class McpStdioClient {
     )
     const payload = toObject(response)
     return {
-      output: extractToolOutput(payload),
+      output: extractMcpToolOutput(payload),
       details: payload,
       isError: Boolean(payload.isError),
     }
@@ -269,11 +318,15 @@ export class McpStdioClient {
   async close(): Promise<void> {
     this.closedByUser = true
     this.initialized = false
-    this.rejectAll(new Error(`MCP server "${this.name}" was closed.`))
+    this.lifecycleState = "closing"
+    this.rejectAll(new Error(`External feature connection "${this.name}" was closed.`))
 
     const child = this.process
     this.process = null
-    if (!child) return
+    if (!child) {
+      this.lifecycleState = "closed"
+      return
+    }
 
     child.stdout.removeAllListeners()
     child.stderr.removeAllListeners()
@@ -282,23 +335,25 @@ export class McpStdioClient {
     if (!child.killed) {
       child.kill()
     }
+    this.lifecycleState = "closed"
   }
 
   private async ensureProcess(): Promise<void> {
     if (this.process) return
     const command = this.config.command?.trim()
     if (!command) {
-      throw new Error(`MCP server "${this.name}" command가 비어 있습니다.`)
+      throw new Error(`External feature connection "${this.name}" command is empty.`)
     }
 
     const child = spawn(command, this.config.args ?? [], {
-      cwd: this.config.cwd || process.cwd(),
+      cwd: this.config.cwd || this.defaultCwd,
       env: {
-        ...process.env,
+        ...this.baseEnv,
         ...(this.config.env ?? {}),
       },
       stdio: ["pipe", "pipe", "pipe"],
     })
+    this.lifecycleState = "starting"
 
     child.stdout.on("data", (chunk: Buffer) => {
       this.stdoutBuffer = Buffer.concat([this.stdoutBuffer, chunk])
@@ -307,33 +362,46 @@ export class McpStdioClient {
 
     child.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8").trim()
-      if (text) log.warn(`[${this.name}] ${text}`)
+      if (text) {
+        log.fieldDebug("external_feature_process_stderr", {
+          target: redactMcpLogText(this.name),
+          error: redactMcpLogText(text),
+        })
+      }
+    })
+
+    child.stdin.on("error", (error) => {
+      const message = mcpClientErrorMessage(error)
+      const safeName = redactMcpLogText(this.name)
+      this.transitionProcessToFailed(
+        child,
+        new Error(`External feature connection "${safeName}" input error: ${message}`),
+      )
     })
 
     child.on("error", (error) => {
-      const message = error instanceof Error ? error.message : String(error)
-      this.rejectAll(new Error(`MCP server "${this.name}" process error: ${message}`))
-      if (!this.closedByUser) {
-        this.onExit?.(`MCP server "${this.name}" process error: ${message}`)
-      }
+      const message = mcpClientErrorMessage(error)
+      const safeName = redactMcpLogText(this.name)
+      this.transitionProcessToFailed(
+        child,
+        new Error(`External feature connection "${safeName}" process error: ${message}`),
+      )
     })
 
     child.on("exit", (code, signal) => {
-      this.process = null
-      this.initialized = false
+      const safeName = redactMcpLogText(this.name)
       const message =
         code !== null
-          ? `MCP server "${this.name}" exited with code ${code}.`
-          : `MCP server "${this.name}" exited with signal ${signal ?? "unknown"}.`
-      this.rejectAll(new Error(message))
-      if (!this.closedByUser) {
-        this.onExit?.(message)
-      }
+          ? `External feature connection "${safeName}" exited with code ${code}.`
+          : `External feature connection "${safeName}" exited with signal ${signal ?? "unknown"}.`
+      this.transitionProcessToFailed(child, new Error(message))
     })
 
     this.closedByUser = false
     this.process = child
-    log.info(`started MCP stdio server ${this.name}`)
+    log.fieldDebug("external_feature_process_started", {
+      target: redactMcpLogText(this.name),
+    })
   }
 
   private consumeFrames(): void {
@@ -359,9 +427,10 @@ export class McpStdioClient {
         const message = JSON.parse(body) as JsonRpcMessage
         this.handleMessage(message)
       } catch (error) {
-        log.warn(
-          `failed to parse MCP message from ${this.name}: ${error instanceof Error ? error.message : String(error)}`,
-        )
+        log.fieldDebug("external_feature_message_parse_failed", {
+          target: redactMcpLogText(this.name),
+          error: mcpClientErrorMessage(error),
+        })
       }
     }
   }
@@ -376,7 +445,9 @@ export class McpStdioClient {
 
     const maybeError = (message as JsonRpcError).error
     if (maybeError) {
-      pending.reject(new Error(maybeError.message ?? `MCP request ${message.id} failed.`))
+      pending.reject(
+        new Error(maybeError.message ?? `External feature request ${message.id} failed.`),
+      )
       return
     }
 
@@ -386,10 +457,11 @@ export class McpStdioClient {
   private async notify(method: string, params: Record<string, unknown>): Promise<void> {
     await this.ensureProcess()
     const child = this.process
-    if (!child) throw new Error(`MCP server "${this.name}" process is not available.`)
+    if (!child)
+      throw new Error(`External feature connection "${this.name}" process is not available.`)
 
     const payload = JSON.stringify({ jsonrpc: "2.0", method, params })
-    child.stdin.write(`Content-Length: ${Buffer.byteLength(payload, "utf8")}\r\n\r\n${payload}`)
+    await this.writeFrame(child, payload)
   }
 
   private async request(
@@ -400,14 +472,15 @@ export class McpStdioClient {
   ): Promise<unknown> {
     await this.ensureProcess()
     const child = this.process
-    if (!child) throw new Error(`MCP server "${this.name}" process is not available.`)
+    if (!child)
+      throw new Error(`External feature connection "${this.name}" process is not available.`)
 
     return new Promise((resolve, reject) => {
       const id = ++this.requestId
       const payload = JSON.stringify({ jsonrpc: "2.0", id, method, params })
       const timeout = setTimeout(() => {
         this.pending.delete(id)
-        reject(new Error(`MCP ${this.name}:${method} timed out after ${timeoutMs}ms`))
+        reject(new Error(`External feature ${this.name}:${method} timed out after ${timeoutMs}ms`))
       }, timeoutMs)
 
       this.pending.set(id, { resolve, reject, timeout })
@@ -420,14 +493,67 @@ export class McpStdioClient {
             if (!pending) return
             clearTimeout(pending.timeout)
             this.pending.delete(id)
-            reject(new Error(`MCP ${this.name}:${method} was aborted.`))
+            reject(new Error(`External feature ${this.name}:${method} was aborted.`))
           },
           { once: true },
         )
       }
 
-      child.stdin.write(`Content-Length: ${Buffer.byteLength(payload, "utf8")}\r\n\r\n${payload}`)
+      void this.writeFrame(child, payload).catch((error) => {
+        const pending = this.pending.get(id)
+        if (!pending) return
+        clearTimeout(pending.timeout)
+        this.pending.delete(id)
+        pending.reject(error)
+      })
     })
+  }
+
+  private writeFrame(child: ChildProcessWithoutNullStreams, payload: string): Promise<void> {
+    if (
+      this.process !== child ||
+      (this.lifecycleState !== "starting" && this.lifecycleState !== "ready") ||
+      !child.stdin.writable ||
+      child.stdin.destroyed
+    ) {
+      return Promise.reject(
+        new Error(`External feature connection "${this.name}" is not writable.`),
+      )
+    }
+
+    const frame = `Content-Length: ${Buffer.byteLength(payload, "utf8")}\r\n\r\n${payload}`
+    return new Promise((resolve, reject) => {
+      try {
+        child.stdin.write(frame, (error) => {
+          if (error) {
+            reject(
+              new Error(
+                `External feature connection "${this.name}" write failed: ${mcpClientErrorMessage(error)}`,
+              ),
+            )
+            return
+          }
+          resolve()
+        })
+      } catch (error) {
+        reject(
+          new Error(
+            `External feature connection "${this.name}" write failed: ${mcpClientErrorMessage(error)}`,
+          ),
+        )
+      }
+    })
+  }
+
+  private transitionProcessToFailed(child: ChildProcessWithoutNullStreams, error: Error): void {
+    if (this.process !== child) return
+    this.process = null
+    this.initialized = false
+    this.lifecycleState = "failed"
+    this.rejectAll(error)
+    if (!this.closedByUser) {
+      this.onExit?.(error.message)
+    }
   }
 
   private rejectAll(error: Error): void {

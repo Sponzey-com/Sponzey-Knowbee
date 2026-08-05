@@ -10,6 +10,7 @@ import { isExplicitProviderRouteTarget, resolveRunRoute, type ResolvedRunRoute }
 import type { RunChunkDeliveryHandler } from "./delivery.js"
 import type { RootRun, TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
+import { redactLogText } from "../logger/index.js"
 
 const MAX_DELAY_TIMER_MS = 2_147_483_647
 const delayedRunTimers = new Map<string, NodeJS.Timeout>()
@@ -48,8 +49,13 @@ interface DelayedRunDependencies extends QueueLoggingDependencies {
     onChunk?: RunChunkDeliveryHandler
   }) => { finished: Promise<RootRun | undefined> }
   now?: () => number
-  resolveRoute?: typeof resolveRunRoute
+  resolveRoute: (input: Parameters<typeof resolveRunRoute>[0]) => ResolvedRunRoute
   setTimer?: typeof setTimeout
+}
+
+function safeQueueErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
 }
 
 function enqueueDelayedSessionRun(
@@ -70,16 +76,18 @@ function enqueueDelayedSessionRun(
 
   const next = (previous ?? Promise.resolve())
     .catch((error) => {
+      const message = safeQueueErrorMessage(error)
       dependencies.logWarn(
-        `previous delayed run queue recovered: ${error instanceof Error ? error.message : String(error)}`,
+        `previous delayed run queue recovered: ${message}`,
       )
     })
     .then(params.task)
     .catch((error) => {
+      const message = safeQueueErrorMessage(error)
       dependencies.logError("delayed run queue task failed", {
         jobId: params.jobId,
         sessionId: params.sessionId,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
       })
     })
     .finally(() => {
@@ -116,7 +124,7 @@ export function scheduleDelayedRootRun(
 ): void {
   const jobId = crypto.randomUUID()
   const now = dependencies.now ?? Date.now
-  const resolveRouteImpl = dependencies.resolveRoute ?? resolveRunRoute
+  const resolveRouteImpl = dependencies.resolveRoute
   const setTimer = dependencies.setTimer ?? setTimeout
 
   dependencies.logInfo("delayed run armed", {

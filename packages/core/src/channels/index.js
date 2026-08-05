@@ -1,5 +1,7 @@
-import { getConfig } from "../config/index.js";
-import { createLogger } from "../logger/index.js";
+import { createArtifactStorageContext } from "../artifacts/lifecycle.js";
+import { createMemoryJournalRepository, } from "../memory/journal.js";
+import { createAgentHierarchyStorage } from "../orchestration/hierarchy.js";
+import { createLogger, redactLogText } from "../logger/index.js";
 import { getFeatureFlag } from "../runtime/rollout-safety.js";
 import { buildCompatChannelConnectionsFromConfig, persistChannelConnections } from "./connections.js";
 import { ChannelRegistry } from "./registry.js";
@@ -12,6 +14,10 @@ import { DiscordChannelAdapter } from "./discord/adapter.js";
 import { setDiscordRuntimeError, stopDiscordRuntime } from "./discord/runtime.js";
 import { GoogleChatChannelAdapter } from "./google-chat/adapter.js";
 import { setGoogleChatRuntimeError, stopGoogleChatRuntime } from "./google-chat/runtime.js";
+import { createStartedChannelRecoveryRuntime, } from "./pending-response-delivery.js";
+import { startRootRun } from "../runs/start.js";
+import { getRootRun } from "../runs/store.js";
+import { loadRecoveredApprovedOperationAttempt, } from "../runs/approved-operation-result-handoff.js";
 export { TelegramChannel } from "./telegram/bot.js";
 export { TelegramChannelAdapter, buildTelegramCapabilityManifest, buildTelegramContinuationLookupCandidate, createTelegramChannelAdapter, normalizeTelegramInboundUpdate, normalizeTelegramInteractionUpdate, resolveTelegramConnectionPolicy, validateTelegramWebhookSecretToken, } from "./telegram/adapter.js";
 export { SlackChannel } from "./slack/bot.js";
@@ -24,20 +30,107 @@ export { buildKakaoTalkLocalBridgeCapabilityManifest, buildKakaoTalkLocalBridgeC
 export { ChannelRegistry, buildChannelRegistryRuntimeDiagnostics, createBuiltInChannelProviderFactories } from "./registry.js";
 export { CHANNEL_REGISTRY_RUNTIME_FEATURE_KEY, buildChannelRuntimeSummary, recordChannelRuntimeEvent, resolveChannelRegistryRuntimeMode, updateConnectionRuntimeHealth, } from "./runtime.js";
 export { buildAccessPolicyFromAllowedIds, evaluateInboundAccessPolicy, recordChannelAccessPolicyResult, } from "./access-policy.js";
-export { buildContinuationConfirmationPrompt, resolveChannelContinuation, } from "./continuation.js";
+export { buildContinuationConfirmationNotice, buildContinuationConfirmationPrompt, resolveChannelContinuation, } from "./continuation.js";
 export { buildIdentityNamespaceCandidates, buildRoomNamespaceCandidates, namespaceChannelPrincipal, namespaceChannelRoom, namespaceChannelThread, namespaceChannelUser, namespaceChannelWorkspace, parseNamespacedChannelPrincipal, } from "./identity.js";
 export { applyChannelConnectionSettingsCompatPatch, buildCompatChannelConnectionsFromConfig, buildSettingsChannelConnectionSnapshot, channelConnectionSecretsToJson, namespaceChannelIdentity, parseNamespacedChannelIdentity, persistChannelConnections, } from "./connections.js";
 export { buildCapabilityFallbackNotice, describeUnsupportedCapability, resolveChannelDeliveryFallbackPlan, splitTextForChannel, } from "./delivery-fallback.js";
+export { detectPrimaryMessageLanguage, resolveUserFacingMessageLanguage, } from "./language.js";
+export { createStartedChannelRecoveryRuntime, } from "./pending-response-delivery.js";
 export { buildUnsupportedCapabilityReceipt, createRawPayloadRef, defineChannelAdapter, defineChannelCapabilities, isBuiltInChannelProvider, isExternalChannelProvider, isInternalChannelSurface, isPositiveDeliveryReceipt, normalizeChannelSource, resolveDeliveryReceiptStatus, resolveChannelSurface, sanitizeChannelContractValue, } from "./contracts.js";
-export { getDefaultChannelSmokeScenarios, createDryRunChannelSmokeExecutor, resolveChannelSmokeReadiness, runPersistedChannelSmokeScenarios, runChannelSmokeScenarios, sanitizeChannelSmokeTrace, sanitizeChannelSmokeValue, validateChannelSmokeTrace, } from "./smoke-runner.js";
+export { getDefaultChannelSmokeScenarios, createDryRunChannelSmokeExecutor, resolveChannelSmokeReadiness, recoverInterruptedGatewayChannelSmokeRuns, runPersistedChannelSmokeScenarios, runChannelSmokeScenarios, sanitizeChannelSmokeTrace, sanitizeChannelSmokeValue, validateChannelSmokeTrace, } from "./smoke-runner.js";
+export { validateTelegramWebUiSemanticOutcomeMatrix, } from "./semantic-outcome-matrix.js";
+export { VerifyConversationProcessUseCase, } from "./conversation-process-verification.js";
+export { CameraConversationProbeAdapter, projectCameraConversationCompletedSnapshot, projectCameraConversationDeliveryApprovalSnapshot, projectCameraConversationPostEffectSnapshot, projectCameraConversationPreEffectSnapshot, } from "./camera-conversation-probe.js";
+export { createStartRootRunConversationProbe, } from "./start-root-run-conversation-probe.js";
+export { projectConversationProcessBaseline, } from "./conversation-process-baseline.js";
+export { validateConversationControlRecoveryParity, } from "./conversation-control-recovery.js";
+export { validateConversationDeliveryParity, } from "./conversation-delivery-parity.js";
 const log = createLogger("channels");
-export async function startChannels() {
-    const config = getConfig();
+let activeChannelMemoryJournal = null;
+export function closeChannelRuntimeStorage() {
+    activeChannelMemoryJournal?.close();
+    activeChannelMemoryJournal = null;
+}
+function channelRuntimeErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
+export async function startChannels(config, paths) {
+    const artifactStorage = createArtifactStorageContext(paths);
+    closeChannelRuntimeStorage();
+    const memoryJournal = createMemoryJournalRepository(paths);
+    activeChannelMemoryJournal = memoryJournal;
+    const hierarchyStorage = createAgentHierarchyStorage(paths);
+    const buildRecoveryRuntime = (owners) => {
+        let runtime;
+        runtime = createStartedChannelRecoveryRuntime({
+            ...owners,
+            resumeExistingRootRun: async (runId, signal) => {
+                const run = getRootRun(runId);
+                const recovered = loadRecoveredApprovedOperationAttempt(runId);
+                if (!run || !recovered.ok)
+                    return false;
+                const onChunk = runtime.resolveDeliveryHandler({
+                    runId: run.id,
+                    sessionId: run.sessionId,
+                    source: run.source,
+                });
+                if (!onChunk)
+                    return false;
+                const started = startRootRun({
+                    artifactStorage,
+                    memoryJournal,
+                    hierarchyStorage,
+                    runId: run.id,
+                    message: run.prompt,
+                    sessionId: run.sessionId,
+                    requestGroupId: run.requestGroupId,
+                    forceRequestGroupReuse: true,
+                    model: undefined,
+                    config,
+                    targetId: run.targetId,
+                    targetLabel: run.targetLabel,
+                    workDir: config.profile.workspace,
+                    source: run.source,
+                    contextMode: "handoff",
+                    taskProfile: run.taskProfile,
+                    skipIntake: true,
+                    executionSemantics: {
+                        filesystemEffect: "none",
+                        privilegedOperation: "required",
+                        artifactDelivery: "direct",
+                        approvalRequired: false,
+                        approvalTool: "external_action",
+                    },
+                    structuredRequest: {
+                        source_language: "unknown",
+                        response_language_mode: "same_as_request",
+                        normalized_english: run.prompt,
+                        target: run.prompt,
+                        to: "current channel conversation",
+                        context: [
+                            "A verified artifact from the approved operation is already bound to this run.",
+                        ],
+                        complete_condition: [
+                            "Deliver the verified artifact to the current channel conversation and report the verified result.",
+                        ],
+                    },
+                    resumeExistingRun: true,
+                    recoveredAttempt: recovered.attempt,
+                    onChunk,
+                    ...(signal ? { signal } : {}),
+                });
+                await started.finished;
+                return true;
+            },
+        });
+        return runtime;
+    };
     try {
         persistChannelConnections(buildCompatChannelConnectionsFromConfig(config));
     }
     catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = channelRuntimeErrorMessage(err);
         log.warn(`Failed to sync channel connection compatibility rows: ${message}`);
     }
     stopActiveSlackChannel();
@@ -50,32 +143,52 @@ export async function startChannels() {
     setGoogleChatRuntimeError(null);
     const runtimeFlag = getFeatureFlag(CHANNEL_REGISTRY_RUNTIME_FEATURE_KEY);
     if (resolveChannelRegistryRuntimeMode(runtimeFlag) === "registry") {
-        const registry = new ChannelRegistry({ config });
+        const registry = new ChannelRegistry({
+            config,
+            artifactStorage,
+            memoryJournal,
+            hierarchyStorage,
+        });
         await registry.startEnabled();
-        return;
+        const telegram = registry.getPendingResponseDeliveryOwner("telegram");
+        const slack = registry.getPendingResponseDeliveryOwner("slack");
+        return buildRecoveryRuntime({
+            ...(telegram ? { telegram } : {}),
+            ...(slack ? { slack } : {}),
+        });
     }
+    let startedSlack;
     if (config.slack?.enabled) {
-        const channel = new SlackChannel(config.slack);
+        const channel = new SlackChannel(config.slack, artifactStorage, {
+            config,
+            workDir: config.profile.workspace,
+        }, memoryJournal, hierarchyStorage);
         try {
             await channel.start();
             setActiveSlackChannel(channel);
+            startedSlack = channel;
         }
         catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = channelRuntimeErrorMessage(err);
             if (getActiveSlackChannel() === channel)
                 setActiveSlackChannel(null);
             setSlackRuntimeError(message);
             log.warn(`Failed to start Slack channel: ${message}`);
         }
     }
+    let startedTelegram;
     if (config.telegram?.enabled) {
-        const channel = new TelegramChannel(config.telegram);
+        const channel = new TelegramChannel(config.telegram, artifactStorage, {
+            config,
+            workDir: config.profile.workspace,
+        }, memoryJournal, hierarchyStorage);
         try {
             await channel.start();
             setActiveTelegramChannel(channel);
+            startedTelegram = channel;
         }
         catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = channelRuntimeErrorMessage(err);
             if (getActiveTelegramChannel() === channel)
                 setActiveTelegramChannel(null);
             setTelegramRuntimeError(message);
@@ -88,7 +201,7 @@ export async function startChannels() {
             await adapter.start();
         }
         catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = channelRuntimeErrorMessage(err);
             setDiscordRuntimeError(message);
             log.warn(`Failed to start Discord channel: ${message}`);
         }
@@ -99,10 +212,14 @@ export async function startChannels() {
             await adapter.start();
         }
         catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = channelRuntimeErrorMessage(err);
             setGoogleChatRuntimeError(message);
             log.warn(`Failed to start Google Chat channel: ${message}`);
         }
     }
+    return buildRecoveryRuntime({
+        ...(startedTelegram ? { telegram: startedTelegram } : {}),
+        ...(startedSlack ? { slack: startedSlack } : {}),
+    });
 }
 //# sourceMappingURL=index.js.map

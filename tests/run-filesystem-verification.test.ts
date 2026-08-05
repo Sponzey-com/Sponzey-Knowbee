@@ -25,7 +25,8 @@ describe("filesystem verification helpers", () => {
     )
 
     expect(prompt).toContain("[Filesystem Verification]")
-    expect(prompt).toContain("원래 사용자 요청: Downloads에 \"달력\" 폴더를 만들어줘")
+    expect(prompt).toContain("Original user request:\nDownloads에 \"달력\" 폴더를 만들어줘")
+    expect(prompt).toContain("[mutation_paths]")
     expect(prompt).toContain("- /tmp/work/Downloads/달력/index.html")
   })
 

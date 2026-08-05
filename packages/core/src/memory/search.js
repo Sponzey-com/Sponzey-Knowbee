@@ -358,8 +358,8 @@ export function likeChunkSearch(query, limit, filters) {
     return results;
 }
 /** Vector-only search using in-process cosine similarity */
-export async function vectorSearch(query, limit, filters) {
-    const provider = getEmbeddingProvider();
+export async function vectorSearch(query, limit, filters, options) {
+    const provider = getEmbeddingProvider(options?.memoryConfig);
     if (provider.dimensions === 0)
         return [];
     let queryVec;
@@ -390,9 +390,9 @@ export async function vectorSearch(query, limit, filters) {
         .sort((a, b) => b.score - a.score)
         .slice(0, limit);
 }
-export async function vectorChunkSearch(query, limit, filters) {
+export async function vectorChunkSearch(query, limit, filters, options) {
     const startedAt = process.hrtime.bigint();
-    const provider = getEmbeddingProvider();
+    const provider = getEmbeddingProvider(options?.memoryConfig);
     if (provider.dimensions === 0) {
         recordMemoryVectorDiagnostic(filters, {
             reason: "disabled",
@@ -466,10 +466,10 @@ export async function vectorChunkSearch(query, limit, filters) {
     return results;
 }
 /** Hybrid search: RRF fusion of FTS and vector results */
-export async function hybridSearch(query, limit, filters) {
+export async function hybridSearch(query, limit, filters, options) {
     const [ftsResults, vecResults] = await Promise.all([
         Promise.resolve(ftsSearch(query, limit * 2, filters)),
-        withVectorTimeout(vectorSearch(query, limit * 2, filters), []),
+        withVectorTimeout(vectorSearch(query, limit * 2, filters, options), []),
     ]);
     // Build score map
     const scoreMap = new Map();
@@ -494,10 +494,10 @@ export async function hybridSearch(query, limit, filters) {
         .slice(0, limit)
         .map(({ item, score }) => ({ item, score, source: "hybrid" }));
 }
-export async function hybridChunkSearch(query, limit, filters) {
+export async function hybridChunkSearch(query, limit, filters, options) {
     const [ftsResults, vectorResults] = await Promise.all([
         Promise.resolve(ftsChunkSearch(query, limit * 2, filters)),
-        withVectorTimeout(vectorChunkSearch(query, limit * 2, filters), [], DEFAULT_VECTOR_SEARCH_TIMEOUT_MS, () => {
+        withVectorTimeout(vectorChunkSearch(query, limit * 2, filters, options), [], DEFAULT_VECTOR_SEARCH_TIMEOUT_MS, () => {
             recordMemoryVectorDiagnostic(filters, {
                 reason: "timeout",
                 summary: "memory vector retrieval timed out and fell back to FTS results",
@@ -534,24 +534,24 @@ export async function hybridChunkSearch(query, limit, filters) {
         .slice(0, limit);
 }
 /** Main entry point respecting config.memory.searchMode */
-export async function searchMemoryItems2(query, limit = 5, mode, filters) {
+export async function searchMemoryItems2(query, limit = 5, mode, filters, options) {
     const resolvedMode = mode ?? "fts";
     if (resolvedMode === "vector") {
-        const vectorResults = await vectorSearch(query, limit, filters);
+        const vectorResults = await vectorSearch(query, limit, filters, options);
         return vectorResults.length > 0 ? vectorResults : ftsSearch(query, limit, filters);
     }
     if (resolvedMode === "hybrid")
-        return hybridSearch(query, limit, filters);
+        return hybridSearch(query, limit, filters, options);
     return ftsSearch(query, limit, filters);
 }
-export async function searchMemoryChunks(query, limit = 5, mode, filters) {
+export async function searchMemoryChunks(query, limit = 5, mode, filters, options) {
     const resolvedMode = mode ?? "fts";
     if (resolvedMode === "vector") {
-        const vectorResults = await vectorChunkSearch(query, limit, filters);
+        const vectorResults = await vectorChunkSearch(query, limit, filters, options);
         return vectorResults.length > 0 ? vectorResults : ftsChunkSearch(query, limit, filters);
     }
     if (resolvedMode === "hybrid")
-        return hybridChunkSearch(query, limit, filters);
+        return hybridChunkSearch(query, limit, filters, options);
     return ftsChunkSearch(query, limit, filters);
 }
 //# sourceMappingURL=search.js.map

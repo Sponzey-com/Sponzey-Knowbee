@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { type AuditAccessRuntimeDependencies } from "../audit-access-runtime.js";
 type AuditEventKind = "tool_call" | "diagnostic" | "run_event" | "artifact" | "delivery" | "decision_trace" | "message_ledger" | "queue_backpressure";
 type AuditTimelineKind = "ingress" | "intake" | "contract" | "memory" | "tool" | "delivery" | "recovery" | "completion";
 interface AuditQuery {
@@ -20,6 +21,8 @@ interface AuditQuery {
     from?: string;
     to?: string;
     q?: string;
+    purpose?: string;
+    scope?: string;
 }
 interface AuditEvent {
     id: string;
@@ -44,6 +47,29 @@ interface AuditEvent {
     stopReason: string | null;
     detail: unknown;
 }
+interface RawAuditEvent {
+    id: string;
+    at: number;
+    kind: AuditEventKind;
+    timelineKind: AuditTimelineKind;
+    status: string;
+    visibility: "audit_only";
+    source: string | null;
+    sessionId: string | null;
+    runId: string | null;
+    requestGroupId: string | null;
+    channel: string | null;
+    toolName: string | null;
+    paramsRaw: string | null;
+    outputRaw: string | null;
+    detailRaw: string | null;
+    durationMs: number | null;
+    approvalRequired: boolean;
+    approvedBy: string | null;
+    errorCode: string | null;
+    retryCount: number | null;
+    stopReason: string | null;
+}
 export declare function listAuditEvents(query: AuditQuery): {
     items: AuditEvent[];
     total: number;
@@ -52,10 +78,11 @@ export declare function listAuditEvents(query: AuditQuery): {
     limit: number;
 };
 export declare function getAuditEventById(id: string): AuditEvent | null;
+export declare function getRawAuditEventById(id: string): RawAuditEvent | null;
 export declare function promoteAuditEventToErrorCorpusCandidate(eventId: string, note?: string): {
     diagnosticEventId: string;
     event: AuditEvent;
 } | null;
-export declare function registerAuditRoute(app: FastifyInstance): void;
+export declare function registerAuditRoute(app: FastifyInstance, auditDependencies?: AuditAccessRuntimeDependencies): void;
 export {};
 //# sourceMappingURL=audit.d.ts.map

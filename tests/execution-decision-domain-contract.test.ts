@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process"
 import { describe, expect, it, vi } from "vitest"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 import {
   DECIDE_EXECUTION_ROUTE_KINDS,
   decideExecutionRoute,
@@ -51,7 +52,7 @@ function graph(): ExecutionGraphSnapshot {
     agentsById: {
       [rootExecutorId]: {
         agentId: rootExecutorId,
-        displayName: "노비",
+        agentName: "노비",
         source: "config",
         status: "active",
         delegationEnabled: true,
@@ -62,7 +63,7 @@ function graph(): ExecutionGraphSnapshot {
       },
       [financeExecutorId]: {
         agentId: financeExecutorId,
-        displayName: "행랑아범",
+        agentName: "행랑아범",
         source: "topology",
         status: "active",
         delegationEnabled: false,
@@ -73,7 +74,7 @@ function graph(): ExecutionGraphSnapshot {
       },
       [leadExecutorId]: {
         agentId: leadExecutorId,
-        displayName: "마당쇠",
+        agentName: "마당쇠",
         source: "topology",
         status: "active",
         delegationEnabled: true,
@@ -84,7 +85,7 @@ function graph(): ExecutionGraphSnapshot {
       },
       [backendExecutorId]: {
         agentId: backendExecutorId,
-        displayName: "삼식이",
+        agentName: "삼식이",
         source: "topology",
         status: "active",
         delegationEnabled: false,
@@ -178,21 +179,21 @@ function context(): AgentExecutionContext {
     },
     current_executor: {
       executor_id: rootExecutorId,
-      display_name: "노비",
+      agent_name: "노비",
       can_delegate: true,
       available: true,
     },
     accessible_executors: [
       {
         executor_id: financeExecutorId,
-        display_name: "행랑아범",
+        agent_name: "행랑아범",
         role_name: "재무 담당",
         can_delegate: false,
         available: true,
       },
       {
         executor_id: leadExecutorId,
-        display_name: "마당쇠",
+        agent_name: "마당쇠",
         role_name: "개발 리드",
         can_delegate: true,
         available: true,
@@ -200,7 +201,7 @@ function context(): AgentExecutionContext {
     ],
     diagnostic_executors: [{
       executor_id: backendExecutorId,
-      display_name: "삼식이",
+      agent_name: "삼식이",
       role_name: "백엔드",
       can_delegate: false,
       available: true,
@@ -327,6 +328,7 @@ describe("execution decision domain contract", () => {
     })
 
     const result = await decideExecutionRoute({
+      config: DEFAULT_CONFIG,
       originalRequest: "openai로 바로 처리해줘",
       delegatedTitle: "명시 provider 처리",
       delegatedTaskProfile: "general_chat",
@@ -348,6 +350,7 @@ describe("execution decision domain contract", () => {
 
   it("routes through the harness and returns a direct child delegation", async () => {
     const result = await decideExecutionRoute({
+      config: DEFAULT_CONFIG,
       originalRequest: "코스피 지수와 테슬라 가격 확인",
       delegatedTitle: "증시 가격 확인",
       delegatedTaskProfile: "finance_research",
@@ -368,6 +371,104 @@ describe("execution decision domain contract", () => {
       leadExecutorId,
     ])
     expect(result.decisionResult.decisionTrace.diagnostic_executor_ids).toEqual([backendExecutorId])
+  })
+
+  it("passes explicitly supplied runtime tools into the LLM execution context", async () => {
+    const runHarness = vi.fn(async (input) => ({
+      ok: true as const,
+      decision: decision({
+        execution_route: "self_solve",
+        selected_executor_id: undefined,
+        selected_connection_path: [],
+        fallback_if_unavailable: "self_solve",
+      }),
+      decisionTrace: {
+        contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
+        decision_source: "knowbee_harness" as const,
+        current_executor_id: rootExecutorId,
+        available_executor_ids: [],
+        diagnostic_executor_ids: [],
+        all_active_executor_ids: [rootExecutorId],
+        selected_connection_path: [],
+        execution_route: "self_solve" as const,
+        fallback_if_unavailable: "self_solve" as const,
+        validation_ok: true,
+        validation_status: "valid" as const,
+        validation_issues: [],
+      },
+      validation: {
+        shape: { ok: true, issues: [] },
+        delegation: {
+          contract_version: AGENT_EXECUTION_DECISION_CONTRACT_VERSION,
+          ok: true,
+          status: "valid" as const,
+          issues: [],
+          fallback_if_invalid: "self_solve" as const,
+        },
+      },
+      trace: [],
+    }))
+    const webTools = [
+      {
+        tool_id: "web_search",
+        label: "Search public web sources",
+        permission_scope: "external" as const,
+      },
+      {
+        tool_id: "web_fetch",
+        label: "Fetch a public web source",
+        permission_scope: "external" as const,
+      },
+    ]
+
+    await decideExecutionRoute({
+      config: DEFAULT_CONFIG,
+      originalRequest: "최신 외부 사실을 조회하고 검증해줘",
+      delegatedTitle: "최신 외부 사실 검증",
+      delegatedTaskProfile: "research",
+      sessionId: "session:runtime-tools",
+      source: "webui",
+      preferredTarget: "auto",
+      availableTools: webTools,
+      buildExecutionGraphSnapshot: () => ({
+        ...graph(),
+        availableExecutorIds: [],
+      }),
+      runAgentExecutionHarness: runHarness as never,
+    })
+
+    expect(runHarness).toHaveBeenCalledWith(expect.objectContaining({
+      context: expect.objectContaining({
+        available_tools: webTools,
+        permission_policy: expect.objectContaining({
+          allowed_tool_ids: ["web_fetch", "web_search"],
+        }),
+      }),
+    }))
+  })
+
+  it("uses agentName for direct child route labels", async () => {
+    const executionGraph = graph()
+    const selected = executionGraph.agentsById[financeExecutorId]
+    if (!selected) throw new Error("Expected finance executor")
+    ;(selected as Record<string, unknown>).agentName = "현장 담당"
+
+    const result = await decideExecutionRoute({
+      config: DEFAULT_CONFIG,
+      originalRequest: "코스피 지수와 테슬라 가격 확인",
+      delegatedTitle: "증시 가격 확인",
+      delegatedTaskProfile: "finance_research",
+      sessionId: "session:test",
+      source: "telegram",
+      preferredTarget: "auto",
+      buildExecutionGraphSnapshot: () => executionGraph,
+      runAgentExecutionHarness: runAgentExecutionHarness,
+      callModel: async () => JSON.stringify(decision()),
+    })
+
+    expect(result.kind).toBe("delegate_to_child")
+    if (result.kind !== "delegate_to_child") throw new Error("Expected delegation")
+    expect(result.route.targetLabel).toBe("현장 담당")
   })
 
   it("maps V2 fail_with_reason to boundary_failure rather than user-confirmation routing", async () => {

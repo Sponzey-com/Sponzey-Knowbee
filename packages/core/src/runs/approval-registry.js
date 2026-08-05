@@ -15,10 +15,21 @@ export function stableStringify(value) {
 export function hashApprovalParams(params) {
     return crypto.createHash("sha256").update(stableStringify(params)).digest("hex");
 }
+export function hashApprovalDecisionActor(input) {
+    const digest = crypto
+        .createHash("sha256")
+        .update(stableStringify({
+        schemaVersion: 1,
+        channel: input.channel.trim().toLowerCase(),
+        actorId: input.actorId,
+    }))
+        .digest("hex");
+    return `sha256:${digest}`;
+}
 export function createApprovalRegistryRequest(input) {
     const now = input.now ?? Date.now();
     const id = input.id ?? crypto.randomUUID();
-    const paramsHash = hashApprovalParams(input.params);
+    const paramsHash = hashApprovalParams(input.authorizationParams ?? input.params);
     const preview = safeJsonPreview(input.params);
     const metadataJson = input.metadata ? JSON.stringify(input.metadata) : null;
     const db = getDb();
@@ -32,8 +43,10 @@ export function createApprovalRegistryRequest(input) {
     db.prepare(`INSERT INTO approval_registry
      (id, run_id, request_group_id, channel, channel_message_id, tool_name, risk_level, kind,
       status, params_hash, params_preview_json, requested_at, expires_at, consumed_at,
-      decision_at, decision_by, decision_source, superseded_by, metadata_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, ?)`).run(id, input.runId, input.requestGroupId ?? null, input.channel, input.channelMessageId ?? null, input.toolName, input.riskLevel, input.kind, paramsHash, preview, now, input.expiresAt ?? null, metadataJson, now, now);
+      decision_at, decision_by, decision_source, superseded_by, metadata_json,
+      operation_id, operation_binding_hash, continuation_schema_version, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL,
+             ?, ?, ?, ?, ?, ?)`).run(id, input.runId, input.requestGroupId ?? null, input.channel, input.channelMessageId ?? null, input.toolName, input.riskLevel, input.kind, paramsHash, preview, now, input.expiresAt ?? null, metadataJson, input.operationBinding?.operationId ?? null, input.operationBinding?.operationBindingHash ?? null, input.operationBinding?.continuationSchemaVersion ?? null, now, now);
     return getApprovalRegistryRow(id);
 }
 export function getApprovalRegistryRow(id) {
@@ -78,6 +91,29 @@ export function attachApprovalChannelMessage(approvalId, channelMessageId, now =
         .run(channelMessageId, now, approvalId);
     return result.changes > 0;
 }
+export function attachApprovalChannelBinding(input) {
+    const result = getDb()
+        .prepare(`UPDATE approval_registry
+       SET channel_message_id = ?, decision_actor_fingerprint = ?,
+           updated_at = ?
+       WHERE id = ? AND status = 'requested'`)
+        .run(input.channelMessageId, input.decisionActorFingerprint, input.now ?? Date.now(), input.approvalId);
+    return result.changes === 1;
+}
+export function listRequestedApprovalsForChannelCallback(input) {
+    const now = input.now ?? Date.now();
+    return getDb()
+        .prepare(`SELECT *
+       FROM approval_registry
+       WHERE run_id = ?
+         AND channel = ?
+         AND channel_message_id = ?
+         AND decision_actor_fingerprint = ?
+         AND status = 'requested'
+         AND (expires_at IS NULL OR expires_at > ?)
+       ORDER BY created_at ASC, id ASC`)
+        .all(input.runId, input.channel, input.channelMessageId, input.decisionActorFingerprint, now);
+}
 export function expireApprovalRegistryRequest(approvalId, now = Date.now()) {
     const row = getApprovalRegistryRow(approvalId);
     if (!row)
@@ -108,23 +144,35 @@ export function resolveApprovalRegistryDecision(params) {
         : params.decision === "allow_once"
             ? "approved_once"
             : "denied";
+    const metadata = parseApprovalMetadata(row);
+    const metadataJson = JSON.stringify({
+        ...metadata,
+        approvalDecision: params.decision,
+    });
     getDb().prepare(`UPDATE approval_registry
-     SET status = ?, decision_at = ?, decision_by = ?, decision_source = ?, updated_at = ?
+     SET status = ?, decision_at = ?, decision_by = ?, decision_source = ?,
+         metadata_json = ?, updated_at = ?
      WHERE id = ?
-       AND status = 'requested'`).run(status, now, params.decisionBy ?? null, params.decisionSource, now, params.approvalId);
+       AND status = 'requested'`).run(status, now, params.decisionBy ?? null, params.decisionSource, metadataJson, now, params.approvalId);
     return { accepted: true, status, decision: params.decision, row: getApprovalRegistryRow(params.approvalId) };
 }
-export function consumeApprovalRegistryDecision(approvalId, now = Date.now()) {
+export function consumeApprovalRegistryDecision(approvalId, now = Date.now(), expected) {
     const row = getApprovalRegistryRow(approvalId);
     if (!row)
         return { accepted: false, status: "missing" };
-    if (row.expires_at !== null && row.expires_at <= now && row.status === "requested") {
-        expireApprovalRegistryRequest(row.id, now);
+    if (row.expires_at !== null && row.expires_at <= now && (row.status === "requested" || APPROVED_STATUSES.has(row.status))) {
+        getDb().prepare(`UPDATE approval_registry
+       SET status = 'expired', decision_at = ?, decision_source = 'timeout', updated_at = ?
+       WHERE id = ?
+         AND status IN ('requested', 'approved_once', 'approved_run')`).run(now, now, row.id);
         return { accepted: false, status: "expired", reason: "late", row: getApprovalRegistryRow(row.id) };
     }
     if (!APPROVED_STATUSES.has(row.status)) {
         const reason = row.status === "consumed" ? "already_consumed" : row.status === "superseded" ? "superseded" : "late";
         return { accepted: false, status: row.status, reason, row };
+    }
+    if (expected && !approvalScopeMatches(row, expected)) {
+        return { accepted: false, status: row.status, reason: "scope_mismatch", row };
     }
     getDb().prepare(`UPDATE approval_registry
      SET status = 'consumed', consumed_at = ?, updated_at = ?
@@ -137,23 +185,121 @@ export function consumeApprovalRegistryDecision(approvalId, now = Date.now()) {
         row: getApprovalRegistryRow(approvalId),
     };
 }
-export function describeLateApproval(row) {
-    if (!row)
-        return "처리할 승인 요청을 찾을 수 없습니다. 필요한 경우 요청을 다시 실행해 주세요.";
+export function acquireApprovalRegistryGrant(expected, now = Date.now()) {
+    const paramsHash = hashApprovalParams(expected.authorizationParams ?? expected.params);
+    const rows = getDb()
+        .prepare(`SELECT *
+       FROM approval_registry
+       WHERE request_group_id IS ?
+         AND tool_name = ?
+         AND params_hash = ?
+         AND status IN ('approved_once', 'approved_run', 'consumed')
+       ORDER BY updated_at DESC, id DESC`)
+        .all(expected.requestGroupId ?? null, expected.toolName, paramsHash);
+    let scopeMismatch = false;
+    for (const row of rows) {
+        if (!approvalScopeMatches(row, expected)) {
+            scopeMismatch = true;
+            continue;
+        }
+        if (row.expires_at !== null && row.expires_at <= now)
+            continue;
+        if (row.status === "consumed") {
+            const metadata = parseApprovalMetadata(row);
+            if (metadata.approvalDecision !== "allow_run")
+                continue;
+            return {
+                acquired: true,
+                decision: "allow_run",
+                approvalId: row.id,
+                source: "consumed_run",
+                row,
+            };
+        }
+        const consumed = consumeApprovalRegistryDecision(row.id, now, expected);
+        if (!consumed.accepted
+            || !consumed.row
+            || (consumed.decision !== "allow_once" && consumed.decision !== "allow_run"))
+            continue;
+        return {
+            acquired: true,
+            decision: consumed.decision,
+            approvalId: row.id,
+            source: "approved",
+            row: consumed.row,
+        };
+    }
+    return {
+        acquired: false,
+        reasonCode: scopeMismatch
+            ? "approval_grant_scope_mismatch"
+            : "approval_grant_not_found",
+    };
+}
+function parseApprovalMetadata(row) {
+    try {
+        const value = row.metadata_json ? JSON.parse(row.metadata_json) : {};
+        return value && typeof value === "object" && !Array.isArray(value)
+            ? value
+            : {};
+    }
+    catch {
+        return {};
+    }
+}
+function approvalScopeMatches(row, expected) {
+    if (row.run_id !== expected.runId || row.tool_name !== expected.toolName)
+        return false;
+    if (row.request_group_id !== (expected.requestGroupId ?? null))
+        return false;
+    if (row.params_hash !==
+        hashApprovalParams(expected.authorizationParams ?? expected.params))
+        return false;
+    const metadata = parseApprovalMetadata(row);
+    const approvedAgentId = typeof metadata.agentId === "string" ? metadata.agentId : null;
+    if (approvedAgentId !== (expected.agentId?.trim() || null))
+        return false;
+    const binding = expected.operationBinding;
+    if (row.operation_id !== (binding?.operationId ?? null)
+        || row.operation_binding_hash !== (binding?.operationBindingHash ?? null)
+        || row.continuation_schema_version
+            !== (binding?.continuationSchemaVersion ?? null)) {
+        return false;
+    }
+    return true;
+}
+export function describeLateApproval(row, language = "ko") {
+    if (!row) {
+        return language === "en"
+            ? "No approval request was found. Run the request again if approval is still needed."
+            : "처리할 승인 요청을 찾을 수 없습니다. 필요한 경우 요청을 다시 실행해 주세요.";
+    }
     switch (row.status) {
         case "expired":
-            return "이 승인 요청은 이미 만료되었습니다. 안전을 위해 실행하지 않았습니다. 요청을 다시 실행해 새 승인을 받아 주세요.";
+            return language === "en"
+                ? "This approval request has expired. It was not executed for safety. Run the request again to request new approval."
+                : "이 승인 요청은 이미 만료되었습니다. 안전을 위해 실행하지 않았습니다. 요청을 다시 실행해 새 승인을 받아 주세요.";
         case "consumed":
-            return "이 승인 요청은 이미 사용되었습니다. 같은 승인은 다시 사용할 수 없습니다.";
+            return language === "en"
+                ? "This approval request has already been used. The same approval cannot be reused."
+                : "이 승인 요청은 이미 사용되었습니다. 같은 승인은 다시 사용할 수 없습니다.";
         case "superseded":
-            return "이 승인 요청은 더 새 요청으로 대체되었습니다. 최신 승인 요청에 응답해 주세요.";
+            return language === "en"
+                ? "This approval request was replaced by a newer request. Respond to the latest approval request."
+                : "이 승인 요청은 더 새 요청으로 대체되었습니다. 최신 승인 요청에 응답해 주세요.";
         case "denied":
-            return "이 승인 요청은 이미 거부되었습니다. 필요한 경우 요청을 다시 실행해 주세요.";
+            return language === "en"
+                ? "This approval request was already denied. Run the request again if approval is still needed."
+                : "이 승인 요청은 이미 거부되었습니다. 필요한 경우 요청을 다시 실행해 주세요.";
         case "approved_once":
         case "approved_run":
-            return "이 승인 요청은 이미 승인 처리되었습니다. 중복 실행은 하지 않습니다.";
+            return language === "en"
+                ? "This approval request has already been approved. Duplicate execution will not run."
+                : "이 승인 요청은 이미 승인 처리되었습니다. 중복 실행은 하지 않습니다.";
         case "requested":
-            return "승인 요청이 아직 대기 중입니다. 최신 승인 메시지에서 다시 응답해 주세요.";
+            return language === "en"
+                ? "This approval request is still pending. Respond from the latest approval message."
+                : "승인 요청이 아직 대기 중입니다. 최신 승인 메시지에서 다시 응답해 주세요.";
     }
 }
 function safeJsonPreview(value) {

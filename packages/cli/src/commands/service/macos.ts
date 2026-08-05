@@ -2,13 +2,14 @@ import { execSync, spawnSync } from "node:child_process"
 import { writeFileSync, unlinkSync, existsSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { getCliServicePath, getCliStateDir } from "../../runtime-env.js"
 import type { ServiceAction } from "./index.js"
 import { which, knowbeeBinPath } from "./index.js"
 
 const LABEL = "com.atomsoft.knowbee"
 const AGENTS_DIR = join(homedir(), "Library", "LaunchAgents")
 const PLIST_PATH = join(AGENTS_DIR, `${LABEL}.plist`)
-const STATE_DIR = process.env["KNOWBEE_STATE_DIR"] ?? process.env["WIZBY_STATE_DIR"] ?? process.env["HOWIE_STATE_DIR"] ?? process.env["KNOWBEE_STATE_DIR"] ?? join(homedir(), ".knowbee")
+const STATE_DIR = getCliStateDir()
 const LOGS_DIR = join(STATE_DIR, "logs")
 
 function buildPlist(nodePath: string, knowbeePath: string): string {
@@ -36,7 +37,7 @@ function buildPlist(nodePath: string, knowbeePath: string): string {
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>${process.env["PATH"] ?? "/usr/local/bin:/usr/bin:/bin"}</string>
+    <string>${getCliServicePath()}</string>
     <key>HOME</key>
     <string>${homedir()}</string>
   </dict>

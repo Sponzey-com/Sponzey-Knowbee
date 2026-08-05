@@ -25,7 +25,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_FEATURE_FLAGS = [
         defaultMode: "off",
         defaultCompatibilityMode: true,
         owner: "runtime",
-        description: "MVP topology node runtime and Knowbee-owned final answer synthesis.",
+        description: "MVP topology node runtime and main-agent-owned final answer synthesis.",
     },
     {
         featureKey: "topology_runtime_recursive_delegation",
@@ -67,7 +67,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_FEATURE_FLAGS = [
         defaultMode: "off",
         defaultCompatibilityMode: true,
         owner: "runtime",
-        description: "Run layer root-run routing gate. Off must always preserve the single Knowbee path.",
+        description: "Run layer root-run routing gate. Off must always preserve the single main-agent path.",
     },
 ];
 export const ENTERPRISE_TOPOLOGY_WORKSPACE_RELEASE_LAYERS = [
@@ -99,7 +99,7 @@ export const ENTERPRISE_TOPOLOGY_WORKSPACE_NO_TYPING_HAPPY_PATH = [
     },
     {
         id: "run_strip",
-        label: "Run from the Simple input strip while WorkOrder template and context remain internally inferred.",
+        label: "Run from the simple input strip while the work template and context remain internally inferred.",
         noTypingRequired: true,
     },
     {
@@ -116,34 +116,34 @@ export const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_ALLOWED_TYPING_INPUTS = [
 export const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH = [
     {
         id: "add_first_executor",
-        label: "Click + 실행자 추가 from the default Executor Graph surface.",
+        label: "Click + 서브 에이전트 추가 from the default sub-agent settings surface.",
         actionKind: "button",
     },
     {
         id: "enter_executor_name",
-        label: "Type the executor name.",
+        label: "Type the sub-agent name.",
         actionKind: "text_input",
         inputKind: "executor_name",
     },
     {
         id: "enter_executor_work",
-        label: "Type only what the executor does; Knowbee infers runtime mode, tools, outputs, and success criteria.",
+        label: "Type only what the sub-agent does; the main agent infers runtime mode, tools, outputs, and success criteria.",
         actionKind: "text_input",
         inputKind: "executor_work",
     },
     {
         id: "review_understanding",
-        label: "Review 노비가 이해한 내용 and confirm or revise it before execution.",
+        label: "Review what the main agent understood and confirm or revise it before execution.",
         actionKind: "review",
     },
     {
         id: "add_second_executor",
-        label: "Add a second executor using the same name and work fields.",
+        label: "Add a second sub-agent using the same name and work fields.",
         actionKind: "button",
     },
     {
         id: "connect_executors",
-        label: "Connect executors through Smart Connect recommendation chips instead of typing relation labels.",
+        label: "Connect sub-agents through Smart Connect recommendation chips instead of typing relation labels.",
         actionKind: "chip_or_button",
     },
     {
@@ -154,12 +154,12 @@ export const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH = [
     },
     {
         id: "run",
-        label: "Click 실행 after start executor, WorkOrder template, and context are inferred internally.",
+        label: "Click Run after the start sub-agent, work template, and context are inferred internally.",
         actionKind: "button",
     },
     {
         id: "review_history",
-        label: "Review 기록, 실패 위치, and 고칠 점 without raw trace or JSON inspection.",
+        label: "Review history, failure location, and improvement points without raw trace or JSON inspection.",
         actionKind: "review",
     },
 ];
@@ -170,7 +170,7 @@ export const ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_DEFAULT_HIDDEN_CONCEPTS = [
     "Tool",
     "Data",
     "Group",
-    "WorkOrder Template",
+    "Internal work template",
     "Context",
     "AgentConfig",
     "SubSession",
@@ -246,7 +246,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_MODE_SEQUENCE = [
         ],
         promotionCriteria: [
             "Operator can activate, inspect, and rollback a topology version without deleting data.",
-            "Unified workspace route compatibility, layer coverage, and Executor-first usability evidence pass.",
+            "Unified workspace route compatibility, layer coverage, and sub-agent-first usability evidence pass.",
             "Topology runtime smoke proves final answers still flow through Knowbee finalization.",
         ],
         rollbackAction: "Set topology_runtime_mvp and enterprise_topology_builder_ui to off, then rollback active topology if operator beta changed it.",
@@ -264,7 +264,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_MODE_SEQUENCE = [
             requirement("topology_runtime_enabled", ["enforced"], "The final routing flag must remain explicit opt-in."),
         ],
         promotionCriteria: [
-            "Feature flag off path and single Knowbee fallback are verified in the same release gate.",
+            "Feature flag off path and single main-agent fallback are verified in the same release gate.",
             "Run Strip, Trace, and Improve layers are verified before opt-in routing is exposed.",
             "Sub-agent and channel finalizer regression suites pass with topology routing enabled.",
             "Rollback smoke restores the previous active topology and compiled snapshot without data deletion.",
@@ -325,7 +325,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_REGRESSION_COMMANDS = [
         ],
         required: true,
         smoke: false,
-        description: "Verify unified route compatibility, visible workspace layer coverage, Executor-first usability, and removal of the old Advanced/Developer topology surfaces.",
+        description: "Verify unified route compatibility, visible workspace layer coverage, sub-agent-first usability, and removal of the old Advanced/Developer topology surfaces.",
     },
     {
         id: "topology_runtime_smoke",
@@ -346,7 +346,7 @@ export const ENTERPRISE_TOPOLOGY_RELEASE_REGRESSION_COMMANDS = [
         command: ["pnpm", "test", "tests/task025-enterprise-topology-release-gate.test.ts"],
         required: true,
         smoke: true,
-        description: "Verify release flag matrix, single Knowbee fallback, rollback runbook, and snapshot restore evidence.",
+        description: "Verify release flag matrix, single main-agent fallback, rollback runbook, and snapshot restore evidence.",
     },
 ];
 export function buildEnterpriseTopologyRuntimeSmoke(input = {}) {
@@ -446,7 +446,7 @@ export function buildEnterpriseTopologyWorkspaceUsabilityGate(input = {}) {
     const featureFlagOffFallbacks = input.featureFlagOffFallbacks ?? [
         "/advanced/topology is hidden by enterprise_topology_builder_ui when disabled.",
         "/advanced/enterprise-topology redirects to /advanced/topology?mode=build and then follows the same feature gate.",
-        "topology_runtime_enabled=off preserves single Knowbee root-run routing.",
+        "topology_runtime_enabled=off preserves single main-agent root-run routing.",
     ];
     const layerSet = new Set(requiredLayers);
     const requiredStepSet = new Set(ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH.map((step) => step.id));
@@ -522,7 +522,7 @@ export function buildEnterpriseTopologyWorkspaceUsabilityGate(input = {}) {
     if (!featureFlagOffFallbacks.some((item) => item.includes("enterprise_topology_builder_ui"))) {
         blockingFailures.push("builder_ui_feature_flag_off_fallback_missing");
     }
-    if (!featureFlagOffFallbacks.some((item) => item.includes("single Knowbee"))) {
+    if (!featureFlagOffFallbacks.some((item) => item.includes("single main-agent"))) {
         blockingFailures.push("single_knowbee_root_run_fallback_missing");
     }
     return {
@@ -568,7 +568,7 @@ export function buildEnterpriseTopologyRollbackRunbook() {
         steps: [
             "Verify the release manifest checksum and the backup snapshot checksum.",
             "Record current active topology id, active version, validation snapshot id, and compiled snapshot id as rollback-of-rollback evidence.",
-            "Set topology_runtime_enabled=off and verify new root requests choose the single Knowbee fallback path.",
+            "Set topology_runtime_enabled=off and verify new root requests choose the single main-agent fallback path.",
             "Set enterprise_topology_builder_ui=off and verify /advanced/topology hides workspace controls while /advanced/enterprise-topology still redirects to /advanced/topology?mode=build.",
             "Set declared_observed_topology_analysis=off when Trace or Improve layer evidence is suspected, without deleting topology runtime trace tables.",
             "Use registry rollbackTopologyVersion(topologyId, targetVersion) or restore the previous active topology record from the verified backup.",
@@ -578,7 +578,7 @@ export function buildEnterpriseTopologyRollbackRunbook() {
             "Keep topology_runtime_enabled=off until post-incident review accepts the restored active topology and compiled snapshot evidence.",
         ],
         verification: [
-            "topology_runtime_enabled is off and the single Knowbee start plan still creates a root run.",
+            "topology_runtime_enabled is off and the single main-agent start plan still creates a root run.",
             "enterprise_topology_builder_ui is off or rollback and the unified workspace route is not exposing activation controls.",
             "/advanced/enterprise-topology remains a compatibility redirect to /advanced/topology?mode=build.",
             "Active topology version matches the selected target version.",
@@ -591,7 +591,7 @@ export function buildEnterpriseTopologyRollbackRunbook() {
             "Release or backup checksum verification fails.",
             "The target topology version has no executable validation snapshot.",
             "The compiled snapshot source hash does not match the target topology version.",
-            "Feature flag off path does not restore single Knowbee fallback.",
+            "Feature flag off path does not restore single main-agent fallback.",
             "Channel finalizer duplicate-final regression fails.",
         ],
     };
@@ -711,10 +711,10 @@ export function buildEnterpriseTopologyReleaseReadinessSummary(options = {}) {
         }),
         gate({
             id: "single_knowbee_fallback",
-            title: "Single Knowbee fallback",
+            title: "Single main-agent fallback",
             releaseModes: ["contracts_validator_only", "dry_run_shadow", "gated_mode", "opt_in_routing"],
             pass: runtimeSmoke.singleKnowbeeFallbackPassed && runtimeSmoke.subAgentRuntimePreserved,
-            summary: "Existing single Knowbee and sub-agent runtime behavior is preserved when topology routing is disabled.",
+            summary: "Existing single main-agent and sub-agent runtime behavior is preserved when topology routing is disabled.",
             evidence: runtimeSmoke,
         }),
         commandGate("sub_agent_regression_suite", regressionCommands),
@@ -744,7 +744,7 @@ export function buildEnterpriseTopologyReleaseReadinessSummary(options = {}) {
         }),
         gate({
             id: "topology_workspace_executor_first_usability",
-            title: "Topology Workspace Executor-first usability",
+            title: "Topology Workspace sub-agent-first usability",
             releaseModes: ["gated_mode", "opt_in_routing"],
             pass: ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_HAPPY_PATH.every((step) => workspaceUsability.executorFirstHappyPath.some((candidate) => candidate.id === step.id)) &&
                 workspaceUsability.allowedTypingInputs.length === ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_ALLOWED_TYPING_INPUTS.length &&
@@ -755,7 +755,7 @@ export function buildEnterpriseTopologyReleaseReadinessSummary(options = {}) {
                 workspaceUsability.internalStability.featureFlagOffSingleKnowbeeFallback &&
                 workspaceUsability.internalStability.advancedTopologySurfaceRemoved &&
                 workspaceUsability.internalStability.rollbackProjectionRestoreVerified,
-            summary: "The default happy path only asks for executor name, executor work, and run input while internal topology safety remains gated.",
+            summary: "The default happy path only asks for sub-agent name, what the sub-agent does, and run input while internal topology safety remains gated.",
             evidence: workspaceUsability,
         }),
         commandGate("topology_workspace_usability_gate", regressionCommands),

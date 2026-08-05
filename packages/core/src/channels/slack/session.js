@@ -2,6 +2,12 @@ import { getDb } from "../../db/index.js";
 export function resolveSlackSessionKey(channelId, threadTs) {
     return `slack:${channelId}:${threadTs}`;
 }
+export function parseSlackSessionKey(sessionKey) {
+    const match = /^slack:([^:]+):([^:]+)$/u.exec(sessionKey);
+    if (!match?.[1] || !match[2])
+        return null;
+    return { channelId: match[1], threadTs: match[2] };
+}
 export function getOrCreateSlackSession(sessionKey) {
     const db = getDb();
     const existing = db

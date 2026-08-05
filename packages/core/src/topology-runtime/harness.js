@@ -3,7 +3,52 @@ import { createEnterpriseTopologyRegistry, } from "../topology/registry.js";
 import { buildWorkOrder, createWorkOrderRuntimeEnvelope, } from "./work-order.js";
 import { runNodeRuntime, } from "./node-runtime.js";
 import { recordTopologyRuntimeExecution, } from "./trace.js";
+import { loadPromptValue } from "../memory/prompt-fragments.js";
+import { runResultDiagnosisProvider, runRequestDiagnosisProvider, } from "../contracts/llm-diagnosis-provider.js";
+import { authorizeDiagnosisActionRoute } from "../contracts/diagnosis-action-routing.js";
+import { runLlmSolutionPlanProvider, } from "../contracts/llm-solution-plan-provider.js";
+import { planStructuredWorkLifecycle } from "../contracts/structured-work-lifecycle.js";
 export const TOPOLOGY_RUNTIME_FEATURE_KEY = "topology_runtime_enabled";
+const TOPOLOGY_RUNTIME_HARNESS_TEXT_SOURCE_ID = "topology_runtime_harness_text_user";
+function topologyRuntimeHarnessText(key, variables = {}) {
+    const entries = loadPromptValue(TOPOLOGY_RUNTIME_HARNESS_TEXT_SOURCE_ID, variables, { required: true })
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map((line) => {
+        const separator = line.indexOf("=");
+        if (separator < 0)
+            return [line, ""];
+        return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()];
+    });
+    const value = new Map(entries).get(key);
+    if (!value)
+        throw new Error(`topology runtime harness text missing: ${key}`);
+    return value;
+}
+function rootFailureSolutionPathReviews(entryNode) {
+    const yeonjangAvailable = entryNode.allowedToolIds.some((toolId) => toolId.includes("yeonjang"));
+    const guidance = topologyRuntimeHarnessText("recovery_recommended_action");
+    return [
+        { path: "direct_answer", disposition: "reviewed_unavailable", reasonCode: "topology_execution_required" },
+        { path: "plan", disposition: "attempted", reasonCode: "work_order_plan_executed" },
+        { path: "tool", disposition: "attempted", reasonCode: "tool_paths_reviewed" },
+        { path: "sub_agent", disposition: "attempted", reasonCode: "child_delegation_reviewed" },
+        {
+            path: "yeonjang",
+            disposition: yeonjangAvailable ? "attempted" : "reviewed_unavailable",
+            reasonCode: yeonjangAvailable ? "yeonjang_tool_path_reviewed" : "yeonjang_not_available_to_node",
+        },
+        { path: "ask_clarification", disposition: "reviewed_unavailable", reasonCode: "work_order_input_accepted" },
+        { path: "partial_completion", disposition: "reviewed_unavailable", reasonCode: "partial_success_reviewed" },
+        {
+            path: "workaround_guidance",
+            disposition: "guidance_ready",
+            reasonCode: "recovery_guidance_available",
+            guidance,
+        },
+    ];
+}
 export function resolveTopologyRootRunRouting(input) {
     const featureFlag = input.featureFlag ?? getFeatureFlag(TOPOLOGY_RUNTIME_FEATURE_KEY);
     const featureFlagMode = featureFlag.mode;
@@ -95,6 +140,84 @@ function timestampMs(value) {
     }
     return 0;
 }
+async function admitLlmTopologyPlan(input) {
+    const { diagnosisProvider, solutionPlanProvider, } = input.admission;
+    if (!diagnosisProvider || !solutionPlanProvider) {
+        return { ok: false, reasonCode: "planning_provider_missing" };
+    }
+    const diagnosisSubject = {
+        ownerAgentName: input.ownerAgentName,
+        userRequestSummary: input.message,
+        context: [
+            `topology_run_id:${input.workOrder.topologyRunId}`,
+            `work_order_id:${input.workOrder.workOrderId}`,
+            ...input.capabilityRefs.map((reference) => `capability:${reference}`),
+        ],
+        constraints: [
+            `permission_risk_level:${input.workOrder.permissionScope.riskLevel}`,
+            ...input.workOrder.authorityScope.requiredAuthorityRuleIds.map((ruleId) => `authority:${ruleId}`),
+        ],
+        workId: input.workOrder.workOrderId,
+        stepId: `planning:${input.workOrder.workOrderId}`,
+    };
+    try {
+        const diagnosis = await runRequestDiagnosisProvider({
+            provider: diagnosisProvider,
+            repairAttempted: false,
+            ...diagnosisSubject,
+        });
+        if (diagnosis.status !== "valid" ||
+            diagnosis.target !== "request_diagnosis" ||
+            !diagnosis.receipt) {
+            return { ok: false, reasonCode: "request_diagnosis_invalid" };
+        }
+        const requestDiagnosisIssuedAt = input.now();
+        const planned = await runLlmSolutionPlanProvider({
+            provider: solutionPlanProvider,
+            workId: input.workOrder.workOrderId,
+            runId: input.runId,
+            ownerAgentName: input.ownerAgentName,
+            requestDiagnosisReceiptId: diagnosis.receipt.receiptId,
+            requestDiagnosisIssuedAt,
+            issuedAt: Math.max(input.now(), requestDiagnosisIssuedAt + 1),
+            goal: diagnosis.diagnosis.goal,
+            constraints: diagnosis.diagnosis.constraints,
+            capabilityRefs: input.capabilityRefs,
+            completionCriteria: input.workOrder.successCriteria.map((criterion) => criterion.description),
+        });
+        if (planned.status !== "valid") {
+            return { ok: false, reasonCode: planned.reasonCode };
+        }
+        planStructuredWorkLifecycle({
+            workId: input.workOrder.workOrderId,
+            runId: input.runId,
+            ownerAgentName: input.ownerAgentName,
+            subjectPayload: diagnosisSubject,
+            diagnosis: diagnosis.diagnosis,
+            receipt: diagnosis.receipt,
+            requestDiagnosisIssuedAt,
+            solutionPlanReceipt: planned.receipt,
+            complexity: {
+                toolCount: input.workOrder.permissionScope.allowedToolIds.length,
+                subAgentCount: input.subAgentCount,
+                usesYeonjang: input.workOrder.permissionScope.allowedToolIds.some((toolId) => toolId.includes("yeonjang")),
+                requiresApproval: input.workOrder.authorityScope.approvalRequired,
+                changesFiles: false,
+                longRunning: false,
+            },
+            proposedSteps: planned.plan.steps,
+        });
+        return {
+            ok: true,
+            requestDiagnosisReceiptId: diagnosis.receipt.receiptId,
+            solutionPlanReceiptId: planned.receipt.receiptId,
+            capabilitySelections: planned.capabilitySelections,
+        };
+    }
+    catch {
+        return { ok: false, reasonCode: "planning_lifecycle_invalid" };
+    }
+}
 export async function runTopologyRootRun(input) {
     const registry = input.registry ?? createEnterpriseTopologyRegistry();
     const exported = registry.exportTopology(input.decision.topologyId, input.decision.topologyVersion);
@@ -150,7 +273,7 @@ export async function runTopologyRootRun(input) {
         },
         successCriteria: [{
                 criterionId: `criterion:${topologyRunId}:knowbee-final-answer`,
-                description: "Produce a result that Knowbee can synthesize into the final user answer.",
+                description: topologyRuntimeHarnessText("root_success_criterion"),
                 required: true,
                 validationKind: "manual",
             }],
@@ -168,6 +291,35 @@ export async function runTopologyRootRun(input) {
         delegationPath: [entryNode.id],
         createdAt: now(),
     });
+    if (input.planningAdmission?.required === true) {
+        const planningAdmission = await admitLlmTopologyPlan({
+            admission: input.planningAdmission,
+            workOrder,
+            runId: input.runId,
+            ownerAgentName: entryNode.name,
+            message: input.message,
+            capabilityRefs: [
+                ...compiledEntryNode.allowedToolIds,
+                ...compiledEntryNode.allowedSystemIds,
+                ...compiledEntryNode.childNodeIds.map((nodeId) => `sub-agent:${nodeId}`),
+            ],
+            subAgentCount: compiledEntryNode.childNodeIds.length,
+            now,
+        });
+        if (!planningAdmission.ok) {
+            return fallbackExecution("planning_admission_blocked", [planningAdmission.reasonCode]);
+        }
+        if (input.onPlanningAdmitted) {
+            const persisted = await input.onPlanningAdmitted({
+                requestDiagnosisReceiptId: planningAdmission.requestDiagnosisReceiptId,
+                solutionPlanReceiptId: planningAdmission.solutionPlanReceiptId,
+                capabilitySelections: planningAdmission.capabilitySelections,
+            });
+            if (!persisted.ok) {
+                return fallbackExecution("planning_admission_blocked", [persisted.reasonCode]);
+            }
+        }
+    }
     const runtimeEnvelope = createWorkOrderRuntimeEnvelope({
         workOrder,
         nodeContractSnapshot: entryNode,
@@ -182,10 +334,11 @@ export async function runTopologyRootRun(input) {
         return fallbackExecution("work_order_envelope_invalid", runtimeEnvelope.issues.map((issue) => issue.reasonCode ?? issue.code));
     }
     const childNodeContractsById = Object.fromEntries(topology.nodes.map((node) => [node.id, structuredClone(node)]));
+    const nodeRunId = `node-run:${topologyRunId}:${entryNode.id}`;
     const runtimeResult = await runNodeRuntime({
         envelope: runtimeEnvelope.envelope,
         compiledTopologySnapshot: snapshot,
-        nodeRunId: `node-run:${topologyRunId}:${entryNode.id}`,
+        nodeRunId,
         now,
         component: "topology-root-run",
         ...(input.selfExecute !== undefined ? { selfExecute: input.selfExecute } : {}),
@@ -209,9 +362,108 @@ export async function runTopologyRootRun(input) {
             fallbackAttempted: true,
             partialSuccessChecked: true,
             parentRecoveryPossibleChecked: true,
-            recommendedAction: "Use the current-agent fallback contract if topology execution cannot produce a final answer.",
+            solutionPathReviews: rootFailureSolutionPathReviews(entryNode),
+            recommendedAction: topologyRuntimeHarnessText("recovery_recommended_action"),
+            ...(input.diagnosisProvider
+                ? {
+                    diagnosisProvider: input.diagnosisProvider,
+                }
+                : {}),
         },
     });
+    const terminalStopDecision = runtimeResult.terminalStopDecision;
+    if (terminalStopDecision !== undefined) {
+        if (input.onResultDiagnosed) {
+            const persisted = await input.onResultDiagnosed({
+                resultDiagnosisReceiptId: terminalStopDecision.reportInput.diagnosisReceiptId,
+            });
+            if (!persisted.ok) {
+                return {
+                    ...fallbackExecution("result_diagnosis_reanalysis_required", [persisted.reasonCode]),
+                    runtimeResult,
+                };
+            }
+        }
+    }
+    else if (input.resultDiagnosisAdmission?.required === true) {
+        const { diagnosisProvider } = input.resultDiagnosisAdmission;
+        if (!diagnosisProvider) {
+            return {
+                ...fallbackExecution("result_diagnosis_reanalysis_required", ["result_diagnosis_provider_missing"]),
+                runtimeResult,
+            };
+        }
+        const diagnosisSubject = {
+            ownerAgentName: entryNode.name,
+            resultSummary: JSON.stringify({
+                runtimeStatus: runtimeResult.status,
+                reportStatus: runtimeResult.nodeResultReport.status,
+                outputs: runtimeResult.nodeResultReport.outputs,
+            }),
+            expectedOutput: workOrder.successCriteria
+                .map((criterion) => `${criterion.criterionId}:${criterion.description}`)
+                .join("\n"),
+            evidence: runtimeResult.nodeResultReport.outputs.map((output) => `output:${output.outputId}:${output.status}`),
+            risks: runtimeResult.nodeResultReport.risksOrGaps,
+            workId: workOrder.workOrderId,
+            stepId: `result:${nodeRunId}`,
+        };
+        try {
+            const diagnosed = await runResultDiagnosisProvider({
+                provider: diagnosisProvider,
+                repairAttempted: false,
+                ...diagnosisSubject,
+            });
+            if (diagnosed.status !== "valid" ||
+                diagnosed.target !== "result_diagnosis" ||
+                !diagnosed.receipt) {
+                return {
+                    ...fallbackExecution("result_diagnosis_reanalysis_required", ["result_diagnosis_invalid"]),
+                    runtimeResult,
+                };
+            }
+            const route = authorizeDiagnosisActionRoute({
+                receipt: diagnosed.receipt,
+                subjectPayload: diagnosisSubject,
+                diagnosis: diagnosed.diagnosis,
+            });
+            if (input.onResultDiagnosed) {
+                const persisted = await input.onResultDiagnosed({
+                    resultDiagnosisReceiptId: diagnosed.receipt.receiptId,
+                });
+                if (!persisted.ok) {
+                    return {
+                        ...fallbackExecution("result_diagnosis_reanalysis_required", [persisted.reasonCode]),
+                        runtimeResult,
+                    };
+                }
+            }
+            const completionIssues = [
+                ...(diagnosed.diagnosis.conflicts.length > 0 ? ["result_diagnosis_conflicts"] : []),
+                ...(diagnosed.diagnosis.missing_information.length > 0
+                    ? ["result_diagnosis_missing_information"]
+                    : []),
+            ];
+            if (diagnosed.diagnosis.sufficiency !== "sufficient" ||
+                route.routeKind !== "final_report" ||
+                completionIssues.length > 0) {
+                return {
+                    ...fallbackExecution("result_diagnosis_reanalysis_required", [
+                        ...completionIssues,
+                        `result_diagnosis_action:${route.routeKind}`,
+                        `result_sufficiency:${diagnosed.diagnosis.sufficiency}`,
+                    ]),
+                    runtimeResult,
+                };
+            }
+        }
+        catch {
+            return {
+                ...fallbackExecution("result_diagnosis_reanalysis_required", ["result_diagnosis_invalid"]),
+                runtimeResult,
+            };
+        }
+    }
     const persistence = recordTopologyRuntimeExecution({
         result: runtimeResult,
         topologyId: topology.id,
@@ -234,10 +486,20 @@ export async function runTopologyRootRun(input) {
         now,
     });
     if (runtimeResult.status !== "completed" && runtimeResult.status !== "partial_success") {
+        if (runtimeResult.terminalStopDecision !== undefined) {
+            return {
+                ok: false,
+                reasonCode: "topology_runtime_terminal_stop",
+                fallbackSummary: topologyRuntimeHarnessText("runtime_failed_summary"),
+                issues: runtimeResult.nodeResultReport.risksOrGaps,
+                runtimeResult,
+                persistence,
+            };
+        }
         return {
             ok: false,
             reasonCode: "topology_runtime_failed",
-            fallbackSummary: "Topology runtime did not produce a completed result; use the current-agent fallback contract.",
+            fallbackSummary: topologyRuntimeHarnessText("runtime_failed_summary"),
             issues: runtimeResult.nodeResultReport.risksOrGaps,
             runtimeResult,
             persistence,
@@ -498,7 +760,7 @@ function fallbackExecution(reasonCode, issues) {
     return {
         ok: false,
         reasonCode,
-        fallbackSummary: `Topology runtime fallback: ${reasonCode}.`,
+        fallbackSummary: topologyRuntimeHarnessText("generic_fallback_summary", { reasonCode }),
         issues,
     };
 }
@@ -508,8 +770,8 @@ function buildTopologyFinalAnswer(input) {
         ? `\n\n검토 필요 항목: ${input.nodeResultReport.risksOrGaps.slice(0, 5).join(", ")}`
         : "";
     return [
-        `요청을 active Enterprise Topology "${input.topology.name}"의 "${input.entryNode.name}" 노드로 처리했습니다.`,
-        `Knowbee final answer: ${outputSummary}`,
+        `요청을 "${input.topology.name}" 위임 흐름의 "${input.entryNode.name}" 서브 에이전트로 처리했습니다.`,
+        `처리 결과: ${outputSummary}`,
         `요청: ${input.userRequest}`,
     ].join("\n\n") + risks;
 }

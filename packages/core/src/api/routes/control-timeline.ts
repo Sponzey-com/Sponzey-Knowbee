@@ -1,12 +1,18 @@
 import type { FastifyInstance } from "fastify"
 import {
-  exportControlTimeline,
-  getControlTimeline,
   type ControlEventSeverity,
   type ControlExportAudience,
   type ControlExportFormat,
   type ControlTimelineQuery,
+  exportControlTimeline,
+  getControlTimeline,
 } from "../../control-plane/timeline.js"
+import {
+  AUTHENTICATED_API_AUDIT_DEPENDENCIES,
+  type AuditAccessRuntimeDependencies,
+  auditAccessHttpFailure,
+  authorizeAndRecordAuditAccess,
+} from "../audit-access-runtime.js"
 import { authMiddleware } from "../middleware/auth.js"
 
 interface ControlTimelineQuerystring {
@@ -19,6 +25,7 @@ interface ControlTimelineQuerystring {
   limit?: string
   audience?: string
   format?: string
+  purpose?: string
 }
 
 function parseLimit(value: string | undefined): number | undefined {
@@ -28,11 +35,23 @@ function parseLimit(value: string | undefined): number | undefined {
 }
 
 function parseSeverity(value: string | undefined): ControlEventSeverity | undefined {
-  return value === "debug" || value === "info" || value === "warning" || value === "error" ? value : undefined
+  return value === "debug" || value === "info" || value === "warning" || value === "error"
+    ? value
+    : undefined
 }
 
 function parseAudience(value: string | undefined): ControlExportAudience {
   return value === "developer" ? "developer" : "user"
+}
+
+export type ControlTimelineExposureContext = "public" | "audit"
+
+export function resolveControlTimelineAudience(
+  requestedAudience: string | undefined,
+  exposureContext: ControlTimelineExposureContext,
+): ControlExportAudience {
+  if (exposureContext !== "audit") return "user"
+  return parseAudience(requestedAudience)
 }
 
 function parseFormat(value: string | undefined): ControlExportFormat {
@@ -53,16 +72,84 @@ function toTimelineQuery(query: ControlTimelineQuerystring): ControlTimelineQuer
   }
 }
 
-export function registerControlTimelineRoute(app: FastifyInstance): void {
-  app.get<{ Querystring: ControlTimelineQuerystring }>("/api/control/timeline", { preHandler: authMiddleware }, async (req) => ({
-    timeline: getControlTimeline(toTimelineQuery(req.query), parseAudience(req.query.audience)),
-  }))
-
-  app.get<{ Querystring: ControlTimelineQuerystring }>("/api/control/timeline/export", { preHandler: authMiddleware }, async (req) => ({
-    export: exportControlTimeline({
-      ...toTimelineQuery(req.query),
-      audience: parseAudience(req.query.audience),
-      format: parseFormat(req.query.format),
+export function registerControlTimelineRoute(
+  app: FastifyInstance,
+  auditDependencies: AuditAccessRuntimeDependencies = AUTHENTICATED_API_AUDIT_DEPENDENCIES,
+): void {
+  app.get<{ Querystring: ControlTimelineQuerystring }>(
+    "/api/control/timeline",
+    { preHandler: authMiddleware },
+    async (req) => ({
+      timeline: getControlTimeline(
+        toTimelineQuery(req.query),
+        resolveControlTimelineAudience(req.query.audience, "public"),
+      ),
     }),
-  }))
+  )
+
+  app.get<{ Querystring: ControlTimelineQuerystring }>(
+    "/api/control/timeline/export",
+    { preHandler: authMiddleware },
+    async (req) => ({
+      export: exportControlTimeline({
+        ...toTimelineQuery(req.query),
+        audience: resolveControlTimelineAudience(req.query.audience, "public"),
+        format: parseFormat(req.query.format),
+      }),
+    }),
+  )
+
+  app.get<{ Querystring: ControlTimelineQuerystring }>(
+    "/api/audit/control/timeline",
+    { preHandler: authMiddleware },
+    async (req, reply) => {
+      const query = toTimelineQuery(req.query)
+      const audience = resolveControlTimelineAudience(req.query.audience, "audit")
+      if (audience === "developer") {
+        const decision = authorizeAndRecordAuditAccess({
+          request: req,
+          purpose: req.query.purpose,
+          operation: "view",
+          ...(req.query.runId ? { runId: req.query.runId } : {}),
+          ...(req.query.requestGroupId ? { requestGroupId: req.query.requestGroupId } : {}),
+          dependencies: auditDependencies,
+        })
+        if (!decision.allowed) {
+          const failure = auditAccessHttpFailure(decision)
+          return reply.status(failure.statusCode).send(failure.body)
+        }
+      }
+      return { timeline: getControlTimeline(query, audience) }
+    },
+  )
+
+  app.get<{ Querystring: ControlTimelineQuerystring }>(
+    "/api/audit/control/timeline/export",
+    { preHandler: authMiddleware },
+    async (req, reply) => {
+      const query = toTimelineQuery(req.query)
+      const audience = resolveControlTimelineAudience(req.query.audience, "audit")
+      if (audience === "developer") {
+        const decision = authorizeAndRecordAuditAccess({
+          request: req,
+          purpose: req.query.purpose,
+          operation: "export",
+          ...(req.query.runId ? { runId: req.query.runId } : {}),
+          ...(req.query.requestGroupId ? { requestGroupId: req.query.requestGroupId } : {}),
+          dependencies: auditDependencies,
+        })
+        if (!decision.allowed) {
+          const failure = auditAccessHttpFailure(decision)
+          return reply.status(failure.statusCode).send(failure.body)
+        }
+      }
+      return {
+        export: exportControlTimeline({
+          ...query,
+          audience,
+          format: parseFormat(req.query.format),
+        }),
+      }
+    },
+  )
 }

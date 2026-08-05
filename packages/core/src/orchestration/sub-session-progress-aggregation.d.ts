@@ -3,8 +3,8 @@ export interface SubSessionProgressAggregationItem {
     parentRunId: string;
     subSessionId: string;
     agentId?: string;
-    agentDisplayName?: string;
-    agentNickname?: string;
+    agentName?: string;
+    agentNameSnapshot?: string;
     status: SubSessionStatus;
     summary: string;
     at: number;

@@ -1,14 +1,21 @@
 import { createReadStream, existsSync, statSync } from "node:fs"
 import { basename, resolve } from "node:path"
 import type { FastifyInstance } from "fastify"
-import { buildArtifactAccessDescriptor, getArtifactsRoot } from "../../artifacts/lifecycle.js"
+import {
+  buildArtifactAccessDescriptor,
+  createArtifactStorageContext,
+  getArtifactsRoot,
+  resolveArtifactDataClassification,
+  type ArtifactStorageContext,
+} from "../../artifacts/lifecycle.js"
 import { getLatestArtifactMetadataByPath } from "../../db/index.js"
 import { authMiddleware } from "../middleware/auth.js"
+import { getApiRuntimePaths } from "../runtime-context.js"
 
-function resolveArtifactFile(encodedPath: string): string | null {
-  const artifactsRoot = getArtifactsRoot()
+function resolveArtifactFile(encodedPath: string, storage: ArtifactStorageContext): string | null {
+  const artifactsRoot = getArtifactsRoot(storage)
   const candidate = resolve(artifactsRoot, encodedPath)
-  const access = buildArtifactAccessDescriptor({ filePath: candidate })
+  const access = buildArtifactAccessDescriptor({ filePath: candidate }, storage)
   if (!access.ok && access.reason === "outside_state_artifacts") return null
   return candidate
 }
@@ -18,8 +25,9 @@ export function registerArtifactsRoute(app: FastifyInstance): void {
     "/api/artifacts/*",
     { preHandler: authMiddleware },
     async (req, reply) => {
+      const storage = createArtifactStorageContext(getApiRuntimePaths(req))
       const encodedPath = req.params["*"] ?? ""
-      const filePath = resolveArtifactFile(encodedPath)
+      const filePath = resolveArtifactFile(encodedPath, storage)
       if (!filePath) {
         return reply.status(403).send({ error: "Forbidden" })
       }
@@ -42,7 +50,8 @@ export function registerArtifactsRoute(app: FastifyInstance): void {
         sizeBytes: metadata?.size_bytes ?? stat.size,
         expiresAt: metadata?.expires_at ?? null,
         ...(metadata?.mime_type ? { mimeType: metadata.mime_type } : {}),
-      })
+        dataClassification: resolveArtifactDataClassification(metadata?.metadata_json),
+      }, storage)
       if (!access.ok) {
         return reply.status(access.reason === "expired" ? 410 : 403).send({ error: access.reason, message: access.userMessage })
       }

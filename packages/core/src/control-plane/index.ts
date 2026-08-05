@@ -2,9 +2,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 import { randomBytes } from "node:crypto"
 import JSON5 from "json5"
-import { getConfig, PATHS, reloadConfig, type KnowbeeConfig } from "../config/index.js"
-import { resetAIProviderCache } from "../ai/index.js"
+import type { KnowbeeConfig } from "../config/index.js"
+import type { RuntimePaths } from "../config/paths.js"
 import { getProviderCapabilityMatrix, type ProviderCapabilityMatrix } from "../ai/capabilities.js"
+import {
+  DEFAULT_MAIN_AGENT_NAME_EN,
+  defaultMainAgentNameForLanguage,
+  resolveMainAgentSelfName,
+} from "../agent/main-agent-identity.js"
 import { DEFAULT_CONFIG } from "../config/types.js"
 import type { AIConnectionConfig } from "../config/types.js"
 import {
@@ -17,19 +22,21 @@ import {
 } from "./setup-extensions.js"
 import { getActiveTelegramChannel, getTelegramRuntimeError } from "../channels/telegram/runtime.js"
 import { getActiveSlackChannel, getSlackRuntimeError } from "../channels/slack/runtime.js"
-import { resetEmbeddingProvider } from "../memory/embedding.js"
-import { loadPromptTemplate } from "../memory/knowbee-md.js"
-import { mcpRegistry } from "../mcp/registry.js"
+import {
+  mcpRegistry,
+  type McpServerStatus,
+  type McpSummary,
+} from "../mcp/registry.js"
 import { getMqttBrokerSnapshot } from "../mqtt/broker.js"
 import {
   orchestrationCapabilityStatus,
   resolveOrchestrationModeSnapshotSync,
 } from "../orchestration/mode.js"
-import { updateActiveRunsMaxDelegationTurns } from "../runs/store.js"
+import { redactLogText } from "../logger/index.js"
 import {
-  OPENAI_CODEX_KNOWN_MODELS,
-  OPENAI_CODEX_RESPONSES_PATH,
+  buildOpenAICodexModelsUrl,
   OPENAI_CODEX_USER_AGENT,
+  parseOpenAICodexModels,
   readOpenAICodexAccessToken,
   resolveOpenAICodexAuthFilePath,
   resolveOpenAICodexBaseUrl,
@@ -42,27 +49,32 @@ import type {
   SkillMcpAllowlist,
   SubAgentConfig,
 } from "../contracts/sub-agent-orchestration.js"
-import { normalizeNickname } from "../contracts/sub-agent-orchestration.js"
+import type {
+  CapabilityCounts,
+  CapabilityStatus,
+  FeatureCapability,
+} from "../contracts/feature-capability.js"
+import {
+  projectPlatformCapabilities,
+  type PlatformCapabilityRuntime,
+} from "../capabilities/platform.js"
+import {
+  normalizeAgentName,
+  normalizeAgentNameSnapshot,
+  resolveAgentConfigAgentName,
+} from "../contracts/sub-agent-orchestration.js"
 
-export type CapabilityStatus = "ready" | "disabled" | "planned" | "error"
-
-export interface FeatureCapability {
-  key: string
-  label: string
-  area: "setup" | "gateway" | "runs" | "chat" | "ai" | "security" | "telegram" | "slack" | "scheduler" | "plugins" | "memory" | "mcp" | "mqtt"
-  status: CapabilityStatus
-  implemented: boolean
-  enabled: boolean
-  reason?: string
-  dependsOn?: string[]
-  metadata?: JsonObject
+function controlPlaneModelDiscoveryErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
 }
 
-export interface CapabilityCounts {
-  ready: number
-  disabled: number
-  planned: number
-  error: number
+export type { CapabilityCounts, CapabilityStatus, FeatureCapability }
+
+export interface CapabilityProjectionOptions {
+  enterpriseTopologyBuilderEnabled?: boolean
+  platformRuntime?: PlatformCapabilityRuntime
+  config: KnowbeeConfig
 }
 
 export interface AIBackendCard {
@@ -226,6 +238,9 @@ export interface SetupDraft {
   subAgents?: SetupSubAgentDraft
 }
 
+export const SETUP_SECRET_MASK = "***"
+export const SETUP_INTERNAL_PATH_MASK = "[internal-path-redacted]"
+
 export type SetupSubAgentMonitoringLogLevel = "product" | "debug" | "dev"
 
 export type SetupSubAgentMonitoringEventKind =
@@ -310,8 +325,7 @@ export interface SetupSubAgentMonitoringDraft {
 export interface SetupSubAgentDraftItem {
   agentId: string
   parentAgentId?: string
-  displayName: string
-  nickname: string
+  agentName?: string
   role: string
   description: string
   skillMcpBindings?: {
@@ -395,9 +409,9 @@ const KNOWN_BACKENDS = [
 ] as const
 
 const GENERIC_BACKEND_REASONS = new Set([
-  "계획·리서치 특화 provider runtime은 아직 gateway에 연결되지 않았습니다.",
-  "엔드포인트와 모델 조회는 가능하지만 실제 실행 경로는 아직 연결되지 않았습니다.",
-  "로컬 경량 추론 provider runtime은 후속 Phase에서 연결합니다.",
+  "계획·리서치 특화 provider runtime은 현재 사용할 수 없습니다.",
+  "엔드포인트와 모델 조회는 가능하지만 실제 실행 경로가 연결되어 있지 않습니다.",
+  "로컬 경량 추론 provider runtime은 현재 사용할 수 없습니다.",
   "사용자 추가 backend이며 실제 연결 테스트는 setup에서 확인합니다.",
 ])
 
@@ -411,8 +425,6 @@ const GENERIC_BACKEND_SUMMARIES = new Set([
 ])
 
 const DEFAULT_MAIN_AGENT_ID = "agent:knowbee"
-const DEFAULT_MAIN_AGENT_NAME = "Knowbee"
-const DEFAULT_MAIN_AGENT_NAME_KO = "노비"
 
 function countCapabilities(items: FeatureCapability[]): CapabilityCounts {
   return items.reduce<CapabilityCounts>(
@@ -487,21 +499,20 @@ function ensureParentDir(filePath: string): void {
   mkdirSync(dirname(filePath), { recursive: true })
 }
 
-function readRawConfig(): JsonObject {
-  if (!existsSync(PATHS.configFile)) return {}
+export type SetupPersistencePaths = Pick<RuntimePaths, "stateDir" | "configFile" | "setupStateFile">
+
+function readRawConfig(paths: SetupPersistencePaths): JsonObject {
+  if (!existsSync(paths.configFile)) return {}
   try {
-    return toObject(JSON5.parse(readFileSync(PATHS.configFile, "utf-8")))
+    return toObject(JSON5.parse(readFileSync(paths.configFile, "utf-8")))
   } catch {
     return {}
   }
 }
 
-function writeRawConfig(raw: JsonObject): void {
-  ensureParentDir(PATHS.configFile)
-  writeFileSync(PATHS.configFile, JSON5.stringify(raw, null, 2), "utf-8")
-  reloadConfig()
-  resetAIProviderCache()
-  resetEmbeddingProvider()
+function writeRawConfig(raw: JsonObject, paths: SetupPersistencePaths): void {
+  ensureParentDir(paths.configFile)
+  writeFileSync(paths.configFile, JSON5.stringify(raw, null, 2), "utf-8")
 }
 
 function defaultSetupState(): SetupState {
@@ -516,10 +527,10 @@ function defaultSetupState(): SetupState {
   }
 }
 
-export function readSetupState(): SetupState {
-  if (!existsSync(PATHS.setupStateFile)) return defaultSetupState()
+export function readSetupState(paths: SetupPersistencePaths): SetupState {
+  if (!existsSync(paths.setupStateFile)) return defaultSetupState()
   try {
-    const parsed = JSON.parse(readFileSync(PATHS.setupStateFile, "utf-8")) as Partial<SetupState>
+    const parsed = JSON.parse(readFileSync(paths.setupStateFile, "utf-8")) as Partial<SetupState>
     const state = {
       ...defaultSetupState(),
       ...parsed,
@@ -527,7 +538,7 @@ export function readSetupState(): SetupState {
     }
     if (!state.completed && state.currentStep === "done") {
       state.currentStep = "review"
-      writeSetupState(state)
+      writeSetupState(state, paths)
     }
     return state
   } catch {
@@ -535,9 +546,9 @@ export function readSetupState(): SetupState {
   }
 }
 
-export function writeSetupState(state: SetupState): SetupState {
-  ensureParentDir(PATHS.setupStateFile)
-  writeFileSync(PATHS.setupStateFile, JSON.stringify(state, null, 2), "utf-8")
+export function writeSetupState(state: SetupState, paths: SetupPersistencePaths): SetupState {
+  ensureParentDir(paths.setupStateFile)
+  writeFileSync(paths.setupStateFile, JSON.stringify(state, null, 2), "utf-8")
   return state
 }
 
@@ -844,67 +855,70 @@ function sanitizeCustomBackends(value: unknown): AIBackendCard[] {
 function buildSubAgentSetupDraft(config: KnowbeeConfig): SetupSubAgentDraft {
   return {
     orchestrationEnabled: config.orchestration.mode === "orchestration",
-    items: (config.orchestration.subAgents ?? []).map((agent) => ({
-      agentId: agent.agentId,
-      displayName: agent.displayName,
-      nickname: agent.nickname ?? agent.displayName,
-      role: agent.role,
-      description: agent.personality,
-      skillMcpBindings: {
-        enabledSkillIds: [...agent.capabilityPolicy.skillMcpAllowlist.enabledSkillIds],
-        enabledMcpServerIds: [...agent.capabilityPolicy.skillMcpAllowlist.enabledMcpServerIds],
-        enabledToolNames: [...agent.capabilityPolicy.skillMcpAllowlist.enabledToolNames],
-        disabledToolNames: [...agent.capabilityPolicy.skillMcpAllowlist.disabledToolNames],
-        ...(agent.capabilityPolicy.skillMcpAllowlist.secretScopeId
-          ? { connectionStateByCatalogId: {} }
+    items: (config.orchestration.subAgents ?? []).map((agent) => {
+      const agentName = normalizeAgentNameSnapshot(agent.agentName ?? "")
+      const resolvedAgentName = agentName || resolveAgentConfigAgentName(agent)
+      return {
+        agentId: agent.agentId,
+        agentName: resolvedAgentName,
+        role: agent.role,
+        description: agent.personality,
+        skillMcpBindings: {
+          enabledSkillIds: [...agent.capabilityPolicy.skillMcpAllowlist.enabledSkillIds],
+          enabledMcpServerIds: [...agent.capabilityPolicy.skillMcpAllowlist.enabledMcpServerIds],
+          enabledToolNames: [...agent.capabilityPolicy.skillMcpAllowlist.enabledToolNames],
+          disabledToolNames: [...agent.capabilityPolicy.skillMcpAllowlist.disabledToolNames],
+          ...(agent.capabilityPolicy.skillMcpAllowlist.secretScopeId
+            ? { connectionStateByCatalogId: {} }
+            : {}),
+        },
+        ...(agent.modelProfile
+          ? {
+              modelPolicy: {
+                mode: "override" as const,
+                providerId: agent.modelProfile.providerId,
+                modelId: agent.modelProfile.modelId,
+                ...(agent.modelProfile.fallbackModelId ? { fallbackModelId: agent.modelProfile.fallbackModelId } : {}),
+                ...(agent.modelProfile.effort ? { effort: agent.modelProfile.effort } : {}),
+                ...(agent.modelProfile.maxOutputTokens !== undefined ? { maxOutputTokens: agent.modelProfile.maxOutputTokens } : {}),
+                ...(agent.modelProfile.costBudget !== undefined ? { costBudget: agent.modelProfile.costBudget } : {}),
+              },
+            }
           : {}),
-      },
-      ...(agent.modelProfile
-        ? {
-            modelPolicy: {
-              mode: "override" as const,
-              providerId: agent.modelProfile.providerId,
-              modelId: agent.modelProfile.modelId,
-              ...(agent.modelProfile.fallbackModelId ? { fallbackModelId: agent.modelProfile.fallbackModelId } : {}),
-              ...(agent.modelProfile.effort ? { effort: agent.modelProfile.effort } : {}),
-              ...(agent.modelProfile.maxOutputTokens !== undefined ? { maxOutputTokens: agent.modelProfile.maxOutputTokens } : {}),
-              ...(agent.modelProfile.costBudget !== undefined ? { costBudget: agent.modelProfile.costBudget } : {}),
-            },
-          }
-        : {}),
-      memoryPolicy: {
-        ...agent.memoryPolicy,
-        rawWindowSize: agent.memoryPolicy.rawWindowSize ?? 24_000,
-        compactThreshold: agent.memoryPolicy.compactThreshold ?? 32_000,
-        capsuleMode: agent.memoryPolicy.capsuleMode ?? "session_compaction",
-        archiveReferenceMode: agent.memoryPolicy.archiveReferenceMode ?? "summary_reference",
-        handoffCapsuleAllowed: agent.memoryPolicy.handoffCapsuleAllowed ?? true,
-        ...(agent.memoryPolicy.lastCompactedAt !== undefined ? { lastCompactedAt: agent.memoryPolicy.lastCompactedAt } : {}),
-        capsuleCount: agent.memoryPolicy.capsuleCount ?? 0,
-      },
-      capabilityPolicy: {
-        permissionProfile: agent.capabilityPolicy.permissionProfile,
-        allowedCapabilityIds: capabilityIdsFromPermissionProfile(agent.capabilityPolicy.permissionProfile),
-        deniedCapabilityIds: deniedCapabilityIdsFromPermissionProfile(agent.capabilityPolicy.permissionProfile),
-        approvalRequiredCapabilityIds: capabilityIdsRequiringApproval(agent.capabilityPolicy.permissionProfile),
-        osSensitiveCapabilityIds: osSensitiveCapabilityIdsFromPermissionProfile(agent.capabilityPolicy.permissionProfile),
-        logVisibility: "product",
-      },
-      delegationPolicy: {
-        canDelegate: agent.delegationPolicy?.enabled ?? agent.delegation.enabled,
-        directChildOnly: agent.delegationPolicy?.directChildOnly ?? true,
-        allowedChildAgentIds: [...(agent.delegationPolicy?.allowedChildAgentIds ?? [])],
-        resultReviewRequired: agent.delegationPolicy?.resultReviewRequired ?? true,
-        aggregationMode: agent.delegationPolicy?.aggregationMode ?? "parent_synthesis",
-        redelegationAllowed: agent.delegationPolicy?.redelegationAllowed ?? (agent.delegationPolicy?.enabled ?? agent.delegation.enabled),
-        escalationPolicy: agent.delegationPolicy?.escalationPolicy ?? "return_to_parent",
-        maxParallelSessions: agent.delegationPolicy?.maxParallelSessions ?? agent.delegation.maxParallelSessions,
-      },
-      status: agent.status,
-      createdAt: agent.createdAt,
-      updatedAt: agent.updatedAt,
-      profileVersion: agent.profileVersion,
-    })),
+        memoryPolicy: {
+          ...agent.memoryPolicy,
+          rawWindowSize: agent.memoryPolicy.rawWindowSize ?? 24_000,
+          compactThreshold: agent.memoryPolicy.compactThreshold ?? 32_000,
+          capsuleMode: agent.memoryPolicy.capsuleMode ?? "session_compaction",
+          archiveReferenceMode: agent.memoryPolicy.archiveReferenceMode ?? "summary_reference",
+          handoffCapsuleAllowed: agent.memoryPolicy.handoffCapsuleAllowed ?? true,
+          ...(agent.memoryPolicy.lastCompactedAt !== undefined ? { lastCompactedAt: agent.memoryPolicy.lastCompactedAt } : {}),
+          capsuleCount: agent.memoryPolicy.capsuleCount ?? 0,
+        },
+        capabilityPolicy: {
+          permissionProfile: agent.capabilityPolicy.permissionProfile,
+          allowedCapabilityIds: capabilityIdsFromPermissionProfile(agent.capabilityPolicy.permissionProfile),
+          deniedCapabilityIds: deniedCapabilityIdsFromPermissionProfile(agent.capabilityPolicy.permissionProfile),
+          approvalRequiredCapabilityIds: capabilityIdsRequiringApproval(agent.capabilityPolicy.permissionProfile),
+          osSensitiveCapabilityIds: osSensitiveCapabilityIdsFromPermissionProfile(agent.capabilityPolicy.permissionProfile),
+          logVisibility: "product",
+        },
+        delegationPolicy: {
+          canDelegate: agent.delegationPolicy?.enabled ?? agent.delegation.enabled,
+          directChildOnly: agent.delegationPolicy?.directChildOnly ?? true,
+          allowedChildAgentIds: [...(agent.delegationPolicy?.allowedChildAgentIds ?? [])],
+          resultReviewRequired: agent.delegationPolicy?.resultReviewRequired ?? true,
+          aggregationMode: agent.delegationPolicy?.aggregationMode ?? "parent_synthesis",
+          redelegationAllowed: agent.delegationPolicy?.redelegationAllowed ?? (agent.delegationPolicy?.enabled ?? agent.delegation.enabled),
+          escalationPolicy: agent.delegationPolicy?.escalationPolicy ?? "return_to_parent",
+          maxParallelSessions: agent.delegationPolicy?.maxParallelSessions ?? agent.delegation.maxParallelSessions,
+        },
+        status: agent.status,
+        createdAt: agent.createdAt,
+        updatedAt: agent.updatedAt,
+        profileVersion: agent.profileVersion,
+      }
+    }),
     runtimeActiveAgentIds: [],
     lastRuntimeSeenAtByAgentId: {},
   }
@@ -939,32 +953,7 @@ function osSensitiveCapabilityIdsFromPermissionProfile(profile: PermissionProfil
 }
 
 function resolveMainAgentName(config: KnowbeeConfig): string {
-  const configured = config.orchestration.knowbee?.nickname?.trim()
-    || config.orchestration.knowbee?.displayName?.trim()
-    || ""
-  return configured && !isDefaultMainAgentAlias(configured) && !isProfileNameAlias(config.profile, configured)
-    ? configured
-    : defaultMainAgentNameForLanguage(config.profile.language)
-}
-
-function defaultMainAgentNameForLanguage(language: string | undefined): string {
-  return language?.trim().toLowerCase().startsWith("ko") ? DEFAULT_MAIN_AGENT_NAME_KO : DEFAULT_MAIN_AGENT_NAME
-}
-
-function isDefaultMainAgentAlias(value: string): boolean {
-  const normalized = value.trim().normalize("NFKC").toLowerCase()
-  return normalized === DEFAULT_MAIN_AGENT_NAME.toLowerCase()
-    || normalized === DEFAULT_MAIN_AGENT_NAME_KO
-}
-
-function isProfileNameAlias(profile: KnowbeeConfig["profile"], value: string): boolean {
-  const normalized = value.trim().normalize("NFKC").toLowerCase()
-  if (!normalized) return false
-  return [profile.displayName, profile.profileName]
-    .map((alias) => alias?.trim() ?? "")
-    .filter((alias) => alias.length > 0)
-    .map((alias) => alias.normalize("NFKC").toLowerCase())
-    .includes(normalized)
+  return resolveMainAgentSelfName(config)
 }
 
 function defaultKnowbeeMemoryPolicy(agentId: string): MemoryPolicy {
@@ -1015,14 +1004,13 @@ function buildKnowbeeAgentConfig(input: {
   now: number
 }): KnowbeeAgentConfig {
   const agentId = input.existing?.agentId?.trim() || DEFAULT_MAIN_AGENT_ID
-  const name = input.name.trim() || DEFAULT_MAIN_AGENT_NAME
+  const name = input.name.trim() || DEFAULT_MAIN_AGENT_NAME_EN
   return {
     schemaVersion: input.existing?.schemaVersion ?? CONTRACT_SCHEMA_VERSION,
     agentType: "knowbee",
     agentId,
-    displayName: name,
-    nickname: name,
-    normalizedNickname: normalizeNickname(name),
+    agentName: name,
+    normalizedAgentName: normalizeAgentName(name),
     status: input.existing?.status ?? "enabled",
     role: input.existing?.role?.trim() || "Main personal assistant coordinator",
     personality: input.existing?.personality?.trim() || "Pragmatic, concise, and careful.",
@@ -1043,9 +1031,8 @@ function buildKnowbeeAgentConfig(input: {
   }
 }
 
-export function buildSetupDraft(): SetupDraft {
-  const config = getConfig()
-  const raw = readRawConfig()
+export function buildSetupDraft(config: KnowbeeConfig, paths: SetupPersistencePaths | null): SetupDraft {
+  const raw = paths ? readRawConfig(paths) : {}
   const defaults = createDefaultAiBackends(config)
   const customBackends = config.ai.connection.provider === "custom"
     ? [{
@@ -1169,6 +1156,115 @@ export function buildSetupDraft(): SetupDraft {
   }
 }
 
+function cloneSetupDraft(draft: SetupDraft): SetupDraft {
+  return JSON.parse(JSON.stringify(draft)) as SetupDraft
+}
+
+function maskSetupSecret(value: string | undefined): string {
+  return value?.trim() ? SETUP_SECRET_MASK : ""
+}
+
+function restoreSetupSecret(value: string, existing: string | undefined): string {
+  return value === SETUP_SECRET_MASK ? (existing ?? "") : value
+}
+
+export function redactSetupDraftSecrets(input: SetupDraft): SetupDraft {
+  const draft = cloneSetupDraft(input)
+
+  draft.aiBackends = draft.aiBackends.map((backend) => ({
+    ...backend,
+    credentials: {
+      ...backend.credentials,
+      ...(backend.credentials.apiKey !== undefined ? { apiKey: maskSetupSecret(backend.credentials.apiKey) } : {}),
+      ...(backend.credentials.password !== undefined ? { password: maskSetupSecret(backend.credentials.password) } : {}),
+      ...(backend.credentials.oauthAuthFilePath !== undefined
+        ? { oauthAuthFilePath: maskSetupSecret(backend.credentials.oauthAuthFilePath) }
+        : {}),
+    },
+  }))
+
+  draft.channels = {
+    ...draft.channels,
+    botToken: maskSetupSecret(draft.channels.botToken),
+    slackBotToken: maskSetupSecret(draft.channels.slackBotToken),
+    slackAppToken: maskSetupSecret(draft.channels.slackAppToken),
+    discordBotToken: maskSetupSecret(draft.channels.discordBotToken),
+    discordPublicKey: maskSetupSecret(draft.channels.discordPublicKey),
+    googleChatAppCredentialJson: maskSetupSecret(draft.channels.googleChatAppCredentialJson),
+    googleChatWebhookUrl: maskSetupSecret(draft.channels.googleChatWebhookUrl),
+    googleChatVerificationToken: maskSetupSecret(draft.channels.googleChatVerificationToken),
+    kakaoTalkBusinessApiKey: maskSetupSecret(draft.channels.kakaoTalkBusinessApiKey),
+  }
+  draft.mqtt = {
+    ...draft.mqtt,
+    password: maskSetupSecret(draft.mqtt.password),
+  }
+  draft.remoteAccess = {
+    ...draft.remoteAccess,
+    authToken: maskSetupSecret(draft.remoteAccess.authToken),
+  }
+
+  return draft
+}
+
+function restoreSetupDraftSecretMasks(input: SetupDraft, existing: SetupDraft): SetupDraft {
+  const draft = cloneSetupDraft(input)
+  const existingBackends = new Map(existing.aiBackends.map((backend) => [backend.id, backend]))
+
+  draft.aiBackends = draft.aiBackends.map((backend) => {
+    const existingBackend = existingBackends.get(backend.id)
+    return {
+      ...backend,
+      credentials: {
+        ...backend.credentials,
+        ...(backend.credentials.apiKey !== undefined
+          ? { apiKey: restoreSetupSecret(backend.credentials.apiKey, existingBackend?.credentials.apiKey) }
+          : {}),
+        ...(backend.credentials.password !== undefined
+          ? { password: restoreSetupSecret(backend.credentials.password, existingBackend?.credentials.password) }
+          : {}),
+        ...(backend.credentials.oauthAuthFilePath !== undefined
+          ? {
+              oauthAuthFilePath: restoreSetupSecret(
+                backend.credentials.oauthAuthFilePath,
+                existingBackend?.credentials.oauthAuthFilePath,
+              ),
+            }
+          : {}),
+      },
+    }
+  })
+
+  draft.channels = {
+    ...draft.channels,
+    botToken: restoreSetupSecret(draft.channels.botToken, existing.channels.botToken),
+    slackBotToken: restoreSetupSecret(draft.channels.slackBotToken, existing.channels.slackBotToken),
+    slackAppToken: restoreSetupSecret(draft.channels.slackAppToken, existing.channels.slackAppToken),
+    discordBotToken: restoreSetupSecret(draft.channels.discordBotToken, existing.channels.discordBotToken),
+    discordPublicKey: restoreSetupSecret(draft.channels.discordPublicKey, existing.channels.discordPublicKey),
+    googleChatAppCredentialJson: restoreSetupSecret(
+      draft.channels.googleChatAppCredentialJson,
+      existing.channels.googleChatAppCredentialJson,
+    ),
+    googleChatWebhookUrl: restoreSetupSecret(draft.channels.googleChatWebhookUrl, existing.channels.googleChatWebhookUrl),
+    googleChatVerificationToken: restoreSetupSecret(
+      draft.channels.googleChatVerificationToken,
+      existing.channels.googleChatVerificationToken,
+    ),
+    kakaoTalkBusinessApiKey: restoreSetupSecret(draft.channels.kakaoTalkBusinessApiKey, existing.channels.kakaoTalkBusinessApiKey),
+  }
+  draft.mqtt = {
+    ...draft.mqtt,
+    password: restoreSetupSecret(draft.mqtt.password, existing.mqtt.password),
+  }
+  draft.remoteAccess = {
+    ...draft.remoteAccess,
+    authToken: restoreSetupSecret(draft.remoteAccess.authToken, existing.remoteAccess.authToken),
+  }
+
+  return draft
+}
+
 function persistBackends(raw: JsonObject, draft: SetupDraft): void {
   if (!raw.ai) raw.ai = {}
   const ai = toObject(raw.ai)
@@ -1261,12 +1357,15 @@ function setupSubAgentItemToConfig(item: SetupSubAgentDraftItem): SubAgentConfig
   const memoryPolicy = item.memoryPolicy ?? beginnerSubAgentMemoryPolicy(item.agentId)
   const permissionProfile = item.capabilityPolicy?.permissionProfile ?? beginnerSubAgentPermissionProfile
   const delegationPolicy = item.delegationPolicy
+  const agentName = resolveAgentConfigAgentName({
+    agentType: "sub_agent",
+    ...(item.agentName !== undefined ? { agentName: item.agentName } : {}),
+  })
   return {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     agentType: "sub_agent",
     agentId: item.agentId,
-    displayName: item.displayName.trim(),
-    nickname: item.nickname.trim(),
+    agentName,
     status: item.status,
     role: item.role.trim(),
     personality: item.description.trim() || item.role.trim(),
@@ -1321,9 +1420,15 @@ function persistSubAgentSetupDraft(raw: JsonObject, draft: SetupDraft): void {
   }
 }
 
-export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: SetupDraft; state: SetupState } {
-  const raw = readRawConfig()
-  const currentConfig = getConfig()
+export function saveSetupDraft(
+  inputDraft: SetupDraft,
+  state: SetupState | undefined,
+  config: KnowbeeConfig,
+  paths: SetupPersistencePaths,
+): { draft: SetupDraft; state: SetupState } {
+  const raw = readRawConfig(paths)
+  const currentConfig = config
+  const draft = restoreSetupDraftSecretMasks(inputDraft, buildSetupDraft(config, paths))
   const userName = draft.personal.displayName.trim() || draft.personal.profileName.trim()
   const rawWebuiAuth = {
     ...toObject(toObject(raw.webui).auth),
@@ -1358,9 +1463,7 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
 
   const draftMainAgentName = draft.mainAgent?.name.trim() ?? ""
   const mainAgentName = draft.mainAgent
-    ? draftMainAgentName && !isDefaultMainAgentAlias(draftMainAgentName) && !isProfileNameAlias(raw.profile as KnowbeeConfig["profile"], draftMainAgentName)
-      ? draftMainAgentName
-      : defaultMainAgentNameForLanguage(draft.personal.language)
+    ? draftMainAgentName || defaultMainAgentNameForLanguage(draft.personal.language)
     : ""
   if (draft.mainAgent) {
     const rawOrchestration = toObject(raw.orchestration)
@@ -1523,40 +1626,39 @@ export function saveSetupDraft(draft: SetupDraft, state?: SetupState): { draft: 
   persistMcpSetupDraft(raw, draft.mcp)
   persistSkillsSetupDraft(raw, draft.skills)
   persistSubAgentSetupDraft(raw, draft)
-  writeRawConfig(raw)
-  updateActiveRunsMaxDelegationTurns(Math.max(0, Math.floor(Number.isFinite(draft.security.maxDelegationTurns) ? draft.security.maxDelegationTurns : 0)))
+  writeRawConfig(raw, paths)
 
-  const nextState = state ? writeSetupState(state) : readSetupState()
-  return { draft: buildSetupDraft(), state: nextState }
+  const nextState = state ? writeSetupState(state, paths) : readSetupState(paths)
+  return { draft, state: nextState }
 }
 
-export function resetSetupEnvironment(): { draft: SetupDraft; state: SetupState; checks: SetupChecks } {
-  writeRawConfig(JSON.parse(JSON.stringify(DEFAULT_CONFIG)) as JsonObject)
-  const state = writeSetupState(defaultSetupState())
+export function resetSetupEnvironment(paths: SetupPersistencePaths): { draft: SetupDraft; state: SetupState; checks: SetupChecks } {
+  writeRawConfig(JSON.parse(JSON.stringify(DEFAULT_CONFIG)) as JsonObject, paths)
+  const config = DEFAULT_CONFIG
+  const state = writeSetupState(defaultSetupState(), paths)
   return {
-    draft: buildSetupDraft(),
+    draft: buildSetupDraft(config, paths),
     state,
-    checks: createSetupChecks(),
+    checks: createSetupChecks(config, paths),
   }
 }
 
-export function completeSetup(): SetupState {
-  const current = readSetupState()
+export function completeSetup(paths: SetupPersistencePaths): SetupState {
+  const current = readSetupState(paths)
   return writeSetupState({
     ...current,
     completed: true,
     currentStep: "done",
     completedAt: Date.now(),
-  })
+  }, paths)
 }
 
-export function createSetupChecks(): SetupChecks {
-  const config = getConfig()
-  const state = readSetupState()
+export function createSetupChecks(config: KnowbeeConfig, paths: SetupPersistencePaths): SetupChecks {
+  const state = readSetupState(paths)
   return {
-    stateDir: PATHS.stateDir,
-    configFile: PATHS.configFile,
-    setupStateFile: PATHS.setupStateFile,
+    stateDir: paths.stateDir,
+    configFile: paths.configFile,
+    setupStateFile: paths.setupStateFile,
     setupCompleted: state.completed,
     telegramConfigured: Boolean(config.telegram?.botToken),
     authEnabled: config.webui.auth.enabled,
@@ -1564,30 +1666,75 @@ export function createSetupChecks(): SetupChecks {
   }
 }
 
+export function redactSetupChecksForApi(checks: SetupChecks): SetupChecks {
+  return {
+    ...checks,
+    stateDir: SETUP_INTERNAL_PATH_MASK,
+    configFile: SETUP_INTERNAL_PATH_MASK,
+    setupStateFile: SETUP_INTERNAL_PATH_MASK,
+  }
+}
+
 export function createTransientAuthToken(): string {
   return randomBytes(32).toString("hex")
 }
 
-function createEnterpriseTopologyBuilderCapability(): FeatureCapability {
-  const rawFlag = process.env["KNOWBEE_ENTERPRISE_TOPOLOGY_BUILDER_UI"]?.trim().toLowerCase()
-  const explicitlyDisabled =
-    rawFlag === "0" || rawFlag === "false" || rawFlag === "no" || rawFlag === "off"
+export function parseEnterpriseTopologyBuilderUiEnabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase()
+  return !(normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off")
+}
+
+function createEnterpriseTopologyBuilderCapability(options: CapabilityProjectionOptions): FeatureCapability {
+  const enabled = options.enterpriseTopologyBuilderEnabled !== false
 
   return {
     key: "enterprise_topology_builder_ui",
     label: "Enterprise Topology Builder",
     area: "gateway",
-    status: explicitlyDisabled ? "disabled" : "ready",
+    status: enabled ? "ready" : "disabled",
     implemented: true,
-    enabled: !explicitlyDisabled,
-    ...(explicitlyDisabled
+    enabled,
+    ...(!enabled
       ? { reason: "Enterprise Topology Builder UI 기능 플래그가 꺼져 있습니다." }
       : {}),
   }
 }
 
-export function createCapabilities(): FeatureCapability[] {
-  const config = getConfig()
+export function projectMcpClientCapability(input: {
+  readonly summary: McpSummary
+  readonly statuses: readonly McpServerStatus[]
+}): FeatureCapability {
+  const capability: FeatureCapability = {
+    key: "mcp.client",
+    label: "External feature connections",
+    area: "mcp",
+    status: "disabled",
+    implemented: true,
+    enabled: false,
+  }
+  if (input.summary.serverCount === 0) {
+    capability.reason = "외부 기능 연결이 설정되지 않았습니다."
+  } else if (input.summary.requiredFailures > 0) {
+    capability.status = "error"
+    capability.reason =
+      `필수 외부 기능 연결 ${input.summary.requiredFailures}개가 준비되지 않았습니다.`
+  } else if (input.summary.readyCount > 0) {
+    capability.status = "ready"
+    capability.enabled = true
+    if (input.summary.readyCount < input.summary.serverCount) {
+      capability.reason =
+        `외부 기능 연결 ${input.summary.readyCount}/${input.summary.serverCount}개가 준비되었습니다.`
+    }
+  } else {
+    const firstError = input.statuses.find((item) => item.error)?.error
+    capability.reason =
+      firstError ?? "설정된 외부 기능 연결이 아직 준비되지 않았습니다."
+  }
+  return capability
+}
+
+export function createCapabilities(options: CapabilityProjectionOptions): FeatureCapability[] {
+  const config = options.config
   const telegramRunning = getActiveTelegramChannel() !== null
   const telegramRuntimeError = getTelegramRuntimeError()
   const slackRunning = getActiveSlackChannel() !== null
@@ -1595,33 +1742,22 @@ export function createCapabilities(): FeatureCapability[] {
   const mcpSummary = mcpRegistry.getSummary()
   const mcpStatuses = mcpRegistry.getStatuses()
   const mqtt = getMqttBrokerSnapshot()
-  const orchestration = resolveOrchestrationModeSnapshotSync()
+  const orchestration = resolveOrchestrationModeSnapshotSync({ config })
   const orchestrationCapability = orchestrationCapabilityStatus(orchestration)
+  const platformCapabilities = projectPlatformCapabilities(options.platformRuntime ?? {
+    providerConfigured: config.ai.connection.provider !== ""
+      && hasConfiguredConnection(config, config.ai.connection.provider),
+    conversationPortAvailable: true,
+    planningPortAvailable: true,
+    executionPortAvailable: true,
+    hierarchyPortAvailable: true,
+    activeSubAgentCount: orchestration.activeSubAgentCount,
+  })
 
-  const mcpCapability: FeatureCapability = {
-    key: "mcp.client",
-    label: "MCP Client",
-    area: "mcp",
-    status: "disabled",
-    implemented: true,
-    enabled: false,
-  }
-
-  if (mcpSummary.serverCount === 0) {
-    mcpCapability.reason = "MCP 서버가 설정되지 않았습니다."
-  } else if (mcpSummary.requiredFailures > 0) {
-    mcpCapability.status = "error"
-    mcpCapability.reason = `필수 MCP 서버 ${mcpSummary.requiredFailures}개가 준비되지 않았습니다.`
-  } else if (mcpSummary.readyCount > 0) {
-    mcpCapability.status = "ready"
-    mcpCapability.enabled = true
-    if (mcpSummary.readyCount < mcpSummary.serverCount) {
-      mcpCapability.reason = `MCP 서버 ${mcpSummary.readyCount}/${mcpSummary.serverCount}개가 준비되었습니다.`
-    }
-  } else {
-    const firstError = mcpStatuses.find((item) => item.error)?.error
-    mcpCapability.reason = firstError ?? "설정된 MCP 서버가 아직 준비되지 않았습니다."
-  }
+  const mcpCapability = projectMcpClientCapability({
+    summary: mcpSummary,
+    statuses: mcpStatuses,
+  })
 
   const telegramCapability: FeatureCapability = {
     key: "telegram.channel",
@@ -1694,6 +1830,7 @@ export function createCapabilities(): FeatureCapability[] {
   }
 
   return [
+    ...platformCapabilities,
     { key: "setup.wizard", label: "Setup Wizard", area: "setup", status: "ready", implemented: true, enabled: true },
     { key: "dashboard.overview", label: "Dashboard Overview", area: "gateway", status: "ready", implemented: true, enabled: true },
     {
@@ -1731,14 +1868,14 @@ export function createCapabilities(): FeatureCapability[] {
       status: "disabled",
       implemented: true,
       enabled: false,
-      reason: "채팅은 완료 응답 기준으로 동작하며, 토큰 단위 실시간 스트리밍 표시는 아직 정리 중입니다.",
+      reason: "채팅은 현재 완료 응답 방식으로 제공됩니다. 토큰 단위 실시간 표시는 사용할 수 없습니다.",
     },
     { key: "ai.backends", label: "AI Backends", area: "ai", status: "ready", implemented: true, enabled: true },
     mcpCapability,
     { key: "ai.routing", label: "AI execution path", area: "ai", status: "ready", implemented: true, enabled: true },
     { key: "instructions.chain", label: "Active Instructions", area: "gateway", status: "ready", implemented: true, enabled: true },
     { key: "settings.control", label: "Settings Control", area: "security", status: "ready", implemented: true, enabled: true },
-    createEnterpriseTopologyBuilderCapability(),
+    createEnterpriseTopologyBuilderCapability(options),
     {
       key: "audit.viewer",
       label: "Audit Viewer",
@@ -1754,7 +1891,7 @@ export function createCapabilities(): FeatureCapability[] {
       status: "planned",
       implemented: false,
       enabled: false,
-      reason: "세션별/요청별 override는 후속 Phase에서 연결합니다.",
+      reason: "세션별/요청별 AI override는 현재 사용할 수 없습니다. 기본 AI 설정을 사용하세요.",
     },
     telegramCapability,
     slackCapability,
@@ -1780,7 +1917,7 @@ export function createCapabilities(): FeatureCapability[] {
       status: "disabled",
       implemented: true,
       enabled: false,
-      reason: "플러그인 런타임은 기존 구현이 있으나 WebUI-first 제어면과의 통합은 아직 완료되지 않았습니다.",
+      reason: "플러그인 런타임은 현재 WebUI에서 직접 제어할 수 없습니다. 기존 실행 경로를 사용하세요.",
     },
     {
       key: "memory.semantic_search",
@@ -1789,17 +1926,17 @@ export function createCapabilities(): FeatureCapability[] {
       status: "planned",
       implemented: false,
       enabled: false,
-      reason: "시맨틱 메모리/검색 제어면은 후속 Phase 범위입니다.",
+      reason: "시맨틱 메모리/검색 제어는 현재 사용할 수 없습니다. 기본 메모리 기능을 사용하세요.",
     },
   ]
 }
 
-export function createCapabilityCounts(): CapabilityCounts {
-  return countCapabilities(createCapabilities())
+export function createCapabilityCounts(options: CapabilityProjectionOptions): CapabilityCounts {
+  return countCapabilities(createCapabilities(options))
 }
 
-export function getPrimaryAiTarget(): string | null {
-  const draft = buildSetupDraft()
+export function getPrimaryAiTarget(config: KnowbeeConfig): string | null {
+  const draft = buildSetupDraft(config, null)
   return draft.routingProfiles.find((profile) => profile.id === "default")?.targets[0] ?? null
 }
 
@@ -1931,6 +2068,7 @@ function createDiscoveryHeaders(
 
 export async function discoverModelsFromEndpoint(
   endpoint: string,
+  config: Pick<KnowbeeConfig, "memory">,
   providerType: AIBackendCard["providerType"] = "custom",
   credentials: AIBackendCard["credentials"] = {},
   authMode: AIBackendCard["authMode"] = "api_key",
@@ -1954,7 +2092,7 @@ export async function discoverModelsFromEndpoint(
           ...(credentials.oauthAuthFilePath?.trim() ? { oauthAuthFilePath: credentials.oauthAuthFilePath.trim() } : {}),
         },
       },
-      memory: getConfig().memory,
+      memory: config.memory,
       forceRefresh: true,
       checkResult: {
         status,
@@ -1971,36 +2109,31 @@ export async function discoverModelsFromEndpoint(
       authFilePath: credentials.oauthAuthFilePath,
     })
     const baseUrl = resolveOpenAICodexBaseUrl(normalized)
-    const sourceUrl = `${baseUrl}${OPENAI_CODEX_RESPONSES_PATH}`
+    const sourceUrl = buildOpenAICodexModelsUrl(baseUrl)
     const response = await fetch(sourceUrl, {
-      method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
+        Accept: "application/json",
         "User-Agent": OPENAI_CODEX_USER_AGENT,
       },
-      body: JSON.stringify({
-        model: OPENAI_CODEX_KNOWN_MODELS[0],
-        input: [{ role: "user", content: [{ type: "input_text", text: "ping" }] }],
-        instructions: loadPromptTemplate({ sourceId: "ai_connection_test" }),
-        store: false,
-        stream: true,
-      }),
     })
     if (!response.ok) {
       const detail = (await response.text().catch(() => "")).trim()
       throw new Error(detail || `${response.status} ${response.statusText}`)
     }
-    try {
-      await response.body?.cancel?.()
-    } catch {
-      // ignore cancellation failure for probe requests
+    const models = parseOpenAICodexModels(await response.json())
+    if (models.length === 0) {
+      throw new Error("ChatGPT OAuth 모델 목록 응답에 사용할 수 있는 모델 ID가 없습니다.")
     }
     return {
-      models: [...OPENAI_CODEX_KNOWN_MODELS],
+      models,
       sourceUrl,
-      capabilityMatrix: buildCheckedCapability("ok", "ChatGPT OAuth Codex responses probe succeeded.", sourceUrl, [...OPENAI_CODEX_KNOWN_MODELS]),
+      capabilityMatrix: buildCheckedCapability(
+        "ok",
+        "ChatGPT OAuth account model catalog loaded.",
+        sourceUrl,
+        models,
+      ),
     }
   }
 
@@ -2029,7 +2162,8 @@ export async function discoverModelsFromEndpoint(
       }
       errors.push(`${candidate}: 모델 없음`)
     } catch (error) {
-      errors.push(`${candidate}: ${error instanceof Error ? error.message : String(error)}`)
+      const message = controlPlaneModelDiscoveryErrorMessage(error)
+      errors.push(`${candidate}: ${message}`)
     }
   }
 

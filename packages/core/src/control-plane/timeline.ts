@@ -9,6 +9,18 @@ import {
 } from "../db/index.js"
 import { eventBus } from "../events/index.js"
 import { sanitizeUserFacingError } from "../runs/error-sanitizer.js"
+import { redactLogText } from "../logger/index.js"
+import {
+  containsInternalLlmStructuredDataText,
+  INTERNAL_LLM_DATA_MASK,
+  isInternalLlmStructuredDataKey,
+} from "../security/internal-llm-data.js"
+import { redactInternalEvidenceText } from "../security/internal-evidence-redaction.js"
+
+function controlTimelineProjectionErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 
 export type ControlEventSeverity = DbControlEventSeverity
 export type ControlExportAudience = "user" | "developer"
@@ -78,7 +90,7 @@ export interface ControlTimelineExport {
   timeline: ControlTimeline
 }
 
-export type RetrievalTimelineEventKind = "session" | "attempt" | "source" | "candidate" | "verdict" | "planner" | "delivery" | "dedupe" | "stop" | "diagnostic"
+export type RetrievalTimelineEventKind = "session" | "attempt" | "source" | "diagnosis" | "planner" | "delivery" | "dedupe" | "stop" | "diagnostic"
 
 export interface RetrievalTimelineEvent {
   id: string
@@ -95,13 +107,6 @@ export interface RetrievalTimelineEvent {
     url: string | null
     domain: string | null
   }
-  verdict: {
-    canAnswer: boolean | null
-    acceptedValue: string | null
-    sufficiency: string | null
-    rejectionReason: string | null
-    conflicts: string[]
-  }
   diagnosticRef: {
     controlEventId: string
     eventType: string
@@ -115,13 +120,11 @@ export interface RetrievalTimelineSummary {
   sessionEvents: number
   attempts: number
   sources: number
-  candidates: number
-  verdicts: number
+  diagnoses: number
   plannerActions: number
   deliveryEvents: number
   dedupeSuppressed: number
   stops: number
-  conflicts: number
   finalDeliveryStatus: string | null
   stopReason: string | null
   severityCounts: Record<ControlEventSeverity, number>
@@ -169,6 +172,9 @@ function parseJson(raw: string | null): unknown {
 }
 
 function sanitizeText(raw: string, audience: ControlExportAudience): string {
+  if (audience === "user" && containsInternalLlmStructuredDataText(raw)) {
+    return INTERNAL_LLM_DATA_MASK
+  }
   let value = raw
   for (const [pattern, replacement] of TEXT_SECRET_PATTERNS) {
     value = value.replace(pattern, replacement)
@@ -178,6 +184,7 @@ function sanitizeText(raw: string, audience: ControlExportAudience): string {
     value = sanitizeUserFacingError(value).userMessage
   }
   if (audience === "user") {
+    value = redactInternalEvidenceText(value)
     value = value.replace(LOCAL_PATH_PATTERN, "[local path hidden]")
   }
   return value.length > 4_000 ? `${value.slice(0, 3_990)}...` : value
@@ -192,7 +199,11 @@ function sanitizeDetail(value: unknown, audience: ControlExportAudience, depth =
 
   const result: Record<string, unknown> = {}
   for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-    result[key] = SECRET_KEY_PATTERN.test(key) ? "***" : sanitizeDetail(nested, audience, depth + 1)
+    result[key] = SECRET_KEY_PATTERN.test(key)
+      ? "***"
+      : audience === "user" && isInternalLlmStructuredDataKey(key)
+        ? INTERNAL_LLM_DATA_MASK
+        : sanitizeDetail(nested, audience, depth + 1)
   }
   return result
 }
@@ -251,9 +262,10 @@ export function recordControlEvent(input: ControlEventInput): string | null {
     return id
   } catch (error) {
     try {
+      const message = controlTimelineProjectionErrorMessage(error)
       insertDiagnosticEvent({
         kind: "control_event_projection_degraded",
-        summary: `control event projection failed: ${error instanceof Error ? error.message : String(error)}`,
+        summary: `control event projection failed: ${message}`,
         ...(input.runId ? { runId: input.runId } : {}),
         ...(input.requestGroupId ? { requestGroupId: input.requestGroupId } : {}),
         detail: {
@@ -290,12 +302,6 @@ function detailString(event: ControlTimelineEvent, key: string): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
-function detailBoolean(event: ControlTimelineEvent, key: string): boolean | null {
-  if (!event.detail || typeof event.detail !== "object" || Array.isArray(event.detail)) return null
-  const value = (event.detail as Record<string, unknown>)[key]
-  return typeof value === "boolean" ? value : null
-}
-
 function detailRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
 }
@@ -308,17 +314,6 @@ function nestedRecord(event: ControlTimelineEvent, key: string): Record<string, 
 function recordString(record: Record<string, unknown> | null, key: string): string | null {
   const value = record?.[key]
   return typeof value === "string" && value.trim() ? value.trim() : null
-}
-
-function recordBoolean(record: Record<string, unknown> | null, key: string): boolean | null {
-  const value = record?.[key]
-  return typeof value === "boolean" ? value : null
-}
-
-function recordStringArray(record: Record<string, unknown> | null, key: string): string[] {
-  const value = record?.[key]
-  if (!Array.isArray(value)) return []
-  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim())
 }
 
 function duplicateKeyFor(event: ControlTimelineEvent): { kind: NonNullable<ControlTimelineEvent["duplicate"]>["kind"]; key: string } | null {
@@ -389,7 +384,7 @@ function annotateTimeline(events: ControlTimelineEvent[]): ControlTimeline {
   }
 }
 
-export function getControlTimeline(query: ControlTimelineQuery = {}, audience: ControlExportAudience = "developer"): ControlTimeline {
+export function getControlTimeline(query: ControlTimelineQuery = {}, audience: ControlExportAudience = "user"): ControlTimeline {
   const events = listControlEvents(query).map((row) => mapRow(row, audience))
   return annotateTimeline(events)
 }
@@ -421,8 +416,7 @@ function classifyRetrievalKind(event: ControlTimelineEvent): RetrievalTimelineEv
   const type = event.eventType
   const lowered = `${type} ${event.summary}`.toLocaleLowerCase("en-US")
   if (type === "web_retrieval.attempt.skipped" || lowered.includes("dedupe") || lowered.includes("duplicate attempt")) return "dedupe"
-  if (type.includes("candidate")) return "candidate"
-  if (type.includes("verdict") || type.includes("verification") || nestedRecord(event, "verdict")) return "verdict"
+  if (type.includes("result_diagnosis") || type.includes("completion_review")) return "diagnosis"
   if (type.includes("planner")) return "planner"
   if (type.startsWith("delivery.") || type === "completion.generated") return "delivery"
   if (type.includes("attempt") || type.startsWith("tool.")) return "attempt"
@@ -446,17 +440,6 @@ function sourceInfo(event: ControlTimelineEvent): RetrievalTimelineEvent["source
   }
 }
 
-function verdictInfo(event: ControlTimelineEvent): RetrievalTimelineEvent["verdict"] {
-  const verdict = nestedRecord(event, "verdict") ?? detailRecord(event.detail)
-  return {
-    canAnswer: recordBoolean(verdict, "canAnswer") ?? detailBoolean(event, "canAnswer"),
-    acceptedValue: recordString(verdict, "acceptedValue") ?? detailString(event, "acceptedValue"),
-    sufficiency: recordString(verdict, "evidenceSufficiency") ?? detailString(event, "evidenceSufficiency") ?? detailString(event, "sufficiency"),
-    rejectionReason: recordString(verdict, "rejectionReason") ?? detailString(event, "rejectionReason"),
-    conflicts: recordStringArray(verdict, "conflicts"),
-  }
-}
-
 function mapRetrievalEvent(event: ControlTimelineEvent): RetrievalTimelineEvent {
   const kind = classifyRetrievalKind(event)
   return {
@@ -469,7 +452,6 @@ function mapRetrievalEvent(event: ControlTimelineEvent): RetrievalTimelineEvent 
     summary: event.summary,
     detail: event.detail,
     source: sourceInfo(event),
-    verdict: verdictInfo(event),
     diagnosticRef: {
       controlEventId: event.id,
       eventType: event.eventType,
@@ -494,14 +476,11 @@ function summarizeRetrievalTimeline(events: RetrievalTimelineEvent[]): Retrieval
   const finalDelivery = [...deliveryEvents].reverse().find((event) => event.eventType.startsWith("delivery.")) ?? null
   const stopReason = firstNonEmpty(stopEvents.reverse().flatMap((event) => {
     const detail = detailRecord(event.detail)
-    const verdict = detailRecord(detail?.["verdict"])
     return [
       recordString(detail, "reason"),
       recordString(detail, "stopReason"),
       recordString(detail, "errorKind"),
       recordString(detail, "status"),
-      recordString(verdict, "rejectionReason"),
-      recordString(verdict, "evidenceSufficiency"),
     ]
   }))
   return {
@@ -509,13 +488,11 @@ function summarizeRetrievalTimeline(events: RetrievalTimelineEvent[]): Retrieval
     sessionEvents: events.filter((event) => event.kind === "session").length,
     attempts: events.filter((event) => event.kind === "attempt").length,
     sources: events.filter((event) => event.kind === "source" || event.source.url || event.source.domain).length,
-    candidates: events.filter((event) => event.kind === "candidate").length,
-    verdicts: events.filter((event) => event.kind === "verdict").length,
+    diagnoses: events.filter((event) => event.kind === "diagnosis").length,
     plannerActions: events.filter((event) => event.kind === "planner").length,
     deliveryEvents: deliveryEvents.length,
     dedupeSuppressed: events.filter((event) => event.kind === "dedupe").length,
     stops: stopEvents.length,
-    conflicts: events.reduce((sum, event) => sum + event.verdict.conflicts.length, 0),
     finalDeliveryStatus: finalDelivery ? finalDelivery.eventType.replace("delivery.", "") : null,
     stopReason,
     severityCounts,
@@ -564,8 +541,7 @@ function renderRetrievalMarkdown(timeline: RetrievalTimeline, audience: ControlE
     `- total: ${timeline.summary.total}`,
     `- attempts: ${timeline.summary.attempts}`,
     `- sources: ${timeline.summary.sources}`,
-    `- candidates: ${timeline.summary.candidates}`,
-    `- verdicts: ${timeline.summary.verdicts}`,
+    `- LLM diagnoses: ${timeline.summary.diagnoses}`,
     `- delivery events: ${timeline.summary.deliveryEvents}`,
     `- dedupe suppressed: ${timeline.summary.dedupeSuppressed}`,
     `- final delivery: ${timeline.summary.finalDeliveryStatus ?? "unknown"}`,
@@ -576,12 +552,7 @@ function renderRetrievalMarkdown(timeline: RetrievalTimeline, audience: ControlE
   for (const event of timeline.events) {
     const duplicate = event.duplicate ? ` duplicate:${event.duplicate.kind}#${event.duplicate.occurrence}` : ""
     const source = [event.source.toolName, event.source.method, event.source.domain].filter(Boolean).join("/")
-    const verdict = event.verdict.acceptedValue
-      ? ` value=${event.verdict.acceptedValue}`
-      : event.verdict.sufficiency
-        ? ` verdict=${event.verdict.sufficiency}`
-        : ""
-    lines.push(`- ${new Date(event.at).toISOString()} [${event.severity}/${event.kind}/${event.eventType}${duplicate}] ${event.summary}${source ? ` (${source})` : ""}${verdict}`)
+    lines.push(`- ${new Date(event.at).toISOString()} [${event.severity}/${event.kind}/${event.eventType}${duplicate}] ${event.summary}${source ? ` (${source})` : ""}`)
     if (audience === "developer") lines.push(`  - ref=${event.diagnosticRef.controlEventId}`)
   }
   return `${lines.join("\n")}\n`

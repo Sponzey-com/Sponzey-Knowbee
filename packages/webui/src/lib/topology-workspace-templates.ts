@@ -303,7 +303,7 @@ function createStarterBaseTopology(input: {
 }
 
 function starterTopologyName(templateId: TopologyWorkspaceStarterTemplateId): string {
-  return TOPOLOGY_WORKSPACE_STARTER_TEMPLATES.find((template) => template.id === templateId)?.labelKo ?? "새 토폴로지"
+  return TOPOLOGY_WORKSPACE_STARTER_TEMPLATES.find((template) => template.id === templateId)?.labelKo ?? "새 위임 흐름"
 }
 
 function starterNode(

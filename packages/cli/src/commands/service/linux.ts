@@ -2,6 +2,7 @@ import { execSync, spawnSync } from "node:child_process"
 import { writeFileSync, unlinkSync, existsSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { getCliServicePath, getCliUserName } from "../../runtime-env.js"
 import type { ServiceAction } from "./index.js"
 import { which, knowbeeBinPath } from "./index.js"
 
@@ -22,7 +23,7 @@ RestartSec=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=${SERVICE_NAME}
-Environment=PATH=${process.env["PATH"] ?? "/usr/local/bin:/usr/bin:/bin"}
+Environment=PATH=${getCliServicePath()}
 Environment=HOME=${homedir()}
 
 [Install]
@@ -48,7 +49,7 @@ export async function run(action: ServiceAction): Promise<void> {
       systemctl("start", SERVICE_NAME)
       // Enable lingering so service persists without active login session
       try {
-        execSync(`loginctl enable-linger ${process.env["USER"] ?? ""}`, { stdio: "pipe" })
+        execSync(`loginctl enable-linger ${getCliUserName()}`, { stdio: "pipe" })
         console.log("✓ Lingering enabled (service persists across logouts)")
       } catch { /* non-critical */ }
       console.log("✓ Service installed and started")

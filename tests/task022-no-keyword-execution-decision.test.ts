@@ -118,16 +118,6 @@ const allowedNonExecutionStringHandling: AllowedNonExecutionStringHandling[] = [
     reason: "request isolation checks only structured IntentContract target/action/delivery fields; raw message text is intentionally ignored.",
   },
   {
-    file: "packages/core/src/runs/web-retrieval-planner.ts",
-    category: "parser-or-normalizer",
-    reason: "web retrieval planner validates structured methods and generated value shapes after a route is chosen.",
-  },
-  {
-    file: "packages/core/src/runs/web-source-adapters/weather.ts",
-    category: "source-adapter-value-extraction",
-    reason: "weather adapter extracts metric values from selected tool results and does not choose a route.",
-  },
-  {
     file: "packages/core/src/topology/schema.ts",
     category: "parser-or-normalizer",
     reason: "schema helpers validate enum values and do not infer natural-language executor meaning.",
@@ -158,29 +148,9 @@ const allowedNonExecutionStringHandling: AllowedNonExecutionStringHandling[] = [
     reason: "task monitor model projects run status and delivery labels for UI display after execution decisions exist.",
   },
   {
-    file: "packages/core/src/runs/web-location-contract.ts",
-    category: "parser-or-normalizer",
-    reason: "weather location contract normalizes a selected weather lookup target and does not choose an executor.",
-  },
-  {
     file: "packages/core/src/runs/web-retrieval-policy.ts",
     category: "parser-or-normalizer",
     reason: "web retrieval policy normalizes structured retrieval contract fields after web retrieval is selected.",
-  },
-  {
-    file: "packages/core/src/runs/web-retrieval-session.ts",
-    category: "parser-or-normalizer",
-    reason: "web retrieval session normalizes selected retrieval query/session data, not executor routing.",
-  },
-  {
-    file: "packages/core/src/runs/web-retrieval-verification.ts",
-    category: "parser-or-normalizer",
-    reason: "web retrieval verification compares selected source bindings after retrieval planning.",
-  },
-  {
-    file: "packages/core/src/runs/web-source-adapters/finance.ts",
-    category: "source-adapter-value-extraction",
-    reason: "finance adapter normalizes market/source values after a finance retrieval source has already been selected.",
   },
   {
     file: "packages/core/src/topology/node-definition-suggestion.ts",

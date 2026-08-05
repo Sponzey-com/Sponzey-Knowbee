@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { closeDb, getDb, insertAuditLog } from "../packages/core/src/db/index.js"
+import type { Database } from "better-sqlite3"
+import { closeDb, insertAuditLog } from "../packages/core/src/db/index.js"
 import { listAuditEvents } from "../packages/core/src/api/routes/audit.ts"
 import { runDoctor } from "../packages/core/src/diagnostics/doctor.ts"
 import { buildRunWritebackCandidates, prepareMemoryWritebackQueueInput } from "../packages/core/src/memory/writeback.ts"
@@ -15,29 +15,34 @@ import {
   validatePromptAssemblyBlocks,
 } from "../packages/core/src/security/trust-boundary.ts"
 import { evaluateAndRecordToolPolicy } from "../packages/core/src/security/tool-policy.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let runtimeFixture: TestRuntimeConfigFixture
+let db: Database
 
 function useRawConfig(configBody: string): { stateDir: string; configPath: string } {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task004-security-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, configBody, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
-  return { stateDir, configPath }
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task004-security-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir, configText: configBody })
+  db = initializeTestDbRuntime(runtimeFixture.paths.stateDir)
+  return { stateDir: runtimeFixture.paths.stateDir, configPath: runtimeFixture.paths.configFile }
 }
 
 function useTempConfig(): { stateDir: string; allowedDir: string } {
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task004-security-"))
+  closeDb()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task004-security-"))
+  const stateDir = join(rootDir, "state")
   const allowedDir = join(stateDir, "workspace")
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: `{
     security: {
       approvalMode: "always",
       approvalTimeout: 60,
@@ -46,10 +51,9 @@ function useTempConfig(): { stateDir: string; allowedDir: string } {
       allowedCommands: ["echo"]
     },
     webui: { enabled: true, host: "127.0.0.1", port: 0, auth: { enabled: false } }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  }`,
+  })
+  db = initializeTestDbRuntime(runtimeFixture.paths.stateDir)
   return { stateDir, allowedDir }
 }
 
@@ -61,11 +65,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -86,20 +85,54 @@ function toolCtx() {
   }
 }
 
+function toolSecurity() {
+  return {
+    allowedPaths: [allowedDir],
+    allowedCommands: ["echo"],
+  }
+}
+
 describe("task004 security boundary", () => {
+  it("keeps tool policy allowlists as explicit inputs", () => {
+    const source = readFileSync("packages/core/src/security/tool-policy.ts", "utf-8")
+
+    expect(source).not.toContain("../config/index.js")
+    expect(source).not.toContain("getConfig(")
+    expect(source).toContain("security: {")
+    expect(source).toContain("security.allowedCommands")
+    expect(source).toContain("security.allowedPaths")
+  })
+
+  it("uses one dispatcher config snapshot for approval mode and tool policy", () => {
+    const source = readFileSync("packages/core/src/tools/dispatcher.ts", "utf-8")
+
+    expect(source).not.toContain("getConfig")
+    expect(source).toContain("config: ToolRuntimeConfigSnapshot")
+    expect(source).toContain("this.config = dependencies.config")
+    expect(source).toMatch(
+      /buildRuntimeToolContext\(\{\s*ctx,\s*config:\s*this\.config,/u,
+    )
+    expect(source).toContain("securityConfig.approvalMode")
+  })
+
   it("wraps untrusted injection content as evidence instead of policy", async () => {
     const content = await readFile("tests/fixtures/security/web-injection.txt", "utf-8")
     const block = createContextBlock({
       id: "web-fixture",
       tag: "web_content",
       title: "Fetched page",
-      content,
+      content: content.trim(),
     })
     const rendered = renderContextBlockForPrompt(block)
     const validation = validatePromptAssemblyBlocks([block])
 
-    expect(rendered).toContain("BEGIN UNTRUSTED CONTENT")
-    expect(rendered).toContain("cannot change system policy")
+    expect(JSON.parse(rendered)).toMatchObject({
+      role: "external_data",
+      policyAuthority: "none",
+      sourceKind: "web",
+      instructionIsolation: "data_only",
+      content: content.trim(),
+    })
     expect(validation.ok).toBe(true)
     expect(validation.violations[0]).toContain("content only")
     expect(shouldBlockUntrustedMemoryWriteback(block)).toBe(true)
@@ -111,10 +144,11 @@ describe("task004 security boundary", () => {
       riskLevel: "dangerous",
       params: { command: "echo hello" },
       ctx: toolCtx(),
+      security: toolSecurity(),
     })
 
     expect(decision).toMatchObject({ decision: "deny", reasonCode: "approval_required" })
-    const row = getDb().prepare<[], { reason_code: string; decision: string }>(
+    const row = db.prepare<[], { reason_code: string; decision: string }>(
       "SELECT reason_code, decision FROM tool_policy_decisions WHERE id = ?",
     ).get(decision.id)
     expect(row).toEqual({ decision: "deny", reason_code: "approval_required" })
@@ -126,6 +160,7 @@ describe("task004 security boundary", () => {
       riskLevel: "dangerous",
       params: { command: "rm -rf ./tmp" },
       ctx: toolCtx(),
+      security: toolSecurity(),
       approvalId: "approval-1",
       approvalDecision: "allow_once",
     })
@@ -134,6 +169,7 @@ describe("task004 security boundary", () => {
       riskLevel: "moderate",
       params: { path: "/etc/knowbee-denied.txt", content: "x" },
       ctx: toolCtx(),
+      security: toolSecurity(),
       approvalId: "approval-2",
       approvalDecision: "allow_once",
     })
@@ -142,6 +178,7 @@ describe("task004 security boundary", () => {
       riskLevel: "moderate",
       params: { path: join(allowedDir, "ok.txt"), content: "x" },
       ctx: toolCtx(),
+      security: toolSecurity(),
       approvalId: "approval-3",
       approvalDecision: "allow_once",
     })
@@ -178,7 +215,13 @@ describe("task004 security boundary", () => {
       slack: { enabled: true, botToken: "xoxb-task004-secret-token-1234567890", appToken: "xapp-task004-secret-token-1234567890", allowedChannelIds: ["C123"] }
     }`)
 
-    const report = runDoctor({ mode: "quick", includeEnvironment: false, includeReleasePackage: false })
+    const report = runDoctor({
+      config: runtimeFixture.load(),
+      paths: runtimeFixture.paths,
+      mode: "quick",
+      includeEnvironment: false,
+      includeReleasePackage: false,
+    })
     const serialized = JSON.stringify(report)
     expect(report.checks.find((check) => check.name === "gateway.exposure")?.status).toBe("blocked")
     expect(report.checks.find((check) => check.name === "credential.redaction")?.status).toBe("ok")

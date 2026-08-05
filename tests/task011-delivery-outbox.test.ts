@@ -3,14 +3,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { DeliveryReceipt } from "../packages/core/src/channels/contracts.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import {
   closeDb,
   findChannelMessageRef,
   insertSession,
   listMessageLedgerEvents,
 } from "../packages/core/src/db/index.js"
-import { commitFinalDelivery } from "../packages/core/src/runs/channel-finalizer.ts"
+import { commitFinalDelivery as commitFinalDeliveryWithGate } from "../packages/core/src/runs/channel-finalizer.ts"
+import { buildLlmResponseReviewReceipt } from "../packages/core/src/runs/user-facing-response-gate.ts"
 import {
   deliverChunk,
   deliverTrackedChunk,
@@ -20,11 +20,29 @@ import {
   type SuccessfulTextDelivery,
 } from "../packages/core/src/runs/delivery.ts"
 import { createRootRun } from "../packages/core/src/runs/store.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const baseNow = Date.UTC(2026, 3, 27, 0, 0, 0)
+
+function commitFinalDelivery(input: Parameters<typeof commitFinalDeliveryWithGate>[0]) {
+  const rawText = `review-input:${input.text}`
+  return commitFinalDeliveryWithGate({
+    ...input,
+    responseReview: {
+      rawText,
+      rawTextSource: "llm_generated",
+      contentKind: "final_report",
+      expectedLanguage: "unknown",
+      receipt: buildLlmResponseReviewReceipt({
+        rawText,
+        responseText: input.text,
+        rawTextSource: "llm_generated",
+        contentKind: "final_report",
+      }),
+    },
+  })
+}
 
 function setupRun(input: {
   runId?: string
@@ -74,19 +92,12 @@ beforeEach(() => {
   resetDeliveryOutboxForTest()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task011-outbox-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 })
 
 afterEach(() => {
   resetDeliveryOutboxForTest()
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -208,12 +219,27 @@ describe("task011 delivery outbox and finalizer integration", () => {
       onChunk: async () => undefined,
       deliveryDependencies: { writeReplyLog: () => undefined },
     })
+    const slackText = "final answer for slack"
     const slack = await commitFinalDelivery({
       parentRunId: "run:task011-final",
       sessionId: "session:task011:slack",
       source: "slack",
-      text: "final answer for slack",
-      onChunk: async () => undefined,
+      text: slackText,
+      onChunk: async (chunk) =>
+        chunk.type === "done"
+          ? {
+              textDeliveries: [
+                {
+                  channel: "slack",
+                  text: slackText,
+                  messageIds: ["1710000100.000200"],
+                  deliveryReceipts: [
+                    slackReceipt({ messageId: "1710000100.000200" }),
+                  ],
+                },
+              ],
+            }
+          : undefined,
       deliveryDependencies: { writeReplyLog: () => undefined },
     })
 

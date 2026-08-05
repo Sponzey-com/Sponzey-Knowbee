@@ -32,7 +32,7 @@ function contextFor(overrides: Partial<AgentExecutionContext> = {}): AgentExecut
     },
     current_executor: {
       executor_id: "node:worker",
-      display_name: "작업 실행자",
+      agent_name: "작업 실행자",
       role_name: "Local task worker",
       definition: "Can work within explicit permission and risk boundaries.",
       can_delegate: false,
@@ -40,7 +40,7 @@ function contextFor(overrides: Partial<AgentExecutionContext> = {}): AgentExecut
     },
     parent_executor: {
       executor_id: "agent:knowbee",
-      display_name: "노비",
+      agent_name: "노비",
       role_name: "Parent orchestrator",
       can_delegate: true,
       available: true,
@@ -115,11 +115,11 @@ describe("task026 risk boundary execution decision", () => {
     }))
   })
 
-  it("sends root Knowbee risk boundary violations to the user when there is no parent executor", async () => {
+  it("sends root main-agent risk boundary violations to the user when there is no parent executor", async () => {
     const rootContext = contextFor({
       current_executor: {
         executor_id: "agent:knowbee",
-        display_name: "노비",
+        agent_name: "노비",
         role_name: "Root agent",
         can_delegate: true,
         available: true,

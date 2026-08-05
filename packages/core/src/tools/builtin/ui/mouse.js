@@ -5,20 +5,111 @@
 import { DEFAULT_YEONJANG_EXTENSION_ID, canYeonjangHandleMethod, invokeYeonjangMethod, isYeonjangUnavailableError } from "../../../yeonjang/mqtt-client.js";
 import { buildYeonjangTargetParameterProperties, buildYeonjangTargetResolutionDetails, buildYeonjangTargetSelectionFailure, recordYeonjangRemoteExecutionApproval, revalidateYeonjangTargetSelection, resolveYeonjangTargetSelection, } from "../yeonjang-target.js";
 import { withYeonjangRequestMetadata } from "../yeonjang-request-metadata.js";
+import { toolUserFacingErrorMessage } from "../error-redaction.js";
+import { buildYeonjangRequiredFailure } from "../yeonjang-required-failure.js";
+import { resolveLocalOrYeonjangEvidenceSourceKind } from "../../evidence-source.js";
+import { createYeonjangControlSideEffect } from "../yeonjang-control-side-effect.js";
 const MOVE_DELAY_MS = 500;
-function yeonjangRequiredFailure(method) {
-    return {
-        success: false,
-        output: `이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 현재 연결된 연장이 \`${method}\` 메서드를 지원하지 않거나 연결되어 있지 않습니다.`,
-        error: "YEONJANG_REQUIRED",
-        details: {
-            requiredExecutor: "yeonjang",
-            requiredMethod: method,
-        },
-    };
+async function observeMousePosition(params, ctx, result) {
+    const details = result.details && typeof result.details === "object" ? result.details : {};
+    const extensionId = typeof details.extensionId === "string" ? details.extensionId : params.extensionId ?? DEFAULT_YEONJANG_EXTENSION_ID;
+    try {
+        const observed = await invokeYeonjangMethod("mouse.position", {}, withYeonjangRequestMetadata(ctx, { extensionId, timeoutMs: 15_000 }));
+        return {
+            available: typeof observed.x === "number" && typeof observed.y === "number",
+            ...(typeof observed.x === "number" ? { x: observed.x } : {}),
+            ...(typeof observed.y === "number" ? { y: observed.y } : {}),
+        };
+    }
+    catch {
+        return { available: false, reason: "mouse_position_unavailable" };
+    }
 }
+const mouseMoveSideEffect = createYeonjangControlSideEffect({
+    method: "mouse.move",
+    expectedState: (params) => ({
+        accepted: true,
+        action: "move",
+        x: params.x,
+        y: params.y,
+    }),
+    observeVerifiedState: async (params, ctx, result) => {
+        const observed = await observeMousePosition(params, ctx, result);
+        return observed.x === params.x && observed.y === params.y;
+    },
+});
+const mouseClickSideEffect = createYeonjangControlSideEffect({
+    method: "mouse.click",
+    expectedState: (params) => ({
+        accepted: true,
+        action: params.double ? "double_click" : "click",
+        x: params.x,
+        y: params.y,
+        button: params.button ?? "left",
+        double: params.double === true,
+    }),
+    observeState: async (params, ctx, result) => {
+        const details = result.details && typeof result.details === "object" ? result.details : {};
+        const postCursor = await observeMousePosition(params, ctx, result);
+        return {
+            verified: false,
+            observedState: {
+                accepted: result.success,
+                action: params.double ? "double_click" : "click",
+                reason: result.success ? "llm_goal_validation_required" : result.error ?? "mouse_click_failed",
+                targetObservation: {
+                    preCursor: details.preCursor ?? { available: false, reason: "pre_cursor_not_observed" },
+                    postCursor,
+                    requestedCoordinate: { x: params.x, y: params.y },
+                },
+            },
+        };
+    },
+});
+const mouseActionSideEffect = createYeonjangControlSideEffect({
+    method: "mouse.action",
+    expectedState: (params) => ({
+        accepted: true,
+        action: params.action,
+        ...(typeof params.x === "number" ? { x: params.x } : {}),
+        ...(typeof params.y === "number" ? { y: params.y } : {}),
+        ...(params.button ? { button: params.button } : {}),
+        ...(typeof params.deltaX === "number" ? { deltaX: params.deltaX } : {}),
+        ...(typeof params.deltaY === "number" ? { deltaY: params.deltaY } : {}),
+    }),
+    observeState: async (params, ctx, result) => {
+        const details = result.details && typeof result.details === "object" ? result.details : {};
+        const postCursor = await observeMousePosition(params, ctx, result);
+        return {
+            verified: false,
+            observedState: {
+                accepted: result.success,
+                action: params.action,
+                reason: result.success ? "llm_goal_validation_required" : result.error ?? "mouse_action_failed",
+                targetObservation: {
+                    preCursor: details.preCursor ?? { available: false, reason: "pre_cursor_not_observed" },
+                    postCursor,
+                    ...(typeof params.x === "number" && typeof params.y === "number"
+                        ? { requestedCoordinate: { x: params.x, y: params.y } }
+                        : {}),
+                    ...(typeof params.deltaX === "number" || typeof params.deltaY === "number"
+                        ? {
+                            requestedScroll: {
+                                deltaX: params.deltaX ?? 0,
+                                deltaY: params.deltaY ?? 0,
+                            },
+                        }
+                        : {}),
+                },
+            },
+        };
+    },
+});
 export const mouseMoveTool = {
     name: "mouse_move",
+    resolveEvidenceSourceKind: resolveLocalOrYeonjangEvidenceSourceKind,
+    runtimeHealthMode: "additional",
+    runtimeMethodIds: ["mouse.move"],
     description: "마우스 커서를 지정한 화면 좌표로 이동합니다.",
     parameters: {
         type: "object",
@@ -31,6 +122,7 @@ export const mouseMoveTool = {
     },
     riskLevel: "moderate",
     requiresApproval: true,
+    sideEffect: mouseMoveSideEffect,
     execute: async (params, ctx) => {
         const selection = resolveYeonjangTargetSelection({
             requestedExtensionId: params.extensionId,
@@ -80,7 +172,7 @@ export const mouseMoveTool = {
         }
         catch (error) {
             if (!isYeonjangUnavailableError(error)) {
-                const message = error instanceof Error ? error.message : String(error);
+                const message = toolUserFacingErrorMessage(error);
                 return {
                     success: false,
                     output: `Yeonjang 마우스 이동 실패: ${message}`,
@@ -92,7 +184,7 @@ export const mouseMoveTool = {
                 };
             }
         }
-        const failure = yeonjangRequiredFailure("mouse.move");
+        const failure = buildYeonjangRequiredFailure({ method: "mouse.move" });
         return {
             ...failure,
             details: {
@@ -104,6 +196,9 @@ export const mouseMoveTool = {
 };
 export const mouseClickTool = {
     name: "mouse_click",
+    resolveEvidenceSourceKind: resolveLocalOrYeonjangEvidenceSourceKind,
+    runtimeHealthMode: "additional",
+    runtimeMethodIds: ["mouse.click"],
     description: "지정한 좌표에서 마우스 클릭을 수행합니다.",
     parameters: {
         type: "object",
@@ -122,6 +217,7 @@ export const mouseClickTool = {
     },
     riskLevel: "moderate",
     requiresApproval: true,
+    sideEffect: mouseClickSideEffect,
     execute: async (params, ctx) => {
         const selection = resolveYeonjangTargetSelection({
             requestedExtensionId: params.extensionId,
@@ -155,6 +251,11 @@ export const mouseClickTool = {
                     };
                 }
                 recordYeonjangRemoteExecutionApproval({ selection: reboundSelection, toolName: "mouse.click", ctx });
+                const preCursor = await observeMousePosition(params, ctx, {
+                    success: true,
+                    output: "pre mouse position observation",
+                    details: buildYeonjangTargetResolutionDetails(reboundSelection),
+                });
                 const remote = await invokeYeonjangMethod("mouse.click", {
                     x: params.x,
                     y: params.y,
@@ -170,6 +271,7 @@ export const mouseClickTool = {
                         y: remote.y,
                         button: remote.button,
                         double: remote.double,
+                        preCursor,
                         ...buildYeonjangTargetResolutionDetails(reboundSelection),
                     },
                     ...(remote.clicked ? {} : { error: "remote_mouse_click_failed" }),
@@ -178,7 +280,7 @@ export const mouseClickTool = {
         }
         catch (error) {
             if (!isYeonjangUnavailableError(error)) {
-                const message = error instanceof Error ? error.message : String(error);
+                const message = toolUserFacingErrorMessage(error);
                 return {
                     success: false,
                     output: `Yeonjang 마우스 클릭 실패: ${message}`,
@@ -190,7 +292,7 @@ export const mouseClickTool = {
                 };
             }
         }
-        const failure = yeonjangRequiredFailure("mouse.click");
+        const failure = buildYeonjangRequiredFailure({ method: "mouse.click" });
         return {
             ...failure,
             details: {
@@ -202,6 +304,9 @@ export const mouseClickTool = {
 };
 export const mouseActionTool = {
     name: "mouse_action",
+    resolveEvidenceSourceKind: resolveLocalOrYeonjangEvidenceSourceKind,
+    runtimeHealthMode: "additional",
+    runtimeMethodIds: ["mouse.action"],
     description: "마우스 액션을 실행합니다. move, click, double_click, button_down, button_up, scroll을 지원합니다.",
     parameters: {
         type: "object",
@@ -226,6 +331,7 @@ export const mouseActionTool = {
     },
     riskLevel: "moderate",
     requiresApproval: true,
+    sideEffect: mouseActionSideEffect,
     execute: async (params, ctx) => {
         const selection = resolveYeonjangTargetSelection({
             requestedExtensionId: params.extensionId,
@@ -259,6 +365,11 @@ export const mouseActionTool = {
                     };
                 }
                 recordYeonjangRemoteExecutionApproval({ selection: reboundSelection, toolName: "mouse.action", ctx });
+                const preCursor = await observeMousePosition(params, ctx, {
+                    success: true,
+                    output: "pre mouse position observation",
+                    details: buildYeonjangTargetResolutionDetails(reboundSelection),
+                });
                 const remote = await invokeYeonjangMethod("mouse.action", {
                     action: params.action,
                     ...(typeof params.x === "number" ? { x: params.x } : {}),
@@ -278,6 +389,7 @@ export const mouseActionTool = {
                         button: remote.button,
                         deltaX: remote.delta_x,
                         deltaY: remote.delta_y,
+                        preCursor,
                         ...buildYeonjangTargetResolutionDetails(reboundSelection),
                     },
                     ...(remote.accepted ? {} : { error: "remote_mouse_action_failed" }),
@@ -286,7 +398,7 @@ export const mouseActionTool = {
         }
         catch (error) {
             if (!isYeonjangUnavailableError(error)) {
-                const message = error instanceof Error ? error.message : String(error);
+                const message = toolUserFacingErrorMessage(error);
                 return {
                     success: false,
                     output: `Yeonjang 마우스 액션 실패: ${message}`,
@@ -298,7 +410,7 @@ export const mouseActionTool = {
                 };
             }
         }
-        const failure = yeonjangRequiredFailure("mouse.action");
+        const failure = buildYeonjangRequiredFailure({ method: "mouse.action" });
         return {
             ...failure,
             details: {

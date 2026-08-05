@@ -8,13 +8,17 @@ import type {
   ResourceLockContract,
   StructuredTaskScope,
 } from "../contracts/sub-agent-orchestration.js"
+import { resolveAgentConfigAgentName } from "../contracts/sub-agent-orchestration.js"
 import type { OrchestrationModeSnapshot } from "./mode.js"
 import {
   type AgentRegistryEntry,
   type OrchestrationRegistrySnapshot,
+  type RegistryServiceDependencies,
   buildOrchestrationRegistrySnapshot,
 } from "./registry.js"
 import type { AgentExecutionDecision } from "./execution-decision-contract.js"
+import { DEFAULT_MAIN_AGENT_NAME_KO } from "../agent/main-agent-identity.js"
+import type { WorkflowAuthoringResult } from "./workflow-authoring.js"
 
 export const ORCHESTRATION_PLANNER_VERSION = "structured-v1"
 export const FAST_PATH_CLASSIFIER_TARGET_P95_MS = 100
@@ -66,6 +70,7 @@ export interface OrchestrationPlannerLearningHint {
 }
 
 export interface OrchestrationPlannerInput {
+  config: RegistryServiceDependencies["config"]
   parentRunId: string
   parentRequestId: string
   userRequest: string
@@ -77,9 +82,11 @@ export interface OrchestrationPlannerInput {
   learningHints?: OrchestrationPlannerLearningHint[]
   agentExecutionDecision?: AgentExecutionDecision
   parentAgentId?: string
+  rootAgentNameSnapshot?: string
   resourceLocks?: ResourceLockContract[]
   resourceLocksByTaskId?: Record<string, ResourceLockContract[]>
   dependencyEdges?: DependencyEdgeContract[]
+  workflowDraft?: WorkflowAuthoringResult
   timeoutMs?: number
   now?: () => number
   idProvider?: () => string
@@ -138,7 +145,7 @@ export function classifyFastPath(input: FastPathClassifierInput): FastPathClassi
       ? "fast_path_structured_intent_candidate"
       : "fast_path_delegation_candidate",
   ]
-  const explanation = "요청 텍스트를 규칙으로 해석하지 않고 구조화된 실행자 후보 평가로 넘깁니다."
+  const explanation = "요청 텍스트를 규칙으로 해석하지 않고 구조화된 서브 에이전트 후보 평가로 넘깁니다."
 
   return {
     classification,
@@ -293,19 +300,21 @@ function explanationForCandidate(input: {
   reasonCodes: string[]
   excludedReasonCodes: string[]
 }): string {
+  const agentName = resolveAgentConfigAgentName(input.agent.config)
+  const reasonCodes = new Set(input.reasonCodes)
   if (input.excludedReasonCodes.length > 0) {
-    return `${input.agent.nickname ?? input.agent.displayName}은 ${input.excludedReasonCodes[0]} 때문에 후보에서 제외되었습니다.`
+    return `${agentName}은 ${input.excludedReasonCodes[0]} 때문에 후보에서 제외되었습니다.`
   }
-  if (input.reasonCodes.includes("explicit_agent_target")) {
-    return `${input.agent.nickname ?? input.agent.displayName}은 사용자가 명시한 직접 대상입니다.`
+  if (reasonCodes.has("explicit_agent_target")) {
+    return `${agentName}은 사용자가 명시한 직접 대상입니다.`
   }
-  if (input.reasonCodes.includes("explicit_team_member")) {
-    return `${input.agent.nickname ?? input.agent.displayName}은 명시된 팀의 실행 가능 멤버입니다.`
+  if (reasonCodes.has("explicit_team_member")) {
+    return `${agentName}은 명시된 팀의 실행 가능 멤버입니다.`
   }
-  if (input.reasonCodes.includes("specialty_tag_match")) {
-    return `${input.agent.nickname ?? input.agent.displayName}은 요청한 전문 태그와 일치합니다.`
+  if (reasonCodes.has("specialty_tag_match")) {
+    return `${agentName}은 요청한 전문 태그와 일치합니다.`
   }
-  return `${input.agent.nickname ?? input.agent.displayName}은 현재 권한, 부하, capability 기준을 통과했습니다.`
+  return `${agentName}은 현재 권한, 부하, capability 기준을 통과했습니다.`
 }
 
 function candidateAllowedByExplicitTarget(
@@ -314,7 +323,7 @@ function candidateAllowedByExplicitTarget(
   intent: OrchestrationPlannerIntent,
 ): boolean {
   if (intent.explicitAgentId) return agent.agentId === intent.explicitAgentId
-  if (intent.explicitTeamId) return teamIds.includes(intent.explicitTeamId)
+  if (intent.explicitTeamId) return new Set(teamIds).has(intent.explicitTeamId)
   return true
 }
 
@@ -389,7 +398,7 @@ function scoreCandidate(
     score += 1_000
     reasonCodes.push("explicit_agent_target")
   }
-  if (intent.explicitTeamId && teamIds.includes(intent.explicitTeamId)) {
+  if (intent.explicitTeamId && new Set(teamIds).has(intent.explicitTeamId)) {
     score += 700
     reasonCodes.push("explicit_team_member")
   }
@@ -554,7 +563,8 @@ function directFallbackPlan(input: {
     requiredCapabilities: [],
     resourceLockIds: [],
     reasonCodes: input.reasonCodes,
-    explanation: input.userMessage ?? "노비가 직접 후속 처리를 맡는 계획입니다.",
+    explanation: input.userMessage ??
+      `${input.modeSnapshot.mainAgentNameSnapshot?.trim() || DEFAULT_MAIN_AGENT_NAME_KO}가 직접 후속 처리를 맡는 계획입니다.`,
   })
 
   const plan: OrchestrationPlan = {
@@ -711,6 +721,10 @@ function directFallbackModeForExecutionDecision(
   return "direct_current_agent"
 }
 
+function normalizedRootAgentNameSnapshot(input: OrchestrationPlannerInput): string {
+  return input.rootAgentNameSnapshot?.trim() || input.modeSnapshot.mainAgentNameSnapshot?.trim() || DEFAULT_MAIN_AGENT_NAME_KO
+}
+
 export function buildOrchestrationPlan(
   input: OrchestrationPlannerInput,
 ): OrchestrationPlanBuildResult {
@@ -718,6 +732,11 @@ export function buildOrchestrationPlan(
   const now = input.now ?? (() => Date.now())
   const idProvider = input.idProvider ?? (() => crypto.randomUUID())
   const timeoutMs = Math.max(1, input.timeoutMs ?? 120)
+  const rootAgentNameSnapshot = normalizedRootAgentNameSnapshot(input)
+  const modeSnapshot: OrchestrationModeSnapshot = {
+    ...input.modeSnapshot,
+    mainAgentNameSnapshot: rootAgentNameSnapshot,
+  }
   const decisionSelectedExecutorId = selectedExecutorFromDelegatingDecision(input.agentExecutionDecision)
   let intent = {
     ...(input.intent ?? {}),
@@ -729,14 +748,29 @@ export function buildOrchestrationPlan(
     now,
   })
 
-  if (input.modeSnapshot.mode !== "orchestration") {
+  if (input.workflowDraft?.state === "rejected") {
+    return nonExecutionPlan({
+      parentRunId: input.parentRunId,
+      parentRequestId: input.parentRequestId,
+      modeSnapshot,
+      reasonCodes: input.workflowDraft.reasonCodes,
+      fallbackReasonCode: input.workflowDraft.reasonCodes[0] ?? "workflow_contract_rejected",
+      now: startedAt,
+      idProvider,
+      fastPathClassification,
+      status: "requires_workflow_recommendation",
+      userMessage: "구조화 워크플로우 계약이 유효하지 않아 실행하지 않았습니다.",
+    })
+  }
+
+  if (modeSnapshot.mode !== "orchestration") {
     return directFallbackPlan({
       parentRunId: input.parentRunId,
       parentRequestId: input.parentRequestId,
       userRequest: input.userRequest,
-      modeSnapshot: input.modeSnapshot,
-      reasonCodes: [`mode_${input.modeSnapshot.mode}`, input.modeSnapshot.reasonCode],
-      fallbackReasonCode: input.modeSnapshot.reasonCode,
+      modeSnapshot,
+      reasonCodes: [`mode_${modeSnapshot.mode}`, modeSnapshot.reasonCode],
+      fallbackReasonCode: modeSnapshot.reasonCode,
       now: startedAt,
       idProvider,
       timedOut: false,
@@ -750,7 +784,7 @@ export function buildOrchestrationPlan(
       parentRunId: input.parentRunId,
       parentRequestId: input.parentRequestId,
       userRequest: input.userRequest,
-      modeSnapshot: input.modeSnapshot,
+      modeSnapshot,
       reasonCodes: fastPathClassification.reasonCodes,
       fallbackReasonCode: "direct_knowbee_fast_path",
       now: startedAt,
@@ -766,7 +800,7 @@ export function buildOrchestrationPlan(
     return nonExecutionPlan({
       parentRunId: input.parentRunId,
       parentRequestId: input.parentRequestId,
-      modeSnapshot: input.modeSnapshot,
+      modeSnapshot,
       reasonCodes: [...fastPathClassification.reasonCodes, "requires_workflow_recommendation"],
       fallbackReasonCode: "requires_workflow_recommendation",
       now: startedAt,
@@ -781,14 +815,14 @@ export function buildOrchestrationPlan(
   const registry =
     input.registrySnapshot ??
     input.loadRegistrySnapshot?.() ??
-    buildOrchestrationRegistrySnapshot({ now })
+    buildOrchestrationRegistrySnapshot({ config: input.config, now })
   const parentAgentId = plannerParentAgentId(input, registry)
   if (now() - startedAt > timeoutMs) {
     return directFallbackPlan({
       parentRunId: input.parentRunId,
       parentRequestId: input.parentRequestId,
       userRequest: input.userRequest,
-      modeSnapshot: input.modeSnapshot,
+      modeSnapshot,
       reasonCodes: ["planning_timeout"],
       fallbackReasonCode: "planning_timeout_direct_current_agent",
       now: startedAt,
@@ -800,7 +834,9 @@ export function buildOrchestrationPlan(
     })
   }
 
-  const scopes = input.taskScopes?.length
+  const scopes = input.workflowDraft?.state === "ready"
+    ? input.workflowDraft.taskScopes
+    : input.taskScopes?.length
     ? input.taskScopes
     : [buildDefaultStructuredTaskScope(input.userRequest)]
   const directChildAgentIds = directChildAgentIdsFor(registry, parentAgentId)
@@ -833,7 +869,7 @@ export function buildOrchestrationPlan(
       parentRunId: input.parentRunId,
       parentRequestId: input.parentRequestId,
       userRequest: input.userRequest,
-      modeSnapshot: input.modeSnapshot,
+      modeSnapshot,
       reasonCodes: [
         "execution_decision_present",
         `execution_decision_route_${input.agentExecutionDecision.execution_route}`,
@@ -873,7 +909,7 @@ export function buildOrchestrationPlan(
       parentRunId: input.parentRunId,
       parentRequestId: input.parentRequestId,
       userRequest: input.userRequest,
-      modeSnapshot: input.modeSnapshot,
+      modeSnapshot,
       reasonCodes: [
         "execution_decision_required",
         "implicit_agent_selection_disabled",
@@ -895,7 +931,7 @@ export function buildOrchestrationPlan(
         : {}),
       unresolvedReasonCode: "execution_decision_missing",
       userMessage:
-        "검증된 실행 결정이 없어 임의 실행자 선택 없이 현재 에이전트가 직접 처리합니다.",
+        "검증된 실행 결정이 없어 임의 서브 에이전트 선택 없이 현재 에이전트가 직접 처리합니다.",
     })
   }
 
@@ -916,7 +952,7 @@ export function buildOrchestrationPlan(
         parentRunId: input.parentRunId,
         parentRequestId: input.parentRequestId,
         userRequest: input.userRequest,
-        modeSnapshot: input.modeSnapshot,
+        modeSnapshot,
         reasonCodes,
         fallbackReasonCode: "explicit_team_target_unavailable",
         now: startedAt,
@@ -957,7 +993,7 @@ export function buildOrchestrationPlan(
       }),
     )
     for (const candidate of candidateScores) {
-      if (candidate.teamIds.includes(explicitTeamId)) candidate.selected = true
+      if (new Set(candidate.teamIds).has(explicitTeamId)) candidate.selected = true
     }
     const plannerReasonCodes = [
       "structured_scoring",
@@ -1035,9 +1071,9 @@ export function buildOrchestrationPlan(
         parentRunId: input.parentRunId,
         parentRequestId: input.parentRequestId,
         userRequest: input.userRequest,
-        modeSnapshot: input.modeSnapshot,
+        modeSnapshot,
         reasonCodes,
-        fallbackReasonCode: targetScore?.excludedReasonCodes.includes("risk_above_agent_ceiling")
+        fallbackReasonCode: new Set(targetScore?.excludedReasonCodes ?? []).has("risk_above_agent_ceiling")
           ? "explicit_agent_permission_denied"
           : "explicit_agent_target_unavailable",
         now: startedAt,
@@ -1051,7 +1087,7 @@ export function buildOrchestrationPlan(
         rejectedReasonCodes: reasonCodes,
         unresolvedReasonCode: "selected_executor_rejected",
         userMessage:
-          "명시된 에이전트가 직접 하위 후보 또는 권한 조건을 만족하지 않아 임의 대체하지 않았습니다.",
+          "명시된 에이전트가 직속 서브 에이전트 후보 또는 권한 조건을 만족하지 않아 임의 대체하지 않았습니다.",
       })
     }
   }
@@ -1063,7 +1099,7 @@ export function buildOrchestrationPlan(
       parentRunId: input.parentRunId,
       parentRequestId: input.parentRequestId,
       userRequest: input.userRequest,
-      modeSnapshot: input.modeSnapshot,
+      modeSnapshot,
       reasonCodes: explicitTargetRequested
         ? ["explicit_target_unavailable"]
         : ["no_eligible_agent_candidate"],
@@ -1147,6 +1183,20 @@ export function buildOrchestrationPlan(
     }
   }
 
+  if (input.workflowDraft?.state === "ready") {
+    for (const edge of input.workflowDraft.dependencies) {
+      const from = delegatedTasks[edge.fromScopeIndex]
+      const to = delegatedTasks[edge.toScopeIndex]
+      if (from && to) {
+        dependencyEdges.push({
+          fromTaskId: from.taskId,
+          toTaskId: to.taskId,
+          reasonCode: edge.reasonCode,
+        })
+      }
+    }
+  }
+
   const parallelGroups =
     dependencyEdges.length === 0 && delegatedTasks.length > 1
       ? [
@@ -1182,6 +1232,7 @@ export function buildOrchestrationPlan(
     reasonCodes: [
       "structured_scoring",
       "execution_decision_selected_executor",
+      ...(input.workflowDraft?.state === "ready" ? input.workflowDraft.reasonCodes : []),
       delegatedTasks.length > 1
         ? parallelGroups.length > 0
           ? "parallel_group_planned"

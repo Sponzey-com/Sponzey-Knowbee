@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
-import { PATHS, getConfig } from "@knowbee/core"
+import type { RuntimePaths } from "@knowbee/core"
 
 const SAMPLE_CONFIG = `// 스폰지 노비 · Sponzey Knowbee configuration
 // Docs: see design/plan.md
@@ -45,8 +45,8 @@ const SAMPLE_CONFIG = `// 스폰지 노비 · Sponzey Knowbee configuration
 }
 `
 
-export function initConfig() {
-  const configPath = PATHS.configFile
+export function initConfig(paths: Pick<RuntimePaths, "configFile">) {
+  const configPath = paths.configFile
   if (existsSync(configPath)) {
     console.log(`Config already exists: ${configPath}`)
     return
@@ -57,14 +57,9 @@ export function initConfig() {
   console.log("Edit the file to add your API keys, then run: knowbee run \"hello\"")
 }
 
-export function showConfig(): void {
-  const cfg = getConfig()
-  console.log(JSON.stringify(cfg, null, 2))
-}
-
-export async function generateAuthToken(): Promise<void> {
+export async function generateAuthToken(paths: Pick<RuntimePaths, "configFile">): Promise<void> {
   const { generateAuthToken: gen } = await import("@knowbee/core")
-  const { token } = gen()
+  const { token } = gen(paths)
 
   console.log("WebUI auth token generated and saved to config.")
   console.log(`Token: ${token}`)

@@ -78,8 +78,8 @@ describe("run approval application", () => {
     })
 
     expect(result.kind).toBe("continue")
-    expect(rememberRunApprovalScope).toHaveBeenCalledWith("run-1")
-    expect(grantRunApprovalScope).toHaveBeenCalledWith("run-1")
+    expect(rememberRunApprovalScope).toHaveBeenCalledWith("run-1", "screen_capture")
+    expect(grantRunApprovalScope).toHaveBeenCalledWith("run-1", "screen_capture")
     expect(grantRunSingleApproval).not.toHaveBeenCalled()
   })
 })

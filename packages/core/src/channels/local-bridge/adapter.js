@@ -1,4 +1,12 @@
 import { buildUnsupportedCapabilityReceipt, createRawPayloadRef, defineChannelAdapter, defineChannelCapabilities, resolveDeliveryReceiptStatus, } from "../contracts.js";
+import { redactLogText } from "../../logger/index.js";
+function redactLocalBridgeReceiptMessage(message) {
+    return redactLogText(message);
+}
+function localBridgeErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLocalBridgeReceiptMessage(raw);
+}
 export function buildLocalBridgeCapabilityManifest(input) {
     return defineChannelCapabilities({
         provider: input.provider,
@@ -170,6 +178,7 @@ export class LocalBridgeChannelAdapter {
                 capability: unsupportedCapability,
                 idempotencyKey: message.idempotencyKey,
                 timestamp: this.now(),
+                userFacingLanguage: message.userFacingLanguage,
             });
         }
         const recipientId = message.target.userId ?? message.target.roomId;
@@ -221,7 +230,7 @@ export class LocalBridgeChannelAdapter {
             };
         }
         catch (error) {
-            return this.failed(message, "local_bridge_delivery_failed", error instanceof Error ? error.message : String(error));
+            return this.failed(message, "local_bridge_delivery_failed", localBridgeErrorMessage(error));
         }
     }
     buildDoctor() {
@@ -249,7 +258,7 @@ export class LocalBridgeChannelAdapter {
             timestamp: this.now(),
             idempotencyKey: message.idempotencyKey,
             errorCode,
-            errorMessage,
+            errorMessage: redactLocalBridgeReceiptMessage(errorMessage),
         };
     }
     failed(message, errorCode, errorMessage) {
@@ -262,7 +271,7 @@ export class LocalBridgeChannelAdapter {
             timestamp: this.now(),
             idempotencyKey: message.idempotencyKey,
             errorCode,
-            errorMessage,
+            errorMessage: redactLocalBridgeReceiptMessage(errorMessage),
         };
     }
 }

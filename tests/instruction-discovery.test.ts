@@ -5,10 +5,8 @@ import { afterEach, describe, expect, it } from "vitest"
 import { discoverInstructionChain } from "../packages/core/src/instructions/discovery.ts"
 
 const tempDirs: string[] = []
-let previousStateDir = process.env["KNOWBEE_STATE_DIR"]
 
 afterEach(() => {
-  process.env["KNOWBEE_STATE_DIR"] = previousStateDir
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -32,8 +30,11 @@ describe("discoverInstructionChain", () => {
     writeFileSync(join(repoDir, "AGENTS.md"), "repo instructions", "utf-8")
     writeFileSync(join(serviceDir, "AGENTS.override.md"), "service override", "utf-8")
 
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-    const chain = discoverInstructionChain(serviceDir)
+    const chain = discoverInstructionChain({
+      workDir: serviceDir,
+      globalStateDir: stateDir,
+      fallbackBoundaryDir: root,
+    })
 
     expect(chain.sources.map((source) => source.path)).toEqual([
       join(stateDir, "AGENTS.md"),
@@ -58,8 +59,11 @@ describe("discoverInstructionChain", () => {
     writeFileSync(join(parentDir, "AGENTS.md"), "parent instructions", "utf-8")
     writeFileSync(join(childDir, "AGENTS.override.md"), "child override", "utf-8")
 
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-    const chain = discoverInstructionChain(childDir)
+    const chain = discoverInstructionChain({
+      workDir: childDir,
+      globalStateDir: stateDir,
+      fallbackBoundaryDir: root,
+    })
 
     expect(chain.sources.map((source) => source.path)).toEqual([
       join(stateDir, "AGENTS.md"),

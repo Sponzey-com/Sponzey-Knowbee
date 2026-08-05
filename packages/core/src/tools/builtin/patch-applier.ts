@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, renameSync } from "node:fs"
 import { join, dirname, isAbsolute } from "node:path"
 import { assertAllowedPath } from "./file.js"
+import { toolUserFacingErrorMessage } from "./error-redaction.js"
+import type { SecurityConfig } from "../../config/types.js"
 import type { ParsedPatch, Hunk } from "./patch-parser.js"
 
 export interface ApplyResult {
@@ -67,16 +69,20 @@ function applyHunkToLines(lines: string[], hunk: Hunk): string[] | null {
   return result
 }
 
-export function applyPatch(patch: ParsedPatch, workDir: string): ApplyResult {
+export function applyPatch(
+  patch: ParsedPatch,
+  workDir: string,
+  securityConfig?: Pick<SecurityConfig, "allowedPaths">,
+): ApplyResult {
   const filesChanged: string[] = []
 
   for (const op of patch.operations) {
     const absPath = resolveFilePath(op.filePath, workDir)
 
     try {
-      assertAllowedPath(absPath)
+      assertAllowedPath(absPath, securityConfig)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = toolUserFacingErrorMessage(err)
       return { success: false, message: `Path check failed for "${op.filePath}": ${msg}`, filesChanged }
     }
 
@@ -93,7 +99,7 @@ export function applyPatch(patch: ParsedPatch, workDir: string): ApplyResult {
         writeFileSync(absPath, op.content, "utf-8")
         filesChanged.push(absPath)
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
+        const msg = toolUserFacingErrorMessage(err)
         return { success: false, message: `Add File failed for "${absPath}": ${msg}`, filesChanged }
       }
       continue
@@ -105,7 +111,7 @@ export function applyPatch(patch: ParsedPatch, workDir: string): ApplyResult {
           unlinkSync(absPath)
           filesChanged.push(absPath)
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
+          const msg = toolUserFacingErrorMessage(err)
           return { success: false, message: `Delete File failed for "${absPath}": ${msg}`, filesChanged }
         }
       }
@@ -126,7 +132,7 @@ export function applyPatch(patch: ParsedPatch, workDir: string): ApplyResult {
         const raw = readFileSync(absPath, "utf-8")
         lines = raw.split(/\r?\n/)
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
+        const msg = toolUserFacingErrorMessage(err)
         return { success: false, message: `Failed to read "${absPath}": ${msg}`, filesChanged }
       }
 
@@ -153,7 +159,7 @@ export function applyPatch(patch: ParsedPatch, workDir: string): ApplyResult {
         renameSync(tmpPath, absPath)
         filesChanged.push(absPath)
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
+        const msg = toolUserFacingErrorMessage(err)
         try { unlinkSync(tmpPath) } catch { /* ignore */ }
         return { success: false, message: `Failed to write "${absPath}": ${msg}`, filesChanged }
       }

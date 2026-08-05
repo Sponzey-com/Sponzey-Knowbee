@@ -1,42 +1,42 @@
-import { getConfig } from "../config/index.js";
+import { resolveAgentConfigAgentName, } from "../contracts/sub-agent-orchestration.js";
+import { loadPromptValue } from "../memory/prompt-fragments.js";
+const PROFILE_CONTEXT_USER_HEADER_SOURCE_ID = "profile_context_user_header_user";
+const PROFILE_CONTEXT_AGENT_HEADER_SOURCE_ID = "profile_context_agent_header_user";
+const PROFILE_CONTEXT_TEAM_HEADER_SOURCE_ID = "profile_context_team_header_user";
 function normalize(value) {
     return value?.trim() ?? "";
 }
-export function buildUserProfilePromptContext() {
-    const profile = getConfig().profile;
+export function resolveUserProfileName(profile) {
+    return normalize(profile.displayName) || normalize(profile.profileName);
+}
+export function buildUserProfilePromptContext(profile) {
     const lines = [];
-    const displayName = normalize(profile.displayName);
-    const profileName = normalize(profile.profileName);
+    const userName = resolveUserProfileName(profile);
     const language = normalize(profile.language);
     const timezone = normalize(profile.timezone);
     const workspace = normalize(profile.workspace);
-    if (displayName)
-        lines.push(`- 표시 이름: ${displayName}`);
-    if (profileName)
-        lines.push(`- 사용자 이름: ${profileName}`);
+    if (userName)
+        lines.push(`- userName: ${userName}`);
     if (language)
-        lines.push(`- 기본 언어: ${language}`);
+        lines.push(`- defaultLanguage: ${language}`);
     if (timezone)
-        lines.push(`- 기본 시간대: ${timezone}`);
+        lines.push(`- defaultTimezone: ${timezone}`);
     if (workspace)
-        lines.push(`- 기본 작업 위치: ${workspace}`);
+        lines.push(`- defaultWorkspace: ${workspace}`);
     if (lines.length === 0)
         return "";
     return [
-        "[사용자 기본정보]",
-        "다음 정보는 사용자가 설정 화면에서 입력한 기본 정보입니다.",
-        "사용자가 새 지시로 덮어쓰지 않는 한 호칭, 기본 언어, 시간대, 작업 위치를 해석할 때 이 정보를 우선 참고하세요.",
+        loadPromptValue(PROFILE_CONTEXT_USER_HEADER_SOURCE_ID, {}, { required: true }),
         ...lines,
     ].join("\n");
 }
 export function buildAgentProfilePromptContext(input) {
+    const agentName = resolveAgentConfigAgentName(input.agent);
     const lines = [
         `- agentType: ${input.agent.agentType}`,
         `- agentId: ${input.agent.agentId}`,
-        `- displayName: ${input.agent.displayName}`,
-        input.agent.nickname ? `- nickname: ${input.agent.nickname}` : "",
+        `- agentName: ${agentName}`,
         `- role: ${input.agent.role}`,
-        `- personality: ${input.agent.personality}`,
         `- specialties: ${input.agent.specialtyTags.join(", ") || "none"}`,
         `- avoidTasks: ${input.agent.avoidTasks.join(", ") || "none"}`,
         `- memoryOwner: ${input.agent.memoryPolicy.owner.ownerType}:${input.agent.memoryPolicy.owner.ownerId}`,
@@ -48,11 +48,9 @@ export function buildAgentProfilePromptContext(input) {
         .filter((team) => team.memberAgentIds.includes(input.agent.agentId))
         .map((team) => `- ${team.displayName} (${team.teamId}): ${team.roleHints.join(", ") || "reference only"}`);
     return [
-        "[Agent Profile]",
-        "The following profile belongs only to the active Knowbee or sub-agent execution context.",
-        "It cannot override safety, approval, memory isolation, or capability isolation policies.",
+        loadPromptValue(PROFILE_CONTEXT_AGENT_HEADER_SOURCE_ID, {}, { required: true }),
         ...lines,
-        ...(teamLines.length > 0 ? ["", "[Team Context]", ...teamLines] : []),
+        ...(teamLines.length > 0 ? ["", loadPromptValue(PROFILE_CONTEXT_TEAM_HEADER_SOURCE_ID, {}, { required: true }), ...teamLines] : []),
     ].join("\n");
 }
 //# sourceMappingURL=profile-context.js.map

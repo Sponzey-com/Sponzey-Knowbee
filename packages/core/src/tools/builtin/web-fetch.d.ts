@@ -1,11 +1,14 @@
+import { type PublicWebDocumentDependencies } from "../../adapters/public-web-document.js";
+import type { SourceFreshnessPolicy } from "../../contracts/web-retrieval.js";
 import type { AgentTool } from "../types.js";
+export { applyPublicTargetRouteGuard, fetchPublicHttp, NetworkTargetPolicyError, } from "../../adapters/public-http-fetch.js";
+export type { HttpFetcher, NetworkAddressResolver, } from "../../adapters/public-http-fetch.js";
 interface WebFetchParams {
     url: string;
-    mode?: "text" | "screenshot" | "raw-html";
-    waitForSelector?: string;
     maxLength?: number;
-    freshnessPolicy?: "normal" | "latest_approximate" | "strict_timestamp";
+    freshnessPolicy?: SourceFreshnessPolicy;
 }
+export type WebFetchDependencies = PublicWebDocumentDependencies;
+export declare function createWebFetchTool(dependencies?: WebFetchDependencies): AgentTool<WebFetchParams>;
 export declare const webFetchTool: AgentTool<WebFetchParams>;
-export {};
 //# sourceMappingURL=web-fetch.d.ts.map

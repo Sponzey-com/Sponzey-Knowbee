@@ -1,4 +1,5 @@
 import { type ScheduleContract } from "../contracts/index.js";
+import type { KnowbeeConfig } from "../config/types.js";
 import { type DbSchedule } from "../db/index.js";
 export type LegacyScheduleMigrationRisk = "low" | "medium" | "high" | "blocked";
 export type LegacyScheduleMigrationStatus = "already_contract" | "convertible" | "blocked";
@@ -40,19 +41,24 @@ export interface LegacyScheduleMigrationItem {
     updatedAt: number;
     lastRunAt: number | null;
 }
-export declare function buildLegacyScheduleMigrationReport(schedule: DbSchedule): LegacyScheduleMigrationReport;
-export declare function dryRunLegacyScheduleMigration(scheduleId: string, options?: {
+export declare function buildLegacyScheduleMigrationReport(schedule: DbSchedule, config: KnowbeeConfig): LegacyScheduleMigrationReport;
+export declare function dryRunLegacyScheduleMigration(scheduleId: string, options: {
     audit?: boolean;
+    config: KnowbeeConfig;
 }): LegacyScheduleMigrationReport | null;
-export declare function applyLegacyScheduleMigration(scheduleId: string): {
+export declare function applyLegacyScheduleMigration(scheduleId: string, options: {
+    config: KnowbeeConfig;
+}): {
     ok: boolean;
     report: LegacyScheduleMigrationReport | null;
     error?: string;
 };
-export declare function keepLegacySchedule(scheduleId: string): {
+export declare function keepLegacySchedule(scheduleId: string, options: {
+    config: KnowbeeConfig;
+}): {
     ok: boolean;
     report: LegacyScheduleMigrationReport | null;
     error?: string;
 };
-export declare function listLegacyScheduleMigrationItems(): LegacyScheduleMigrationItem[];
+export declare function listLegacyScheduleMigrationItems(config: KnowbeeConfig): LegacyScheduleMigrationItem[];
 //# sourceMappingURL=legacy-migration.d.ts.map

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 
 const detectAvailableProviderMock = vi.fn(() => "openai")
 const getDefaultModelMock = vi.fn(() => "gpt-5")
@@ -64,6 +65,7 @@ describe("start preflight", () => {
     expect(resolveStartPreflightFailure({
       source: "webui",
       message: "hello",
+      config: DEFAULT_CONFIG,
     })?.code).toBe("ai_connection_unavailable")
   })
 
@@ -74,6 +76,7 @@ describe("start preflight", () => {
       source: "webui",
       message: "hello",
       providerId: "openai",
+      config: DEFAULT_CONFIG,
     })?.code).toBe("ai_model_unavailable")
   })
 
@@ -92,6 +95,7 @@ describe("start preflight", () => {
       providerId: "openai",
       model: "gpt-5",
       onChunk: vi.fn(),
+      config: DEFAULT_CONFIG,
     })
 
     expect(failure?.code).toBe("channel_unavailable")
@@ -115,6 +119,7 @@ describe("start preflight", () => {
       contextMode: "handoff",
       runScope: "child",
       skipIntake: true,
+      config: DEFAULT_CONFIG,
     })
 
     expect(failure).toBeNull()
@@ -133,6 +138,7 @@ describe("start preflight", () => {
         approvalRequired: false,
         approvalTool: "screen_capture",
       },
+      config: DEFAULT_CONFIG,
     })
 
     expect(failure?.code).toBe("yeonjang_unavailable")
@@ -145,6 +151,7 @@ describe("start preflight", () => {
       providerId: "openai",
       model: "gpt-5",
       onChunk: vi.fn(),
+      config: DEFAULT_CONFIG,
     })
 
     const plan = resolveStartContextPlan({
@@ -153,10 +160,37 @@ describe("start preflight", () => {
       providerId: "openai",
       model: "gpt-5",
       onChunk: vi.fn(),
+      config: DEFAULT_CONFIG,
     })
 
     expect(failure).toBeNull()
-    expect(plan.toolPolicy.requiresYeonjang).toBe(false)
+    expect(plan.toolPolicy.requiresYeonjang).toBe("unknown")
+  })
+
+  it("marks Yeonjang not required only from an explicit non-Yeonjang policy input", () => {
+    expect(resolveStartContextPlan({
+      source: "webui",
+      message: "hello",
+      providerId: "openai",
+      model: "gpt-5",
+      toolsEnabled: false,
+      config: DEFAULT_CONFIG,
+    }).toolPolicy.requiresYeonjang).toBe("not_required")
+
+    expect(resolveStartContextPlan({
+      source: "webui",
+      message: "hello",
+      providerId: "openai",
+      model: "gpt-5",
+      executionSemantics: {
+        filesystemEffect: "none",
+        privilegedOperation: "none",
+        artifactDelivery: "none",
+        approvalRequired: false,
+        approvalTool: "external_action",
+      },
+      config: DEFAULT_CONFIG,
+    }).toolPolicy.requiresYeonjang).toBe("not_required")
   })
 
   it("allows Yeonjang-bound requests to reach request-time method refresh when a snapshot is connected", () => {
@@ -183,7 +217,45 @@ describe("start preflight", () => {
         approvalRequired: false,
         approvalTool: "screen_capture",
       },
+      config: DEFAULT_CONFIG,
     })).toBeNull()
+  })
+
+  it("preserves validated camera approval, artifact, and Yeonjang requirements", () => {
+    getMqttExtensionSnapshotsMock.mockReturnValueOnce([{
+      extensionId: "yeonjang-main",
+      clientId: "client-camera",
+      displayName: "Yeonjang",
+      state: "connected",
+      message: null,
+      version: "0.1.0",
+      methods: ["camera.permission_status", "camera.capture"],
+      lastSeenAt: 1,
+    }])
+
+    const plan = resolveStartContextPlan({
+      source: "telegram",
+      message: "카메라 요청",
+      providerId: "openai",
+      model: "gpt-5",
+      onChunk: vi.fn(),
+      executionSemantics: {
+        filesystemEffect: "none",
+        privilegedOperation: "required",
+        artifactDelivery: "direct",
+        approvalRequired: true,
+        approvalTool: "yeonjang_camera_capture",
+      },
+      config: DEFAULT_CONFIG,
+    })
+
+    expect(plan.preflightFailure).toBeNull()
+    expect(plan.memoryScopes).toContain("artifact")
+    expect(plan.toolPolicy).toEqual({
+      toolsEnabled: true,
+      requiresApproval: true,
+      requiresYeonjang: "required",
+    })
   })
 
   it("builds a context plan before memory retrieval and execution", () => {
@@ -211,6 +283,7 @@ describe("start preflight", () => {
         approvalRequired: true,
         approvalTool: "screen_capture",
       },
+      config: DEFAULT_CONFIG,
     })
 
     expect(plan.preflightFailure).toBeNull()
@@ -219,7 +292,7 @@ describe("start preflight", () => {
     expect(plan.toolPolicy).toEqual({
       toolsEnabled: true,
       requiresApproval: true,
-      requiresYeonjang: true,
+      requiresYeonjang: "required",
     })
     expect(plan.retrieval.vectorOptional).toBe(true)
   })

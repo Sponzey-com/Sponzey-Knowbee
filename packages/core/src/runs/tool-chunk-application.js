@@ -1,4 +1,5 @@
 import { applyToolExecutionReceipt, buildToolExecutionReceipt, } from "./execution.js";
+import { collectYeonjangSideEffectGoalValidationCandidate, } from "../yeonjang/side-effect-goal-validation-review.js";
 export function applyToolStartChunk(params, dependencies) {
     params.pendingToolParams.set(params.toolName, params.toolParams);
     const summary = `${params.toolName} 실행 중`;
@@ -14,6 +15,7 @@ export function applyToolEndChunk(params, dependencies) {
         output: params.output,
         toolParams,
         toolDetails: params.toolDetails,
+        ...(params.evidenceSource ? { evidenceSource: params.evidenceSource } : {}),
         workDir: params.workDir,
         commandFailureSeen: params.commandFailureSeen,
     });
@@ -25,6 +27,15 @@ export function applyToolEndChunk(params, dependencies) {
         toolParams,
         previousCommandFailureSeen: params.commandFailureSeen,
     });
+    if (params.yeonjangSideEffectGoalValidationCandidates) {
+        collectYeonjangSideEffectGoalValidationCandidate({
+            toolName: params.toolName,
+            success: params.success,
+            output: params.output,
+            details: params.toolDetails,
+            candidates: params.yeonjangSideEffectGoalValidationCandidates,
+        });
+    }
     dependencies.appendRunEvent(params.runId, toolReceipt.summary);
     dependencies.updateRunSummary(params.runId, toolReceipt.summary);
     return nextState;

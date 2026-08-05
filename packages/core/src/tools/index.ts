@@ -1,4 +1,9 @@
-export { toolDispatcher, ToolDispatcher } from "./dispatcher.js"
+export { ToolDispatcher } from "./dispatcher.js"
+export {
+  getToolDispatcher,
+  initializeToolDispatcher,
+  toolDispatcher,
+} from "./runtime-dispatcher.js"
 export type { AgentScopedToolDispatchInput } from "./dispatcher.js"
 export type { AgentTool, AnyTool, ToolContext, ToolResult, RiskLevel } from "./types.js"
 
@@ -12,8 +17,6 @@ export {
 export { shellExecTool } from "./builtin/shell.js"
 export { yeonjangBroadcastRunTool } from "./builtin/yeonjang-broadcast.js"
 export { fileSearchTool } from "./builtin/file-search.js"
-export { webSearchTool } from "./builtin/web-search.js"
-export { webFetchTool } from "./builtin/web-fetch.js"
 export { processListTool, processKillTool } from "./builtin/process.js"
 export { appLaunchTool, appListTool } from "./builtin/app.js"
 export { memoryStoreTool, memorySearchTool, fileSemanticSearchTool } from "./builtin/memory.js"
@@ -26,8 +29,35 @@ export {
 } from "./builtin/ui/keyboard.js"
 export { clipboardReadTool, clipboardWriteTool } from "./builtin/ui/clipboard.js"
 export { windowListTool, windowFocusTool } from "./builtin/ui/window.js"
-export { yeonjangCameraListTool, yeonjangCameraCaptureTool } from "./builtin/yeonjang.js"
+export {
+  yeonjangCameraListTool,
+  yeonjangCameraPermissionStatusTool,
+  yeonjangCameraCaptureTool,
+  yeonjangFileMetadataTool,
+  yeonjangFileListTool,
+  yeonjangFileReadTool,
+  yeonjangFileSearchTool,
+  yeonjangFileWriteTool,
+  yeonjangFilePatchTool,
+  yeonjangFileDeleteTool,
+  yeonjangDiskInfoTool,
+  yeonjangDiskUsageTool,
+  yeonjangDiskExistsTool,
+  yeonjangProcessListTool,
+  yeonjangProcessInfoTool,
+  yeonjangBrowserListTool,
+  yeonjangBrowserActiveHintTool,
+  yeonjangBrowserOpenUrlTool,
+  yeonjangBrowserFocusTool,
+  yeonjangClipboardReadTool,
+  yeonjangClipboardWriteTool,
+  yeonjangNetworkStatusTool,
+  yeonjangDeviceStatusTool,
+} from "./builtin/yeonjang.js"
+export { yeonjangStatusTool } from "./builtin/yeonjang-status.js"
 export { telegramSendFileTool } from "./builtin/telegram-send.js"
+export { webFetchTool } from "./builtin/web-fetch.js"
+export { webSearchTool } from "./builtin/web-search.js"
 
 import { appLaunchTool, appListTool } from "./builtin/app.js"
 import { fileSearchTool } from "./builtin/file-search.js"
@@ -43,6 +73,8 @@ import { processKillTool, processListTool } from "./builtin/process.js"
 import { shellExecTool } from "./builtin/shell.js"
 import { yeonjangBroadcastRunTool } from "./builtin/yeonjang-broadcast.js"
 import { telegramSendFileTool } from "./builtin/telegram-send.js"
+import { webFetchTool } from "./builtin/web-fetch.js"
+import { webSearchTool } from "./builtin/web-search.js"
 import { clipboardReadTool, clipboardWriteTool } from "./builtin/ui/clipboard.js"
 import {
   keyboardActionTool,
@@ -52,13 +84,36 @@ import {
 import { mouseActionTool, mouseClickTool, mouseMoveTool } from "./builtin/ui/mouse.js"
 import { screenCaptureTool, screenFindTextTool } from "./builtin/ui/screen.js"
 import { windowFocusTool, windowListTool } from "./builtin/ui/window.js"
-import { webFetchTool } from "./builtin/web-fetch.js"
-import { webSearchTool } from "./builtin/web-search.js"
-import { yeonjangCameraCaptureTool, yeonjangCameraListTool } from "./builtin/yeonjang.js"
-import { toolDispatcher } from "./dispatcher.js"
+import {
+  yeonjangCameraCaptureTool,
+  yeonjangCameraListTool,
+  yeonjangCameraPermissionStatusTool,
+  yeonjangFileMetadataTool,
+  yeonjangFileListTool,
+  yeonjangFileReadTool,
+  yeonjangFileSearchTool,
+  yeonjangFileWriteTool,
+  yeonjangFilePatchTool,
+  yeonjangFileDeleteTool,
+  yeonjangDiskInfoTool,
+  yeonjangDiskUsageTool,
+  yeonjangDiskExistsTool,
+  yeonjangProcessListTool,
+  yeonjangProcessInfoTool,
+  yeonjangBrowserListTool,
+  yeonjangBrowserActiveHintTool,
+  yeonjangBrowserOpenUrlTool,
+  yeonjangBrowserFocusTool,
+  yeonjangClipboardReadTool,
+  yeonjangClipboardWriteTool,
+  yeonjangNetworkStatusTool,
+  yeonjangDeviceStatusTool,
+} from "./builtin/yeonjang.js"
+import { yeonjangStatusTool } from "./builtin/yeonjang-status.js"
+import type { ToolDispatcher } from "./dispatcher.js"
 
-export function registerBuiltinTools(): void {
-  toolDispatcher.registerAll([
+export function registerBuiltinTools(dispatcher: ToolDispatcher): void {
+  dispatcher.registerAll([
     // File tools
     fileReadTool,
     fileWriteTool,
@@ -67,10 +122,8 @@ export function registerBuiltinTools(): void {
     filePatchTool,
     // Shell
     shellExecTool,
-    // Search
+    // Local search
     fileSearchTool,
-    webSearchTool,
-    webFetchTool,
     // Process / App
     processListTool,
     processKillTool,
@@ -94,10 +147,35 @@ export function registerBuiltinTools(): void {
     windowListTool,
     windowFocusTool,
     // Yeonjang extension
+    yeonjangStatusTool,
     yeonjangBroadcastRunTool,
     yeonjangCameraListTool,
+    yeonjangCameraPermissionStatusTool,
     yeonjangCameraCaptureTool,
+    yeonjangFileMetadataTool,
+    yeonjangFileListTool,
+    yeonjangFileReadTool,
+    yeonjangFileSearchTool,
+    yeonjangFileWriteTool,
+    yeonjangFilePatchTool,
+    yeonjangFileDeleteTool,
+    yeonjangDiskInfoTool,
+    yeonjangDiskUsageTool,
+    yeonjangDiskExistsTool,
+    yeonjangProcessListTool,
+    yeonjangProcessInfoTool,
+    yeonjangBrowserListTool,
+    yeonjangBrowserActiveHintTool,
+    yeonjangBrowserOpenUrlTool,
+    yeonjangBrowserFocusTool,
+    yeonjangClipboardReadTool,
+    yeonjangClipboardWriteTool,
+    yeonjangNetworkStatusTool,
+    yeonjangDeviceStatusTool,
     // Channel delivery
     telegramSendFileTool,
+    // Built-in public web retrieval
+    webSearchTool,
+    webFetchTool,
   ])
 }

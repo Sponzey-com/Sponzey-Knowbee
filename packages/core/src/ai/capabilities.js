@@ -152,7 +152,7 @@ function buildStaticMatrix(params) {
     const supportsResponses = resolution.adapterType === "openai_codex_oauth";
     const contextWindow = resolveContextWindow(resolution);
     const modelListingStatus = resolution.adapterType === "openai_codex_oauth"
-        ? capability("warning", "Codex OAuth는 공식 모델 목록 API 대신 알려진 Codex 모델 목록을 사용합니다.")
+        ? capability("supported", "ChatGPT OAuth 계정에 허용된 Codex 모델 목록을 조회합니다.")
         : resolution.providerId === "custom"
             ? capability("warning", "OpenAI-compatible endpoint는 모델 목록 API가 없을 수 있습니다.")
             : capability("supported", "provider 모델 목록 조회 경로가 정의되어 있습니다.");

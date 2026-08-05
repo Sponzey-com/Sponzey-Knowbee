@@ -1,11 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
 import type { ToolContext } from "../packages/core/src/tools/types.ts"
 import { upsertYeonjangRegistryObservation } from "../packages/core/src/yeonjang/registry.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const canYeonjangHandleMethod = vi.fn()
 const getYeonjangCapabilities = vi.fn()
@@ -44,17 +44,15 @@ const { mouseMoveTool } = await import("../packages/core/src/tools/builtin/ui/mo
 const { keyboardTypeTool } = await import("../packages/core/src/tools/builtin/ui/keyboard.ts")
 const { windowFocusTool } = await import("../packages/core/src/tools/builtin/ui/window.ts")
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let artifactRoot = ""
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-run-yeonjang-required-tools-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  artifactRoot = join(stateDir, "artifacts")
+  initializeTestDbRuntime(stateDir)
 }
 
 function seedObservation(overrides: Partial<Parameters<typeof upsertYeonjangRegistryObservation>[0]> = {}) {
@@ -95,6 +93,15 @@ function seedObservation(overrides: Partial<Parameters<typeof upsertYeonjangRegi
 
 function createContext(userMessage = "연장으로 실행해줘", source: ToolContext["source"] = "telegram"): ToolContext {
   return {
+    artifactStorage: {
+      rootDir: artifactRoot,
+      fileSystem: {
+        exists: existsSync,
+        realpath: realpathSync,
+        remove: (path) => rmSync(path, { force: true }),
+        stat: statSync,
+      },
+    },
     sessionId: "session-1",
     runId: "run-1",
     requestGroupId: "request-group-1",
@@ -150,11 +157,6 @@ describe("yeonjang required tools", () => {
 
   afterEach(() => {
     closeDb()
-    if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-    else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-    if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-    else process.env["KNOWBEE_CONFIG"] = previousConfig
-    reloadConfig()
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop()
       if (dir) rmSync(dir, { recursive: true, force: true })
@@ -185,7 +187,7 @@ describe("yeonjang required tools", () => {
     expect(result.output).toContain("screen.capture")
   })
 
-  it("returns a terminal guidance message when remote screen capture hits the Windows path bug", async () => {
+  it("returns a bounded remote failure when remote screen capture fails", async () => {
     expect(seedObservation({
       instanceId: "inst-remote-windows",
       instanceAlias: "windows-test-pc",
@@ -211,16 +213,17 @@ describe("yeonjang required tools", () => {
     const result = await screenCaptureTool.execute({ extensionId: 'yeonjang-dongwooshinc28b-92049' }, createContext('윈도우 메인화면 캡처해서 보여줘'))
 
     expect(result.success).toBe(false)
-    expect(result.error).toBe('YEONJANG_SCREEN_CAPTURE_PATH_BUG')
-    expect(result.output).toContain('Windows 연장의 `screen.capture` 내부 경로 처리 오류')
+    expect(result.error).toBe('YEONJANG_SCREEN_CAPTURE_REMOTE_FAILURE')
+    expect(result.output).toContain('Yeonjang 화면 캡처 실패')
     expect(result.details).toMatchObject({
       via: 'yeonjang',
       stopAfterFailure: true,
-      failureKind: 'path_bug',
+      failureKind: 'remote_failure',
       extensionId: 'yeonjang-dongwooshinc28b-92049',
     })
     expect(getYeonjangCapabilities).toHaveBeenCalledWith({
       extensionId: 'yeonjang-dongwooshinc28b-92049',
+      signal: expect.any(AbortSignal),
       metadata: {
         runId: 'run-1',
         requestGroupId: 'request-group-1',
@@ -268,6 +271,7 @@ describe("yeonjang required tools", () => {
     expect(result.success).toBe(true)
     expect(getYeonjangCapabilities).toHaveBeenCalledWith({
       extensionId: 'yeonjang-dongwooshinc28b-92049',
+      signal: expect.any(AbortSignal),
       metadata: {
         runId: 'run-1',
         requestGroupId: 'request-group-1',
@@ -363,6 +367,7 @@ describe("yeonjang required tools", () => {
       {
         extensionId: 'yeonjang-main',
         timeoutMs: 60000,
+        signal: expect.any(AbortSignal),
         metadata: {
           runId: 'run-1',
           requestGroupId: 'request-group-1',

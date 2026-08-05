@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   buildAiRecoveryKey,
   buildCommandFailureRecoveryPrompt,
+  buildYeonjangFailureEvidenceRecoveryPayload,
   buildRecoveryKey,
   summarizeRawErrorForUser,
   describeAssistantTextDeliveryFailure,
@@ -12,8 +13,45 @@ import {
   selectGenericExecutionRecovery,
   shouldRetryTruncatedOutput,
 } from "../packages/core/src/runs/recovery.ts"
+import { buildYeonjangEvidenceEnvelope } from "../packages/core/src/yeonjang/evidence.ts"
 
 describe("run recovery helpers", () => {
+  it("projects failed Yeonjang post-check evidence without raw target or reason payload", () => {
+    const payload = buildYeonjangFailureEvidenceRecoveryPayload({
+      toolName: "yeonjang_camera_capture",
+      output: "raw output must not be projected",
+      details: {
+        via: "yeonjang",
+        evidence: buildYeonjangEvidenceEnvelope({
+          targetRef: "yeonjang-main:/private/camera/path",
+          toolName: "yeonjang_camera_capture",
+          methodIds: ["camera.capture"],
+          group: "camera",
+          riskLevel: "moderate",
+          requiresApproval: true,
+          summary: "camera verification failed",
+          postCheck: {
+            kind: "failed",
+            verified: false,
+            reason: "failure /private/camera/path raw payload",
+          },
+        }),
+      },
+    })
+
+    expect(payload).toMatchObject({
+      summary: "yeonjang_camera_capture Yeonjang evidence failed verification.",
+      toolNames: ["yeonjang_camera_capture"],
+    })
+    expect(payload?.reason).toContain("target_ref=sha256:")
+    expect(payload?.reason).toContain("method=camera.capture")
+    expect(payload?.reason).toContain("reason=post_check_failed")
+    expect(JSON.stringify(payload)).not.toContain("yeonjang-main")
+    expect(JSON.stringify(payload)).not.toContain("/private/camera/path")
+    expect(JSON.stringify(payload)).not.toContain("raw payload")
+    expect(JSON.stringify(payload)).not.toContain("raw output")
+  })
+
   it("classifies auth-like AI recovery failures into a stable key", () => {
     const key = buildAiRecoveryKey({
       targetId: "provider:openai",
@@ -125,10 +163,10 @@ describe("run recovery helpers", () => {
       alternatives: [],
     })
 
-    expect(prompt).toContain("경로 별칭 후보")
+    expect(prompt).toContain("Path alias candidates")
     expect(prompt).toContain("~/Downloads")
     expect(prompt).toContain("다운도르")
-    expect(prompt).toContain("따옴표")
+    expect(prompt).toContain("quoted folder names")
   })
 
   it("returns a delivery recovery candidate for missing direct artifact delivery", () => {
@@ -180,6 +218,51 @@ describe("run recovery helpers", () => {
     })
 
     expect(recovery).toBeNull()
+  })
+
+  it("keys structured pre-dispatch recovery by reason code and evidence ref instead of prose", () => {
+    const first = selectGenericExecutionRecovery({
+      executionRecovery: {
+        summary: "scope repair",
+        reason: "first wording",
+        reasonCode: "run_scoped_target_ambiguous",
+        evidenceRefs: [
+          `run-scoped-pre-dispatch:sha256:${"a".repeat(64)}`,
+        ],
+        toolNames: ["yeonjang_camera_capture"],
+      },
+      seenKeys: new Set<string>(),
+    })
+    expect(first).not.toBeNull()
+    if (!first) return
+
+    const sameEvidence = selectGenericExecutionRecovery({
+      executionRecovery: {
+        summary: "scope repair",
+        reason: "different wording",
+        reasonCode: "run_scoped_target_ambiguous",
+        evidenceRefs: [
+          `run-scoped-pre-dispatch:sha256:${"a".repeat(64)}`,
+        ],
+        toolNames: ["yeonjang_camera_capture"],
+      },
+      seenKeys: new Set([first.key]),
+    })
+    const changedScope = selectGenericExecutionRecovery({
+      executionRecovery: {
+        summary: "scope repair",
+        reason: "different wording",
+        reasonCode: "run_scoped_target_ambiguous",
+        evidenceRefs: [
+          `run-scoped-pre-dispatch:sha256:${"b".repeat(64)}`,
+        ],
+        toolNames: ["yeonjang_camera_capture"],
+      },
+      seenKeys: new Set([first.key]),
+    })
+
+    expect(sameEvidence).toBeNull()
+    expect(changedScope).not.toBeNull()
   })
 
   it("keeps direct artifact delivery recovery keys channel-specific", () => {

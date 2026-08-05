@@ -1,8 +1,9 @@
+import { redactLogText } from "../logger/index.js";
 function normalizeRawError(message) {
     return (message ?? "").replace(/\r\n?/g, "\n").trim();
 }
 function firstSafeLine(message) {
-    const firstLine = message.split(/\n+/)[0]?.trim() ?? message;
+    const firstLine = redactLogText(message).split(/\n+/)[0]?.trim() ?? message;
     const withoutStackLocation = firstLine.replace(/\s+at\s+\S+\([^)]*\).*$/i, "").trim();
     return withoutStackLocation.length > 220 ? `${withoutStackLocation.slice(0, 217)}...` : withoutStackLocation;
 }
@@ -121,7 +122,7 @@ function sanitizeUserFacingErrorCore(message) {
             reason: "모델 호출 빈도 제한 때문에 응답 생성이 중단되었습니다.",
         };
     }
-    if (/(unsupported|invalid|unknown|not found|does not exist).{0,40}\bmodel\b|\bmodel\b.{0,40}(unsupported|invalid|unknown|not found|does not exist)/i.test(normalized)) {
+    if (/(unsupported|not supported|invalid|unknown|not found|does not exist).{0,40}\bmodel\b|\bmodel\b.{0,40}(unsupported|not supported|invalid|unknown|not found|does not exist)/i.test(normalized)) {
         return {
             kind: "not_found",
             userMessage: "현재 설정된 모델을 provider가 지원하지 않거나 찾을 수 없습니다.",
@@ -142,11 +143,18 @@ function sanitizeUserFacingErrorCore(message) {
             reason: "도구 또는 실행 환경의 오류 출력이 깨진 인코딩으로 반환되었습니다.",
         };
     }
-    if (/(selenium|web[_ -]?search|external search|browser search).*(timeout|timed out|deadline exceeded)|(timeout|timed out|deadline exceeded).*(selenium|web[_ -]?search|external search|browser search)/i.test(normalized)) {
+    if (/(selenium|web[_ -]?search).*(timeout|timed out|deadline exceeded)|(timeout|timed out|deadline exceeded).*(selenium|web[_ -]?search)/i.test(normalized)) {
         return {
             kind: "timeout",
             userMessage: "웹 검색 실행 시간이 초과되었습니다.",
-            reason: "웹 검색 또는 브라우저 기반 검색 도구가 제한 시간 안에 응답하지 않았습니다.",
+            reason: "웹 검색 도구가 제한 시간 안에 검색 결과를 반환하지 않았습니다.",
+        };
+    }
+    if (/(selenium|browser fetch|browser lookup|web[_ -]?fetch).*(timeout|timed out|deadline exceeded)|(timeout|timed out|deadline exceeded).*(selenium|browser fetch|browser lookup|web[_ -]?fetch)/i.test(normalized)) {
+        return {
+            kind: "timeout",
+            userMessage: "웹 문서 조회 실행 시간이 초과되었습니다.",
+            reason: "웹 문서 조회 또는 브라우저 기반 조회 도구가 제한 시간 안에 응답하지 않았습니다.",
         };
     }
     if (/(screen[_ ]capture|camera capture|yeonjang_\w+|yeonjang|연장).*(timeout|timed out|시간 초과)|(timeout|timed out|시간 초과).*(screen[_ ]capture|camera capture|yeonjang_\w+|yeonjang|연장)/i.test(normalized)) {

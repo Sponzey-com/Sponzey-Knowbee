@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 import { buildIncomingIntentContract } from "../packages/core/src/runs/active-run-projection.ts"
 import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
+import { createTestStartPlanBoundaryDependencies } from "./fixtures/start-plan.ts"
 
 function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan>[1]>) {
   const reconnectRun = {
@@ -11,6 +13,7 @@ function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan
     status: "running",
   } as any
   return {
+    ...createTestStartPlanBoundaryDependencies(),
     analyzeRequestEntrySemantics: vi.fn((message: string) => ({
       reuse_conversation_context: false,
       active_queue_cancellation_mode: null,
@@ -36,6 +39,7 @@ describe("build start plan", () => {
   it("starts a new root for provider target contracts without explicit continuation", async () => {
     const dependencies = createDependencies()
     const result = await buildStartPlan({
+      config: DEFAULT_CONFIG,
       message: "run a new provider-backed task",
       sessionId: "session-1",
       runId: "run-1",
@@ -87,6 +91,7 @@ describe("build start plan", () => {
     })
 
     const result = await buildStartPlan({
+      config: DEFAULT_CONFIG,
       message: "continue the work",
       sessionId: "session-2",
       runId: "run-2",
@@ -113,6 +118,7 @@ describe("build start plan", () => {
     })
 
     const result = await buildStartPlan({
+      config: DEFAULT_CONFIG,
       message: "new message",
       sessionId: "session-3",
       runId: "run-3",
@@ -144,6 +150,7 @@ describe("build start plan", () => {
     })
 
     const result = await buildStartPlan({
+      config: DEFAULT_CONFIG,
       message: "지금 작업 취소해줘",
       sessionId: "session-4",
       runId: "run-4",
@@ -163,6 +170,7 @@ describe("build start plan", () => {
     const dependencies = createDependencies({ compareRequestContinuation })
 
     const result = await buildStartPlan({
+      config: DEFAULT_CONFIG,
       message: "오늘 나스닥 지수 얼마야?",
       sessionId: "session-raw-question",
       runId: "run-raw-question",
@@ -187,6 +195,7 @@ describe("build start plan", () => {
     const dependencies = createDependencies({ compareRequestContinuation })
 
     const result = await buildStartPlan({
+      config: DEFAULT_CONFIG,
       message: "메인 화면 캡쳐해서 보여줘",
       sessionId: "session-capture",
       runId: "run-capture",
@@ -220,6 +229,7 @@ describe("build start plan", () => {
     })
 
     const result = await buildStartPlan({
+      config: DEFAULT_CONFIG,
       message: "후속 작업",
       sessionId: "session-5",
       runId: "run-5",
@@ -244,6 +254,7 @@ describe("build start plan", () => {
     const dependencies = createDependencies({ compareRequestContinuation })
 
     const result = await buildStartPlan({
+      config: DEFAULT_CONFIG,
       message: "이 실행에 이어서 처리",
       sessionId: "session-6",
       runId: "run-6",

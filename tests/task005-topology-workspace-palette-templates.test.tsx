@@ -31,7 +31,7 @@ describe("task005 topology workspace palette and templates", () => {
     )
 
     expect(core.map((item) => item.id)).toEqual(["task", "decision", "approval", "tool", "data", "group"])
-    expect(core.map((item) => item.labelEn)).toEqual(["Task", "Decision", "Approval", "Tool", "Data", "Group"])
+    expect(core.map((item) => item.labelEn)).toEqual(["Task", "Decision", "Approval", "External tool", "Data", "Group"])
     expect(advanced.map((item) => item.id)).toEqual(["org_unit", "position", "person", "process", "authority", "responsibility"])
     expect(html).toContain('data-testid="enterprise-palette-create-task"')
     expect(html).toContain('data-testid="enterprise-palette-create-group"')

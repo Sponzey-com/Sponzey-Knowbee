@@ -93,6 +93,19 @@ describe("phase021 executor graph runtime contracts", () => {
     )
   })
 
+  it("uses the configured root agent name in fallback safe alternative descriptions", () => {
+    const executor = createExecutor("node:frontend", "프론트엔드 엔지니어", "React 화면을 구현하고 테스트 결과를 정리한다.")
+    const analysis = buildNodeTaskAnalysis({
+      executor,
+      rootAgentNameSnapshot: "마당쇠",
+      now,
+    })
+    const fallback = analysis.safeAlternatives.find((alternative) => alternative.changedDimension === "fallback_route")
+
+    expect(fallback?.description).toContain("마당쇠 직접 처리")
+    expect(fallback?.description).not.toContain("노비 직접 처리")
+  })
+
   it("extends executor inference into task analysis with connection context", () => {
     const source = createExecutor("node:intake", "접수 담당자", "사용자 요청을 정리한다.")
     const target = createExecutor("node:frontend", "프론트엔드 엔지니어", "React 화면을 구현하고 테스트한다.")
@@ -219,6 +232,25 @@ describe("phase021 executor graph runtime contracts", () => {
     expect(resolution.selectedTargetId).toBe("knowbee_direct")
   })
 
+  it("uses the configured root agent name for direct delegation fallback labels", () => {
+    const executor = createExecutor("agent:knowbee", "마당쇠", "직접 처리 fallback을 담당한다.")
+    const analysis = buildNodeTaskAnalysis({ executor, now })
+    const resolution = resolveNodeDelegation({
+      executorId: "agent:knowbee",
+      taskAnalysis: analysis,
+      candidates: [],
+      rootAgentNameSnapshot: "마당쇠",
+      now,
+    })
+
+    expect(resolution.selectedRoute).toBe("knowbee_direct")
+    expect(resolution.selectedTargetLabel).toBe("마당쇠 직접 처리")
+    expect(resolution.fallbackRoutes.find((route) => route.route === "knowbee_direct")?.reason).toContain(
+      "마당쇠가 직접 처리",
+    )
+    expect(JSON.stringify(resolution)).not.toContain("노비가 직접 처리")
+  })
+
   it("builds delegation candidates from agent and team registry snapshots", () => {
     const executor = createExecutor("node:frontend", "프론트엔드 엔지니어", "프론트엔드 구현을 담당한다.")
     const analysis = buildNodeTaskAnalysis({ executor, now })
@@ -286,6 +318,48 @@ describe("phase021 executor graph runtime contracts", () => {
       "team:product",
     ]))
     expect(candidates.find((candidate) => candidate.targetId === "agent:frontend")?.availability).toBe("available")
+  })
+
+  it("does not use legacy registry displayName for agent delegation candidate labels", () => {
+    const executor = createExecutor("node:research", "조사 담당", "조사 작업을 담당한다.")
+    const analysis = buildNodeTaskAnalysis({ executor, now })
+    const candidates = delegationCandidatesFromRegistry({
+      taskAnalysis: analysis,
+      includeTeams: false,
+      registry: {
+        agents: [
+          registryAgent({
+            agentId: "agent:field",
+            agentName: "현장 담당",
+            displayName: "Legacy Field Display",
+            nickname: "Legacy Field Nick",
+          }),
+          registryAgent({
+            agentId: "agent:unnamed",
+            agentName: "",
+            displayName: "Legacy Unnamed Display",
+            nickname: "Legacy Unnamed Nick",
+          }),
+        ] as never,
+        teams: [],
+      },
+    })
+    const field = candidates.find((candidate) => candidate.targetId === "agent:field")
+    const unnamed = candidates.find((candidate) => candidate.targetId === "agent:unnamed")
+
+    expect(field?.targetLabel).toBe("현장 담당")
+    expect(unnamed?.targetLabel).toBe("Unnamed sub-agent")
+    expect(JSON.stringify(candidates)).not.toContain("Legacy Field Display")
+    expect(JSON.stringify(candidates)).not.toContain("Legacy Unnamed Display")
+
+    const resolution = resolveNodeDelegation({
+      executorId: executor.id,
+      taskAnalysis: analysis,
+      candidates: unnamed ? [unnamed] : [],
+      now,
+    })
+    expect(resolution.selectedTargetLabel).toBe("Unnamed sub-agent")
+    expect(resolution.selectionReason).not.toContain("Legacy Unnamed Display")
   })
 
   it("turns an executor graph into a graph execution plan with visible nodes and edge delegation", () => {
@@ -650,6 +724,43 @@ function graph(executors: ExecutorDraft[], connections: ExecutorConnectionDraft[
     latestRun: null,
     issues: [],
     sourceOfTruth: EXECUTOR_GRAPH_SOURCE_OF_TRUTH,
+  }
+}
+
+function registryAgent(overrides: {
+  agentId: string
+  agentName: string
+  displayName: string
+  nickname?: string
+}): Record<string, unknown> {
+  return {
+    agentId: overrides.agentId,
+    agentName: overrides.agentName,
+    displayName: overrides.displayName,
+    ...(overrides.nickname ? { nickname: overrides.nickname } : {}),
+    status: "enabled",
+    role: "서브 에이전트",
+    specialtyTags: ["업무 처리"],
+    avoidTasks: [],
+    teamIds: [],
+    delegationEnabled: true,
+    source: "topology",
+    capabilitySummary: {
+      available: true,
+      availability: "available",
+    },
+    modelSummary: {
+      available: true,
+      availability: "available",
+    },
+    currentLoad: {
+      activeSubSessions: 0,
+      queuedSubSessions: 0,
+      failedSubSessions: 0,
+      completedSubSessions: 0,
+      maxParallelSessions: 1,
+      utilization: 0,
+    },
   }
 }
 

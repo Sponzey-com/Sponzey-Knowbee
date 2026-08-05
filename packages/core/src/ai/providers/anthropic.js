@@ -10,6 +10,11 @@ const CONTEXT_LIMITS = {
     "claude-3-5-haiku-20241022": 200_000,
     "claude-3-opus-20240229": 200_000,
 };
+export function toAnthropicToolChoice(toolChoice, hasTools) {
+    if (!hasTools || toolChoice !== "required")
+        return undefined;
+    return { type: "any" };
+}
 export class AnthropicProvider {
     profile;
     id = "anthropic";
@@ -33,6 +38,7 @@ export class AnthropicProvider {
         }));
         log.debug(`chat() model=${params.model} messages=${params.messages.length}`);
         const streamEvents = [];
+        const toolChoice = toAnthropicToolChoice(params.toolChoice, Boolean(tools?.length));
         try {
             const createParams = {
                 model: params.model,
@@ -41,6 +47,7 @@ export class AnthropicProvider {
                 stream: true,
                 ...(params.system != null ? { system: params.system } : {}),
                 ...(tools && tools.length > 0 ? { tools: tools } : {}),
+                ...(toolChoice ? { tool_choice: toolChoice } : {}),
             };
             const response = await client.messages.create(createParams, { signal: params.signal });
             // First pass: collect events and stream text deltas

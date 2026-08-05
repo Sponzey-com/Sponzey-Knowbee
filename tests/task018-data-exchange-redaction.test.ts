@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import Fastify from "../packages/core/node_modules/fastify/fastify.js"
 import type { SubAgentResultReview } from "../packages/core/src/agent/sub-agent-result-review.ts"
 import { registerDataExchangeRoutes } from "../packages/core/src/api/routes/data-exchanges.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type {
   DataExchangePackage,
@@ -14,6 +13,7 @@ import type {
   ResultReport,
   RuntimeIdentity,
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
+import { validateResultReport } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 import { closeDb, listControlEvents } from "../packages/core/src/db/index.js"
 import {
   MemoryIsolationError,
@@ -28,29 +28,23 @@ import {
   validateDataExchangePackage,
 } from "../packages/core/src/memory/isolation.ts"
 import { buildFeedbackLoopPackage } from "../packages/core/src/orchestration/feedback-loop.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
 const dayMs = 24 * 60 * 60 * 1_000
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task018-data-exchange-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = undefined
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task018-data-exchange-"))
+  tempDirs.push(rootDir)
+  const runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function restoreState(): void {
   closeDb()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -82,8 +76,8 @@ function baseExchange(
   return createDataExchangePackage({
     sourceOwner: owner("knowbee", "agent:knowbee"),
     recipientOwner: owner("sub_agent", "agent:researcher"),
-    sourceNicknameSnapshot: "Knowbee",
-    recipientNicknameSnapshot: "Researcher",
+    sourceAgentName: "Knowbee",
+    recipientAgentName: "Researcher",
     purpose: "Share bounded task context.",
     allowedUse: "temporary_context",
     retentionPolicy: "session_only",
@@ -183,7 +177,33 @@ afterEach(() => {
 })
 
 describe("task018 data exchange package redaction", () => {
-  it("redacts every fixture taxonomy category and requires nickname and provenance metadata", () => {
+  it("creates data exchange packages with canonical agent name snapshots", () => {
+    const exchange = createDataExchangePackage({
+      sourceOwner: owner("knowbee", "agent:knowbee"),
+      recipientOwner: owner("sub_agent", "agent:researcher"),
+      sourceAgentName: "Knowbee Agent",
+      recipientAgentName: "Research Agent",
+      purpose: "Share bounded task context.",
+      allowedUse: "temporary_context",
+      retentionPolicy: "session_only",
+      redactionState: "not_sensitive",
+      provenanceRefs: ["result:task018:agent-name"],
+      payload: { summary: "safe summary" },
+      exchangeId: "exchange:task018:agent-name",
+      idempotencyKey: "exchange:task018:agent-name",
+      now: () => now,
+    })
+
+    expect(exchange.sourceAgentName).toBe("Knowbee Agent")
+    expect(exchange.sourceAgentNameSnapshot).toBe("Knowbee Agent")
+    expect(exchange.recipientAgentName).toBe("Research Agent")
+    expect(exchange.recipientAgentNameSnapshot).toBe("Research Agent")
+    expect(exchange).not.toHaveProperty("sourceNicknameSnapshot")
+    expect(exchange).not.toHaveProperty("recipientNicknameSnapshot")
+    expect(validateDataExchangePackage(exchange, { now }).ok).toBe(true)
+  })
+
+  it("redacts every fixture taxonomy category and requires agent name and provenance metadata", () => {
     const fixtures = [
       {
         category: "secret_token_key_password_env",
@@ -230,17 +250,57 @@ describe("task018 data exchange package redaction", () => {
     }
 
     const valid = baseExchange({ exchangeId: "exchange:task018:valid" })
-    const { sourceNicknameSnapshot: _sourceNicknameSnapshot, ...withoutSourceNickname } = valid
-    const missingNickname = validateDataExchangePackage(
-      withoutSourceNickname as DataExchangePackage,
+    const {
+      sourceAgentName: _sourceAgentName,
+      sourceAgentNameSnapshot: _sourceAgentNameSnapshot,
+      ...withoutSourceAgentName
+    } = valid
+    const missingAgentName = validateDataExchangePackage(
+      withoutSourceAgentName as DataExchangePackage,
       { now },
     )
-    expect(missingNickname.ok).toBe(false)
-    expect(missingNickname.issues.map((issue) => issue.code)).toContain("source_nickname_missing")
+    expect(missingAgentName.ok).toBe(false)
+    expect(missingAgentName.issues.map((issue) => issue.code)).toContain("source_agent_name_missing")
+
+    const mismatchedAgentName = validateDataExchangePackage({
+      ...valid,
+      sourceAgentName: "Different Source",
+      recipientAgentName: "Different Recipient",
+    }, { now })
+    expect(mismatchedAgentName.ok).toBe(false)
+    expect(mismatchedAgentName.issues.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining(["source_agent_name_mismatch", "recipient_agent_name_mismatch"]),
+    )
 
     const missingProvenance = validateDataExchangePackage({ ...valid, provenanceRefs: [] }, { now })
     expect(missingProvenance.ok).toBe(false)
     expect(missingProvenance.issues.map((issue) => issue.code)).toContain("provenance_refs_missing")
+  })
+
+  it("uses agent name terminology in attribution snapshot validation messages", () => {
+    const invalidSource = validateResultReport({
+      ...resultReport(),
+      source: "Researcher",
+    }, { expectedOutputs: [expectedOutput()] })
+    const aliasSource = validateResultReport({
+      ...resultReport(),
+      source: {
+        entityType: "sub_agent",
+        entityId: "agent:researcher",
+        nicknameSnapshot: "Researcher",
+        displayName: "Researcher",
+      },
+    }, { expectedOutputs: [expectedOutput()] })
+
+    const invalidMessages = invalidSource.issues.map((issue) => issue.message).join(" ")
+    const aliasMessages = aliasSource.issues.map((issue) => issue.message).join(" ")
+
+    expect(invalidSource.ok).toBe(false)
+    expect(invalidMessages).toContain("agent name attribution")
+    expect(invalidMessages).not.toContain("nickname attribution")
+    expect(aliasSource.ok).toBe(false)
+    expect(aliasMessages).toContain("agent name attribution contracts")
+    expect(aliasMessages).not.toContain("nickname attribution")
   })
 
   it("creates stored packages through the API, returns sanitized views, and blocks wrong recipients", async () => {
@@ -251,8 +311,8 @@ describe("task018 data exchange package redaction", () => {
         payload: {
           sourceOwner: owner("knowbee", "agent:knowbee"),
           recipientOwner: owner("sub_agent", "agent:researcher"),
-          sourceNicknameSnapshot: "Knowbee",
-          recipientNicknameSnapshot: "Researcher",
+          sourceAgentName: "Knowbee API",
+          recipientAgentName: "Researcher API",
           purpose: "temporary verification context",
           allowedUse: "temporary_context",
           retentionPolicy: "session_only",
@@ -269,6 +329,12 @@ describe("task018 data exchange package redaction", () => {
       expect(create.statusCode, create.body).toBe(201)
       const created = create.json()
       expect(created.exchange.payload).toBeUndefined()
+      expect(created.exchange.sourceAgentName).toBe("Knowbee API")
+      expect(created.exchange.sourceAgentNameSnapshot).toBe("Knowbee API")
+      expect(created.exchange.recipientAgentName).toBe("Researcher API")
+      expect(created.exchange.recipientAgentNameSnapshot).toBe("Researcher API")
+      expect(created.exchange).not.toHaveProperty("sourceNicknameSnapshot")
+      expect(created.exchange).not.toHaveProperty("recipientNicknameSnapshot")
       expect(created.exchange.payloadSummary).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789")
       expect(created.exchange.payloadSummary).not.toContain("alice@example.com")
       expect(created.exchange.redactionState).toBe("redacted")
@@ -371,9 +437,9 @@ describe("task018 data exchange package redaction", () => {
       expectedOutputs: [expectedOutput()],
       targetAgentPolicy: "same_agent",
       targetAgentId: "agent:researcher",
-      targetAgentNicknameSnapshot: "Researcher",
+      targetAgentNameSnapshot: "Researcher",
       requestingAgentId: "agent:knowbee",
-      requestingAgentNicknameSnapshot: "Knowbee",
+      requestingAgentNameSnapshot: "Knowbee",
       parentRunId: "run:task018",
       persistSynthesizedContext: false,
       idProvider: () => "task018-feedback",
@@ -382,8 +448,18 @@ describe("task018 data exchange package redaction", () => {
 
     expect(built.synthesizedContext.expiresAt).toBe(now + dayMs)
     expect(built.synthesizedContext.redactionState).toBe("redacted")
-    expect(built.synthesizedContext.sourceNicknameSnapshot).toBe("Knowbee")
-    expect(built.synthesizedContext.recipientNicknameSnapshot).toBe("Researcher")
+    expect(built.feedbackRequest.targetAgentName).toBe("Researcher")
+    expect(built.feedbackRequest.targetAgentNameSnapshot).toBe("Researcher")
+    expect(built.feedbackRequest.requestingAgentName).toBe("Knowbee")
+    expect(built.feedbackRequest.requestingAgentNameSnapshot).toBe("Knowbee")
+    expect(built.feedbackRequest).not.toHaveProperty("targetAgentNicknameSnapshot")
+    expect(built.feedbackRequest).not.toHaveProperty("requestingAgentNicknameSnapshot")
+    expect(built.synthesizedContext.sourceAgentName).toBe("Knowbee")
+    expect(built.synthesizedContext.sourceAgentNameSnapshot).toBe("Knowbee")
+    expect(built.synthesizedContext.recipientAgentName).toBe("Researcher")
+    expect(built.synthesizedContext.recipientAgentNameSnapshot).toBe("Researcher")
+    expect(built.synthesizedContext).not.toHaveProperty("sourceNicknameSnapshot")
+    expect(built.synthesizedContext).not.toHaveProperty("recipientNicknameSnapshot")
     expect(built.synthesizedContext.provenanceRefs).toEqual(["result:feedback:task018"])
     expect(JSON.stringify(built.synthesizedContext.payload)).not.toContain(
       "sk-task018secretsecretsecret",

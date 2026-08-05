@@ -21,7 +21,7 @@ function baseCapsule(overrides: Partial<MemoryCapsule> = {}): MemoryCapsule {
       channelKey: "webui",
       threadKey: "thread-1",
     },
-    nicknameSnapshot: "노비",
+    agentNameSnapshot: "노비",
     capsuleKind: "session_compaction",
     summary: " 최근 진행 상황 요약 ",
     activeObjectives: [" 현재 작업 유지 ", "현재 작업 유지"],
@@ -53,6 +53,8 @@ describe("task001 memory capsule contract", () => {
     })
 
     expect(validation).toEqual({ ok: true, reasonCodes: [] })
+    expect(capsule.agentNameSnapshot).toBe("노비")
+    expect(capsule).not.toHaveProperty("nicknameSnapshot")
     expect(capsule.summary).toBe("최근 진행 상황 요약")
     expect(capsule.activeObjectives).toEqual(["현재 작업 유지"])
     expect(capsule.sourceRefs).toEqual(["message:1", "result:2"])

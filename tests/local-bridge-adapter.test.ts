@@ -132,6 +132,51 @@ describe("local bridge adapters", () => {
     })
   })
 
+  it("redacts local bridge delivery failure details before returning receipts", async () => {
+    const secret = "sk-task0585-local-bridge-secret-1234567890"
+    const localPath = "/Users/dongwooshin/private/local-bridge-secret.txt"
+    const transport: LocalBridgeTransport = {
+      async requestManualConfirmation() {
+        return { confirmed: true }
+      },
+      async sendMessage() {
+        throw new Error(`automation permission denied token=${secret} path=${localPath}`)
+      },
+    }
+    const adapter = createIMessageChannelAdapter({ config: imessageConfig(), transport, now: () => 21 })
+
+    const receipt = await adapter.sendMessage(outbound())
+    expect(receipt).toMatchObject({
+      status: "failed",
+      errorCode: "local_bridge_delivery_failed",
+    })
+    expect(receipt.errorMessage).toContain("token=***")
+    expect(receipt.errorMessage).toContain("[internal-path-redacted]")
+    expect(receipt.errorMessage).not.toContain(secret)
+    expect(receipt.errorMessage).not.toContain(localPath)
+  })
+
+  it("redacts local bridge manual confirmation denial details before returning receipts", async () => {
+    const secret = "sk-task0585-manual-secret-1234567890"
+    const localPath = "/Users/dongwooshin/private/manual-confirmation.txt"
+    const transport: LocalBridgeTransport = {
+      async requestManualConfirmation() {
+        return { confirmed: false, reason: `operator denied token=${secret} path=${localPath}` }
+      },
+    }
+    const adapter = createIMessageChannelAdapter({ config: imessageConfig(), transport, now: () => 22 })
+
+    const receipt = await adapter.sendMessage(outbound())
+    expect(receipt).toMatchObject({
+      status: "blocked_by_policy",
+      errorCode: "local_bridge_manual_confirmation_denied",
+    })
+    expect(receipt.errorMessage).toContain("token=***")
+    expect(receipt.errorMessage).toContain("[internal-path-redacted]")
+    expect(receipt.errorMessage).not.toContain(secret)
+    expect(receipt.errorMessage).not.toContain(localPath)
+  })
+
   it("reports local bridge doctor issues for missing bridge, desktop session, permission, and recipients", () => {
     const doctor = buildIMessageLocalBridgeDoctor(imessageConfig({
       riskAcknowledged: false,

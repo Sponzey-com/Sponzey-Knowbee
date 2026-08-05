@@ -7,6 +7,7 @@ import { applyExecutionPostPassDecision } from "./execution-postpass-application
 import { decideFilesystemPostPassRecovery, } from "./filesystem-postpass.js";
 import { applyFilesystemPostPassDecision } from "./filesystem-postpass-application.js";
 import { runReviewEntryPass } from "./review-entry-pass.js";
+import { combineUserFacingTextSources } from "./loop-directive.js";
 const defaultModuleDependencies = {
     decideExecutionPostPassRecovery,
     applyExecutionPostPassDecision,
@@ -86,6 +87,13 @@ export async function runPostExecutionPass(params, dependencies, moduleDependenc
         previousResult: params.preview,
     });
     let nextPreview = deliveryPass.preview;
+    let nextPreviewSource = params.previewSource;
+    if (deliveryPass.preview !== params.preview) {
+        nextPreviewSource = combineUserFacingTextSources([
+            ...(nextPreviewSource ? [nextPreviewSource] : []),
+            "runtime_deterministic",
+        ]);
+    }
     if (deliveryPass.summaryToLog) {
         mergedDependencies.updateRunSummary(params.runId, deliveryPass.summaryToLog);
     }
@@ -135,6 +143,10 @@ export async function runPostExecutionPass(params, dependencies, moduleDependenc
     }
     if (filesystemPostPassApplication.preview) {
         nextPreview = filesystemPostPassApplication.preview;
+        nextPreviewSource = combineUserFacingTextSources([
+            ...(nextPreviewSource ? [nextPreviewSource] : []),
+            "runtime_deterministic",
+        ]);
     }
     const reviewEntryPass = await moduleDependencies.runReviewEntryPass({
         runId: params.runId,
@@ -142,6 +154,7 @@ export async function runPostExecutionPass(params, dependencies, moduleDependenc
         source: params.source,
         onChunk: params.onChunk,
         preview: nextPreview,
+        ...(nextPreviewSource ? { previewSource: nextPreviewSource } : {}),
         ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
         persistRuntimePreview: params.activeWorkerRuntime,
         directDeliveryApplication: deliveryPass.directDeliveryApplication,
@@ -176,6 +189,8 @@ export async function runPostExecutionPass(params, dependencies, moduleDependenc
     return {
         kind: "continue",
         preview: nextPreview,
+        ...(nextPreviewSource ? { previewSource: nextPreviewSource } : {}),
+        ...(params.deferredPreviewDelivery ? { deferredPreviewDelivery: true } : {}),
         deliveryOutcome: deliveryPass.deliveryOutcome,
     };
 }

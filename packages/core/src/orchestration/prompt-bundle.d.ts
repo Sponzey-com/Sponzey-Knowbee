@@ -1,6 +1,8 @@
 import { type AgentConfig, type AgentPromptBundle, type AgentPromptFragment, type AgentPromptFragmentKind, type AgentPromptFragmentStatus, type DataExchangePackage, type StructuredTaskScope, type TeamConfig } from "../contracts/sub-agent-orchestration.js";
+import { type ExplicitAgentTraitInput } from "../contracts/sub-agent-prompt-layer.js";
 import { type LoadedPromptSource } from "../memory/knowbee-md.js";
 import { type PromptBundleContextMemoryRef } from "../runs/context-preflight.js";
+import { type AgentCapabilityModelSummary } from "./capability-model.js";
 import type { ExecutorProfile } from "./registry.js";
 export declare const AGENT_PROMPT_BUNDLE_VERSION = "agent-prompt-bundle-v1";
 export interface ImportedPromptFragmentInput {
@@ -22,6 +24,7 @@ export interface AgentPromptBundleBuildInput {
     locale?: "ko" | "en";
     promptSources?: LoadedPromptSource[];
     importedFragments?: ImportedPromptFragmentInput[];
+    explicitTraits?: ExplicitAgentTraitInput;
     memoryRefs?: PromptBundleContextMemoryRef[];
     dataExchangePackages?: DataExchangePackage[];
     executorProfileProjection?: ExecutorProfilePromptProjection;
@@ -36,7 +39,18 @@ export interface ExecutorProfilePromptConnection {
     toExecutorId: string;
     relation?: string;
 }
-export interface ExecutorProfilePromptItem extends ExecutorProfile {
+export interface ExecutorProfilePromptItem {
+    schemaVersion: ExecutorProfile["schemaVersion"];
+    executorId: string;
+    agentName: string;
+    roleName: string;
+    definition: string;
+    does: string[];
+    delegationScope: string[];
+    expectedOutputs: string[];
+    handoffStyle: string;
+    declineCriteria: string[];
+    riskBoundary: string[];
     connectedNextExecutorIds: string[];
 }
 export interface ExecutorProfilePromptProjection {
@@ -72,7 +86,13 @@ export declare function buildExecutorProfilePromptProjection(input: {
     currentExecutorId: string;
     executorProfiles: ExecutorProfile[];
     connections: ExecutorProfilePromptConnection[];
+    agentNamesByExecutorId?: Record<string, string>;
 }): ExecutorProfilePromptProjection;
+export declare function executorProfilePromptItem(input: {
+    profile: ExecutorProfile;
+    agentName?: string;
+    connectedNextExecutorIds: string[];
+}): ExecutorProfilePromptItem;
 export interface AgentPromptBundleBuildResult {
     bundle: AgentPromptBundle;
     blockedFragments: AgentPromptFragment[];
@@ -81,6 +101,9 @@ export interface AgentPromptBundleBuildResult {
     cacheKey: string;
     promptChecksum: string;
     renderedPrompt: string;
+}
+export interface AgentPromptBundleBuildDependencies {
+    resolveCapabilityModelSummary: (agent: AgentConfig) => AgentCapabilityModelSummary | undefined;
 }
 export interface PromptBundleCacheEntry {
     cacheKey: string;
@@ -93,13 +116,14 @@ export interface PromptBundleCacheStats {
     hits: number;
     misses: number;
 }
-export declare function buildAgentPromptBundle(input: AgentPromptBundleBuildInput): AgentPromptBundleBuildResult;
+export declare function buildAgentPromptBundle(input: AgentPromptBundleBuildInput, dependencies?: AgentPromptBundleBuildDependencies): AgentPromptBundleBuildResult;
 export declare function buildAgentPromptBundleCacheKey(input: {
     agent: AgentConfig;
     taskScope: StructuredTaskScope;
     teams?: TeamConfig[];
     sourceProvenance?: AgentPromptBundle["sourceProvenance"];
     fragments?: AgentPromptFragment[];
+    safetyRules?: string[];
 }): string;
 export declare function renderAgentPromptBundleText(input: {
     agent: AgentConfig;

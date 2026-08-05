@@ -15,6 +15,7 @@ function createState() {
     sawRealFilesystemMutation: false,
     filesystemMutationRecoveryAttempted: false,
     truncatedOutputRecoveryAttempted: false,
+    successfulTools: [],
   }
 }
 

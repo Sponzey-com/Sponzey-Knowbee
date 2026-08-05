@@ -1,7 +1,8 @@
 import type { CapabilityRiskLevel, DependencyEdgeContract, OrchestrationPlan, ResourceLockContract, StructuredTaskScope } from "../contracts/sub-agent-orchestration.js";
 import type { OrchestrationModeSnapshot } from "./mode.js";
-import { type OrchestrationRegistrySnapshot } from "./registry.js";
+import { type OrchestrationRegistrySnapshot, type RegistryServiceDependencies } from "./registry.js";
 import type { AgentExecutionDecision } from "./execution-decision-contract.js";
+import type { WorkflowAuthoringResult } from "./workflow-authoring.js";
 export declare const ORCHESTRATION_PLANNER_VERSION = "structured-v1";
 export declare const FAST_PATH_CLASSIFIER_TARGET_P95_MS = 100;
 export declare const ORCHESTRATION_PLANNER_TARGET_P95_MS = 700;
@@ -45,6 +46,7 @@ export interface OrchestrationPlannerLearningHint {
     reasonCode?: string;
 }
 export interface OrchestrationPlannerInput {
+    config: RegistryServiceDependencies["config"];
     parentRunId: string;
     parentRequestId: string;
     userRequest: string;
@@ -56,9 +58,11 @@ export interface OrchestrationPlannerInput {
     learningHints?: OrchestrationPlannerLearningHint[];
     agentExecutionDecision?: AgentExecutionDecision;
     parentAgentId?: string;
+    rootAgentNameSnapshot?: string;
     resourceLocks?: ResourceLockContract[];
     resourceLocksByTaskId?: Record<string, ResourceLockContract[]>;
     dependencyEdges?: DependencyEdgeContract[];
+    workflowDraft?: WorkflowAuthoringResult;
     timeoutMs?: number;
     now?: () => number;
     idProvider?: () => string;

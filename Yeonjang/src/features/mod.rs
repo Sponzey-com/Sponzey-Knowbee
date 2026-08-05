@@ -1,5 +1,14 @@
+pub mod browser;
 pub mod camera;
+pub(crate) mod capture_artifact;
+pub mod clipboard;
+pub mod device;
+pub mod disk;
+pub mod file;
+pub mod input;
 pub mod keyboard;
 pub mod mouse;
+pub mod network;
+pub mod process;
 pub mod screen;
 pub mod system;

@@ -55,21 +55,28 @@ export interface McpToolCallPayload extends Record<string, unknown> {
         };
     };
 }
+export declare function extractMcpToolOutput(payload: unknown): string;
+export declare function redactMcpLogText(value: string): string;
 export declare function buildMcpToolCallPayload(name: string, args: Record<string, unknown>, context?: McpAgentCallContext): McpToolCallPayload;
 export declare class McpStdioClient {
     private readonly name;
     private readonly config;
     private readonly onExit;
+    private readonly baseEnv;
+    private readonly defaultCwd;
     private process;
     private stdoutBuffer;
     private requestId;
     private initialized;
     private pending;
     private closedByUser;
+    private lifecycleState;
     constructor(options: {
         name: string;
         config: McpServerConfig;
         onExit?: (error: string) => void;
+        baseEnv?: NodeJS.ProcessEnv;
+        defaultCwd: string;
     });
     initialize(): Promise<void>;
     listTools(): Promise<McpDiscoveredTool[]>;
@@ -80,6 +87,8 @@ export declare class McpStdioClient {
     private handleMessage;
     private notify;
     private request;
+    private writeFrame;
+    private transitionProcessToFailed;
     private rejectAll;
     private startupTimeoutMs;
     private toolTimeoutMs;

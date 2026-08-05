@@ -17,6 +17,16 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
+function deletableCleanupEvidence(): NonNullable<RetentionItem["cleanupProtection"]> {
+  return {
+    activeReferenceCount: 0,
+    referenceScanCompleted: true,
+    migrationRequired: false,
+    rollbackRequired: false,
+    deletionApproved: true,
+  }
+}
+
 describe("task006 soak and retention policy", () => {
   it("defines staged soak profiles and runs a deterministic short profile", async () => {
     const short = getSoakProfile("short")
@@ -105,12 +115,12 @@ describe("task006 soak and retention policy", () => {
   it("selects retention cleanup candidates by age, count, bytes and excludes active runs", async () => {
     const now = 100 * DAY_MS
     const items: RetentionItem[] = [
-      { id: "artifact-old", kind: "artifact", createdAt: now - 40 * DAY_MS, sizeBytes: 30, runId: "finished-run" },
+      { id: "artifact-old", kind: "artifact", createdAt: now - 40 * DAY_MS, sizeBytes: 30, runId: "finished-run", cleanupProtection: deletableCleanupEvidence() },
       { id: "artifact-active-old", kind: "artifact", createdAt: now - 50 * DAY_MS, sizeBytes: 1_000, runId: "active-run" },
       { id: "artifact-newest", kind: "artifact", createdAt: now - 1_000, sizeBytes: 70, runId: "finished-run" },
-      { id: "artifact-middle", kind: "artifact", createdAt: now - 2_000, sizeBytes: 70, runId: "finished-run" },
-      { id: "artifact-third", kind: "artifact", createdAt: now - 3_000, sizeBytes: 70, runId: "finished-run" },
-      { id: "audit-old", kind: "audit_log", createdAt: now - 120 * DAY_MS, sizeBytes: 10 },
+      { id: "artifact-middle", kind: "artifact", createdAt: now - 2_000, sizeBytes: 70, runId: "finished-run", cleanupProtection: deletableCleanupEvidence() },
+      { id: "artifact-third", kind: "artifact", createdAt: now - 3_000, sizeBytes: 70, runId: "finished-run", cleanupProtection: deletableCleanupEvidence() },
+      { id: "audit-old", kind: "audit_log", createdAt: now - 120 * DAY_MS, sizeBytes: 10, cleanupProtection: deletableCleanupEvidence() },
     ]
 
     const plan = buildRetentionCleanupPlan({
@@ -152,6 +162,7 @@ describe("task006 soak and retention policy", () => {
     })
 
     expect(result.failures).toEqual([])
+    expect(result.retained).toEqual([])
     expect(result.auditRecorded).toBe(true)
     expect(auditRecorded).toBe(true)
     expect(deleted).toEqual(["audit-old", "artifact-old", "artifact-third", "artifact-middle"])

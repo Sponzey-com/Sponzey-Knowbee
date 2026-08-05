@@ -49,6 +49,7 @@ import {
   resolveTopologyConnectionIntent,
   resolveTopologyNodeDragDropIntent,
   selectionFromTopologyNode,
+  topologyAgentDisplayLabel,
   topologyNodeTone,
 } from "../lib/topology"
 import { useRunsStore } from "../stores/runs"
@@ -101,24 +102,24 @@ function TopologyNodeView(props: NodeProps) {
           type="target"
           position={Position.Top}
           className="!h-3 !w-3 !border-2 !border-white !bg-sky-700"
-          title="Team lead input"
+          title="팀장 연결"
         />
         <Handle
           type="source"
           position={Position.Bottom}
           className="!h-3 !w-3 !border-2 !border-white !bg-teal-700"
-          title="Team membership output"
+          title="팀원 연결"
         />
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 truncate text-sm font-semibold">{data.label}</div>
           <span className="shrink-0 rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase text-sky-700">
-            Team
+            팀
           </span>
         </div>
         <div className="mt-1 text-[11px] text-sky-700">
           {typeof data.groupMemberCount === "number"
-            ? `${data.groupMemberCount} members`
-            : data.entityId}
+            ? `${data.groupMemberCount}명`
+            : "팀"}
         </div>
       </div>
     )
@@ -140,17 +141,17 @@ function TopologyNodeView(props: NodeProps) {
               ? "!h-3 !w-3 !border-2 !border-white !bg-sky-700"
               : "!h-3 !w-3 !border-2 !border-white !bg-stone-700"
           }
-          title={data.kind === "team" ? "Team input" : "Parent input"}
+          title={data.kind === "team" ? "팀 연결" : "상위 연결"}
         />
       ) : null}
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0 truncate text-sm font-semibold">{data.label}</div>
-        <span className="shrink-0 rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold uppercase text-stone-600">
-          {data.kind.replace("_", " ")}
+          <span className="shrink-0 rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold uppercase text-stone-600">
+          {topologyNodeKindLabel(data.kind)}
         </span>
       </div>
       {data.kind === "team" ? (
-        <div className="mt-1 truncate text-[11px] text-stone-600">{data.entityId}</div>
+        <div className="mt-1 truncate text-[11px] text-stone-600">팀</div>
       ) : null}
       <div className="mt-2 flex flex-wrap gap-1">
         {data.badges.slice(0, 4).map((badge) => (
@@ -176,7 +177,7 @@ function TopologyNodeView(props: NodeProps) {
               ? "!h-3 !w-3 !border-2 !border-white !bg-teal-700"
               : "!h-3 !w-3 !border-2 !border-white !bg-stone-900"
           }
-          title={data.kind === "team" ? "Team member output" : "Child output"}
+          title={data.kind === "team" ? "팀원 연결" : "하위 연결"}
         />
       ) : null}
     </div>
@@ -213,6 +214,64 @@ function listText(values: string[], empty = "-"): string {
 
 function uniqueValues(values: string[]): string[] {
   return [...new Set(values.filter((value) => value.trim().length > 0))]
+}
+
+function agentInspectorLabel(agent: AgentTopologyAgentInspector): string {
+  return topologyAgentDisplayLabel(agent)
+}
+
+function agentModelSummary(agent: AgentTopologyAgentInspector, text: ReturnType<typeof useUiI18n>["text"]): string {
+  if (agent.model.providerId || agent.model.modelId) return text("AI 모델 설정됨", "AI model configured")
+  return text("모델 확인 필요", "Model needs check")
+}
+
+function agentModelAvailabilityLabel(availability: string | undefined, text: ReturnType<typeof useUiI18n>["text"]): string {
+  if (!availability) return text("모델 확인 필요", "Model needs check")
+  const normalized = availability.trim().toLowerCase()
+  if (normalized === "available" || normalized === "ready" || normalized === "enabled") return text("사용 가능", "Available")
+  if (normalized === "limited" || normalized === "partial") return text("일부 제한", "Limited")
+  if (normalized === "unavailable" || normalized === "disabled") return text("사용 불가", "Unavailable")
+  return text("모델 확인 필요", "Model needs check")
+}
+
+function topologyNodeKindLabel(kind: TopologyFlowNodeData["kind"]): string {
+  if (kind === "knowbee") return "메인 에이전트"
+  if (kind === "team") return "팀"
+  return "서브 에이전트"
+}
+
+function edgeStyleLabel(style: string): string {
+  if (style === "hierarchy") return "위임"
+  if (style === "lead") return "팀장"
+  if (style === "membership") return "팀원"
+  if (style === "membership_reference") return "참조 팀원"
+  return "연결"
+}
+
+function memberStateLabel(state: string | undefined, active: boolean): string {
+  if (state === "active" || active) return "활성"
+  if (state === "reference") return "참조"
+  if (state === "excluded") return "제외"
+  return "대기"
+}
+
+function memberScopeLabel(directChild: boolean): string {
+  return directChild ? "직속" : "참조"
+}
+
+function reasonLabel(reasonCode: string): string {
+  if (reasonCode === "owner_direct_child_required") return "소유자의 직속 서브 에이전트만 팀원으로 활성화할 수 있습니다."
+  if (reasonCode === "lead_required") return "팀장이 필요합니다."
+  if (reasonCode === "member_required") return "팀원이 필요합니다."
+  return reasonCode.replace(/_/g, " ")
+}
+
+function agentLabelById(projection: AgentTopologyProjection, agentId: string): string {
+  return projection.nodes.find((node) => node.entityId === agentId)?.label ?? "서브 에이전트"
+}
+
+function teamLabelById(projection: AgentTopologyProjection, teamId: string): string {
+  return projection.nodes.find((node) => node.entityId === teamId)?.label ?? "팀"
 }
 
 function splitTopologyListDraft(value: string): string[] {
@@ -309,26 +368,26 @@ function AgentCompositionPanel({
   return (
     <section className="rounded-lg border border-stone-200 bg-white p-4">
       <div className="text-sm font-semibold text-stone-900">
-        {text("Topology 구성", "Topology Composition")}
+        {text("서브 에이전트 구성", "Sub-agent composition")}
       </div>
       <div className="mt-3 grid gap-3">
         <CompositionItemList
-          title={text("Parent", "Parent")}
+          title={text("상위", "Parent")}
           items={composition.parent ? [composition.parent] : []}
           empty={parentEmpty}
         />
         <CompositionItemList
-          title={text("Direct sub-agents", "Direct sub-agents")}
+          title={text("직속 서브 에이전트", "Direct sub-agents")}
           items={composition.children}
           empty={text("없음", "None")}
         />
         <CompositionItemList
-          title={text("Owned teams", "Owned teams")}
+          title={text("관리하는 팀", "Owned teams")}
           items={composition.ownedTeams}
           empty={text("없음", "None")}
         />
         <CompositionItemList
-          title={text("Team memberships", "Team memberships")}
+          title={text("속한 팀", "Team memberships")}
           items={[...composition.activeTeams, ...composition.referenceTeams]}
           empty={text("없음", "None")}
         />
@@ -350,22 +409,22 @@ function TeamCompositionPanel({
         {text("구성 기준", "Composition Basis")}
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        <InspectorField label={text("Owner", "Owner")} value={summary.owner.label} />
+        <InspectorField label={text("담당", "Owner")} value={summary.owner.label} />
         <InspectorField
           label={text("실행 가능", "Execution candidate")}
           value={summary.executionCandidate}
         />
         <InspectorField
-          label={text("Direct children", "Direct children")}
+          label={text("직속 서브 에이전트", "Direct sub-agents")}
           value={summary.directChildCount}
         />
         <InspectorField label={text("후보", "Candidates")} value={summary.candidateCount} />
         <InspectorField
-          label={text("Active members", "Active members")}
+          label={text("활성 팀원", "Active members")}
           value={summary.activeMemberCount}
         />
         <InspectorField
-          label={text("Reference members", "Reference members")}
+          label={text("참조 팀원", "Reference members")}
           value={summary.referenceMemberCount}
         />
       </div>
@@ -446,14 +505,15 @@ function SimpleTeamEditor({
     }
   }
 
+  const ownerLabel = team.members.find((member) => member.agentId === team.ownerAgentId)?.label ?? "서브 에이전트"
+
   return (
     <div className="rounded-lg border border-stone-200 bg-stone-50 p-3">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-stone-900">
-            {team.nickname ?? team.displayName}
+            {team.displayName}
           </div>
-          <div className="mt-1 text-xs text-stone-500">{team.teamId}</div>
         </div>
         <div className="flex shrink-0 gap-2">
           <button
@@ -481,9 +541,9 @@ function SimpleTeamEditor({
         <div className="mt-3 grid gap-3">
           <div className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs">
             <div className="font-semibold text-stone-600">
-            {text("팀장", "Team lead")}
+              {text("팀장", "Team lead")}
             </div>
-            <div className="mt-1 break-all font-semibold text-stone-900">{team.ownerAgentId}</div>
+            <div className="mt-1 break-all font-semibold text-stone-900">{ownerLabel}</div>
           </div>
           <div>
             <div className="text-xs font-semibold text-stone-600">{text("팀원", "Members")}</div>
@@ -495,16 +555,16 @@ function SimpleTeamEditor({
                     key={candidate.agentId}
                     className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs"
                   >
-                      <span>
-                        <span className="font-semibold text-stone-900">{candidate.label}</span>
-                      <span className="ml-2 text-stone-500">member</span>
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(event) =>
-                          toggleMember(candidate.agentId, event.currentTarget.checked)
-                        }
+                    <span>
+                      <span className="font-semibold text-stone-900">{candidate.label}</span>
+                      <span className="ml-2 text-stone-500">팀원</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(event) =>
+                        toggleMember(candidate.agentId, event.currentTarget.checked)
+                      }
                       className="h-4 w-4"
                     />
                   </label>
@@ -640,7 +700,7 @@ function AgentTeamSetupPanel({
             <div className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs">
               <div className="font-semibold text-stone-600">{text("팀장", "Team lead")}</div>
               <div className="mt-1 font-semibold text-stone-900">
-                {agent.nickname ?? agent.displayName}
+                {agentInspectorLabel(agent)}
               </div>
             </div>
             <div>
@@ -655,9 +715,9 @@ function AgentTeamSetupPanel({
                     >
                       <span>
                         <span className="font-semibold text-stone-900">
-                          {child.nickname ?? child.displayName}
+                          {agentInspectorLabel(child)}
                         </span>
-                        <span className="ml-2 text-stone-500">member</span>
+                        <span className="ml-2 text-stone-500">팀원</span>
                       </span>
                       <input
                         type="checkbox"
@@ -684,8 +744,8 @@ function AgentTeamSetupPanel({
         ) : (
           <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
             {text(
-              "이 노드에 하위 에이전트를 연결하면 팀을 만들 수 있습니다.",
-              "Connect child agents to this node before creating a team.",
+              "이 에이전트에 하위 에이전트를 연결하면 팀을 만들 수 있습니다.",
+              "Connect child agents to this agent before creating a team.",
             )}
           </div>
         )}
@@ -728,8 +788,7 @@ function AgentInspector({
   const assignedTeams = buildTopologyAgentTeamAssignments(composition)
   const canEditAgentProfile = agent.source !== "synthetic"
   const [editingProfile, setEditingProfile] = useState(false)
-  const [displayNameDraft, setDisplayNameDraft] = useState(agent.displayName)
-  const [nicknameDraft, setNicknameDraft] = useState(agent.nickname ?? agent.displayName)
+  const [agentNameDraft, setAgentNameDraft] = useState(agentInspectorLabel(agent))
   const [roleDraft, setRoleDraft] = useState(agent.role)
   const [specialtyDraft, setSpecialtyDraft] = useState(agent.specialtyTags.join(", "))
   const [statusDraft, setStatusDraft] = useState(agent.status)
@@ -738,21 +797,19 @@ function AgentInspector({
 
   useEffect(() => {
     setEditingProfile(false)
-    setDisplayNameDraft(agent.displayName)
-    setNicknameDraft(agent.nickname ?? agent.displayName)
+    setAgentNameDraft(agentInspectorLabel(agent))
     setRoleDraft(agent.role)
     setSpecialtyDraft(agent.specialtyTags.join(", "))
     setStatusDraft(agent.status)
     setProfileError("")
-  }, [agent.agentId, agent.displayName, agent.nickname, agent.role, agent.specialtyTags, agent.status])
+  }, [agent.agentId, agent.agentName, agent.displayName, agent.role, agent.specialtyTags, agent.status])
 
   async function saveAgentProfile() {
-    const displayName = displayNameDraft.trim()
-    const nickname = nicknameDraft.trim() || displayName
+    const agentName = agentNameDraft.trim()
     const role = roleDraft.trim()
     const specialtyTags = splitTopologyListDraft(specialtyDraft)
-    if (!displayName) {
-      setProfileError(text("표시 이름이 필요합니다.", "Display name is required."))
+    if (!agentName) {
+      setProfileError(text("서브 에이전트 이름이 필요합니다.", "Sub-agent name is required."))
       return
     }
     if (!role) {
@@ -763,8 +820,7 @@ function AgentInspector({
     setProfileError("")
     try {
       await api.updateTopologyAgent(agent.agentId, {
-        displayName,
-        nickname,
+        agentName,
         role,
         specialtyTags,
         status: AGENT_PROFILE_STATUS_OPTIONS.some((status) => status === statusDraft)
@@ -784,10 +840,10 @@ function AgentInspector({
     <div className="space-y-4">
       <div>
         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-400">
-          {text("Agent Inspector", "Agent Inspector")}
+          {text("서브 에이전트 정보", "Sub-agent details")}
         </div>
         <h2 className="mt-2 break-words text-xl font-semibold text-stone-950">
-          {agent.nickname ?? agent.displayName}
+          {agentInspectorLabel(agent)}
         </h2>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
@@ -824,8 +880,8 @@ function AgentInspector({
         {!canEditAgentProfile ? (
           <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
             {text(
-              "저장된 에이전트 설정이 없는 노드는 여기서 수정할 수 없습니다.",
-              "Nodes without stored agent configuration cannot be edited here.",
+              "저장된 서브 에이전트 설정이 없는 항목은 여기서 수정할 수 없습니다.",
+              "Items without stored agent configuration cannot be edited here.",
             )}
           </div>
         ) : null}
@@ -837,18 +893,10 @@ function AgentInspector({
         {editingProfile ? (
           <div className="mt-3 grid gap-3">
             <label className="grid gap-1 text-xs font-semibold text-stone-600">
-              {text("표시 이름", "Display name")}
+              {text("서브 에이전트 이름", "Sub-agent name")}
               <input
-                value={displayNameDraft}
-                onChange={(event) => setDisplayNameDraft(event.currentTarget.value)}
-                className="h-9 rounded-lg border border-stone-200 bg-white px-3 text-sm font-normal text-stone-900"
-              />
-            </label>
-            <label className="grid gap-1 text-xs font-semibold text-stone-600">
-              {text("별칭", "Nickname")}
-              <input
-                value={nicknameDraft}
-                onChange={(event) => setNicknameDraft(event.currentTarget.value)}
+                value={agentNameDraft}
+                onChange={(event) => setAgentNameDraft(event.currentTarget.value)}
                 className="h-9 rounded-lg border border-stone-200 bg-white px-3 text-sm font-normal text-stone-900"
               />
             </label>
@@ -886,7 +934,7 @@ function AgentInspector({
             <button
               type="button"
               onClick={() => void saveAgentProfile()}
-              disabled={profileSaving || !displayNameDraft.trim() || !roleDraft.trim()}
+              disabled={profileSaving || !agentNameDraft.trim() || !roleDraft.trim()}
               className="h-9 rounded-lg bg-stone-900 px-3 text-xs font-semibold text-white disabled:opacity-50"
             >
               {profileSaving ? text("저장 중", "Saving") : text("저장", "Save")}
@@ -895,10 +943,7 @@ function AgentInspector({
         ) : (
           <div className="mt-3 grid gap-2 text-xs leading-5 text-stone-600">
             <div>
-              {text("표시 이름", "Display name")}: {agent.displayName}
-            </div>
-            <div>
-              {text("별칭", "Nickname")}: {agent.nickname ?? "-"}
+              {text("서브 에이전트 이름", "Sub-agent name")}: {agentInspectorLabel(agent)}
             </div>
             <div>
               {text("전문성", "Specialty")}: {listText(agent.specialtyTags)}
@@ -908,7 +953,7 @@ function AgentInspector({
       </section>
       <AgentCompositionPanel
         composition={composition}
-        parentEmpty={agent.kind === "knowbee" ? text("Root", "Root") : text("미배치", "Unassigned")}
+        parentEmpty={agent.kind === "knowbee" ? text("최상위", "Root") : text("미배치", "Unassigned")}
         text={text}
       />
       <AgentTeamSetupPanel
@@ -921,59 +966,59 @@ function AgentInspector({
         text={text}
       />
       <section className="rounded-lg border border-stone-200 bg-white p-4">
-        <div className="text-sm font-semibold text-stone-900">{text("Model", "Model")}</div>
+        <div className="text-sm font-semibold text-stone-900">{text("AI 모델", "AI model")}</div>
         <div className="mt-3 grid gap-2 text-sm text-stone-700">
           <div>
-            {agent.model.providerId ?? "-"} / {agent.model.modelId ?? "-"}
+            {text("설정", "Setup")}: {agentModelSummary(agent, text)}
           </div>
           <div>
-            {text("가용성", "Availability")}: {agent.model.availability ?? "-"}
+            {text("가용성", "Availability")}: {agentModelAvailabilityLabel(agent.model.availability, text)}
           </div>
           <div>
-            {text("Fallback", "Fallback")}: {agent.model.fallbackModelId ?? "-"}
-          </div>
-        </div>
-      </section>
-      <section className="rounded-lg border border-stone-200 bg-white p-4">
-        <div className="text-sm font-semibold text-stone-900">Skill / MCP / Tool</div>
-        <div className="mt-3 grid gap-2 text-xs leading-5 text-stone-600">
-          <div>
-            {text("Skills", "Skills")}: {listText(agent.skillMcp.enabledSkillIds)}
-          </div>
-          <div>
-            {text("MCP", "MCP")}: {listText(agent.skillMcp.enabledMcpServerIds)}
-          </div>
-          <div>
-            {text("Tools", "Tools")}: {listText(agent.tools.enabledToolNames)}
-          </div>
-          <div>
-            {text("Secret Scope", "Secret Scope")}: {agent.skillMcp.secretScope}
+            {text("대체 모델", "Fallback model")}: {agent.model.fallbackModelId ? text("준비됨", "Ready") : text("없음", "None")}
           </div>
         </div>
       </section>
       <section className="rounded-lg border border-stone-200 bg-white p-4">
-        <div className="text-sm font-semibold text-stone-900">{text("Memory", "Memory")}</div>
+        <div className="text-sm font-semibold text-stone-900">{text("기능 연결", "Capability connections")}</div>
         <div className="mt-3 grid gap-2 text-xs leading-5 text-stone-600">
           <div>
-            {text("Owner", "Owner")}: {agent.memory.owner}
+            {text("작업 능력", "Work abilities")}: {listText(agent.skillMcp.enabledSkillIds)}
           </div>
           <div>
-            {text("Visibility", "Visibility")}: {agent.memory.visibility}
+            {text("외부 기능", "External features")}: {listText(agent.skillMcp.enabledMcpServerIds)}
           </div>
           <div>
-            {text("Read Scopes", "Read Scopes")}: {listText(agent.memory.readScopes)}
+            {text("외부 도구", "External tools")}: {listText(agent.tools.enabledToolNames)}
           </div>
           <div>
-            {text("Write Scope", "Write Scope")}: {agent.memory.writeScope}
+            {text("비밀값 범위", "Secret scope")}: {agent.skillMcp.secretScope}
+          </div>
+        </div>
+      </section>
+      <section className="rounded-lg border border-stone-200 bg-white p-4">
+        <div className="text-sm font-semibold text-stone-900">{text("메모리", "Memory")}</div>
+        <div className="mt-3 grid gap-2 text-xs leading-5 text-stone-600">
+          <div>
+            {text("메모리 소유자", "Memory owner")}: {agentInspectorLabel(agent)}
           </div>
           <div>
-            {text("Retention", "Retention")}: {agent.memory.retentionPolicy}
+            {text("공개 범위", "Visibility")}: {agent.memory.visibility}
+          </div>
+          <div>
+            {text("읽기 범위", "Read scopes")}: {listText(agent.memory.readScopes)}
+          </div>
+          <div>
+            {text("쓰기 범위", "Write scope")}: {agent.memory.writeScope}
+          </div>
+          <div>
+            {text("보관 정책", "Retention")}: {agent.memory.retentionPolicy}
           </div>
         </div>
       </section>
       <section className="rounded-lg border border-stone-200 bg-white p-4">
         <div className="text-sm font-semibold text-stone-900">
-          {text("Delegation", "Delegation")}
+          {text("위임", "Delegation")}
         </div>
         <div className="mt-3 grid gap-2 text-xs leading-5 text-stone-600">
           <div>
@@ -1003,26 +1048,26 @@ function TeamInspector({
   deleteTeam: (teamId: string) => Promise<void>
   text: (ko: string, en: string) => string
 }) {
+  const leadLabel = team.members.find((member) => member.agentId === team.leadAgentId)?.label ?? composition.owner.label
   return (
     <div className="space-y-4">
       <div>
         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-400">
-          {text("Team Inspector", "Team Inspector")}
+          {text("팀 정보", "Team details")}
         </div>
         <h2 className="mt-2 break-words text-xl font-semibold text-stone-950">
-          {team.nickname ?? team.displayName}
+          {team.displayName}
         </h2>
-        <div className="mt-2 text-xs text-stone-500">{team.teamId}</div>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
         <InspectorField label={text("상태", "Status")} value={team.status} />
-        <InspectorField label={text("Owner", "Owner")} value={team.ownerAgentId} />
-        <InspectorField label={text("Lead", "Lead")} value={team.leadAgentId ?? "-"} />
-        <InspectorField label={text("Health", "Health")} value={team.health.status} />
+        <InspectorField label={text("담당", "Owner")} value={composition.owner.label} />
+        <InspectorField label={text("팀장", "Lead")} value={leadLabel} />
+        <InspectorField label={text("운영 상태", "Health")} value={team.health.status} />
       </div>
       <TeamCompositionPanel summary={composition} text={text} />
       <section className="rounded-lg border border-stone-200 bg-white p-4">
-        <div className="text-sm font-semibold text-stone-900">{text("Members", "Members")}</div>
+        <div className="text-sm font-semibold text-stone-900">{text("팀원", "Members")}</div>
         <div className="mt-3 space-y-2">
           {team.members.map((member) => (
             <div
@@ -1030,13 +1075,12 @@ function TeamInspector({
               className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600"
             >
               <div className="font-semibold text-stone-900">{member.label}</div>
-              <div className="mt-1 break-all">{member.agentId}</div>
               <div className="mt-1">
-                {member.primaryRole} · {member.executionState} ·{" "}
-                {member.directChild ? "direct" : "reference"}
+                {member.primaryRole} · {memberStateLabel(member.executionState, member.active)} ·{" "}
+                {memberScopeLabel(member.directChild)}
               </div>
               {member.reasonCodes.length > 0 ? (
-                <div className="mt-1 text-amber-700">{listText(member.reasonCodes)}</div>
+                <div className="mt-1 text-amber-700">{listText(member.reasonCodes.map(reasonLabel))}</div>
               ) : null}
             </div>
           ))}
@@ -1072,11 +1116,13 @@ function ConnectionInspector({
   const agentId = typeof edge.data.agentId === "string" ? edge.data.agentId : ""
   const active = edge.data.active === true
   const canDeactivate = edge.kind === "team_membership" && edge.style !== "lead" && active
+  const teamLabel = teamId ? teamLabelById(projection, teamId) : "-"
+  const agentLabel = agentId ? agentLabelById(projection, agentId) : "-"
   return (
     <div className="space-y-4">
       <div>
         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-400">
-          {text("Connection Inspector", "Connection Inspector")}
+          {text("연결 정보", "Connection details")}
         </div>
         <h2 className="mt-2 break-words text-xl font-semibold text-stone-950">
           {edge.kind === "parent_child"
@@ -1085,13 +1131,12 @@ function ConnectionInspector({
               ? text("팀장 연결", "Team lead connection")
             : text("팀 멤버십", "Team membership")}
         </h2>
-        <div className="mt-2 break-all text-xs text-stone-500">{edge.id}</div>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
-        <InspectorField label={text("Source", "Source")} value={source?.label ?? edge.source} />
-        <InspectorField label={text("Target", "Target")} value={target?.label ?? edge.target} />
-        <InspectorField label={text("Style", "Style")} value={edge.style} />
-        <InspectorField label={text("Valid", "Valid")} value={edge.valid} />
+        <InspectorField label={text("시작", "Source")} value={source?.label ?? "-"} />
+        <InspectorField label={text("도착", "Target")} value={target?.label ?? "-"} />
+        <InspectorField label={text("연결 종류", "Connection type")} value={edgeStyleLabel(edge.style)} />
+        <InspectorField label={text("상태", "Status")} value={edge.valid ? text("정상", "Valid") : text("확인 필요", "Needs review")} />
       </div>
       {edge.kind === "team_membership" ? (
         <section className="rounded-lg border border-stone-200 bg-white p-4">
@@ -1100,22 +1145,20 @@ function ConnectionInspector({
           </div>
           <div className="mt-3 grid gap-2 text-xs leading-5 text-stone-600">
             <div>
-              {text("Team", "Team")}: {teamId || "-"}
+              {text("팀", "Team")}: {teamLabel}
             </div>
             <div>
-              {text("Agent", "Agent")}: {agentId || "-"}
+              {text("서브 에이전트", "Sub-agent")}: {agentLabel}
             </div>
             <div>
-              {text("Role", "Role")}:{" "}
+              {text("역할", "Role")}:{" "}
               {typeof edge.data.role === "string" ? edge.data.role : (edge.label ?? "-")}
             </div>
             <div>
-              {text("State", "State")}:{" "}
-              {typeof edge.data.executionState === "string"
-                ? edge.data.executionState
-                : active
-                  ? "active"
-                  : "-"}
+              {text("상태", "State")}: {memberStateLabel(
+                typeof edge.data.executionState === "string" ? edge.data.executionState : undefined,
+                active,
+              )}
             </div>
           </div>
           {canDeactivate && teamId && agentId ? (
@@ -1127,7 +1170,7 @@ function ConnectionInspector({
             >
               {membershipUpdating
                 ? text("변경 중", "Updating")
-                : text("멤버 비활성화", "Deactivate member")}
+                : text("팀원 비활성화", "Deactivate member")}
             </button>
           ) : null}
         </section>
@@ -1137,7 +1180,7 @@ function ConnectionInspector({
           <div className="text-sm font-semibold text-amber-900">{text("진단", "Diagnostics")}</div>
           <div className="mt-2 space-y-1 text-xs text-amber-800">
             {edge.diagnostics.map((diagnostic) => (
-              <div key={`${edge.id}:${diagnostic.reasonCode}`}>{diagnostic.reasonCode}</div>
+              <div key={`${edge.id}:${diagnostic.reasonCode}`}>{reasonLabel(diagnostic.reasonCode)}</div>
             ))}
           </div>
         </section>
@@ -1181,7 +1224,7 @@ function InspectorPanel({
   if (!projection || !selection) {
     return (
       <div className="rounded-lg border border-stone-200 bg-white p-5 text-sm text-stone-500">
-        {text("노드를 선택하세요.", "Select a node.")}
+        {text("서브 에이전트 또는 팀을 선택하세요.", "Select a sub-agent or team.")}
       </div>
     )
   }
@@ -1356,7 +1399,7 @@ function TopologyPageInner() {
     async (teamId: string) => {
       if (!teamId) return
       const team = projection?.inspectors.teams[teamId]
-      const label = team?.nickname ?? team?.displayName ?? teamId
+      const label = team?.displayName ?? teamId
       if (
         typeof window !== "undefined" &&
         !window.confirm(
@@ -1404,15 +1447,15 @@ function TopologyPageInner() {
       if (blockedNodes.length > 0) {
         setActionError(
           text(
-            "메인 노비 노드는 삭제할 수 없습니다.",
-            "The main Knowbee node cannot be deleted.",
+            "메인 에이전트는 삭제할 수 없습니다.",
+            "The main agent cannot be deleted.",
           ),
         )
       } else if (deletableNodes.length > 0) {
         setActionError(
           text(
-            "삭제는 Layout 저장 시 반영됩니다.",
-            "Deletion will be applied when saving the layout.",
+            "삭제는 구성 저장 시 반영됩니다.",
+            "Deletion will be applied when saving the composition.",
           ),
         )
       }
@@ -1491,15 +1534,15 @@ function TopologyPageInner() {
       if (blockedLeadEdge) {
         setActionError(
           text(
-            "팀장 연결은 선 삭제로 제거할 수 없습니다. 팀 설정에서 팀을 변경하거나 삭제하세요.",
+            "팀장 연결은 선을 삭제해서 제거할 수 없습니다. 팀 설정에서 팀장을 바꾸거나 팀을 삭제하세요.",
             "Team lead connections cannot be removed by deleting the edge. Change or delete the team from team settings.",
           ),
         )
       } else if (deletableEdges.length > 0) {
         setActionError(
           text(
-            "관계 삭제는 Layout 저장 시 반영됩니다.",
-            "Connection deletion will be applied when saving the layout.",
+            "연결 삭제는 구성 저장 시 반영됩니다.",
+            "Connection deletion will be applied when saving the composition.",
           ),
         )
       }
@@ -1649,7 +1692,7 @@ function TopologyPageInner() {
     if (!projection) return
     const name = draftName.trim()
     if (!name) {
-      setActionError(text("노드 이름이 필요합니다.", "Node name is required."))
+      setActionError(text("서브 에이전트 이름이 필요합니다.", "Sub-agent name is required."))
       return
     }
     setCreatingNode(true)
@@ -1675,8 +1718,8 @@ function TopologyPageInner() {
     if (!selection || !canArchiveTopologySelection(selection)) return
     const label =
       selection.kind === "team"
-        ? text("이 팀 노드를 아카이브할까요?", "Archive this team node?")
-        : text("이 서브 에이전트 노드를 아카이브할까요?", "Archive this sub-agent node?")
+        ? text("이 팀을 아카이브할까요?", "Archive this team?")
+        : text("이 서브 에이전트를 아카이브할까요?", "Archive this sub-agent?")
     if (typeof window !== "undefined" && !window.confirm(label)) return
     setArchivingNode(true)
     setActionError("")
@@ -1705,15 +1748,15 @@ function TopologyPageInner() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-400">
-              {text("Runtime Resource Topology", "Runtime Resource Topology")}
+              {text("서브 에이전트 구성", "Sub-agent composition")}
             </div>
             <h1 className="mt-2 text-2xl font-semibold">
-              {text("런타임 리소스 토폴로지", "Runtime Resource Topology")}
+              {text("서브 에이전트 구성", "Sub-agent composition")}
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-stone-500">
               {text(
-                "Agent와 Team의 실행 리소스, 멤버십, 런타임 연결을 관리합니다.",
-                "Manage agent and team runtime resources, memberships, and execution links.",
+                "서브 에이전트와 팀의 위임 구조, 팀원 구성, 실행 연결을 관리합니다.",
+                "Manage sub-agent delegation, team membership, and execution links.",
               )}
             </p>
           </div>
@@ -1731,7 +1774,7 @@ function TopologyPageInner() {
               disabled={savingLayout}
               className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
             >
-              {savingLayout ? text("저장 중", "Saving") : text("Layout 저장", "Save layout")}
+              {savingLayout ? text("저장 중", "Saving") : text("구성 저장", "Save composition")}
             </button>
             <button
               type="button"
@@ -1750,8 +1793,8 @@ function TopologyPageInner() {
             value={draftName}
             onChange={(event) => setDraftName(event.currentTarget.value)}
             className="h-10 rounded-lg border border-stone-200 bg-white px-3 text-sm text-stone-800"
-            placeholder={text("에이전트 이름", "Agent name")}
-            aria-label={text("에이전트 이름", "Agent name")}
+            placeholder={text("서브 에이전트 이름", "Sub-agent name")}
+            aria-label={text("서브 에이전트 이름", "Sub-agent name")}
           />
           <input
             value={draftDetail}
@@ -1766,7 +1809,7 @@ function TopologyPageInner() {
             disabled={creatingNode || !draftName.trim()}
             className="h-10 rounded-lg bg-stone-900 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {creatingNode ? text("추가 중", "Adding") : text("에이전트 추가", "Add agent")}
+            {creatingNode ? text("추가 중", "Adding") : text("서브 에이전트 추가", "Add sub-agent")}
           </button>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs text-stone-600">
@@ -1775,20 +1818,20 @@ function TopologyPageInner() {
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="h-0.5 w-8 rounded bg-stone-700" />
-            {text("부모-하위 에이전트", "Parent-child agents")}
+            {text("상위-하위 서브 에이전트", "Parent-child sub-agents")}
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="h-0.5 w-8 rounded border-t-2 border-dashed border-teal-700" />
-            {text("활성 팀 멤버", "Active team member")}
+            {text("활성 팀원", "Active team member")}
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="h-0.5 w-8 rounded border-t-2 border-dashed border-amber-700" />
-            {text("참조 멤버", "Reference member")}
+            {text("참조 팀원", "Reference member")}
           </span>
           <span className="ml-auto text-stone-500">
             {text(
-              "팀 구성은 선택한 노드의 설정에서 관리합니다.",
-              "Manage teams from the selected node settings.",
+              "팀 구성은 선택한 서브 에이전트 또는 팀 설정에서 관리합니다.",
+              "Manage teams from the selected sub-agent or team settings.",
             )}
           </span>
         </div>
@@ -1815,12 +1858,12 @@ function TopologyPageInner() {
         ) : null}
         {pendingNodeDeletions.length > 0 ? (
           <div className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-800">
-            {text("삭제 대기", "Pending deletion")}: {pendingNodeDeletions.length}
+            {text("구성 삭제 대기", "Pending composition deletion")}: {pendingNodeDeletions.length}
           </div>
         ) : null}
         {pendingEdgeDeletions.length > 0 ? (
           <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            {text("관계 삭제 대기", "Pending connection deletion")}:{" "}
+            {text("연결 삭제 대기", "Pending connection deletion")}:{" "}
             {pendingEdgeDeletions.length}
           </div>
         ) : null}

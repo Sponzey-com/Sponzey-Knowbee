@@ -16,6 +16,7 @@ function source(path: string): string {
 function agent(input: Partial<UnifiedSettingsAgentInput> = {}): UnifiedSettingsAgentInput {
   return {
     id: input.id ?? "agent:research",
+    agentName: input.agentName,
     displayName: input.displayName ?? "Researcher",
     nickname: input.nickname ?? "리서처",
     role: input.role ?? "research",
@@ -51,22 +52,22 @@ describe("task002 unified settings contracts", () => {
     })
   })
 
-  it("treats single Knowbee without sub-agents as skipped, not an error", () => {
+  it("treats direct main-agent mode without sub-agents as skipped, not an error", () => {
     const readiness = evaluateUnifiedSettingsReadiness({
-      mode: "single_knowbee",
-      rootAgent: { id: "agent:knowbee", displayName: "Knowbee", nickname: "노비" },
+      mode: "direct_main_agent",
+      rootAgent: { id: "agent:knowbee", agentName: "마당쇠" },
       agents: [],
     })
 
     expect(readiness.status).toBe("skipped")
     expect(readiness.issues).toEqual([])
-    expect(readiness.reasonCodes).toContain("single_knowbee_without_sub_agents")
+    expect(readiness.reasonCodes).toContain("direct_main_agent_without_sub_agents")
   })
 
   it("requires at least one valid sub-agent when orchestration is enabled", () => {
     const empty = evaluateUnifiedSettingsReadiness({
       mode: "orchestration",
-      rootAgent: { id: "agent:knowbee", displayName: "Knowbee", nickname: "노비" },
+      rootAgent: { id: "agent:knowbee", agentName: "마당쇠" },
       agents: [],
     })
 
@@ -75,31 +76,116 @@ describe("task002 unified settings contracts", () => {
 
     const ready = evaluateUnifiedSettingsReadiness({
       mode: "orchestration",
-      rootAgent: { id: "agent:knowbee", displayName: "Knowbee", nickname: "노비" },
-      agents: [agent()],
+      rootAgent: { id: "agent:knowbee", agentName: "마당쇠" },
+      agents: [agent({ agentName: "조사" })],
     })
 
     expect(ready.status).toBe("ready")
     expect(ready.issues).toEqual([])
   })
 
-  it("blocks duplicate names, duplicate nicknames, and reserved Knowbee names", () => {
+  it("requires an explicit agentName and does not accept nickname or displayName as a name fallback", () => {
     const readiness = evaluateUnifiedSettingsReadiness({
       mode: "orchestration",
-      rootAgent: { id: "agent:knowbee", displayName: "Knowbee", nickname: "노비" },
+      rootAgent: { id: "agent:knowbee", agentName: "마당쇠" },
       agents: [
         agent({ id: "agent:a", displayName: "Researcher", nickname: "조사" }),
-        agent({ id: "agent:b", displayName: "Researcher", nickname: "조사" }),
-        agent({ id: "agent:c", displayName: "노비", nickname: "Knowbee" }),
+      ],
+    })
+
+    expect(readiness.status).toBe("needs_attention")
+    expect(readiness.issues).toContainEqual({
+      code: "agent_name_required",
+      severity: "attention",
+      agentId: "agent:a",
+      field: "agentName",
+    })
+  })
+
+  it("blocks duplicate canonical agent names and reserved main-agent names", () => {
+    const readiness = evaluateUnifiedSettingsReadiness({
+      mode: "orchestration",
+      rootAgent: { id: "agent:knowbee", agentName: "마당쇠", displayName: "Knowbee", nickname: "노비" },
+      agents: [
+        agent({ id: "agent:a", agentName: "조사", displayName: "Researcher", nickname: "legacy-a" }),
+        agent({ id: "agent:b", agentName: " 조사 ", displayName: "Writer", nickname: "legacy-b" }),
+        agent({ id: "agent:c", agentName: "마당쇠", displayName: "Planner", nickname: "legacy-c" }),
       ],
     })
 
     expect(readiness.status).toBe("blocked")
     expect(readiness.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
-      "display_name_duplicate",
-      "nickname_duplicate",
+      "agent_name_duplicate",
       "reserved_root_name",
     ]))
+    expect(readiness.issues.map((issue) => issue.field)).toEqual(expect.arrayContaining(["agentName"]))
+  })
+
+  it("does not reserve root legacy displayName or nickname when root agentName is explicit", () => {
+    const legacyRootNames = evaluateUnifiedSettingsReadiness({
+      mode: "orchestration",
+      rootAgent: {
+        id: "agent:knowbee",
+        agentName: "마당쇠",
+        displayName: "Legacy Root Display",
+        nickname: "Legacy Root Nickname",
+      },
+      agents: [
+        agent({ id: "agent:a", agentName: "Legacy Root Display" }),
+        agent({ id: "agent:b", agentName: "Legacy Root Nickname" }),
+      ],
+    })
+    const productDefaultNames = evaluateUnifiedSettingsReadiness({
+      mode: "orchestration",
+      rootAgent: {
+        id: "agent:knowbee",
+        agentName: "마당쇠",
+        displayName: "Legacy Root Display",
+        nickname: "Legacy Root Nickname",
+      },
+      agents: [
+        agent({ id: "agent:a", agentName: "Knowbee" }),
+        agent({ id: "agent:b", agentName: "노비" }),
+      ],
+    })
+
+    expect(legacyRootNames.status).toBe("ready")
+    expect(legacyRootNames.issues).toEqual([])
+    expect(productDefaultNames.status).toBe("blocked")
+    expect(productDefaultNames.issues.map((issue) => issue.code)).toEqual([
+      "reserved_root_name",
+      "reserved_root_name",
+    ])
+  })
+
+  it("does not treat legacy nickname or displayName duplicates as agentName duplicates", () => {
+    const duplicateLegacyNickname = evaluateUnifiedSettingsReadiness({
+      mode: "orchestration",
+      rootAgent: { id: "agent:knowbee", agentName: "마당쇠" },
+      agents: [
+        agent({ id: "agent:a", displayName: "Researcher", nickname: "조사" }),
+        agent({ id: "agent:b", displayName: "Writer", nickname: " 조사 " }),
+      ],
+    })
+    const duplicateLegacyDisplayName = evaluateUnifiedSettingsReadiness({
+      mode: "orchestration",
+      rootAgent: { id: "agent:knowbee", agentName: "마당쇠" },
+      agents: [
+        agent({ id: "agent:a", displayName: "Researcher", nickname: "" }),
+        agent({ id: "agent:b", displayName: " researcher ", nickname: "" }),
+      ],
+    })
+
+    expect(duplicateLegacyNickname.issues.map((issue) => issue.code)).not.toContain("agent_name_duplicate")
+    expect(duplicateLegacyDisplayName.issues.map((issue) => issue.code)).not.toContain("agent_name_duplicate")
+    expect(duplicateLegacyNickname.issues.map((issue) => issue.code)).toEqual([
+      "agent_name_required",
+      "agent_name_required",
+    ])
+    expect(duplicateLegacyDisplayName.issues.map((issue) => issue.code)).toEqual([
+      "agent_name_required",
+      "agent_name_required",
+    ])
   })
 
   it("keeps the contract independent from external frameworks, hidden IO, and env reads", () => {
@@ -121,4 +207,3 @@ describe("task002 unified settings contracts", () => {
     }
   })
 })
-

@@ -141,14 +141,16 @@ export interface MqttConfig {
   username: string
   password: string
   allowAnonymous: boolean
+  /**
+   * Explicit local enrollment for the Gateway MQTT v2 requester. This value
+   * is never inferred from the broker account, agent name, or legacy node ID.
+   */
+  yeonjangV2?: {
+    requesterId: string
+  }
 }
 
 export interface SearchConfig {
-  web?: {
-    provider: "brave" | "tavily" | "duckduckgo"
-    apiKey?: string
-    maxResults: number
-  }
   files?: {
     indexedPaths: string[]
     excludePatterns: string[]
@@ -166,9 +168,13 @@ export interface MemoryConfig {
     modelId?: string
     fallbackModelId?: string
     minContextTokens?: number
+    tokenThreshold?: number
+    messageThreshold?: number
+    protectedRecentMessageCount?: number
   }
   searchMode?: "fts" | "vector" | "hybrid"
   sessionRetentionDays: number
+  longTermRetentionDays?: number
   indexedPaths?: string[]
   excludePatterns?: string[]
 }
@@ -347,16 +353,17 @@ export const DEFAULT_CONFIG: KnowbeeConfig = {
     username: "",
     password: "",
     allowAnonymous: false,
-  },
-  search: {
-    web: {
-      provider: "duckduckgo",
-      maxResults: 5,
+    yeonjangV2: {
+      requesterId: "",
     },
   },
+  search: {},
   memory: {
     compaction: {
       minContextTokens: 3000,
+      tokenThreshold: 120_000,
+      messageThreshold: 40,
+      protectedRecentMessageCount: 8,
     },
     sessionRetentionDays: 30,
   },

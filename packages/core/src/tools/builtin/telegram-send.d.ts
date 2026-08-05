@@ -1,6 +1,7 @@
 import type { AgentTool } from "../types.js";
 interface TelegramSendFileParams {
-    filePath: string;
+    filePath?: string;
+    artifactRef?: string;
     caption?: string | undefined;
 }
 export declare const telegramSendFileTool: AgentTool<TelegramSendFileParams>;

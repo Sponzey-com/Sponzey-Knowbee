@@ -1,5 +1,9 @@
-import type { TelegramConfig } from "../../config/types.js";
+import type { KnowbeeConfig, TelegramConfig } from "../../config/types.js";
+import type { ArtifactStorageContext } from "../../artifacts/lifecycle.js";
+import type { MemoryJournalRepository } from "../../memory/journal.js";
+import type { AgentHierarchyStorage } from "../../orchestration/hierarchy.js";
 import { type ChannelAdapter, type ChannelCapabilities, type ChannelHealthCheck, type DeliveryReceipt, type InboundEnvelope, type InteractionEnvelope, type OutboundMessage } from "../contracts.js";
+import type { ChannelPendingResponseDeliveryInput } from "../pending-response-delivery.js";
 export type TelegramConnectionMode = "polling" | "webhook";
 export interface TelegramConnectionPolicy {
     mode: TelegramConnectionMode;
@@ -24,7 +28,11 @@ export interface TelegramAdapterTransport {
     }>;
 }
 export interface TelegramChannelAdapterOptions {
+    artifactStorage?: ArtifactStorageContext | undefined;
+    memoryJournal?: MemoryJournalRepository | undefined;
+    hierarchyStorage?: AgentHierarchyStorage | undefined;
     config?: TelegramConfig | undefined;
+    runtimeConfig?: KnowbeeConfig | undefined;
     channelId?: string;
     connectionId?: string;
     connectionMode?: TelegramConnectionMode;
@@ -68,6 +76,10 @@ export declare class TelegramChannelAdapter implements ChannelAdapter {
     readonly provider: "telegram";
     readonly connectionId: string;
     private readonly config;
+    private readonly runtimeConfig;
+    private readonly artifactStorage;
+    private readonly memoryJournal;
+    private readonly hierarchyStorage;
     private readonly connectionMode;
     private readonly transport;
     private readonly now;
@@ -75,6 +87,7 @@ export declare class TelegramChannelAdapter implements ChannelAdapter {
     constructor(options?: TelegramChannelAdapterOptions);
     start(): Promise<void>;
     stop(): Promise<void>;
+    createPendingResponseDeliveryHandler(input: ChannelPendingResponseDeliveryInput): import("../../runs/delivery.js").RunChunkDeliveryHandler;
     healthCheck(): Promise<ChannelHealthCheck>;
     getCapabilities(): ChannelCapabilities;
     normalizeInbound(rawPayload: unknown): Promise<InboundEnvelope[]>;

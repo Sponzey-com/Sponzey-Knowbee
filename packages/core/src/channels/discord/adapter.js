@@ -1,6 +1,12 @@
 import { createPublicKey, verify } from "node:crypto";
+import { redactLogText } from "../../logger/index.js";
 import { buildUnsupportedCapabilityReceipt, createRawPayloadRef, defineChannelAdapter, defineChannelCapabilities, resolveDeliveryReceiptStatus, } from "../contracts.js";
+import { resolveUserFacingMessageLanguage } from "../language.js";
 import { getDiscordRuntimeStatus, setDiscordRuntimeError, setDiscordRuntimeRunning, stopDiscordRuntime, } from "./runtime.js";
+function discordAdapterErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 const DEFAULT_CHANNEL_ID = "discord:primary";
 const DEFAULT_CONNECTION_ID = "discord:primary";
 const DISCORD_MAX_MESSAGE_LENGTH = 2000;
@@ -329,7 +335,7 @@ export class DiscordChannelAdapter {
             setDiscordRuntimeError(null);
         }
         catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = discordAdapterErrorMessage(error);
             setDiscordRuntimeError(message);
             throw error;
         }
@@ -413,6 +419,7 @@ export class DiscordChannelAdapter {
                 capability: unsupportedCapability,
                 idempotencyKey: message.idempotencyKey,
                 timestamp: this.now(),
+                userFacingLanguage: message.userFacingLanguage,
             });
         }
         const outboundMessage = applyDiscordThreadPolicy(message);
@@ -470,7 +477,7 @@ export class DiscordChannelAdapter {
             };
         }
         catch (error) {
-            const messageText = error instanceof Error ? error.message : String(error);
+            const messageText = discordAdapterErrorMessage(error);
             const receipt = {
                 channelId: outboundMessage.channelId,
                 provider: outboundMessage.provider,
@@ -552,6 +559,7 @@ function normalizeDiscordMessage(message, rawPayload, options) {
             mentions,
             timestamp,
             rawPayloadRef: createRawPayloadRef({ provider: "discord", payload: rawPayload, createdAt: timestamp }),
+            userFacingLanguage: resolveUserFacingMessageLanguage(text),
             ...(replyToMessageId
                 ? { continuationContext: { parentMessageId: replyToMessageId, source: "reply" } }
                 : {}),
@@ -577,6 +585,7 @@ function normalizeDiscordSlashCommand(body, rawPayload, options) {
         mentions: [],
         timestamp,
         rawPayloadRef: createRawPayloadRef({ provider: "discord", payload: rawPayload, createdAt: timestamp }),
+        userFacingLanguage: resolveUserFacingMessageLanguage(formatDiscordSlashCommand(body.data)),
         dedupeKey: `discord:interaction:${body.id ?? timestamp}`,
     };
 }

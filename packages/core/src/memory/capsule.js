@@ -98,7 +98,7 @@ function normalizeArtifactRefs(values = []) {
 function collectCapsuleStrings(capsule) {
     const values = [
         capsule.summary,
-        capsule.nicknameSnapshot,
+        capsule.agentNameSnapshot,
         ...capsule.activeObjectives,
         ...capsule.confirmedFacts,
         ...capsule.decisions,
@@ -168,11 +168,11 @@ export function normalizeMemoryCapsule(input) {
         createdAt: Number.isFinite(input.createdAt) ? Math.floor(input.createdAt) : Date.now(),
     };
     const parentCapsuleId = normalizeString(input.parentCapsuleId);
-    const nicknameSnapshot = normalizeString(input.nicknameSnapshot);
+    const agentNameSnapshot = normalizeString(input.agentNameSnapshot);
     if (parentCapsuleId)
         normalized.parentCapsuleId = parentCapsuleId;
-    if (nicknameSnapshot)
-        normalized.nicknameSnapshot = nicknameSnapshot;
+    if (agentNameSnapshot)
+        normalized.agentNameSnapshot = agentNameSnapshot;
     return normalized;
 }
 export function validateMemoryCapsule(input, options = {}) {

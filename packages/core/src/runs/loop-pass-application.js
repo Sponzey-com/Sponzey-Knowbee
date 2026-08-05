@@ -12,6 +12,17 @@ export function applyLoopEntryPassResult(result) {
             },
         };
     }
+    if (result.kind === "execute") {
+        return {
+            kind: "execute",
+            nextMessage: result.nextMessage,
+            requiredToolNames: result.requiredToolNames,
+            state: {
+                pendingLoopDirective: null,
+                intakeProcessed: true,
+            },
+        };
+    }
     if (result.kind === "set_directive") {
         return {
             kind: "continue",
@@ -81,6 +92,8 @@ export function applyPostExecutionPassResult(params) {
             activeWorkerRuntime: params.activeWorkerRuntime,
         },
         preview: params.result.preview,
+        ...(params.result.previewSource ? { previewSource: params.result.previewSource } : {}),
+        ...(params.result.deferredPreviewDelivery ? { deferredPreviewDelivery: true } : {}),
         deliveryOutcome: params.result.deliveryOutcome,
     };
 }
@@ -88,13 +101,17 @@ export function applyReviewCyclePassResult(params) {
     if (params.result.kind === "break") {
         return { kind: "break" };
     }
-    if (params.result.normalizedFollowupPrompt) {
-        params.seenFollowupPrompts.add(params.result.normalizedFollowupPrompt);
+    if (params.result.structuredFollowupKey) {
+        params.seenFollowupPrompts.add(params.result.structuredFollowupKey);
     }
     return {
         kind: "retry",
         state: {
             currentMessage: params.result.nextMessage,
+            requiredToolNames: params.result.requiredToolNames ?? [],
+            ...(params.result.nextAttemptToolPolicy
+                ? { nextAttemptToolPolicy: params.result.nextAttemptToolPolicy }
+                : {}),
             truncatedOutputRecoveryAttempted: params.truncatedOutputRecoveryAttempted
                 || Boolean(params.result.markTruncatedOutputRecoveryAttempted),
             activeWorkerRuntime: params.result.clearWorkerRuntime ? undefined : params.activeWorkerRuntime,

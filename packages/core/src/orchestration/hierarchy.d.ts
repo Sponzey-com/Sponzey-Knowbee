@@ -1,5 +1,11 @@
+import { type PersistedConfigFileSystem } from "../config/persisted-file.js";
+import type { RuntimePaths } from "../config/paths.js";
+import type { OrchestrationConfig } from "../config/types.js";
 import { type AgentConfig, type AgentRelationship, type AgentStatus, type RelationshipGraphEdge, type RelationshipGraphNode } from "../contracts/sub-agent-orchestration.js";
 import { type RegistryServiceDependencies } from "./registry.js";
+export type AgentHierarchyConfigSnapshot = Pick<{
+    orchestration: OrchestrationConfig;
+}, "orchestration">;
 export type HierarchyDiagnosticSeverity = "info" | "warning" | "blocked";
 export interface AgentHierarchyDiagnostic {
     reasonCode: string;
@@ -20,8 +26,7 @@ export interface AgentHierarchyValidationResult {
 export interface AgentHierarchyAgentSummary {
     agentId: string;
     agentType: AgentConfig["agentType"];
-    displayName: string;
-    nickname?: string;
+    agentName: string;
     status: AgentStatus;
     source: "db" | "config" | "topology" | "synthetic";
 }
@@ -57,12 +62,18 @@ export interface AgentTreeProjection {
     diagnostics: AgentHierarchyDiagnostic[];
 }
 export interface AgentHierarchyServiceDependencies extends RegistryServiceDependencies {
+    config: AgentHierarchyConfigSnapshot;
+    storage: AgentHierarchyStorage;
     rootAgentId?: string;
     maxDepth?: number;
     maxChildCount?: number;
-    layoutPath?: string;
 }
-export declare function createAgentHierarchyService(dependencies?: AgentHierarchyServiceDependencies): {
+export interface AgentHierarchyStorage {
+    readonly layoutFile: string;
+    readonly fileSystem: PersistedConfigFileSystem;
+}
+export declare function createAgentHierarchyStorage(paths: Pick<RuntimePaths, "stateDir">, fileSystem?: PersistedConfigFileSystem): AgentHierarchyStorage;
+export declare function createAgentHierarchyService(dependencies: AgentHierarchyServiceDependencies): {
     rootAgentId: string;
     maxDepth: number;
     maxChildCount: number;

@@ -1,14 +1,44 @@
-import type { CompletionReviewResult } from "../agent/completion-review.js"
+import {
+  buildCompletionReviewContextReceipt,
+  buildCompletionReviewExpectedConditions,
+  type CompletionReviewOperationalEvidence,
+  type CompletionReviewResult,
+} from "../agent/completion-review.js"
 import type { TaskExecutionSemantics } from "../agent/intake.js"
 import type { DeliveryOutcome, RunChunkDeliveryHandler } from "./delivery.js"
-import type { FinalizationDependencies, FinalizationSource } from "./finalization.js"
+import type {
+  CanonicalDeliveryRecorder,
+  CanonicalPendingResponseConsumer,
+  CanonicalPendingResponseStager,
+  FinalizationDependencies,
+  FinalizationSource,
+  StandaloneAssistantMessageResponseContext,
+} from "./finalization.js"
+import type { UserFacingTextSource } from "./loop-directive.js"
 import type { RecoveryBudgetUsage } from "./recovery-budget.js"
 import type { SuccessfulToolEvidence } from "./recovery.js"
-import { type SyntheticApprovalRequest, type SyntheticApprovalRuntimeDependencies } from "./approval.js"
+import type { SyntheticApprovalRequest, SyntheticApprovalRuntimeDependencies } from "./approval.js"
 import { applySyntheticApprovalContinuation } from "./approval-application.js"
 import { runSyntheticApprovalPass } from "./approval-pass.js"
 import { applyCompletionApplicationPass, type CompletionApplicationPassResult } from "./completion-application-pass.js"
 import { runCompletionPass } from "./completion-pass.js"
+import { buildStructuredFollowupKey } from "./completion-application.js"
+import {
+  buildCanonicalCompletionOutcomeDescriptor,
+  type CanonicalFinalizationTransitionDescriptor,
+} from "./canonical-finalization-lifecycle.js"
+import { CanonicalExecutionFailure } from "./canonical-execution-failure.js"
+import type { NextAttemptToolPolicy } from "./next-attempt-tool-policy.js"
+import {
+  buildCanonicalCompletionBlockedReport,
+  buildCanonicalCompletionExhaustedReport,
+} from "./canonical-runtime-result-report.js"
+import type { CanonicalFinalOutcome } from "./canonical-work-run-projection.js"
+import type { CanonicalResultReportFacts } from "../contracts/canonical-result-report.js"
+
+export type CanonicalCompletionOutcomeRecorder = (
+  descriptor: CanonicalFinalizationTransitionDescriptor,
+) => Promise<{ ok: true } | { ok: false; reasonCode: string }>
 
 export type ReviewOutcomePassResult =
   | { kind: "break" }
@@ -17,14 +47,16 @@ export type ReviewOutcomePassResult =
       nextMessage: string
       clearWorkerRuntime: boolean
       clearProvider?: boolean
-      normalizedFollowupPrompt?: string
+      structuredFollowupKey?: string
       markTruncatedOutputRecoveryAttempted?: boolean
+      requiredToolNames?: string[]
+      nextAttemptToolPolicy?: NextAttemptToolPolicy
     }
 
 interface ReviewOutcomePassDependencies {
-  rememberRunApprovalScope: (runId: string) => void
-  grantRunApprovalScope: (runId: string) => void
-  grantRunSingleApproval: (runId: string) => void
+  rememberRunApprovalScope: (runId: string, toolName: string) => void
+  grantRunApprovalScope: (runId: string, toolName: string) => void
+  grantRunSingleApproval: (runId: string, toolName: string) => void
   rememberRunFailure: (params: {
     runId: string
     sessionId: string
@@ -72,16 +104,24 @@ export async function runReviewOutcomePass(
     onChunk: RunChunkDeliveryHandler | undefined
     signal: AbortSignal
     preview: string
+    previewSource?: UserFacingTextSource
+    deferredPreviewDelivery?: boolean
     review: CompletionReviewResult | null
+    reviewFailureReasonCode?:
+      | "completion_review_provider_failed"
+      | "completion_review_contract_invalid"
     syntheticApproval: SyntheticApprovalRequest | null
     executionSemantics: TaskExecutionSemantics
     deliveryOutcome: DeliveryOutcome
     successfulTools: SuccessfulToolEvidence[]
+    completionConditions: string[]
+    operationalEvidence?: CompletionReviewOperationalEvidence
     sawRealFilesystemMutation: boolean
     requiresFilesystemMutation: boolean
     truncatedOutputRecoveryAttempted: boolean
     originalRequest: string
     recoveryBudgetUsage: RecoveryBudgetUsage
+    responseContext?: StandaloneAssistantMessageResponseContext | undefined
     delegationTurnCount?: number
     maxDelegationTurns?: number
     defaultMaxDelegationTurns: number
@@ -90,6 +130,10 @@ export async function runReviewOutcomePass(
     syntheticApprovalSourceLabel: string
     syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies
     finalizationDependencies: FinalizationDependencies
+    recordCanonicalCompletionOutcome?: CanonicalCompletionOutcomeRecorder | undefined
+    recordCanonicalDelivery?: CanonicalDeliveryRecorder | undefined
+    stageCanonicalPendingResponse?: CanonicalPendingResponseStager | undefined
+    consumeCanonicalPendingResponse?: CanonicalPendingResponseConsumer | undefined
   },
   dependencies: ReviewOutcomePassDependencies,
   moduleDependencies: ReviewOutcomePassModuleDependencies = defaultModuleDependencies,
@@ -125,12 +169,36 @@ export async function runReviewOutcomePass(
     }
   }
 
-  const normalizedFollowupPrompt = params.review?.status === "followup"
-    ? params.review.followupPrompt?.replace(/\s+/g, " ").trim().toLowerCase()
+  const structuredFollowupKey = params.review?.status === "followup" && params.review.followupPrompt?.trim()
+    ? buildStructuredFollowupKey({
+        kind: "followup",
+        summary: params.review.summary || "Follow-up required.",
+        reason: params.review.reason,
+        remainingItems: params.review.remainingItems,
+        followupPrompt: params.review.followupPrompt,
+        followupEvidenceRefs: params.review.followupEvidenceRefs ?? [],
+        evidenceRevisionRefs:
+          params.review.contextReceipt?.evidenceRefs
+          ?? params.review.followupEvidenceRefs
+          ?? [],
+        ...(params.review.followupExecutionMode
+          ? { followupExecutionMode: params.review.followupExecutionMode }
+          : {}),
+        ...(params.review.followupRequiredToolNames?.length
+          ? { followupRequiredToolNames: params.review.followupRequiredToolNames }
+          : {}),
+        ...(params.review.followupTargetRefs?.length
+          ? { followupTargetRefs: params.review.followupTargetRefs }
+          : {}),
+      }, params.review.contextReceipt?.evidenceRefs)
     : undefined
 
   const completionPass = moduleDependencies.runCompletionPass({
+    goalId: params.runId,
     review: params.review,
+    ...(params.reviewFailureReasonCode
+      ? { reviewFailureReasonCode: params.reviewFailureReasonCode }
+      : {}),
     executionSemantics: params.executionSemantics,
     preview: params.preview,
     deliveryOutcome: params.deliveryOutcome,
@@ -150,17 +218,97 @@ export async function runReviewOutcomePass(
     followupAlreadySeen: params.followupPromptSeen,
   })
 
+  let canonicalFinalOutcome: CanonicalFinalOutcome | undefined
+  let terminalReport: CanonicalResultReportFacts | undefined
+  if (params.recordCanonicalCompletionOutcome) {
+    const expectedLlmDiagnosisContext = buildCompletionReviewContextReceipt({
+      originalRequest: params.originalRequest,
+      latestAssistantMessage: params.preview,
+      successfulTools: params.successfulTools,
+      ...(params.operationalEvidence
+        ? { operationalEvidence: params.operationalEvidence }
+        : {}),
+      completionConditions: params.completionConditions,
+    })
+    const requiresLlmResultDiagnosis =
+      params.review !== null && expectedLlmDiagnosisContext.evidenceRefs.length > 0
+    const built = buildCanonicalCompletionOutcomeDescriptor({
+      runId: params.runId,
+      review: params.review,
+      requiresLlmResultDiagnosis,
+      ...(requiresLlmResultDiagnosis
+        ? {
+            expectedLlmDiagnosisContext,
+            expectedLlmDiagnosisConditions: buildCompletionReviewExpectedConditions(
+              params.completionConditions,
+            ),
+          }
+        : {}),
+      state: completionPass.state,
+      application: completionPass.application,
+      preview: params.preview,
+    })
+    if (!built.ok) {
+      throw new CanonicalExecutionFailure({
+        phase: "review",
+        reasonCode: built.reasonCode,
+        retryable: false,
+      })
+    }
+    if (built.descriptor) {
+      const recorded = await params.recordCanonicalCompletionOutcome(built.descriptor)
+      if (!recorded.ok) {
+        throw new CanonicalExecutionFailure({
+          phase: "review",
+          reasonCode: recorded.reasonCode,
+          retryable: false,
+        })
+      }
+      if (built.descriptor.event === "PATHS_EXHAUSTED") {
+        canonicalFinalOutcome = "exhausted"
+        terminalReport = buildCanonicalCompletionExhaustedReport({
+          runId: params.runId,
+          primaryLanguage:
+            params.responseContext?.identityContext?.promptLocale === "ko" ? "ko" : "en",
+          evidenceRefs: built.descriptor.receipt.evidenceRefs,
+        })
+      } else if (built.descriptor.event === "RESULT_BLOCKED") {
+        canonicalFinalOutcome = "blocked"
+        terminalReport = buildCanonicalCompletionBlockedReport({
+          runId: params.runId,
+          primaryLanguage:
+            params.responseContext?.identityContext?.promptLocale === "ko" ? "ko" : "en",
+          evidenceRefs: built.descriptor.receipt.evidenceRefs,
+        })
+      }
+    }
+  }
+
   const completionApplicationPass: CompletionApplicationPassResult = await moduleDependencies.applyCompletionApplicationPass({
     runId: params.runId,
     sessionId: params.sessionId,
     source: params.source,
     onChunk: params.onChunk,
     preview: params.preview,
+    ...(params.previewSource ? { previewSource: params.previewSource } : {}),
+    ...(params.deferredPreviewDelivery ? { deferredPreviewDelivery: true } : {}),
     state: completionPass.state,
     application: completionPass.application,
     maxTurns: completionPass.maxTurns,
     recoveryBudgetUsage: params.recoveryBudgetUsage,
+    ...(params.responseContext ? { responseContext: params.responseContext } : {}),
     finalizationDependencies: params.finalizationDependencies,
+    ...(params.recordCanonicalDelivery
+      ? { recordCanonicalDelivery: params.recordCanonicalDelivery }
+      : {}),
+    ...(params.stageCanonicalPendingResponse
+      ? { stageCanonicalPendingResponse: params.stageCanonicalPendingResponse }
+      : {}),
+    ...(params.consumeCanonicalPendingResponse
+      ? { consumeCanonicalPendingResponse: params.consumeCanonicalPendingResponse }
+      : {}),
+    ...(canonicalFinalOutcome ? { canonicalFinalOutcome } : {}),
+    ...(terminalReport ? { terminalReport } : {}),
   }, dependencies)
 
   if (completionApplicationPass.kind === "retry") {
@@ -168,13 +316,19 @@ export async function runReviewOutcomePass(
       kind: "retry",
       nextMessage: completionApplicationPass.nextMessage,
       clearWorkerRuntime: completionApplicationPass.clearWorkerRuntime,
-      ...(completionApplicationPass.normalizedFollowupPrompt
-        ? { normalizedFollowupPrompt: completionApplicationPass.normalizedFollowupPrompt }
-        : normalizedFollowupPrompt
-          ? { normalizedFollowupPrompt }
+      ...(completionApplicationPass.structuredFollowupKey
+        ? { structuredFollowupKey: completionApplicationPass.structuredFollowupKey }
+        : structuredFollowupKey
+          ? { structuredFollowupKey }
           : {}),
       ...(completionApplicationPass.markTruncatedOutputRecoveryAttempted
         ? { markTruncatedOutputRecoveryAttempted: completionApplicationPass.markTruncatedOutputRecoveryAttempted }
+        : {}),
+      ...(completionApplicationPass.requiredToolNames !== undefined
+        ? { requiredToolNames: completionApplicationPass.requiredToolNames }
+        : {}),
+      ...(completionApplicationPass.nextAttemptToolPolicy
+        ? { nextAttemptToolPolicy: completionApplicationPass.nextAttemptToolPolicy }
         : {}),
     }
   }

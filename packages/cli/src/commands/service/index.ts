@@ -17,12 +17,12 @@ export function which(bin: string): string {
 /** Find Knowbee CLI entry point absolute path */
 export function knowbeeBinPath(): string {
   // When running from dist/, __dirname is packages/cli/dist/commands/service/
-  // The bin entry is packages/cli/dist/index.js
+  // The lightweight bin entry is packages/cli/dist/launcher.js.
   const url = new URL(import.meta.url)
   const thisFile = url.pathname
-  // Walk up to dist/, then index.js
+  // Walk up to dist/, then launcher.js.
   const distDir = resolve(thisFile, "../../../")
-  const candidate = resolve(distDir, "index.js")
+  const candidate = resolve(distDir, "launcher.js")
   if (existsSync(candidate)) return candidate
   // Fallback: try to find via npm/pnpm global
   try { return which("knowbee") } catch { /* ignore */ }

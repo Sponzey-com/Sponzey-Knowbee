@@ -13,6 +13,45 @@ import type {
   UpdateSubAgentSkillMcpBindingsCommand,
 } from "../../lib/advanced-sub-agent-settings"
 
+function permissionStateLabel(state: string): string {
+  if (state === "allowed") return "허용"
+  if (state === "denied") return "거부"
+  if (state === "approval_required") return "승인 필요"
+  if (state === "os_permission_required") return "OS 승인 필요"
+  if (state === "unavailable") return "사용 불가"
+  return "확인 필요"
+}
+
+function riskLevelLabel(risk: string): string {
+  if (risk === "safe") return "안전"
+  if (risk === "moderate") return "중간 위험"
+  if (risk === "external") return "외부 접근"
+  if (risk === "sensitive") return "민감"
+  if (risk === "dangerous") return "위험"
+  return "확인 필요"
+}
+
+function skillMcpKindLabel(kind: string): string {
+  if (kind === "skill") return "작업 능력"
+  if (kind === "mcp_server") return "외부 기능 연결"
+  if (kind === "mcp_tool") return "외부 도구"
+  return "연결 항목"
+}
+
+function skillMcpFilterLabel(filter: "all" | "skill" | "mcp"): string {
+  if (filter === "skill") return "작업 능력"
+  if (filter === "mcp") return "외부 기능"
+  return "전체"
+}
+
+function monitoringLogLevelLabel(
+  logLevel: SubAgentAdvancedDetailView["monitoring"]["logLevel"],
+): string {
+  if (logLevel === "debug") return "현장 확인 로그"
+  if (logLevel === "dev") return "개발 로그"
+  return "제품 최소 로그"
+}
+
 export function SubAgentAdvancedSettingsPanel({
   view,
   saving,
@@ -29,7 +68,7 @@ export function SubAgentAdvancedSettingsPanel({
 }: {
   view: SubAgentAdvancedSettingsView
   saving: boolean
-  onSelectAgent: (agentId: string) => void
+  onSelectAgent: (agentId: string, trigger?: HTMLElement) => void
   onUpdateIdentity?: (
     command: UpdateSubAgentIdentityCommand,
   ) => SubAgentAdvancedMutationResult | undefined
@@ -56,6 +95,12 @@ export function SubAgentAdvancedSettingsPanel({
     <section
       className="min-w-0 space-y-4 [overflow-wrap:anywhere]"
       data-testid="sub-agent-advanced-settings-panel"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || saving) return
+        event.preventDefault()
+        event.stopPropagation()
+        onCancel()
+      }}
     >
       <SubAgentStatusBar
         view={view}
@@ -107,11 +152,11 @@ function SubAgentStatusBar({
           tone={view.statusBar.hasDraftChanges ? "warning" : "success"}
         />
         <StatusChip label={view.statusBar.validationLabel} tone={view.statusBar.validationTone} />
-        <StatusChip label={`saved ${view.statusBar.savedVersionLabel}`} tone="info" />
-        <StatusChip label={`published ${view.statusBar.publishedVersionLabel}`} tone="info" />
-        <StatusChip label={`runtime ${view.statusBar.runtimeActiveVersionLabel}`} tone="info" />
+        <StatusChip label={`저장 ${view.statusBar.savedVersionLabel}`} tone="info" />
+        <StatusChip label={`활성화 ${view.statusBar.publishedVersionLabel}`} tone="info" />
+        <StatusChip label={`실행 반영 ${view.statusBar.runtimeActiveVersionLabel}`} tone="info" />
         <StatusChip
-          label={`warning ${view.statusBar.warningCount}`}
+          label={`확인 ${view.statusBar.warningCount}`}
           tone={view.statusBar.warningCount > 0 ? "warning" : "success"}
         />
       </div>
@@ -174,18 +219,18 @@ function GlobalPolicySummary({ view }: { view: SubAgentAdvancedSettingsView }) {
             {policy.affectedAgentCount} agents
           </span>
           <span className="rounded-full bg-stone-100 px-2.5 py-1">
-            {policy.inheritedAgentCount} inherited
+            {policy.inheritedAgentCount} 상속
           </span>
           <span className="rounded-full bg-stone-100 px-2.5 py-1">
-            {policy.overriddenAgentCount} override
+            {policy.overriddenAgentCount} 개별 설정
           </span>
         </div>
       </div>
       <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
         <PolicyMetric label="기본 모델" value={policy.defaultModelLabel} />
-        <PolicyMetric label="Memory" value={policy.defaultMemoryLabel} />
+        <PolicyMetric label="메모리" value={policy.defaultMemoryLabel} />
         <PolicyMetric label="권한" value={policy.defaultPermissionLabel} />
-        <PolicyMetric label="Skill/MCP" value={policy.commonSkillMcpLabel} />
+        <PolicyMetric label="작업 능력/외부 기능" value={policy.commonSkillMcpLabel} />
       </div>
       <p className="mt-3 text-xs leading-5 text-stone-500">{policy.catalogSummary}</p>
     </section>
@@ -197,7 +242,7 @@ function SubAgentList({
   onSelectAgent,
 }: {
   view: SubAgentAdvancedSettingsView
-  onSelectAgent: (agentId: string) => void
+  onSelectAgent: (agentId: string, trigger?: HTMLElement) => void
 }) {
   return (
     <section
@@ -244,26 +289,20 @@ function SubAgentRow({
   onSelectAgent,
 }: {
   row: SubAgentAdvancedListRowView
-  onSelectAgent: (agentId: string) => void
+  onSelectAgent: (agentId: string, trigger?: HTMLElement) => void
 }) {
   return (
     <button
       type="button"
-      onClick={() => onSelectAgent(row.agentId)}
+      onClick={(event) => onSelectAgent(row.agentId, event.currentTarget)}
       className={`w-full rounded-lg border px-3 py-2 text-left ${row.selected ? "border-stone-900 bg-stone-50" : "border-stone-200 bg-white"}`}
       data-testid="sub-agent-advanced-row"
       data-selected={row.selected}
     >
       <div className="flex min-w-0 items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-stone-950" title={row.nickname}>
-            {row.nickname}
-          </div>
-          <div
-            className="mt-0.5 truncate text-xs font-medium text-stone-600"
-            title={row.displayName}
-          >
-            {row.displayName}
+          <div className="truncate text-sm font-semibold text-stone-950" title={row.agentName}>
+            {row.agentName}
           </div>
           <div className="mt-1 line-clamp-2 text-xs leading-5 text-stone-500">{row.role}</div>
         </div>
@@ -274,7 +313,7 @@ function SubAgentRow({
             {row.readinessLabel}
           </div>
           <div className="mt-1 text-[10px] font-semibold text-stone-500">
-            warn {row.warningCount}
+            확인 {row.warningCount}
           </div>
         </div>
       </div>
@@ -327,12 +366,11 @@ function SubAgentDetail({
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-xs font-semibold uppercase tracking-[0.14em] text-stone-400">
-                Agent detail
+                서브 에이전트 상세
               </div>
               <h2 className="mt-1 break-words text-xl font-semibold text-stone-950">
-                {detail.displayName}
+                {detail.agentName}
               </h2>
-              <div className="mt-1 text-sm font-semibold text-stone-600">{detail.nickname}</div>
               <p className="mt-2 break-words text-sm leading-6 text-stone-600 [overflow-wrap:anywhere]">
                 {detail.description || detail.role}
               </p>
@@ -413,26 +451,17 @@ function IdentityEditor({
     command: UpdateSubAgentIdentityCommand,
   ) => SubAgentAdvancedMutationResult | undefined
 }) {
-  const [displayName, setDisplayName] = useState(detail.identity.displayName)
-  const [nickname, setNickname] = useState(detail.identity.nickname)
+  const [agentName, setAgentName] = useState(detail.identity.agentName)
   const [role, setRole] = useState(detail.identity.role)
-  const [description, setDescription] = useState(detail.identity.description)
   const [message, setMessage] = useState("")
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    setDisplayName(detail.identity.displayName)
-    setNickname(detail.identity.nickname)
+    setAgentName(detail.identity.agentName)
     setRole(detail.identity.role)
-    setDescription(detail.identity.description)
     setMessage("")
     setFieldErrors({})
-  }, [
-    detail.identity.displayName,
-    detail.identity.nickname,
-    detail.identity.role,
-    detail.identity.description,
-  ])
+  }, [detail.identity.agentName, detail.identity.role])
 
   const disabled = detail.identity.rootReadOnly || !onUpdateIdentity
   const save = () => {
@@ -441,11 +470,10 @@ function IdentityEditor({
       kind: "update_identity",
       source: "advanced",
       agentId: detail.agentId,
-      displayName,
-      nickname,
+      agentName: agentName.trim(),
       role,
-      description,
-      attributionLabel: nickname.trim() || displayName.trim(),
+      description: detail.identity.description,
+      attributionLabel: agentName.trim(),
     })
     if (result) {
       setMessage(result.message)
@@ -466,23 +494,16 @@ function IdentityEditor({
           </p>
         </div>
         <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-stone-600">
-          parent {detail.identity.parentLabel}
+          상위 에이전트 {detail.identity.parentLabel}
         </span>
       </div>
       <div className="mt-3 grid gap-2">
         <LabeledInput
-          label="이름"
-          value={displayName}
-          onChange={setDisplayName}
+          label="에이전트 이름"
+          value={agentName}
+          onChange={setAgentName}
           disabled={disabled}
-          error={fieldErrors.displayName}
-        />
-        <LabeledInput
-          label="별명"
-          value={nickname}
-          onChange={setNickname}
-          disabled={disabled}
-          error={fieldErrors.nickname}
+          error={fieldErrors.agentName}
         />
         <LabeledInput
           label="역할"
@@ -491,21 +512,6 @@ function IdentityEditor({
           disabled={disabled}
           error={fieldErrors.role}
         />
-        <label className="grid gap-1 text-xs font-semibold text-stone-700">
-          설명
-          <textarea
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            disabled={disabled}
-            rows={4}
-            className="min-h-[96px] resize-y rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm font-normal leading-6 text-stone-800 disabled:cursor-not-allowed disabled:opacity-60"
-          />
-          {fieldErrors.description ? (
-            <span className="text-[11px] font-semibold text-red-700">
-              {fieldErrors.description}
-            </span>
-          ) : null}
-        </label>
       </div>
       {detail.identity.warnings.length > 0 ? (
         <div className="mt-2 grid gap-1 text-[11px] font-semibold text-amber-800">
@@ -514,10 +520,6 @@ function IdentityEditor({
           ))}
         </div>
       ) : null}
-      <details className="mt-3 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs text-stone-500">
-        <summary className="cursor-pointer font-semibold text-stone-700">debug</summary>
-        <div className="mt-2 break-all">internal id: {detail.identity.internalDebugId}</div>
-      </details>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <div
           className={`text-xs font-semibold ${message && Object.keys(fieldErrors).length > 0 ? "text-red-700" : "text-stone-500"}`}
@@ -624,7 +626,7 @@ function ModelPolicyEditor({
             disabled={disabled}
             className={`flex-1 rounded-md px-2 py-1.5 ${mode === "inherit" ? "bg-stone-900 text-white" : "text-stone-600"}`}
           >
-            global 상속
+            공통 상속
           </button>
           <button
             type="button"
@@ -632,7 +634,7 @@ function ModelPolicyEditor({
             disabled={disabled}
             className={`flex-1 rounded-md px-2 py-1.5 ${mode === "override" ? "bg-stone-900 text-white" : "text-stone-600"}`}
           >
-            override
+            개별 설정
           </button>
         </div>
         <div className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs leading-5 text-stone-600">
@@ -644,7 +646,7 @@ function ModelPolicyEditor({
         {mode === "override" ? (
           <>
             <label className="grid gap-1 text-xs font-semibold text-stone-700">
-              Provider
+              제공자
               <select
                 value={providerId}
                 onChange={(event) => {
@@ -659,11 +661,11 @@ function ModelPolicyEditor({
                 disabled={disabled}
                 className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800"
               >
-                <option value="">provider 선택</option>
+                <option value="">제공자 선택</option>
                 {providerOptions.map((provider) => (
                   <option key={provider.id} value={provider.id}>
                     {provider.label}
-                    {provider.available ? "" : " (unavailable)"}
+                    {provider.available ? "" : " (사용 불가)"}
                   </option>
                 ))}
               </select>
@@ -674,18 +676,18 @@ function ModelPolicyEditor({
               ) : null}
             </label>
             <label className="grid gap-1 text-xs font-semibold text-stone-700">
-              Model
+              모델
               <select
                 value={modelId}
                 onChange={(event) => setModelId(event.target.value)}
                 disabled={disabled}
                 className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800"
               >
-                <option value="">model 선택</option>
+                <option value="">모델 선택</option>
                 {modelOptions.map((option) => (
                   <option key={`${option.providerId}:${option.modelId}`} value={option.modelId}>
                     {option.modelId}
-                    {option.available ? "" : " (unavailable)"}
+                    {option.available ? "" : " (사용 불가)"}
                   </option>
                 ))}
               </select>
@@ -696,21 +698,21 @@ function ModelPolicyEditor({
               ) : null}
             </label>
             <label className="grid gap-1 text-xs font-semibold text-stone-700">
-              Fallback model
+              대체 모델
               <select
                 value={fallbackModelId}
                 onChange={(event) => setFallbackModelId(event.target.value)}
                 disabled={disabled}
                 className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800"
               >
-                <option value="">fallback 없음</option>
+                <option value="">대체 모델 없음</option>
                 {modelOptions.map((option) => (
                   <option
                     key={`fallback:${option.providerId}:${option.modelId}`}
                     value={option.modelId}
                   >
                     {option.modelId}
-                    {option.available ? "" : " (unavailable)"}
+                    {option.available ? "" : " (사용 불가)"}
                   </option>
                 ))}
               </select>
@@ -735,7 +737,7 @@ function ModelPolicyEditor({
           className={`text-xs font-semibold ${message && Object.keys(fieldErrors).length > 0 ? "text-red-700" : "text-stone-500"}`}
         >
           {message ||
-            (detail.modelPolicy.runtimeReflectionRequired ? "저장 후 runtime 반영 필요" : "")}
+            (detail.modelPolicy.runtimeReflectionRequired ? "저장 후 실행 반영 필요" : "")}
         </div>
         <button
           type="button"
@@ -859,20 +861,20 @@ function SkillMcpBindingEditor({
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-stone-950">Skill/MCP binding</h3>
+          <h3 className="text-sm font-semibold text-stone-950">작업 능력/외부 기능 연결</h3>
           <p className="mt-1 text-xs leading-5 text-stone-600">
             {detail.skillMcp.commonCatalogLabel}
           </p>
         </div>
         <div className="flex flex-wrap gap-1 text-[10px] font-semibold text-stone-600">
           <span className="rounded-full bg-white px-2 py-0.5">
-            enabled {enabledSkillIds.length + enabledMcpServerIds.length}
+            활성 {enabledSkillIds.length + enabledMcpServerIds.length}
           </span>
           <span className="rounded-full bg-white px-2 py-0.5">
-            unavailable {detail.skillMcp.unavailableCount}
+            사용 불가 {detail.skillMcp.unavailableCount}
           </span>
           <span className="rounded-full bg-white px-2 py-0.5">
-            connection {detail.skillMcp.connectionIssueCount}
+            연결 확인 {detail.skillMcp.connectionIssueCount}
           </span>
         </div>
       </div>
@@ -881,7 +883,7 @@ function SkillMcpBindingEditor({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           className="min-w-0 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800"
-          placeholder="Skill, MCP, tool 검색"
+          placeholder="작업 능력, 외부 기능, 도구 검색"
         />
         <div className="flex rounded-lg border border-stone-200 bg-white p-1 text-xs font-semibold">
           {(["all", "skill", "mcp"] as const).map((id) => (
@@ -891,7 +893,7 @@ function SkillMcpBindingEditor({
               onClick={() => setFilter(id)}
               className={`rounded-md px-2 py-1.5 ${filter === id ? "bg-stone-900 text-white" : "text-stone-600"}`}
             >
-              {id}
+              {skillMcpFilterLabel(id)}
             </button>
           ))}
         </div>
@@ -923,16 +925,16 @@ function SkillMcpBindingEditor({
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="break-words font-semibold text-stone-950">{item.label}</span>
                       <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-semibold text-stone-600">
-                        {item.kind}
+                        {skillMcpKindLabel(item.kind)}
                       </span>
                       {item.recommendedForAgent ? (
                         <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-800">
-                          recommended draft
+                          추천 초안
                         </span>
                       ) : null}
                       {item.approvalRequired ? (
                         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                          approval
+                          승인 필요
                         </span>
                       ) : null}
                     </div>
@@ -953,7 +955,7 @@ function SkillMcpBindingEditor({
                     {item.sourceLabel}
                   </span>
                   <span className="rounded-full bg-stone-100 px-2 py-0.5 text-stone-600">
-                    {item.riskLabel}
+                    {riskLevelLabel(item.riskLabel)}
                   </span>
                   <span
                     className={`rounded-full px-2 py-0.5 ${connectionToneClass(item.connectionState)}`}
@@ -969,7 +971,7 @@ function SkillMcpBindingEditor({
           })}
           {visibleItems.length === 0 ? (
             <div className="rounded-lg border border-dashed border-stone-200 bg-white px-3 py-5 text-center text-sm text-stone-500">
-              표시할 Skill/MCP 항목이 없습니다.
+              표시할 작업 능력/외부 기능 항목이 없습니다.
             </div>
           ) : null}
         </div>
@@ -988,7 +990,7 @@ function SkillMcpBindingEditor({
           {message ||
             fieldErrors.enabledSkillIds ||
             fieldErrors.enabledMcpServerIds ||
-            "공통 catalog와 agent별 binding은 별도로 저장됩니다."}
+            "공통 목록과 서브 에이전트별 연결은 별도로 저장됩니다."}
         </div>
         <button
           type="button"
@@ -996,7 +998,7 @@ function SkillMcpBindingEditor({
           disabled={disabled}
           className="rounded-lg bg-stone-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Skill/MCP 저장
+          작업 능력/외부 기능 저장
         </button>
       </div>
     </section>
@@ -1062,7 +1064,7 @@ function MemoryPolicyEditor({
       </div>
       <div className="mt-3 grid gap-2">
         <div className="grid gap-1 text-xs font-semibold text-stone-700">
-          compact threshold
+          기억 압축 기준
           <input
             type="number"
             min={1}
@@ -1078,21 +1080,21 @@ function MemoryPolicyEditor({
           ) : null}
         </div>
         <label className="grid gap-1 text-xs font-semibold text-stone-700">
-          capsule mode
+          기억 압축 방식
           <select
             value={capsuleMode}
             onChange={(event) => setCapsuleMode(event.target.value as typeof capsuleMode)}
             disabled={disabled}
             className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm font-normal text-stone-800"
           >
-            <option value="session_compaction">session compaction</option>
-            <option value="rolling_summary">rolling summary</option>
+            <option value="session_compaction">대화 기록 압축</option>
+            <option value="rolling_summary">누적 요약</option>
           </select>
         </label>
       </div>
       <div className="mt-3 grid gap-1 text-[11px] font-semibold text-stone-600">
-        <span>원문 보존 창 {detail.memory.rawWindowSize}</span>
-        <span>last compact {detail.memory.lastCompactedLabel}</span>
+        <span>최근 대화 유지 범위 {detail.memory.rawWindowSize}</span>
+        <span>최근 압축 {detail.memory.lastCompactedLabel}</span>
         {detail.memory.exchangePolicyItems.map((item) => (
           <span key={item}>{item}</span>
         ))}
@@ -1108,7 +1110,7 @@ function MemoryPolicyEditor({
         <div
           className={`text-xs font-semibold ${fieldErrors.memory ? "text-red-700" : "text-stone-500"}`}
         >
-          {message || fieldErrors.memory || "capsule 원문 내용은 기본 화면에 표시하지 않습니다."}
+          {message || fieldErrors.memory || "장기 기억 상세 내용은 기본 화면에 표시하지 않습니다."}
         </div>
         <button
           type="button"
@@ -1188,7 +1190,7 @@ function PermissionPolicyEditor({
           <p className="mt-1 text-xs leading-5 text-stone-600">{detail.permission.summary}</p>
         </div>
         <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-stone-600">
-          {detail.permission.riskCeiling}
+          {riskLevelLabel(detail.permission.riskCeiling)}
         </span>
       </div>
       <div className="mt-3 max-h-[280px] overflow-y-auto pr-1">
@@ -1215,10 +1217,10 @@ function PermissionPolicyEditor({
               </div>
               <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-semibold">
                 <span className="rounded-full bg-stone-100 px-2 py-0.5 text-stone-600">
-                  {allowedSet.has(item.id) ? "allowed" : item.state}
+                  {permissionStateLabel(allowedSet.has(item.id) ? "allowed" : item.state)}
                 </span>
                 <span className="rounded-full bg-stone-100 px-2 py-0.5 text-stone-600">
-                  {item.riskLabel}
+                  {riskLevelLabel(item.riskLabel)}
                 </span>
                 {item.osSensitive ? (
                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-800">
@@ -1246,7 +1248,7 @@ function PermissionPolicyEditor({
         >
           {message ||
             fieldErrors.allowedCapabilityIds ||
-            "product/debug/dev 로그 경계에 맞춰 상태만 표시합니다."}
+            "로그 단계별 공개 범위에 맞춰 상태만 표시합니다."}
         </div>
         <button
           type="button"
@@ -1334,12 +1336,12 @@ function DelegationPolicyEditor({
           <p className="mt-1 text-xs leading-5 text-stone-600">{detail.delegation.summary}</p>
         </div>
         <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-stone-600">
-          direct child only
+          직속 서브 에이전트만 위임
         </span>
       </div>
       <div className="mt-3 grid gap-2 text-xs font-semibold text-stone-700">
         <label className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 bg-white px-3 py-2">
-          can delegate
+          하위 위임 허용
           <input
             type="checkbox"
             checked={canDelegate}
@@ -1376,11 +1378,9 @@ function DelegationPolicyEditor({
               <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="break-words text-sm font-semibold text-stone-950">
-                    {child.nickname}
+                    {child.agentName}
                   </div>
-                  <div className="mt-1 text-xs leading-5 text-stone-600">
-                    {child.displayName} · {child.role}
-                  </div>
+                  <div className="mt-1 text-xs leading-5 text-stone-600">{child.role}</div>
                   <div className="mt-1 text-[11px] font-semibold text-stone-500">
                     {child.readinessLabel}
                   </div>
@@ -1397,7 +1397,7 @@ function DelegationPolicyEditor({
           ))}
           {detail.delegation.directChildren.length === 0 ? (
             <div className="rounded-lg border border-dashed border-stone-200 bg-white px-3 py-5 text-center text-sm text-stone-500">
-              direct child가 없습니다.
+              직속 서브 에이전트가 없습니다.
             </div>
           ) : null}
         </div>
@@ -1470,7 +1470,7 @@ function RuntimeMonitoringPanel({ detail }: { detail: SubAgentAdvancedDetailView
         </div>
         <div className="flex flex-wrap gap-1.5 text-[10px] font-semibold">
           <span className="rounded-full bg-white px-2 py-0.5 text-stone-700">
-            log {monitoring.logLevel}
+            {monitoringLogLevelLabel(monitoring.logLevel)}
           </span>
           <span
             className={`rounded-full px-2 py-0.5 ${monitoring.stale ? "bg-amber-100 text-amber-800" : "bg-white text-stone-700"}`}
@@ -1478,7 +1478,7 @@ function RuntimeMonitoringPanel({ detail }: { detail: SubAgentAdvancedDetailView
             {monitoring.staleLabel}
           </span>
           <span className="rounded-full bg-white px-2 py-0.5 text-stone-700">
-            runs {monitoring.activeRuns.length}
+            실행 {monitoring.activeRuns.length}
           </span>
         </div>
       </div>
@@ -1505,13 +1505,13 @@ function RuntimeMonitoringPanel({ detail }: { detail: SubAgentAdvancedDetailView
                       </span>
                     </div>
                     <div className="mt-1 text-[11px] leading-5 text-stone-500">
-                      {run.latestEventLabel} · event {run.eventCount}
+                      {run.latestEventLabel} · 기록 {run.eventCount}
                     </div>
                   </div>
                 ))
               ) : (
                 <div className="rounded-lg border border-dashed border-stone-200 bg-stone-50 px-3 py-4 text-center text-xs text-stone-500">
-                  실행 중인 trace가 없습니다.
+                  실행 중인 기록이 없습니다.
                 </div>
               )}
             </div>
@@ -1519,7 +1519,7 @@ function RuntimeMonitoringPanel({ detail }: { detail: SubAgentAdvancedDetailView
 
           <div className="rounded-lg border border-stone-200 bg-white px-3 py-2">
             <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-stone-400">
-              부모-자식 경로
+              상위-하위 경로
             </div>
             <div className="mt-2 grid min-w-0 gap-1.5 text-xs font-semibold text-stone-700">
               {monitoring.treePaths.length > 0 ? (
@@ -1594,7 +1594,7 @@ function RuntimeMonitoringPanel({ detail }: { detail: SubAgentAdvancedDetailView
                 ))
               ) : (
                 <div className="rounded-lg border border-dashed border-stone-200 bg-white px-3 py-6 text-center text-sm text-stone-500">
-                  아직 trace event가 없습니다.
+                  아직 실행 기록이 없습니다.
                 </div>
               )}
             </div>
@@ -1629,7 +1629,6 @@ function RuntimeTraceItem({
           <span className="rounded-full bg-stone-100 px-2 py-0.5 text-stone-700">
             {item.kindLabel}
           </span>
-          <span className="rounded-full bg-stone-100 px-2 py-0.5 text-stone-700">{item.kind}</span>
           <span className={`rounded-full px-2 py-0.5 ${monitoringStatusToneClass(item.status)}`}>
             {item.statusLabel}
           </span>
@@ -1641,7 +1640,7 @@ function RuntimeTraceItem({
       <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-semibold text-stone-600">
         {item.reviewStatus ? (
           <span className="rounded-full bg-sky-100 px-2 py-0.5 text-sky-800">
-            {item.reviewStatus}
+            {item.reviewStatusLabel}
           </span>
         ) : null}
         {item.quality ? (
@@ -1682,7 +1681,7 @@ function DetailSection({ section }: { section: SubAgentAdvancedDetailSectionView
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">{section.title}</h3>
         <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold">
-          {section.inheritanceState}
+          {inheritanceStateLabel(section.inheritanceState)}
         </span>
       </div>
       <p className="mt-2 text-xs leading-5 opacity-80">{section.summary}</p>
@@ -1701,6 +1700,15 @@ function DetailSection({ section }: { section: SubAgentAdvancedDetailSectionView
       ) : null}
     </section>
   )
+}
+
+function inheritanceStateLabel(
+  state: SubAgentAdvancedDetailSectionView["inheritanceState"],
+): string {
+  if (state === "global") return "공통"
+  if (state === "inherited") return "상속"
+  if (state === "overridden") return "개별 설정"
+  return "서브 에이전트별"
 }
 
 function PolicyMetric({ label, value }: { label: string; value: string }) {

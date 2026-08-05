@@ -15,6 +15,7 @@ function createExecutionState(): ExecutionCycleState {
     sawRealFilesystemMutation: false,
     filesystemMutationRecoveryAttempted: false,
     truncatedOutputRecoveryAttempted: false,
+    successfulTools: [],
   }
 }
 

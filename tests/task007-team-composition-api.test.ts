@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerAgentRoutes } from "../packages/core/src/api/routes/agent.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { closeDb, insertRunSubSession } from "../packages/core/src/db/index.js"
 import {
   CONTRACT_SCHEMA_VERSION,
@@ -17,6 +17,11 @@ import {
   type TeamConfig,
   type TeamMembership,
 } from "../packages/core/src/index.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: {
@@ -36,17 +41,15 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 type FastifyTestApp = ReturnType<typeof Fastify>
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task007-team-composition-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task007-team-composition-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function owner(
@@ -100,8 +103,7 @@ function subAgentConfig(
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     agentType: "sub_agent",
     agentId,
-    displayName: nickname,
-    nickname,
+    agentName: nickname,
     status: "enabled",
     role: `${nickname} worker`,
     personality: "Precise and concise",
@@ -163,7 +165,6 @@ function teamConfig(overrides: Partial<TeamConfig> = {}): TeamConfig {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     teamId,
     displayName: "Composition Team",
-    nickname: "Composition Team",
     status: "enabled",
     purpose: "Validate executable team composition.",
     ownerAgentId: "agent:knowbee",
@@ -202,8 +203,8 @@ function subSession(agentId: string): SubSessionContract {
     parentSessionId: "session:task007",
     parentRunId: "run:task007",
     agentId,
-    agentDisplayName: agentId,
-    agentNickname: agentId.replace("agent:", ""),
+    agentName: agentId.replace("agent:", ""),
+    agentNameSnapshot: agentId.replace("agent:", ""),
     commandRequestId: "command:task007",
     status: "running",
     promptBundleId: "prompt:task007",
@@ -275,11 +276,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -289,6 +285,7 @@ afterEach(() => {
 describe("task007 team composition API", () => {
   it("limits active coverage to owner direct children and separates reference and unresolved members", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -339,6 +336,7 @@ describe("task007 team composition API", () => {
 
   it("marks a team invalid when the lead is not an active owner-direct-child member", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -376,6 +374,7 @@ describe("task007 team composition API", () => {
 
   it("excludes overloaded members from role and capability coverage with recalculation hooks", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -432,6 +431,7 @@ describe("task007 team composition API", () => {
 
   it("marks owner-unavailable teams invalid before execution", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -471,6 +471,7 @@ describe("task007 team composition API", () => {
 
   it("allows narrow fallback candidates and rejects broader fallback permissions", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {
@@ -560,6 +561,7 @@ describe("task007 team composition API", () => {
 
   it("validates import/export team payloads with the same composition rules before save", async () => {
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerAgentRoutes(app)
     await app.ready()
     try {

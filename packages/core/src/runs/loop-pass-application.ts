@@ -1,11 +1,12 @@
 import type { AIProvider } from "../ai/index.js"
 import type { DeliveryOutcome } from "./delivery.js"
-import type { LoopDirective } from "./loop-directive.js"
+import type { LoopDirective, UserFacingTextSource } from "./loop-directive.js"
 import type { LoopEntryPassResult } from "./loop-entry-pass.js"
 import type { PostExecutionPassResult } from "./post-execution-pass.js"
 import type { RecoveryEntryPassResult } from "./recovery-entry-pass.js"
 import type { ReviewOutcomePassResult } from "./review-outcome-pass.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
+import type { NextAttemptToolPolicy } from "./next-attempt-tool-policy.js"
 
 export interface LoopEntryApplicationState {
   pendingLoopDirective: LoopDirective | null
@@ -15,6 +16,7 @@ export interface LoopEntryApplicationState {
 export type LoopEntryApplicationResult =
   | { kind: "break" }
   | { kind: "retry"; nextMessage: string; state: LoopEntryApplicationState }
+  | { kind: "execute"; nextMessage: string; requiredToolNames: string[]; state: LoopEntryApplicationState }
   | { kind: "continue"; state: LoopEntryApplicationState }
 
 export function applyLoopEntryPassResult(result: LoopEntryPassResult): LoopEntryApplicationResult {
@@ -29,6 +31,18 @@ export function applyLoopEntryPassResult(result: LoopEntryPassResult): LoopEntry
       state: {
         pendingLoopDirective: null,
         intakeProcessed: false,
+      },
+    }
+  }
+
+  if (result.kind === "execute") {
+    return {
+      kind: "execute",
+      nextMessage: result.nextMessage,
+      requiredToolNames: result.requiredToolNames,
+      state: {
+        pendingLoopDirective: null,
+        intakeProcessed: true,
       },
     }
   }
@@ -106,6 +120,8 @@ export type PostExecutionApplicationResult =
       kind: "continue"
       state: PostExecutionApplicationState
       preview: string
+      previewSource?: UserFacingTextSource
+      deferredPreviewDelivery?: boolean
       deliveryOutcome: DeliveryOutcome
     }
 
@@ -152,12 +168,16 @@ export function applyPostExecutionPassResult(params: {
       activeWorkerRuntime: params.activeWorkerRuntime,
     },
     preview: params.result.preview,
+    ...(params.result.previewSource ? { previewSource: params.result.previewSource } : {}),
+    ...(params.result.deferredPreviewDelivery ? { deferredPreviewDelivery: true } : {}),
     deliveryOutcome: params.result.deliveryOutcome,
   }
 }
 
 export interface ReviewCycleApplicationState {
   currentMessage: string
+  requiredToolNames?: string[]
+  nextAttemptToolPolicy?: NextAttemptToolPolicy
   truncatedOutputRecoveryAttempted: boolean
   activeWorkerRuntime: WorkerRuntimeTarget | undefined
   currentProvider: AIProvider | undefined
@@ -179,14 +199,18 @@ export function applyReviewCyclePassResult(params: {
     return { kind: "break" }
   }
 
-  if (params.result.normalizedFollowupPrompt) {
-    params.seenFollowupPrompts.add(params.result.normalizedFollowupPrompt)
+  if (params.result.structuredFollowupKey) {
+    params.seenFollowupPrompts.add(params.result.structuredFollowupKey)
   }
 
   return {
     kind: "retry",
     state: {
       currentMessage: params.result.nextMessage,
+      requiredToolNames: params.result.requiredToolNames ?? [],
+      ...(params.result.nextAttemptToolPolicy
+        ? { nextAttemptToolPolicy: params.result.nextAttemptToolPolicy }
+        : {}),
       truncatedOutputRecoveryAttempted: params.truncatedOutputRecoveryAttempted
         || Boolean(params.result.markTruncatedOutputRecoveryAttempted),
       activeWorkerRuntime: params.result.clearWorkerRuntime ? undefined : params.activeWorkerRuntime,

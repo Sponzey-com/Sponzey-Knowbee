@@ -9,8 +9,7 @@ import {
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { closeDb, getDb } from "../packages/core/src/db/index.ts"
+import { closeDb, getDb } from "../packages/core/src/db/index.js"
 import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
 import { buildReleaseManifest, buildReleasePipelinePlan } from "../packages/core/src/release/package.ts"
 import {
@@ -30,10 +29,11 @@ import {
 } from "../packages/core/src/runtime/rollout-safety.ts"
 import { buildStartPlan, defaultStartPlanDependencies } from "../packages/core/src/runs/start-plan.ts"
 import { resolveTopologyRootRunRouting } from "../packages/core/src/topology-runtime/harness.ts"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 function makeTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -63,11 +63,9 @@ function createReleaseFixture(): string {
 
 function useTempState(): void {
   closeDb()
-  const stateDir = makeTempDir("knowbee-task025-state-")
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
-  getDb()
+  const rootDir = makeTempDir("knowbee-task025-state-")
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function topologyFeatureFlags(
@@ -90,11 +88,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -138,6 +131,7 @@ describe("task025 Enterprise Topology release gate", () => {
       featureFlag: offFlag,
     })
     const plan = await buildStartPlan({
+      config: runtimeFixture.config,
       message: "topology:customer-success 고객 요청 업무 처리",
       sessionId: "session:task025-off",
       runId: "run:task025-off",
@@ -289,6 +283,8 @@ describe("task025 Enterprise Topology release gate", () => {
       gitCommit: "task025",
       targetPlatforms: [],
       now: new Date("2026-04-30T00:00:00.000Z"),
+      config: runtimeFixture.config,
+      runtimePaths: runtimeFixture.paths,
     })
     const pipeline = buildReleasePipelinePlan({ targetPlatforms: [] })
     const runbook = readFileSync(join(process.cwd(), "docs", "release-runbook.md"), "utf-8")

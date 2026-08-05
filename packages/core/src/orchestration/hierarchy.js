@@ -1,13 +1,18 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { PATHS, getConfig } from "../config/index.js";
-import { validateAgentRelationship, } from "../contracts/sub-agent-orchestration.js";
+import { join } from "node:path";
+import { NODE_PERSISTED_FILE_SYSTEM, writeAtomicTextFile, } from "../config/persisted-file.js";
+import { DEFAULT_KNOWBEE_AGENT_NAME, resolveAgentConfigAgentName, validateAgentRelationship, } from "../contracts/sub-agent-orchestration.js";
 import { getAgentRelationship, listAgentRelationships, upsertAgentRelationship, } from "../db/index.js";
 import { createAgentRegistryService } from "./registry.js";
 const DEFAULT_ROOT_AGENT_ID = "agent:knowbee";
 const DEFAULT_MAX_DEPTH = 5;
 const DEFAULT_MAX_CHILD_COUNT = 10;
 const LAYOUT_SCHEMA_VERSION = 1;
+export function createAgentHierarchyStorage(paths, fileSystem = NODE_PERSISTED_FILE_SYSTEM) {
+    return Object.freeze({
+        layoutFile: join(paths.stateDir, "agent-tree-layout.json"),
+        fileSystem,
+    });
+}
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -80,11 +85,11 @@ function relationshipSort(left, right) {
         left.edgeId.localeCompare(right.edgeId));
 }
 function agentFromConfig(config, source) {
+    const agentName = resolveAgentConfigAgentName(config);
     return {
         agentId: config.agentId,
         agentType: config.agentType,
-        displayName: config.displayName,
-        ...(config.nickname ? { nickname: config.nickname } : {}),
+        agentName,
         status: config.status,
         source,
     };
@@ -99,9 +104,6 @@ function agentMetadata(input) {
         executionCandidate: input.executionCandidate,
         ...(input.blockedReason ? { blockedReason: input.blockedReason } : {}),
     };
-}
-function layoutPath(dependencies) {
-    return dependencies.layoutPath ?? join(PATHS.stateDir, "agent-tree-layout.json");
 }
 function defaultLayoutPreference() {
     return {
@@ -232,21 +234,16 @@ function inactiveReasonFor(agentId, rootAgentId, agents, relationships) {
     }
     return undefined;
 }
-function configFromDependencies(dependencies) {
-    return dependencies.getConfig?.() ?? getConfig();
-}
 function positiveIntegerOrDefault(value, fallback) {
-    if (value === 0)
-        return Number.MAX_SAFE_INTEGER;
     return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
 }
-export function createAgentHierarchyService(dependencies = {}) {
+export function createAgentHierarchyService(dependencies) {
     const now = () => dependencies.now?.() ?? Date.now();
-    const config = () => configFromDependencies(dependencies);
-    const rootAgentId = () => dependencies.rootAgentId ?? config().orchestration.knowbee?.agentId ?? DEFAULT_ROOT_AGENT_ID;
-    const maxDepth = () => positiveIntegerOrDefault(dependencies.maxDepth ?? config().orchestration.maxDelegationTurns, DEFAULT_MAX_DEPTH);
+    const config = dependencies.config;
+    const rootAgentId = () => dependencies.rootAgentId ?? config.orchestration.knowbee?.agentId ?? DEFAULT_ROOT_AGENT_ID;
+    const maxDepth = () => positiveIntegerOrDefault(dependencies.maxDepth ?? config.orchestration.maxDelegationTurns, DEFAULT_MAX_DEPTH);
     const maxChildCount = () => dependencies.maxChildCount ?? DEFAULT_MAX_CHILD_COUNT;
-    const registry = () => createAgentRegistryService(dependencies);
+    const registry = () => createAgentRegistryService({ ...dependencies, config });
     function agentSummaries() {
         const result = new Map();
         const snapshot = registry().snapshot();
@@ -254,7 +251,7 @@ export function createAgentHierarchyService(dependencies = {}) {
             result.set(entry.agentId, agentFromConfig(entry.config, entry.source));
         for (const agent of registry().list())
             result.set(agent.agentId, agentFromConfig(agent, "db"));
-        const root = config().orchestration.knowbee;
+        const root = config.orchestration.knowbee;
         const resolvedRootAgentId = rootAgentId();
         if (root)
             result.set(root.agentId, agentFromConfig(root, "config"));
@@ -262,8 +259,7 @@ export function createAgentHierarchyService(dependencies = {}) {
             result.set(resolvedRootAgentId, {
                 agentId: resolvedRootAgentId,
                 agentType: "knowbee",
-                displayName: "Knowbee",
-                nickname: "Knowbee",
+                agentName: DEFAULT_KNOWBEE_AGENT_NAME,
                 status: "enabled",
                 source: "synthetic",
             });
@@ -292,7 +288,7 @@ export function createAgentHierarchyService(dependencies = {}) {
             diagnostics.push({
                 reasonCode: "knowbee_parent_forbidden",
                 severity: "blocked",
-                message: "Knowbee must remain the parentless root and cannot be a child.",
+                message: "The root main agent must remain parentless and cannot be a child.",
                 edgeId: relationship.edgeId,
                 parentAgentId: relationship.parentAgentId,
                 childAgentId: relationship.childAgentId,
@@ -517,7 +513,7 @@ export function createAgentHierarchyService(dependencies = {}) {
             .map((agentId) => agents.get(agentId) ?? {
             agentId,
             agentType: "sub_agent",
-            displayName: agentId,
+            agentName: "Unnamed sub-agent",
             status: "disabled",
             source: "synthetic",
         })
@@ -534,7 +530,7 @@ export function createAgentHierarchyService(dependencies = {}) {
                 nodeId: nodeIdForAgent(agent.agentId),
                 entityType: agent.agentType,
                 entityId: agent.agentId,
-                label: agent.nickname ?? agent.displayName,
+                label: agent.agentName,
                 status: agent.status,
                 metadata: agentMetadata({
                     agent,
@@ -561,7 +557,7 @@ export function createAgentHierarchyService(dependencies = {}) {
     }
     function readLayout() {
         try {
-            const parsed = JSON.parse(readFileSync(layoutPath(dependencies), "utf-8"));
+            const parsed = JSON.parse(dependencies.storage.fileSystem.readText(dependencies.storage.layoutFile));
             if (!isRecord(parsed))
                 return defaultLayoutPreference();
             const updatedAt = asFiniteNumber(parsed.updatedAt);
@@ -573,9 +569,7 @@ export function createAgentHierarchyService(dependencies = {}) {
     }
     function writeLayout(input) {
         const preference = normalizeLayoutPreference(input, now());
-        const target = layoutPath(dependencies);
-        mkdirSync(dirname(target), { recursive: true });
-        writeFileSync(target, `${JSON.stringify(preference, null, 2)}\n`, "utf-8");
+        writeAtomicTextFile(dependencies.storage.layoutFile, `${JSON.stringify(preference, null, 2)}\n`, dependencies.storage.fileSystem);
         return preference;
     }
     return {

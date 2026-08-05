@@ -1,18 +1,41 @@
 import crypto from "node:crypto"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { PATHS } from "../config/index.js"
 import { insertDiagnosticEvent } from "../db/index.js"
-import { recordArtifactMetadata } from "../artifacts/lifecycle.js"
+import {
+  recordArtifactMetadata,
+  type ArtifactStorageContext,
+} from "../artifacts/lifecycle.js"
+import { redactLogText } from "../logger/index.js"
+import type {
+  SourceEvidence,
+  SourceFreshnessAssessment,
+  SourceFreshnessPolicy,
+  SourceKind,
+  SourceReliability,
+  WebRetrievalMethod,
+  WebRetrievalTransitionAdmission,
+  WebRetrievalTransitionReceipt,
+} from "../contracts/web-retrieval.js"
 import { sanitizeUserFacingError } from "./error-sanitizer.js"
 
-export const WEB_RETRIEVAL_POLICY_VERSION = "2026.04.18-task009"
+export const WEB_RETRIEVAL_POLICY_VERSION = "web-provenance-v2"
+export const SOURCE_FRESHNESS_POLICY_VERSION = "strict-source-age-v1"
+export const STRICT_SOURCE_MAX_AGE_MS = 96 * 60 * 60 * 1_000
+const SOURCE_TIMESTAMP_FUTURE_TOLERANCE_MS = 5 * 60 * 1_000
 
-export type WebRetrievalMethod = "official_api" | "direct_fetch" | "fast_text_search" | "browser_search"
-export type SourceKind = "official" | "first_party" | "search_index" | "third_party" | "browser_evidence" | "unknown"
-export type SourceReliability = "high" | "medium" | "low" | "unknown"
-export type SourceFreshnessPolicy = "normal" | "latest_approximate" | "strict_timestamp"
-export type SourceCompletionStatus = "ready" | "approximate_latest" | "limited_success" | "insufficient_source"
+export type {
+  SourceEvidence,
+  SourceFreshnessAssessment,
+  SourceFreshnessPolicy,
+  SourceFreshnessReasonCode,
+  SourceFreshnessVerdict,
+  SourceKind,
+  SourceReliability,
+  WebRetrievalMethod,
+  WebRetrievalTransitionAdmission,
+  WebRetrievalTransitionReceipt,
+} from "../contracts/web-retrieval.js"
 
 export interface WebRetrievalPolicyInput {
   toolName: string
@@ -31,33 +54,10 @@ export interface WebRetrievalPolicyDecision {
   sourceKind: SourceKind
   reliability: SourceReliability
   fetchTimestamp: string
-  answerDirective: string
-}
-
-export interface SourceEvidence {
-  method: WebRetrievalMethod
-  sourceKind: SourceKind
-  reliability: SourceReliability
-  sourceUrl?: string | null
-  sourceDomain?: string | null
-  sourceLabel?: string | null
-  sourceTimestamp?: string | null
-  fetchTimestamp: string
-  freshnessPolicy?: SourceFreshnessPolicy
-  adapterId?: string | null
-  adapterVersion?: string | null
-  parserVersion?: string | null
-  adapterStatus?: "active" | "degraded" | null
-}
-
-export interface SourceReliabilityGuardResult {
-  status: SourceCompletionStatus
-  userMessage: string
-  mustAvoidGuessing: boolean
-  evidence: SourceEvidence
 }
 
 export interface BrowserSearchEvidenceInput {
+  artifactStorage: ArtifactStorageContext
   query: string
   url?: string | null
   extractedText?: string | null
@@ -90,6 +90,158 @@ const TRACKING_QUERY_KEYS = new Set([
   "utm_term",
 ])
 
+const ENGLISH_MONTH_INDEX: ReadonlyMap<string, number> = new Map([
+  ["jan", 0], ["january", 0], ["feb", 1], ["february", 1],
+  ["mar", 2], ["march", 2], ["apr", 3], ["april", 3], ["may", 4],
+  ["jun", 5], ["june", 5], ["jul", 6], ["july", 6], ["aug", 7],
+  ["august", 7], ["sep", 8], ["september", 8], ["oct", 9], ["october", 9],
+  ["nov", 10], ["november", 10], ["dec", 11], ["december", 11],
+])
+
+function offsetMinutes(sign: string, hourText: string, minuteText: string | undefined): number {
+  const absolute = Number.parseInt(hourText, 10) * 60 + Number.parseInt(minuteText ?? "0", 10)
+  return sign === "-" ? -absolute : absolute
+}
+
+function timestampFromParts(input: {
+  year: number
+  monthIndex: number
+  day: number
+  hour: number
+  minute: number
+  second: number
+  offsetMinutes: number
+}): number {
+  return Date.UTC(
+    input.year,
+    input.monthIndex,
+    input.day,
+    input.hour,
+    input.minute,
+    input.second,
+  ) - input.offsetMinutes * 60_000
+}
+
+export function normalizeSourceTimestamp(
+  sourceTimestamp: string | null | undefined,
+  fetchTimestamp: string,
+): string | null {
+  const source = sourceTimestamp?.trim()
+  const fetchMs = Date.parse(fetchTimestamp)
+  if (!source || !Number.isFinite(fetchMs)) return null
+
+  const english = source.match(
+    /^(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2}),?(?:\s+(\d{4}))?\s+(?:at\s+)?(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?\s*GMT([+-])(\d{1,2})(?::(\d{2}))?$/iu,
+  )
+  if (english) {
+    const monthIndex = ENGLISH_MONTH_INDEX.get((english[1] ?? "").toLowerCase())
+    if (monthIndex === undefined) return null
+    let hour = Number.parseInt(english[4] ?? "", 10)
+    const meridiem = english[7]?.toUpperCase()
+    if (meridiem === "AM" && hour === 12) hour = 0
+    if (meridiem === "PM" && hour < 12) hour += 12
+    const year = english[3]
+      ? Number.parseInt(english[3], 10)
+      : new Date(fetchMs).getUTCFullYear()
+    return new Date(timestampFromParts({
+      year,
+      monthIndex,
+      day: Number.parseInt(english[2] ?? "", 10),
+      hour,
+      minute: Number.parseInt(english[5] ?? "", 10),
+      second: Number.parseInt(english[6] ?? "0", 10),
+      offsetMinutes: offsetMinutes(english[8] ?? "+", english[9] ?? "0", english[10]),
+    })).toISOString()
+  }
+
+  const korean = source.match(
+    /^(?:(\d{4})년\s*)?(\d{1,2})월\s+(\d{1,2})일,?\s*(오전|오후)\s*(\d{1,2})시\s*(\d{1,2})분(?:\s*(\d{1,2})초)?\s*GMT([+-])(\d{1,2})(?::(\d{2}))?$/u,
+  )
+  if (korean) {
+    let hour = Number.parseInt(korean[5] ?? "", 10)
+    if (korean[4] === "오전" && hour === 12) hour = 0
+    if (korean[4] === "오후" && hour < 12) hour += 12
+    const year = korean[1]
+      ? Number.parseInt(korean[1], 10)
+      : new Date(fetchMs).getUTCFullYear()
+    return new Date(timestampFromParts({
+      year,
+      monthIndex: Number.parseInt(korean[2] ?? "", 10) - 1,
+      day: Number.parseInt(korean[3] ?? "", 10),
+      hour,
+      minute: Number.parseInt(korean[6] ?? "", 10),
+      second: Number.parseInt(korean[7] ?? "0", 10),
+      offsetMinutes: offsetMinutes(korean[8] ?? "+", korean[9] ?? "0", korean[10]),
+    })).toISOString()
+  }
+
+  const directMs = Date.parse(source)
+  return Number.isFinite(directMs) ? new Date(directMs).toISOString() : null
+}
+
+export function assessSourceFreshness(input: {
+  sourceTimestamp: string | null | undefined
+  fetchTimestamp: string
+  freshnessPolicy: SourceFreshnessPolicy
+}): SourceFreshnessAssessment {
+  if (input.freshnessPolicy !== "strict_timestamp") {
+    return {
+      policyVersion: SOURCE_FRESHNESS_POLICY_VERSION,
+      freshnessVerdict: "unknown",
+      freshnessReasonCode: "freshness_not_strict",
+      normalizedSourceTimestamp: normalizeSourceTimestamp(
+        input.sourceTimestamp,
+        input.fetchTimestamp,
+      ),
+      sourceAgeMs: null,
+    }
+  }
+  if (!input.sourceTimestamp?.trim()) {
+    return {
+      policyVersion: SOURCE_FRESHNESS_POLICY_VERSION,
+      freshnessVerdict: "unknown",
+      freshnessReasonCode: "strict_source_timestamp_missing",
+      normalizedSourceTimestamp: null,
+      sourceAgeMs: null,
+    }
+  }
+  const normalizedSourceTimestamp = normalizeSourceTimestamp(
+    input.sourceTimestamp,
+    input.fetchTimestamp,
+  )
+  const fetchMs = Date.parse(input.fetchTimestamp)
+  const sourceMs = normalizedSourceTimestamp ? Date.parse(normalizedSourceTimestamp) : Number.NaN
+  if (!normalizedSourceTimestamp || !Number.isFinite(fetchMs) || !Number.isFinite(sourceMs)) {
+    return {
+      policyVersion: SOURCE_FRESHNESS_POLICY_VERSION,
+      freshnessVerdict: "unknown",
+      freshnessReasonCode: "strict_source_timestamp_invalid",
+      normalizedSourceTimestamp: null,
+      sourceAgeMs: null,
+    }
+  }
+  const sourceAgeMs = fetchMs - sourceMs
+  if (sourceAgeMs < -SOURCE_TIMESTAMP_FUTURE_TOLERANCE_MS) {
+    return {
+      policyVersion: SOURCE_FRESHNESS_POLICY_VERSION,
+      freshnessVerdict: "unknown",
+      freshnessReasonCode: "strict_source_timestamp_future",
+      normalizedSourceTimestamp,
+      sourceAgeMs,
+    }
+  }
+  return {
+    policyVersion: SOURCE_FRESHNESS_POLICY_VERSION,
+    freshnessVerdict: sourceAgeMs <= STRICT_SOURCE_MAX_AGE_MS ? "fresh" : "stale",
+    freshnessReasonCode:
+      sourceAgeMs <= STRICT_SOURCE_MAX_AGE_MS
+        ? "strict_source_age_within_limit"
+        : "strict_source_age_exceeded",
+    normalizedSourceTimestamp,
+    sourceAgeMs,
+  }
+}
+
 function kstDateBucket(now: Date): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(now)
 }
@@ -100,10 +252,6 @@ function isoTimestamp(now: Date): string {
 
 function normalizeWhitespace(value: string): string {
   return value.trim().replace(/\s+/g, " ")
-}
-
-function canonicalQuery(value: unknown): string {
-  return normalizeWhitespace(typeof value === "string" ? value : "").toLocaleLowerCase("ko-KR")
 }
 
 function canonicalUrl(value: unknown): { href: string; domain: string | null } {
@@ -126,6 +274,42 @@ function canonicalUrl(value: unknown): { href: string; domain: string | null } {
 
 function hashValue(value: unknown): string {
   return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24)
+}
+
+function webCandidateRef(value: unknown): string | null {
+  const canonical = canonicalUrl(value)
+  if (!canonical.href) return null
+  return `web-candidate:${hashValue(canonical.href)}`
+}
+
+export function buildWebRetrievalTransitionReceipt(input: {
+  toolName: string
+  result: { success: boolean; details?: unknown }
+  policy: WebRetrievalPolicyDecision
+}): WebRetrievalTransitionReceipt | null {
+  if (input.toolName === "web_fetch") {
+    const candidateRef = webCandidateRef(input.policy.canonicalParams.url)
+    return candidateRef
+      ? { schemaVersion: 1, kind: "direct_fetch_attempt", candidateRefs: [candidateRef] }
+      : null
+  }
+  return null
+}
+
+export function evaluateWebRetrievalTransitionAdmission(input: {
+  nextToolName: string
+  receipts: WebRetrievalTransitionReceipt[]
+}): WebRetrievalTransitionAdmission {
+  const discovered = new Set<string>()
+  const attempted = new Set<string>()
+  for (const receipt of input.receipts) {
+    const target = receipt.kind === "discovery" ? discovered : attempted
+    for (const candidateRef of receipt.candidateRefs) target.add(candidateRef)
+  }
+  const pendingCandidateCount = [...discovered]
+    .filter((candidateRef) => !attempted.has(candidateRef))
+    .length
+  return { allowed: true, pendingCandidateCount }
 }
 
 function freshnessPolicyFromParam(value: unknown): SourceFreshnessPolicy | null {
@@ -164,39 +348,39 @@ function reliabilityFor(kind: SourceKind): SourceReliability {
 }
 
 export function buildWebRetrievalPolicyDecision(input: WebRetrievalPolicyInput): WebRetrievalPolicyDecision | null {
-  if (input.toolName !== "web_search" && input.toolName !== "web_fetch") return null
   const now = input.now ?? new Date()
   const fetchTimestamp = isoTimestamp(now)
 
   if (input.toolName === "web_search") {
-    // Web search is a discovery step, not a source-certification step. It must
-    // not derive policy from the user's natural-language phrasing.
-    const query = canonicalQuery(input.params.query)
-    const locale = typeof input.params.locale === "string" ? input.params.locale.trim().toLowerCase() : "ko-KR"
-    const dateRange = typeof input.params.dateRange === "string" ? input.params.dateRange : "none"
     const canonicalParams = {
-      query,
-      locale,
-      dateRange,
-      freshnessPolicy: "latest_approximate",
+      query: normalizeWhitespace(
+        typeof input.params.query === "string" ? input.params.query : "",
+      ),
+      locale: normalizeWhitespace(
+        typeof input.params.locale === "string" ? input.params.locale : input.locale ?? "",
+      ),
+      maxResults:
+        typeof input.params.maxResults === "number" ? input.params.maxResults : 8,
+      safeSearch:
+        input.params.safeSearch === "strict" ? "strict" : "moderate",
+      method: "fast_text_search" as const,
+      freshnessPolicy:
+        freshnessPolicyFromParam(input.params.freshnessPolicy) ?? "latest_approximate",
       timeBucket: kstDateBucket(now),
-      method: "fast_text_search",
-      sourceKind: "search_index",
+      sourceKind: "search_index" as const,
     }
-    const dedupeKey = `web:search:${hashValue(canonicalParams)}`
     return {
       applies: true,
       method: "fast_text_search",
-      dedupeKey,
+      dedupeKey: `web:search:${hashValue(canonicalParams)}`,
       canonicalParams,
-      freshnessPolicy: "latest_approximate",
+      freshnessPolicy: canonicalParams.freshnessPolicy,
       sourceKind: "search_index",
       reliability: "medium",
       fetchTimestamp,
-      answerDirective: buildAnswerDirective("latest_approximate", "search_index", null, fetchTimestamp),
     }
   }
-
+  if (input.toolName !== "web_fetch") return null
   const canonical = canonicalUrl(input.params.url)
   const mode = typeof input.params.mode === "string" ? input.params.mode : "text"
   const waitForSelector = typeof input.params.waitForSelector === "string" ? normalizeWhitespace(input.params.waitForSelector) : ""
@@ -224,65 +408,6 @@ export function buildWebRetrievalPolicyDecision(input: WebRetrievalPolicyInput):
     sourceKind,
     reliability: reliabilityFor(sourceKind),
     fetchTimestamp,
-    answerDirective: buildAnswerDirective(freshnessPolicy, sourceKind, canonical.domain, fetchTimestamp),
-  }
-}
-
-export function buildAnswerDirective(
-  freshnessPolicy: SourceFreshnessPolicy,
-  sourceKind: SourceKind,
-  sourceDomain: string | null,
-  fetchTimestamp: string,
-): string {
-  const sourceLabel = sourceDomain ? `${sourceDomain} (${sourceKind})` : sourceKind
-  if (freshnessPolicy === "latest_approximate") {
-    if (sourceKind === "search_index") {
-      return `최신 근사 허용 정책입니다. source=${sourceLabel}, fetchTimestamp=${fetchTimestamp}를 근거로 현재/최신 수치 후보가 보이면 "수집 시각 기준 근사값"으로 답변하세요. 단, web_search는 발견 단계입니다. 검색 결과에 요청 대상과 직접 연결된 수치 후보가 없으면 값 미추출 최종 답변으로 끝내지 말고, 검색 결과 URL 또는 알려진 직접 시세 URL을 web_fetch로 확인하세요. 같은 검색어 반복이나 workspace file_search로 우회하지 마세요. 근사 허용은 추정 허용이 아닙니다. 요청 대상과 같은 출처 항목, 심볼, 이름, 검색 결과 항목에 직접 붙어 있는 수치 후보만 사용하세요. 주변 지수, 다른 티커, 다른 표 행, 기사 숫자, 과거 값, 모델 기억값으로 범위나 숫자를 만들지 마세요. web_fetch에서도 수치 후보 자체가 없거나 대상과 수치의 연결이 불명확하면 완료가 아니라 보강 조건입니다. 같은 요청 안에서 다른 출처, 직접 시세 URL, 브라우저 근거, 어댑터/API 등 안전한 대안이 남아 있으면 계속 확인하세요. 최종 전달 전에는 필수 값, 출처, 기준 시각, 충돌 여부가 final validation으로 검증되어야 하며, 모든 안전한 대안이 소진된 경우에만 시도한 출처와 미확인 항목을 명시해 제한적으로 종료하세요.`
-    }
-    return `최신 근사 허용 정책입니다. source=${sourceLabel}, fetchTimestamp=${fetchTimestamp}를 근거로 현재/최신 수치 후보가 보이면 "수집 시각 기준 근사값"으로 답변하세요. 단, 근사 허용은 추정 허용이 아닙니다. 요청 대상과 같은 출처 항목, 심볼, 이름, 검색 결과 항목에 직접 붙어 있는 수치 후보만 사용하세요. 주변 지수, 다른 티커, 다른 표 행, 기사 숫자, 과거 값, 모델 기억값으로 범위나 숫자를 만들지 마세요. 수치 후보 자체가 없거나 대상과 수치의 연결이 불명확하면 완료가 아니라 보강 조건입니다. 다른 출처, 직접 시세 URL, 브라우저 근거, 어댑터/API 등 안전한 대안이 남아 있으면 계속 확인하세요. 최종 전달 전에는 필수 값, 출처, 기준 시각, 충돌 여부가 final validation으로 검증되어야 하며, 모든 안전한 대안이 소진된 경우에만 시도한 출처와 미확인 항목을 명시해 제한적으로 종료하세요.`
-  }
-  if (freshnessPolicy === "strict_timestamp") {
-    return `엄격한 기준 시각 정책입니다. 답변에는 source=${sourceLabel}, fetchTimestamp=${fetchTimestamp}, sourceTimestamp 유무를 명시하고, sourceTimestamp 또는 신뢰 가능한 기준 시각이 없으면 수치를 확정하지 마세요.`
-  }
-  return `웹 근거 source=${sourceLabel}, fetchTimestamp=${fetchTimestamp}를 필요한 경우 답변에 반영하세요.`
-}
-
-export function evaluateSourceReliabilityGuard(input: SourceEvidence): SourceReliabilityGuardResult {
-  const freshnessPolicy = input.freshnessPolicy ?? "normal"
-  const hasUsableSource = input.reliability === "high" || input.reliability === "medium"
-  const hasSourceTimestamp = Boolean(input.sourceTimestamp?.trim())
-
-  if (!hasUsableSource) {
-    return {
-      status: "insufficient_source",
-      userMessage: "신뢰 가능한 출처를 확보하지 못해 확정할 수 없습니다.",
-      mustAvoidGuessing: true,
-      evidence: input,
-    }
-  }
-  if (!hasSourceTimestamp) {
-    if (freshnessPolicy === "latest_approximate") {
-      return {
-        status: "approximate_latest",
-        userMessage: "출처 기준 시각은 없지만 수집 시각 기준 근사값으로 답변할 수 있습니다.",
-        mustAvoidGuessing: false,
-        evidence: input,
-      }
-    }
-    if (freshnessPolicy === "strict_timestamp") {
-      return {
-        status: "limited_success",
-        userMessage: "출처는 확인했지만 기준 시각이 명확하지 않아 수치를 확정할 수 없습니다.",
-        mustAvoidGuessing: true,
-        evidence: input,
-      }
-    }
-  }
-  return {
-    status: "ready",
-    userMessage: "출처 근거가 답변 생성에 사용할 수 있는 상태입니다.",
-    mustAvoidGuessing: false,
-    evidence: input,
   }
 }
 
@@ -293,18 +418,28 @@ export function extractSourceTimestampFromHtml(html: string): string | null {
     /<time[^>]+datetime=["']([^"']+)["']/i,
     /"datePublished"\s*:\s*"([^"]+)"/i,
     /"dateModified"\s*:\s*"([^"]+)"/i,
+    /"localTradedAt"\s*:\s*"([^"]+)"/i,
+    /(\d{1,2}월\s+\d{1,2}일,\s*(?:오전|오후)\s*\d{1,2}시\s*\d{1,2}분(?:\s*\d{1,2}초)?\s*GMT[+-]\d{1,2}(?::\d{2})?)/iu,
+    /((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+(?:at\s+)?\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?\s*GMT[+-]\d{1,2}(?::\d{2})?)/iu,
   ]
   for (const pattern of patterns) {
     const match = html.match(pattern)
-    const value = match?.[1]?.trim()
+    const value = match?.[1]?.trim().replace(/\s+/gu, " ")
     if (value) return value
   }
   return null
 }
 
+function browserSearchEvidenceErrorMessage(error: unknown): string | null {
+  if (error == null) return null
+  const rawMessage = error instanceof Error ? error.message : String(error)
+  const sanitized = sanitizeUserFacingError(rawMessage)
+  return redactLogText(sanitized.userMessage)
+}
+
 export function recordBrowserSearchEvidence(input: BrowserSearchEvidenceInput): BrowserSearchEvidenceArtifact {
   const createdAt = input.createdAt ?? Date.now()
-  const safeError = input.error == null ? null : sanitizeUserFacingError(input.error instanceof Error ? input.error.message : String(input.error)).userMessage
+  const safeError = browserSearchEvidenceErrorMessage(input.error)
   const payload = {
     kind: "browser_search_evidence",
     query: input.query,
@@ -317,7 +452,7 @@ export function recordBrowserSearchEvidence(input: BrowserSearchEvidenceInput): 
     method: input.method ?? "browser_search",
   }
 
-  const root = join(PATHS.stateDir, "artifacts", "browser-search")
+  const root = join(input.artifactStorage.rootDir, "browser-search")
   mkdirSync(root, { recursive: true })
   const fileName = `browser-search-${createdAt}-${hashValue({ query: input.query, url: input.url ?? null }).slice(0, 10)}.json`
   const artifactPath = join(root, fileName)
@@ -337,7 +472,7 @@ export function recordBrowserSearchEvidence(input: BrowserSearchEvidenceInput): 
       metadata: { kind: "browser_search_evidence", query: input.query, url: input.url ?? null },
       createdAt,
       updatedAt: createdAt,
-    })
+    }, input.artifactStorage)
   } catch {
     artifactId = null
   }

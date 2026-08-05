@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react"
 import { api } from "../api/client"
-import type { PromptSourceDocument, PromptSourceDryRunResult, PromptSourceLocaleParityResult, PromptSourceMetadata, PromptSourceRegressionResult, PromptSourceWriteResult } from "../api/client"
+import type { PromptImprovementHarnessInput, PromptSourceDocument, PromptSourceLocaleParityResult, PromptSourceMetadata, PromptSourceRegressionResult, PromptSourceWriteResult } from "../api/client"
 import type { ActiveInstructionsResponse } from "../contracts/instructions"
 import { useUiI18n } from "../lib/ui-i18n"
 
-export function ActiveInstructionsPanel() {
+interface ActiveInstructionsPanelProps {
+  allowRawPromptEditing?: boolean
+}
+
+export function ActiveInstructionsPanel({ allowRawPromptEditing = false }: ActiveInstructionsPanelProps = {}) {
   const { text, displayText } = useUiI18n()
   const [data, setData] = useState<ActiveInstructionsResponse | null>(null)
   const [promptSources, setPromptSources] = useState<PromptSourceMetadata[]>([])
   const [promptSourcesWorkDir, setPromptSourcesWorkDir] = useState("")
-  const [promptDryRun, setPromptDryRun] = useState<PromptSourceDryRunResult | null>(null)
   const [promptParity, setPromptParity] = useState<PromptSourceLocaleParityResult | null>(null)
   const [promptRegression, setPromptRegression] = useState<PromptSourceRegressionResult | null>(null)
   const [selectedPromptSourceKey, setSelectedPromptSourceKey] = useState("")
@@ -18,6 +21,7 @@ export function ActiveInstructionsPanel() {
   const [promptSourceResult, setPromptSourceResult] = useState<PromptSourceWriteResult | null>(null)
   const [promptSourceAction, setPromptSourceAction] = useState<"loading" | "saving" | "rollback" | null>(null)
   const [promptSourceError, setPromptSourceError] = useState<string | null>(null)
+  const [rawEditorOpen, setRawEditorOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -25,10 +29,9 @@ export function ActiveInstructionsPanel() {
     setLoading(true)
     setError(null)
     try {
-      const [response, promptSourceResponse, promptDryRunResponse, promptParityResponse, promptRegressionResponse] = await Promise.all([
+      const [response, promptSourceResponse, promptParityResponse, promptRegressionResponse] = await Promise.all([
         api.instructionsActive(),
         api.promptSources(),
-        api.promptSourcesDryRun(),
         api.promptSourcesParity(),
         api.promptSourcesRegression(),
       ])
@@ -40,7 +43,6 @@ export function ActiveInstructionsPanel() {
         if (current && nextSources.some((source) => promptSourceKey(source) === current)) return current
         return nextSources[0] ? promptSourceKey(nextSources[0]) : ""
       })
-      setPromptDryRun(promptDryRunResponse.dryRun)
       setPromptParity(promptParityResponse.parity)
       setPromptRegression(promptRegressionResponse.regression)
     } catch (loadError) {
@@ -55,13 +57,13 @@ export function ActiveInstructionsPanel() {
   }, [])
 
   useEffect(() => {
-    if (!selectedPromptSourceKey) {
+    if (!allowRawPromptEditing || !rawEditorOpen || !selectedPromptSourceKey) {
       setPromptSourceDocument(null)
       setPromptSourceDraft("")
       return
     }
     void loadPromptSourceDocument(selectedPromptSourceKey)
-  }, [selectedPromptSourceKey, promptSourcesWorkDir])
+  }, [allowRawPromptEditing, rawEditorOpen, selectedPromptSourceKey])
 
   async function loadPromptSourceDocument(key = selectedPromptSourceKey) {
     const parsed = parsePromptSourceKey(key)
@@ -69,7 +71,7 @@ export function ActiveInstructionsPanel() {
     setPromptSourceAction("loading")
     setPromptSourceError(null)
     try {
-      const response = await api.promptSource(parsed.sourceId, parsed.locale, promptSourcesWorkDir || undefined)
+      const response = await api.promptSourceRaw(parsed.sourceId, parsed.locale, disclosureWorkDir(promptSourcesWorkDir))
       setPromptSourceDocument(response.source)
       setPromptSourceDraft(response.source.content)
     } catch (sourceError) {
@@ -85,14 +87,16 @@ export function ActiveInstructionsPanel() {
     setPromptSourceError(null)
     try {
       const result = await api.writePromptSource(promptSourceDocument.sourceId, promptSourceDocument.locale, {
-        workDir: promptSourcesWorkDir || undefined,
+        workDir: disclosureWorkDir(promptSourcesWorkDir),
         content: promptSourceDraft,
         createBackup: true,
+        harnessInput: buildPromptSourceSaveHarnessInput(promptSourceDocument),
       })
       setPromptSourceResult(result)
       setPromptSourceDocument({ ...result.source, content: promptSourceDraft.trimEnd() })
       setPromptSources((sources) => sources.map((source) => promptSourceKey(source) === promptSourceKey(result.source) ? result.source : source))
       await load()
+      await loadPromptSourceDocument(selectedPromptSourceKey)
     } catch (saveError) {
       setPromptSourceError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
@@ -106,7 +110,13 @@ export function ActiveInstructionsPanel() {
     setPromptSourceAction("rollback")
     setPromptSourceError(null)
     try {
-      await api.rollbackPromptSource({ sourcePath: backup.sourcePath, backupPath: backup.backupPath })
+      await api.rollbackPromptSource({
+        workDir: disclosureWorkDir(promptSourcesWorkDir),
+        sourceId: backup.sourceId,
+        locale: backup.locale,
+        backupId: backup.backupId,
+        reason: "prompt_source_editor_rollback_requested",
+      })
       setPromptSourceResult(null)
       await load()
       await loadPromptSourceDocument(selectedPromptSourceKey)
@@ -117,12 +127,23 @@ export function ActiveInstructionsPanel() {
     }
   }
 
+  function closeRawEditor() {
+    setRawEditorOpen(false)
+    setPromptSourceDocument(null)
+    setPromptSourceDraft("")
+    setPromptSourceResult(null)
+    setPromptSourceError(null)
+  }
+
+  const activeInstructionsAreRaw = data?.disclosure.state === "raw_authorized"
+  const hiddenValue = text("내부 세부 정보 숨김", "Internal details hidden")
+
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-5">
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-stone-900">{text("활성 지침", "Active Instructions")}</div>
-          <div className="mt-1 text-xs text-stone-500">{text("현재 gateway가 실제로 합쳐서 사용하는 instruction chain", "The instruction chain currently merged and used by the gateway")}</div>
+          <div className="mt-1 text-xs text-stone-500">{text("현재 앱이 적용 중인 지침 묶음을 확인합니다.", "Review the instruction set currently applied by the app.")}</div>
         </div>
         <button
           onClick={() => void load()}
@@ -138,8 +159,8 @@ export function ActiveInstructionsPanel() {
       {!loading && !error && data ? (
         <div className="mt-4 space-y-4">
           <div className="space-y-2 text-sm text-stone-600">
-            <StatusRow label="Work Dir" value={data.workDir} mono />
-            <StatusRow label="Git Root" value={data.gitRoot ?? ""} mono />
+            <StatusRow label={text("작업 위치", "Work location")} value={activeInstructionsAreRaw ? data.workDir : hiddenValue} mono={activeInstructionsAreRaw} />
+            <StatusRow label={text("프로젝트 루트", "Project root")} value={activeInstructionsAreRaw ? data.gitRoot ?? "" : hiddenValue} mono={activeInstructionsAreRaw} />
             <StatusRow label={text("불러온 소스 수", "Loaded sources")} value={String(data.sources.length)} />
           </div>
 
@@ -147,28 +168,30 @@ export function ActiveInstructionsPanel() {
             <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-stone-500">{text("프롬프트 소스", "Prompt Sources")}</div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-stone-500">{text("지침 파일", "Instruction files")}</div>
                   <div className="mt-1 text-xs text-stone-500">
-                    {text("runtime dry-run 순서와 checksum", "Runtime dry-run order and checksums")}: {promptDryRun?.totalChars ?? 0} chars
+                    {text("적용 상태와 안전 점검 결과를 확인합니다.", "Review applied state and safety checks.")}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <div className={`rounded-full px-2 py-1 text-xs font-semibold ${promptParity?.ok === false ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>
-                    {promptParity?.ok === false ? text("locale 점검 필요", "Locale check needed") : text("locale 정상", "Locale OK")}
+                    {promptParity?.ok === false ? text("언어 점검 필요", "Language check needed") : text("언어 점검 정상", "Language check OK")}
                   </div>
                   <div className={`rounded-full px-2 py-1 text-xs font-semibold ${promptRegression?.ok === false ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`}>
-                    {promptRegression?.ok === false ? text("regression 실패", "Regression failed") : text("regression 정상", "Regression OK")}
+                    {promptRegression?.ok === false ? text("변경 검증 실패", "Change check failed") : text("변경 검증 정상", "Change check OK")}
                   </div>
                 </div>
               </div>
               <div className="mt-3 grid gap-2 md:grid-cols-2">
-                {promptSources.map((source) => (
+                {promptSources.map((source, index) => (
                   <div key={`${source.sourceId}-${source.locale}`} className="rounded-lg bg-white px-3 py-2 text-xs text-stone-600">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-semibold text-stone-900">{source.sourceId}:{source.locale}</span>
-                      <span className="font-mono text-[11px] text-stone-500">{source.checksum.slice(0, 12)}</span>
+                      <span className="font-semibold text-stone-900">{text(`지침 파일 ${index + 1}`, `Instruction file ${index + 1}`)}</span>
+                      <span className="text-[11px] text-stone-500">{source.checksum.startsWith("[") ? hiddenValue : text("검증 기준 연결됨", "Check baseline linked")}</span>
                     </div>
-                    <div className="mt-1 break-all font-mono text-[11px] text-stone-400">{source.path}</div>
+                    <div className="mt-1 break-all text-[11px] text-stone-400">
+                      {source.path.startsWith("[") ? hiddenValue : text("저장 위치는 일반 화면에 표시하지 않습니다.", "Storage location is hidden in the default view.")}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -180,28 +203,47 @@ export function ActiveInstructionsPanel() {
               {promptRegression ? (
                 <div className={`mt-3 rounded-lg px-3 py-2 text-xs leading-5 ${promptRegression.ok ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-800"}`}>
                   <div className="font-semibold">
-                    {text("프롬프트 회귀 검증", "Prompt regression")}: {promptRegression.issues.length} {text("개 이슈", "issues")}
+                    {text("지침 변경 검증", "Instruction change check")}: {promptRegression.issues.length} {text("개 이슈", "issues")}
                   </div>
                   {promptRegression.issues.length ? (
                     <div className="mt-1 space-y-1">
                       {promptRegression.issues.slice(0, 6).map((issue, index) => (
                         <div key={`${issue.code}-${issue.sourceId ?? "assembly"}-${issue.locale ?? "all"}-${index}`}>
-                          {issue.sourceId ? `${issue.sourceId}:${issue.locale ?? "all"} · ` : ""}{displayText(issue.message)}
+                          {displayText(issue.message)}
                         </div>
                       ))}
                     </div>
                   ) : (
                     <div className="mt-1">
-                      {text("책임 중복, locale parity, impact marker가 모두 통과했습니다.", "Responsibility split, locale parity, and impact markers passed.")}
+                      {text("책임 분리, 언어 구성, 변경 영향 확인이 모두 통과했습니다.", "Responsibility split, language coverage, and change-impact checks passed.")}
                     </div>
                   )}
                 </div>
               ) : null}
 
-              <div className="mt-4 rounded-xl border border-stone-200 bg-white px-4 py-3">
+              {allowRawPromptEditing ? (
+                <div className="mt-4 flex flex-col gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-stone-500">{text("지침 편집", "Instruction editor")}</div>
+                    <div className="mt-1 text-xs leading-5 text-stone-500">
+                      {text("지침 원문은 명시적으로 편집기를 열 때만 불러옵니다.", "Instruction text is loaded only after the editor is explicitly opened.")}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => rawEditorOpen ? closeRawEditor() : setRawEditorOpen(true)}
+                    className="rounded-xl border border-stone-200 bg-stone-900 px-3 py-2 text-xs font-semibold text-white"
+                  >
+                    {rawEditorOpen ? text("편집 닫기", "Close editor") : text("편집 열기", "Open editor")}
+                  </button>
+                </div>
+              ) : null}
+
+              {allowRawPromptEditing && rawEditorOpen ? (
+                <div className="mt-4 rounded-xl border border-stone-200 bg-white px-4 py-3">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                   <label className="min-w-0 flex-1 text-xs font-semibold text-stone-600">
-                    {text("소스 편집", "Source editor")}
+                    {text("편집할 지침 선택", "Select instruction to edit")}
                     <select
                       value={selectedPromptSourceKey}
                       onChange={(event) => {
@@ -243,13 +285,13 @@ export function ActiveInstructionsPanel() {
                 </div>
 
                 {promptSourceError ? <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{displayText(promptSourceError)}</div> : null}
-                {promptSourceAction === "loading" ? <div className="mt-3 text-xs text-stone-500">{text("소스 불러오는 중...", "Loading source...")}</div> : null}
+                {promptSourceAction === "loading" ? <div className="mt-3 text-xs text-stone-500">{text("지침 불러오는 중...", "Loading instruction...")}</div> : null}
 
                 {promptSourceDocument ? (
                   <>
                     <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-500">
                       <span className="rounded-full bg-stone-50 px-2 py-1">{promptSourceDocument.sourceId}:{promptSourceDocument.locale}</span>
-                      <span className="rounded-full bg-stone-50 px-2 py-1 font-mono">{promptSourceDocument.checksum.slice(0, 12)}</span>
+                      <span className="rounded-full bg-stone-50 px-2 py-1">{text("검증 기준 연결됨", "Check baseline linked")}</span>
                       <span className="rounded-full bg-stone-50 px-2 py-1">{promptSourceDocument.usageScope}</span>
                     </div>
                     <textarea
@@ -264,8 +306,8 @@ export function ActiveInstructionsPanel() {
                 {promptSourceResult ? (
                   <div className="mt-4 rounded-xl bg-stone-50 px-3 py-3">
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-600">
-                      <span className="font-semibold text-stone-900">{text("Diff 결과", "Diff result")}</span>
-                      <span className="font-mono">{promptSourceResult.diff.beforeChecksum.slice(0, 12)} → {promptSourceResult.diff.afterChecksum.slice(0, 12)}</span>
+                      <span className="font-semibold text-stone-900">{text("변경 결과", "Change result")}</span>
+                      <span>{text("검증 기준 갱신됨", "Check baseline updated")}</span>
                     </div>
                     <div className="mt-3 max-h-64 overflow-auto rounded-lg bg-white p-2 font-mono text-[11px] leading-5 text-stone-700">
                       {promptSourceResult.diff.lines.filter((line) => line.kind !== "unchanged").slice(0, 80).map((line, index) => (
@@ -278,6 +320,7 @@ export function ActiveInstructionsPanel() {
                   </div>
                 ) : null}
               </div>
+              ) : null}
             </div>
 
             {data.sources.length > 0 ? (
@@ -286,7 +329,7 @@ export function ActiveInstructionsPanel() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-stone-900">{source.scope}</div>
-                      <div className="mt-1 break-all font-mono text-xs text-stone-500">{source.path}</div>
+                      <div className="mt-1 break-all text-xs text-stone-500">{activeInstructionsAreRaw ? source.path : hiddenValue}</div>
                     </div>
                     <div className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-stone-700">
                       L{source.level}
@@ -301,19 +344,23 @@ export function ActiveInstructionsPanel() {
               ))
             ) : (
               <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 px-4 py-5 text-sm text-stone-500">
-                {text("활성 instruction 파일이 없습니다.", "There are no active instruction files.")}
+                {text("활성 지침 파일이 없습니다.", "There are no active instruction files.")}
               </div>
             )}
           </div>
 
-          {data.mergedText.trim() ? (
+          {data.mergedText.trim() && data.disclosure.state === "raw_authorized" ? (
             <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
               <div className="text-xs font-semibold uppercase tracking-wide text-stone-500">{text("병합 미리보기", "Merged Preview")}</div>
               <pre className="mt-3 whitespace-pre-wrap break-words text-xs leading-6 text-stone-700">
                 {data.mergedText.slice(0, 2000)}
               </pre>
             </div>
-          ) : null}
+          ) : (
+            <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-xs leading-5 text-stone-500">
+              {text("병합된 시스템 지침 원문은 기본 화면에 표시하지 않습니다.", "Merged system instruction text is not shown in the default view.")}
+            </div>
+          )}
         </div>
       ) : null}
     </div>
@@ -331,6 +378,48 @@ function StatusRow({ label, value, mono = false }: { label: string; value: strin
 
 function promptSourceKey(source: { sourceId: string; locale: "ko" | "en" }): string {
   return `${source.sourceId}::${source.locale}`
+}
+
+function disclosureWorkDir(workDir: string): string | undefined {
+  const trimmed = workDir.trim()
+  if (!trimmed || trimmed.startsWith("[")) return undefined
+  return trimmed
+}
+
+function buildPromptSourceSaveHarnessInput(source: PromptSourceDocument): PromptImprovementHarnessInput {
+  const sourceRef = `${source.sourceId}:${source.locale}`
+  return {
+    improvementGoal: `Save reviewed prompt source ${sourceRef}.`,
+    improvementKind: "prompt_source",
+    improvingAgentName: "Knowbee",
+    improvingAgentType: "main",
+    parentReviewerAgentName: "",
+    triggerSource: "admin_request",
+    targetPromptSources: [sourceRef],
+    activeHarnessVersion: "prompt_improvement.md:active",
+    targetHarnessSources: [],
+    agentOwnedPromptScope: [source.sourceId],
+    currentBehavior: "The active prompt source draft differs from the saved prompt source.",
+    desiredBehavior: "The reviewed prompt source is saved as the next source-backed prompt version.",
+    userReactionEvidence: ["User explicitly clicked save in the prompt source editor."],
+    responseStrategyTarget: source.sourceId,
+    harnessChangeScope: [],
+    harnessGuardrailsToPreserve: [],
+    nonGoals: ["Do not change unrelated prompt sources.", "Do not change runtime environment settings."],
+    allowedChangeScope: [sourceRef],
+    requiredInvariants: ["identity", "safety", "memory_isolation", "tool_policy", "prompt_visibility"],
+    requiredTests: ["prompt-source-regression", "prompt-source-locale-parity"],
+    approvalMode: "admin_required",
+    approvalRecord: {
+      approvedBy: "admin:prompt-source-editor",
+      approvedAt: new Date().toISOString(),
+      approvalScope: ["apply_change"],
+      targetPromptSources: [sourceRef],
+      targetHarnessSources: [],
+      riskAccepted: "medium",
+    },
+    rollbackPlan: "Use the generated prompt source backup to restore the previous source.",
+  }
 }
 
 function parsePromptSourceKey(key: string): { sourceId: string; locale: "ko" | "en" } | null {

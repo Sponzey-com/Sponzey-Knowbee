@@ -219,4 +219,25 @@ describe("Telegram adapter facade policies", () => {
     })
     await expect(adapter.start()).rejects.toThrow("Telegram bot token is missing.")
   })
+
+  it("redacts Telegram delivery receipt errors", async () => {
+    const secret = "sk-task0620-telegram-secret-value"
+    const localPath = "/Users/dongwooshin/.knowbee/telegram/raw.json"
+    const adapter = createTelegramChannelAdapter({
+      config: telegramConfig,
+      now: () => 1_710_000_200_000,
+      transport: {
+        async sendMessage() {
+          throw new Error(`telegram failed token=${secret} path=${localPath}`)
+        },
+      },
+    })
+
+    const receipt = await adapter.sendMessage(buildTelegramOutboundMessage())
+    expect(receipt.status).toBe("failed")
+    expect(receipt.errorMessage).toContain("***")
+    expect(receipt.errorMessage).toContain("[internal-path-redacted]")
+    expect(receipt.errorMessage).not.toContain(secret)
+    expect(receipt.errorMessage).not.toContain(localPath)
+  })
 })

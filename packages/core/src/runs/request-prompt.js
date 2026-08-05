@@ -1,3 +1,22 @@
+import { loadPromptTemplate } from "../memory/knowbee-md.js";
+import { loadPromptValue } from "../memory/prompt-fragments.js";
+const STRUCTURED_EXECUTION_SECTION_LABELS_SOURCE_ID = "structured_execution_section_labels_user";
+function structuredExecutionSectionLabel(key, variables = {}) {
+    const entries = loadPromptValue(STRUCTURED_EXECUTION_SECTION_LABELS_SOURCE_ID, variables, { required: true })
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map((line) => {
+        const separator = line.indexOf("=");
+        if (separator < 0)
+            return [line, ""];
+        return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()];
+    });
+    const value = new Map(entries).get(key);
+    if (!value)
+        throw new Error(`structured execution section label missing: ${key}`);
+    return value;
+}
 function normalizeLine(value) {
     return value?.trim() ?? "";
 }
@@ -6,65 +25,78 @@ function normalizeList(values) {
         .map((value) => normalizeLine(value))
         .filter(Boolean);
 }
+function normalizeRenderedPrompt(value) {
+    return value
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}
+function formatLines(values) {
+    return normalizeList(values).join("\n");
+}
+function formatBulletLines(values) {
+    return normalizeList(values).map((value) => `- ${value}`).join("\n");
+}
+function formatOptionalBlock(title, values) {
+    const lines = normalizeList(values);
+    if (lines.length === 0)
+        return "";
+    return [title, ...lines.map((line) => `- ${line}`)].join("\n");
+}
+function formatOriginalRequestBlock(originalRequest) {
+    const normalized = normalizeLine(originalRequest);
+    if (!normalized)
+        return "";
+    return loadPromptValue("structured_execution_original_request_block_user", { originalRequest: normalized });
+}
 function buildChecklistLines(params) {
     const lines = [
-        `- [ ] 목표 확인: ${params.target}`,
+        loadPromptValue("structured_execution_checklist_confirm_goal_user", { target: params.target }),
         params.executionSemantics.filesystemEffect === "mutate"
-            ? "- [ ] 실제 파일 또는 폴더 결과를 생성하거나 수정한다."
-            : "- [ ] 요청된 실제 작업을 수행한다.",
-        ...params.completeConditionLines.map((line) => `- [ ] 완료 조건 확인: ${line}`),
+            ? loadPromptValue("structured_execution_checklist_filesystem_work_user")
+            : loadPromptValue("structured_execution_checklist_general_work_user"),
+        ...params.completeConditionLines.map((line) => loadPromptValue("structured_execution_checklist_complete_condition_user", { completeCondition: line })),
         params.executionSemantics.artifactDelivery === "direct"
-            ? `- [ ] 결과물 자체를 ${params.destination}에 직접 전달한다.`
-            : `- [ ] 최종 결과를 ${params.destination}에 전달한다.`,
-        "- [ ] 완료된 항목은 내부적으로 [x] 기준으로 확인하고, 남은 항목이 없을 때만 종료한다.",
+            ? loadPromptValue("structured_execution_checklist_direct_artifact_user", { destination: params.destination })
+            : loadPromptValue("structured_execution_checklist_final_result_user", { destination: params.destination }),
+        loadPromptValue("structured_execution_checklist_stop_condition_user"),
     ];
     return normalizeList(lines);
 }
 export function buildStructuredExecutionBrief(params) {
-    const target = normalizeLine(params.structuredRequest.target) || "Execute the requested work.";
-    const destination = normalizeLine(params.structuredRequest.to) || "the current execution target";
+    const target = normalizeLine(params.structuredRequest.target) ||
+        loadPromptValue("execution_default_target_user");
+    const destination = normalizeLine(params.structuredRequest.to) ||
+        loadPromptValue("execution_default_destination_user");
     const contextLines = normalizeList(params.structuredRequest.context);
     const normalizedEnglish = normalizeLine(params.structuredRequest.normalized_english);
     const completeConditionLines = normalizeList(params.structuredRequest.complete_condition);
+    const effectiveCompleteConditionLines = completeConditionLines.length > 0
+        ? completeConditionLines
+        : [loadPromptValue("execution_default_complete_condition_user")];
     const checklistLines = buildChecklistLines({
         target,
         destination,
-        completeConditionLines: completeConditionLines.length > 0
-            ? completeConditionLines
-            : ["Produce the requested result in the current execution."],
+        completeConditionLines: effectiveCompleteConditionLines,
         executionSemantics: params.executionSemantics,
     });
-    const sections = [
-        params.header,
-        ...normalizeList(params.introLines ?? []),
-        normalizeLine(params.originalRequest) ? `원래 사용자 요청: ${normalizeLine(params.originalRequest)}` : "",
-        [
-            "[target]",
+    return normalizeRenderedPrompt(loadPromptTemplate({
+        sourceId: "structured_execution_brief_user",
+        variables: {
+            header: normalizeLine(params.header),
+            introLines: formatLines(params.introLines ?? []),
+            originalRequestBlock: formatOriginalRequestBlock(params.originalRequest),
             target,
-        ].join("\n"),
-        [
-            "[to]",
             destination,
-        ].join("\n"),
-        contextLines.length > 0
-            ? ["[context]", ...contextLines.map((line) => `- ${line}`)].join("\n")
-            : "",
-        normalizedEnglish
-            ? ["[normalized-english]", normalizedEnglish].join("\n")
-            : "",
-        [
-            "[complete-condition]",
-            ...(completeConditionLines.length > 0
-                ? completeConditionLines.map((line) => `- ${line}`)
-                : ["- Produce the requested result in the current execution."]),
-        ].join("\n"),
-        [
-            "[checklist]",
-            ...checklistLines,
-        ].join("\n"),
-        ...normalizeList(params.extraSections ?? []),
-        ...normalizeList(params.closingLines ?? []),
-    ];
-    return sections.filter(Boolean).join("\n\n");
+            contextBlock: formatOptionalBlock(structuredExecutionSectionLabel("context_header"), contextLines),
+            normalizedEnglishBlock: normalizedEnglish
+                ? `${structuredExecutionSectionLabel("normalized_english_header")}\n${normalizedEnglish}`
+                : "",
+            completeConditions: formatBulletLines(effectiveCompleteConditionLines),
+            checklist: checklistLines.join("\n"),
+            extraSections: formatLines(params.extraSections ?? []),
+            closingLines: formatLines(params.closingLines ?? []),
+        },
+    }));
 }
 //# sourceMappingURL=request-prompt.js.map

@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type { EnterpriseTopology, NodeContract } from "../packages/core/src/contracts/enterprise-topology.ts"
 import type {
@@ -22,19 +21,22 @@ import { buildAgentExecutionDecisionPrompt } from "../packages/core/src/orchestr
 import { buildExecutionGraphSnapshot, WORKSPACE_DRAFT_TOPOLOGY_ID } from "../packages/core/src/orchestration/execution-graph-snapshot.ts"
 import { buildAgentPromptBundle } from "../packages/core/src/orchestration/prompt-bundle.ts"
 import { createEnterpriseTopologyRegistry } from "../packages/core/src/topology/registry.js"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const now = Date.UTC(2026, 4, 7, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-prompt-direct-executors-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-prompt-direct-executors-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 beforeEach(() => {
@@ -43,11 +45,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -228,6 +225,7 @@ function workspaceGraph() {
   const registry = createEnterpriseTopologyRegistry({ now: () => now })
   registry.appendTopologyVersion({ topology: topologyFixture(), createdBy: "test" })
   return buildExecutionGraphSnapshot({
+    config: runtimeFixture.config,
     mode: "workspace",
     now: () => now,
     topologyRegistry: registry,
@@ -279,18 +277,18 @@ describe("task004 prompt direct executor projection", () => {
     const prompt = buildAgentExecutionDecisionPrompt(context)
     const payload = contextJsonFromPrompt(prompt)
     const promptContext = payload.context as {
-      accessible_executors: Array<{ executor_id: string; display_name: string }>
-      diagnostic_executors: Array<{ executor_id: string; display_name: string }>
+      accessible_executors: Array<{ executor_id: string; agent_name: string }>
+      diagnostic_executors: Array<{ executor_id: string; agent_name: string }>
     }
 
     expect(prompt).toContain("accessible_executors contains only direct children")
     expect(prompt).toContain("Choose only an executor visible from the current executor")
-    expect(promptContext.accessible_executors.map((executor) => executor.display_name)).toEqual([
+    expect(promptContext.accessible_executors.map((executor) => executor.agent_name)).toEqual([
       "행랑아범",
       "마당쇠",
     ])
-    expect(promptContext.accessible_executors.map((executor) => executor.display_name)).not.toContain("삼식이")
-    expect(promptContext.diagnostic_executors.map((executor) => executor.display_name)).toEqual(["삼식이"])
+    expect(promptContext.accessible_executors.map((executor) => executor.agent_name)).not.toContain("삼식이")
+    expect(promptContext.diagnostic_executors.map((executor) => executor.agent_name)).toEqual(["삼식이"])
   })
 
   it("renders prompt bundle direct executor section separately from diagnostic executors", () => {
@@ -304,15 +302,15 @@ describe("task004 prompt direct executor projection", () => {
       now: () => now,
     })
 
-    expect(projection.selectableExecutors.map((executor) => executor.displayName)).toEqual([
+    expect(projection.selectableExecutors.map((executor) => executor.agentName)).toEqual([
       "행랑아범",
       "마당쇠",
     ])
-    expect(projection.diagnosticExecutors?.map((executor) => executor.displayName)).toEqual(["삼식이"])
+    expect(projection.diagnosticExecutors?.map((executor) => executor.agentName)).toEqual(["삼식이"])
     expect(result.renderedPrompt).toContain("Available direct executors for current agent")
-    expect(result.renderedPrompt).toContain("name: 행랑아범")
+    expect(result.renderedPrompt).toContain("agentName: 행랑아범")
     expect(result.renderedPrompt).toContain("Diagnostic executors - not selectable here")
-    expect(result.renderedPrompt).toContain("name: 삼식이")
+    expect(result.renderedPrompt).toContain("agentName: 삼식이")
     expect(result.bundle.sourceProvenance.map((source) => source.sourceId)).not.toContain("prompt:bootstrap:en")
   })
 
@@ -324,20 +322,18 @@ describe("task004 prompt direct executor projection", () => {
     const knowbeeExecution = sources.find((source) => source.sourceId === "knowbee_execution" && source.locale === "en")
     const toolPolicy = sources.find((source) => source.sourceId === "tool_policy" && source.locale === "en")
     const topologyPolicy = sources.find((source) => source.sourceId === "topology_executor_policy" && source.locale === "en")
-    const webRetrievalPlanner = sources.find((source) => source.sourceId === "web_retrieval_planner" && source.locale === "en")
 
     expect(knowbeeExecution?.content).toContain("direct children")
     expect(knowbeeExecution?.content).toContain("diagnostic_executors")
-    expect(knowbeeExecution?.content).toContain("Broad coordination, management, review, or summary ability is weak evidence")
+    expect(knowbeeExecution?.content).toContain("broad coordination, management, review, or summary ability as weak evidence")
     expect(knowbeeExecution?.content).toContain("concrete profile-fit evidence")
-    expect(toolPolicy?.content).toContain("explicit provider target")
+    expect(knowbeeExecution?.content).toContain("explicit provider target")
+    expect(toolPolicy?.content).toContain("knowbee-execution.md")
     expect(topologyPolicy?.content).toContain("first hop must be a direct child")
-    expect(webRetrievalPlanner?.usageScope).toBe("internal")
     expect(runtimeSourceIds).toContain("knowbee_execution")
     expect(runtimeSourceIds).toContain("tool_policy")
     expect(runtimeSourceIds).toContain("recovery_policy")
     expect(runtimeSourceIds).toContain("topology_executor_policy")
-    expect(runtimeSourceIds).not.toContain("web_retrieval_planner")
     expect(runtimeSourceIds).not.toContain("bootstrap")
   })
 })

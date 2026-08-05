@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import {
   CONTRACT_SCHEMA_VERSION,
@@ -65,6 +66,7 @@ function subAgent(
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     agentType: "sub_agent",
     agentId,
+    agentName: nickname,
     displayName,
     nickname,
     status: "enabled",
@@ -124,8 +126,7 @@ const relationships: AgentRelationship[] = [
 const validationContext: SubAgentSettingsValidationContext = {
   rootAgent: {
     agentId: "agent:knowbee",
-    displayName: "Knowbee",
-    nickname: "Knowbee",
+    agentName: "Knowbee",
   },
   agents: [
     subAgent("agent:researcher", "Researcher", "Res"),
@@ -142,6 +143,20 @@ const validationContext: SubAgentSettingsValidationContext = {
 }
 
 describe("task002 sub-agent settings view model and command contracts", () => {
+  it("uses canonical direct main-agent mode when no sub-agents are configured", () => {
+    const beginner = buildBeginnerSubAgentSetupView({
+      rootAgent: validationContext.rootAgent,
+      savedAgents: [],
+      relationships: [],
+      catalogs: validationContext.catalogs,
+      now,
+    })
+
+    expect(beginner.orchestrationMode).toBe("direct_main_agent")
+    expect(beginner.status).toBe("empty")
+    expect(beginner.primaryAction).toBe("create_first_sub_agent")
+  })
+
   it("builds beginner and advanced projections from the same saved source", () => {
     const savedAgents = [
       subAgent("agent:researcher", "Researcher", "Res"),
@@ -176,8 +191,7 @@ describe("task002 sub-agent settings view model and command contracts", () => {
     expect(beginner.orchestrationMode).toBe("orchestration")
     expect(beginner.cards[0]).toEqual(expect.objectContaining({
       id: "agent:researcher",
-      displayName: "Researcher",
-      nickname: "Res",
+      agentName: "Res",
       attributionLabel: "Res",
       parentDisplayName: "Knowbee",
       childCount: 1,
@@ -187,14 +201,20 @@ describe("task002 sub-agent settings view model and command contracts", () => {
     }))
     expect(beginner.cards[0]?.displayLabel).toBe("Res")
     expect(beginner.cards[0]?.displayLabel).not.toBe("agent:researcher")
+    expect(beginner.cards[0]).not.toHaveProperty("displayName")
+    expect(beginner.cards[0]).not.toHaveProperty("nickname")
 
     expect(advanced.agents[0]).toEqual(expect.objectContaining({
       id: "agent:researcher",
-      displayName: "Researcher",
-      nickname: "Res",
+      agentName: "Res",
       readinessState: "ready",
       lifecycleState: "runtime_active",
     }))
+    expect(advanced.agents[0]).not.toHaveProperty("displayName")
+    expect(advanced.agents[0]).not.toHaveProperty("nickname")
+    expect(advanced.selectedAgent?.identity.agentName).toBe("Res")
+    expect(advanced.selectedAgent?.identity).not.toHaveProperty("displayName")
+    expect(advanced.selectedAgent?.identity).not.toHaveProperty("nickname")
     expect(advanced.selectedAgent?.identity.attributionLabel).toBe("Res")
     expect(advanced.selectedAgent?.model.mode).toBe("override")
     expect(advanced.selectedAgent?.skillMcp.enabledSkillIds).toEqual(["skill:research"])
@@ -202,13 +222,111 @@ describe("task002 sub-agent settings view model and command contracts", () => {
     expect(advanced.selectedAgent?.delegation.directChildAgentIds).toEqual(["agent:writer"])
   })
 
+  it("projects canonical agentName ahead of legacy displayName and nickname", () => {
+    const savedAgents = [
+      subAgent("agent:researcher", "Researcher Display", "Researcher Legacy", {
+        agentName: "Researcher Canonical",
+      }),
+    ]
+
+    const beginner = buildBeginnerSubAgentSetupView({
+      rootAgent: validationContext.rootAgent,
+      savedAgents,
+      relationships: relationships.slice(0, 1),
+      catalogs: validationContext.catalogs,
+      now,
+    })
+    const advanced = buildAdvancedSubAgentSettingsView({
+      rootAgent: validationContext.rootAgent,
+      savedAgents,
+      relationships: relationships.slice(0, 1),
+      catalogs: validationContext.catalogs,
+      selectedAgentId: "agent:researcher",
+      now,
+    })
+
+    expect(beginner.cards[0]?.agentName).toBe("Researcher Canonical")
+    expect(beginner.cards[0]?.displayLabel).toBe("Researcher Canonical")
+    expect(advanced.selectedAgent?.identity.agentName).toBe("Researcher Canonical")
+    expect(advanced.selectedAgent?.identity.attributionLabel).toBe("Researcher Canonical")
+  })
+
+  it("sorts visible sub-agent rows by canonical agentName instead of legacy displayName", () => {
+    const savedAgents = [
+      subAgent("agent:alpha", "Z legacy display", "Z legacy nick", {
+        agentName: "Alpha",
+      }),
+      subAgent("agent:zeta", "A legacy display", "A legacy nick", {
+        agentName: "Zeta",
+      }),
+    ]
+    const topLevelRelationships: AgentRelationship[] = savedAgents.map((agent, index) => ({
+      edgeId: `edge:knowbee:${agent.agentId}`,
+      parentAgentId: "agent:knowbee",
+      childAgentId: agent.agentId,
+      relationshipType: "parent_child",
+      status: "active",
+      sortOrder: index,
+    }))
+
+    const beginner = buildBeginnerSubAgentSetupView({
+      rootAgent: validationContext.rootAgent,
+      savedAgents,
+      relationships: topLevelRelationships,
+      catalogs: validationContext.catalogs,
+      now,
+    })
+    const advanced = buildAdvancedSubAgentSettingsView({
+      rootAgent: validationContext.rootAgent,
+      savedAgents,
+      relationships: topLevelRelationships,
+      catalogs: validationContext.catalogs,
+      now,
+    })
+
+    expect(beginner.cards.map((card) => card.agentName)).toEqual(["Alpha", "Zeta"])
+    expect(advanced.agents.map((agent) => agent.agentName)).toEqual(["Alpha", "Zeta"])
+  })
+
+  it("uses canonical agent name validation codes in readiness diagnostics", () => {
+    const savedAgents = [
+      subAgent("agent:researcher", "Researcher", "Res"),
+      subAgent("agent:writer", "Writer", "Res"),
+    ]
+
+    const beginner = buildBeginnerSubAgentSetupView({
+      rootAgent: validationContext.rootAgent,
+      savedAgents,
+      relationships,
+      catalogs: validationContext.catalogs,
+      now,
+    })
+
+    expect(beginner.cards[0]?.readiness.reasonCodes).toContain("agent_name_duplicate")
+    expect(beginner.cards[1]?.readiness.reasonCodes).toContain("agent_name_duplicate")
+    expect(beginner.cards.flatMap((card) => card.readiness.reasonCodes)).not.toContain("nickname_duplicate")
+  })
+
+  it("does not keep legacy nickname or display-name issue codes in settings sources", () => {
+    const sources = [
+      "../packages/core/src/ui/sub-agent-settings.ts",
+      "../packages/core/src/ui/unified-settings.ts",
+      "../packages/webui/src/lib/beginner-sub-agents.ts",
+      "../packages/webui/src/lib/advanced-sub-agent-settings.ts",
+    ].map((path) => readFileSync(new URL(path, import.meta.url), "utf-8"))
+
+    for (const source of sources) {
+      expect(source).not.toContain("nickname_duplicate")
+      expect(source).not.toContain("display_name_required")
+    }
+  })
+
   it("validates section commands before they can mutate saved settings", () => {
     expect(validateSubAgentSettingsCommand({
       kind: "create_basic",
       source: "beginner",
       parentAgentId: "agent:knowbee",
-      displayName: "Researcher 2",
-      nickname: "Res2",
+      agentName: "Res2",
       role: "Research helper",
       description: "Collect evidence.",
       initialLifecycleState: "draft",
@@ -219,19 +337,17 @@ describe("task002 sub-agent settings view model and command contracts", () => {
       kind: "update_identity",
       source: "advanced",
       agentId: "agent:writer",
-      displayName: "Writer",
-      nickname: "Res",
+      agentName: "Res",
       role: "Writer role",
       description: "Draft responses.",
       attributionLabel: "Res",
-    }, validationContext).issues.map((issue) => issue.code)).toContain("nickname_duplicate")
+    }, validationContext).issues.map((issue) => issue.code)).toContain("agent_name_duplicate")
 
     expect(validateSubAgentSettingsCommand({
       kind: "update_identity",
       source: "advanced",
       agentId: "agent:writer",
-      displayName: "Knowbee",
-      nickname: "Knowbee",
+      agentName: "Knowbee",
       role: "Writer role",
       description: "Draft responses.",
       attributionLabel: "Knowbee",
@@ -290,6 +406,110 @@ describe("task002 sub-agent settings view model and command contracts", () => {
     }, validationContext).issues.map((issue) => issue.code)).toContain("delegation_target_not_direct_child")
   })
 
+  it("validates command names from agentName only, not legacy displayName or nickname", () => {
+    const legacyMissingNamePayload = {
+      kind: "create_basic",
+      source: "beginner",
+      parentAgentId: "agent:knowbee",
+      agentName: "",
+      displayName: "Display Filled",
+      nickname: "Nickname Filled",
+      role: "Research helper",
+      description: "Collect evidence.",
+      initialLifecycleState: "draft",
+      safeDefaultPolicy: true,
+    } as unknown as Parameters<typeof validateSubAgentSettingsCommand>[0]
+    const missing = validateSubAgentSettingsCommand(legacyMissingNamePayload, validationContext)
+
+    const legacyDuplicatePayload = {
+      kind: "update_identity",
+      source: "advanced",
+      agentId: "agent:writer",
+      agentName: "Writer Unique",
+      displayName: "Researcher",
+      nickname: "Res",
+      role: "Writer role",
+      description: "Draft responses.",
+      attributionLabel: "Res",
+    } as unknown as Parameters<typeof validateSubAgentSettingsCommand>[0]
+    const uniqueAgentNameWithLegacyDuplicate = validateSubAgentSettingsCommand(legacyDuplicatePayload, validationContext)
+
+    expect(missing.ok).toBe(false)
+    expect(missing.issues.map((issue) => issue.code)).toContain("agent_name_required")
+    expect(uniqueAgentNameWithLegacyDuplicate.ok).toBe(true)
+    expect(uniqueAgentNameWithLegacyDuplicate.issues).toEqual([])
+    const source = readFileSync("packages/core/src/ui/sub-agent-settings.ts", "utf-8")
+    expect(source).not.toContain("command.nickname")
+    expect(source).not.toContain("rootAgent.nickname")
+  })
+
+  it("reserves only product default names and root agentName, not root legacy displayName or nickname", () => {
+    const rootAgent = {
+      agentId: "agent:knowbee",
+      agentName: "마당쇠",
+      displayName: "Legacy Root Display",
+      nickname: "Legacy Root Nickname",
+    }
+    const context: SubAgentSettingsValidationContext = {
+      ...validationContext,
+      rootAgent,
+      agents: [],
+      relationships: [],
+    }
+    const createCommand = (agentName: string) => validateSubAgentSettingsCommand({
+      kind: "create_basic",
+      source: "beginner",
+      parentAgentId: "agent:knowbee",
+      agentName,
+      role: "Research helper",
+      description: "Collect evidence.",
+      initialLifecycleState: "draft",
+      safeDefaultPolicy: true,
+    }, context)
+
+    expect(createCommand("Legacy Root Display").ok).toBe(true)
+    expect(createCommand("Legacy Root Nickname").ok).toBe(true)
+    expect(createCommand("마당쇠").issues.map((issue) => issue.code)).toContain("reserved_knowbee_name")
+    expect(createCommand("Knowbee").issues.map((issue) => issue.code)).toContain("reserved_knowbee_name")
+    expect(createCommand("노비").issues.map((issue) => issue.code)).toContain("reserved_knowbee_name")
+
+    const legacyNamedAgent = subAgent("agent:legacy", "Legacy Display", "Legacy Nick", {
+      agentName: "Legacy Root Display",
+    })
+    const rootNamedAgent = subAgent("agent:root-name", "Root Name Display", "Root Name Nick", {
+      agentName: "마당쇠",
+    })
+    const productNamedAgent = subAgent("agent:product-name", "Product Display", "Product Nick", {
+      agentName: "노비",
+    })
+    const topLevelRelationships: AgentRelationship[] = [
+      legacyNamedAgent,
+      rootNamedAgent,
+      productNamedAgent,
+    ].map((agent, index) => ({
+      edgeId: `edge:knowbee:${agent.agentId}`,
+      parentAgentId: "agent:knowbee",
+      childAgentId: agent.agentId,
+      relationshipType: "parent_child",
+      status: "active",
+      sortOrder: index,
+    }))
+
+    const beginner = buildBeginnerSubAgentSetupView({
+      rootAgent,
+      savedAgents: [legacyNamedAgent, rootNamedAgent, productNamedAgent],
+      relationships: topLevelRelationships,
+      catalogs: validationContext.catalogs,
+      now,
+    })
+
+    const readinessById = new Map(beginner.cards.map((card) => [card.id, card.readiness]))
+    expect(readinessById.get("agent:legacy")?.reasonCodes).not.toContain("reserved_knowbee_name")
+    expect(readinessById.get("agent:legacy")?.state).toBe("ready")
+    expect(readinessById.get("agent:root-name")?.reasonCodes).toContain("reserved_knowbee_name")
+    expect(readinessById.get("agent:product-name")?.reasonCodes).toContain("reserved_knowbee_name")
+  })
+
   it("keeps draft, saved, and runtime active projections separated", () => {
     const saved = subAgent("agent:researcher", "Researcher", "Res")
     const draft = subAgent("agent:researcher", "Researcher draft", "ResDraft", {
@@ -316,12 +536,67 @@ describe("task002 sub-agent settings view model and command contracts", () => {
     })
 
     expect(projection.agentId).toBe("agent:researcher")
-    expect(projection.draft?.displayName).toBe("Researcher draft")
-    expect(projection.saved?.displayName).toBe("Researcher")
-    expect(projection.runtimeActive?.displayName).toBe("Researcher")
+    expect(projection.draft?.agentName).toBe("ResDraft")
+    expect(projection.saved?.agentName).toBe("Res")
+    expect(projection.runtimeActive?.agentName).toBe("Res")
+    expect(projection.draft).not.toHaveProperty("displayName")
+    expect(projection.saved).not.toHaveProperty("displayName")
+    expect(projection.runtimeActive).not.toHaveProperty("displayName")
     expect(projection.stateLabel).toBe("unsaved_changes")
     expect(projection.runtimeActive?.driftFromSaved).toBe(false)
     expect(projection.draft?.displayLabel).toBe("ResDraft")
     expect(projection.runtimeActive?.displayLabel).toBe("Res")
+  })
+
+  it("uses agentName, not legacy displayName or nickname, for saved and runtime drift decisions", () => {
+    const saved = subAgent("agent:researcher", "Saved legacy display", "Saved legacy nick", {
+      agentName: "Researcher",
+      role: "Research role",
+    })
+    const draftWithLegacyOnlyChange = subAgent("agent:researcher", "Draft legacy display", "Draft legacy nick", {
+      agentName: "Researcher",
+      role: "Research role",
+    })
+    const runtimeWithLegacyOnlyChange = subAgent("agent:researcher", "Runtime legacy display", "Runtime legacy nick", {
+      agentName: "Researcher",
+      role: "Research role",
+      profileVersion: saved.profileVersion,
+    })
+    const runtimeWithAgentNameChange = subAgent("agent:researcher", "Saved legacy display", "Saved legacy nick", {
+      agentName: "Researcher Runtime",
+      role: "Research role",
+      profileVersion: saved.profileVersion,
+    })
+
+    const legacyOnlyProjection = buildSubAgentStateProjection({
+      rootAgent: validationContext.rootAgent,
+      draftAgent: draftWithLegacyOnlyChange,
+      savedAgent: saved,
+      runtimeActiveAgent: runtimeWithLegacyOnlyChange,
+      relationships,
+      catalogs: validationContext.catalogs,
+      runtime: {
+        activeAgentIds: ["agent:researcher"],
+        activeVersionByAgentId: { "agent:researcher": saved.profileVersion },
+      },
+      now,
+    })
+    const agentNameDriftProjection = buildSubAgentStateProjection({
+      rootAgent: validationContext.rootAgent,
+      savedAgent: saved,
+      runtimeActiveAgent: runtimeWithAgentNameChange,
+      relationships,
+      catalogs: validationContext.catalogs,
+      runtime: {
+        activeAgentIds: ["agent:researcher"],
+        activeVersionByAgentId: { "agent:researcher": saved.profileVersion },
+      },
+      now,
+    })
+
+    expect(legacyOnlyProjection.stateLabel).toBe("running")
+    expect(legacyOnlyProjection.runtimeActive?.driftFromSaved).toBe(false)
+    expect(agentNameDriftProjection.stateLabel).toBe("runtime_drift")
+    expect(agentNameDriftProjection.runtimeActive?.driftFromSaved).toBe(true)
   })
 })

@@ -30,16 +30,46 @@ function printTextReport(report: DoctorReport, artifactPath: string | null): voi
   }
 }
 
+interface DoctorCommandRedactionResult<T = unknown> {
+  value: T
+}
+
+type DoctorCommandRedactor = <T>(
+  value: T,
+  options: { audience: "advanced" },
+) => DoctorCommandRedactionResult<T>
+
+export function redactDoctorCommandOutput(
+  report: DoctorReport,
+  artifactPath: string | null,
+  redactValue: DoctorCommandRedactor,
+): { report: DoctorReport; artifactPath: string | null } {
+  return {
+    report: redactValue(report, { audience: "advanced" }).value as DoctorReport,
+    artifactPath: artifactPath
+      ? redactValue(artifactPath, { audience: "advanced" }).value as string
+      : null,
+  }
+}
+
 export async function doctorCommand(options: DoctorCommandOptions): Promise<void> {
   const core = await import("@knowbee/core")
   const mode = resolveMode(options)
-  const report = core.runDoctor({ mode })
-  const artifactPath = options.write ? core.writeDoctorReportArtifact(report) : null
+  const processContext = core.captureStartupProcessContext()
+  const paths = core.createRuntimePaths(processContext.env)
+  const config = core.loadConfigSnapshot({
+    baseEnv: { ...processContext.env },
+    cwd: processContext.cwd,
+    paths,
+  })
+  const report = core.runDoctor({ mode, config, paths })
+  const artifactPath = options.write ? core.writeDoctorReportArtifact(report, paths) : null
+  const safeOutput = redactDoctorCommandOutput(report, artifactPath, core.redactUiValue)
 
   if (options.json) {
-    console.log(JSON.stringify({ report, artifactPath }, null, 2))
+    console.log(JSON.stringify(safeOutput, null, 2))
     return
   }
 
-  printTextReport(report, artifactPath)
+  printTextReport(safeOutput.report, safeOutput.artifactPath)
 }

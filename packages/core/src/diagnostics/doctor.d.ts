@@ -1,3 +1,5 @@
+import type { RuntimePaths } from "../config/paths.js";
+import type { KnowbeeConfig } from "../config/types.js";
 import { type RuntimeManifest, type RuntimeManifestOptions } from "../runtime/manifest.js";
 export type DoctorStatus = "ok" | "warning" | "blocked" | "unknown";
 export type DoctorMode = "quick" | "full";
@@ -26,10 +28,11 @@ export interface DoctorReport {
     };
     manifest: RuntimeManifest;
 }
-export interface RunDoctorOptions extends RuntimeManifestOptions {
+export interface RunDoctorOptions extends Omit<RuntimeManifestOptions, "config"> {
     mode?: DoctorMode;
+    config: KnowbeeConfig;
 }
-export declare function runDoctor(options?: RunDoctorOptions): DoctorReport;
-export declare function writeDoctorReportArtifact(report: DoctorReport): string;
-export declare function lastDoctorReportExists(): boolean;
+export declare function runDoctor(options: RunDoctorOptions): DoctorReport;
+export declare function writeDoctorReportArtifact(report: DoctorReport, paths: RuntimePaths): string;
+export declare function lastDoctorReportExists(paths: RuntimePaths): boolean;
 //# sourceMappingURL=doctor.d.ts.map

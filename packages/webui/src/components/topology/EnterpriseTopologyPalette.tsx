@@ -58,11 +58,11 @@ export interface EnterpriseTopologyPaletteCreateResult {
 }
 
 export const ENTERPRISE_TOPOLOGY_KIND_LABELS: Record<EnterpriseTopologyPaletteKind, { ko: string; en: string }> = {
-  task: { ko: "Task", en: "Task" },
-  decision: { ko: "Decision", en: "Decision" },
-  approval: { ko: "Approval", en: "Approval" },
-  data: { ko: "Data", en: "Data" },
-  group: { ko: "Group", en: "Group" },
+  task: { ko: "작업", en: "Task" },
+  decision: { ko: "판단", en: "Decision" },
+  approval: { ko: "승인", en: "Approval" },
+  data: { ko: "데이터", en: "Data" },
+  group: { ko: "그룹", en: "Group" },
   work_node: { ko: "서브 에이전트", en: "Sub-agent" },
   team: { ko: "팀", en: "Team" },
   org_unit: { ko: "조직", en: "Org unit" },
@@ -70,19 +70,19 @@ export const ENTERPRISE_TOPOLOGY_KIND_LABELS: Record<EnterpriseTopologyPaletteKi
   person: { ko: "담당자", en: "Person" },
   process: { ko: "업무 프로세스", en: "Process" },
   system: { ko: "시스템", en: "System" },
-  tool: { ko: "도구", en: "Tool" },
+  tool: { ko: "외부 도구", en: "External tool" },
   authority: { ko: "승인 규칙", en: "Authority rule" },
   responsibility: { ko: "책임 매트릭스", en: "Responsibility" },
 }
 
 export const ENTERPRISE_TOPOLOGY_PALETTE: EnterpriseTopologyPaletteItem[] = [
-  { id: "task", labelKo: "Task", labelEn: "Task", tone: "sky", group: "core", iconLabel: "TS" },
-  { id: "decision", labelKo: "Decision", labelEn: "Decision", tone: "stone", group: "core", iconLabel: "DC" },
-  { id: "approval", labelKo: "Approval", labelEn: "Approval", tone: "rose", group: "core", iconLabel: "AP" },
-  { id: "tool", labelKo: "Tool", labelEn: "Tool", tone: "amber", group: "core", iconLabel: "TL" },
-  { id: "data", labelKo: "Data", labelEn: "Data", tone: "teal", group: "core", iconLabel: "DT" },
-  { id: "group", labelKo: "Group", labelEn: "Group", tone: "teal", group: "core", iconLabel: "GP" },
-  { id: "org_unit", labelKo: "OrgUnit", labelEn: "OrgUnit", tone: "stone", group: "advanced", iconLabel: "OU" },
+  { id: "task", labelKo: "작업", labelEn: "Task", tone: "sky", group: "core", iconLabel: "TS" },
+  { id: "decision", labelKo: "판단", labelEn: "Decision", tone: "stone", group: "core", iconLabel: "DC" },
+  { id: "approval", labelKo: "승인", labelEn: "Approval", tone: "rose", group: "core", iconLabel: "AP" },
+  { id: "tool", labelKo: "외부 도구", labelEn: "External tool", tone: "amber", group: "core", iconLabel: "TL" },
+  { id: "data", labelKo: "데이터", labelEn: "Data", tone: "teal", group: "core", iconLabel: "DT" },
+  { id: "group", labelKo: "그룹", labelEn: "Group", tone: "teal", group: "core", iconLabel: "GP" },
+  { id: "org_unit", labelKo: "조직", labelEn: "Org unit", tone: "stone", group: "advanced", iconLabel: "OU" },
   { id: "position", labelKo: "직책", labelEn: "Position", tone: "stone", group: "advanced", iconLabel: "PO" },
   { id: "person", labelKo: "담당자", labelEn: "Person", tone: "stone", group: "advanced", iconLabel: "PE" },
   { id: "process", labelKo: "업무 프로세스", labelEn: "Process", tone: "sky", group: "advanced", iconLabel: "PR" },
@@ -504,7 +504,7 @@ export function EnterpriseTopologyPalette({
         />
         <details className="rounded-lg border border-stone-200 bg-stone-50 p-3" data-testid="enterprise-palette-task-presets">
           <summary className="cursor-pointer text-xs font-semibold text-stone-700">
-            {text("Task preset", "Task preset")}
+            {text("작업 템플릿", "Task preset")}
           </summary>
           <div className="mt-2 grid gap-1.5">
             {nodePresets.map((preset) => (

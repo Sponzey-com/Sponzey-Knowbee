@@ -3,10 +3,11 @@
  * Uses @nut-tree/nut-js when available, falls back to platform CLI tools.
  */
 
+import { createHash } from "node:crypto"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs"
-import type { AgentTool, ArtifactDeliveryResultDetails, ToolResult } from "../../types.js"
+import type { AgentTool, ArtifactDeliveryResultDetails, ToolContext, ToolResult, ToolSideEffectObservation } from "../../types.js"
 import {
   DEFAULT_YEONJANG_EXTENSION_ID,
   isYeonjangUnavailableError,
@@ -30,6 +31,8 @@ import {
   statArtifactSize,
   yeonjangRequiredFailure,
 } from "./yeonjang-screen-shared.js"
+import { toolUserFacingErrorMessage } from "../error-redaction.js"
+import { resolveLocalOrYeonjangEvidenceSourceKind } from "../../evidence-source.js"
 
 interface ScreenCaptureParams extends YeonjangTargetedToolParams {
   display?: number | string
@@ -69,8 +72,87 @@ function resolveRequestedDisplay(display: number | string | undefined, userMessa
   return undefined
 }
 
+function hashUtf8(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex")
+}
+
+function screenExtensionTarget(params: YeonjangTargetedToolParams): string {
+  const extensionId = params.extensionId?.trim() || DEFAULT_YEONJANG_EXTENSION_ID
+  const sessionId = params.targetSessionId?.trim()
+  return sessionId ? `${extensionId}#${sessionId}` : extensionId
+}
+
+function screenDisplayRef(params: ScreenCaptureParams, ctx: ToolContext): string {
+  return `${resolveRequestedDisplay(params.display, ctx.userMessage) ?? "default"}`
+}
+
+function screenCaptureTargetRef(params: ScreenCaptureParams, ctx: ToolContext): string {
+  return `yeonjang:${screenExtensionTarget(params)}:screen:${screenDisplayRef(params, ctx)}`
+}
+
+function screenCaptureExpectedState(params: ScreenCaptureParams, ctx: ToolContext): Record<string, unknown> {
+  return {
+    artifact: "local_saved",
+    display: screenDisplayRef(params, ctx),
+    minBytes: 1,
+  }
+}
+
+async function observeScreenCapture(
+  params: ScreenCaptureParams,
+  ctx: ToolContext,
+  result: ToolResult,
+): Promise<ToolSideEffectObservation> {
+  const expectedState = screenCaptureExpectedState(params, ctx)
+  const details = result.details && typeof result.details === "object" ? result.details as Record<string, unknown> : {}
+  const bytes = typeof details.localFileSize === "number" ? details.localFileSize : 0
+  return {
+    available: result.success && bytes >= 1,
+    targetRef: screenCaptureTargetRef(params, ctx),
+    expectedState,
+    observedState: result.success && bytes >= 1
+      ? expectedState
+      : {
+          artifact: "missing_or_empty",
+          reason: result.error ?? "screen_capture_not_verified",
+        },
+  }
+}
+
+function screenFindTextTargetRef(params: ScreenFindTextParams): string {
+  return `yeonjang:${screenExtensionTarget(params)}:screen:ocr:${hashUtf8(params.text)}`
+}
+
+function screenFindTextExpectedState(params: ScreenFindTextParams): Record<string, unknown> {
+  return {
+    ocrChecked: true,
+    textHash: hashUtf8(params.text),
+  }
+}
+
+async function observeScreenFindText(
+  params: ScreenFindTextParams,
+  _ctx: ToolContext,
+  result: ToolResult,
+): Promise<ToolSideEffectObservation> {
+  return {
+    available: result.success,
+    targetRef: screenFindTextTargetRef(params),
+    expectedState: screenFindTextExpectedState(params),
+    observedState: result.success
+      ? screenFindTextExpectedState(params)
+      : {
+          ocrChecked: false,
+          reason: result.error ?? "screen_ocr_not_verified",
+        },
+  }
+}
+
 export const screenCaptureTool: AgentTool<ScreenCaptureParams> = {
   name: "screen_capture",
+  resolveEvidenceSourceKind: resolveLocalOrYeonjangEvidenceSourceKind,
+  runtimeHealthMode: "additional",
+  runtimeMethodIds: ["screen.capture"],
   description: "현재 화면을 캡처하여 base64 PNG 이미지로 반환합니다. 특정 모니터를 캡처하려면 display를 지정하세요. 예: 메인 모니터=0, 두 번째 모니터=1.",
   parameters: {
     type: "object",
@@ -83,8 +165,15 @@ export const screenCaptureTool: AgentTool<ScreenCaptureParams> = {
     },
     required: [],
   },
-  riskLevel: "safe",
-  requiresApproval: false,
+  riskLevel: "moderate",
+  requiresApproval: true,
+  sideEffect: {
+    effectClass: "local_write",
+    compensationSupport: "irreversible",
+    targetRef: screenCaptureTargetRef,
+    expectedState: screenCaptureExpectedState,
+    observe: observeScreenCapture,
+  },
   execute: async (params, ctx): Promise<ToolResult> => {
     const selection = resolveYeonjangTargetSelection({
       requestedExtensionId: params.extensionId,
@@ -129,8 +218,35 @@ export const screenCaptureTool: AgentTool<ScreenCaptureParams> = {
           options: yeonjangOptions,
           ...(display !== undefined ? { display } : {}),
         })
-        const localSavedPath = saveInlineScreenCapture(base64, remote.mime_type)
+        const localSavedPath = saveInlineScreenCapture(
+          base64,
+          remote.mime_type,
+          join(ctx.artifactStorage.rootDir, "screens"),
+        )
         const localFileSize = statArtifactSize(localSavedPath)
+        if (!Number.isSafeInteger(localFileSize) || localFileSize < 1) {
+          return {
+            success: false,
+            output: "Yeonjang 화면 캡처 결과 파일이 비어 있어 전달할 수 없습니다.",
+            error: "SCREEN_CAPTURE_ARTIFACT_EMPTY",
+            details: {
+              via: "yeonjang",
+              stopAfterFailure: true,
+              failureKind: "remote_failure",
+              reasonCode: "screen_capture_artifact_empty",
+              terminalStage: "handler_failed",
+              retrySafety: "unknown_effect_state",
+              failure: {
+                reasonCode: "screen_capture_artifact_empty",
+                retrySameStrategy: false,
+                terminalStage: "handler_failed",
+                retrySafety: "unknown_effect_state",
+              },
+              ...buildYeonjangTargetResolutionDetails(reboundSelection),
+              ...(display !== undefined ? { display } : {}),
+            },
+          }
+        }
         const artifactChannel = ctx.source === "webui" || ctx.source === "telegram" || ctx.source === "slack"
           ? ctx.source
           : null
@@ -164,8 +280,8 @@ export const screenCaptureTool: AgentTool<ScreenCaptureParams> = {
       }
     } catch (error) {
       if (!isYeonjangUnavailableError(error)) {
-        const message = error instanceof Error ? error.message : String(error)
-        const classified = classifyYeonjangScreenCaptureFailure(message)
+        const message = toolUserFacingErrorMessage(error)
+        const classified = classifyYeonjangScreenCaptureFailure(error, message)
         return {
           success: false,
           output: classified.output,
@@ -191,6 +307,9 @@ export const screenCaptureTool: AgentTool<ScreenCaptureParams> = {
 
 export const screenFindTextTool: AgentTool<ScreenFindTextParams> = {
   name: "screen_find_text",
+  resolveEvidenceSourceKind: resolveLocalOrYeonjangEvidenceSourceKind,
+  runtimeHealthMode: "additional",
+  runtimeMethodIds: ["screen.capture"],
   description: "현재 화면에서 특정 텍스트의 위치를 찾습니다. OCR을 사용합니다 (tesseract 필요).",
   parameters: {
     type: "object",
@@ -200,8 +319,15 @@ export const screenFindTextTool: AgentTool<ScreenFindTextParams> = {
     },
     required: ["text"],
   },
-  riskLevel: "safe",
-  requiresApproval: false,
+  riskLevel: "moderate",
+  requiresApproval: true,
+  sideEffect: {
+    effectClass: "local_write",
+    compensationSupport: "irreversible",
+    targetRef: screenFindTextTargetRef,
+    expectedState: screenFindTextExpectedState,
+    observe: observeScreenFindText,
+  },
   execute: async (params: ScreenFindTextParams, ctx): Promise<ToolResult> => {
     const selection = resolveYeonjangTargetSelection({
       requestedExtensionId: params.extensionId,
@@ -262,6 +388,8 @@ export const screenFindTextTool: AgentTool<ScreenFindTextParams> = {
           : `"${params.text}" 텍스트를 화면에서 찾을 수 없습니다.`,
         details: {
           via: "yeonjang",
+          found,
+          textHash: hashUtf8(params.text),
           ...buildYeonjangTargetResolutionDetails(reboundSelection),
         },
       }
@@ -278,7 +406,7 @@ export const screenFindTextTool: AgentTool<ScreenFindTextParams> = {
       }
       return {
         success: false,
-        output: `텍스트 검색 실패: ${err instanceof Error ? err.message : String(err)}`,
+        output: `텍스트 검색 실패: ${toolUserFacingErrorMessage(err)}`,
         details: {
           via: "yeonjang",
           ...buildYeonjangTargetResolutionDetails(selection),

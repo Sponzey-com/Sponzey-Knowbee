@@ -1,4 +1,28 @@
-import { insertChannelSmokeRun, insertChannelSmokeStep, updateChannelSmokeRun, } from "../db/index.js";
+import { insertChannelSmokeRun, insertChannelSmokeStep, interruptGatewayOwnedChannelSmokeRunsStartedBefore, updateChannelSmokeRun, } from "../db/index.js";
+import { redactLogText } from "../logger/index.js";
+export function channelSmokeScenarioRequiresCapabilityAdmission(kind) {
+    return (kind === "web_skill" ||
+        kind === "approval_required_tool" ||
+        kind === "artifact_delivery");
+}
+function channelSmokeErrorReason(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
+export function recoverInterruptedGatewayChannelSmokeRuns(input) {
+    if (!Number.isSafeInteger(input.gatewayStartedAt)
+        || input.gatewayStartedAt < 0
+        || !Number.isSafeInteger(input.recoveredAt)
+        || input.recoveredAt < input.gatewayStartedAt) {
+        throw new Error("channel_smoke_startup_recovery_time_invalid");
+    }
+    return Object.freeze({
+        recoveredCount: interruptGatewayOwnedChannelSmokeRunsStartedBefore({
+            startedBefore: input.gatewayStartedAt,
+            finishedAt: input.recoveredAt,
+        }),
+    });
+}
 const LOCAL_PATH_MARKDOWN_PATTERN = /!?\[[^\]]*\]\((?:\/Users\/|\/tmp\/|[A-Za-z]:\\)[^)]+\)|(?:\/Users\/|\/tmp\/|[A-Za-z]:\\)[^\s)]+/u;
 const SENSITIVE_KEY_PATTERN = /token|secret|authorization|cookie|api[_-]?key|password|credential|chat[_-]?id|channel[_-]?id|group[_-]?id|user[_-]?id|target[_-]?id|allowed.*ids/i;
 const SENSITIVE_TEXT_PATTERNS = [
@@ -7,9 +31,11 @@ const SENSITIVE_TEXT_PATTERNS = [
     [/\b\d{7,}\b/g, "***"],
     [/([A-Za-z0-9_-]{12,})\.([A-Za-z0-9_-]{12,})\.([A-Za-z0-9_-]{12,})/g, "***.***.***"],
 ];
+const UNSUPPORTED_EXTENSION_REQUEST = '기능 ID "missing_capability"를 우선 사용해 그 기능의 health 상태를 확인해줘. 사용할 수 없다면 허용된 대체 경로를 검토하고, 확인할 수 없으면 실패 결과를 보고해.';
 export function getDefaultChannelSmokeScenarios() {
     return [
         buildScenario("webui", "basic_query", "기본 Web UI 질의", "오늘 상태를 한 줄로 알려줘"),
+        buildScenario("webui", "web_skill", "Web UI 웹 검색", "현재 SK하이닉스 주가를 웹에서 확인하고 기준 시각과 출처를 알려줘", { expectedTool: "web_search" }),
         buildScenario("webui", "approval_required_tool", "Web UI 승인 도구", "메인 화면 캡쳐해서 보여줘", {
             expectedTool: "screen_capture",
             expectsApproval: true,
@@ -19,11 +45,12 @@ export function getDefaultChannelSmokeScenarios() {
             expectedTool: "screen_capture",
             expectsArtifact: true,
         }),
-        buildScenario("webui", "failure_tool", "Web UI 실패 안내", "지원하지 않는 연장 기능을 실행해줘", {
+        buildScenario("webui", "failure_tool", "Web UI 실패 안내", UNSUPPORTED_EXTENSION_REQUEST, {
             expectsFailure: true,
             expectsUnsupportedCapability: true,
         }),
         buildScenario("telegram", "basic_query", "Telegram 기본 질의", "오늘 상태를 한 줄로 알려줘"),
+        buildScenario("telegram", "web_skill", "Telegram 웹 검색", "현재 SK하이닉스 주가를 웹에서 확인하고 기준 시각과 출처를 알려줘", { expectedTool: "web_search" }),
         buildScenario("telegram", "approval_required_tool", "Telegram 승인 도구", "메인 화면 캡쳐해서 보여줘", {
             expectedTool: "screen_capture",
             expectsApproval: true,
@@ -33,7 +60,7 @@ export function getDefaultChannelSmokeScenarios() {
             expectedTool: "screen_capture",
             expectsArtifact: true,
         }),
-        buildScenario("telegram", "failure_tool", "Telegram 실패 안내", "지원하지 않는 연장 기능을 실행해줘", {
+        buildScenario("telegram", "failure_tool", "Telegram 실패 안내", UNSUPPORTED_EXTENSION_REQUEST, {
             expectsFailure: true,
             expectsUnsupportedCapability: true,
         }),
@@ -47,7 +74,7 @@ export function getDefaultChannelSmokeScenarios() {
             expectedTool: "screen_capture",
             expectsArtifact: true,
         }),
-        buildScenario("slack", "failure_tool", "Slack 실패 안내", "지원하지 않는 연장 기능을 실행해줘", {
+        buildScenario("slack", "failure_tool", "Slack 실패 안내", UNSUPPORTED_EXTENSION_REQUEST, {
             expectsFailure: true,
             expectsUnsupportedCapability: true,
         }),
@@ -61,7 +88,7 @@ export function getDefaultChannelSmokeScenarios() {
             expectedTool: "screen_capture",
             expectsArtifact: true,
         }),
-        buildScenario("discord", "failure_tool", "Discord 실패 안내", "지원하지 않는 연장 기능을 실행해줘", {
+        buildScenario("discord", "failure_tool", "Discord 실패 안내", UNSUPPORTED_EXTENSION_REQUEST, {
             expectsFailure: true,
             expectsUnsupportedCapability: true,
         }),
@@ -75,7 +102,7 @@ export function getDefaultChannelSmokeScenarios() {
             expectedTool: "screen_capture",
             expectsArtifact: true,
         }),
-        buildScenario("google_chat", "failure_tool", "Google Chat 실패 안내", "지원하지 않는 연장 기능을 실행해줘", {
+        buildScenario("google_chat", "failure_tool", "Google Chat 실패 안내", UNSUPPORTED_EXTENSION_REQUEST, {
             expectsFailure: true,
             expectsUnsupportedCapability: true,
         }),
@@ -242,7 +269,7 @@ export function validateChannelSmokeTrace(scenario, trace) {
     if (trace.correlationKey && trace.correlationKey !== scenario.correlationKey) {
         failures.push(`correlation_key_mismatch:${trace.correlationKey}`);
     }
-    validateRequestFlowTrace(trace, failures);
+    validateRequestFlowTrace(scenario, trace, failures);
     for (const toolCall of trace.toolCalls ?? []) {
         if (toolCall.sourceChannel !== scenario.channel) {
             failures.push(`tool_source_mismatch:${toolCall.toolName}:${toolCall.sourceChannel}`);
@@ -303,7 +330,7 @@ export function validateChannelSmokeTrace(scenario, trace) {
     }
     return { status: "passed", failures };
 }
-function validateRequestFlowTrace(trace, failures) {
+function validateRequestFlowTrace(scenario, trace, failures) {
     const flow = trace.requestFlow;
     if (!flow) {
         failures.push("request_flow_missing");
@@ -319,14 +346,77 @@ function validateRequestFlowTrace(trace, failures) {
     if (flow.requestGroupMatchesRunId === false) {
         failures.push("request_group_id_not_run_id");
     }
-    if (flow.decisionTracePresent !== true) {
-        failures.push("decision_trace_missing");
+    const directResponse = scenario.kind === "basic_query" && flow.flowKind === "direct_response";
+    if (directResponse) {
+        if (!flow.directResponseReceiptId?.trim()) {
+            failures.push("direct_response_receipt_missing");
+        }
     }
-    if (flow.topologyRunCreated !== true) {
-        failures.push("topology_run_missing");
+    else {
+        if (flow.decisionTracePresent !== true) {
+            failures.push("decision_trace_missing");
+        }
+        if (!flow.requestDiagnosisReceiptId?.trim()) {
+            failures.push("request_diagnosis_receipt_missing");
+        }
+        if (!flow.solutionPlanReceiptId?.trim()) {
+            failures.push("solution_plan_receipt_missing");
+        }
+        if (!flow.resultReviewReceiptId?.trim()) {
+            failures.push("result_review_receipt_missing");
+        }
+        if (!flow.finalResponseReceiptId?.trim()) {
+            failures.push("final_response_receipt_missing");
+        }
+        if (flow.decisionReceiptOrderValid !== true) {
+            failures.push("decision_receipt_order_invalid");
+        }
+    }
+    if (channelSmokeScenarioRequiresCapabilityAdmission(scenario.kind)) {
+        if (flow.capabilityAdmissionRequired !== true) {
+            failures.push("capability_admission_requirement_missing");
+        }
+        if (!flow.capabilityAdmissionReceiptId?.trim()) {
+            failures.push("capability_admission_receipt_missing");
+        }
     }
     if (flow.providerDirectUsed !== false) {
         failures.push(flow.providerDirectUsed === true ? "provider_direct_used" : "provider_direct_state_missing");
+    }
+    const latency = trace.latency;
+    if (!latency) {
+        failures.push("latency_evidence_missing");
+    }
+    else {
+        if (latency.runId !== flow.runId || latency.requestGroupId !== flow.requestGroupId) {
+            failures.push("latency_evidence_binding_mismatch");
+        }
+        if (!latency.metricId.trim())
+            failures.push("first_response_latency_metric_missing");
+        if (!Number.isSafeInteger(latency.firstResponseLatencyMs)
+            || latency.firstResponseLatencyMs < 0
+            || !Number.isSafeInteger(latency.terminalResponseLatencyMs)
+            || latency.terminalResponseLatencyMs < 0) {
+            failures.push("latency_evidence_invalid");
+        }
+    }
+    if (!trace.finalization?.rootOwnerFinalized) {
+        failures.push("root_finalization_missing");
+    }
+    else if (trace.finalization.finalAnswerCount !== 1) {
+        failures.push("final_answer_count_invalid");
+    }
+    const delivery = trace.finalDelivery;
+    if (!delivery?.delivered || !delivery.receiptRef?.trim() || !delivery.userVisible) {
+        failures.push("final_delivery_receipt_missing");
+    }
+    else {
+        if (delivery.targetChannel !== trace.sourceChannel) {
+            failures.push(`final_delivery_target_mismatch:${delivery.targetChannel}`);
+        }
+        if (delivery.correlationKey !== trace.correlationKey) {
+            failures.push(`final_delivery_correlation_mismatch:${delivery.correlationKey}`);
+        }
     }
 }
 function validateCapabilityFallbackTrace(trace, failures) {
@@ -400,7 +490,7 @@ export async function runChannelSmokeScenarios(options) {
             results.push({
                 scenario,
                 status: "failed",
-                reason: error instanceof Error ? error.message : String(error),
+                reason: channelSmokeErrorReason(error),
                 failures: ["scenario_execution_failed"],
                 startedAt,
                 finishedAt: Date.now(),
@@ -420,8 +510,53 @@ export function createDryRunChannelSmokeExecutor(input = {}) {
                 requestGroupId: `dry-run:${scenario.id}`,
                 requestGroupMatchesRunId: true,
                 decisionTracePresent: true,
+                requestDiagnosisReceiptId: `dry-diagnosis:${scenario.id}`,
+                solutionPlanReceiptId: `dry-plan:${scenario.id}`,
+                resultReviewReceiptId: `dry-review:${scenario.id}`,
+                finalResponseReceiptId: `dry-final-response:${scenario.id}`,
+                decisionReceiptOrderValid: true,
+                ...(channelSmokeScenarioRequiresCapabilityAdmission(scenario.kind)
+                    ? {
+                        capabilityAdmissionRequired: true,
+                        capabilityAdmissionReceiptId: `dry-capability-admission:${scenario.id}`,
+                    }
+                    : {}),
                 topologyRunCreated: true,
                 providerDirectUsed: false,
+            },
+            finalization: {
+                rootOwnerFinalized: true,
+                finalAnswerCount: 1,
+            },
+            latency: {
+                metricId: `dry-first-response:${scenario.id}`,
+                runId: `dry-run:${scenario.id}`,
+                requestGroupId: `dry-run:${scenario.id}`,
+                firstResponseLatencyMs: 1,
+                firstResponseBudgetMs: 30_000,
+                firstResponseStatus: "ok",
+                terminalResponseLatencyMs: 2,
+            },
+            finalDelivery: {
+                delivered: true,
+                targetChannel: scenario.expectedTarget,
+                correlationKey: scenario.correlationKey,
+                receiptRef: `dry-delivery:${scenario.id}`,
+                userVisible: true,
+            },
+            semanticOutcome: {
+                executionStatus: scenario.expectsFailure ? "exhausted" : "succeeded",
+                deliveryStatus: "delivered",
+            },
+            semanticReview: {
+                requiredCompletionConditionIds: ["condition:execution", "condition:delivery"],
+                satisfiedCompletionConditionIds: ["condition:execution", "condition:delivery"],
+                reasonCodes: [scenario.expectsFailure ? "paths_exhausted" : "goal_satisfied"],
+                terminalReport: "delivered",
+                evidenceRefs: [
+                    `dry-review:${scenario.id}`,
+                    `dry-delivery:${scenario.id}`,
+                ],
             },
             auditLogId: `dry-audit-${scenario.id}`,
             toolCalls: scenario.expectedTool

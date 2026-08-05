@@ -1,23 +1,16 @@
+import type { KnowbeeConfig } from "../config/index.js";
+import type { RuntimePaths } from "../config/paths.js";
 import { type ProviderCapabilityMatrix } from "../ai/capabilities.js";
 import { type SetupMcpServerDraft, type SetupSkillDraftItem } from "./setup-extensions.js";
+import { type McpServerStatus, type McpSummary } from "../mcp/registry.js";
 import type { MemoryPolicy, PermissionProfile } from "../contracts/sub-agent-orchestration.js";
-export type CapabilityStatus = "ready" | "disabled" | "planned" | "error";
-export interface FeatureCapability {
-    key: string;
-    label: string;
-    area: "setup" | "gateway" | "runs" | "chat" | "ai" | "security" | "telegram" | "slack" | "scheduler" | "plugins" | "memory" | "mcp" | "mqtt";
-    status: CapabilityStatus;
-    implemented: boolean;
-    enabled: boolean;
-    reason?: string;
-    dependsOn?: string[];
-    metadata?: JsonObject;
-}
-export interface CapabilityCounts {
-    ready: number;
-    disabled: number;
-    planned: number;
-    error: number;
+import type { CapabilityCounts, CapabilityStatus, FeatureCapability } from "../contracts/feature-capability.js";
+import { type PlatformCapabilityRuntime } from "../capabilities/platform.js";
+export type { CapabilityCounts, CapabilityStatus, FeatureCapability };
+export interface CapabilityProjectionOptions {
+    enterpriseTopologyBuilderEnabled?: boolean;
+    platformRuntime?: PlatformCapabilityRuntime;
+    config: KnowbeeConfig;
 }
 export interface AIBackendCard {
     id: string;
@@ -156,6 +149,8 @@ export interface SetupDraft {
     };
     subAgents?: SetupSubAgentDraft;
 }
+export declare const SETUP_SECRET_MASK = "***";
+export declare const SETUP_INTERNAL_PATH_MASK = "[internal-path-redacted]";
 export type SetupSubAgentMonitoringLogLevel = "product" | "debug" | "dev";
 export type SetupSubAgentMonitoringEventKind = "request_received" | "delegation_planned" | "handoff_package_created" | "child_accepted" | "child_running" | "child_result_returned" | "parent_reviewing" | "parent_aggregating" | "redelegation_planned" | "final_delivery_prepared" | "completed" | "blocked" | "cancelled";
 export type SetupSubAgentMonitoringEventStatus = "pending" | "running" | "reviewing" | "completed" | "blocked" | "cancelled";
@@ -200,8 +195,7 @@ export interface SetupSubAgentMonitoringDraft {
 export interface SetupSubAgentDraftItem {
     agentId: string;
     parentAgentId?: string;
-    displayName: string;
-    nickname: string;
+    agentName?: string;
     role: string;
     description: string;
     skillMcpBindings?: {
@@ -271,29 +265,35 @@ export interface SetupChecks {
     authEnabled: boolean;
     schedulerEnabled: boolean;
 }
-type JsonObject = Record<string, unknown>;
-export declare function readSetupState(): SetupState;
-export declare function writeSetupState(state: SetupState): SetupState;
-export declare function buildSetupDraft(): SetupDraft;
-export declare function saveSetupDraft(draft: SetupDraft, state?: SetupState): {
+export type SetupPersistencePaths = Pick<RuntimePaths, "stateDir" | "configFile" | "setupStateFile">;
+export declare function readSetupState(paths: SetupPersistencePaths): SetupState;
+export declare function writeSetupState(state: SetupState, paths: SetupPersistencePaths): SetupState;
+export declare function buildSetupDraft(config: KnowbeeConfig, paths: SetupPersistencePaths | null): SetupDraft;
+export declare function redactSetupDraftSecrets(input: SetupDraft): SetupDraft;
+export declare function saveSetupDraft(inputDraft: SetupDraft, state: SetupState | undefined, config: KnowbeeConfig, paths: SetupPersistencePaths): {
     draft: SetupDraft;
     state: SetupState;
 };
-export declare function resetSetupEnvironment(): {
+export declare function resetSetupEnvironment(paths: SetupPersistencePaths): {
     draft: SetupDraft;
     state: SetupState;
     checks: SetupChecks;
 };
-export declare function completeSetup(): SetupState;
-export declare function createSetupChecks(): SetupChecks;
+export declare function completeSetup(paths: SetupPersistencePaths): SetupState;
+export declare function createSetupChecks(config: KnowbeeConfig, paths: SetupPersistencePaths): SetupChecks;
+export declare function redactSetupChecksForApi(checks: SetupChecks): SetupChecks;
 export declare function createTransientAuthToken(): string;
-export declare function createCapabilities(): FeatureCapability[];
-export declare function createCapabilityCounts(): CapabilityCounts;
-export declare function getPrimaryAiTarget(): string | null;
-export declare function discoverModelsFromEndpoint(endpoint: string, providerType?: AIBackendCard["providerType"], credentials?: AIBackendCard["credentials"], authMode?: AIBackendCard["authMode"]): Promise<{
+export declare function parseEnterpriseTopologyBuilderUiEnabled(value: string | undefined): boolean;
+export declare function projectMcpClientCapability(input: {
+    readonly summary: McpSummary;
+    readonly statuses: readonly McpServerStatus[];
+}): FeatureCapability;
+export declare function createCapabilities(options: CapabilityProjectionOptions): FeatureCapability[];
+export declare function createCapabilityCounts(options: CapabilityProjectionOptions): CapabilityCounts;
+export declare function getPrimaryAiTarget(config: KnowbeeConfig): string | null;
+export declare function discoverModelsFromEndpoint(endpoint: string, config: Pick<KnowbeeConfig, "memory">, providerType?: AIBackendCard["providerType"], credentials?: AIBackendCard["credentials"], authMode?: AIBackendCard["authMode"]): Promise<{
     models: string[];
     sourceUrl: string;
     capabilityMatrix: ProviderCapabilityMatrix;
 }>;
-export {};
 //# sourceMappingURL=index.d.ts.map

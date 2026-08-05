@@ -7,6 +7,7 @@ import type {
 } from "../contracts/enterprise-topology.js"
 import type { ToolDispatcher } from "../tools/dispatcher.js"
 import type { ToolContext, ToolResult } from "../tools/types.js"
+import { redactLogText } from "../logger/index.js"
 import {
   createNodeRuntimeTraceEvent,
 } from "./trace.js"
@@ -272,8 +273,12 @@ function reasonCodeForExecutionStatus(
 ): string {
   if (status === "succeeded") return "tool_execution_succeeded"
   if (status === "timeout") return "tool_execution_timeout"
-  if (status === "denied") return input.result?.error ?? "tool_execution_denied"
-  return input.result?.error ?? (input.thrown instanceof Error ? input.thrown.message : "tool_execution_error")
+  if (status === "denied") return input.result?.error ? redactLogText(input.result.error) : "tool_execution_denied"
+  return input.result?.error
+    ? redactLogText(input.result.error)
+    : input.thrown instanceof Error
+      ? redactLogText(input.thrown.message)
+      : "tool_execution_error"
 }
 
 function isDeniedToolResult(result: ToolResult | undefined): boolean {

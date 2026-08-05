@@ -4,7 +4,6 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerSubSessionRoutes } from "../packages/core/src/api/routes/subsessions.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type {
   AgentPromptBundle,
@@ -29,6 +28,7 @@ import {
   resetLatencyMetrics,
 } from "../packages/core/src/observability/latency.js"
 import type { RunSubSessionInput } from "../packages/core/src/orchestration/sub-session-runner.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: {
@@ -47,8 +47,6 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 
 const expectedOutput: ExpectedOutputContract = {
   outputId: "answer",
@@ -100,20 +98,15 @@ const memoryPolicy: MemoryPolicy = {
 
 function useTempState(): void {
   closeDb()
-  resetLatencyMetrics()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task014-subsession-control-"))
   tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
+  resetLatencyMetrics()
 }
 
 function restoreState(): void {
-  closeDb()
   resetLatencyMetrics()
-  process.env.KNOWBEE_STATE_DIR = previousStateDir
-  process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
+  closeDb()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -142,8 +135,6 @@ function promptBundle(bundleId = "prompt-bundle:task014"): AgentPromptBundle {
     agentId: "agent:researcher",
     agentType: "sub_agent",
     role: "control worker",
-    displayNameSnapshot: "Researcher",
-    nicknameSnapshot: "Res",
     personalitySnapshot: "Precise",
     teamContext: [],
     memoryPolicy,
@@ -182,7 +173,7 @@ function command(id: string, parentRunId = "run:task014"): CommandRequest {
     parentRunId,
     subSessionId: `sub:${id}`,
     targetAgentId: "agent:researcher",
-    targetNicknameSnapshot: "Res",
+    targetAgentNameSnapshot: "Res",
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
@@ -194,13 +185,11 @@ function runInput(id: string, parentRunId = "run:task014"): RunSubSessionInput {
     command: command(id, parentRunId),
     parentAgent: {
       agentId: "agent:knowbee",
-      displayName: "Knowbee",
-      nickname: "노비",
+      agentName: "노비",
     },
     agent: {
       agentId: "agent:researcher",
-      displayName: "Researcher",
-      nickname: "Res",
+      agentName: "Res",
     },
     parentSessionId: "session:task014",
     promptBundle: promptBundle(),
@@ -273,6 +262,14 @@ describe("task014 sub-session control API", () => {
         url: "/api/subsessions/spawn",
         payload: { input: runInput("logs") },
       })
+      const spawned = parseSubSession("sub:logs")
+      updateRunSubSession({
+        ...spawned,
+        parentAgentDisplayName: "Legacy Parent Display",
+        parentAgentNameSnapshot: "노비",
+        agentDisplayName: "Legacy Agent Display",
+        agentNameSnapshot: "Res",
+      })
       await app.inject({
         method: "POST",
         url: "/api/subsessions/sub:logs/steer",
@@ -290,11 +287,15 @@ describe("task014 sub-session control API", () => {
       expect(info.json().info).toEqual(
         expect.objectContaining({
           subSessionId: "sub:logs",
-          parentAgentNickname: "노비",
-          agentNickname: "Res",
+          parentAgentName: "노비",
+          parentAgentNameSnapshot: "노비",
+          agentName: "Res",
+          agentNameSnapshot: "Res",
           promptBundle: expect.objectContaining({ promptChecksum: "sha256:task014" }),
         }),
       )
+      expect(info.json().info).not.toHaveProperty("parentAgentDisplayName")
+      expect(info.json().info).not.toHaveProperty("agentDisplayName")
 
       const logs = await app.inject({
         method: "GET",
@@ -441,6 +442,28 @@ describe("task014 sub-session control API", () => {
         expect.objectContaining({
           ok: false,
           status: "rejected",
+        }),
+      )
+
+      const legacyNameOnly = await app.inject({
+        method: "POST",
+        url: "/api/subsessions/spawn",
+        payload: {
+          input: {
+            ...runInput("legacy-display"),
+            agent: {
+              agentId: "agent:researcher",
+              displayName: "Legacy Researcher",
+            },
+          },
+        },
+      })
+      expect(legacyNameOnly.statusCode).toBe(400)
+      expect(legacyNameOnly.json().ack).toEqual(
+        expect.objectContaining({
+          ok: false,
+          status: "rejected",
+          reasonCode: "invalid_agent_snapshot",
         }),
       )
     })

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -14,7 +14,6 @@ import type {
   StructuredTaskScope,
   SubSessionContract,
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import {
   closeDb,
   getAgentMemoryStateByScopeKey,
@@ -26,16 +25,14 @@ import {
   buildAgentMemoryStateScopeKey,
   buildSubAgentMemoryStateScope,
 } from "../packages/core/src/memory/agent-state.ts"
-import { closeMemoryJournalDb } from "../packages/core/src/memory/journal.js"
 import {
   SubSessionRunner,
   createTextResultReport,
   type RunSubSessionInput,
   type SubSessionRuntimeDependencies,
 } from "../packages/core/src/orchestration/sub-session-runner.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 const now = Date.UTC(2026, 4, 18, 9, 0, 0)
 
@@ -89,18 +86,9 @@ const memoryPolicy: MemoryPolicy = {
 
 function useTempState(): void {
   closeDb()
-  closeMemoryJournalDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task003-bootstrap-"))
   tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
-    ai: { connection: { provider: "ollama", model: "llama3.2", endpoint: "http://127.0.0.1:11434" } },
-    webui: { enabled: true, host: "127.0.0.1", port: 0, auth: { enabled: false } },
-    security: { approvalMode: "off" }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 function identity(entityType: RuntimeIdentity["entityType"], entityId: string): RuntimeIdentity {
@@ -125,8 +113,6 @@ function promptBundle(): AgentPromptBundle {
     agentId: "agent:researcher",
     agentType: "sub_agent",
     role: "research worker",
-    displayNameSnapshot: "Researcher",
-    nicknameSnapshot: "Researcher",
     personalitySnapshot: "Precise",
     teamContext: [],
     memoryPolicy,
@@ -150,7 +136,7 @@ function command(): CommandRequest {
     parentRunId: "run-parent",
     subSessionId: "sub:child",
     targetAgentId: "agent:researcher",
-    targetNicknameSnapshot: "Researcher",
+    targetAgentNameSnapshot: "Researcher",
     taskScope,
     contextPackageIds: ["exchange:ctx-1", "exchange:ctx-2"],
     expectedOutputs: [expectedOutput],
@@ -200,12 +186,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -250,6 +230,33 @@ describe("task003 child own memory bootstrap", () => {
       resultTokenEstimate: 48,
       createdAt: now - 1_000,
     })
+    insertMemoryCapsule({
+      capsuleId: "capsule:foreign-newer",
+      capsuleVersion: 1,
+      ownerScope: buildSubAgentMemoryStateScope({
+        agentId: "agent:other",
+        sessionId: "session-parent",
+        requestGroupId: "command:foreign",
+        lineageId: "sub:foreign",
+        channelKey: "slack",
+        threadKey: "slack:C123:thread-1",
+      }),
+      agentNameSnapshot: "Other",
+      capsuleKind: "handoff_compaction",
+      summary: "다른 실행자의 비공개 메모리",
+      activeObjectives: ["foreign objective"],
+      confirmedFacts: ["foreign fact"],
+      decisions: [],
+      constraints: [],
+      pendingItems: [],
+      artifactRefs: [],
+      recoveryHints: [],
+      sourceRefs: ["exchange:foreign"],
+      compactedMessageIds: [],
+      sourceTokenEstimate: 100,
+      resultTokenEstimate: 30,
+      createdAt: now,
+    })
 
     const { dependencies } = makeDependencies()
     const runner = new SubSessionRunner(dependencies)
@@ -269,7 +276,7 @@ describe("task003 child own memory bootstrap", () => {
 
     expect(bootstrap).toEqual(expect.objectContaining({
       ownerScope: expectedScope,
-      nicknameSnapshot: "Researcher",
+      agentNameSnapshot: "Researcher",
       seedMode: "child_own_state",
       rawTranscriptIncluded: false,
       latestCapsuleId: "capsule:previous",
@@ -280,6 +287,7 @@ describe("task003 child own memory bootstrap", () => {
         "exchange:handoff:command:child",
       ],
     }))
+    expect(bootstrap).not.toHaveProperty("nicknameSnapshot")
     expect(bootstrap?.initialPinnedItems).toEqual(expect.arrayContaining([
       "goal:Collect a small result for parent review.",
       "constraint:Do not deliver directly to the user.",
@@ -293,13 +301,15 @@ describe("task003 child own memory bootstrap", () => {
       "command_request:command:child",
     ]))
     expect(JSON.stringify(bootstrap)).not.toContain("부모 전체 transcript")
+    expect(JSON.stringify(bootstrap)).not.toContain("다른 실행자의 비공개 메모리")
 
     const state = getAgentMemoryStateByScopeKey(buildAgentMemoryStateScopeKey(expectedScope))
     expect(state).toEqual(expect.objectContaining({
       ownerScope: expectedScope,
       latestCapsuleId: "capsule:previous",
-      nicknameSnapshot: "Researcher",
+      agentNameSnapshot: "Researcher",
     }))
+    expect(state).not.toHaveProperty("nicknameSnapshot")
     const handoffExchange = getAgentDataExchange("exchange:handoff:command:child")
     expect(handoffExchange?.allowed_use).toBe("temporary_context")
     expect(JSON.parse(handoffExchange?.payload_json ?? "{}")).toMatchObject({

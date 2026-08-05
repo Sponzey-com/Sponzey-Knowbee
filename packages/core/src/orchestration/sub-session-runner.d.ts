@@ -1,17 +1,18 @@
 import { type ParentAggregationTrace, type SubAgentResultReview, type SubAgentResultReviewIssue } from "../agent/sub-agent-result-review.js";
+import { type DelegatedExecutionSnapshot } from "../contracts/delegated-execution-snapshot.js";
+import { type LlmDiagnosisProvider } from "../contracts/llm-diagnosis-provider.js";
+import type { LlmDiagnosisSchemaRepairProvider } from "../contracts/llm-diagnosis-schema-repair-provider.js";
 import { type AgentPromptBundle, type CommandRequest, type ErrorReport, type FeedbackRequest, type ModelExecutionSnapshot, type OrchestrationPlan, type ParallelSubSessionGroup, type ProgressEvent, type ResourceLockContract, type ResultReport, type ResultReportImpossibleReason, type SubSessionContract, type SubSessionMemoryBootstrap, type SubSessionStatus } from "../contracts/sub-agent-orchestration.js";
 import { type MessageLedgerEventInput } from "../runs/message-ledger.js";
 import { type ModelAvailabilityDoctorSnapshot, type ModelExecutionAuditSummary, type ProviderModelCapability } from "./model-execution-policy.js";
 import { type SubSessionProgressAggregator } from "./sub-session-progress-aggregation.js";
 export interface SubSessionRuntimeAgentSnapshot {
     agentId: string;
-    displayName: string;
-    nickname?: string;
+    agentName: string;
 }
 export interface SubSessionParentAgentSnapshot {
     agentId: string;
-    displayName?: string;
-    nickname?: string;
+    agentName?: string;
 }
 export interface RunSubSessionInput {
     command: CommandRequest;
@@ -19,6 +20,7 @@ export interface RunSubSessionInput {
     parentAgent?: SubSessionParentAgentSnapshot;
     parentSessionId: string;
     promptBundle: AgentPromptBundle;
+    delegationSnapshot?: DelegatedExecutionSnapshot;
     memoryBootstrap?: SubSessionMemoryBootstrap;
     channelKey?: string;
     threadKey?: string;
@@ -64,6 +66,8 @@ export interface SubSessionReviewRuntimeEventInput {
 export interface SubSessionRuntimeDependencies {
     now?: () => number;
     idProvider?: () => string;
+    prepareMemoryBootstrap?: (input: RunSubSessionInput, now: number) => SubSessionMemoryBootstrap;
+    initializeAgentMemoryState?: (bootstrap: SubSessionMemoryBootstrap) => void;
     loadSubSessionByIdempotencyKey?: (idempotencyKey: string) => Promise<SubSessionContract | undefined> | SubSessionContract | undefined;
     persistSubSession?: (subSession: SubSessionContract) => Promise<boolean> | boolean;
     updateSubSession?: (subSession: SubSessionContract) => Promise<void> | void;
@@ -79,6 +83,8 @@ export interface SubSessionRuntimeDependencies {
         resultReport: ResultReport;
         subSession: SubSessionContract;
     }) => Promise<SubAgentResultReview> | SubAgentResultReview;
+    diagnosisProvider?: LlmDiagnosisProvider;
+    diagnosisRepairProvider?: LlmDiagnosisSchemaRepairProvider;
 }
 export interface SubSessionWorkItem {
     taskId: string;
@@ -219,6 +225,8 @@ export declare class SubSessionRunner {
     private readonly idProvider;
     private readonly dependencies;
     private readonly customReviewResultReport;
+    private readonly diagnosisProvider;
+    private readonly diagnosisRepairProvider;
     private readonly progressAggregator;
     private readonly recordLedgerEvent;
     private readonly activeControllers;
@@ -236,6 +244,7 @@ export declare class SubSessionRunner {
     private recordSubSessionLifecycleEvent;
     private changeStatus;
     private reviewResultReport;
+    private resolvePostReviewResultDiagnosis;
     private executeWithModelPolicy;
 }
 export declare function runParallelSubSessionGroup(group: Pick<ParallelSubSessionGroup, "groupId" | "dependencyEdges" | "concurrencyLimit">, items: SubSessionWorkItem[], options?: ParallelSubSessionGroupRunOptions): Promise<ParallelSubSessionGroupRunResult>;

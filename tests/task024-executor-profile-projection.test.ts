@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type {
   EnterpriseMetadataValue,
@@ -34,28 +33,20 @@ import {
   type ExecutorGraphWorkspace,
 } from "../packages/core/src/topology/executor-graph.ts"
 import { createEnterpriseTopologyRegistry } from "../packages/core/src/topology/registry.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const now = Date.UTC(2026, 4, 6, 9, 0, 0)
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task024-executor-profile-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -322,7 +313,7 @@ describe("task024 executor profile projection", () => {
       createdBy: "task024-test",
     })
     const snapshot = buildOrchestrationRegistrySnapshot({
-      getConfig: emptyRegistryConfig,
+      config: emptyRegistryConfig(),
       now: () => now,
     })
     const agent = snapshot.agents.find(

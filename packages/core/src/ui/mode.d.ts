@@ -1,3 +1,5 @@
+import type { PersistedConfigPaths } from "../config/persisted-file.js";
+import type { KnowbeeConfig } from "../config/types.js";
 export type UiMode = "beginner" | "advanced" | "admin";
 export type PreferredUiMode = "beginner" | "advanced";
 export interface UiModeState {
@@ -33,16 +35,25 @@ export interface UiModeRollbackActivation {
     legacyAliasEnabled: boolean;
     reason: "disabled" | "enabled_by_ui_mode_rollback" | "enabled_by_legacy_ui_alias";
 }
+export interface UiModeRuntimeInput {
+    adminActivation?: AdminUiActivationInput;
+    rollbackActivation?: UiModeRollbackActivationInput;
+    config?: KnowbeeConfig;
+}
+export type UiModeRuntimeConfigInput = UiModeRuntimeInput & {
+    config: KnowbeeConfig;
+};
+export interface ResolveUiModeInput extends UiModeRuntimeInput {
+    preferredUiMode?: unknown;
+    requestedMode?: unknown;
+    adminEnabled?: boolean;
+}
 export declare function normalizePreferredUiMode(value: unknown): PreferredUiMode;
 export declare function resolveUiModeRollbackActivation(input?: UiModeRollbackActivationInput): UiModeRollbackActivation;
 export declare function isUiModeRollbackEnabled(): boolean;
 export declare function resolveAdminUiActivation(input?: AdminUiActivationInput): AdminUiActivation;
-export declare function isAdminUiEnabled(): boolean;
-export declare function resolveUiMode(input?: {
-    preferredUiMode?: unknown;
-    requestedMode?: unknown;
-    adminEnabled?: boolean;
-}): UiModeState;
-export declare function getUiModeState(): UiModeState;
-export declare function savePreferredUiMode(mode: PreferredUiMode): UiModeState;
+export declare function isAdminUiEnabled(input?: AdminUiActivationInput): boolean;
+export declare function resolveUiMode(input?: ResolveUiModeInput): UiModeState;
+export declare function getUiModeState(input: UiModeRuntimeConfigInput): UiModeState;
+export declare function savePreferredUiMode(mode: PreferredUiMode, input: UiModeRuntimeConfigInput, paths: PersistedConfigPaths): UiModeState;
 //# sourceMappingURL=mode.d.ts.map

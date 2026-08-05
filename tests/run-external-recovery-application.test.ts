@@ -2,6 +2,55 @@ import { describe, expect, it, vi } from "vitest"
 import { applyExternalRecoveryPlan } from "../packages/core/src/runs/external-recovery-application.ts"
 
 describe("external recovery application", () => {
+  it("returns unchanged ai recovery to completion review without terminal application", async () => {
+    const seenKeys = new Set<string>()
+    const appendRunEvent = vi.fn()
+    const applyTerminalApplication = vi.fn()
+
+    const result = await applyExternalRecoveryPlan({
+      runId: "run-review",
+      sessionId: "session-review",
+      source: "telegram",
+      onChunk: undefined,
+      preview: "",
+      plan: {
+        recoveryKey: "provider-contract-1",
+        eventLabel: "AI 실행 실패를 동일 계약으로 재전송하지 않고 completion review로 전달합니다.",
+        routeChanged: false,
+        reviewRequired: true,
+        nextState: {
+          model: "gpt-5",
+          providerId: "openai",
+          provider: undefined,
+          targetId: "provider:openai",
+          targetLabel: "OpenAI",
+          workerRuntime: undefined,
+        },
+        nextMessage: "",
+      },
+      seenKeys,
+      finalizationDependencies: {
+        appendRunEvent: vi.fn(),
+        setRunStepStatus: vi.fn(),
+        updateRunStatus: vi.fn(),
+        rememberRunSuccess: vi.fn(),
+        rememberRunFailure: vi.fn(),
+      },
+    }, {
+      appendRunEvent,
+    }, {
+      applyTerminalApplication,
+    })
+
+    expect(result).toEqual({ kind: "review" })
+    expect(seenKeys).toContain("provider-contract-1")
+    expect(appendRunEvent).toHaveBeenCalledWith(
+      "run-review",
+      "AI 실행 실패를 동일 계약으로 재전송하지 않고 completion review로 전달합니다.",
+    )
+    expect(applyTerminalApplication).not.toHaveBeenCalled()
+  })
+
   it("moves to stop when duplicate stop is requested", async () => {
     const appendRunEvent = vi.fn()
     const applyTerminalApplication = vi.fn(async () => ({ kind: "stop" }))
@@ -12,6 +61,12 @@ describe("external recovery application", () => {
       source: "telegram",
       onChunk: undefined,
       preview: "partial",
+      responseContext: {
+        originalRequest: "카메라로 사진을 찍어줘",
+        model: "gpt-5",
+        providerId: "openai",
+        workDir: "/tmp/project",
+      },
       plan: {
         recoveryKey: "dup-1",
         eventLabel: "AI 오류를 분석하고 다른 방법으로 재시도합니다.",
@@ -49,6 +104,12 @@ describe("external recovery application", () => {
     expect(result).toEqual({ kind: "stop" })
     expect(applyTerminalApplication).toHaveBeenCalledTimes(1)
     expect(applyTerminalApplication).toHaveBeenCalledWith(expect.objectContaining({
+      responseContext: {
+        originalRequest: "카메라로 사진을 찍어줘",
+        model: "gpt-5",
+        providerId: "openai",
+        workDir: "/tmp/project",
+      },
       application: expect.objectContaining({
         rawMessage: "forbidden",
       }),

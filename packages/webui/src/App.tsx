@@ -12,38 +12,57 @@ import {
 import { connectWs, onWsConnect, onWsMessage } from "./api/ws"
 import { FeatureGate } from "./components/FeatureGate"
 import { Layout } from "./components/Layout"
+import { ResourceReadStatusNotice } from "./components/ResourceReadStatusNotice"
+import { WorkWorkspace } from "./components/work/WorkWorkspace"
 import { buildAdminShellView } from "./lib/admin-shell"
+import { resolveCanonicalCompatibilityTarget } from "./lib/canonical-compatibility-shell"
 import { uiCatalogText } from "./lib/message-catalog"
 import { useUiI18n } from "./lib/ui-i18n"
 import { resolveLegacyAdvancedRoute, resolveUnifiedRoute } from "./lib/ui-mode"
-import { ChatPage } from "./pages/ChatPage"
 import { LoginPage } from "./pages/LoginPage"
-import { SetupPage } from "./pages/SetupPage"
 import { useCapabilitiesStore } from "./stores/capabilities"
 import { handleWsMessage, useChatStore } from "./stores/chat"
 import { useConnectionStore } from "./stores/connection"
-import { useRunsStore } from "./stores/runs"
 import { useSetupStore } from "./stores/setup"
 import { useUiModeStore } from "./stores/uiMode"
 
 const DashboardPage = lazy(() =>
   import("./pages/DashboardPage").then((module) => ({ default: module.DashboardPage })),
 )
+const ChatPage = lazy(() =>
+  import("./pages/ChatPage").then((module) => ({ default: module.ChatPage })),
+)
+const SetupPage = lazy(() =>
+  import("./pages/SetupPage").then((module) => ({ default: module.SetupPage })),
+)
 const RunsPage = lazy(() =>
   import("./pages/RunsPage").then((module) => ({ default: module.RunsPage })),
-)
-const AuditPage = lazy(() =>
-  import("./pages/AuditPage").then((module) => ({ default: module.AuditPage })),
 )
 const SchedulePage = lazy(() =>
   import("./pages/SchedulePage").then((module) => ({ default: module.SchedulePage })),
 )
-const SettingsPage = lazy(() =>
-  import("./pages/SettingsPage").then((module) => ({ default: module.SettingsPage })),
+const AuditPage = lazy(() =>
+  import("./pages/AuditPage").then((module) => ({ default: module.AuditPage })),
 )
 const PluginsPage = lazy(() => import("./pages/PluginsPage"))
 const TopologyWorkspacePage = lazy(() =>
-  import("./pages/TopologyWorkspacePage").then((module) => ({ default: module.TopologyWorkspacePage })),
+  import("./pages/TopologyWorkspacePage").then((module) => ({
+    default: module.TopologyWorkspacePage,
+  })),
+)
+const SkillCatalogPage = lazy(() =>
+  import("./pages/SkillCatalogPage").then((module) => ({ default: module.SkillCatalogPage })),
+)
+const McpCatalogPage = lazy(() =>
+  import("./pages/McpCatalogPage").then((module) => ({ default: module.McpCatalogPage })),
+)
+const YeonjangCatalogPage = lazy(() =>
+  import("./pages/YeonjangCatalogPage").then((module) => ({
+    default: module.YeonjangCatalogPage,
+  })),
+)
+const AgentsPage = lazy(() =>
+  import("./pages/AgentsPage").then((module) => ({ default: module.AgentsPage })),
 )
 
 function LegacyAdvancedRedirect({ from }: { from: string }) {
@@ -52,10 +71,20 @@ function LegacyAdvancedRedirect({ from }: { from: string }) {
   return <Navigate to={`${to}${location.search}${location.hash}`} replace />
 }
 
-function UnifiedRouteRedirect({ fallback = "/sub-agents" }: { fallback?: string }) {
+function UnifiedRouteRedirect({ fallback = "/agents" }: { fallback?: string }) {
   const location = useLocation()
   const to = resolveUnifiedRoute(location.pathname)?.to ?? fallback
   return <Navigate to={`${to}${location.hash}`} replace />
+}
+
+function CanonicalCompatibilityRedirect({ setupCompleted }: { setupCompleted: boolean }) {
+  const location = useLocation()
+  if (!setupCompleted) return <Navigate to="/setup" replace />
+  const resolution = resolveCanonicalCompatibilityTarget({
+    pathname: location.pathname,
+    query: location.search,
+  })
+  return <Navigate to={`${resolution?.to ?? "/chat"}${location.hash}`} replace />
 }
 
 function AdvancedModeNotice() {
@@ -502,9 +531,7 @@ function AdminShellPage() {
               {msg("admin.lab.degraded", { count: toolLab?.webRetrieval.summary.degraded ?? 0 })}
             </p>
             <p className="mt-1 text-sm text-stone-600">
-              {msg("admin.lab.answerable", {
-                count: toolLab?.webRetrieval.summary.answerable ?? 0,
-              })}
+              LLM diagnosis {toolLab?.webRetrieval.summary.diagnosed ?? 0}
             </p>
           </article>
           <article className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5">
@@ -512,7 +539,7 @@ function AdminShellPage() {
               {msg("admin.lab.discovery")}
             </div>
             <p className="mt-3 text-sm leading-6 text-emerald-900">
-              web_search와 source 후보는 넓게 수집합니다.
+              직접 조회, 연장, Skill, MCP, 외부 API 근거를 수집합니다.
             </p>
           </article>
           <article className="rounded-3xl border border-sky-200 bg-sky-50 p-5">
@@ -520,7 +547,7 @@ function AdminShellPage() {
               {msg("admin.lab.completion")}
             </div>
             <p className="mt-3 text-sm leading-6 text-sky-900">
-              최종 답변은 target, source, candidate 필드 확인을 통과해야 합니다.
+              수집한 증거의 의미와 완료 여부는 LLM 결과 진단이 결정합니다.
             </p>
           </article>
         </div>
@@ -591,24 +618,13 @@ function AdminShellPage() {
                   className="rounded-2xl border border-stone-200 bg-stone-50 p-4"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-stone-950">
-                      {session.target &&
-                      typeof session.target === "object" &&
-                      "canonicalName" in session.target
-                        ? String(
-                            (session.target as { canonicalName?: unknown }).canonicalName ??
-                              session.id,
-                          )
-                        : session.id}
-                    </div>
+                    <div className="text-sm font-semibold text-stone-950">{session.id}</div>
                     <div className="flex flex-wrap gap-2 text-xs font-semibold">
                       <span className="rounded-full bg-white px-2 py-1 text-stone-700 ring-1 ring-stone-200">
                         {msg("admin.lab.attempts", { count: session.fetchAttempts.length })}
                       </span>
                       <span className="rounded-full bg-white px-2 py-1 text-stone-700 ring-1 ring-stone-200">
-                        {msg("admin.lab.candidates", {
-                          count: session.candidateExtraction.candidateCount,
-                        })}
+                        evidence {session.resultDiagnosis.evidenceRefs.length}
                       </span>
                       <span
                         className={`rounded-full px-2 py-1 ring-1 ${session.degradedState.degraded ? "bg-amber-100 text-amber-800 ring-amber-200" : "bg-emerald-100 text-emerald-800 ring-emerald-200"}`}
@@ -635,10 +651,11 @@ function AdminShellPage() {
                         {msg("admin.lab.completion")}
                       </div>
                       <div className="mt-2 text-sm font-semibold text-stone-900">
-                        {String(session.verification.canAnswer ?? "unknown")}
+                        {session.resultDiagnosis.status ?? "not diagnosed"}
                       </div>
                       <div className="mt-1 text-xs text-stone-600">
-                        {session.verification.evidenceSufficiency ?? "-"}
+                        criteria {session.resultDiagnosis.criterionKeys.length} · conditions{" "}
+                        {session.resultDiagnosis.conditionCount ?? 0}
                       </div>
                     </div>
                   </div>
@@ -656,21 +673,6 @@ function AdminShellPage() {
                         </div>
                         <div className="mt-1 text-stone-500">{attempt.freshnessPolicy}</div>
                       </div>
-                    ))}
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-600">
-                    <span className="rounded-full bg-white px-2 py-1 ring-1 ring-stone-200">
-                      {msg("admin.lab.cache", { status: session.cache.status })}
-                    </span>
-                    {session.adapterMetadata.map((adapter) => (
-                      <span
-                        key={adapter.adapterId}
-                        className="rounded-full bg-white px-2 py-1 ring-1 ring-stone-200"
-                      >
-                        {msg("admin.lab.adapter", {
-                          name: `${adapter.adapterId}@${adapter.adapterVersion}`,
-                        })}
-                      </span>
                     ))}
                   </div>
                 </div>
@@ -712,13 +714,11 @@ function AdminShellPage() {
                 >
                   <div className="text-sm font-semibold text-stone-950">{result.fixtureId}</div>
                   <div className="mt-1 text-xs text-stone-500">
-                    {result.status} · attempts {result.attempts} · candidates{" "}
-                    {result.candidateCount}
+                    {result.status} · attempts {result.attempts} · sources{" "}
+                    {result.successfulSourceCount}
                   </div>
                   <div className="mt-2 text-sm text-stone-700">
-                    {result.canAnswer
-                      ? (result.acceptedValue ?? "answerable")
-                      : result.evidenceSufficiency}
+                    expected diagnosis: {result.llmDiagnosisExpectation.status}
                   </div>
                 </div>
               ))}
@@ -1155,6 +1155,17 @@ function AdminShellPage() {
                       {job.error}
                     </p>
                   ) : null}
+                  {job.status === "succeeded" && job.bundleUrl ? (
+                    <a
+                      href={job.bundleUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      download
+                      className="mt-3 inline-flex h-9 items-center rounded-xl bg-stone-950 px-3 text-sm font-semibold text-white hover:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-stone-900/20"
+                    >
+                      {msg("admin.platform.downloadExport")}
+                    </a>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -1194,38 +1205,6 @@ function AdminShellPage() {
         <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
           {shell.auditNotice}
         </div>
-      </section>
-    </div>
-  )
-}
-
-function BeginnerTasksPage() {
-  const { language } = useUiI18n()
-  const msg = (
-    key: Parameters<typeof uiCatalogText>[1],
-    params?: Record<string, string | number>,
-  ) => uiCatalogText(language, key, params)
-  const shell = useUiModeStore((state) => state.shell)
-  const taskComponent = shell?.viewModel.advanced.components.find(
-    (component) => component.key === "tasks",
-  )
-  const activeRunCount =
-    typeof taskComponent?.configSummary.total === "number" ? taskComponent.configSummary.total : 0
-  return (
-    <div className="h-full overflow-y-auto bg-stone-100 p-6">
-      <section className="rounded-[2rem] bg-white p-8 shadow-sm">
-        <h1 className="text-2xl font-semibold text-stone-900">{msg("beginner.tasks.title")}</h1>
-        <p className="mt-3 text-sm text-stone-600">{msg("beginner.tasks.description")}</p>
-        <div className="mt-6 rounded-2xl border border-stone-200 bg-stone-50 p-5">
-          <div className="text-sm font-semibold text-stone-900">{msg("beginner.tasks.active")}</div>
-          <div className="mt-2 text-3xl font-semibold text-stone-900">{activeRunCount}</div>
-        </div>
-        <Link
-          to="/advanced/runs"
-          className="mt-6 inline-flex rounded-xl border border-stone-200 px-4 py-2.5 text-sm font-semibold text-stone-700"
-        >
-          {msg("beginner.tasks.details")}
-        </Link>
       </section>
     </div>
   )
@@ -1287,25 +1266,22 @@ function StatusCard({ label, value }: { label: string; value: string }) {
 export default function App() {
   const { text } = useUiI18n()
   const setConnected = useChatStore((state) => state.setConnected)
-  const initializeConnection = useConnectionStore((state) => state.initialize)
+  const acceptConnectionStatus = useConnectionStore((state) => state.acceptStatus)
+  const setConnectionDisconnected = useConnectionStore((state) => state.setDisconnected)
   const initializeCapabilities = useCapabilitiesStore((state) => state.initialize)
-  const ensureRunsInitialized = useRunsStore((state) => state.ensureInitialized)
   const initializeUiMode = useUiModeStore((state) => state.initialize)
   const setupCompleted = useSetupStore((state) => state.state.completed)
   const initializeSetup = useSetupStore((state) => state.initialize)
   const setupInitialized = useSetupStore((state) => state.initialized)
+  const setupCoreReadState = useSetupStore((state) => state.coreReadState)
   const [authState, setAuthState] = useState<boolean | null>(null)
 
   useEffect(() => {
-    ensureRunsInitialized()
-  }, [ensureRunsInitialized])
-
-  useEffect(() => {
-    void initializeConnection()
+    if (authState !== true) return
     void initializeCapabilities()
     void initializeSetup()
     void initializeUiMode()
-  }, [initializeCapabilities, initializeConnection, initializeSetup, initializeUiMode])
+  }, [authState, initializeCapabilities, initializeSetup, initializeUiMode])
 
   useEffect(() => {
     void checkAuth()
@@ -1313,17 +1289,17 @@ export default function App() {
 
   async function checkAuth() {
     try {
-      const response = await fetch("/api/status")
-      if (response.ok) {
-        setAuthState(true)
-        initWs()
-      } else if (response.status === 401) {
+      const status = await api.status()
+      acceptConnectionStatus(status)
+      setAuthState(true)
+      initWs()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setConnectionDisconnected(message)
+      if (message.startsWith("401 ")) {
         setAuthState(false)
-      } else {
-        setAuthState(true)
-        initWs()
+        return
       }
-    } catch {
       setAuthState(true)
       initWs()
     }
@@ -1334,16 +1310,13 @@ export default function App() {
     onWsMessage(handleWsMessage)
     onWsConnect((connected) => {
       setConnected(connected)
-      if (connected) {
-        void ensureRunsInitialized(true)
-      }
     })
   }
 
   function handleLogin(token: string) {
     void token
-    setAuthState(true)
-    initWs()
+    setAuthState(null)
+    void checkAuth()
   }
 
   if (authState === null) {
@@ -1366,19 +1339,145 @@ export default function App() {
     )
   }
 
+  if (setupCoreReadState.status === "failed") {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-stone-100 p-5">
+        <div className="w-full max-w-xl">
+          <ResourceReadStatusNotice
+            state={setupCoreReadState}
+            subject="settings"
+            text={text}
+            onRefresh={() => void initializeSetup(true)}
+          />
+        </div>
+      </main>
+    )
+  }
+
   return (
     <BrowserRouter>
       <Layout>
         <Routes>
           <Route path="/" element={<Navigate to={setupCompleted ? "/chat" : "/setup"} replace />} />
-          <Route path="/setup" element={<SetupPage />} />
+          <Route
+            path="/setup"
+            element={
+              setupCompleted ? (
+                <Navigate to="/settings" replace />
+              ) : (
+                <LazyPage>
+                  <SetupPage mode="initial" />
+                </LazyPage>
+              )
+            }
+          />
           <Route
             path="/chat"
-            element={setupCompleted ? <ChatPage /> : <Navigate to="/setup" replace />}
+            element={
+              setupCompleted ? (
+                <LazyPage>
+                  <ChatPage />
+                </LazyPage>
+              ) : (
+                <Navigate to="/setup" replace />
+              )
+            }
+          />
+          <Route
+            path="/work"
+            element={
+              setupCompleted ? (
+                <Navigate to="/work/runs" replace />
+              ) : (
+                <Navigate to="/setup" replace />
+              )
+            }
+          />
+          <Route
+            path="/work/runs"
+            element={
+              setupCompleted ? (
+                <LazyPage>
+                  <RunsPage />
+                </LazyPage>
+              ) : (
+                <Navigate to="/setup" replace />
+              )
+            }
+          />
+          <Route
+            path="/work/schedules"
+            element={
+              setupCompleted ? (
+                <WorkWorkspace activeView="schedules">
+                  <LazyPage>
+                    <SchedulePage embedded />
+                  </LazyPage>
+                </WorkWorkspace>
+              ) : (
+                <Navigate to="/setup" replace />
+              )
+            }
+          />
+          <Route
+            path="/work/*"
+            element={<Navigate to={setupCompleted ? "/work/runs" : "/setup"} replace />}
+          />
+          <Route
+            path="/agents/*"
+            element={
+              setupCompleted ? (
+                <LazyPage>
+                  <AgentsPage />
+                </LazyPage>
+              ) : (
+                <Navigate to="/setup" replace />
+              )
+            }
+          />
+          <Route
+            path="/capabilities/skills"
+            element={
+              setupCompleted ? (
+                <LazyPage>
+                  <SkillCatalogPage />
+                </LazyPage>
+              ) : (
+                <Navigate to="/setup" replace />
+              )
+            }
+          />
+          <Route
+            path="/capabilities/mcp"
+            element={
+              setupCompleted ? (
+                <LazyPage>
+                  <McpCatalogPage />
+                </LazyPage>
+              ) : (
+                <Navigate to="/setup" replace />
+              )
+            }
+          />
+          <Route
+            path="/capabilities/yeonjang"
+            element={
+              setupCompleted ? (
+                <LazyPage>
+                  <YeonjangCatalogPage />
+                </LazyPage>
+              ) : (
+                <Navigate to="/setup" replace />
+              )
+            }
+          />
+          <Route
+            path="/capabilities/*"
+            element={<CanonicalCompatibilityRedirect setupCompleted={setupCompleted} />}
           />
           <Route
             path="/tasks"
-            element={setupCompleted ? <BeginnerTasksPage /> : <Navigate to="/setup" replace />}
+            element={<Navigate to={setupCompleted ? "/work/runs" : "/setup"} replace />}
           />
           <Route
             path="/status"
@@ -1386,42 +1485,16 @@ export default function App() {
           />
           <Route
             path="/sub-agents"
-            element={
-              setupCompleted ? (
-                <FeatureGate
-                  capabilityKey="enterprise_topology_builder_ui"
-                  title="서브 에이전트 설정"
-                >
-                  <LazyPage>
-                    <TopologyWorkspacePage />
-                  </LazyPage>
-                </FeatureGate>
-              ) : (
-                <Navigate to="/setup" replace />
-              )
-            }
+            element={<Navigate to={setupCompleted ? "/agents" : "/setup"} replace />}
           />
           <Route
             path="/sub-agents/*"
-            element={
-              setupCompleted ? (
-                <FeatureGate
-                  capabilityKey="enterprise_topology_builder_ui"
-                  title="서브 에이전트 설정"
-                >
-                  <LazyPage>
-                    <TopologyWorkspacePage />
-                  </LazyPage>
-                </FeatureGate>
-              ) : (
-                <Navigate to="/setup" replace />
-              )
-            }
+            element={<Navigate to={setupCompleted ? "/agents" : "/setup"} replace />}
           />
-          <Route path="/runs/*" element={<LegacyAdvancedRedirect from="/runs" />} />
+          <Route path="/runs/*" element={<UnifiedRouteRedirect fallback="/work/runs" />} />
           <Route path="/dashboard/*" element={<LegacyAdvancedRedirect from="/dashboard" />} />
           <Route path="/audit/*" element={<LegacyAdvancedRedirect from="/audit" />} />
-          <Route path="/schedules/*" element={<LegacyAdvancedRedirect from="/schedules" />} />
+          <Route path="/schedules/*" element={<Navigate to="/work/schedules" replace />} />
           <Route path="/plugins/*" element={<LegacyAdvancedRedirect from="/plugins" />} />
           <Route
             path="/topology/*"
@@ -1431,7 +1504,29 @@ export default function App() {
             path="/enterprise-topology/*"
             element={<LegacyAdvancedRedirect from="/advanced/topology" />}
           />
-          <Route path="/settings/*" element={<Navigate to="/advanced/ai" replace />} />
+          <Route
+            path="/settings"
+            element={
+              setupCompleted ? (
+                <Navigate to="/settings/basics" replace />
+              ) : (
+                <Navigate to="/setup" replace />
+              )
+            }
+          />
+          <Route
+            path="/settings/:sectionId"
+            element={
+              setupCompleted ? (
+                <LazyPage>
+                  <SetupPage mode="settings" />
+                </LazyPage>
+              ) : (
+                <Navigate to="/setup" replace />
+              )
+            }
+          />
+          <Route path="/settings/*" element={<Navigate to="/settings/basics" replace />} />
           <Route path="/ai/*" element={<LegacyAdvancedRedirect from="/advanced/ai" />} />
           <Route
             path="/channels/*"
@@ -1450,20 +1545,8 @@ export default function App() {
             element={
               setupCompleted ? (
                 <AdvancedOnly>
-                  <ChatPage />
-                </AdvancedOnly>
-              ) : (
-                <Navigate to="/setup" replace />
-              )
-            }
-          />
-          <Route
-            path="/advanced/runs"
-            element={
-              setupCompleted ? (
-                <AdvancedOnly>
                   <LazyPage>
-                    <RunsPage />
+                    <ChatPage />
                   </LazyPage>
                 </AdvancedOnly>
               ) : (
@@ -1471,79 +1554,25 @@ export default function App() {
               )
             }
           />
-          <Route
-            path="/advanced/runs/*"
-            element={
-              setupCompleted ? (
-                <AdvancedOnly>
-                  <LazyPage>
-                    <RunsPage />
-                  </LazyPage>
-                </AdvancedOnly>
-              ) : (
-                <Navigate to="/setup" replace />
-              )
-            }
-          />
-          <Route
-            path="/advanced/ai"
-            element={
-              <AdvancedOnly>
-                <LazyPage>
-                  <SettingsPage />
-                </LazyPage>
-              </AdvancedOnly>
-            }
-          />
-          <Route
-            path="/advanced/ai/*"
-            element={
-              <AdvancedOnly>
-                <LazyPage>
-                  <SettingsPage />
-                </LazyPage>
-              </AdvancedOnly>
-            }
-          />
+          <Route path="/advanced/runs" element={<UnifiedRouteRedirect fallback="/work/runs" />} />
+          <Route path="/advanced/runs/*" element={<UnifiedRouteRedirect fallback="/work/runs" />} />
+          <Route path="/advanced/ai" element={<UnifiedRouteRedirect fallback="/settings/ai" />} />
+          <Route path="/advanced/ai/*" element={<UnifiedRouteRedirect fallback="/settings/ai" />} />
           <Route
             path="/advanced/channels"
-            element={
-              <AdvancedOnly>
-                <LazyPage>
-                  <SettingsPage />
-                </LazyPage>
-              </AdvancedOnly>
-            }
+            element={<UnifiedRouteRedirect fallback="/settings/connections" />}
           />
           <Route
             path="/advanced/channels/*"
-            element={
-              <AdvancedOnly>
-                <LazyPage>
-                  <SettingsPage />
-                </LazyPage>
-              </AdvancedOnly>
-            }
+            element={<UnifiedRouteRedirect fallback="/settings/connections" />}
           />
           <Route
             path="/advanced/extensions"
-            element={
-              <AdvancedOnly>
-                <LazyPage>
-                  <SettingsPage />
-                </LazyPage>
-              </AdvancedOnly>
-            }
+            element={<UnifiedRouteRedirect fallback="/settings/connections" />}
           />
           <Route
             path="/advanced/extensions/*"
-            element={
-              <AdvancedOnly>
-                <LazyPage>
-                  <SettingsPage />
-                </LazyPage>
-              </AdvancedOnly>
-            }
+            element={<UnifiedRouteRedirect fallback="/settings/connections" />}
           />
           <Route
             path="/advanced/dashboard"
@@ -1603,115 +1632,71 @@ export default function App() {
           />
           <Route
             path="/advanced/schedules"
-            element={
-              setupCompleted ? (
-                <AdvancedOnly>
-                  <LazyPage>
-                    <SchedulePage />
-                  </LazyPage>
-                </AdvancedOnly>
-              ) : (
-                <Navigate to="/setup" replace />
-              )
-            }
+            element={<UnifiedRouteRedirect fallback="/work/schedules" />}
           />
           <Route
             path="/advanced/schedules/*"
+            element={<UnifiedRouteRedirect fallback="/work/schedules" />}
+          />
+          <Route
+            path="/advanced/topology"
             element={
               setupCompleted ? (
-                <AdvancedOnly>
-                  <LazyPage>
-                    <SchedulePage />
-                  </LazyPage>
-                </AdvancedOnly>
+                <UnifiedRouteRedirect fallback="/agents" />
               ) : (
                 <Navigate to="/setup" replace />
               )
             }
           />
           <Route
-            path="/advanced/topology"
-            element={setupCompleted ? <UnifiedRouteRedirect fallback="/sub-agents" /> : <Navigate to="/setup" replace />}
-          />
-          <Route
             path="/advanced/topology/*"
-            element={setupCompleted ? <UnifiedRouteRedirect fallback="/sub-agents" /> : <Navigate to="/setup" replace />}
+            element={
+              setupCompleted ? (
+                <UnifiedRouteRedirect fallback="/agents" />
+              ) : (
+                <Navigate to="/setup" replace />
+              )
+            }
           />
           <Route
             path="/advanced/enterprise-topology"
-            element={<UnifiedRouteRedirect fallback="/sub-agents" />}
+            element={<UnifiedRouteRedirect fallback="/agents" />}
           />
           <Route
             path="/advanced/enterprise-topology/*"
-            element={<UnifiedRouteRedirect fallback="/sub-agents" />}
+            element={<UnifiedRouteRedirect fallback="/agents" />}
           />
           <Route
             path="/advanced/orchestration"
-            element={<UnifiedRouteRedirect fallback="/sub-agents" />}
+            element={<UnifiedRouteRedirect fallback="/agents" />}
           />
           <Route
             path="/advanced/orchestration/*"
-            element={<UnifiedRouteRedirect fallback="/sub-agents" />}
+            element={<UnifiedRouteRedirect fallback="/agents" />}
           />
           <Route
             path="/advanced/memory"
-            element={
-              <AdvancedOnly>
-                <LazyPage>
-                  <SettingsPage />
-                </LazyPage>
-              </AdvancedOnly>
-            }
+            element={<UnifiedRouteRedirect fallback="/settings/memory" />}
           />
           <Route
             path="/advanced/memory/*"
-            element={
-              <AdvancedOnly>
-                <LazyPage>
-                  <SettingsPage />
-                </LazyPage>
-              </AdvancedOnly>
-            }
+            element={<UnifiedRouteRedirect fallback="/settings/memory" />}
           />
           <Route
             path="/advanced/tools"
-            element={
-              <AdvancedOnly>
-                <LazyPage>
-                  <SettingsPage />
-                </LazyPage>
-              </AdvancedOnly>
-            }
+            element={<UnifiedRouteRedirect fallback="/settings/permissions" />}
           />
           <Route
             path="/advanced/tools/*"
-            element={
-              <AdvancedOnly>
-                <LazyPage>
-                  <SettingsPage />
-                </LazyPage>
-              </AdvancedOnly>
-            }
+            element={<UnifiedRouteRedirect fallback="/settings/permissions" />}
           />
           <Route
             path="/advanced/release"
-            element={
-              <AdvancedOnly>
-                <LazyPage>
-                  <SettingsPage />
-                </LazyPage>
-              </AdvancedOnly>
-            }
+            element={<UnifiedRouteRedirect fallback="/settings/diagnostics" />}
           />
           <Route
             path="/advanced/release/*"
-            element={
-              <AdvancedOnly>
-                <LazyPage>
-                  <SettingsPage />
-                </LazyPage>
-              </AdvancedOnly>
-            }
+            element={<UnifiedRouteRedirect fallback="/settings/diagnostics" />}
           />
           <Route
             path="/advanced/plugins"
@@ -1741,8 +1726,14 @@ export default function App() {
               )
             }
           />
-          <Route path="/advanced/settings" element={<UnifiedRouteRedirect fallback="/setup" />} />
-          <Route path="/advanced/settings/*" element={<UnifiedRouteRedirect fallback="/setup" />} />
+          <Route
+            path="/advanced/settings"
+            element={<UnifiedRouteRedirect fallback="/settings" />}
+          />
+          <Route
+            path="/advanced/settings/*"
+            element={<UnifiedRouteRedirect fallback="/settings" />}
+          />
           <Route
             path="/admin/*"
             element={

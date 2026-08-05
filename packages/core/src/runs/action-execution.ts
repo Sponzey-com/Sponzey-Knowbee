@@ -1,8 +1,14 @@
 import crypto from "node:crypto"
+import { dirname, join } from "node:path"
+import type { ArtifactStorageContext } from "../artifacts/lifecycle.js"
 import type { ChannelSource } from "../channels/contracts.js"
 import { getSchedule, insertAuditLog, insertSchedule, updateSchedule, upsertScheduleMemoryEntry } from "../db/index.js"
-import { getConfig } from "../config/index.js"
-import { CONTRACT_SCHEMA_VERSION, type ScheduleContract } from "../contracts/index.js"
+import type { KnowbeeConfig } from "../config/types.js"
+import {
+  CONTRACT_SCHEMA_VERSION,
+  type ResponseLanguageMode,
+  type ScheduleContract,
+} from "../contracts/index.js"
 import { findScheduleCandidatesByContract } from "../schedules/candidates.js"
 import { storeMemorySync } from "../memory/store.js"
 import type {
@@ -14,6 +20,8 @@ import type {
 } from "../agent/intake.js"
 import { isValidCron, isValidTimeZone, normalizeScheduleTimezone } from "../scheduler/cron.js"
 import { buildPromptContextBlockPlan } from "../orchestration/prompt-bundle.js"
+import { loadPromptTemplate, type PromptTemplateVariables } from "../memory/knowbee-md.js"
+import { loadPromptValue } from "../memory/prompt-fragments.js"
 import {
   reconcileScheduleExecution,
   removeManagedScheduleExecution,
@@ -22,17 +30,45 @@ import {
 import type { AgentContextMode } from "../agent/index.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
 import { buildScheduledFollowupPrompt, getScheduledRunExecutionOptions } from "./scheduled.js"
-import { buildStructuredExecutionBrief } from "./request-prompt.js"
 import type { TaskProfile } from "./types.js"
+import {
+  buildScheduleActionResultNotice,
+  type ScheduleActionResultNotice,
+} from "./schedule-action-notice.js"
+
+const TASK_EXECUTION_BRIEF_SECTION_LABELS_SOURCE_ID = "task_execution_brief_section_labels_user"
+
+function taskExecutionBriefSectionLabel(key: string, variables: PromptTemplateVariables = {}): string {
+  const entries = loadPromptValue(TASK_EXECUTION_BRIEF_SECTION_LABELS_SOURCE_ID, variables, { required: true })
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line): [string, string] => {
+      const separator = line.indexOf("=")
+      if (separator < 0) return [line, ""]
+      return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()]
+    })
+  const value = new Map(entries).get(key)
+  if (!value) throw new Error(`task execution brief section label missing: ${key}`)
+  return value
+}
 
 export interface ScheduleActionExecutionResult {
   ok: boolean
   message: string
+  messageTextSource: "runtime_deterministic"
+  requiresFinalResponseRendering: true
+  notice: ScheduleActionResultNotice
   detail: string
   successCount: number
   failureCount: number
   receipts: ScheduleActionReceipt[]
 }
+
+type InternalScheduleActionExecutionResult = Omit<
+  ScheduleActionExecutionResult,
+  "messageTextSource" | "requiresFinalResponseRendering" | "notice"
+>
 
 export type ScheduleActionReceipt =
   | {
@@ -115,6 +151,7 @@ export interface ScheduleActionDependencies {
     originRequestGroupId: string
     model: string | undefined
     literalText?: string
+    responseLanguageMode: ResponseLanguageMode
   }) => {
     scheduleId: string
     targetSessionId?: string
@@ -133,6 +170,23 @@ function defaultScheduleActionReceipts(): ScheduleActionReceipt[] {
   return []
 }
 
+function withScheduleActionResultProvenance(
+  result: InternalScheduleActionExecutionResult,
+  actionCount = result.successCount + result.failureCount,
+): ScheduleActionExecutionResult {
+  return {
+    ...result,
+    messageTextSource: "runtime_deterministic",
+    requiresFinalResponseRendering: true,
+    notice: buildScheduleActionResultNotice({
+      ok: result.ok,
+      actionCount,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+    }),
+  }
+}
+
 function describeDefaultScheduleDestination(source: ScheduleActionExecutionParams["source"]): string {
   return source === "telegram" || source === "slack" ? `${source} current session` : `${source} current session`
 }
@@ -147,6 +201,7 @@ function buildRecurringScheduleContract(params: {
   originRunId: string
   originRequestGroupId: string
   literalText?: string | undefined
+  responseLanguageMode: ResponseLanguageMode
 }): ScheduleContract {
   const targetChannel = params.source === "telegram"
     ? "telegram"
@@ -157,6 +212,7 @@ function buildRecurringScheduleContract(params: {
   return {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     kind: "recurring",
+    responseLanguageMode: params.responseLanguageMode,
     time: {
       cron: params.cron,
       timezone: params.timezone,
@@ -188,16 +244,20 @@ function buildRecurringScheduleContract(params: {
 }
 
 export function createDefaultScheduleActionDependencies(
-  overrides: Pick<ScheduleActionDependencies, "scheduleDelayedRun">,
+  overrides: Pick<ScheduleActionDependencies, "scheduleDelayedRun"> & {
+    artifactStorage: ArtifactStorageContext
+    config: KnowbeeConfig
+  },
 ): ScheduleActionDependencies {
+  const stateDir = dirname(overrides.artifactStorage.rootDir)
+  const systemCronPaths = Object.freeze({ stateDir, logsDir: join(stateDir, "logs") })
   return {
     scheduleDelayedRun: overrides.scheduleDelayedRun,
     createRecurringSchedule: (params) => {
       const now = Date.now()
       const scheduleId = crypto.randomUUID()
       const targetSessionId = params.source === "telegram" || params.source === "slack" ? params.sessionId : undefined
-      const config = getConfig()
-      const timezone = normalizeScheduleTimezone(params.timezone, config.scheduler.timezone || config.profile.timezone)
+      const timezone = normalizeScheduleTimezone(params.timezone, overrides.config.scheduler.timezone || overrides.config.profile.timezone)
       const contract = buildRecurringScheduleContract({
         title: params.title,
         task: params.task,
@@ -207,6 +267,7 @@ export function createDefaultScheduleActionDependencies(
         ...(targetSessionId ? { targetSessionId } : {}),
         originRunId: params.originRunId,
         originRequestGroupId: params.originRequestGroupId,
+        responseLanguageMode: params.responseLanguageMode,
         ...(params.literalText ? { literalText: params.literalText } : {}),
       })
       const [duplicateCandidate] = findScheduleCandidatesByContract({
@@ -297,7 +358,7 @@ export function createDefaultScheduleActionDependencies(
         type: "project_note",
         importance: "medium",
       })
-      const execution = reconcileScheduleExecution(scheduleId)
+      const execution = reconcileScheduleExecution(scheduleId, systemCronPaths)
       return {
         scheduleId,
         ...(targetSessionId ? { targetSessionId } : {}),
@@ -323,7 +384,7 @@ export function createDefaultScheduleActionDependencies(
             ...(schedule.timezone ? { timezone: schedule.timezone } : {}),
           },
         })
-        removeManagedScheduleExecution(scheduleId)
+        removeManagedScheduleExecution(scheduleId, systemCronPaths)
         cancelledNames.push(schedule.name)
       }
       return cancelledNames
@@ -367,9 +428,7 @@ export function buildFollowupPrompt(params: {
     params.intake.intent_envelope.execution_semantics.approvalRequired
       ? `승인/권한 필요 여부 확인: ${params.intake.intent_envelope.execution_semantics.approvalTool ?? "approval"}`
       : "",
-    requiresFilesystemMutation
-      ? "파일/폴더 변경이 필요한 경우 실제 경로와 변경 여부를 확인한다."
-      : "결과가 텍스트라도 확인한 사실과 확인하지 못한 항목을 분리한다.",
+    buildTaskExecutionDefaultVerificationNote(requiresFilesystemMutation),
   ])
   const promptContextPlan = buildPromptContextBlockPlan({
     mode: "handoff",
@@ -383,83 +442,136 @@ export function buildFollowupPrompt(params: {
   })
   const selectedExecutorLines = params.selectedExecutorId
     ? [
-        "[validated_executor]",
-        `executor_id: ${params.selectedExecutorId}`,
-        params.selectedExecutorLabel ? `executor_label: ${params.selectedExecutorLabel}` : "",
-        params.selectedExecutorReason ? `selection_reason: ${params.selectedExecutorReason}` : "",
-        "The executor route is already validated by the parent decision. Do not choose another provider or target unless the parent explicitly asks for a fallback.",
+        taskExecutionBriefSectionLabel("validated_executor_header"),
+        `${taskExecutionBriefSectionLabel("executor_id_label")} ${params.selectedExecutorId}`,
+        params.selectedExecutorLabel ? `${taskExecutionBriefSectionLabel("executor_label_label")} ${params.selectedExecutorLabel}` : "",
+        params.selectedExecutorReason ? `${taskExecutionBriefSectionLabel("selection_reason_label")} ${params.selectedExecutorReason}` : "",
       ].filter(Boolean).join("\n")
     : ""
 
-  return buildStructuredExecutionBrief({
-    header: "[Task Execution Brief]",
-    introLines: [
-      "This is a child execution prompt for the current root request.",
-      "Do not treat this as a fresh channel request or a direct final answer to the user.",
-    ],
-    originalRequest: params.originalMessage,
-    structuredRequest: {
-      ...params.intake.structured_request,
-      target: params.intake.intent_envelope.target.trim() || goal,
-      to: params.intake.intent_envelope.destination.trim() || params.intake.structured_request.to,
-      context: params.intake.intent_envelope.context.length > 0
-        ? params.intake.intent_envelope.context
-        : [context],
-      normalized_english:
-        params.intake.intent_envelope.normalized_english.trim()
-        || params.intake.structured_request.normalized_english.trim(),
-      complete_condition: params.intake.intent_envelope.complete_condition.length > 0
-        ? params.intake.intent_envelope.complete_condition
-        : params.intake.structured_request.complete_condition,
-    },
-    executionSemantics: params.intake.intent_envelope.execution_semantics,
-    extraSections: [
-      [
-        "[included_context_blocks]",
+  const structuredRequest = {
+    ...params.intake.structured_request,
+    target: params.intake.intent_envelope.target.trim() || goal,
+    to: params.intake.intent_envelope.destination.trim() || params.intake.structured_request.to,
+    context: params.intake.intent_envelope.context.length > 0
+      ? params.intake.intent_envelope.context
+      : [context],
+    normalized_english:
+      params.intake.intent_envelope.normalized_english.trim()
+      || params.intake.structured_request.normalized_english.trim(),
+    complete_condition: params.intake.intent_envelope.complete_condition.length > 0
+      ? params.intake.intent_envelope.complete_condition
+      : params.intake.structured_request.complete_condition,
+  }
+
+  return loadPromptTemplate({
+    sourceId: "task_execution_brief_user",
+    variables: {
+      originalRequest: params.originalMessage,
+      target: structuredRequest.target || loadPromptValue("execution_default_target_user"),
+      destination: structuredRequest.to || loadPromptValue("execution_default_destination_user"),
+      contextBlock: formatExecutionBriefListBlock(taskExecutionBriefSectionLabel("context_header"), structuredRequest.context),
+      normalizedEnglishBlock: structuredRequest.normalized_english.trim()
+        ? `${taskExecutionBriefSectionLabel("normalized_english_header")}\n${structuredRequest.normalized_english.trim()}`
+        : "",
+      completeConditions: formatExecutionBriefBullets(
+        structuredRequest.complete_condition.length > 0
+          ? structuredRequest.complete_condition
+          : [loadPromptValue("execution_default_complete_condition_user")],
+      ),
+      checklist: formatExecutionBriefBullets(buildExecutionBriefChecklist({
+        target: structuredRequest.target || loadPromptValue("execution_default_target_user"),
+        destination: structuredRequest.to || loadPromptValue("execution_default_destination_user"),
+        completeConditions: structuredRequest.complete_condition,
+        requiresFilesystemMutation,
+        directArtifactDelivery: params.intake.intent_envelope.execution_semantics.artifactDelivery === "direct",
+      })),
+      includedContextBlocks: [
+        taskExecutionBriefSectionLabel("included_context_blocks_header"),
         ...promptContextPlan.includedContextBlocks.map((block) =>
           `- ${block.blockId}: ${block.included ? "included" : "excluded"} (${block.reason})`,
         ),
       ].join("\n"),
-      [
-        "[parent_work_order]",
-        `root_request: ${params.originalMessage}`,
-        `delegated_action: ${params.action.title}`,
-        `goal: ${goal}`,
-        `context: ${context}`,
-        `task_profile: ${params.taskProfile}`,
+      parentWorkOrder: [
+        taskExecutionBriefSectionLabel("parent_work_order_header"),
+        `${taskExecutionBriefSectionLabel("root_request_label")} ${params.originalMessage}`,
+        `${taskExecutionBriefSectionLabel("delegated_action_label")} ${params.action.title}`,
+        `${taskExecutionBriefSectionLabel("goal_label")} ${goal}`,
+        `${taskExecutionBriefSectionLabel("context_label")} ${context}`,
+        `${taskExecutionBriefSectionLabel("task_profile_label")} ${params.taskProfile}`,
       ].join("\n"),
-      selectedExecutorLines,
-      [
-        "[required_outputs]",
-        ...(requiredOutputs.length > 0
-          ? requiredOutputs.map((item) => `- ${item}`)
-          : ["- Return the concrete result requested by the parent work order."]),
-      ].join("\n"),
-      [
-        "[verification_notes]",
-        ...(verificationNotes.length > 0
-          ? verificationNotes.map((item) => `- ${item}`)
-          : ["- Verify the output against the original request before returning it."]),
-      ].join("\n"),
-      [
-        "[return_to_parent_contract]",
-        "- Return a structured result to the parent/requesting agent.",
-        "- Do not send or claim the final user-channel answer yourself.",
-        "- Include status, confirmed facts, produced outputs, verification performed, unresolved items, risks, and next recommended action.",
-        "- If incomplete, include the safe alternatives already tried and the remaining alternatives the parent can choose.",
-      ].join("\n"),
-      `작업 프로필: ${params.taskProfile}`,
-      successCriteria.length > 0 ? ["성공 조건:", ...successCriteria.map((item) => `- ${item}`)].join("\n") : "",
-      constraints.length > 0 ? ["제약 사항:", ...constraints.map((item) => `- ${item}`)].join("\n") : "",
-    ].filter(Boolean),
-    closingLines: [
-      "사용자가 지정한 이름, 따옴표 안 문자열, 파일명, 폴더명, 경로, 언어를 그대로 유지하세요. 폴더명 같은 리터럴을 번역하지 마세요.",
-      "최종 답변은 원래 사용자 요청과 같은 언어로 작성하세요. 사용자가 번역을 요청하지 않았다면 언어를 바꾸지 마세요.",
-      requiresFilesystemMutation
-        ? "이 요청은 실제 로컬 파일 또는 폴더 변경이 필요합니다. 로컬 도구를 사용해 실제로 생성하거나 수정하세요. 코드 조각, 설명문, 수동 안내만 남기고 끝내지 마세요."
-        : "지금 실제 작업을 수행하세요. 다시 intake 접수 메시지를 만들지 말고, 부모 실행자가 검증/취합할 수 있는 실제 결과를 반환하세요.",
-    ],
+      selectedExecutor: selectedExecutorLines,
+      requiredOutputs: formatExecutionBriefBullets(
+        requiredOutputs.length > 0
+          ? requiredOutputs
+          : [loadPromptValue("task_execution_default_required_output_user")],
+      ),
+      verificationNotes: formatExecutionBriefBullets(
+        verificationNotes.length > 0
+          ? verificationNotes
+          : [loadPromptValue("task_execution_default_verification_note_user")],
+      ),
+      taskProfile: params.taskProfile,
+      successCriteria: successCriteria.length > 0
+        ? [taskExecutionBriefSectionLabel("success_criteria_header"), ...successCriteria.map((item) => `- ${item}`)].join("\n")
+        : "",
+      constraints: constraints.length > 0
+        ? [taskExecutionBriefSectionLabel("constraints_header"), ...constraints.map((item) => `- ${item}`)].join("\n")
+        : "",
+      executionInstruction: buildTaskExecutionInstruction(requiresFilesystemMutation),
+    },
   })
+}
+
+function buildTaskExecutionInstruction(requiresFilesystemMutation: boolean): string {
+  return loadPromptTemplate({
+    sourceId: requiresFilesystemMutation
+      ? "task_execution_filesystem_instruction_user"
+      : "task_execution_general_instruction_user",
+  }).trim()
+}
+
+function buildTaskExecutionDefaultVerificationNote(requiresFilesystemMutation: boolean): string {
+  return loadPromptValue(requiresFilesystemMutation
+    ? "task_execution_filesystem_verification_note_user"
+    : "task_execution_text_verification_note_user", {}, { required: true })
+}
+
+function formatExecutionBriefBullets(items: string[]): string {
+  const normalized = uniqueStrings(items)
+  return normalized.length > 0 ? normalized.map((item) => `- ${item}`).join("\n") : ""
+}
+
+function formatExecutionBriefListBlock(title: string, items: string[]): string {
+  const lines = formatExecutionBriefBullets(items)
+  return lines ? [title, lines].join("\n") : ""
+}
+
+function buildExecutionBriefChecklist(params: {
+  target: string
+  destination: string
+  completeConditions: string[]
+  requiresFilesystemMutation: boolean
+  directArtifactDelivery: boolean
+}): string[] {
+  return [
+    loadPromptValue("task_execution_checklist_confirm_goal_user", { target: params.target }),
+    params.requiresFilesystemMutation
+      ? loadPromptValue("task_execution_checklist_filesystem_work_user")
+      : loadPromptValue("task_execution_checklist_general_work_user"),
+    ...(params.completeConditions.length > 0
+      ? params.completeConditions.map((condition) =>
+          loadPromptValue("task_execution_checklist_complete_condition_user", { completeCondition: condition }))
+      : [
+          loadPromptValue("task_execution_checklist_complete_condition_user", {
+            completeCondition: loadPromptValue("execution_default_complete_condition_user"),
+          }),
+        ]),
+    params.directArtifactDelivery
+      ? loadPromptValue("task_execution_checklist_direct_artifact_user", { destination: params.destination })
+      : loadPromptValue("task_execution_checklist_final_result_user", { destination: params.destination }),
+    loadPromptValue("task_execution_checklist_stop_condition_user"),
+  ]
 }
 
 export function executeScheduleActions(
@@ -470,18 +582,21 @@ export function executeScheduleActions(
 ): ScheduleActionExecutionResult {
   if (actions.length === 0) {
     const receipt = intake.user_message.text.trim()
-    return {
+    return withScheduleActionResultProvenance({
       ok: false,
       message: receipt || "일정 요청을 해석했지만 생성할 스케줄 정보가 부족합니다.",
       detail: "일정 생성 항목이 없습니다.",
       successCount: 0,
       failureCount: 1,
       receipts: defaultScheduleActionReceipts(),
-    }
+    }, 0)
   }
 
   if (actions.length === 1) {
-    return executeScheduleAction(actions[0], intake, params, intake.user_message.text.trim(), dependencies)
+    return withScheduleActionResultProvenance(
+      executeScheduleAction(actions[0], intake, params, intake.user_message.text.trim(), dependencies),
+      1,
+    )
   }
 
   const results = actions.map((action) => executeScheduleAction(action, intake, params, "", dependencies))
@@ -491,14 +606,14 @@ export function executeScheduleActions(
     ? hasCreate ? "일정 요청을 처리했습니다." : "예약 변경을 처리했습니다."
     : hasCreate ? "일부 일정 생성에 실패했습니다." : "일부 예약 변경에 실패했습니다."
 
-  return {
+  return withScheduleActionResultProvenance({
     ok: results.every((result) => result.ok),
     message: [receipt, "", heading, ...results.map((result) => `- ${result.detail}`)].join("\n"),
     detail: results.map((result) => result.detail).join(" / "),
     successCount: results.filter((result) => result.ok).length,
     failureCount: results.filter((result) => !result.ok).length,
     receipts: results.flatMap((result) => result.receipts),
-  }
+  }, actions.length)
 }
 
 function executeScheduleAction(
@@ -507,7 +622,7 @@ function executeScheduleAction(
   params: ScheduleActionExecutionParams,
   receipt: string,
   dependencies: ScheduleActionDependencies,
-): ScheduleActionExecutionResult {
+): InternalScheduleActionExecutionResult {
   // knowbee-critical-decision-audit: action-execution.structured_schedule_action
   // This dispatch uses structured intake action types, not raw user-language string comparison.
   if (!action || action.type === "create_schedule") {
@@ -533,7 +648,7 @@ function executeCreateScheduleAction(
   params: ScheduleActionExecutionParams,
   receipt: string,
   dependencies: ScheduleActionDependencies,
-): ScheduleActionExecutionResult {
+): InternalScheduleActionExecutionResult {
   if (!action) {
     return {
       ok: false,
@@ -662,6 +777,7 @@ function executeCreateScheduleAction(
     originRunId: params.runId,
     originRequestGroupId: params.requestGroupId,
     model: params.model,
+    responseLanguageMode: intake.structured_request.response_language_mode ?? "same_as_request",
     ...(followup.literalText ? { literalText: followup.literalText } : {}),
   })
   const scheduleText = actionScheduleText || cron
@@ -721,7 +837,7 @@ function executeCancelScheduleAction(
   intake: TaskIntakeResult,
   receipt: string,
   dependencies: ScheduleActionDependencies,
-): ScheduleActionExecutionResult {
+): InternalScheduleActionExecutionResult {
   const scheduleIds = Array.isArray(action.payload.schedule_ids)
     ? action.payload.schedule_ids.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : []

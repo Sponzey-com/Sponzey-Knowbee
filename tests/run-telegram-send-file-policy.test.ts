@@ -34,6 +34,11 @@ afterEach(() => {
 })
 
 describe("telegram send file policy", () => {
+  it("requires a delivery-specific approval before external file transfer", () => {
+    expect(telegramSendFileTool.riskLevel).toBe("moderate")
+    expect(telegramSendFileTool.requiresApproval).toBe(true)
+  })
+
   it("rejects document-like attachments for simple status requests", async () => {
     const filePath = createTempFile("monitor-status.txt", "display count: 2")
 

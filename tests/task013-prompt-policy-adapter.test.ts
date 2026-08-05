@@ -54,13 +54,13 @@ function context(): AgentExecutionContext {
     },
     current_executor: {
       executor_id: "agent:knowbee",
-      display_name: "노비",
+      agent_name: "노비",
       can_delegate: true,
       available: true,
     },
     accessible_executors: [{
       executor_id: "node:finance",
-      display_name: "행랑아범",
+      agent_name: "행랑아범",
       role_name: "재무 담당",
       definition: "시장과 재무 정보를 확인한다.",
       can_delegate: false,

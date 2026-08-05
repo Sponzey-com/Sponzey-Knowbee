@@ -1,42 +1,241 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
-import { PATHS } from "../config/index.js";
+import { canonicalizeLegacyAgentIdentity } from "../adapters/legacy-agent-identity.js";
+import { canonicalizeLegacyTeamIdentity } from "../adapters/legacy-team-identity.js";
 import { buildDeliveryKey, buildPayloadHash, buildScheduleIdentityKey, formatContractValidationFailureForUser, toCanonicalJson, validateScheduleContract, } from "../contracts/index.js";
-import { SUB_AGENT_CONTRACT_SCHEMA_VERSION, normalizeNickname, normalizeNicknameSnapshot, } from "../contracts/sub-agent-orchestration.js";
-import { normalizeAgentMemoryState, } from "../memory/agent-state.js";
+import { SUB_AGENT_CONTRACT_SCHEMA_VERSION, normalizeAgentName, normalizeAgentNameSnapshot, resolveAgentConfigAgentName, } from "../contracts/sub-agent-orchestration.js";
+import { normalizeAgentMemoryState } from "../memory/agent-state.js";
 import { buildSessionSnapshotProjectionFromMemoryCapsule, buildTaskContinuityProjectionFromMemoryCapsule, normalizeMemoryCapsule, validateMemoryCapsule, } from "../memory/capsule.js";
 import { assertMigrationWriteAllowed } from "./migration-safety.js";
 import { createPreMigrationBackupIfNeeded, runMigrations } from "./migrations.js";
+function dbConstraintErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return raw;
+}
+export class DbRuntimeNotInitializedError extends Error {
+    reasonCode = "db_runtime_not_initialized";
+    constructor() {
+        super("Primary database runtime is not initialized.");
+        this.name = "DbRuntimeNotInitializedError";
+    }
+}
+export class DbRuntimePathMismatchError extends Error {
+    reasonCode = "db_runtime_path_mismatch";
+    constructor() {
+        super("Primary database runtime is already initialized for another instance.");
+        this.name = "DbRuntimePathMismatchError";
+    }
+}
+export class DbRuntimeInitializationError extends Error {
+    reasonCode = "db_runtime_initialization_failed";
+    constructor(cause) {
+        super("Primary database initialization failed.", { cause });
+        this.name = "DbRuntimeInitializationError";
+    }
+}
+const NODE_DB_RUNTIME_DEPENDENCIES = Object.freeze({
+    exists: existsSync,
+    makeDirectory: (path) => {
+        mkdirSync(path, { recursive: true });
+    },
+    openDatabase: (path) => new BetterSqlite3(path),
+    createBackup: createPreMigrationBackupIfNeeded,
+    migrate: runMigrations,
+    reconcile: (db) => {
+        reconcileSubAgentStorageDerivedFields(db);
+    },
+});
 let _db = null;
-export function getDb() {
-    if (_db)
+let _dbRuntimeContext = null;
+let _dbRuntimeState = "uninitialized";
+let _dbRuntimeFailure = null;
+export function createDbRuntimeContext(options) {
+    return Object.freeze({
+        paths: Object.freeze({
+            dbFile: options.paths.dbFile,
+            stateDir: options.paths.stateDir,
+        }),
+        migrationOwnerId: options.migrationOwnerId ?? `gateway:${process.pid}`,
+        dependencies: options.dependencies ?? NODE_DB_RUNTIME_DEPENDENCIES,
+    });
+}
+export function getDbRuntimeState() {
+    return _dbRuntimeState;
+}
+function sameDbRuntimePaths(left, right) {
+    return left.dbFile === right.dbFile && left.stateDir === right.stateDir;
+}
+export function initializeDbRuntime(context) {
+    if (_dbRuntimeState === "failed" && _dbRuntimeFailure)
+        throw _dbRuntimeFailure;
+    if (_db && _dbRuntimeContext) {
+        if (!sameDbRuntimePaths(_dbRuntimeContext.paths, context.paths)) {
+            throw new DbRuntimePathMismatchError();
+        }
         return _db;
-    mkdirSync(dirname(PATHS.dbFile), { recursive: true });
-    const dbExisted = existsSync(PATHS.dbFile);
-    _db = new BetterSqlite3(PATHS.dbFile);
-    _db.pragma("journal_mode = WAL");
-    _db.pragma("foreign_keys = ON");
-    _db.pragma("synchronous = NORMAL");
-    const backupSnapshotId = dbExisted
-        ? createPreMigrationBackupIfNeeded(_db, PATHS.dbFile, join(PATHS.stateDir, "backups", "db"))
-        : null;
-    runMigrations(_db, { backupSnapshotId, lockedBy: `gateway:${process.pid}` });
-    reconcileSubAgentStorageDerivedFields(_db);
-    return _db;
+    }
+    if (_dbRuntimeState !== "uninitialized") {
+        throw new DbRuntimeInitializationError(new Error(`invalid DB runtime state: ${_dbRuntimeState}`));
+    }
+    _dbRuntimeContext = context;
+    let opened = null;
+    try {
+        _dbRuntimeState = "opening";
+        context.dependencies.makeDirectory(dirname(context.paths.dbFile));
+        const dbExisted = context.dependencies.exists(context.paths.dbFile);
+        opened = context.dependencies.openDatabase(context.paths.dbFile);
+        _dbRuntimeState = "configuring";
+        opened.pragma("journal_mode = WAL");
+        opened.pragma("foreign_keys = ON");
+        opened.pragma("synchronous = NORMAL");
+        _dbRuntimeState = "backup_check";
+        const backupSnapshotId = dbExisted
+            ? context.dependencies.createBackup(opened, context.paths.dbFile, join(context.paths.stateDir, "backups", "db"))
+            : null;
+        _dbRuntimeState = "migrating";
+        context.dependencies.migrate(opened, {
+            backupSnapshotId,
+            lockedBy: context.migrationOwnerId,
+        });
+        _dbRuntimeState = "reconciling";
+        context.dependencies.reconcile(opened);
+        _db = opened;
+        _dbRuntimeState = "ready";
+        return opened;
+    }
+    catch (error) {
+        try {
+            opened?.close();
+        }
+        catch {
+            // Preserve the initialization failure as the terminal runtime reason.
+        }
+        _db = null;
+        _dbRuntimeState = "failed";
+        _dbRuntimeFailure =
+            error instanceof DbRuntimeInitializationError
+                ? error
+                : new DbRuntimeInitializationError(error);
+        throw _dbRuntimeFailure;
+    }
+}
+export function getDb(options) {
+    if (_db && _dbRuntimeContext) {
+        if (options && !sameDbRuntimePaths(_dbRuntimeContext.paths, options.paths)) {
+            throw new DbRuntimePathMismatchError();
+        }
+        return _db;
+    }
+    if (_dbRuntimeState === "failed" && _dbRuntimeFailure)
+        throw _dbRuntimeFailure;
+    if (!options)
+        throw new DbRuntimeNotInitializedError();
+    return initializeDbRuntime(createDbRuntimeContext(options));
 }
 export function closeDb() {
-    _db?.close();
-    _db = null;
+    try {
+        _db?.close();
+    }
+    finally {
+        _db = null;
+        _dbRuntimeContext = null;
+        _dbRuntimeFailure = null;
+        _dbRuntimeState = "uninitialized";
+    }
 }
-export class NicknameNamespaceError extends Error {
+export function getAgentOperationalSettingsMutationReceiptByNonce(nonce) {
+    return getDb()
+        .prepare("SELECT * FROM agent_operational_settings_mutation_receipts WHERE nonce = ?")
+        .get(nonce);
+}
+export function reserveAgentOperationalSettingsMutationReceipt(input) {
+    const result = getDb()
+        .prepare(`INSERT OR IGNORE INTO agent_operational_settings_mutation_receipts
+       (mutation_id, nonce, actor_ref, scope, purpose, mutation_kind, target_revision, state,
+        reason_code, request_fingerprint, receipt_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?)`)
+        .run(input.mutationId, input.nonce, input.actorRef, input.scope, input.purpose, input.mutationKind, input.targetRevision, input.state, input.requestFingerprint, input.now, input.now);
+    return result.changes === 1;
+}
+export function updateAgentOperationalSettingsMutationReceipt(input) {
+    const result = getDb()
+        .prepare(`UPDATE agent_operational_settings_mutation_receipts
+       SET state = ?, reason_code = ?, receipt_json = ?, updated_at = ?
+       WHERE mutation_id = ?`)
+        .run(input.state, input.reasonCode, input.receiptJson, input.now, input.mutationId);
+    return result.changes === 1;
+}
+export function getAgentRelationshipMutationReceiptByNonce(nonce) {
+    return getDb()
+        .prepare("SELECT * FROM agent_relationship_mutation_receipts WHERE nonce = ?")
+        .get(nonce);
+}
+export function reserveAgentRelationshipMutationReceipt(input) {
+    const result = getDb()
+        .prepare(`INSERT OR IGNORE INTO agent_relationship_mutation_receipts
+       (mutation_id, nonce, actor_ref, scope, purpose, mutation_kind, target_revision, state,
+        reason_code, request_fingerprint, receipt_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?)`)
+        .run(input.mutationId, input.nonce, input.actorRef, input.scope, input.purpose, input.mutationKind, input.targetRevision, input.state, input.requestFingerprint, input.now, input.now);
+    return result.changes === 1;
+}
+export function updateAgentRelationshipMutationReceipt(input) {
+    const result = getDb()
+        .prepare(`UPDATE agent_relationship_mutation_receipts
+       SET state = ?, reason_code = ?, receipt_json = ?, updated_at = ?
+       WHERE mutation_id = ?`)
+        .run(input.state, input.reasonCode, input.receiptJson, input.now, input.mutationId);
+    return result.changes === 1;
+}
+export function getAgentIdentityMutationReceiptByNonce(nonce) {
+    return getDb()
+        .prepare("SELECT * FROM agent_identity_mutation_receipts WHERE nonce = ?")
+        .get(nonce);
+}
+export function saveAgentIdentityMutationReceipt(input) {
+    const result = getDb()
+        .prepare(`INSERT OR IGNORE INTO agent_identity_mutation_receipts
+       (mutation_id, nonce, request_signature, mutation_kind, state, receipt_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(input.mutationId, input.nonce, input.requestSignature, input.mutationKind, input.state, input.receiptJson, input.now, input.now);
+    return result.changes === 1;
+}
+export function reserveCapabilityMutationReceipt(input) {
+    const result = getDb()
+        .prepare(`INSERT OR IGNORE INTO capability_mutation_receipts
+     (mutation_id, nonce, actor_ref, scope, purpose, capability_kind, target_revision, state, reason_code,
+      request_fingerprint, receipt_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(input.mutationId, input.nonce, input.actorRef, input.scope, input.purpose, input.capabilityKind, input.targetRevision, input.state, input.reasonCode ?? null, input.requestFingerprint ?? null, input.receiptJson ?? null, input.now, input.now);
+    return result.changes === 1;
+}
+export function getCapabilityMutationReceiptByNonce(nonce) {
+    return getDb()
+        .prepare("SELECT * FROM capability_mutation_receipts WHERE nonce = ?")
+        .get(nonce);
+}
+export function getCapabilityMutationReceipt(mutationId) {
+    return getDb()
+        .prepare("SELECT * FROM capability_mutation_receipts WHERE mutation_id = ?")
+        .get(mutationId);
+}
+export function updateCapabilityMutationReceipt(input) {
+    const result = getDb()
+        .prepare(`UPDATE capability_mutation_receipts
+     SET state = ?, reason_code = ?, receipt_json = COALESCE(?, receipt_json), updated_at = ?
+     WHERE mutation_id = ?`)
+        .run(input.state, input.reasonCode ?? null, input.receiptJson ?? null, input.now, input.mutationId);
+    return result.changes === 1;
+}
+export class AgentNameNamespaceError extends Error {
     details;
     constructor(details) {
-        const message = details.reasonCode === "nickname_conflict"
-            ? `Nickname "${details.nickname ?? ""}" is already used by ${details.existingEntityType} ${details.existingEntityId}. Choose a different nickname.`
-            : `Nickname is required for ${details.attemptedEntityType} ${details.attemptedEntityId}.`;
+        const message = details.reasonCode === "agent_name_conflict"
+            ? `Agent name "${details.agentName ?? ""}" is already used by ${details.existingEntityType} ${details.existingEntityId}. Choose a different name.`
+            : `Agent name is required for ${details.attemptedEntityType} ${details.attemptedEntityId}.`;
         super(message);
-        this.name = "NicknameNamespaceError";
+        this.name = "AgentNameNamespaceError";
         this.details = details;
     }
 }
@@ -55,6 +254,14 @@ export function insertMessage(msg) {
        (id, session_id, root_run_id, role, content, tool_calls, tool_call_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(msg.id, msg.session_id, msg.root_run_id ?? null, msg.role, msg.content, msg.tool_calls, msg.tool_call_id, msg.created_at);
+}
+export function insertMessageIfAbsent(msg) {
+    const result = getDb()
+        .prepare(`INSERT OR IGNORE INTO messages
+       (id, session_id, root_run_id, role, content, tool_calls, tool_call_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(msg.id, msg.session_id, msg.root_run_id ?? null, msg.role, msg.content, msg.tool_calls, msg.tool_call_id, msg.created_at);
+    return result.changes === 1;
 }
 export function getMessages(sessionId) {
     return getDb()
@@ -98,6 +305,14 @@ export function insertAuditLog(log) {
         duration_ms, approval_required, approved_by, error_code, retry_count, stop_reason)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(id, log.timestamp, log.session_id, log.run_id ?? null, log.request_group_id ?? null, log.channel ?? null, log.source, log.tool_name, log.params, log.output, log.result, log.duration_ms, log.approval_required, log.approved_by, log.error_code ?? null, log.retry_count ?? null, log.stop_reason ?? null);
+    return id;
+}
+export function listAuditLogsForRun(runId) {
+    return getDb()
+        .prepare(`SELECT * FROM audit_logs
+       WHERE run_id = ?
+       ORDER BY timestamp ASC, id ASC`)
+        .all(runId);
 }
 export function insertChannelMessageRef(ref) {
     const id = crypto.randomUUID();
@@ -108,6 +323,13 @@ export function insertChannelMessageRef(ref) {
         .run(id, ref.source, ref.session_id, ref.root_run_id, ref.request_group_id, ref.external_chat_id, ref.external_thread_id, ref.external_message_id, ref.role, ref.created_at);
     return id;
 }
+export function listChannelMessageRefsForRun(runId) {
+    return getDb()
+        .prepare(`SELECT * FROM channel_message_refs
+       WHERE root_run_id = ?
+       ORDER BY created_at ASC, id ASC`)
+        .all(runId);
+}
 export function insertDecisionTrace(input) {
     const id = input.id ?? crypto.randomUUID();
     getDb()
@@ -117,6 +339,13 @@ export function insertDecisionTrace(input) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(id, input.runId ?? null, input.requestGroupId ?? null, input.sessionId ?? null, input.source ?? null, input.channel ?? null, input.decisionKind, input.reasonCode, input.inputContractIds ? JSON.stringify(input.inputContractIds) : null, input.receiptIds ? JSON.stringify(input.receiptIds) : null, toJsonOrNull(input.detail), input.createdAt ?? Date.now());
     return id;
+}
+export function listDecisionTracesForRun(runId) {
+    return getDb()
+        .prepare(`SELECT * FROM decision_traces
+       WHERE run_id = ?
+       ORDER BY created_at DESC, id DESC`)
+        .all(runId);
 }
 export function insertMessageLedgerEvent(input) {
     const id = input.id ?? crypto.randomUUID();
@@ -130,7 +359,7 @@ export function insertMessageLedgerEvent(input) {
         return id;
     }
     catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = dbConstraintErrorMessage(error);
         if (message.toLowerCase().includes("unique") && message.includes("message_ledger")) {
             return null;
         }
@@ -145,6 +374,16 @@ export function getMessageLedgerEventByIdempotencyKey(idempotencyKey) {
        ORDER BY created_at DESC
        LIMIT 1`)
         .get(idempotencyKey);
+}
+export function transitionMessageLedgerEvent(input) {
+    const result = getDb()
+        .prepare(`
+      UPDATE message_ledger
+      SET event_kind = ?, status = ?, summary = ?, detail_json = ?
+      WHERE idempotency_key = ? AND event_kind = ? AND status = ?
+    `)
+        .run(input.eventKind, input.status, input.summary, toJsonOrNull(input.detail), input.idempotencyKey, input.expectedEventKind, input.expectedStatus);
+    return result.changes === 1;
 }
 export function insertQueueBackpressureEvent(input) {
     const id = input.id ?? crypto.randomUUID();
@@ -268,7 +507,7 @@ export function insertOrchestrationEvent(input) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, createdAt, emittedAt, input.eventKind, input.runId ?? null, input.parentRunId ?? null, input.requestGroupId ?? null, input.subSessionId ?? null, input.agentId ?? null, input.teamId ?? null, input.exchangeId ?? null, input.approvalId ?? null, input.correlationId, input.dedupeKey ?? null, input.source, input.severity ?? "info", input.summary, JSON.stringify(input.payloadRedacted), input.payloadRawRef ?? null, input.producerTask ?? null);
     }
     catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = dbConstraintErrorMessage(error);
         if (message.toLowerCase().includes("unique") && message.includes("orchestration_events")) {
             const existing = (input.dedupeKey ? getOrchestrationEventByDedupeKey(input.dedupeKey) : undefined) ??
                 getOrchestrationEventById(id);
@@ -615,6 +854,22 @@ export function updateChannelSmokeRun(id, fields) {
         .prepare(`UPDATE channel_smoke_runs SET ${sets.join(", ")} WHERE id = ?`)
         .run(...values);
 }
+/**
+ * Finalizes diagnostic runs owned by a previous Gateway process. CLI smoke
+ * runs have a separate process owner and are deliberately excluded.
+ */
+export function interruptGatewayOwnedChannelSmokeRunsStartedBefore(input) {
+    const result = getDb()
+        .prepare(`UPDATE channel_smoke_runs
+       SET status = 'failed',
+           finished_at = ?,
+           summary = 'channel smoke failed: gateway_restart_interrupted'
+       WHERE status = 'running'
+         AND started_at < ?
+         AND initiated_by IN ('webui', 'release-live-acceptance')`)
+        .run(input.finishedAt, input.startedBefore);
+    return result.changes;
+}
 export function insertChannelSmokeStep(input) {
     const id = input.id ?? crypto.randomUUID();
     const startedAt = input.startedAt ?? Date.now();
@@ -674,9 +929,7 @@ export function updateRunPromptSourceSnapshot(runId, snapshot) {
         .prepare(`SELECT prompt_source_snapshot FROM root_runs WHERE id = ?`)
         .get(runId);
     const existing = parseJsonRecord(current?.prompt_source_snapshot);
-    const mergedSnapshot = existing
-        ? { ...existing, ...snapshot }
-        : snapshot;
+    const mergedSnapshot = existing ? { ...existing, ...snapshot } : snapshot;
     getDb()
         .prepare(`UPDATE root_runs SET prompt_source_snapshot = ?, updated_at = ? WHERE id = ?`)
         .run(JSON.stringify(mergedSnapshot), Date.now(), runId);
@@ -794,8 +1047,8 @@ function tableExists(db, table) {
 function tableColumns(db, table) {
     return new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name));
 }
-function normalizedNicknameOrNull(value) {
-    const normalized = normalizeNickname(value ?? "");
+function normalizedAgentNameOrNull(value) {
+    const normalized = normalizeAgentName(value ?? "");
     return normalized || null;
 }
 function uniqueStrings(values) {
@@ -899,70 +1152,70 @@ function persistedTeamShape(input) {
 function optionalAuditId(identityAuditId, override) {
     return override ?? identityAuditId ?? null;
 }
-function syncNicknameNamespace(db, input) {
-    if (!tableExists(db, "nickname_namespaces"))
+function syncAgentNameNamespace(db, input) {
+    if (!tableExists(db, "agent_name_namespaces"))
         return;
-    const normalizedNickname = normalizedNicknameOrNull(input.nickname);
-    db.prepare("DELETE FROM nickname_namespaces WHERE entity_type = ? AND entity_id = ?").run(input.entityType, input.entityId);
-    if (!normalizedNickname)
+    const normalizedAgentName = normalizedAgentNameOrNull(input.agentName);
+    db.prepare("DELETE FROM agent_name_namespaces WHERE entity_type = ? AND entity_id = ?").run(input.entityType, input.entityId);
+    if (!normalizedAgentName)
         return;
     const existing = db
-        .prepare("SELECT * FROM nickname_namespaces WHERE normalized_nickname = ?")
-        .get(normalizedNickname);
+        .prepare("SELECT * FROM agent_name_namespaces WHERE normalized_agent_name = ?")
+        .get(normalizedAgentName);
     if (existing &&
         (existing.entity_type !== input.entityType || existing.entity_id !== input.entityId)) {
-        throw new NicknameNamespaceError({
-            reasonCode: "nickname_conflict",
+        throw new AgentNameNamespaceError({
+            reasonCode: "agent_name_conflict",
             attemptedEntityType: input.entityType,
             attemptedEntityId: input.entityId,
-            nickname: input.nickname,
-            normalizedNickname,
+            agentName: input.agentName,
+            normalizedAgentName,
             existingEntityType: existing.entity_type,
             existingEntityId: existing.entity_id,
-            existingNickname: existing.nickname_snapshot,
+            existingAgentName: existing.agent_name_snapshot,
             existingStatus: existing.status,
         });
     }
-    db.prepare(`INSERT INTO nickname_namespaces
-     (normalized_nickname, entity_type, entity_id, nickname_snapshot, status, source, created_at, updated_at)
+    db.prepare(`INSERT INTO agent_name_namespaces
+     (normalized_agent_name, entity_type, entity_id, agent_name_snapshot, status, source, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(normalized_nickname) DO UPDATE SET
+     ON CONFLICT(normalized_agent_name) DO UPDATE SET
        entity_type = excluded.entity_type,
        entity_id = excluded.entity_id,
-       nickname_snapshot = excluded.nickname_snapshot,
+       agent_name_snapshot = excluded.agent_name_snapshot,
        status = excluded.status,
        source = excluded.source,
        created_at = excluded.created_at,
-       updated_at = excluded.updated_at`).run(normalizedNickname, input.entityType, input.entityId, input.nickname ?? normalizedNickname, input.status, input.source, input.createdAt, input.updatedAt);
+       updated_at = excluded.updated_at`).run(normalizedAgentName, input.entityType, input.entityId, input.agentName ?? normalizedAgentName, input.status, input.source, input.createdAt, input.updatedAt);
 }
 function reconcileSubAgentStorageDerivedFields(db) {
     if (!tableExists(db, "agent_configs") || !tableExists(db, "team_configs"))
         return;
     const agentColumns = tableColumns(db, "agent_configs");
     const teamColumns = tableColumns(db, "team_configs");
-    const canSyncNicknameNamespace = tableExists(db, "nickname_namespaces");
+    const canSyncAgentNameNamespace = tableExists(db, "agent_name_namespaces");
     const tx = db.transaction(() => {
         const agentRows = db
             .prepare("SELECT * FROM agent_configs ORDER BY updated_at DESC, agent_id ASC")
             .all();
         for (const row of agentRows) {
             const config = parseJsonRecord(row.config_json);
-            const nextNormalizedNickname = normalizedNicknameOrNull(row.nickname);
+            const nextNormalizedAgentName = normalizedAgentNameOrNull(row.agent_name);
             const nextModelProfileJson = jsonStringOrNull(config?.["modelProfile"]);
             const nextDelegationPolicyJson = jsonStringOrNull(deriveDelegationPolicyValue(config ?? {}));
-            if (agentColumns.has("normalized_nickname") ||
+            if (agentColumns.has("normalized_agent_name") ||
                 agentColumns.has("model_profile_json") ||
                 agentColumns.has("delegation_policy_json")) {
                 db.prepare(`UPDATE agent_configs
-           SET normalized_nickname = ?, model_profile_json = ?, delegation_policy_json = ?
-           WHERE agent_id = ?`).run(nextNormalizedNickname, nextModelProfileJson, nextDelegationPolicyJson, row.agent_id);
+           SET normalized_agent_name = ?, model_profile_json = ?, delegation_policy_json = ?
+           WHERE agent_id = ?`).run(nextNormalizedAgentName, nextModelProfileJson, nextDelegationPolicyJson, row.agent_id);
             }
-            if (canSyncNicknameNamespace) {
+            if (canSyncAgentNameNamespace) {
                 try {
-                    syncNicknameNamespace(db, {
+                    syncAgentNameNamespace(db, {
                         entityType: "agent",
                         entityId: row.agent_id,
-                        nickname: row.nickname,
+                        agentName: row.agent_name,
                         status: row.status,
                         source: row.source,
                         createdAt: row.created_at,
@@ -970,7 +1223,7 @@ function reconcileSubAgentStorageDerivedFields(db) {
                     });
                 }
                 catch (error) {
-                    if (!(error instanceof NicknameNamespaceError))
+                    if (!(error instanceof AgentNameNamespaceError))
                         throw error;
                 }
             }
@@ -1000,18 +1253,18 @@ function reconcileSubAgentStorageDerivedFields(db) {
                 ...fallbackRoleHints,
             ]);
             const requiredCapabilityTags = asStringArray(config?.["requiredCapabilityTags"]);
-            if (teamColumns.has("normalized_nickname") || teamColumns.has("owner_agent_id")) {
+            if (teamColumns.has("owner_agent_id")) {
                 db.prepare(`UPDATE team_configs
-           SET normalized_nickname = ?, owner_agent_id = ?, lead_agent_id = ?, member_count_min = ?, member_count_max = ?,
+           SET owner_agent_id = ?, lead_agent_id = ?, member_count_min = ?, member_count_max = ?,
                required_team_roles_json = ?, required_capability_tags_json = ?, result_policy = ?, conflict_policy = ?
-           WHERE team_id = ?`).run(normalizedNicknameOrNull(row.nickname), ownerAgentId, leadAgentId, memberCountMin, memberCountMax, toJson(requiredTeamRoles), toJson(requiredCapabilityTags), asString(config?.["resultPolicy"]) ?? "lead_synthesis", asString(config?.["conflictPolicy"]) ?? "lead_decides", row.team_id);
+           WHERE team_id = ?`).run(ownerAgentId, leadAgentId, memberCountMin, memberCountMax, toJson(requiredTeamRoles), toJson(requiredCapabilityTags), asString(config?.["resultPolicy"]) ?? "lead_synthesis", asString(config?.["conflictPolicy"]) ?? "lead_decides", row.team_id);
             }
-            if (canSyncNicknameNamespace) {
+            if (canSyncAgentNameNamespace) {
                 try {
-                    syncNicknameNamespace(db, {
+                    syncAgentNameNamespace(db, {
                         entityType: "team",
                         entityId: row.team_id,
-                        nickname: row.nickname,
+                        agentName: row.display_name,
                         status: row.status,
                         source: row.source,
                         createdAt: row.created_at,
@@ -1019,7 +1272,7 @@ function reconcileSubAgentStorageDerivedFields(db) {
                     });
                 }
                 catch (error) {
-                    if (!(error instanceof NicknameNamespaceError))
+                    if (!(error instanceof AgentNameNamespaceError))
                         throw error;
                 }
             }
@@ -1039,108 +1292,109 @@ function persistenceSource(options) {
         return "import";
     return options?.source ?? "manual";
 }
-function agentNickname(input) {
-    return normalizeNicknameSnapshot(input.nickname ?? "");
+function agentNameForPersistence(input) {
+    const canonical = canonicalizeLegacyAgentIdentity(input);
+    if (canonical.agentName)
+        return canonical.agentName;
+    return resolveAgentConfigAgentName(input);
 }
-function teamNickname(input) {
-    return normalizeNicknameSnapshot(input.nickname ?? "");
+function teamDisplayName(input) {
+    return normalizeAgentNameSnapshot(input.displayName);
 }
 function persistedAgentConfig(input, imported) {
+    const inputRecord = input;
+    const { displayName: _displayName, nickname: _nickname, normalizedNickname: _normalizedNickname, ...rest } = inputRecord;
     const normalizedBase = {
-        ...input,
-        nickname: agentNickname(input),
+        ...rest,
+        agentName: agentNameForPersistence(input),
     };
-    const normalized = (normalizedNicknameOrNull(input.nickname)
-        ? { ...normalizedBase, normalizedNickname: normalizedNicknameOrNull(input.nickname) }
-        : normalizedBase);
+    const normalized = normalizedBase;
     if (!imported)
         return normalized;
     return { ...normalized, status: "disabled" };
 }
 function persistedTeamConfig(input, imported) {
-    const normalizedInput = {
-        ...input,
-        nickname: teamNickname(input),
-    };
-    const normalized = persistedTeamShape(normalizedNicknameOrNull(input.nickname)
-        ? { ...normalizedInput, normalizedNickname: normalizedNicknameOrNull(input.nickname) }
-        : normalizedInput);
+    const canonical = canonicalizeLegacyTeamIdentity(input);
+    const normalized = persistedTeamShape({
+        ...canonical,
+        displayName: teamDisplayName(canonical),
+    });
     if (!imported)
         return normalized;
     return { ...normalized, status: "disabled" };
 }
-function throwNicknameRequired(input) {
-    throw new NicknameNamespaceError({
-        reasonCode: "nickname_required",
+function throwAgentNameRequired(input) {
+    throw new AgentNameNamespaceError({
+        reasonCode: "agent_name_required",
         attemptedEntityType: input.attemptedEntityType,
         attemptedEntityId: input.attemptedEntityId,
-        nickname: input.nickname,
-        normalizedNickname: "",
+        agentName: input.agentName,
+        normalizedAgentName: "",
     });
 }
-function assertNicknameAvailable(input) {
-    const normalizedNickname = normalizeNickname(input.nickname ?? "");
-    if (!normalizedNickname)
-        throwNicknameRequired(input);
+function assertAgentNameAvailable(input) {
+    const normalizedAgentName = normalizeAgentName(input.agentName ?? "");
+    if (!normalizedAgentName)
+        throwAgentNameRequired(input);
     const db = getDb();
-    if (tableExists(db, "nickname_namespaces")) {
+    if (tableExists(db, "agent_name_namespaces")) {
         const existing = db
-            .prepare("SELECT * FROM nickname_namespaces WHERE normalized_nickname = ?")
-            .get(normalizedNickname);
+            .prepare("SELECT * FROM agent_name_namespaces WHERE normalized_agent_name = ?")
+            .get(normalizedAgentName);
         if (!existing)
             return;
         if (existing.entity_type === input.attemptedEntityType &&
             existing.entity_id === input.attemptedEntityId)
             return;
-        throw new NicknameNamespaceError({
-            reasonCode: "nickname_conflict",
+        throw new AgentNameNamespaceError({
+            reasonCode: "agent_name_conflict",
             attemptedEntityType: input.attemptedEntityType,
             attemptedEntityId: input.attemptedEntityId,
-            nickname: input.nickname,
-            normalizedNickname,
+            agentName: input.agentName,
+            normalizedAgentName,
             existingEntityType: existing.entity_type,
             existingEntityId: existing.entity_id,
-            existingNickname: existing.nickname_snapshot,
+            existingAgentName: existing.agent_name_snapshot,
             existingStatus: existing.status,
         });
     }
     const agentRows = db
-        .prepare("SELECT agent_id, nickname, status FROM agent_configs")
+        .prepare("SELECT agent_id, agent_name, status FROM agent_configs")
         .all();
     const teamRows = db
-        .prepare("SELECT team_id, nickname, status FROM team_configs")
+        .prepare("SELECT team_id, display_name, status FROM team_configs")
         .all();
     for (const row of agentRows) {
         if (input.attemptedEntityType === "agent" && row.agent_id === input.attemptedEntityId)
             continue;
-        if (normalizeNickname(row.nickname ?? "") !== normalizedNickname)
+        if (normalizeAgentName(row.agent_name) !== normalizedAgentName)
             continue;
-        throw new NicknameNamespaceError({
-            reasonCode: "nickname_conflict",
+        throw new AgentNameNamespaceError({
+            reasonCode: "agent_name_conflict",
             attemptedEntityType: input.attemptedEntityType,
             attemptedEntityId: input.attemptedEntityId,
-            nickname: input.nickname,
-            normalizedNickname,
+            agentName: input.agentName,
+            normalizedAgentName,
             existingEntityType: "agent",
             existingEntityId: row.agent_id,
-            existingNickname: row.nickname,
+            existingAgentName: row.agent_name,
             existingStatus: row.status,
         });
     }
     for (const row of teamRows) {
         if (input.attemptedEntityType === "team" && row.team_id === input.attemptedEntityId)
             continue;
-        if (normalizeNickname(row.nickname ?? "") !== normalizedNickname)
+        if (normalizeAgentName(row.display_name) !== normalizedAgentName)
             continue;
-        throw new NicknameNamespaceError({
-            reasonCode: "nickname_conflict",
+        throw new AgentNameNamespaceError({
+            reasonCode: "agent_name_conflict",
             attemptedEntityType: input.attemptedEntityType,
             attemptedEntityId: input.attemptedEntityId,
-            nickname: input.nickname,
-            normalizedNickname,
+            agentName: input.agentName,
+            normalizedAgentName,
             existingEntityType: "team",
             existingEntityId: row.team_id,
-            existingNickname: row.nickname,
+            existingAgentName: row.display_name,
             existingStatus: row.status,
         });
     }
@@ -1149,26 +1403,27 @@ export function upsertAgentConfig(input, options = {}) {
     const db = getDb();
     assertMigrationWriteAllowed(db, "agent.config.upsert");
     const config = persistedAgentConfig(input, options.imported);
-    assertNicknameAvailable({
+    const agentName = agentNameForPersistence(config);
+    const normalizedAgentName = normalizeAgentName(agentName);
+    assertAgentNameAvailable({
         attemptedEntityType: "agent",
         attemptedEntityId: config.agentId,
-        nickname: config.nickname ?? null,
+        agentName,
     });
     const now = options.now ?? Date.now();
     const updatedAt = options.now ?? config.updatedAt ?? now;
     const source = persistenceSource(options);
     const tx = db.transaction(() => {
         db.prepare(`INSERT INTO agent_configs
-       (agent_id, agent_type, status, display_name, nickname, normalized_nickname, role, personality, specialty_tags_json,
+       (agent_id, agent_type, status, agent_name, normalized_agent_name, role, personality, specialty_tags_json,
         avoid_tasks_json, model_profile_json, memory_policy_json, capability_policy_json, delegation_policy_json,
         profile_version, config_json, schema_version, source, audit_id, idempotency_key, created_at, updated_at, archived_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(agent_id) DO UPDATE SET
          agent_type = excluded.agent_type,
          status = excluded.status,
-         display_name = excluded.display_name,
-         nickname = excluded.nickname,
-         normalized_nickname = excluded.normalized_nickname,
+         agent_name = excluded.agent_name,
+         normalized_agent_name = excluded.normalized_agent_name,
          role = excluded.role,
          personality = excluded.personality,
          specialty_tags_json = excluded.specialty_tags_json,
@@ -1184,11 +1439,11 @@ export function upsertAgentConfig(input, options = {}) {
          audit_id = excluded.audit_id,
          idempotency_key = COALESCE(excluded.idempotency_key, agent_configs.idempotency_key),
          updated_at = excluded.updated_at,
-         archived_at = excluded.archived_at`).run(config.agentId, config.agentType, config.status, config.displayName, config.nickname ?? null, normalizedNicknameOrNull(config.nickname), config.role, config.personality, toJson(config.specialtyTags), toJson(config.avoidTasks), jsonStringOrNull(config.modelProfile), toJson(config.memoryPolicy), toJson(config.capabilityPolicy), jsonStringOrNull(deriveDelegationPolicyValue(config)), config.profileVersion, toConfigJson(config), config.schemaVersion, source, options.auditId ?? null, options.idempotencyKey ?? null, config.createdAt, updatedAt, config.status === "archived" ? updatedAt : null);
-        syncNicknameNamespace(db, {
+         archived_at = excluded.archived_at`).run(config.agentId, config.agentType, config.status, agentName, normalizedAgentName, config.role, config.personality, toJson(config.specialtyTags), toJson(config.avoidTasks), jsonStringOrNull(config.modelProfile), toJson(config.memoryPolicy), toJson(config.capabilityPolicy), jsonStringOrNull(deriveDelegationPolicyValue(config)), config.profileVersion, toConfigJson(config), config.schemaVersion, source, options.auditId ?? null, options.idempotencyKey ?? null, config.createdAt, updatedAt, config.status === "archived" ? updatedAt : null);
+        syncAgentNameNamespace(db, {
             entityType: "agent",
             entityId: config.agentId,
-            nickname: config.nickname ?? null,
+            agentName,
             status: config.status,
             source,
             createdAt: config.createdAt,
@@ -1201,6 +1456,100 @@ export function getAgentConfig(agentId) {
     return getDb()
         .prepare("SELECT * FROM agent_configs WHERE agent_id = ?")
         .get(agentId);
+}
+export function compareAndUpdateAgentIdentity(input) {
+    const db = getDb();
+    assertMigrationWriteAllowed(db, "agent.identity.compare_and_update");
+    const row = getAgentConfig(input.agentId);
+    if (!row)
+        return "agent_not_found";
+    const agentName = input.agentName?.trim() ?? row.agent_name;
+    const role = input.role?.trim() ?? row.role;
+    assertAgentNameAvailable({
+        attemptedEntityType: "agent",
+        attemptedEntityId: input.agentId,
+        agentName,
+    });
+    let config;
+    try {
+        const parsed = JSON.parse(row.config_json);
+        config = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    }
+    catch {
+        config = {};
+    }
+    const nextRevision = input.expectedRevision + 1;
+    const nextStatus = input.archive ? "archived" : row.status;
+    const configJson = toConfigJson({
+        ...config,
+        agentName,
+        role,
+        status: nextStatus,
+        profileVersion: nextRevision,
+        updatedAt: input.now,
+    });
+    const tx = db.transaction(() => {
+        const result = db
+            .prepare(`UPDATE agent_configs
+         SET agent_name = ?, normalized_agent_name = ?, role = ?, status = ?,
+             profile_version = ?, config_json = ?, updated_at = ?, archived_at = ?
+         WHERE agent_id = ? AND profile_version = ?`)
+            .run(agentName, normalizeAgentName(agentName), role, nextStatus, nextRevision, configJson, input.now, input.archive ? input.now : row.archived_at, input.agentId, input.expectedRevision);
+        if (result.changes !== 1)
+            return false;
+        syncAgentNameNamespace(db, {
+            entityType: "agent",
+            entityId: input.agentId,
+            agentName,
+            status: nextStatus,
+            source: row.source,
+            createdAt: row.created_at,
+            updatedAt: input.now,
+        });
+        return true;
+    });
+    return tx() ? "updated" : "revision_conflict";
+}
+export function compareAndUpdateAgentOperationalSettings(input) {
+    const db = getDb();
+    assertMigrationWriteAllowed(db, "agent.operational_settings.compare_and_update");
+    return db.transaction(() => {
+        const row = db
+            .prepare("SELECT * FROM agent_configs WHERE agent_id = ?")
+            .get(input.agentId);
+        if (!row)
+            return "agent_not_found";
+        if (row.profile_version !== input.expectedRevision)
+            return "revision_conflict";
+        let current;
+        try {
+            current = JSON.parse(row.config_json);
+        }
+        catch {
+            return "agent_config_invalid";
+        }
+        if (!current || typeof current !== "object" || current.agentId !== input.agentId)
+            return "agent_config_invalid";
+        const { modelProfile: _modelProfile, ...withoutModelProfile } = current;
+        const next = {
+            ...withoutModelProfile,
+            ...(input.modelProfile ? { modelProfile: input.modelProfile } : {}),
+            memoryPolicy: input.memoryPolicy,
+            capabilityPolicy: {
+                ...current.capabilityPolicy,
+                permissionProfile: input.permissionProfile,
+            },
+            profileVersion: input.targetRevision,
+            updatedAt: input.now,
+        };
+        const result = db
+            .prepare(`UPDATE agent_configs
+         SET model_profile_json = ?, memory_policy_json = ?, capability_policy_json = ?,
+             profile_version = ?, config_json = ?, updated_at = ?
+         WHERE agent_id = ? AND profile_version = ?`)
+            .run(jsonStringOrNull(input.modelProfile), toJson(input.memoryPolicy), toJson(next.capabilityPolicy), input.targetRevision, toConfigJson(next), input.now, input.agentId, input.expectedRevision);
+        return result.changes === 1 ? "updated" : "revision_conflict";
+    })();
 }
 export function listAgentConfigs(filters = {}) {
     const where = [];
@@ -1239,10 +1588,10 @@ export function disableAgentConfig(agentId, now = Date.now()) {
          WHERE agent_id = ?`)
             .run("disabled", nextConfigJson, now, agentId);
         if (result.changes > 0) {
-            syncNicknameNamespace(db, {
+            syncAgentNameNamespace(db, {
                 entityType: "agent",
                 entityId: agentId,
-                nickname: row.nickname,
+                agentName: row.agent_name,
                 status: "disabled",
                 source: row.source,
                 createdAt: row.created_at,
@@ -1257,26 +1606,24 @@ export function upsertTeamConfig(input, options = {}) {
     const db = getDb();
     assertMigrationWriteAllowed(db, "team.config.upsert");
     const config = persistedTeamConfig(input, options.imported);
-    assertNicknameAvailable({
+    assertAgentNameAvailable({
         attemptedEntityType: "team",
         attemptedEntityId: config.teamId,
-        nickname: config.nickname ?? null,
+        agentName: config.displayName,
     });
     const now = options.now ?? Date.now();
     const updatedAt = options.now ?? config.updatedAt ?? now;
     const source = persistenceSource(options);
     const tx = db.transaction(() => {
         db.prepare(`INSERT INTO team_configs
-       (team_id, status, display_name, nickname, normalized_nickname, purpose, owner_agent_id, lead_agent_id,
+       (team_id, status, display_name, purpose, owner_agent_id, lead_agent_id,
         member_count_min, member_count_max, required_team_roles_json, required_capability_tags_json, result_policy,
         conflict_policy, role_hints_json, member_agent_ids_json, profile_version, config_json, schema_version, source,
         audit_id, idempotency_key, created_at, updated_at, archived_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(team_id) DO UPDATE SET
          status = excluded.status,
          display_name = excluded.display_name,
-         nickname = excluded.nickname,
-         normalized_nickname = excluded.normalized_nickname,
          purpose = excluded.purpose,
          owner_agent_id = excluded.owner_agent_id,
          lead_agent_id = excluded.lead_agent_id,
@@ -1295,11 +1642,11 @@ export function upsertTeamConfig(input, options = {}) {
          audit_id = excluded.audit_id,
          idempotency_key = COALESCE(excluded.idempotency_key, team_configs.idempotency_key),
          updated_at = excluded.updated_at,
-         archived_at = excluded.archived_at`).run(config.teamId, config.status, config.displayName, config.nickname ?? null, normalizedNicknameOrNull(config.nickname), config.purpose, config.ownerAgentId ?? null, config.leadAgentId ?? null, config.memberCountMin ?? null, config.memberCountMax ?? null, toJson(config.requiredTeamRoles ?? []), toJson(config.requiredCapabilityTags ?? []), config.resultPolicy ?? "lead_synthesis", config.conflictPolicy ?? "lead_decides", toJson(config.roleHints), toJson(config.memberAgentIds), config.profileVersion, toConfigJson(config), config.schemaVersion, source, options.auditId ?? null, options.idempotencyKey ?? null, config.createdAt, updatedAt, config.status === "archived" ? updatedAt : null);
-        syncNicknameNamespace(db, {
+         archived_at = excluded.archived_at`).run(config.teamId, config.status, config.displayName, config.purpose, config.ownerAgentId ?? null, config.leadAgentId ?? null, config.memberCountMin ?? null, config.memberCountMax ?? null, toJson(config.requiredTeamRoles ?? []), toJson(config.requiredCapabilityTags ?? []), config.resultPolicy ?? "lead_synthesis", config.conflictPolicy ?? "lead_decides", toJson(config.roleHints), toJson(config.memberAgentIds), config.profileVersion, toConfigJson(config), config.schemaVersion, source, options.auditId ?? null, options.idempotencyKey ?? null, config.createdAt, updatedAt, config.status === "archived" ? updatedAt : null);
+        syncAgentNameNamespace(db, {
             entityType: "team",
             entityId: config.teamId,
-            nickname: config.nickname ?? null,
+            agentName: config.displayName,
             status: config.status,
             source,
             createdAt: config.createdAt,
@@ -1351,8 +1698,8 @@ export function deleteTeamConfig(teamId) {
             db.prepare("DELETE FROM team_execution_plans WHERE team_id = ?").run(teamId);
         }
         db.prepare("DELETE FROM agent_team_memberships WHERE team_id = ?").run(teamId);
-        if (tableExists(db, "nickname_namespaces")) {
-            db.prepare("DELETE FROM nickname_namespaces WHERE entity_type = ? AND entity_id = ?").run("team", teamId);
+        if (tableExists(db, "agent_name_namespaces")) {
+            db.prepare("DELETE FROM agent_name_namespaces WHERE entity_type = ? AND entity_id = ?").run("team", teamId);
         }
         const result = db.prepare("DELETE FROM team_configs WHERE team_id = ?").run(teamId);
         return result.changes > 0;
@@ -1510,11 +1857,11 @@ export function listAgentCapabilityBindings(filters = {}) {
        ORDER BY agent_id ASC, capability_kind ASC, catalog_id ASC`)
         .all(...params);
 }
-export function listNicknameNamespaces() {
-    if (!tableExists(getDb(), "nickname_namespaces"))
+export function listAgentNameNamespaces() {
+    if (!tableExists(getDb(), "agent_name_namespaces"))
         return [];
     return getDb()
-        .prepare("SELECT * FROM nickname_namespaces ORDER BY normalized_nickname ASC")
+        .prepare("SELECT * FROM agent_name_namespaces ORDER BY normalized_agent_name ASC")
         .all();
 }
 export function upsertAgentRelationship(input, options = {}) {
@@ -1564,10 +1911,10 @@ export function insertTeamExecutionPlan(input, options = {}) {
     assertMigrationWriteAllowed(db, "team.execution_plan.insert");
     try {
         db.prepare(`INSERT INTO team_execution_plans
-       (team_execution_plan_id, parent_run_id, team_id, team_nickname_snapshot, owner_agent_id, lead_agent_id,
+       (team_execution_plan_id, parent_run_id, team_id, team_name_snapshot, owner_agent_id, lead_agent_id,
         member_task_assignments_json, reviewer_agent_ids_json, verifier_agent_ids_json, fallback_assignments_json,
         coverage_report_json, conflict_policy_snapshot, result_policy_snapshot, contract_json, schema_version, audit_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.teamExecutionPlanId, input.parentRunId, input.teamId, input.teamNicknameSnapshot ?? null, input.ownerAgentId, input.leadAgentId, toJson(input.memberTaskAssignments), toJson(input.reviewerAgentIds), toJson(input.verifierAgentIds), toJson(input.fallbackAssignments), toJson(input.coverageReport), input.conflictPolicySnapshot, input.resultPolicySnapshot, toJson(input), SUB_AGENT_CONTRACT_SCHEMA_VERSION, options.auditId ?? null, input.createdAt);
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.teamExecutionPlanId, input.parentRunId, input.teamId, input.teamNameSnapshot ?? null, input.ownerAgentId, input.leadAgentId, toJson(input.memberTaskAssignments), toJson(input.reviewerAgentIds), toJson(input.verifierAgentIds), toJson(input.fallbackAssignments), toJson(input.coverageReport), input.conflictPolicySnapshot, input.resultPolicySnapshot, toJson(input), SUB_AGENT_CONTRACT_SCHEMA_VERSION, options.auditId ?? null, input.createdAt);
         return true;
     }
     catch (error) {
@@ -1586,16 +1933,25 @@ export function listTeamExecutionPlansForParentRun(parentRunId) {
         .prepare("SELECT * FROM team_execution_plans WHERE parent_run_id = ? ORDER BY created_at ASC, team_execution_plan_id ASC")
         .all(parentRunId);
 }
+function subSessionStorageAgentName(input) {
+    return (normalizeAgentNameSnapshot(input.agentName ?? input.agentNameSnapshot ?? "") ||
+        "Unnamed sub-agent");
+}
+function subSessionStorageAgentNameSnapshot(input) {
+    return normalizeAgentNameSnapshot(input.agentNameSnapshot ?? "") || null;
+}
 export function insertRunSubSession(input, options = {}) {
     const db = getDb();
     assertMigrationWriteAllowed(db, "run.subsession.insert");
     const now = options.now ?? Date.now();
+    const agentName = subSessionStorageAgentName(input);
+    const agentNameSnapshot = subSessionStorageAgentNameSnapshot(input);
     try {
         db.prepare(`INSERT INTO run_subsessions
-       (sub_session_id, parent_run_id, parent_session_id, parent_sub_session_id, parent_request_id, agent_id, agent_display_name,
-        agent_nickname, command_request_id, status, prompt_bundle_id, contract_json, schema_version,
+       (sub_session_id, parent_run_id, parent_session_id, parent_sub_session_id, parent_request_id, agent_id, agent_name,
+        agent_name_snapshot, command_request_id, status, prompt_bundle_id, contract_json, schema_version,
         audit_id, idempotency_key, created_at, updated_at, started_at, finished_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.subSessionId, input.parentRunId, input.parentSessionId, input.identity.parent?.parentSubSessionId ?? null, input.identity.parent?.parentRequestId ?? null, input.agentId, input.agentDisplayName, input.agentNickname ?? null, input.commandRequestId, input.status, input.promptBundleId, toJson(input), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, now, now, input.startedAt ?? null, input.finishedAt ?? null);
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.subSessionId, input.parentRunId, input.parentSessionId, input.identity.parent?.parentSubSessionId ?? null, input.identity.parent?.parentRequestId ?? null, input.agentId, agentName, agentNameSnapshot, input.commandRequestId, input.status, input.promptBundleId, toJson(input), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, now, now, input.startedAt ?? null, input.finishedAt ?? null);
         return true;
     }
     catch (error) {
@@ -1608,6 +1964,8 @@ export function updateRunSubSession(input, options = {}) {
     const db = getDb();
     assertMigrationWriteAllowed(db, "run.subsession.update");
     const now = options.now ?? Date.now();
+    const agentName = subSessionStorageAgentName(input);
+    const agentNameSnapshot = subSessionStorageAgentNameSnapshot(input);
     const result = db
         .prepare(`UPDATE run_subsessions
        SET parent_run_id = ?,
@@ -1615,8 +1973,8 @@ export function updateRunSubSession(input, options = {}) {
            parent_sub_session_id = ?,
            parent_request_id = ?,
            agent_id = ?,
-           agent_display_name = ?,
-           agent_nickname = ?,
+           agent_name = ?,
+           agent_name_snapshot = ?,
            command_request_id = ?,
            status = ?,
            prompt_bundle_id = ?,
@@ -1628,34 +1986,43 @@ export function updateRunSubSession(input, options = {}) {
            started_at = ?,
            finished_at = ?
        WHERE sub_session_id = ?`)
-        .run(input.parentRunId, input.parentSessionId, input.identity.parent?.parentSubSessionId ?? null, input.identity.parent?.parentRequestId ?? null, input.agentId, input.agentDisplayName, input.agentNickname ?? null, input.commandRequestId, input.status, input.promptBundleId, toJson(input), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, now, input.startedAt ?? null, input.finishedAt ?? null, input.subSessionId);
+        .run(input.parentRunId, input.parentSessionId, input.identity.parent?.parentSubSessionId ?? null, input.identity.parent?.parentRequestId ?? null, input.agentId, agentName, agentNameSnapshot, input.commandRequestId, input.status, input.promptBundleId, toJson(input), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, now, input.startedAt ?? null, input.finishedAt ?? null, input.subSessionId);
     return result.changes > 0;
 }
 export function getRunSubSession(subSessionId) {
     return getDb()
-        .prepare("SELECT * FROM run_subsessions WHERE sub_session_id = ?")
+        .prepare(`SELECT * FROM run_subsessions
+       WHERE sub_session_id = ?`)
         .get(subSessionId);
 }
 export function getRunSubSessionByIdempotencyKey(idempotencyKey) {
     return getDb()
-        .prepare("SELECT * FROM run_subsessions WHERE idempotency_key = ?")
+        .prepare(`SELECT * FROM run_subsessions
+       WHERE idempotency_key = ?`)
         .get(idempotencyKey);
 }
 export function listRunSubSessionsForParentRun(parentRunId) {
     return getDb()
-        .prepare("SELECT * FROM run_subsessions WHERE parent_run_id = ? ORDER BY created_at ASC, sub_session_id ASC")
+        .prepare(`SELECT * FROM run_subsessions
+       WHERE parent_run_id = ?
+       ORDER BY created_at ASC, sub_session_id ASC`)
         .all(parentRunId);
+}
+function dataExchangeStorageAgentNameSnapshot(value) {
+    return normalizeAgentNameSnapshot(value ?? "") || null;
 }
 export function insertAgentDataExchange(input, options = {}) {
     const db = getDb();
     assertMigrationWriteAllowed(db, "agent.data_exchange.insert");
     const now = options.now ?? Date.now();
+    const sourceAgentNameSnapshot = dataExchangeStorageAgentNameSnapshot(input.sourceAgentNameSnapshot ?? input.sourceAgentName);
+    const recipientAgentNameSnapshot = dataExchangeStorageAgentNameSnapshot(input.recipientAgentNameSnapshot ?? input.recipientAgentName);
     try {
         db.prepare(`INSERT INTO agent_data_exchanges
-       (exchange_id, source_owner_type, source_owner_id, source_nickname_snapshot, recipient_owner_type, recipient_owner_id,
-        recipient_nickname_snapshot, purpose, allowed_use, retention_policy, redaction_state, provenance_refs_json, payload_json,
+       (exchange_id, source_owner_type, source_owner_id, source_agent_name_snapshot, recipient_owner_type, recipient_owner_id,
+        recipient_agent_name_snapshot, purpose, allowed_use, retention_policy, redaction_state, provenance_refs_json, payload_json,
         contract_json, schema_version, audit_id, idempotency_key, created_at, updated_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.exchangeId, input.sourceOwner.ownerType, input.sourceOwner.ownerId, input.sourceNicknameSnapshot ?? null, input.recipientOwner.ownerType, input.recipientOwner.ownerId, input.recipientNicknameSnapshot ?? null, input.purpose, input.allowedUse, input.retentionPolicy, input.redactionState, toJson(input.provenanceRefs), toJson(input.payload), toJson(input), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, input.createdAt, now, options.expiresAt ?? input.expiresAt ?? null);
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.exchangeId, input.sourceOwner.ownerType, input.sourceOwner.ownerId, sourceAgentNameSnapshot, input.recipientOwner.ownerType, input.recipientOwner.ownerId, recipientAgentNameSnapshot, input.purpose, input.allowedUse, input.retentionPolicy, input.redactionState, toJson(input.provenanceRefs), toJson(input.payload), toJson(input), input.identity.schemaVersion, optionalAuditId(input.identity.auditCorrelationId, options.auditId), input.identity.idempotencyKey, input.createdAt, now, options.expiresAt ?? input.expiresAt ?? null);
         return true;
     }
     catch (error) {
@@ -1666,7 +2033,11 @@ export function insertAgentDataExchange(input, options = {}) {
 }
 export function getAgentDataExchange(exchangeId) {
     return getDb()
-        .prepare("SELECT * FROM agent_data_exchanges WHERE exchange_id = ?")
+        .prepare(`SELECT *,
+              source_agent_name_snapshot AS source_agent_name,
+              recipient_agent_name_snapshot AS recipient_agent_name
+       FROM agent_data_exchanges
+       WHERE exchange_id = ?`)
         .get(exchangeId);
 }
 export function listAgentDataExchangesForRecipient(recipientOwner, options = {}) {
@@ -1683,7 +2054,10 @@ export function listAgentDataExchangesForRecipient(recipientOwner, options = {})
     }
     values.push(limit);
     return getDb()
-        .prepare(`SELECT * FROM agent_data_exchanges
+        .prepare(`SELECT *,
+              source_agent_name_snapshot AS source_agent_name,
+              recipient_agent_name_snapshot AS recipient_agent_name
+       FROM agent_data_exchanges
        WHERE ${clauses.join(" AND ")}
        ORDER BY created_at DESC, exchange_id ASC
        LIMIT ?`)
@@ -1703,7 +2077,10 @@ export function listAgentDataExchangesForSource(sourceOwner, options = {}) {
     }
     values.push(limit);
     return getDb()
-        .prepare(`SELECT * FROM agent_data_exchanges
+        .prepare(`SELECT *,
+              source_agent_name_snapshot AS source_agent_name,
+              recipient_agent_name_snapshot AS recipient_agent_name
+       FROM agent_data_exchanges
        WHERE ${clauses.join(" AND ")}
        ORDER BY created_at DESC, exchange_id ASC
        LIMIT ?`)
@@ -2047,12 +2424,26 @@ export function insertArtifactReceipt(input) {
     return id;
 }
 export function hasArtifactReceipt(input) {
-    const row = getDb()
-        .prepare(`SELECT id FROM artifact_receipts
-       WHERE run_id = ? AND channel = ? AND artifact_path = ?
-       LIMIT 1`)
-        .get(input.runId, input.channel, input.artifactPath);
+    const row = input.channelTarget
+        ? getDb()
+            .prepare(`SELECT id FROM artifact_receipts
+         WHERE run_id = ? AND channel = ? AND artifact_path = ?
+           AND json_extract(delivery_receipt_json, '$.channelTarget') = ?
+         LIMIT 1`)
+            .get(input.runId, input.channel, input.artifactPath, input.channelTarget)
+        : getDb()
+            .prepare(`SELECT id FROM artifact_receipts
+         WHERE run_id = ? AND channel = ? AND artifact_path = ?
+         LIMIT 1`)
+            .get(input.runId, input.channel, input.artifactPath);
     return Boolean(row);
+}
+export function listArtifactReceiptsForRun(runId) {
+    return getDb()
+        .prepare(`SELECT * FROM artifact_receipts
+       WHERE run_id = ?
+       ORDER BY created_at ASC, id ASC`)
+        .all(runId);
 }
 export function insertArtifactMetadata(input) {
     const id = crypto.randomUUID();
@@ -2095,6 +2486,14 @@ export function listActiveArtifactMetadata() {
        WHERE deleted_at IS NULL
        ORDER BY created_at ASC, id ASC`)
         .all();
+}
+export function listArtifactMetadataForRun(runId) {
+    return getDb()
+        .prepare(`SELECT * FROM artifacts
+       WHERE source_run_id = ?
+         AND deleted_at IS NULL
+       ORDER BY created_at ASC, id ASC`)
+        .all(runId);
 }
 export function markArtifactDeleted(id, deletedAt = Date.now()) {
     getDb()
@@ -2199,7 +2598,9 @@ export function upsertTaskContinuity(input) {
          recovery_budget = COALESCE(excluded.recovery_budget, task_continuity.recovery_budget),
          continuity_status = COALESCE(excluded.continuity_status, task_continuity.continuity_status),
          updated_at = excluded.updated_at`)
-        .run(input.lineageRootRunId, input.parentRunId ?? null, input.handoffSummary ?? null, input.lastGoodState ?? null, input.latestInstructionSummary ?? null, input.latestSuccessfulSummary ?? null, input.latestTargetContext ?? null, hasField("failureRecoveryHints") ? JSON.stringify(input.failureRecoveryHints ?? []) : null, hasField("continuityExchangeRefs") ? JSON.stringify(input.continuityExchangeRefs ?? []) : null, hasField("pendingApprovals") ? JSON.stringify(input.pendingApprovals ?? []) : null, hasField("pendingDelivery") ? JSON.stringify(input.pendingDelivery ?? []) : null, input.lastToolReceipt ?? null, input.lastDeliveryReceipt ?? null, input.failedRecoveryKey ?? null, input.failureKind ?? null, input.recoveryBudget ?? null, input.status ?? null, Date.now());
+        .run(input.lineageRootRunId, input.parentRunId ?? null, input.handoffSummary ?? null, input.lastGoodState ?? null, input.latestInstructionSummary ?? null, input.latestSuccessfulSummary ?? null, input.latestTargetContext ?? null, hasField("failureRecoveryHints") ? JSON.stringify(input.failureRecoveryHints ?? []) : null, hasField("continuityExchangeRefs")
+        ? JSON.stringify(input.continuityExchangeRefs ?? [])
+        : null, hasField("pendingApprovals") ? JSON.stringify(input.pendingApprovals ?? []) : null, hasField("pendingDelivery") ? JSON.stringify(input.pendingDelivery ?? []) : null, input.lastToolReceipt ?? null, input.lastDeliveryReceipt ?? null, input.failedRecoveryKey ?? null, input.failureKind ?? null, input.recoveryBudget ?? null, input.status ?? null, Date.now());
 }
 function dbMemoryCapsuleToContract(row) {
     return normalizeMemoryCapsule({
@@ -2215,7 +2616,7 @@ function dbMemoryCapsuleToContract(row) {
             ...(row.channel_key ? { channelKey: row.channel_key } : {}),
             ...(row.thread_key ? { threadKey: row.thread_key } : {}),
         },
-        ...(row.nickname_snapshot ? { nicknameSnapshot: row.nickname_snapshot } : {}),
+        ...(row.agent_name_snapshot ? { agentNameSnapshot: row.agent_name_snapshot } : {}),
         capsuleKind: row.capsule_kind,
         summary: row.summary,
         activeObjectives: parseJsonStringArray(row.active_objectives_json),
@@ -2245,7 +2646,7 @@ function dbAgentMemoryStateToContract(row) {
             ...(row.thread_key ? { threadKey: row.thread_key } : {}),
         },
         ownerScopeKey: row.owner_scope_key,
-        ...(row.nickname_snapshot ? { nicknameSnapshot: row.nickname_snapshot } : {}),
+        ...(row.agent_name_snapshot ? { agentNameSnapshot: row.agent_name_snapshot } : {}),
         ...(row.latest_capsule_id ? { latestCapsuleId: row.latest_capsule_id } : {}),
         currentRawTokenEstimate: row.current_raw_token_estimate,
         currentRawMessageCount: row.current_raw_message_count,
@@ -2267,17 +2668,19 @@ export function insertMemoryCapsule(input, options = {}) {
     getDb()
         .prepare(`INSERT INTO memory_capsules
        (capsule_id, capsule_version, parent_capsule_id, owner_type, owner_id, session_id, request_group_id,
-        lineage_id, channel_key, thread_key, nickname_snapshot, capsule_kind, summary,
+        lineage_id, channel_key, thread_key, agent_name_snapshot, capsule_kind, summary,
         active_objectives_json, confirmed_facts_json, decisions_json, constraints_json, pending_items_json,
         artifact_refs_json, recovery_hints_json, source_refs_json, compacted_message_ids_json,
         source_token_estimate, result_token_estimate, metadata_json, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(capsule.capsuleId, capsule.capsuleVersion, capsule.parentCapsuleId ?? null, capsule.ownerScope.ownerType, capsule.ownerScope.ownerId, capsule.ownerScope.sessionId ?? null, capsule.ownerScope.requestGroupId ?? null, capsule.ownerScope.lineageId ?? null, capsule.ownerScope.channelKey ?? null, capsule.ownerScope.threadKey ?? null, capsule.nicknameSnapshot ?? null, capsule.capsuleKind, capsule.summary, JSON.stringify(capsule.activeObjectives), JSON.stringify(capsule.confirmedFacts), JSON.stringify(capsule.decisions), JSON.stringify(capsule.constraints), JSON.stringify(capsule.pendingItems), JSON.stringify(capsule.artifactRefs), JSON.stringify(capsule.recoveryHints), JSON.stringify(capsule.sourceRefs), JSON.stringify(capsule.compactedMessageIds), capsule.sourceTokenEstimate, capsule.resultTokenEstimate, null, capsule.createdAt);
+        .run(capsule.capsuleId, capsule.capsuleVersion, capsule.parentCapsuleId ?? null, capsule.ownerScope.ownerType, capsule.ownerScope.ownerId, capsule.ownerScope.sessionId ?? null, capsule.ownerScope.requestGroupId ?? null, capsule.ownerScope.lineageId ?? null, capsule.ownerScope.channelKey ?? null, capsule.ownerScope.threadKey ?? null, capsule.agentNameSnapshot ?? null, capsule.capsuleKind, capsule.summary, JSON.stringify(capsule.activeObjectives), JSON.stringify(capsule.confirmedFacts), JSON.stringify(capsule.decisions), JSON.stringify(capsule.constraints), JSON.stringify(capsule.pendingItems), JSON.stringify(capsule.artifactRefs), JSON.stringify(capsule.recoveryHints), JSON.stringify(capsule.sourceRefs), JSON.stringify(capsule.compactedMessageIds), capsule.sourceTokenEstimate, capsule.resultTokenEstimate, null, capsule.createdAt);
     return capsule.capsuleId;
 }
 export function getMemoryCapsule(capsuleId) {
     const row = getDb()
-        .prepare(`SELECT * FROM memory_capsules WHERE capsule_id = ? LIMIT 1`)
+        .prepare(`SELECT * FROM memory_capsules
+       WHERE capsule_id = ?
+       LIMIT 1`)
         .get(capsuleId);
     return row ? dbMemoryCapsuleToContract(row) : undefined;
 }
@@ -2319,7 +2722,7 @@ export function upsertAgentMemoryState(input) {
     getDb()
         .prepare(`INSERT INTO agent_memory_state
        (state_id, owner_scope_key, agent_type, agent_id, session_id, request_group_id, lineage_id,
-        channel_key, thread_key, nickname_snapshot, latest_capsule_id, current_raw_token_estimate,
+        channel_key, thread_key, agent_name_snapshot, latest_capsule_id, current_raw_token_estimate,
         current_raw_message_count, last_compaction_at, compaction_block_reason, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(owner_scope_key) DO UPDATE SET
@@ -2330,19 +2733,21 @@ export function upsertAgentMemoryState(input) {
          lineage_id = excluded.lineage_id,
          channel_key = excluded.channel_key,
          thread_key = excluded.thread_key,
-         nickname_snapshot = COALESCE(excluded.nickname_snapshot, agent_memory_state.nickname_snapshot),
+         agent_name_snapshot = COALESCE(excluded.agent_name_snapshot, agent_memory_state.agent_name_snapshot),
          latest_capsule_id = COALESCE(excluded.latest_capsule_id, agent_memory_state.latest_capsule_id),
          current_raw_token_estimate = excluded.current_raw_token_estimate,
          current_raw_message_count = excluded.current_raw_message_count,
          last_compaction_at = COALESCE(excluded.last_compaction_at, agent_memory_state.last_compaction_at),
          compaction_block_reason = excluded.compaction_block_reason,
          updated_at = excluded.updated_at`)
-        .run(state.stateId, state.ownerScopeKey, state.ownerScope.ownerType, state.ownerScope.ownerId, state.ownerScope.sessionId, state.ownerScope.requestGroupId ?? null, state.ownerScope.lineageId ?? null, state.ownerScope.channelKey ?? null, state.ownerScope.threadKey ?? null, state.nicknameSnapshot ?? null, state.latestCapsuleId ?? null, state.currentRawTokenEstimate, state.currentRawMessageCount, state.lastCompactionAt ?? null, state.compactionBlockReason ?? null, state.createdAt, state.updatedAt);
+        .run(state.stateId, state.ownerScopeKey, state.ownerScope.ownerType, state.ownerScope.ownerId, state.ownerScope.sessionId, state.ownerScope.requestGroupId ?? null, state.ownerScope.lineageId ?? null, state.ownerScope.channelKey ?? null, state.ownerScope.threadKey ?? null, state.agentNameSnapshot ?? null, state.latestCapsuleId ?? null, state.currentRawTokenEstimate, state.currentRawMessageCount, state.lastCompactionAt ?? null, state.compactionBlockReason ?? null, state.createdAt, state.updatedAt);
     return state.stateId;
 }
 export function getAgentMemoryStateByScopeKey(ownerScopeKey) {
     const row = getDb()
-        .prepare(`SELECT * FROM agent_memory_state WHERE owner_scope_key = ? LIMIT 1`)
+        .prepare(`SELECT * FROM agent_memory_state
+       WHERE owner_scope_key = ?
+       LIMIT 1`)
         .get(ownerScopeKey);
     return row ? dbAgentMemoryStateToContract(row) : undefined;
 }

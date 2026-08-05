@@ -1,5 +1,7 @@
 import { ENTERPRISE_TOPOLOGY_SCHEMA_VERSION, } from "../contracts/enterprise-topology.js";
 import { listAgentConfigs, listAgentRelationships, listTeamConfigs, } from "../db/index.js";
+import { canonicalizeLegacyAgentIdentity } from "../adapters/legacy-agent-identity.js";
+import { canonicalizeLegacyTeamIdentity } from "../adapters/legacy-team-identity.js";
 import { validateTopology } from "./validator.js";
 function isRecord(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -18,7 +20,7 @@ function agentFromRow(row) {
         schemaVersion: row.schema_version,
         agentType: row.agent_type,
         agentId: row.agent_id,
-        displayName: row.display_name,
+        agentName: row.agent_name,
         status: row.status,
         role: row.role,
         personality: row.personality,
@@ -96,9 +98,6 @@ function toolId(toolName) {
 function systemId(systemName) {
     return `system:${stableSegment(systemName)}`;
 }
-function displayName(record, fallback) {
-    return asString(record.displayName) ?? asString(record.nickname) ?? asString(record.agentId) ?? asString(record.teamId) ?? fallback;
-}
 function capabilityPolicy(record) {
     return isRecord(record.capabilityPolicy) ? record.capabilityPolicy : undefined;
 }
@@ -150,32 +149,31 @@ function relationshipRecord(value) {
     return value;
 }
 function importedNode(record, now) {
-    const agentId = asString(record.agentId) ?? "agent:imported";
-    const createdAt = asTimestamp(record.createdAt, now);
-    const updatedAt = asTimestamp(record.updatedAt, now);
-    const allowedToolIds = collectToolNames(record).map(toolId);
-    const allowedSystemIds = collectSystemNames(record).map(systemId);
+    const canonical = canonicalizeLegacyAgentIdentity(record);
+    const agentId = asString(canonical.agentId) ?? "agent:imported";
+    const createdAt = asTimestamp(canonical.createdAt, now);
+    const updatedAt = asTimestamp(canonical.updatedAt, now);
+    const allowedToolIds = collectToolNames(canonical).map(toolId);
+    const allowedSystemIds = collectSystemNames(canonical).map(systemId);
     const metadata = {
         imported_from_agent_config: agentId,
         importedFromAgentConfigId: agentId,
         source_role: "migration_source_only",
-        source_profile_version: typeof record.profileVersion === "number" ? record.profileVersion : null,
+        source_profile_version: typeof canonical.profileVersion === "number" ? canonical.profileVersion : null,
     };
-    const instruction = [asString(record.role), asString(record.personality)].filter(Boolean).join("\n\n");
-    const recordDisplayName = asString(record.displayName);
+    const instruction = [asString(canonical.role), asString(canonical.personality)].filter(Boolean).join("\n\n");
     return {
         schemaVersion: ENTERPRISE_TOPOLOGY_SCHEMA_VERSION,
         entityType: "node",
         id: agentNodeId(agentId),
-        name: displayName(record, agentId),
-        ...(recordDisplayName ? { displayName: recordDisplayName } : {}),
-        status: agentStatusToTopologyStatus(record.status),
+        name: asString(canonical.agentName) ?? agentId,
+        status: agentStatusToTopologyStatus(canonical.status),
         createdAt,
         updatedAt,
         nodeType: "function",
         ...(instruction ? { instruction } : {}),
-        description: asString(record.role) ?? "Imported AgentConfig migration node.",
-        tags: asStringArray(record.specialtyTags),
+        description: asString(canonical.role) ?? "Imported AgentConfig migration node.",
+        tags: asStringArray(canonical.specialtyTags),
         children: [],
         template: {
             templateId: "template:imported-agent-config",
@@ -189,8 +187,9 @@ function importedNode(record, now) {
     };
 }
 function importedTeam(record, nodeIdsByAgentId, now) {
-    const teamId = asString(record.teamId) ?? "team:imported";
-    const memberNodeIds = asStringArray(record.memberAgentIds)
+    const canonical = canonicalizeLegacyTeamIdentity(record);
+    const teamId = asString(canonical.teamId) ?? "team:imported";
+    const memberNodeIds = asStringArray(canonical.memberAgentIds)
         .map((agentId) => nodeIdsByAgentId.get(agentId))
         .filter((nodeId) => nodeId !== undefined);
     const metadata = {
@@ -202,13 +201,13 @@ function importedTeam(record, nodeIdsByAgentId, now) {
         schemaVersion: ENTERPRISE_TOPOLOGY_SCHEMA_VERSION,
         entityType: "team",
         id: teamId,
-        name: displayName(record, teamId),
-        status: agentStatusToTopologyStatus(record.status),
-        createdAt: asTimestamp(record.createdAt, now),
-        updatedAt: asTimestamp(record.updatedAt, now),
-        purpose: asString(record.purpose) ?? "Imported TeamConfig migration group.",
+        name: asString(canonical.displayName) ?? teamId,
+        status: agentStatusToTopologyStatus(canonical.status),
+        createdAt: asTimestamp(canonical.createdAt, now),
+        updatedAt: asTimestamp(canonical.updatedAt, now),
+        purpose: asString(canonical.purpose) ?? "Imported TeamConfig migration group.",
         nodeIds: memberNodeIds,
-        tags: asStringArray(record.roleHints),
+        tags: asStringArray(canonical.roleHints),
         metadata,
     };
 }

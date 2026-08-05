@@ -5,10 +5,8 @@ import { afterEach, describe, expect, it } from "vitest"
 import { loadMergedInstructions } from "../packages/core/src/instructions/merge.ts"
 
 const tempDirs: string[] = []
-let previousStateDir = process.env["KNOWBEE_STATE_DIR"]
 
 afterEach(() => {
-  process.env["KNOWBEE_STATE_DIR"] = previousStateDir
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -32,8 +30,10 @@ describe("loadMergedInstructions", () => {
     writeFileSync(join(repoDir, "AGENTS.md"), "repo rule", "utf-8")
     writeFileSync(join(nestedDir, "AGENTS.override.md"), "nested override", "utf-8")
 
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-    const bundle = loadMergedInstructions(nestedDir)
+    const bundle = loadMergedInstructions(nestedDir, {
+      globalStateDir: stateDir,
+      fallbackBoundaryDir: root,
+    })
 
     expect(bundle.mergedText).toContain("global rule")
     expect(bundle.mergedText).toContain("repo rule")
@@ -60,12 +60,12 @@ describe("loadMergedInstructions", () => {
     const globalPath = join(stateDir, "AGENTS.md")
     writeFileSync(globalPath, "global v1", "utf-8")
 
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-    const first = loadMergedInstructions(repoDir)
+    const runtime = { globalStateDir: stateDir, fallbackBoundaryDir: root }
+    const first = loadMergedInstructions(repoDir, runtime)
     expect(first.mergedText).toContain("global v1")
 
     writeFileSync(globalPath, "global v2", "utf-8")
-    const second = loadMergedInstructions(repoDir)
+    const second = loadMergedInstructions(repoDir, runtime)
 
     expect(second.mergedText).toContain("global v2")
     expect(second.mergedText).not.toContain("global v1")

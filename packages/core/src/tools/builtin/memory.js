@@ -1,8 +1,43 @@
-import { storeMemory, searchMemory } from "../../memory/store.js";
+import { searchOwnerScopedMemory, storeOwnerScopedMemory } from "../../memory/isolation.js";
+import { decideProductMemoryWritePolicy } from "../../memory/product-parameter-policy.js";
 import { fileIndexer } from "../../memory/file-indexer.js";
+// ── memory_store ─────────────────────────────────────────────────────────
+const MAIN_AGENT_MEMORY_OWNER_SCOPE = { ownerType: "knowbee", ownerId: "agent:knowbee" };
+function resolveToolMemoryOwnerScope(ctx) {
+    const agentId = ctx.agentId?.trim();
+    if (agentId && ctx.agentType === "sub_agent") {
+        return { ownerType: "sub_agent", ownerId: agentId };
+    }
+    if (agentId && ctx.agentType === "knowbee") {
+        return { ownerType: "knowbee", ownerId: agentId };
+    }
+    return MAIN_AGENT_MEMORY_OWNER_SCOPE;
+}
+function parseMetadata(value) {
+    if (!value)
+        return {};
+    try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? parsed
+            : {};
+    }
+    catch {
+        return {};
+    }
+}
+function formatTags(value) {
+    if (!Array.isArray(value))
+        return "";
+    return value
+        .filter((item) => typeof item === "string" && item.trim().length > 0)
+        .map((item) => item.trim())
+        .join(", ");
+}
 export const memoryStoreTool = {
     name: "memory_store",
-    description: "중요한 정보를 장기 메모리에 저장합니다. 사용자가 기억해달라고 요청하거나 나중에 유용할 정보를 발견했을 때 사용하세요.",
+    evidenceSourceKind: "memory",
+    description: "Store information in long-term memory only when the user explicitly asks to remember it and runtime long-term retention is configured.",
     parameters: {
         type: "object",
         properties: {
@@ -23,18 +58,61 @@ export const memoryStoreTool = {
     riskLevel: "safe",
     requiresApproval: false,
     execute: async (params, ctx) => {
-        const id = await storeMemory({
-            content: params.content,
-            ...(params.tags !== undefined && { tags: params.tags }),
-            importance: params.importance ?? "medium",
-            scope: "global",
-            type: "user_fact",
+        const owner = resolveToolMemoryOwnerScope(ctx);
+        const longTermRetentionDays = ctx.memoryConfig?.longTermRetentionDays;
+        const productMemoryPolicy = decideProductMemoryWritePolicy({
+            trigger: "explicit_user_save_request",
+            runtimeLongTermRetentionConfigured: Number.isSafeInteger(longTermRetentionDays)
+                && (longTermRetentionDays ?? 0) > 0,
         });
-        return { success: true, output: `메모리에 저장됨 (id: ${id.slice(0, 8)}…)` };
+        if (!productMemoryPolicy.longTermAllowed) {
+            return {
+                success: false,
+                output: "장기 메모리 보존 기간이 설정되지 않아 이 내용은 장기 저장하지 않았습니다.",
+                error: "LONG_TERM_MEMORY_RETENTION_NOT_CONFIGURED",
+                details: {
+                    policyDecision: productMemoryPolicy.decision,
+                    reasonCode: productMemoryPolicy.reasonCode,
+                },
+            };
+        }
+        const stored = await storeOwnerScopedMemory({
+            owner,
+            visibility: "private",
+            retentionPolicy: "long_term",
+            longTermWriteGate: {
+                targetOwner: owner,
+                category: "approved_work_context",
+                storageNeed: "durable_user_fact",
+                sensitivity: "personal",
+                userIntent: "explicit_user_request",
+                sourceEvidenceRefs: [
+                    ...(ctx.runId ? [`run:${ctx.runId}`] : []),
+                    ...(ctx.sessionId ? [`session:${ctx.sessionId}`] : []),
+                    "tool:memory_store",
+                ],
+                retentionPurpose: "user requested memory_store persistence",
+            },
+            rawText: params.content,
+            sourceType: "user_fact",
+            title: "memory_store",
+            metadata: {
+                tags: params.tags ?? [],
+                importance: params.importance ?? "medium",
+                productMemoryPolicyDecision: productMemoryPolicy.decision,
+                productMemoryPolicyReasonCode: productMemoryPolicy.reasonCode,
+                productMemoryPolicyNotes: productMemoryPolicy.notes,
+                sessionId: ctx.sessionId,
+                runId: ctx.runId,
+                ...(ctx.requestGroupId ? { requestGroupId: ctx.requestGroupId } : {}),
+            },
+        });
+        return { success: true, output: `메모리에 저장됨 (id: ${stored.documentId.slice(0, 8)}…)` };
     },
 };
 export const memorySearchTool = {
     name: "memory_search",
+    evidenceSourceKind: "memory",
     description: "장기 메모리에서 관련 내용을 검색합니다. 사용자가 이전에 말한 내용이나 저장된 사실이 필요할 때 사용하세요.",
     parameters: {
         type: "object",
@@ -48,19 +126,28 @@ export const memorySearchTool = {
     requiresApproval: false,
     execute: async (params, ctx) => {
         const limit = Math.min(params.limit ?? 5, 20);
-        const results = await searchMemory(params.query, limit, {
-            sessionId: ctx.sessionId,
-            ...(ctx.runId ? { runId: ctx.runId } : {}),
-            ...(ctx.requestGroupId ? { requestGroupId: ctx.requestGroupId } : {}),
+        const owner = resolveToolMemoryOwnerScope(ctx);
+        const result = await searchOwnerScopedMemory({
+            requester: owner,
+            owner,
+            query: params.query,
+            limit,
+            filters: {
+                sessionId: ctx.sessionId,
+                runId: ctx.runId,
+                ...(ctx.requestGroupId ? { requestGroupId: ctx.requestGroupId } : {}),
+            },
         });
+        const results = result.memoryResults;
         if (results.length === 0) {
             return { success: true, output: "관련 메모리를 찾을 수 없습니다." };
         }
         const text = results
             .map((r, i) => {
-            const date = new Date(r.created_at).toLocaleDateString("ko-KR");
-            const tags = r.tags ? JSON.parse(r.tags).join(", ") : "";
-            return `${i + 1}. [${date}${tags ? ` | ${tags}` : ""}] ${r.content}`;
+            const date = new Date(r.chunk.updated_at).toLocaleDateString("ko-KR");
+            const metadata = parseMetadata(r.chunk.document_metadata_json);
+            const tags = formatTags(metadata["tags"]);
+            return `${i + 1}. [${date}${tags ? ` | ${tags}` : ""}] ${r.chunk.content}`;
         })
             .join("\n");
         return { success: true, output: text };
@@ -68,6 +155,7 @@ export const memorySearchTool = {
 };
 export const fileSemanticSearchTool = {
     name: "file_semantic_search",
+    evidenceSourceKind: "file",
     description: "인덱싱된 로컬 파일에서 의미적/키워드 검색을 수행합니다. `knowbee index` 명령으로 파일을 먼저 인덱싱해야 합니다.",
     parameters: {
         type: "object",
@@ -84,21 +172,22 @@ export const fileSemanticSearchTool = {
     },
     riskLevel: "safe",
     requiresApproval: false,
-    execute: async (params) => {
+    execute: async (params, ctx) => {
         const limit = Math.min(params.limit ?? 5, 20);
         const mode = params.mode ?? "hybrid";
+        const vectorSearchOptions = ctx.memoryConfig ? { memoryConfig: ctx.memoryConfig } : undefined;
         let results;
         if (mode === "text") {
             results = fileIndexer.searchByText(params.query, limit);
         }
         else if (mode === "vector") {
-            results = await fileIndexer.searchByVector(params.query, limit);
+            results = await fileIndexer.searchByVector(params.query, limit, vectorSearchOptions);
         }
         else {
             // hybrid: merge text + vector results
             const [textRes, vecRes] = await Promise.all([
                 Promise.resolve(fileIndexer.searchByText(params.query, limit)),
-                fileIndexer.searchByVector(params.query, limit),
+                fileIndexer.searchByVector(params.query, limit, vectorSearchOptions),
             ]);
             const seen = new Set();
             results = [];

@@ -7,7 +7,6 @@ function readRepoFile(path: string): string {
 
 describe("task004 obsolete policy guard", () => {
   it("keeps process documents synced with task/delivery/completion policy", () => {
-    expect(readRepoFile(".tasks/task004.md")).toContain("문서 동기화 완료")
     expect(readRepoFile("packages/core/src/runs/source.md")).toContain("lineageRootRunId")
     expect(readRepoFile("packages/webui/src/pages/source.md")).toContain("`/api/tasks` projection")
   })

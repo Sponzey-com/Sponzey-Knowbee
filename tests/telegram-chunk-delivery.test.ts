@@ -3,21 +3,24 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createTelegramChunkDeliveryHandler } from "../packages/core/src/channels/telegram/chunk-delivery.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { resetArtifactDeliveryDedupeForTest } from "../packages/core/src/runs/delivery.js"
+import { createTestArtifactStorage } from "./fixtures/artifact-storage.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+import { buildReviewedFinalResponse } from "./fixtures/final-response-review.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let artifactStorage: ReturnType<typeof createTestArtifactStorage>
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-telegram-chunk-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-telegram-chunk-"))
+  tempDirs.push(rootDir)
+  const runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
+  artifactStorage = createTestArtifactStorage(runtimeFixture.paths.stateDir)
 }
 
 beforeEach(() => {
@@ -27,11 +30,6 @@ beforeEach(() => {
 afterEach(() => {
   resetArtifactDeliveryDedupeForTest()
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -39,7 +37,7 @@ afterEach(() => {
 })
 
 describe("telegram chunk delivery helper", () => {
-  it("buffers text and returns text delivery receipt on done", async () => {
+  it("buffers reviewed text and returns text delivery receipt on done", async () => {
     const responder = {
       sendToolStatus: vi.fn(),
       updateToolStatus: vi.fn(),
@@ -49,6 +47,7 @@ describe("telegram chunk delivery helper", () => {
     }
     const recordOutgoingMessageRef = vi.fn()
     const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "telegram-session",
       chatId: 42120565,
@@ -57,7 +56,7 @@ describe("telegram chunk delivery helper", () => {
       logError: vi.fn(),
     })
 
-    await onChunk?.({ type: "text", delta: "안녕" })
+    await onChunk?.({ type: "text", delta: "안녕", textSource: "llm_reviewed" })
     const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
 
     expect(responder.sendFinalResponse).toHaveBeenCalledWith("안녕")
@@ -83,6 +82,32 @@ describe("telegram chunk delivery helper", () => {
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(2)
   })
 
+  it("does not send unreviewed text chunks as Telegram final text", async () => {
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn().mockResolvedValue([101]),
+      sendError: vi.fn(),
+    }
+    const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
+      responder,
+      sessionId: "telegram-session",
+      chatId: 42120565,
+      getRunId: () => "run-unreviewed-telegram",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    await onChunk?.({ type: "text", delta: "검토되지 않은 원문" })
+    await onChunk?.({ type: "text", delta: "검토되지 않은 모델 원문", textSource: "llm_generated" })
+    const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
+
+    expect(responder.sendFinalResponse).not.toHaveBeenCalled()
+    expect(receipt).toBeUndefined()
+  })
+
   it("returns artifact delivery receipt for successful file delivery", async () => {
     const responder = {
       sendToolStatus: vi.fn(),
@@ -93,6 +118,7 @@ describe("telegram chunk delivery helper", () => {
     }
     const recordOutgoingMessageRef = vi.fn()
     const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "telegram-session",
       chatId: 42120565,
@@ -136,6 +162,54 @@ describe("telegram chunk delivery helper", () => {
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(1)
   })
 
+  it("redacts Yeonjang internal evidence from artifact captions", async () => {
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn().mockResolvedValue(313),
+      sendFinalResponse: vi.fn(),
+      sendError: vi.fn(),
+    }
+    const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
+      responder,
+      sessionId: "telegram-session",
+      chatId: 42120565,
+      getRunId: () => "run-telegram-redacted-artifact",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    const receipt = await onChunk?.({
+      type: "tool_end",
+      toolName: "screen_capture",
+      success: true,
+      output: "sent",
+      details: {
+        kind: "artifact_delivery",
+        channel: "telegram",
+        filePath: "/tmp/redacted.png",
+        caption:
+          "yeonjang-goal-validation:screen_capture:candidate_not_validated:result_diagnosis_not_sufficient operationId=operation:telegram-artifact raw observed state",
+        size: 123,
+        source: "telegram",
+      },
+    })
+
+    expect(responder.sendFile).toHaveBeenCalledWith(
+      "/tmp/redacted.png",
+      "작업 결과를 확인하기 위해 추가 확인이 필요합니다.",
+    )
+    expect(receipt?.artifactDeliveries?.[0]?.caption).toBe(
+      "작업 결과를 확인하기 위해 추가 확인이 필요합니다.",
+    )
+    const serialized = JSON.stringify(receipt)
+    expect(serialized).not.toContain("yeonjang-goal-validation")
+    expect(serialized).not.toContain("operationId")
+    expect(serialized).not.toContain("operation:telegram-artifact")
+    expect(serialized).not.toContain("raw observed state")
+  })
+
   it("does not send the same artifact twice for one run", async () => {
     const responder = {
       sendToolStatus: vi.fn(),
@@ -146,6 +220,7 @@ describe("telegram chunk delivery helper", () => {
     }
     const recordOutgoingMessageRef = vi.fn()
     const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "telegram-session",
       chatId: 42120565,
@@ -204,12 +279,20 @@ describe("telegram chunk delivery helper", () => {
     }
     const recordOutgoingMessageRef = vi.fn()
     const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "telegram-session",
       chatId: 42120565,
       getRunId: () => "run-3",
       recordOutgoingMessageRef,
       logError: vi.fn(),
+      noticeRendering: {
+        config: DEFAULT_CONFIG,
+        renderFinalResponseText: vi.fn(async (input) =>
+          buildReviewedFinalResponse(input, `rendered: ${input.rawText}`)),
+        getDefaultModel: () => "gpt-test",
+        workDir: "/tmp",
+      },
     })
 
     await onChunk?.({
@@ -223,7 +306,7 @@ describe("telegram chunk delivery helper", () => {
     })
 
     expect(responder.sendToolStatus).toHaveBeenCalledWith("screen_capture")
-    expect(responder.sendError).toHaveBeenCalledWith("failure")
+    expect(responder.sendError).toHaveBeenCalledWith("rendered: Channel execution failed. Reason: failure")
     expect(recordOutgoingMessageRef).toHaveBeenCalledTimes(2)
   })
 
@@ -237,6 +320,7 @@ describe("telegram chunk delivery helper", () => {
       sendError: vi.fn(),
     }
     const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "telegram-session",
       chatId: 42120565,
@@ -272,6 +356,7 @@ describe("telegram chunk delivery helper", () => {
       sendError: vi.fn(),
     }
     const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "telegram-session",
       chatId: 42120565,
@@ -308,6 +393,7 @@ describe("telegram chunk delivery helper", () => {
     }
     const recordOutgoingMessageRef = vi.fn()
     const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "telegram-session",
       chatId: 42120565,
@@ -350,6 +436,7 @@ describe("telegram chunk delivery helper", () => {
       sendError: vi.fn(),
     }
     const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "telegram-session",
       chatId: 42120565,
@@ -379,6 +466,67 @@ describe("telegram chunk delivery helper", () => {
     expect(responder.sendFinalResponse).not.toHaveBeenCalled()
   })
 
+  it("delivers one reviewed canonical final answer after an artifact", async () => {
+    const order: string[] = []
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn().mockImplementation(async () => {
+        order.push("file")
+        return 606
+      }),
+      sendFinalResponse: vi.fn().mockImplementation(async () => {
+        order.push("text")
+        return [707]
+      }),
+      sendError: vi.fn(),
+    }
+    const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
+      responder,
+      sessionId: "telegram-session",
+      chatId: 42120565,
+      getRunId: () => "run-artifact-final",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    const artifactReceipt = await onChunk?.({
+      type: "tool_end",
+      toolName: "telegram_send_file",
+      success: true,
+      output: "sent",
+      details: {
+        kind: "artifact_delivery",
+        channel: "telegram",
+        filePath: "/tmp/result.png",
+        size: 123,
+        source: "telegram",
+      },
+    })
+    await onChunk?.({
+      type: "text",
+      delta: "사진을 촬영해 전달했습니다.",
+      textSource: "llm_reviewed",
+    })
+    const finalReceipt = await onChunk?.({ type: "done", totalTokens: 0 })
+    await onChunk?.({
+      type: "text",
+      delta: "중복 최종 답변",
+      textSource: "llm_reviewed",
+    })
+    const duplicateReceipt = await onChunk?.({ type: "done", totalTokens: 0 })
+
+    expect(order).toEqual(["file", "text"])
+    expect(artifactReceipt?.artifactDeliveries).toHaveLength(1)
+    expect(finalReceipt?.textDeliveries).toMatchObject([{
+      channel: "telegram",
+      text: "사진을 촬영해 전달했습니다.",
+    }])
+    expect(duplicateReceipt).toBeUndefined()
+    expect(responder.sendFinalResponse).toHaveBeenCalledTimes(1)
+  })
+
   it("clears buffered preamble text after artifact delivery succeeds", async () => {
     const responder = {
       sendToolStatus: vi.fn(),
@@ -388,6 +536,7 @@ describe("telegram chunk delivery helper", () => {
       sendError: vi.fn(),
     }
     const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "telegram-session",
       chatId: 42120565,
@@ -426,6 +575,7 @@ describe("telegram chunk delivery helper", () => {
       sendError: vi.fn(),
     }
     const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "telegram-session",
       chatId: 42120565,
@@ -483,6 +633,7 @@ describe("telegram chunk delivery helper", () => {
       sendError: vi.fn(),
     }
     const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "telegram-session",
       chatId: 42120565,
@@ -512,6 +663,48 @@ describe("telegram chunk delivery helper", () => {
     expect(responder.sendError).not.toHaveBeenCalled()
   })
 
+  it("redacts Yeonjang internal evidence from isolated final-text tool output", async () => {
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn().mockResolvedValue([1152]),
+      sendError: vi.fn(),
+    }
+    const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
+      responder,
+      sessionId: "telegram-session",
+      chatId: 42120565,
+      getRunId: () => "run-telegram-redacted-text",
+      recordOutgoingMessageRef: vi.fn(),
+      logError: vi.fn(),
+    })
+
+    await onChunk?.({
+      type: "tool_end",
+      toolName: "mouse_click",
+      success: true,
+      output:
+        "yeonjang-goal-validation:mouse_click:candidate_not_validated:result_diagnosis_not_sufficient operationId=operation:telegram-redacted receipt payload raw observed state",
+      details: {
+        via: "yeonjang",
+        responseOwnership: "final_text",
+      },
+    })
+    const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
+
+    expect(responder.sendFinalResponse).toHaveBeenCalledWith(
+      "작업 결과를 확인하기 위해 추가 확인이 필요합니다.",
+    )
+    const serialized = JSON.stringify(receipt)
+    expect(serialized).not.toContain("yeonjang-goal-validation")
+    expect(serialized).not.toContain("operationId")
+    expect(serialized).not.toContain("operation:telegram-redacted")
+    expect(serialized).not.toContain("receipt payload")
+    expect(serialized).not.toContain("raw observed state")
+  })
+
   it("falls back to a compact diagnostic message when final text would create too many chunks", async () => {
     const responder = {
       sendToolStatus: vi.fn(),
@@ -522,6 +715,7 @@ describe("telegram chunk delivery helper", () => {
     }
     const recordOutgoingMessageRef = vi.fn()
     const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "telegram-session",
       chatId: 42120565,
@@ -532,7 +726,7 @@ describe("telegram chunk delivery helper", () => {
     })
     const longText = "a".repeat(4100)
 
-    await onChunk?.({ type: "text", delta: longText })
+    await onChunk?.({ type: "text", delta: longText, textSource: "llm_reviewed" })
     const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
 
     expect(responder.sendFinalResponse).toHaveBeenCalledTimes(1)
@@ -567,6 +761,7 @@ describe("telegram chunk delivery helper", () => {
       sendError: vi.fn(),
     }
     const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
       responder,
       sessionId: "telegram-session",
       chatId: 42120565,
@@ -575,11 +770,42 @@ describe("telegram chunk delivery helper", () => {
       logError,
     })
 
-    await onChunk?.({ type: "text", delta: "final answer" })
+    await onChunk?.({ type: "text", delta: "final answer", textSource: "llm_reviewed" })
     const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
 
     expect(receipt).toBeUndefined()
     expect(responder.sendFinalResponse).toHaveBeenCalledWith("final answer")
     expect(logError).toHaveBeenCalledWith("Failed to send Telegram text delivery: telegram unavailable")
+  })
+
+  it("redacts Telegram text delivery errors before invoking logError", async () => {
+    const logError = vi.fn()
+    const rawToken = "sk-telegram-delivery-secret-1234567890"
+    const rawPath = "/Users/example/private/telegram-delivery.log"
+    const responder = {
+      sendToolStatus: vi.fn(),
+      updateToolStatus: vi.fn(),
+      sendFile: vi.fn(),
+      sendFinalResponse: vi.fn().mockRejectedValue(new Error(`telegram failed token=${rawToken} path=${rawPath}`)),
+      sendError: vi.fn(),
+    }
+    const onChunk = createTelegramChunkDeliveryHandler({
+      artifactStorage,
+      responder,
+      sessionId: "telegram-session",
+      chatId: 42120565,
+      getRunId: () => "run-telegram-redaction",
+      recordOutgoingMessageRef: vi.fn(),
+      logError,
+    })
+
+    await onChunk?.({ type: "text", delta: "redacted telegram response", textSource: "llm_reviewed" })
+    await onChunk?.({ type: "done", totalTokens: 0 })
+    const payload = JSON.stringify(logError.mock.calls)
+
+    expect(payload).not.toContain(rawToken)
+    expect(payload).not.toContain(rawPath)
+    expect(payload).toContain("***")
+    expect(payload).toContain("[internal-path-redacted]")
   })
 })

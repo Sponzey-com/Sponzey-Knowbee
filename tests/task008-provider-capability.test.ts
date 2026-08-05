@@ -6,25 +6,30 @@ import {
   buildProviderProfileId,
   clearProviderCapabilityCache,
   getProviderCapabilityMatrix,
-} from "../packages/core/src/ai/capabilities.ts"
+} from "../packages/core/src/ai/capabilities.js"
 import { resolveProviderResolutionSnapshot, resetAIProviderCache } from "../packages/core/src/ai/index.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import {
+  OPENAI_CODEX_BASE_URL,
+  resolveOpenAICodexBaseUrl,
+} from "../packages/core/src/auth/openai-codex-oauth.ts"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.js"
 import { discoverModelsFromEndpoint } from "../packages/core/src/control-plane/index.ts"
+import { closeDb } from "../packages/core/src/db/index.js"
 import { runDoctor } from "../packages/core/src/diagnostics/doctor.ts"
 import { buildAiRecoveryKey } from "../packages/core/src/runs/recovery.ts"
 import { buildSetupDraft } from "../packages/core/src/control-plane/index.ts"
 import { resolveRunRouteFromDraft } from "../packages/core/src/runs/routing.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousCodexHome = process.env["CODEX_HOME"]
 
 afterEach(() => {
   vi.unstubAllGlobals()
-  process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousCodexHome === undefined) delete process.env["CODEX_HOME"]
-  else process.env["CODEX_HOME"] = previousCodexHome
-  reloadConfig()
+  closeDb()
   resetAIProviderCache()
   clearProviderCapabilityCache()
   while (tempDirs.length > 0) {
@@ -33,15 +38,13 @@ afterEach(() => {
   }
 })
 
-function useTempState(configText: string): string {
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task008-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  writeFileSync(join(stateDir, "config.json5"), configText, "utf-8")
-  reloadConfig()
+function useTempState(configText: string): TestRuntimeConfigFixture {
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task008-"))
+  tempDirs.push(rootDir)
+  const runtimeFixture = createTestRuntimeConfigFixture({ rootDir, configText })
   resetAIProviderCache()
   clearProviderCapabilityCache()
-  return stateDir
+  return runtimeFixture
 }
 
 function writeCodexAuth(stateDir: string): string {
@@ -55,13 +58,18 @@ function writeCodexAuth(stateDir: string): string {
       refresh_token: "refresh-token",
     },
   }), "utf-8")
-  process.env["CODEX_HOME"] = codexHome
   return authPath
 }
 
 describe("task008 provider capability matrix", () => {
+  it("routes ChatGPT OAuth away from the API-key endpoint", () => {
+    expect(resolveOpenAICodexBaseUrl("https://api.openai.com/v1")).toBe(OPENAI_CODEX_BASE_URL)
+    expect(resolveOpenAICodexBaseUrl("https://api.openai.com/v1/responses")).toBe(OPENAI_CODEX_BASE_URL)
+    expect(resolveOpenAICodexBaseUrl("https://custom.example/v1")).toBe("https://custom.example/v1")
+  })
+
   it("marks ChatGPT OAuth as chat-capable through responses while embeddings stay separate", () => {
-    const stateDir = useTempState(`
+    const runtimeFixture = useTempState(`
       {
         ai: {
           connection: {
@@ -73,12 +81,12 @@ describe("task008 provider capability matrix", () => {
         }
       }
     `)
-    const authPath = writeCodexAuth(stateDir)
+    const authPath = writeCodexAuth(runtimeFixture.paths.stateDir)
 
     const matrix = getProviderCapabilityMatrix({
       connection: {
         provider: "openai",
-        model: "gpt-5.4",
+        model: "gpt-5.6-sol",
         endpoint: "https://chatgpt.com/backend-api/codex",
         auth: { mode: "chatgpt_oauth", oauthAuthFilePath: authPath },
       },
@@ -89,7 +97,7 @@ describe("task008 provider capability matrix", () => {
     expect(matrix.responsesApi.status).toBe("supported")
     expect(matrix.chatCompletions.status).toBe("unsupported")
     expect(matrix.embeddings.status).toBe("warning")
-    expect(matrix.modelListing.status).toBe("warning")
+    expect(matrix.modelListing.status).toBe("supported")
     expect(matrix.authRefresh.status).toBe("supported")
   })
 
@@ -121,7 +129,7 @@ describe("task008 provider capability matrix", () => {
   it("does not block an OpenAI-compatible endpoint only because model listing is unsupported", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("not found", { status: 404, statusText: "Not Found" })))
 
-    const result = await discoverModelsFromEndpoint("http://127.0.0.1:8080/v1", "custom", {}, "api_key")
+    const result = await discoverModelsFromEndpoint("http://127.0.0.1:8080/v1", DEFAULT_CONFIG, "custom", {}, "api_key")
 
     expect(result.models).toEqual([])
     expect(result.capabilityMatrix.lastCheckResult.status).toBe("warning")
@@ -130,7 +138,7 @@ describe("task008 provider capability matrix", () => {
   })
 
   it("adds resolver evidence to runtime route traces and doctor output", () => {
-    useTempState(`
+    const runtimeFixture = useTempState(`
       {
         ai: {
           connection: {
@@ -142,11 +150,14 @@ describe("task008 provider capability matrix", () => {
       }
     `)
 
-    const draft = buildSetupDraft()
+    const config = runtimeFixture.config
+    const draft = buildSetupDraft(config, null)
     const route = resolveRunRouteFromDraft(draft, { preferredTarget: "provider:ollama" })
-    const snapshot = resolveProviderResolutionSnapshot()
-    const doctor = runDoctor({ mode: "quick", includeEnvironment: false, includeReleasePackage: false })
+    const snapshot = resolveProviderResolutionSnapshot(undefined, config)
+    initializeTestDbRuntime(runtimeFixture.paths.stateDir)
+    const doctor = runDoctor({ config, paths: runtimeFixture.paths, mode: "quick", includeEnvironment: false, includeReleasePackage: false })
     const resolverCheck = doctor.checks.find((check) => check.name === "provider.resolver")
+    const uncheckedChat = doctor.checks.find((check) => check.name === "provider.chat")
 
     expect(route.providerTrace).toMatchObject({
       profileId: expect.any(String),
@@ -157,6 +168,27 @@ describe("task008 provider capability matrix", () => {
     expect(snapshot.providerId).toBe("ollama")
     expect(resolverCheck?.status).toBe("ok")
     expect(resolverCheck?.detail.profileId).toBe(route.providerTrace?.profileId)
+    expect(uncheckedChat?.status).toBe("warning")
+
+    getProviderCapabilityMatrix({
+      connection: config.ai.connection,
+      memory: config.memory,
+      forceRefresh: true,
+      checkResult: {
+        status: "failed",
+        checkedAt: "2026-07-24T00:00:00.000Z",
+        message: "연결 테스트에 실패했습니다.",
+        sourceUrl: null,
+      },
+    })
+    const failedDoctor = runDoctor({
+      config,
+      paths: runtimeFixture.paths,
+      mode: "quick",
+      includeEnvironment: false,
+      includeReleasePackage: false,
+    })
+    expect(failedDoctor.checks.find((check) => check.name === "provider.chat")?.status).toBe("blocked")
   })
 
   it("keeps OAuth and API key provider failures on different recovery keys", () => {

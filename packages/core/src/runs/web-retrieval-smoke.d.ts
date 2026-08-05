@@ -1,14 +1,10 @@
-import type { SourceFreshnessPolicy, SourceKind, SourceReliability } from "./web-retrieval-policy.js";
-import type { RetrievalSourceMethod, RetrievalTargetKind } from "./web-retrieval-session.js";
-import type { CandidateExtractionHints, RetrievalEvidenceSufficiency, RetrievalExtractionInputKind, RetrievalVerificationVerdict } from "./web-retrieval-verification.js";
-import type { WebSourceAdapterRegistrySnapshot } from "./web-source-adapters/index.js";
-import { type EvidenceConflictPolicy } from "./web-conflict-resolver.js";
-import { type RetrievalCacheTtlPolicy } from "./web-retrieval-cache.js";
-export declare const WEB_RETRIEVAL_FIXTURE_SCHEMA_VERSION = 1;
+import { type ArtifactStorageContext } from "../artifacts/lifecycle.js";
+export declare const WEB_RETRIEVAL_FIXTURE_SCHEMA_VERSION = 2;
+export declare const WEB_RETRIEVAL_EVIDENCE_CONTRACT_VERSION = "web-evidence-llm-diagnosis-v2";
 export type WebRetrievalSmokeStatus = "passed" | "failed" | "skipped" | "warning";
 export type WebRetrievalLiveSmokeMode = "dry-run" | "live-run";
 export interface WebRetrievalFixtureTargetInput {
-    kind?: RetrievalTargetKind;
+    kind?: string;
     rawQuery?: string | null;
     canonicalName?: string | null;
     symbols?: string[];
@@ -18,34 +14,36 @@ export interface WebRetrievalFixtureTargetInput {
 }
 export interface WebRetrievalFixtureSource {
     id: string;
-    method: RetrievalSourceMethod;
+    method: string;
     status?: "succeeded" | "failed";
     toolName?: string | null;
-    sourceKind: SourceKind;
-    reliability: SourceReliability;
+    sourceKind: string;
+    reliability: string;
     sourceUrl?: string | null;
     sourceDomain?: string | null;
     sourceLabel?: string | null;
     sourceTimestamp?: string | null;
     fetchTimestamp?: string | null;
-    inputKind: RetrievalExtractionInputKind;
+    inputKind: string;
     content?: unknown;
-    hints?: CandidateExtractionHints;
     errorKind?: string | null;
     stopReason?: string | null;
 }
+export interface WebRetrievalLlmDiagnosisExpectation {
+    status: "complete" | "followup" | "ask_user";
+    requiredEvidenceSourceIds: string[];
+    requiredConditionVerdicts: string[];
+    changedStrategyRequired: boolean;
+}
 export interface WebRetrievalFixtureExpected {
-    canAnswer: boolean;
-    acceptedValue?: string | null;
-    evidenceSufficiency: RetrievalEvidenceSufficiency;
-    minAttempts?: number;
-    limitedCompletionOk?: boolean;
+    minimumAttempts: number;
+    llmDiagnosisExpectation: WebRetrievalLlmDiagnosisExpectation;
 }
 export interface WebRetrievalFixture {
     schemaVersion: number;
     id: string;
     title: string;
-    freshnessPolicy: SourceFreshnessPolicy;
+    freshnessPolicy: string;
     target: WebRetrievalFixtureTargetInput;
     sources: WebRetrievalFixtureSource[];
     expected: WebRetrievalFixtureExpected;
@@ -56,12 +54,13 @@ export interface WebRetrievalFixtureRegressionResult {
     status: WebRetrievalSmokeStatus;
     failures: string[];
     attempts: number;
-    candidateCount: number;
-    verdict: RetrievalVerificationVerdict;
+    successfulSourceCount: number;
+    evidenceSourceIds: string[];
+    llmDiagnosisExpectation: WebRetrievalLlmDiagnosisExpectation;
     sanitizedSummary: string;
 }
 export interface WebRetrievalFixtureRegressionSummary {
-    kind: "web_retrieval.fixture_regression";
+    kind: "web_retrieval.provenance_fixture_regression";
     policyVersion: string;
     startedAt: string;
     finishedAt: string;
@@ -79,16 +78,41 @@ export interface WebRetrievalLiveSmokeScenario {
     title: string;
     request: string;
     target: WebRetrievalFixtureTargetInput;
-    freshnessPolicy: SourceFreshnessPolicy;
-    minimumMethods: RetrievalSourceMethod[];
-    expectsAnswerOrLimitedCompletion: boolean;
+    freshnessPolicy: string;
+    minimumMethods: string[];
+    completionConditions: string[];
+}
+export interface WebRetrievalLiveDiagnosisReceipt {
+    diagnosedBy: "llm" | "fixture";
+    status: "complete" | "followup" | "ask_user";
+    contextFingerprint: `sha256:${string}`;
+    criterionKeys: readonly string[];
+    conditionCount: number;
+    evidenceRefs: readonly string[];
+}
+export interface WebRetrievalLiveSourceEvidenceReceipt {
+    evidenceRef: string;
+    sourceDomain: string;
+    sourceTimestamp: string;
+    fetchedAt: string;
+}
+export interface WebRetrievalLiveTargetBindingReceipt {
+    status: "verified" | "unverified";
+    requestedTargetFingerprint: `sha256:${string}`;
+    evidenceTargetFingerprint: `sha256:${string}`;
+}
+export interface WebRetrievalLiveAcceptanceReceipt {
+    auditEventId: string;
+    redactionStatus: "verified" | "unverified";
+    targetBinding: WebRetrievalLiveTargetBindingReceipt;
+    sourceEvidence: readonly WebRetrievalLiveSourceEvidenceReceipt[];
 }
 export interface WebRetrievalLiveSmokeTrace {
-    attemptedMethods: RetrievalSourceMethod[];
-    sourceDomains?: string[];
+    attemptedMethods: readonly string[];
+    sourceDomains?: readonly string[];
     answerProduced: boolean;
-    verdict?: Pick<RetrievalVerificationVerdict, "canAnswer" | "evidenceSufficiency" | "acceptedValue" | "rejectionReason" | "caveats"> | null;
-    limitedCompletionOk?: boolean;
+    resultDiagnosis?: WebRetrievalLiveDiagnosisReceipt | null;
+    liveAcceptance?: WebRetrievalLiveAcceptanceReceipt | null;
     finalText?: string | null;
     artifactPath?: string | null;
     rawError?: string | null;
@@ -125,9 +149,6 @@ export interface WebRetrievalLiveSmokeSummary {
 export interface WebRetrievalReleaseGateSummary {
     kind: "web_retrieval.release_gate";
     policyVersion: string;
-    sourceAdapters: WebSourceAdapterRegistrySnapshot;
-    conflictPolicy: EvidenceConflictPolicy;
-    cachePolicy: RetrievalCacheTtlPolicy;
     fixtureRegression: Pick<WebRetrievalFixtureRegressionSummary, "status" | "counts" | "results"> | null;
     liveSmoke: Pick<WebRetrievalLiveSmokeSummary, "mode" | "smokeId" | "status" | "counts" | "artifactPath"> | null;
     gateStatus: "passed" | "failed" | "warning";
@@ -140,25 +161,26 @@ export declare function runWebRetrievalFixtureRegression(fixtures: WebRetrievalF
     finishedAt?: Date;
 }): WebRetrievalFixtureRegressionSummary;
 export declare function getDefaultWebRetrievalLiveSmokeScenarios(): WebRetrievalLiveSmokeScenario[];
-export declare function isLiveWebSmokeEnabled(env?: NodeJS.ProcessEnv): boolean;
+export declare function isLiveWebSmokeEnabled(env?: Record<string, string | undefined>): boolean;
 export declare function createDryRunWebRetrievalLiveSmokeExecutor(input?: {
-    traceOverrides?: Partial<Record<string, Partial<WebRetrievalLiveSmokeTrace>>>;
+    traceOverrides?: Record<string, Partial<WebRetrievalLiveSmokeTrace>>;
 }): (scenario: WebRetrievalLiveSmokeScenario) => Promise<WebRetrievalLiveSmokeTrace>;
+export declare function validateWebRetrievalLiveSmokeTrace(scenario: WebRetrievalLiveSmokeScenario, trace: WebRetrievalLiveSmokeTrace): string[];
 export declare function runWebRetrievalLiveSmokeScenarios(input?: {
+    artifactStorage?: ArtifactStorageContext;
     mode?: WebRetrievalLiveSmokeMode;
     scenarios?: WebRetrievalLiveSmokeScenario[];
     executeScenario?: (scenario: WebRetrievalLiveSmokeScenario) => Promise<WebRetrievalLiveSmokeTrace>;
     env?: NodeJS.ProcessEnv;
+    liveEnabled?: boolean;
     writeArtifact?: boolean;
     now?: Date;
+    clock?: () => Date;
 }): Promise<WebRetrievalLiveSmokeSummary>;
-export declare function validateWebRetrievalLiveSmokeTrace(scenario: WebRetrievalLiveSmokeScenario, trace: WebRetrievalLiveSmokeTrace): string[];
-export declare function writeWebRetrievalSmokeArtifact(summary: WebRetrievalLiveSmokeSummary): WebRetrievalLiveSmokeSummary;
+export declare function writeWebRetrievalSmokeArtifact(summary: WebRetrievalLiveSmokeSummary, artifactStorage: ArtifactStorageContext): WebRetrievalLiveSmokeSummary;
 export declare function buildWebRetrievalReleaseGateSummary(input?: {
     fixtureRegression?: WebRetrievalFixtureRegressionSummary | null;
     liveSmoke?: WebRetrievalLiveSmokeSummary | null;
-    requireLiveSmokePass?: boolean;
-    sourceAdapters?: WebSourceAdapterRegistrySnapshot;
 }): WebRetrievalReleaseGateSummary;
 export declare function buildFixtureRegressionFromWorkspace(rootDir: string): WebRetrievalFixtureRegressionSummary | null;
 export declare function fixtureFileNameForId(id: string): string;

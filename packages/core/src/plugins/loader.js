@@ -4,39 +4,44 @@
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { getDb } from "../db/index.js";
-import { toolDispatcher } from "../tools/dispatcher.js";
-import { createLogger } from "../logger/index.js";
-import { getConfig } from "../config/index.js";
+import { toolDispatcher } from "../tools/runtime-dispatcher.js";
+import { createLogger, redactLogText } from "../logger/index.js";
 const log = createLogger("plugins");
+function pluginLoaderErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 export class PluginLoader {
     loaded = new Map();
     /** Load all enabled plugins from the DB */
-    async loadAll() {
+    async loadAll(options) {
+        const config = options.config;
         const db = getDb();
         const rows = db
             .prepare("SELECT * FROM plugins WHERE enabled = 1")
             .all();
         for (const meta of rows) {
-            await this.load(meta).catch((err) => {
-                log.error(`Failed to load plugin "${meta.name}": ${err instanceof Error ? err.message : String(err)}`);
+            await this.load(meta, { config }).catch((err) => {
+                log.error(`Failed to load plugin "${meta.name}": ${pluginLoaderErrorMessage(err)}`);
             });
         }
         log.info(`Loaded ${this.loaded.size} plugin(s)`);
     }
     /** Load a single plugin by meta */
-    async load(meta) {
+    async load(meta, options) {
         if (this.loaded.has(meta.name))
             return;
+        const config = options.config;
         const entryPath = resolve(meta.entry_path);
         if (!existsSync(entryPath)) {
-            throw new Error(`Plugin entry not found: ${entryPath}`);
+            throw new Error("Plugin entry not found.");
         }
         const mod = await import(entryPath);
         const plugin = mod.default;
         if (!plugin || typeof plugin.initialize !== "function") {
             throw new Error(`Plugin "${meta.name}" does not export a valid KnowbeePlugin as default`);
         }
-        const ctx = this.buildContext(meta);
+        const ctx = this.buildContext(meta, config);
         await plugin.initialize(ctx);
         this.loaded.set(meta.name, { plugin, meta });
         log.info(`Plugin "${meta.name}" v${meta.version} loaded`);
@@ -51,12 +56,12 @@ export class PluginLoader {
         log.info(`Plugin "${name}" unloaded`);
     }
     /** Enable a plugin in DB and load it */
-    async enable(name) {
+    async enable(name, options) {
         const db = getDb();
         db.prepare("UPDATE plugins SET enabled = 1, updated_at = ? WHERE name = ?").run(Date.now(), name);
         const meta = db.prepare("SELECT * FROM plugins WHERE name = ?").get(name);
         if (meta)
-            await this.load(meta);
+            await this.load(meta, options);
     }
     /** Disable a plugin in DB and unload it */
     async disable(name) {
@@ -91,13 +96,13 @@ export class PluginLoader {
     getLoadedNames() {
         return Array.from(this.loaded.keys());
     }
-    buildContext(meta) {
+    buildContext(meta, config) {
         return {
             registerTools(tools) {
                 toolDispatcher.registerAll(tools);
             },
             getConfig(keyPath) {
-                const cfg = getConfig();
+                const cfg = config;
                 const parts = keyPath.split(".");
                 let cur = cfg;
                 for (const part of parts) {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { registerTopologyRoutes } from "../packages/core/src/api/routes/topologies.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { verifyMigrationState } from "../packages/core/src/db/migration-safety.ts"
 import { runMigrations } from "../packages/core/src/db/migrations.ts"
@@ -14,6 +14,11 @@ import {
   type CompiledTopologySnapshot,
   type EnterpriseTopology,
 } from "../packages/core/src/index.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 type SqliteStatement = {
@@ -48,8 +53,7 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 
 const now = Date.UTC(2026, 3, 29, 8, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 function topologyFixture(): EnterpriseTopology {
   const topology = structuredClone(buildExampleEnterpriseTopology(now))
@@ -82,11 +86,10 @@ function invalidTopologyFixture(): EnterpriseTopology {
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task013-topology-registry-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task013-topology-registry-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 afterEach(() => {
@@ -94,11 +97,6 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
 })
 
 describe("task013 durable topology registry and activation", () => {
@@ -234,6 +232,7 @@ describe("task013 durable topology registry and activation", () => {
   it("supports import/export and registry API route smoke", async () => {
     useTempState()
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerTopologyRoutes(app)
     await app.ready()
     try {

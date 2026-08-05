@@ -1,12 +1,12 @@
 import { authMiddleware } from "../middleware/auth.js";
 import { getUiModeState, savePreferredUiMode } from "../../ui/mode.js";
-import { getConfig } from "../../config/index.js";
 import { readSetupState } from "../../control-plane/index.js";
 import { getMqttExtensionSnapshots } from "../../mqtt/broker.js";
 import { listActiveRootRuns } from "../../runs/store.js";
 import { buildUiViewModels } from "../../ui/view-model.js";
 import { buildYeonjangFleetProjection } from "../../yeonjang/topology.js";
 import { buildYeonjangBroadcastPolicyProjection } from "../../yeonjang/broadcast-policy.js";
+import { getApiRuntimeConfig, getApiRuntimePaths } from "../runtime-context.js";
 function parsePreferredUiMode(value) {
     if (typeof value !== "string")
         return null;
@@ -15,8 +15,9 @@ function parsePreferredUiMode(value) {
         return normalized;
     return null;
 }
-function buildUiShellDomainState() {
-    const cfg = getConfig();
+function buildUiShellDomainState(options, config, paths) {
+    const cfg = config;
+    const modeOptions = { ...options, config };
     const activeRuns = listActiveRootRuns();
     const extensions = getMqttExtensionSnapshots();
     const yeonjang = buildYeonjangFleetProjection({ snapshots: extensions });
@@ -40,9 +41,9 @@ function buildUiShellDomainState() {
         && (cfg.kakaoTalk.allowedUserIds.length > 0 || cfg.kakaoTalk.allowedRoomIds.length > 0));
     return {
         generatedAt: Date.now(),
-        mode: getUiModeState(),
+        mode: getUiModeState(modeOptions),
         setupState: {
-            completed: readSetupState().completed,
+            completed: readSetupState(paths).completed,
         },
         runtimeHealth: {
             ai: {
@@ -83,12 +84,14 @@ function buildUiShellDomainState() {
         },
     };
 }
-export function registerUiModeRoute(app) {
-    app.get("/api/ui/mode", { preHandler: authMiddleware }, async () => {
-        return getUiModeState();
+export function registerUiModeRoute(app, options = {}) {
+    app.get("/api/ui/mode", { preHandler: authMiddleware }, async (req) => {
+        const config = getApiRuntimeConfig(req);
+        return getUiModeState({ ...options, config });
     });
-    app.get("/api/ui/shell", { preHandler: authMiddleware }, async () => {
-        const shell = buildUiShellDomainState();
+    app.get("/api/ui/shell", { preHandler: authMiddleware }, async (req) => {
+        const config = getApiRuntimeConfig(req);
+        const shell = buildUiShellDomainState(options, config, getApiRuntimePaths(req));
         return { ...shell, viewModel: buildUiViewModels(shell) };
     });
     app.post("/api/ui/mode", { preHandler: authMiddleware }, async (req, reply) => {
@@ -100,7 +103,14 @@ export function registerUiModeRoute(app) {
                 allowedModes: ["beginner", "advanced"],
             });
         }
-        return reply.status(200).send({ ok: true, ...savePreferredUiMode(mode) });
+        const config = getApiRuntimeConfig(req);
+        const paths = getApiRuntimePaths(req);
+        return reply.status(200).send({
+            ok: true,
+            ...savePreferredUiMode(mode, { ...options, config }, paths),
+            restartRequired: true,
+            appliesOn: "next_start",
+        });
     });
 }
 //# sourceMappingURL=ui-mode.js.map

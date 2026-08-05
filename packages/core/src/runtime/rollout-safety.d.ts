@@ -112,5 +112,5 @@ export declare function recordShadowCompare(input: {
     now?: number;
     db?: Database.Database;
 }): ShadowCompareResult;
-export declare function buildRolloutSafetySnapshot(dbPath?: string): RolloutSafetySnapshot;
+export declare function buildRolloutSafetySnapshot(dbPath: string): RolloutSafetySnapshot;
 //# sourceMappingURL=rollout-safety.d.ts.map

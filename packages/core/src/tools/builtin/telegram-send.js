@@ -1,7 +1,8 @@
 import { existsSync, statSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { homedir } from "node:os";
-import { getConfig } from "../../config/index.js";
+import { toolUserFacingErrorMessage } from "./error-redaction.js";
+import { resolveArtifactReference } from "../../artifacts/lifecycle.js";
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 const DOCUMENT_LIKE_EXTENSIONS = new Set([
     ".txt",
@@ -30,12 +31,12 @@ const EXPLICIT_FILE_DELIVERY_PATTERNS = [
     /\b(txt|text|markdown|md|json|csv|tsv|log|yaml|yml|xml|html|pdf|doc|docx|xls|xlsx)\b/i,
     /(?:파일|문서|첨부|첨부파일|다운로드|내보내|내보내기|보고서\s*파일|텍스트\s*파일|로그\s*파일|파일로)/u,
 ];
-function assertAllowedPath(filePath) {
+const DEFAULT_FILE_DELIVERY_SECURITY = Object.freeze({ allowedPaths: [] });
+function assertAllowedPath(filePath, securityConfig = DEFAULT_FILE_DELIVERY_SECURITY) {
     const resolved = resolve(filePath);
-    const config = getConfig();
     const home = homedir();
-    const allowed = config.security.allowedPaths.length > 0
-        ? config.security.allowedPaths.map((p) => resolve(p.replace("~", home)))
+    const allowed = securityConfig.allowedPaths.length > 0
+        ? securityConfig.allowedPaths.map((p) => resolve(p.replace("~", home)))
         : [home];
     const isAllowed = allowed.some((a) => resolved.startsWith(a + "/") || resolved === a);
     if (!isAllowed) {
@@ -65,18 +66,25 @@ export const telegramSendFileTool = {
                 type: "string",
                 description: "Absolute path to the file to send",
             },
+            artifactRef: {
+                type: "string",
+                description: "Opaque artifact reference produced by a prior Tool result in this run",
+            },
             caption: {
                 type: "string",
                 description: "Optional caption to display with the file",
             },
         },
-        required: ["filePath"],
+        required: [],
     },
-    riskLevel: "safe",
-    requiresApproval: false,
+    riskLevel: "moderate",
+    requiresApproval: true,
     availableSources: ["telegram"],
+    channelCapability: {
+        kind: "direct_artifact_delivery",
+        channel: "telegram",
+    },
     async execute(params, ctx) {
-        const filePath = params.filePath.replace(/^~/, homedir());
         try {
             if (ctx.source !== "telegram") {
                 return {
@@ -85,7 +93,31 @@ export const telegramSendFileTool = {
                     error: "TELEGRAM_CHANNEL_REQUIRED",
                 };
             }
-            assertAllowedPath(filePath);
+            const resolvedArtifact = params.artifactRef?.trim()
+                ? resolveArtifactReference({
+                    artifactRef: params.artifactRef,
+                    runId: ctx.runId,
+                    ...(ctx.requestGroupId ? { requestGroupId: ctx.requestGroupId } : {}),
+                }, ctx.artifactStorage)
+                : null;
+            if (resolvedArtifact && !resolvedArtifact.ok) {
+                return {
+                    success: false,
+                    output: "요청한 artifact를 현재 실행 범위에서 확인할 수 없습니다.",
+                    error: `ARTIFACT_REF_${resolvedArtifact.reason.toUpperCase()}`,
+                };
+            }
+            const filePath = resolvedArtifact?.ok
+                ? resolvedArtifact.filePath
+                : params.filePath?.replace(/^~/, homedir());
+            if (!filePath) {
+                return {
+                    success: false,
+                    output: "전달할 artifact reference 또는 파일 경로가 필요합니다.",
+                    error: "ARTIFACT_TARGET_REQUIRED",
+                };
+            }
+            assertAllowedPath(filePath, ctx.securityConfig);
             if (!existsSync(filePath)) {
                 return {
                     success: false,
@@ -118,9 +150,12 @@ export const telegramSendFileTool = {
             const details = {
                 kind: "artifact_delivery",
                 channel: "telegram",
-                filePath,
+                ...(resolvedArtifact?.ok
+                    ? { artifactRef: resolvedArtifact.artifactRef }
+                    : { filePath }),
                 size: stat.size,
                 source: ctx.source,
+                ...(resolvedArtifact?.ok ? { mimeType: resolvedArtifact.mimeType } : {}),
                 ...(params.caption ? { caption: params.caption } : {}),
             };
             return {
@@ -130,7 +165,7 @@ export const telegramSendFileTool = {
             };
         }
         catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = toolUserFacingErrorMessage(err);
             return { success: false, output: `Error preparing file: ${msg}`, error: msg };
         }
     },

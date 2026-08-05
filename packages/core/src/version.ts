@@ -16,6 +16,22 @@ function sanitizeDisplayVersion(value: string | null | undefined): string | null
   return trimmed || null
 }
 
+export interface VersionEnvironmentSnapshot {
+  displayVersion: string | null
+  gitVersion: string | null
+}
+
+export function createVersionEnvironmentSnapshot(
+  env: Readonly<Record<string, string | undefined>>,
+): VersionEnvironmentSnapshot {
+  return Object.freeze({
+    displayVersion: sanitizeDisplayVersion(env["KNOWBEE_DISPLAY_VERSION"]),
+    gitVersion: sanitizeDisplayVersion(env["KNOWBEE_GIT_VERSION"]),
+  })
+}
+
+const VERSION_ENV = createVersionEnvironmentSnapshot(process.env)
+
 export function getWorkspaceRootPath(): string {
   let current = dirname(fileURLToPath(import.meta.url))
   while (true) {
@@ -44,10 +60,8 @@ export function getCurrentAppVersion(): string {
   }
 }
 
-export function getCurrentDisplayVersion(): string {
-  const explicit =
-    sanitizeDisplayVersion(process.env["KNOWBEE_DISPLAY_VERSION"])
-    ?? sanitizeDisplayVersion(process.env["KNOWBEE_GIT_VERSION"])
+export function getCurrentDisplayVersion(snapshot: VersionEnvironmentSnapshot = VERSION_ENV): string {
+  const explicit = snapshot.displayVersion ?? snapshot.gitVersion
   if (explicit) return explicit
 
   try {

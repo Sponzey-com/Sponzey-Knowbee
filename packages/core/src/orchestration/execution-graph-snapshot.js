@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { getConfig } from "../config/index.js";
+import { resolveAgentConfigAgentName } from "../contracts/sub-agent-orchestration.js";
 import { listAgentRelationships } from "../db/index.js";
 import { createLegacyTopologyRegistry, legacyTopologyEnvelopeToExecutorCompatibilityEnvelope, } from "../topology/legacy-enterprise-topology-adapter.js";
 import { buildExecutorProfileFromNode, buildOrchestrationRegistrySnapshot, normalizeExecutorProfile, } from "./registry.js";
@@ -26,7 +26,7 @@ function sha256(value) {
 function rootAgentIdFromInput(input) {
     if (input.rootAgentId?.trim())
         return input.rootAgentId;
-    const cfg = input.getConfig?.() ?? getConfig();
+    const cfg = input.config;
     return cfg.orchestration.knowbee?.agentId ?? EXECUTION_GRAPH_ROOT_AGENT_ID;
 }
 function topologyAgentId(topologyId, nodeId) {
@@ -188,10 +188,10 @@ function projectTopologyAgents(input) {
             continue;
         const agentId = topologyAgentId(topology.id, node.id);
         const executionCandidate = nodeExecutionCandidate(node);
-        const displayName = nodeDisplayName(node);
+        const agentName = nodeDisplayName(node);
         agents[agentId] = {
             agentId,
-            displayName,
+            agentName,
             source: "topology",
             status: node.status,
             delegationEnabled: executionCandidate,
@@ -201,7 +201,7 @@ function projectTopologyAgents(input) {
             topologyId: topology.id,
             topologyVersion,
             executorId: node.id,
-            executorProfile: buildExecutorProfileFromNode(node, { executorId: agentId, displayName }),
+            executorProfile: buildExecutorProfileFromNode(node, { executorId: agentId, displayName: agentName }),
             reasonCodes: executionCandidate ? [] : [`node_${node.status}`],
         };
     }
@@ -209,9 +209,10 @@ function projectTopologyAgents(input) {
 }
 function projectRegistryAgent(agent) {
     const executionCandidate = agent.status === "enabled" && agent.delegationEnabled;
+    const agentName = resolveAgentConfigAgentName(agent.config);
     return {
         agentId: agent.agentId,
-        displayName: agent.displayName,
+        agentName,
         source: agent.source,
         status: agent.status,
         delegationEnabled: agent.delegationEnabled,
@@ -220,7 +221,7 @@ function projectRegistryAgent(agent) {
         specialtyTags: [...agent.specialtyTags],
         executorProfile: agent.executorProfile ?? normalizeExecutorProfile(undefined, {
             executorId: agent.agentId,
-            displayName: agent.displayName,
+            displayName: agentName,
             roleName: agent.role,
             definition: agent.config.personality,
             does: agent.specialtyTags,
@@ -240,7 +241,10 @@ function loadDbConfigRegistrySnapshot(input) {
         return input.registrySnapshot;
     if (input.loadRegistrySnapshot)
         return input.loadRegistrySnapshot();
-    return buildOrchestrationRegistrySnapshot(input.registryDependencies);
+    return buildOrchestrationRegistrySnapshot({
+        ...input.registryDependencies,
+        config: input.config,
+    });
 }
 function appendEdge(input) {
     input.edges.push(input.edge);
@@ -664,7 +668,7 @@ function buildDbConfigExecutionGraphSnapshot(input) {
         validationIssues,
     });
 }
-export function buildExecutionGraphSnapshot(input = {}) {
+export function buildExecutionGraphSnapshot(input) {
     const generatedAt = input.now?.() ?? Date.now();
     const rootAgentId = rootAgentIdFromInput(input);
     const currentExecutorId = input.currentExecutorId ?? rootAgentId;

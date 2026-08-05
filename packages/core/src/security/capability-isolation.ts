@@ -305,10 +305,10 @@ export function resolveToolCapabilityRisk(
   if (fallback === "external" || fallback === "sensitive") return fallback
 
   if (toolName === "shell_exec" || toolName === "process_kill") return "dangerous"
-  if (/^(mouse_|keyboard_|window_focus|screen_|yeonjang_camera_capture|app_launch)/u.test(toolName))
+  if (/^(mouse_|keyboard_|window_focus|screen_|app_launch)/u.test(toolName))
     return "dangerous"
   if (/^file_(write|patch|delete)$/u.test(toolName)) return "sensitive"
-  if (/^(web_search|web_fetch)$/u.test(toolName)) return "external"
+  if (toolName === "web_fetch") return "external"
   if (toolName.startsWith("mcp__")) return "moderate"
   return "safe"
 }
@@ -319,9 +319,9 @@ export function classifyDepthScopedToolKind(toolName: string): DepthScopedToolKi
   if (toolName === "process_kill" || toolName === "app_launch") return "system"
   if (toolName === "shell_exec") return "shell"
   if (/^file_(read|write|patch|delete|list|search)$/u.test(toolName)) return "filesystem"
-  if (/^(web_search|web_fetch)$/u.test(toolName)) return "network"
+  if (toolName === "web_fetch") return "network"
   if (toolName.startsWith("mcp__")) return "mcp"
-  if (/^(mouse_|keyboard_|window_|screen_|yeonjang_camera_capture)/u.test(toolName)) {
+  if (/^(mouse_|keyboard_|window_|screen_)/u.test(toolName)) {
     return "screen"
   }
   return "other"
@@ -879,12 +879,9 @@ function resolvePermissionProfileBlockReason(
     return "shell_execution_not_allowed"
   if (/^file_(write|patch|delete)$/u.test(toolName) && !profile.allowFilesystemWrite)
     return "filesystem_write_not_allowed"
-  if (/^(web_search|web_fetch)$/u.test(toolName) && !profile.allowExternalNetwork)
+  if (toolName === "web_fetch" && !profile.allowExternalNetwork)
     return "external_network_not_allowed"
-  if (
-    /^(mouse_|keyboard_|window_focus|screen_|yeonjang_camera_capture|app_launch)/u.test(toolName) &&
-    !profile.allowScreenControl
-  )
+  if (/^(mouse_|keyboard_|window_focus|screen_|app_launch)/u.test(toolName) && !profile.allowScreenControl)
     return "screen_control_not_allowed"
   return null
 }

@@ -1,4 +1,5 @@
 import type { AIProvider } from "../ai/index.js";
+import type { AIProviderFailureReasonCode } from "../ai/provider-failure.js";
 import type { TaskProfile } from "./types.js";
 import type { WorkerRuntimeTarget } from "./worker-runtime.js";
 export type ExternalRecoveryKind = "ai" | "worker_runtime";
@@ -6,6 +7,7 @@ export interface ExternalRecoveryPayload {
     summary: string;
     reason: string;
     message: string;
+    providerFailureReasonCode?: AIProviderFailureReasonCode;
 }
 export interface ExternalRecoveryState {
     model: string | undefined;
@@ -22,6 +24,7 @@ export interface ExternalRecoveryPlan {
     routeEventLabel?: string;
     nextState: ExternalRecoveryState;
     nextMessage: string;
+    reviewRequired?: true;
     duplicateStop?: {
         summary: string;
         reason: string;

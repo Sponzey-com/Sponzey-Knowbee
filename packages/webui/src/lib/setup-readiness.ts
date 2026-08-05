@@ -4,6 +4,7 @@ import type { CapabilityCounts } from "../contracts/capabilities"
 import type { SetupDraft, SetupState, SetupStepId, SetupStepMeta } from "../contracts/setup"
 import { validateSetupStep } from "./setupFlow"
 import { pickUiText, type UiLanguage } from "../stores/uiLanguage"
+import { DEFAULT_MAIN_AGENT_NAME_EN, DEFAULT_MAIN_AGENT_NAME_KO } from "./main-agent-copy"
 
 export type ReviewBoardStepId = Extract<SetupStepId, "personal" | "ai_backends" | "mcp" | "skills" | "security" | "channels" | "remote_access">
 export type ReviewBoardTone = "ready" | "warning" | "error" | "draft"
@@ -309,7 +310,7 @@ function buildReviewTile(
         tone: defaultTone,
         summary: `${userName || t("사용자 이름 없음", "No user name")} · ${draft.personal.language || "-"}`,
         details: [
-          `${t("메인 에이전트", "Main agent")}: ${draft.mainAgent?.name || t("노비", "Knowbee")}`,
+          `${t("메인 에이전트", "Main agent")}: ${draft.mainAgent?.name || t(DEFAULT_MAIN_AGENT_NAME_KO, DEFAULT_MAIN_AGENT_NAME_EN)}`,
           draft.personal.timezone || "-",
           draft.personal.workspace || t("작업 폴더 미입력", "Workspace missing"),
         ],
@@ -335,14 +336,14 @@ function buildReviewTile(
     case "mcp":
       return {
         stepId,
-        title: step?.label ?? "MCP",
+        title: step?.label ?? t("외부 기능 연결", "External features"),
         tone: defaultTone,
         summary: t(
           `활성 ${draft.mcp.servers.filter((server) => server.enabled).length}개 · ready ${draft.mcp.servers.filter((server) => server.status === "ready").length}개`,
           `${draft.mcp.servers.filter((server) => server.enabled).length} enabled · ${draft.mcp.servers.filter((server) => server.status === "ready").length} ready`,
         ),
         details: draft.mcp.servers.slice(0, 2).map((server) => `${server.name || server.id} · ${server.transport}`),
-        badges: [`servers:${draft.mcp.servers.length}`],
+        badges: [`connections:${draft.mcp.servers.length}`],
       }
     case "skills":
       return {

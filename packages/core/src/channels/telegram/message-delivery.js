@@ -1,6 +1,11 @@
 import { InputFile } from "grammy";
+import { redactLogText } from "../../logger/index.js";
 import { createRawPayloadRef, resolveDeliveryReceiptStatus, } from "../contracts.js";
 import { splitMessage } from "./markdown.js";
+function telegramDeliveryErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 function buildThreadOptions(threadId) {
     return threadId !== undefined ? { message_thread_id: threadId } : {};
 }
@@ -84,7 +89,7 @@ export function buildTelegramSentDeliveryReceipt(params) {
     };
 }
 export function buildTelegramFailedDeliveryReceipt(params) {
-    const message = params.error instanceof Error ? params.error.message : String(params.error);
+    const message = telegramDeliveryErrorMessage(params.error);
     return {
         channelId: "telegram:primary",
         provider: "telegram",

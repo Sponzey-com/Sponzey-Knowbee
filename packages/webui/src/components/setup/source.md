@@ -6,10 +6,9 @@
 
 ## 주요 파일
 
-- AI backend와 실행 대상 순서 편집: `BackendComposer`, `BackendHealthCard`, `RoutingPriorityEditor`
-- 채널과 보안 설정: `TelegramSettingsForm`, `SecuritySettingsForm`, `AuthTokenPanel`
-- MQTT 관리: `MqttSettingsForm`, `MqttRuntimePanel`
-- 설정 가이드와 검토: `SetupAssistPanel`, `ReviewSummaryPanel`, `SetupChecksPanel`
+- 기본 정보와 권한 설정: `PersonalSettingsForm`, `SecuritySettingsForm`
+- 단일 설정 화면 구성: `SingleSettingsWorkspaceShell`, `UnifiedSettingsSummaryPanel`
+- 메모리와 연장 상태: `MemorySettingsOverviewPanel`, `MqttRuntimePanel`, `YeonjangFleetPanel`
 
 ## 메모
 

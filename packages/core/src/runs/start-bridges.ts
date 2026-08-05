@@ -1,4 +1,7 @@
-import { applyLoopDirective } from "./loop-directive-application.js"
+import {
+  applyLoopDirective,
+  type LoopDirectiveResponseContext,
+} from "./loop-directive-application.js"
 import type { LoopDirective } from "./loop-directive.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
 import type { FinalizationDependencies, FinalizationSource } from "./finalization.js"
@@ -16,8 +19,14 @@ import type { TaskProfile } from "./types.js"
 import type {
   AgentExecutionDecision,
   AgentExecutionDecisionTraceSnapshot,
+  AgentExecutionToolBinding,
 } from "../orchestration/execution-decision-contract.js"
 import type { AIProvider } from "../ai/index.js"
+import type { KnowbeeConfig } from "../config/types.js"
+import type { ArtifactStorageContext } from "../artifacts/lifecycle.js"
+import type { CanonicalIntakeDiagnosisDescriptor } from "./canonical-intake-diagnosis.js"
+import type { FirstResponseDeadline } from "./first-response-deadline.js"
+import type { FirstResponseReceiptRecorder } from "./first-response-receipt.js"
 
 interface StartBridgeModuleDependencies {
   applyLoopDirective: typeof applyLoopDirective
@@ -37,6 +46,8 @@ export function buildStartFinalizationDependencies(params: {
   rememberRunFailure: FinalizationDependencies["rememberRunFailure"]
   rememberRunAwaitingUser?: FinalizationDependencies["rememberRunAwaitingUser"]
   onDeliveryError?: FinalizationDependencies["onDeliveryError"]
+  recordFirstResponseReceipt?: FirstResponseReceiptRecorder
+  firstResponseMonotonicNow?: () => number
 }): FinalizationDependencies {
   return {
     appendRunEvent: params.appendRunEvent,
@@ -48,6 +59,12 @@ export function buildStartFinalizationDependencies(params: {
       ? { rememberRunAwaitingUser: params.rememberRunAwaitingUser }
       : {}),
     ...(params.onDeliveryError ? { onDeliveryError: params.onDeliveryError } : {}),
+    ...(params.recordFirstResponseReceipt
+      ? { recordFirstResponseReceipt: params.recordFirstResponseReceipt }
+      : {}),
+    ...(params.firstResponseMonotonicNow
+      ? { firstResponseMonotonicNow: params.firstResponseMonotonicNow }
+      : {}),
   }
 }
 
@@ -58,6 +75,7 @@ export async function executeStartLoopDirective(
     source: FinalizationSource
     onChunk: RunChunkDeliveryHandler | undefined
     directive: LoopDirective
+    responseContext?: LoopDirectiveResponseContext | undefined
     finalizationDependencies: FinalizationDependencies
     suppressFinalDelivery?: boolean
     suppressFinalDeliveryReasonCode?: string
@@ -69,6 +87,7 @@ export async function executeStartLoopDirective(
 
 export async function runStartIntakeBridge(
   params: {
+    artifactStorage: ArtifactStorageContext
     message: string
     originalRequest: string
     sessionId: string
@@ -76,11 +95,17 @@ export async function runStartIntakeBridge(
     model: string | undefined
     providerId?: string | undefined
     provider?: AIProvider | undefined
+    config: KnowbeeConfig
     workDir: string
     source: FinalizationSource
     runId: string
     onChunk: RunChunkDeliveryHandler | undefined
+    signal?: AbortSignal
+    firstResponseDeadline?: FirstResponseDeadline
+    nowMs?: () => number
+    recordFirstResponseReceipt?: FirstResponseReceiptRecorder
     reuseConversationContext: boolean
+    executionTools?: AgentExecutionToolBinding[] | undefined
     scheduleDelayedRun: (params: ScheduleDelayedRunRequest) => void
     startDelegatedRun: (
       params: DelegatedRunStartParams,
@@ -91,9 +116,28 @@ export async function runStartIntakeBridge(
     updateRunSummary: (runId: string, summary: string) => void
     incrementDelegationTurnCount: (runId: string, summary: string) => void
     emitScheduleCreated: (payload: ReturnType<typeof buildScheduleRegistrationCreatedEvent>) => void
-    emitScheduleCancelled: (payload: ReturnType<typeof buildScheduleRegistrationCancelledEvent>) => void
+    emitScheduleCancelled: (
+      payload: ReturnType<typeof buildScheduleRegistrationCancelledEvent>,
+    ) => void
     normalizeTaskProfile: (taskProfile: string | undefined) => TaskProfile
     logInfo: (message: string, payload: Record<string, unknown>) => void
+    recordCanonicalIntakeDiagnosis: (
+      descriptor: CanonicalIntakeDiagnosisDescriptor,
+    ) => Promise<{ ok: true } | { ok: false; reasonCode: string }>
+    authorizeCanonicalIntakePlan: (input: {
+      runId: string
+      intake: import("../agent/intake.js").TaskIntakeResult
+    }) => Promise<
+      | { ok: true; requiredToolNames?: string[] | undefined }
+      | { ok: false; reasonCode: string }
+    >
+    recordCanonicalExecutionStart: (input: {
+      runId: string
+      intake: import("../agent/intake.js").TaskIntakeResult
+    }) => Promise<{ ok: true } | { ok: false; reasonCode: string }>
+    releaseCanonicalSimplePath: Parameters<
+      typeof runIntakeBridgePass
+    >[1]["releaseCanonicalSimplePath"]
     recordExecutionDecisionTrace?: (params: {
       runId: string
       agentExecutionDecision: AgentExecutionDecision
@@ -112,6 +156,10 @@ export async function runStartIntakeBridge(
     startDelegatedRun: params.startDelegatedRun,
     normalizeTaskProfile: dependencies.normalizeTaskProfile,
     logInfo: dependencies.logInfo,
+    recordCanonicalIntakeDiagnosis: dependencies.recordCanonicalIntakeDiagnosis,
+    authorizeCanonicalIntakePlan: dependencies.authorizeCanonicalIntakePlan,
+    recordCanonicalExecutionStart: dependencies.recordCanonicalExecutionStart,
+    releaseCanonicalSimplePath: dependencies.releaseCanonicalSimplePath,
     ...(dependencies.recordExecutionDecisionTrace
       ? { recordExecutionDecisionTrace: dependencies.recordExecutionDecisionTrace }
       : {}),

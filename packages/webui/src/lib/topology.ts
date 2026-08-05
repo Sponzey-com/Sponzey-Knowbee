@@ -140,6 +140,7 @@ export type TopologyConnectionIntent =
     }
 
 const TOPOLOGY_CONTRACT_SCHEMA_VERSION = 1
+const UNNAMED_TOPOLOGY_AGENT_LABEL = "Unnamed agent"
 const WORKING_RUN_STATUSES = new Set(["queued", "running", "awaiting_approval", "awaiting_user"])
 const WORKING_SUB_SESSION_STATUSES = new Set([
   "created",
@@ -157,6 +158,12 @@ function uniqueTopologyIds(values: Array<string | undefined>): string[] {
 function recordString(value: Record<string, unknown>, key: string): string | undefined {
   const raw = value[key]
   return typeof raw === "string" && raw.trim() ? raw.trim() : undefined
+}
+
+export function topologyAgentDisplayLabel(agent: {
+  agentName?: string | undefined
+}): string {
+  return agent.agentName?.trim() || UNNAMED_TOPOLOGY_AGENT_LABEL
 }
 
 export function buildTopologyWorkingAgentIds(
@@ -191,9 +198,9 @@ export function buildTopologyAgentCreatePayload(
   draft: TopologyNodeCreateDraft,
 ): TopologyAgentCreatePayload {
   const now = draft.now ?? Date.now()
-  const displayName = draft.name.trim()
+  const agentName = draft.name.trim()
   const role = draft.detail.trim() || "assistant"
-  const slug = normalizeTopologyEntitySlug(displayName, "agent")
+  const slug = normalizeTopologyEntitySlug(agentName, "agent")
   const agentId = `agent:${slug}`
   const owner = { ownerType: "sub_agent", ownerId: agentId }
   return {
@@ -201,8 +208,7 @@ export function buildTopologyAgentCreatePayload(
       schemaVersion: TOPOLOGY_CONTRACT_SCHEMA_VERSION,
       agentType: "sub_agent",
       agentId,
-      displayName,
-      nickname: displayName,
+      agentName,
       status: "enabled",
       role,
       personality: "Focused sub-agent managed from the topology editor.",
@@ -287,7 +293,6 @@ export function buildTopologyTeamCreatePayload(
       schemaVersion: TOPOLOGY_CONTRACT_SCHEMA_VERSION,
       teamId,
       displayName,
-      nickname: displayName,
       status: "enabled",
       purpose,
       ownerAgentId,
@@ -503,6 +508,14 @@ function teamMemberPosition(
   return { x: node.position.x, y: node.position.y }
 }
 
+function topologyAgentLabel(
+  projection: AgentTopologyProjection,
+  node: AgentTopologyNode,
+): string {
+  if (node.kind !== "knowbee" && node.kind !== "sub_agent") return node.label
+  return topologyAgentDisplayLabel(projection.inspectors.agents[node.entityId] ?? {})
+}
+
 function agentIdFromTopologyNodeId(nodeId: string): string | null {
   return nodeId.startsWith("agent:") ? nodeId.slice("agent:".length) : null
 }
@@ -590,7 +603,7 @@ export function buildTopologyFlowElements(
           data: {
             kind: node.kind,
             entityId: node.entityId,
-            label: node.label,
+            label: topologyAgentLabel(projection, node),
             ...(node.status ? { status: node.status } : {}),
             ...(agentWorking || groupWorking ? { working: true } : {}),
             ...(group ? { group: true, groupMemberCount: group.memberCount } : {}),
@@ -807,7 +820,7 @@ export function buildTopologySummaryCards(
 ): TopologySummaryCard[] {
   if (!projection) {
     return [
-      { id: "agents", label: text("에이전트", "Agents"), value: "-", tone: "stone" },
+      { id: "agents", label: text("서브 에이전트", "Sub-agents"), value: "-", tone: "stone" },
       { id: "teams", label: text("팀", "Teams"), value: "-", tone: "stone" },
       { id: "issues", label: text("진단", "Diagnostics"), value: "-", tone: "stone" },
     ]
@@ -822,7 +835,7 @@ export function buildTopologySummaryCards(
   return [
     {
       id: "agents",
-      label: text("에이전트", "Agents"),
+      label: text("서브 에이전트", "Sub-agents"),
       value: String(agents.length),
       tone: agents.length > 0 ? "emerald" : "stone",
     },
@@ -858,7 +871,7 @@ function compositionItemFromNode(node: AgentTopologyNode): TopologyCompositionIt
 function compositionItemFromTeam(team: AgentTopologyTeamInspector): TopologyCompositionItem {
   return {
     id: team.teamId,
-    label: team.nickname ?? team.displayName,
+    label: team.displayName,
     status: team.status,
   }
 }
@@ -965,7 +978,7 @@ export function buildTopologyTeamCompositionSummary(
   return {
     owner: ownerNode
       ? compositionItemFromNode(ownerNode)
-      : { id: team.ownerAgentId, label: team.ownerAgentId },
+      : { id: team.ownerAgentId, label: "서브 에이전트" },
     directChildCount: team.builder.directChildAgentIds.length,
     candidateCount: team.builder.candidates.length,
     activeMemberCount: team.health.activeMemberCount,

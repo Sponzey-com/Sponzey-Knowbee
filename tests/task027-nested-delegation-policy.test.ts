@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type {
   AgentPromptBundle,
@@ -38,28 +37,20 @@ import { evaluateAgentToolCapabilityPolicy } from "../packages/core/src/security
 import { buildRunRuntimeInspectorProjection } from "../packages/core/src/runs/runtime-inspector-projection.ts"
 import type { RootRun } from "../packages/core/src/runs/types.ts"
 import type { ToolContext } from "../packages/core/src/tools/types.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task027-nested-"))
   tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = undefined
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 function restoreState(): void {
   closeDb()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -161,6 +152,7 @@ function registryAgent(agentId: string): AgentRegistryEntry {
       schemaVersion: CONTRACT_SCHEMA_VERSION,
       agentType: "sub_agent",
       agentId,
+      agentName: agentId,
       displayName: agentId,
       status: "enabled",
       role: "worker",
@@ -176,9 +168,21 @@ function registryAgent(agentId: string): AgentRegistryEntry {
         writebackReviewRequired: true,
       },
       capabilityPolicy,
-      delegationPolicy: { enabled: true, maxParallelSessions: 2 },
+      delegationPolicy: {
+        enabled: true,
+        maxParallelSessions: 2,
+        directChildOnly: true,
+        allowedChildAgentIds: agentId === "agent:a" ? ["agent:b"] : agentId === "agent:b" ? ["agent:c"] : [],
+        redelegationAllowed: true,
+      },
       teamIds: [],
-      delegation: { enabled: true, maxParallelSessions: 2 },
+      delegation: {
+        enabled: true,
+        maxParallelSessions: 2,
+        directChildOnly: true,
+        allowedChildAgentIds: agentId === "agent:a" ? ["agent:b"] : agentId === "agent:b" ? ["agent:c"] : [],
+        redelegationAllowed: true,
+      },
       profileVersion: 1,
       createdAt: now,
       updatedAt: now,
@@ -330,7 +334,6 @@ function promptBundle(agentId: string): AgentPromptBundle {
     agentId,
     agentType: "sub_agent",
     role: "worker",
-    displayNameSnapshot: agentId,
     personalitySnapshot: "precise",
     teamContext: [],
     memoryPolicy: {
@@ -366,8 +369,8 @@ function runInput(
 ) {
   return {
     command: command(subSessionId, targetAgentId, parentSubSessionId),
-    parentAgent: { agentId: parentAgentId, displayName: parentAgentId },
-    agent: { agentId: targetAgentId, displayName: targetAgentId },
+    parentAgent: { agentId: parentAgentId, agentName: parentAgentId },
+    agent: { agentId: targetAgentId, agentName: targetAgentId },
     parentSessionId: "session:task027",
     promptBundle: promptBundle(targetAgentId),
     ...(modelExecutionPolicy ? { modelExecutionPolicy } : {}),
@@ -460,6 +463,7 @@ describe("task027 nested delegation and depth scoped policy", () => {
     expect(result.plan?.delegatedTasks).toEqual([
       expect.objectContaining({ assignedAgentId: "agent:b" }),
     ])
+    expect(result.delegationAuthorizationReceiptIds?.[0]).toMatch(/^delegation-forest:/)
 
     const crossTree = buildNestedDelegationPlan({
       parentRunId: "run:task027",

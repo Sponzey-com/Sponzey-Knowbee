@@ -2,15 +2,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
 import { buildReleaseManifest } from "../packages/core/src/release/package.ts"
 import { buildUiModeReleaseGateSummary, buildUiModeSmokeMatrix } from "../packages/core/src/release/ui-mode-gate.ts"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
+let runtimeFixture: TestRuntimeConfigFixture
 
 function tempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -50,19 +50,13 @@ function createReleaseRoot(): string {
 
 beforeEach(() => {
   closeDb()
-  const stateDir = tempDir("knowbee-task017-state-")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = tempDir("knowbee-task017-state-")
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -145,6 +139,8 @@ describe("task017 UI mode release gate", () => {
       gitCommit: "def5678",
       targetPlatforms: ["macos"],
       now: new Date("2026-04-18T00:00:00.000Z"),
+      config: runtimeFixture.config,
+      runtimePaths: runtimeFixture.paths,
     })
 
     expect(manifest.uiModeEvidence.kind).toBe("ui_mode.release_gate")

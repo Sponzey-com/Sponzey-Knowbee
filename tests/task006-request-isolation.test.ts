@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 import { buildIncomingIntentContract } from "../packages/core/src/runs/active-run-projection.ts"
 import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
 import { createInboundMessageRecord } from "../packages/core/src/runs/request-isolation.ts"
+import { createTestStartPlanBoundaryDependencies } from "./fixtures/start-plan.ts"
 
 function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan>[1]>) {
   const reconnectRun = {
@@ -17,6 +19,7 @@ function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan
     sessionId: "session-1",
   } as any
   return {
+    ...createTestStartPlanBoundaryDependencies(),
     analyzeRequestEntrySemantics: vi.fn(() => ({ reuse_conversation_context: false, active_queue_cancellation_mode: null })),
     isReusableRequestGroup: vi.fn(() => false),
     listActiveSessionRequestGroups: vi.fn(() => [reconnectRun]),
@@ -68,6 +71,7 @@ describe("task006 request isolation", () => {
   it("starts a new root run for a separate Telegram finance message even with an active run", async () => {
     const dependencies = createDependencies()
     const result = await buildStartPlan({
+      config: DEFAULT_CONFIG,
       message: "지금 코스피 지수 얼마야",
       sessionId: "session-1",
       runId: "run-kospi",
@@ -87,6 +91,7 @@ describe("task006 request isolation", () => {
   it("starts a new root run for a Slack message with a different timestamp in the same thread", async () => {
     const dependencies = createDependencies()
     const result = await buildStartPlan({
+      config: DEFAULT_CONFIG,
       message: "오늘 나스닥 지수 얼마야?",
       sessionId: "slack:C1:1700000000.000100",
       runId: "run-slack-next",

@@ -3,6 +3,8 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { toolUserFacingErrorMessage } from "../error-redaction.js";
+import { buildYeonjangRequiredFailure } from "../yeonjang-required-failure.js";
 const execFileAsync = promisify(execFile);
 async function listWindows() {
     const platform = process.platform;
@@ -47,16 +49,6 @@ async function listWindows() {
     }
     return [];
 }
-function yeonjangRequiredFailure() {
-    return {
-        success: false,
-        output: "이 작업은 Yeonjang 연장을 통해서만 실행할 수 있습니다. 창 포커스 제어는 현재 코어 로컬 경로에서 금지되어 있습니다.",
-        error: "YEONJANG_REQUIRED",
-        details: {
-            requiredExecutor: "yeonjang",
-        },
-    };
-}
 // ── window_list ───────────────────────────────────────────────────────────
 export const windowListTool = {
     name: "window_list",
@@ -79,7 +71,7 @@ export const windowListTool = {
             return { success: true, output: text };
         }
         catch (err) {
-            return { success: false, output: `창 목록 조회 실패: ${err instanceof Error ? err.message : String(err)}` };
+            return { success: false, output: `창 목록 조회 실패: ${toolUserFacingErrorMessage(err)}` };
         }
     },
 };
@@ -97,7 +89,10 @@ export const windowFocusTool = {
     requiresApproval: true,
     execute: async (params) => {
         void params;
-        return yeonjangRequiredFailure();
+        return buildYeonjangRequiredFailure({
+            reason: "창 포커스 제어는 현재 코어 로컬 경로에서 금지되어 있습니다.",
+            reasonCode: "core_local_path_forbidden",
+        });
     },
 };
 //# sourceMappingURL=window.js.map

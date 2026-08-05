@@ -9,6 +9,7 @@
 - `store.ts`: 메모리 저장/검색 API와 프롬프트 문맥 조립
 - `journal.ts`: `memory.db3` 실행 저널, FTS 검색, 성공/실패 요약 기록
 - `knowbee-md.ts`: 워크스페이스 메모리 파일과 `prompts/` 기반 시스템 프롬프트 source 로딩
+- `prompt-regression.ts`: 등록된 prompt source와 runtime assembly 계약의 정적 회귀 검증
 - `compressor.ts`: 문맥 압축 로직
 - `embedding.ts`, `search.ts`, `file-indexer.ts`: 시맨틱 검색과 파일 기반 검색 지원
 
@@ -28,7 +29,7 @@
 - `knowbee-md.ts`의 runtime prompt assembly는 prompt source checksum, locale, source state, policy version을 cache key로 사용합니다. prompt source가 바뀌지 않으면 같은 assembly를 재사용합니다.
 - prompt source file loader와 registry metadata 관리는 `knowbee-md.ts`가 담당하고, runtime 사용처별 source 선택은 `orchestration/prompt-policy-adapter.ts`가 담당합니다. prompt bundle이나 execution harness가 source id 목록과 usage scope 규칙을 중복 소유하지 않도록 유지합니다.
 - prompt 변경은 파일 존재 확인만으로 완료하지 않습니다. source registry, dry-run assembly, agent prompt bundle, execution harness policy block 중 실제 사용처의 assembled prompt regression을 함께 갱신합니다.
-- `knowbee-md.ts`의 first-run fallback prompt seed는 `prompts/` source가 없을 때도 서브 에이전트 hierarchy, `CommandRequest`/`DataExchangePackage`/`ResultReport`/`FeedbackRequest`, nickname attribution, team expansion 기본 규칙을 포함해야 합니다.
+- `knowbee-md.ts`의 first-run fallback prompt seed는 `prompts/` source가 없을 때도 서브 에이전트 hierarchy, `CommandRequest`/`DataExchangePackage`/`ResultReport`/`FeedbackRequest`, agent_name attribution, team expansion 기본 규칙을 포함해야 합니다.
 - 실행 종료 경로는 `memory_writeback_queue`, `session_snapshots`, `task_continuity`에 instruction/success/failure 후보를 조용히 기록합니다. writeback 실패는 사용자 채널에 노출하지 않고 실행 완료 판정도 직접 막지 않습니다.
 - session snapshot은 후속 run이 열린 task id와 마지막 성공 요약을 회수할 수 있게 유지합니다. task continuity는 같은 request group의 handoff summary와 실패 복구 근거를 남기는 경계입니다.
 - `agent_memory_state`는 Knowbee/서브 에이전트별 active memory 경계와 최신 capsule pointer를 추적하는 read model입니다. `session_snapshots`는 root session 호환 요약, `task_continuity`는 lineage handoff/복구 경계이므로 서로 역할이 다릅니다.

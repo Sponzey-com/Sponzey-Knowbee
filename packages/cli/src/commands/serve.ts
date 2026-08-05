@@ -1,28 +1,19 @@
-import { writeFileSync, mkdirSync, existsSync } from "node:fs"
+import { writeFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
-import { homedir } from "node:os"
+import { getCliStateDir } from "../runtime-env.js"
+import { formatDaemonRejectionLog } from "../daemon-error.js"
 
-const STATE_DIR = process.env["KNOWBEE_STATE_DIR"] ?? process.env["WIZBY_STATE_DIR"]
-  ?? process.env["HOWIE_STATE_DIR"]
-  ?? process.env["KNOWBEE_STATE_DIR"]
-  ?? (existsSync(join(homedir(), ".knowbee")) ? join(homedir(), ".knowbee")
-    : existsSync(join(homedir(), ".wizby")) ? join(homedir(), ".wizby")
-      : existsSync(join(homedir(), ".howie")) ? join(homedir(), ".howie")
-        : join(homedir(), ".knowbee"))
+const STATE_DIR = getCliStateDir()
 const PID_FILE = join(STATE_DIR, "daemon.pid")
 const LOGS_DIR = join(STATE_DIR, "logs")
+const STARTUP_EVIDENCE_FILE = join(STATE_DIR, "gateway-startup.json")
 let rejectionGuardInstalled = false
-
-function formatDaemonError(error: unknown): string {
-  if (error instanceof Error) return error.stack ?? error.message
-  return String(error)
-}
 
 function installDaemonRejectionGuard(): void {
   if (rejectionGuardInstalled) return
   rejectionGuardInstalled = true
   process.on("unhandledRejection", (reason) => {
-    console.error("Unhandled promise rejection in daemon; keeping process alive:", formatDaemonError(reason))
+    console.error(formatDaemonRejectionLog(reason))
   })
 }
 
@@ -35,24 +26,43 @@ export async function serveCommand(): Promise<void> {
 
   console.log(`스폰지 노비 · Sponzey Knowbee daemon starting (PID=${process.pid})`)
 
-  const { bootstrapAsync } = await import("@knowbee/core")
+  const {
+    createGatewayStartupLogPort,
+    createStartupEvidenceFilePort,
+    startGatewayStartup,
+  } = await import("@knowbee/core/startup")
+  const startedAt = Date.now()
+  const startup = await startGatewayStartup({
+    startupId: `gateway-${process.pid}-${startedAt}`,
+    pid: process.pid,
+    startedAt,
+    evidencePort: createStartupEvidenceFilePort({
+      filePath: STARTUP_EVIDENCE_FILE,
+    }),
+    logger: createGatewayStartupLogPort(),
+  })
+  if (startup.status === "rejected") {
+    throw new Error(`gateway_startup_rejected:${startup.reasonCode}`)
+  }
+
+  const { bootstrapAsync } = await import("@knowbee/core/bootstrap")
 
   // Bootstrap: load config, init DB, register tools, start WebUI + scheduler
-  await bootstrapAsync()
+  await bootstrapAsync(undefined, { startupProgress: startup.progress })
 
   console.log("스폰지 노비 · Sponzey Knowbee daemon running. Press Ctrl+C to stop.")
 
   // Keep alive
   process.on("SIGTERM", () => {
     console.log("SIGTERM received — shutting down")
-    import("@knowbee/core").then(({ closeServer }) => {
+    import("@knowbee/core/bootstrap").then(({ closeServer }) => {
       void closeServer().then(() => process.exit(0))
     })
   })
 
   process.on("SIGINT", () => {
     console.log("\nSIGINT received — shutting down")
-    import("@knowbee/core").then(({ closeServer }) => {
+    import("@knowbee/core/bootstrap").then(({ closeServer }) => {
       void closeServer().then(() => process.exit(0))
     })
   })

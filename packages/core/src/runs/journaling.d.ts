@@ -33,7 +33,7 @@ export interface DataExchangeJournalParams {
     requestGroupId?: string;
     sourceSessionId?: string;
 }
-interface RunJournalDependencies {
+export interface RunJournalDependencies {
     insertRecord: (input: MemoryJournalRecordInput) => string;
     onError: (message: string) => void;
 }
@@ -41,6 +41,5 @@ export declare function buildRunInstructionJournalRecord(params: RunInstructionJ
 export declare function buildRunSuccessJournalRecord(params: RunSuccessJournalParams): MemoryJournalRecordInput;
 export declare function buildRunFailureJournalRecord(params: RunFailureJournalParams): MemoryJournalRecordInput;
 export declare function buildDataExchangeJournalRecord(params: DataExchangeJournalParams): MemoryJournalRecordInput;
-export declare function safeInsertRunJournalRecord(input: MemoryJournalRecordInput, dependencies?: Partial<RunJournalDependencies>): void;
-export {};
+export declare function safeInsertRunJournalRecord(input: MemoryJournalRecordInput, dependencies: RunJournalDependencies): void;
 //# sourceMappingURL=journaling.d.ts.map

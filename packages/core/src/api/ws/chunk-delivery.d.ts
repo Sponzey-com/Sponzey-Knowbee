@@ -1,6 +1,8 @@
+import { type ArtifactStorageContext } from "../../artifacts/lifecycle.js";
 import { type RunChunkDeliveryHandler } from "../../runs/delivery.js";
 import type { MessageLedgerDeliveryKind } from "../../runs/message-ledger.js";
 export declare function createWebUiChunkDeliveryHandler(params: {
+    artifactStorage: ArtifactStorageContext;
     sessionId: string;
     runId: string;
     deliveryKind?: MessageLedgerDeliveryKind;

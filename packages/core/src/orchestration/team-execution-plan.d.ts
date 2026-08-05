@@ -30,8 +30,8 @@ export interface TeamExecutionPlanBuildResult {
 export interface TeamExecutionPlanServiceDependencies extends TeamCompositionServiceDependencies {
     idProvider?: (prefix: string) => string;
 }
-export declare function buildTeamExecutionPlan(input: TeamExecutionPlanBuildInput, dependencies?: TeamExecutionPlanServiceDependencies): TeamExecutionPlanBuildResult;
-export declare function createTeamExecutionPlanService(dependencies?: TeamExecutionPlanServiceDependencies): {
+export declare function buildTeamExecutionPlan(input: TeamExecutionPlanBuildInput, dependencies: TeamExecutionPlanServiceDependencies): TeamExecutionPlanBuildResult;
+export declare function createTeamExecutionPlanService(dependencies: TeamExecutionPlanServiceDependencies): {
     build(input: TeamExecutionPlanBuildInput): TeamExecutionPlanBuildResult;
 };
 //# sourceMappingURL=team-execution-plan.d.ts.map

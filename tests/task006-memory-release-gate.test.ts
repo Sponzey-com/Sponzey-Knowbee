@@ -1,17 +1,18 @@
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs"
+import { mkdtempSync, rmSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import type { AIChunk, AIProvider, ChatParams } from "../packages/core/src/ai/types.js"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, insertSession } from "../packages/core/src/db/index.js"
-import { closeMemoryJournalDb } from "../packages/core/src/memory/journal.js"
 import { executeRootSessionCompaction } from "../packages/core/src/memory/compaction.ts"
 import { buildReleaseManifest } from "../packages/core/src/release/package.ts"
 import { buildMemoryCompactionReleaseGateSummary } from "../packages/core/src/release/memory-compaction-gate.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 class ReleaseGateProvider implements AIProvider {
@@ -41,13 +42,11 @@ class ReleaseGateProvider implements AIProvider {
   }
 }
 
-function useTempState(): void {
+function useTempState(): TestRuntimeConfigFixture {
   closeDb()
-  closeMemoryJournalDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task006-memory-release-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task006-memory-release-"))
+  tempDirs.push(rootDir)
+  const fixture = createTestRuntimeConfigFixture({ rootDir, configText: `{
     memory: {
       compaction: {
         modelId: "compact-release-model",
@@ -55,10 +54,9 @@ function useTempState(): void {
         minContextTokens: 3000
       }
     }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  }` })
+  initializeTestDbRuntime(fixture.paths.stateDir)
+  return fixture
 }
 
 async function seedReleaseEvidence(): Promise<void> {
@@ -75,6 +73,7 @@ async function seedReleaseEvidence(): Promise<void> {
     provider,
     model: "compact-release-model",
     sessionId: "session-task006-release",
+    agentNameSnapshot: "노비",
     requestGroupId: "group-task006-release",
     messages: [
       {
@@ -95,12 +94,6 @@ async function seedReleaseEvidence(): Promise<void> {
 
 afterEach(() => {
   closeDb()
-  closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -109,11 +102,13 @@ afterEach(() => {
 
 describe("task006 memory compaction release gate", () => {
   it("wires memory compaction evidence into the release summary, pipeline, and runbook", async () => {
-    useTempState()
+    const fixture = useTempState()
     await seedReleaseEvidence()
+    const config = fixture.config
 
     const summary = buildMemoryCompactionReleaseGateSummary({
       now: new Date("2026-05-18T07:00:00.000Z"),
+      config,
     })
     expect(summary.checks.map((check) => check.id)).toEqual([
       "quality_snapshot_guard",
@@ -126,6 +121,8 @@ describe("task006 memory compaction release gate", () => {
     const manifest = buildReleaseManifest({
       rootDir: process.cwd(),
       now: new Date("2026-05-18T07:00:00.000Z"),
+      config,
+      runtimePaths: fixture.paths,
     })
     expect(manifest.memoryCompactionEvidence.gateStatus).toBe(summary.gateStatus)
     expect(manifest.pipeline.steps).toEqual(

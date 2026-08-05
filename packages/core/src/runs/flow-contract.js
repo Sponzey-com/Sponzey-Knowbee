@@ -28,47 +28,42 @@ export function resolveRunFlowIdentifiers(params) {
         ...(params.scheduleId?.trim() ? { scheduleId: params.scheduleId.trim() } : {}),
     };
 }
-export function deriveRunCompletionOutcome(input) {
-    if (input.impossible) {
-        return {
-            status: "completed_impossible",
-            reason: "요청이 물리적 또는 논리적으로 불가능해 사유 반환으로 완료됩니다.",
-        };
+function effectiveCanonicalOutcomeState(aggregate) {
+    if (aggregate.state !== "USER_REPORT")
+        return aggregate.state;
+    const reportTransition = aggregate.transitions[aggregate.transitions.length - 1];
+    if (reportTransition?.event !== "REPORT_DELIVERED")
+        return undefined;
+    return reportTransition.previousState;
+}
+function executionStatusForCanonicalState(state, runStatus) {
+    if (!state)
+        return "internal_fault";
+    switch (state) {
+        case "USER_INPUT_REQUIRED":
+            return runStatus === "awaiting_approval" ? "awaiting_approval" : "awaiting_user";
+        case "SUCCEEDED":
+            return "succeeded";
+        case "PARTIALLY_SUCCEEDED":
+            return "partially_succeeded";
+        case "BLOCKED":
+            return "blocked";
+        case "EXHAUSTED":
+            return "exhausted";
+        case "CANCELLED":
+            return "cancelled";
+        case "USER_REPORT":
+            return "internal_fault";
+        default:
+            return runStatus === "failed" || runStatus === "cancelled" || runStatus === "interrupted"
+                ? "internal_fault"
+                : "in_progress";
     }
-    if (input.approvalPending) {
-        return {
-            status: "awaiting_approval",
-            reason: "도구 실행 승인을 기다리고 있습니다.",
-        };
-    }
-    const completion = input.completion;
-    if (completion?.interpretationStatus === "user_input_required") {
-        return {
-            status: "awaiting_user_input",
-            reason: completion.conflictReason ?? "추가 사용자 입력이 필요합니다.",
-        };
-    }
-    if (completion?.completionSatisfied) {
-        if (completion.deliveryStatus === "satisfied") {
-            return {
-                status: "completed_delivered",
-                reason: "실행과 직접 결과 전달이 모두 완료되었습니다.",
-            };
-        }
-        return {
-            status: "completed_in_chat",
-            reason: "요청된 정보가 채팅 본문으로 완료되었습니다.",
-        };
-    }
-    if (input.finalFailure) {
-        return {
-            status: "failed_final",
-            reason: completion?.conflictReason ?? "자동 대안이 없어 최종 실패로 종료합니다.",
-        };
-    }
+}
+export function projectRequestExecutionOutcome(input) {
     return {
-        status: "failed_recoverable",
-        reason: completion?.conflictReason ?? "복구 가능한 미완료 상태입니다.",
+        executionStatus: executionStatusForCanonicalState(effectiveCanonicalOutcomeState(input.aggregate), input.runStatus),
+        deliveryStatus: input.deliveryStatus,
     };
 }
 //# sourceMappingURL=flow-contract.js.map

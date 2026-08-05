@@ -38,7 +38,13 @@ function legacyRiskClass(risk: LegacyScheduleMigrationReport["risk"] | undefined
   }
 }
 
-export function SchedulePage() {
+export function SchedulePage({
+  embedded = false,
+  onRuntimeStatus,
+}: {
+  embedded?: boolean
+  onRuntimeStatus?: (available: boolean) => void
+} = {}) {
   const { text, displayText } = useUiI18n()
   const [schedules, setSchedules] = useState<Schedule[]>([])
   const [health, setHealth] = useState<SchedulerHealth | null>(null)
@@ -71,12 +77,14 @@ export function SchedulePage() {
         ? current
         : scheduleResponse.schedules[0]?.id ?? null)
       setError("")
+      onRuntimeStatus?.(true)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError))
+      onRuntimeStatus?.(false)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [onRuntimeStatus])
 
   const loadScheduleRuns = useCallback(async (scheduleId: string) => {
     setRunsLoading(true)
@@ -185,8 +193,8 @@ export function SchedulePage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-stone-100 p-6">
-      <div className="rounded-[1.75rem] border border-stone-200 bg-white p-6">
+    <div className={embedded ? "min-w-0" : "h-full overflow-y-auto bg-stone-100 p-6"}>
+      {!embedded ? <div className="rounded-[1.75rem] border border-stone-200 bg-white p-6">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">{text("예약 작업", "Schedules")}</div>
@@ -207,7 +215,7 @@ export function SchedulePage() {
             {loading ? text("새로고침 중", "Refreshing") : text("새로고침", "Refresh")}
           </button>
         </div>
-      </div>
+      </div> : null}
 
       <FeatureGate capabilityKey="scheduler.core" title="Scheduler">
         <div className="mt-6 grid gap-6 xl:grid-cols-[22rem_1fr]">
@@ -263,7 +271,7 @@ export function SchedulePage() {
                         {schedule.enabled ? text("활성", "On") : text("중지", "Off")}
                       </span>
                       {isLegacySchedule(schedule) ? (
-                        <span className="shrink-0 rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-800">Legacy</span>
+                        <span className="shrink-0 rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-800">{text("이전 형식", "Legacy")}</span>
                       ) : null}
                     </div>
                     <div className={`mt-2 text-xs ${selectedSchedule?.id === schedule.id ? "text-stone-300" : "text-stone-500"}`}>
@@ -280,11 +288,10 @@ export function SchedulePage() {
               <div className="space-y-6">
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                   <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">{selectedSchedule.id}</div>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                       <h2 className="text-xl font-semibold text-stone-900">{displayText(selectedSchedule.name)}</h2>
                       {isLegacySchedule(selectedSchedule) ? (
-                        <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-800">Legacy schedule</span>
+                        <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-800">{text("이전 예약", "Legacy schedule")}</span>
                       ) : null}
                     </div>
                     <p className="mt-2 max-w-3xl whitespace-pre-wrap text-sm leading-7 text-stone-600">{displayText(selectedSchedule.prompt)}</p>
@@ -313,10 +320,10 @@ export function SchedulePage() {
                   <div className="rounded-[1.5rem] border border-amber-200 bg-amber-50 p-5">
                     <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                       <div>
-                        <div className="text-sm font-semibold text-amber-950">{text("Legacy 예약 변환", "Legacy schedule migration")}</div>
+                        <div className="text-sm font-semibold text-amber-950">{text("이전 예약 변환", "Legacy schedule migration")}</div>
                         <p className="mt-2 max-w-3xl text-sm leading-6 text-amber-900">
                           {text(
-                            "이 예약은 아직 ScheduleContract가 없어 실행 시 legacy fallback을 탈 수 있습니다. 먼저 dry-run으로 변환 결과를 확인한 뒤 명시적으로 변환하세요.",
+                            "이 예약은 아직 새 예약 형식이 없어 실행 시 이전 방식으로 처리될 수 있습니다. 먼저 미리 확인으로 변환 결과를 확인한 뒤 명시적으로 변환하세요.",
                             "This schedule has no ScheduleContract yet and may use legacy fallback during execution. Review a dry-run first, then convert explicitly.",
                           )}
                         </p>
@@ -328,7 +335,7 @@ export function SchedulePage() {
                           disabled={legacyActionId !== null}
                           className="rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          {text("Dry-run", "Dry-run")}
+                          {text("미리 확인", "Dry-run")}
                         </button>
                         <button
                           type="button"
@@ -359,23 +366,16 @@ export function SchedulePage() {
                     {selectedLegacyReport ? (
                       <div className="mt-4 grid gap-3 xl:grid-cols-[14rem_1fr]">
                         <div className="rounded-2xl border border-amber-200 bg-white px-4 py-3">
-                          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">Risk</div>
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">{text("위험도", "Risk")}</div>
                           <span className={`mt-2 inline-flex rounded-full px-2 py-1 text-xs font-semibold ${legacyRiskClass(selectedLegacyReport.risk)}`}>
                             {selectedLegacyReport.risk}
                           </span>
-                          <div className="mt-2 text-xs text-stone-600">Confidence {Math.round(selectedLegacyReport.confidence * 100)}%</div>
+                          <div className="mt-2 text-xs text-stone-600">{text("확신도", "Confidence")} {Math.round(selectedLegacyReport.confidence * 100)}%</div>
                         </div>
                         <div className="rounded-2xl border border-amber-200 bg-white px-4 py-3 text-xs leading-6 text-stone-700">
-                          <div className="font-semibold text-stone-900">{text("Dry-run 결과", "Dry-run result")}</div>
+                          <div className="font-semibold text-stone-900">{text("미리 확인 결과", "Dry-run result")}</div>
                           {selectedLegacyReport.reasons.map((reason) => <div key={`reason-${reason}`}>- {displayText(reason)}</div>)}
                           {selectedLegacyReport.warnings.map((warning) => <div key={`warning-${warning}`} className="text-amber-800">- {displayText(warning)}</div>)}
-                          {selectedLegacyReport.persistence ? (
-                            <div className="mt-2 grid gap-1 break-all text-[11px] text-stone-500">
-                              <div>identity: {selectedLegacyReport.persistence.identityKey}</div>
-                              <div>payload: {selectedLegacyReport.persistence.payloadHash}</div>
-                              <div>delivery: {selectedLegacyReport.persistence.deliveryKey}</div>
-                            </div>
-                          ) : null}
                         </div>
                       </div>
                     ) : null}

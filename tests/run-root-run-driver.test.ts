@@ -29,6 +29,23 @@ function createDependencies() {
     grantRunSingleApproval: vi.fn(),
     onDeliveryError: vi.fn(),
     onReviewError: vi.fn(),
+    recordCanonicalAttempt: vi.fn(async () => ({ ok: true as const })),
+    recordCanonicalRecoveryReentry: vi.fn(async () => ({ ok: true as const })),
+    recordCanonicalCompletionOutcome: vi.fn(async () => ({ ok: true as const })),
+    recordCanonicalDelivery: vi.fn(async () => ({ ok: true as const })),
+    stageCanonicalPendingResponse: vi.fn(async () => ({ ok: true as const })),
+    consumeCanonicalPendingResponse: vi.fn(async () => ({ ok: true as const })),
+    recordCanonicalCancellation: vi.fn(async () => ({
+      ok: true as const,
+      receiptRef: "receipt:cancellation:run-1:test",
+    })),
+    getCanonicalTerminalOutcome: vi.fn(() => null),
+    getCanonicalTerminalEvidence: vi.fn(() => ({
+      status: "evidence_missing" as const,
+      reasonCode: "canonical_terminal_transition_missing" as const,
+    })),
+    admitCanonicalTopologyExecution: vi.fn(async () => ({ ok: true as const })),
+    recordCanonicalTopologyResult: vi.fn(async () => ({ ok: true as const, finalOutcome: "partial" as const })),
     executeLoopDirective: vi.fn(async () => "break" as const),
     tryHandleActiveQueueCancellation: vi.fn(async () => null),
     tryHandleIntakeBridge: vi.fn(async () => null),
@@ -76,6 +93,181 @@ function createParams() {
 }
 
 describe("execute root run driver", () => {
+  it("re-enters request analysis without recording an attempt when topology planning is blocked", async () => {
+    const dependencies = createDependencies()
+    const params = {
+      ...createParams(),
+      topologyRouting: {
+        mode: "route" as const,
+        reasonCode: "explicit_topology_target" as const,
+        featureFlagMode: "enforced" as const,
+        topologyId: "topology:test",
+        topologyName: "Test",
+        topologyVersion: 1,
+        topologyVersionId: "version:1",
+        compiledTopologySnapshotId: "snapshot:1",
+        entryNodeId: "node:entry",
+        selectedExecutorId: "node:entry",
+        selectedConnectionPath: ["node:entry"],
+        availableDirectChildExecutorIds: ["node:entry"],
+        explicit: true,
+      },
+    }
+    const runRootLoop = vi.fn()
+
+    await executeRootRunDriver(params, dependencies as never, {
+      createExecutionLoopRuntimeState: vi.fn(() => ({
+        executionProfile: {},
+        originalUserRequest: params.message,
+      })),
+      prepareRootLoopLaunch: vi.fn(() => ({ rootLoopParams: {}, rootLoopDependencies: {} })),
+      runRootLoop,
+      applyRootRunDriverFailure: vi.fn(),
+      runTopologyRootRun: vi.fn(async () => ({
+        ok: false,
+        reasonCode: "planning_admission_blocked",
+        fallbackSummary: "Reanalyze the request.",
+        issues: ["canonical_planning_persistence_failed"],
+      })),
+    } as never)
+
+    expect(dependencies.recordCanonicalTopologyResult).not.toHaveBeenCalled()
+    expect(dependencies.recordCanonicalRecoveryReentry).not.toHaveBeenCalled()
+    expect(runRootLoop).toHaveBeenCalledTimes(1)
+  })
+
+  it("records an execution attempt and re-enters analysis when result diagnosis is blocked", async () => {
+    const dependencies = createDependencies()
+    const params = {
+      ...createParams(),
+      topologyRouting: {
+        mode: "route" as const,
+        reasonCode: "explicit_topology_target" as const,
+        featureFlagMode: "enforced" as const,
+        topologyId: "topology:test",
+        topologyName: "Test",
+        topologyVersion: 1,
+        topologyVersionId: "version:1",
+        compiledTopologySnapshotId: "snapshot:1",
+        entryNodeId: "node:entry",
+        selectedExecutorId: "node:entry",
+        selectedConnectionPath: ["node:entry"],
+        availableDirectChildExecutorIds: ["node:entry"],
+        explicit: true,
+      },
+    }
+    const runRootLoop = vi.fn()
+    const result = {
+      ok: false as const,
+      reasonCode: "result_diagnosis_reanalysis_required" as const,
+      fallbackSummary: "Reanalyze the incomplete result.",
+      issues: ["result_diagnosis_invalid"],
+    }
+
+    await executeRootRunDriver(params, dependencies as never, {
+      createExecutionLoopRuntimeState: vi.fn(() => ({
+        executionProfile: {},
+        originalUserRequest: params.message,
+      })),
+      prepareRootLoopLaunch: vi.fn(() => ({ rootLoopParams: {}, rootLoopDependencies: {} })),
+      runRootLoop,
+      applyRootRunDriverFailure: vi.fn(),
+      runTopologyRootRun: vi.fn(async () => result),
+    } as never)
+
+    expect(dependencies.recordCanonicalTopologyResult).toHaveBeenCalledWith({
+      runId: params.runId,
+      result,
+    })
+    expect(dependencies.recordCanonicalRecoveryReentry).toHaveBeenCalledTimes(1)
+    expect(runRootLoop).toHaveBeenCalledTimes(1)
+  })
+
+  it("preserves canonical user-input waiting instead of projecting a generic failure", async () => {
+    const dependencies = createDependencies()
+    const params = { ...createParams(), suppressFinalDelivery: true }
+    dependencies.getCanonicalTerminalOutcome.mockReturnValue("user_input")
+    const applyRootRunDriverFailure = vi.fn()
+
+    await executeRootRunDriver(params, dependencies as any, {
+      createExecutionLoopRuntimeState: vi.fn(() => ({
+        executionProfile: {},
+        originalUserRequest: params.message,
+      })),
+      prepareRootLoopLaunch: vi.fn(() => ({ rootLoopParams: {}, rootLoopDependencies: {} })),
+      runRootLoop: vi.fn(async () => {
+        throw new Error("canonical_policy_input_required")
+      }),
+      applyRootRunDriverFailure,
+    } as any)
+
+    expect(applyRootRunDriverFailure).not.toHaveBeenCalled()
+    expect(dependencies.updateRunStatus).not.toHaveBeenCalledWith(
+      "run-1",
+      "failed",
+      expect.any(String),
+      false,
+    )
+  })
+
+  it("does not claim policy blocking when terminal evidence is missing", async () => {
+    const dependencies = createDependencies()
+    const params = { ...createParams(), suppressFinalDelivery: true }
+    dependencies.getCanonicalTerminalOutcome.mockReturnValue("blocked")
+    const applyRootRunDriverFailure = vi.fn()
+
+    await executeRootRunDriver(params, dependencies as any, {
+      createExecutionLoopRuntimeState: vi.fn(() => ({
+        executionProfile: {},
+        originalUserRequest: params.message,
+      })),
+      prepareRootLoopLaunch: vi.fn(() => ({ rootLoopParams: {}, rootLoopDependencies: {} })),
+      runRootLoop: vi.fn(async () => {
+        throw new Error("canonical policy outcome")
+      }),
+      applyRootRunDriverFailure,
+    } as any)
+
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith(
+      params.runId,
+      "canonical_blocked_terminal_evidence_rejected:canonical_terminal_transition_missing",
+    )
+    expect(applyRootRunDriverFailure).toHaveBeenCalledTimes(1)
+  })
+
+  it("records canonical cancellation before applying aborted root failure", async () => {
+    const dependencies = createDependencies()
+    const params = { ...createParams(), suppressFinalDelivery: true }
+    const order: string[] = []
+    dependencies.recordCanonicalCancellation.mockImplementation(async () => {
+      order.push("canonical-cancelled")
+      return { ok: true as const, receiptRef: "receipt:cancellation:run-1:test" }
+    })
+    const applyRootRunDriverFailure = vi.fn(async () => {
+      order.push("failure-projection")
+    })
+
+    await executeRootRunDriver(params, dependencies as any, {
+      createExecutionLoopRuntimeState: vi.fn(() => ({
+        executionProfile: {},
+        originalUserRequest: params.message,
+      })),
+      prepareRootLoopLaunch: vi.fn(() => ({ rootLoopParams: {}, rootLoopDependencies: {} })),
+      runRootLoop: vi.fn(async () => {
+        params.controller.abort()
+        throw new Error("aborted")
+      }),
+      applyRootRunDriverFailure,
+    } as any)
+
+    expect(dependencies.recordCanonicalCancellation).toHaveBeenCalledWith({
+      runId: "run-1",
+      cancellationKind: "runtime_abort",
+      signalAborted: true,
+    })
+    expect(order).toEqual(["canonical-cancelled", "failure-projection"])
+  })
+
   it("wraps verification and intake bridge with the resolved original request", async () => {
     const dependencies = createDependencies()
     const moduleDependencies = {
@@ -276,20 +468,31 @@ describe("execute root run driver", () => {
         rootLoopDependencies: {} as any,
       })),
       runRootLoop: vi.fn(async () => {
-        throw new Error("boom")
+        throw new Error(
+          "boom token=sk-root-driver-secret-1234567890 at /Users/me/private/root-run-driver.ts",
+        )
       }),
       applyRootRunDriverFailure: vi.fn(async () => undefined),
     }
 
     await executeRootRunDriver(createParams(), dependencies as any, moduleDependencies as any)
 
-    expect(moduleDependencies.applyRootRunDriverFailure).toHaveBeenCalledWith(expect.objectContaining({
-      runId: "run-1",
-      sessionId: "session-1",
-      source: "cli",
-      message: "boom",
-      aborted: false,
-    }), expect.any(Object))
+    expect(moduleDependencies.applyRootRunDriverFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        sessionId: "session-1",
+        source: "cli",
+        message: "boom token=*** at [internal-path-redacted]",
+        aborted: false,
+      }),
+      expect.any(Object),
+    )
+    expect(JSON.stringify(moduleDependencies.applyRootRunDriverFailure.mock.calls)).not.toContain(
+      "sk-root-driver-secret",
+    )
+    expect(JSON.stringify(moduleDependencies.applyRootRunDriverFailure.mock.calls)).not.toContain(
+      "/Users/me/private",
+    )
     expect(dependencies.onFinally).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,5 +1,6 @@
 import { runSubAgentBenchmarkSuite, } from "../benchmarks/sub-agent-benchmarks.js";
 import { buildReleasePerformanceSummary, } from "./performance-gate.js";
+import { activateSubAgentRolloutThresholdPolicy, } from "./sub-agent-rollout-threshold-policy.js";
 export const SUB_AGENT_RELEASE_MODE_SEQUENCE = [
     {
         id: "flag_off",
@@ -9,10 +10,10 @@ export const SUB_AGENT_RELEASE_MODE_SEQUENCE = [
         compatibilityMode: true,
         trafficPolicy: "single_knowbee_only",
         promotionCriteria: [
-            "Single Knowbee run creation and final-answer smoke pass.",
+            "Single main-agent run creation and final-answer smoke pass.",
             "Registry is not touched when orchestration is disabled.",
         ],
-        rollbackAction: "Keep sub_agent_orchestration=off and continue on the single Knowbee path.",
+        rollbackAction: "Keep sub_agent_orchestration=off and continue on the single main-agent path.",
     },
     {
         id: "dry_run_only",
@@ -55,7 +56,7 @@ export const SUB_AGENT_RELEASE_MODE_SEQUENCE = [
         rollbackAction: "Switch sub_agent_orchestration=off before restoring any binary or state payload.",
     },
 ];
-export const DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS = {
+export const SUB_AGENT_OPERATIONAL_REFERENCE_THRESHOLDS = {
     duplicateFinalAnswerCount: 0,
     spawnAckP95Ms: 300,
     hotRegistrySnapshotP95Ms: 100,
@@ -63,6 +64,8 @@ export const DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS = {
     firstProgressP95Ms: 1_500,
     restartRecoveryP95Ms: 3_000,
 };
+/** @deprecated Use SUB_AGENT_OPERATIONAL_REFERENCE_THRESHOLDS for diagnostics only. */
+export const DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS = SUB_AGENT_OPERATIONAL_REFERENCE_THRESHOLDS;
 function statusFromFailures(blockingFailures, warnings = []) {
     if (blockingFailures.length > 0)
         return "failed";
@@ -115,9 +118,6 @@ export function runSubAgentRestartResumeSoak(input = {}) {
     }
     if (base.duplicateFinalAnswerCount > 0) {
         blockingFailures.push(`duplicate_final_answer_count:${base.duplicateFinalAnswerCount}`);
-    }
-    if (base.restartRecoveryP95Ms > DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS.restartRecoveryP95Ms) {
-        blockingFailures.push(`restart_recovery_p95:${base.restartRecoveryP95Ms}ms`);
     }
     return {
         kind: "knowbee.sub_agent.restart_resume_soak",
@@ -177,11 +177,15 @@ function buildDryRunSummary(input) {
         input.benchmarkSuite.aggregate.hotRegistrySnapshotP95Ms <=
             input.thresholds.hotRegistrySnapshotP95Ms
         ? "passed"
-        : "failed";
+        : input.benchmarkSuite.aggregate.hotRegistrySnapshotP95Ms == null
+            ? "failed"
+            : "warning";
     const plannerStatus = input.benchmarkSuite.aggregate.plannerHotPathP95Ms != null &&
         input.benchmarkSuite.aggregate.plannerHotPathP95Ms <= input.thresholds.plannerHotPathP95Ms
         ? "passed"
-        : "failed";
+        : input.benchmarkSuite.aggregate.plannerHotPathP95Ms == null
+            ? "failed"
+            : "warning";
     const migrationStatus = input.migrationPreflight.currentSchemaVersion <= input.migrationPreflight.latestSchemaVersion
         ? "passed"
         : "failed";
@@ -243,7 +247,8 @@ function benchmarkThresholdFailures(suite, soak, thresholds) {
     if (suite.aggregate.duplicateFinalAnswerCount !== thresholds.duplicateFinalAnswerCount) {
         failures.push(`duplicate_final_answer_count:${suite.aggregate.duplicateFinalAnswerCount}`);
     }
-    if (suite.aggregate.spawnAckP95Ms == null || suite.aggregate.spawnAckP95Ms > thresholds.spawnAckP95Ms) {
+    if (suite.aggregate.spawnAckP95Ms == null ||
+        suite.aggregate.spawnAckP95Ms > thresholds.spawnAckP95Ms) {
         failures.push(`spawn_ack_p95:${suite.aggregate.spawnAckP95Ms ?? "missing"}ms`);
     }
     if (suite.aggregate.hotRegistrySnapshotP95Ms == null ||
@@ -278,11 +283,7 @@ export function buildSubAgentReleaseReadinessSummary(options = {}) {
     const now = options.now ?? new Date();
     const requestedMode = options.requestedMode ?? "limited_beta";
     const requestedModeDefinition = releaseModeFor(requestedMode);
-    const thresholds = {
-        ...DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS,
-        ...options.thresholds,
-        duplicateFinalAnswerCount: 0,
-    };
+    const operationalReferenceThresholds = SUB_AGENT_OPERATIONAL_REFERENCE_THRESHOLDS;
     const benchmarkSuite = options.benchmarkSuite ?? runSubAgentBenchmarkSuite({ now });
     const performanceEvidence = options.performanceEvidence ?? buildReleasePerformanceSummary({ now });
     const migrationPreflight = options.migrationPreflight ?? defaultMigrationPreflight();
@@ -303,12 +304,34 @@ export function buildSubAgentReleaseReadinessSummary(options = {}) {
         migrationPreflight,
         performanceEvidence,
         soak,
-        thresholds,
+        thresholds: operationalReferenceThresholds,
         currentFeatureFlagMode,
         currentCompatibilityMode,
         orchestrationGateStatus,
     });
-    const thresholdFailures = benchmarkThresholdFailures(benchmarkSuite, soak, thresholds);
+    const publicRollout = requestedMode === "limited_beta" || requestedMode === "full_enable";
+    let activeRolloutPolicy = null;
+    let rolloutPolicyReasonCodes = [];
+    if (publicRollout) {
+        if (!options.rolloutThresholdPolicy) {
+            rolloutPolicyReasonCodes = ["rollout_threshold_policy_missing"];
+        }
+        else {
+            const activation = activateSubAgentRolloutThresholdPolicy(options.rolloutThresholdPolicy);
+            if (activation.status === "baseline_only") {
+                rolloutPolicyReasonCodes = activation.reasonCodes;
+            }
+            else if (activation.policy.candidate.releaseMode !== requestedMode) {
+                rolloutPolicyReasonCodes = ["rollout_threshold_release_mode_mismatch"];
+            }
+            else {
+                activeRolloutPolicy = activation.policy;
+            }
+        }
+    }
+    const thresholdFailures = activeRolloutPolicy
+        ? benchmarkThresholdFailures(benchmarkSuite, soak, activeRolloutPolicy.candidate.thresholds)
+        : [];
     const orchestrationChecks = new Map((options.orchestrationEvidence?.checks ?? []).map((check) => [check.id, check]));
     const featureFlagOffParity = orchestrationChecks.get("feature_flag_off_parity");
     const noAgentFallback = orchestrationChecks.get("no_agent_fallback");
@@ -327,14 +350,31 @@ export function buildSubAgentReleaseReadinessSummary(options = {}) {
         gate({
             id: "release_dry_run_summary",
             title: "Release dry-run summary",
-            pass: dryRunSummary.registry.status === "passed" &&
-                dryRunSummary.planner.status === "passed" &&
+            pass: dryRunSummary.registry.status !== "failed" &&
+                dryRunSummary.planner.status !== "failed" &&
                 dryRunSummary.eventStream.status === "passed" &&
                 dryRunSummary.delivery.status === "passed" &&
                 dryRunSummary.migration.status === "passed",
             releaseModes: ["dry_run_only", "limited_beta", "full_enable"],
             summary: "Dry-run summary includes orchestration mode, registry, planner, event stream, delivery, and migration evidence.",
             evidence: dryRunSummary,
+        }),
+        gate({
+            id: "performance_acceptance",
+            title: "Approved performance acceptance",
+            required: requestedMode === "limited_beta" || requestedMode === "full_enable",
+            pass: (requestedMode !== "limited_beta" && requestedMode !== "full_enable") ||
+                performanceEvidence.acceptance.status === "accepted",
+            releaseModes: ["limited_beta", "full_enable"],
+            summary: "Limited beta and full enable require performance evidence bound to an approved acceptance matrix.",
+            evidence: {
+                gateStatus: performanceEvidence.gateStatus,
+                acceptanceStatus: performanceEvidence.acceptance.status,
+                matrixId: performanceEvidence.acceptance.matrixId,
+                matrixVersion: performanceEvidence.acceptance.matrixVersion,
+                baselineVersion: performanceEvidence.acceptance.baselineVersion,
+                reasonCodes: performanceEvidence.acceptance.reasonCodes,
+            },
         }),
         gate({
             id: "migration_rehearsal",
@@ -350,7 +390,7 @@ export function buildSubAgentReleaseReadinessSummary(options = {}) {
             pass: rollback.status === "passed" &&
                 (featureFlagOffParity ? featureFlagOffParity.status === "passed" : true),
             releaseModes: ["flag_off", "dry_run_only", "limited_beta", "full_enable"],
-            summary: "Feature flag off returns to single Knowbee mode without deleting runtime data.",
+            summary: "Feature flag off returns to single main-agent mode without deleting runtime data.",
             evidence: {
                 rollback,
                 orchestrationCheck: featureFlagOffParity ?? null,
@@ -361,7 +401,7 @@ export function buildSubAgentReleaseReadinessSummary(options = {}) {
             title: "No sub-agent fallback",
             pass: noAgentFallback ? noAgentFallback.status === "passed" : true,
             releaseModes: ["flag_off", "dry_run_only", "limited_beta", "full_enable"],
-            summary: "No active sub-agent state falls back to the single Knowbee path.",
+            summary: "No active sub-agent state falls back to the single main-agent path.",
             evidence: { orchestrationCheck: noAgentFallback ?? null },
         }),
         gate({
@@ -525,11 +565,22 @@ export function buildSubAgentReleaseReadinessSummary(options = {}) {
         }),
         gate({
             id: "benchmark_threshold",
-            title: "Benchmark thresholds",
-            pass: thresholdFailures.length === 0,
-            summary: "Limited beta thresholds require duplicate final 0, spawn ack <=300ms, hot registry <=100ms, planner <=700ms, first progress <=1.5s, restart recovery <=3s.",
+            title: "Authorized benchmark thresholds",
+            required: publicRollout,
+            pass: !publicRollout || (activeRolloutPolicy !== null && thresholdFailures.length === 0),
+            summary: "Limited beta and full enable require benchmark evidence evaluated against an exactly bound administrator-authorized threshold policy.",
             evidence: {
-                thresholds,
+                policyStatus: !publicRollout
+                    ? "not_required"
+                    : activeRolloutPolicy
+                        ? "active"
+                        : "baseline_only",
+                policyId: activeRolloutPolicy?.candidate.policyId ?? null,
+                policyVersion: activeRolloutPolicy?.candidate.policyVersion ?? null,
+                authorizationId: activeRolloutPolicy?.authorization.authorizationId ?? null,
+                releaseMode: activeRolloutPolicy?.candidate.releaseMode ?? null,
+                reasonCodes: rolloutPolicyReasonCodes,
+                thresholds: activeRolloutPolicy?.candidate.thresholds ?? null,
                 aggregate: benchmarkSuite.aggregate,
                 soakRestartRecoveryP95Ms: soak.restartRecoveryP95Ms,
                 thresholdFailures,
@@ -574,13 +625,16 @@ export function buildSubAgentReleaseReadinessSummary(options = {}) {
             title: "Rollback by feature flag off",
             pass: rollback.status === "passed" && rollback.dataDeletionRequired === false,
             releaseModes: ["flag_off", "dry_run_only", "limited_beta", "full_enable"],
-            summary: "Rollback returns to single Knowbee mode by disabling the feature flag without deleting data.",
+            summary: "Rollback returns to single main-agent mode by disabling the feature flag without deleting data.",
             evidence: rollback,
         }),
     ];
     const warnings = [
         ...(options.orchestrationEvidence?.warnings ?? []).map((warning) => `orchestration:${warning}`),
         ...(options.uiModeEvidence?.gateStatus === "warning" ? ["ui_mode_release_gate_warning"] : []),
+        ...(performanceEvidence.operationalStatus === "warning"
+            ? ["performance_operational_health_warning"]
+            : []),
     ];
     const blockingFailures = [
         ...(options.orchestrationEvidence?.blockingFailures ?? []).map((failure) => `orchestration:${failure}`),
@@ -598,7 +652,7 @@ export function buildSubAgentReleaseReadinessSummary(options = {}) {
         requestedMode,
         gateStatus: statusFromFailures(blockingFailures, warnings),
         modes: SUB_AGENT_RELEASE_MODE_SEQUENCE,
-        defaultThresholds: thresholds,
+        operationalReferenceThresholds,
         dryRunSummary,
         soak,
         rollback,

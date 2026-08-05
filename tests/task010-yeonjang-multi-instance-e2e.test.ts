@@ -1,10 +1,12 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { closeDb } from "../packages/core/src/db/index.ts"
+import { createTestArtifactStorage } from "./fixtures/artifact-storage.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+import { closeDb } from "../packages/core/src/db/index.js"
 import type { ToolContext } from "../packages/core/src/tools/types.ts"
+import { withToolAuthorization } from "./fixtures/tool-authorization.ts"
 import {
   listYeonjangRegistryInstances,
   upsertYeonjangRegistryObservation,
@@ -13,6 +15,7 @@ import {
   resolveYeonjangTargetSelection,
   revalidateYeonjangTargetSelection,
 } from "../packages/core/src/tools/builtin/yeonjang-target.ts"
+import { getYeonjangGatewayHostFingerprint } from "../packages/core/src/yeonjang/runtime-identity.ts"
 
 const {
   getYeonjangCapabilities,
@@ -43,40 +46,25 @@ vi.mock("../packages/core/src/mqtt/broker.js", () => ({
 
 const { screenCaptureTool } = await import("../packages/core/src/tools/builtin/ui/screen.ts")
 const { yeonjangBroadcastRunTool } = await import("../packages/core/src/tools/builtin/yeonjang-broadcast.ts")
+
+function executeAuthorizedBroadcast(params: Record<string, unknown>, ctx: ToolContext) {
+  return yeonjangBroadcastRunTool.execute(
+    params as Parameters<typeof yeonjangBroadcastRunTool.execute>[0],
+    withToolAuthorization(ctx, yeonjangBroadcastRunTool.name, params),
+  )
+}
 const { createYeonjangCommandDispatch } = await import("../packages/core/src/yeonjang/mqtt-client.ts")
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 let observedBase = 0
-
-function stableHexHash(value: string): string {
-  let hash = 0xcbf29ce484222325n
-  for (const byte of Buffer.from(value, "utf-8")) {
-    hash ^= BigInt(byte)
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n)
-  }
-  return hash.toString(16).padStart(16, "0")
-}
-
-function gatewayHostFingerprintRaw(): string {
-  const hostname =
-    process.env["KNOWBEE_HOSTNAME"]?.trim()
-    || process.env["COMPUTERNAME"]?.trim()
-    || process.env["HOSTNAME"]?.trim()
-    || "localhost"
-  const os = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : process.platform
-  const arch = process.arch === "x64" ? "x86_64" : process.arch === "arm64" ? "aarch64" : process.arch === "ia32" ? "x86" : process.arch
-  return stableHexHash(`${hostname}|${os}|${arch}`)
-}
+let artifactStorage: ReturnType<typeof createTestArtifactStorage>
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task010-yeonjang-e2e-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
+  artifactStorage = createTestArtifactStorage(stateDir)
 }
 
 function seedObservation(overrides: Partial<Parameters<typeof upsertYeonjangRegistryObservation>[0]> = {}) {
@@ -89,7 +77,7 @@ function seedObservation(overrides: Partial<Parameters<typeof upsertYeonjangRegi
     supportProfile: overrides.supportProfile ?? "desktop_interactive",
     platform: overrides.platform ?? "macos",
     arch: overrides.arch ?? "arm64",
-    hostFingerprint: overrides.hostFingerprint ?? gatewayHostFingerprintRaw(),
+    hostFingerprint: overrides.hostFingerprint ?? getYeonjangGatewayHostFingerprint(),
     installFingerprint: overrides.installFingerprint ?? "install-local",
     sessionId: overrides.sessionId ?? "ys-inst-local-1000",
     clientId: overrides.clientId ?? "client-local",
@@ -126,6 +114,7 @@ function createContext(userMessage = "연장 작업을 실행해줘"): ToolConte
     allowWebAccess: false,
     onProgress: vi.fn(),
     signal: new AbortController().signal,
+    artifactStorage,
   }
 }
 
@@ -252,11 +241,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -309,7 +293,7 @@ describe("task010 yeonjang multi-instance e2e", () => {
       displayName: "Local Side Console",
       nodeId: "yeonjang-local-side",
       sessionId: "ys-inst-local-side-1000",
-      hostFingerprint: gatewayHostFingerprintRaw(),
+      hostFingerprint: getYeonjangGatewayHostFingerprint(),
       installFingerprint: "install-local-side",
       observedAt: observedBase + 500,
     })).toEqual(expect.objectContaining({ ok: true }))
@@ -418,7 +402,7 @@ describe("task010 yeonjang multi-instance e2e", () => {
       })
       .mockRejectedValueOnce(new Error("timed out"))
 
-    const first = await yeonjangBroadcastRunTool.execute({
+    const first = await executeAuthorizedBroadcast({
       toolName: "screen_capture",
       targetSelector: { type: "all_online" },
       broadcastIntent: { confirm: true },
@@ -459,7 +443,7 @@ describe("task010 yeonjang multi-instance e2e", () => {
       message: "linux retry ok",
     })
 
-    const second = await yeonjangBroadcastRunTool.execute({
+    const second = await executeAuthorizedBroadcast({
       toolName: "screen_capture",
       targetSelector: { type: "all_online" },
       broadcastIntent: { confirm: true },

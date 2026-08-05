@@ -3,8 +3,8 @@ import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { registerTopologyAnalysisRoutes } from "../packages/core/src/api/routes/topology-analysis.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { runMigrations } from "../packages/core/src/db/migrations.ts"
 import {
@@ -15,6 +15,8 @@ import {
   type EnterpriseTopology,
   type ObservedTopologyEdge,
 } from "../packages/core/src/index.ts"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 type SqliteStatement = {
@@ -49,8 +51,7 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: {
 
 const now = Date.UTC(2026, 3, 29, 10, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 function topologyFixture(): EnterpriseTopology {
   const topology = structuredClone(buildExampleEnterpriseTopology(now))
@@ -97,11 +98,10 @@ function migratedDb(): SqliteDatabase {
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task015-topology-analysis-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task015-topology-analysis-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 afterEach(() => {
@@ -109,11 +109,6 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
 })
 
 describe("task015 declared vs observed topology analysis", () => {
@@ -353,6 +348,7 @@ describe("task015 declared vs observed topology analysis", () => {
     expect(activated.ok).toBe(true)
 
     const app = Fastify({ logger: false })
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
     registerTopologyAnalysisRoutes(app)
     await app.ready()
     try {

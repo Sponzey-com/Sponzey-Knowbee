@@ -162,6 +162,28 @@ describe("task002 WorkOrder, Result, Failure, Trace contracts", () => {
     }
   })
 
+  it("validates structured partial-result references and workaround guidance", () => {
+    const valid = validateFailureReport({
+      ...failureReport(),
+      partialResultRefs: ["output:summary"],
+      workaroundGuidance: ["Connect the required executor and retry the remaining step."],
+    })
+    expect(valid.ok).toBe(true)
+
+    const invalid = validateFailureReport({
+      ...failureReport(),
+      partialResultRefs: [42],
+      workaroundGuidance: ["Valid guidance", null],
+    })
+    expect(invalid.ok).toBe(false)
+    if (!invalid.ok) {
+      expect(invalid.issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: "$.partialResultRefs" }),
+        expect.objectContaining({ path: "$.workaroundGuidance" }),
+      ]))
+    }
+  })
+
   it("requires TraceEvent topology, node, work order, and path linkage", () => {
     const invalid = {
       ...traceEvent(),

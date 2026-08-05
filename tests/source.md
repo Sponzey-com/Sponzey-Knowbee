@@ -99,6 +99,7 @@
 - completion review 이후 `complete/followup/ask_user/retry_truncated/recover_empty_result` 분기 동작
 - completion decision의 retry/stop/awaiting_user/complete 적용 helper 동작
 - assistant 응답 송신, awaiting_user 전환, cancelled/completed finalization 동작
+- provider/intake 실패의 typed evidence 수락, 원인 왜곡 교정, 불일치 응답 차단 동작
 - finalization helper가 전달 계층 의존성을 주입받아 DB/eventBus 없이도 검증되는지 확인하는 동작
 - instruction/success/failure journal 입력 조립과 안전한 insert 예외 흡수 동작
 - analysis-only subrun 생성, parent event 기록, interrupted 종료 정리 동작
@@ -112,6 +113,17 @@
 - delivery post-pass preview 보정과 direct artifact delivery decision 동작
 - direct artifact delivery decision의 complete/retry/stop 적용 helper 동작
 - MCP와 provider 관련 예외 케이스
+- Yeonjang previous-package rollback gate의 exact package 입력, distinct identity와
+  schema-3 terminal replay/no-new-effect release 계약
+- Yeonjang independent broker의 TLS negative case는 explicit transport error 또는
+  bounded no-CONNACK을 거부로 인정하되, 어떤 CONNACK도 즉시 실패시켜 TLS 정책을
+  느슨하게 만들지 않는 계약
+- Windows direct MQTT gate의 native x64/ARM64 target 선택, PE/package/loaded identity
+  일치와 architecture별 actual evidence 비대체 계약
+- Gateway MQTT v2 terminal의 producer `schemaVersion: 1`과 새 artifact
+  `lifecycleRevision = 0` 승인, exact fetch/ack와 cancellation CAS revision 전이 계약,
+  actual-shaped pre-effect `blocked` terminal의 즉시 typed rejection과 artifact control 부재,
+  만료된 Field Debug와 terminal/artifact waiter의 raw-free category·chunk count·latency trace 계약
 
 ## 메모
 

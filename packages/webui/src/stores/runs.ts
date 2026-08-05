@@ -1,15 +1,23 @@
 import { create } from "zustand"
 import { api } from "../api/client"
 import type { OperationsSummary, StaleRunCleanupResult } from "../contracts/operations"
-import type { RootRun } from "../contracts/runs"
+import type { RequestExecutionOutcome, RootRun } from "../contracts/runs"
 import type { TaskModel } from "../contracts/tasks"
-import { useConnectionStore } from "./connection"
+import {
+  type ResourceReadState,
+  initialResourceReadState,
+  reduceResourceReadState,
+} from "../lib/resource-read-state"
+import { projectUserRecovery } from "../lib/user-recovery"
+
+type WorkSnapshotMarker = { snapshot: true }
 
 interface RunsState {
   initialized: boolean
   loading: boolean
-  lastError: string
+  readState: ResourceReadState<WorkSnapshotMarker>
   runs: RootRun[]
+  executionOutcomes: Record<string, RequestExecutionOutcome>
   tasks: TaskModel[]
   operationsSummary: OperationsSummary | null
   selectedRunId: string | null
@@ -17,7 +25,11 @@ interface RunsState {
   refresh: () => Promise<void>
   refreshOperations: () => Promise<void>
   selectRun: (runId: string) => void
-  createRun: (message: string, sessionId?: string, focusThreadId?: string) => Promise<{ requestId: string; runId: string; sessionId: string; source: string; status: string; receipt?: string }>
+  createRun: (
+    message: string,
+    sessionId?: string,
+    focusThreadId?: string,
+  ) => ReturnType<typeof api.createRun>
   cancelRun: (runId: string) => Promise<void>
   deleteRunHistory: (runId: string) => Promise<{ deletedRunCount: number }>
   clearHistoricalRunHistory: () => Promise<{ deletedRunCount: number }>
@@ -27,11 +39,11 @@ interface RunsState {
 }
 
 function sortRuns(runs: RootRun[]): RootRun[] {
-  return [...runs].sort((a, b) => (b.createdAt - a.createdAt) || (b.updatedAt - a.updatedAt))
+  return [...runs].sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)
 }
 
 function sortTasks(tasks: TaskModel[]): TaskModel[] {
-  return [...tasks].sort((a, b) => (b.createdAt - a.createdAt) || (b.updatedAt - a.updatedAt))
+  return [...tasks].sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)
 }
 
 function resolveSelectedRunId(params: {
@@ -42,7 +54,9 @@ function resolveSelectedRunId(params: {
   const { currentSelectedRunId, tasks, runs } = params
   if (!currentSelectedRunId) return tasks[0]?.id ?? runs[0]?.id ?? null
 
-  const hasMatchingTask = tasks.some((task) => task.id === currentSelectedRunId || task.latestAttemptId === currentSelectedRunId)
+  const hasMatchingTask = tasks.some(
+    (task) => task.id === currentSelectedRunId || task.latestAttemptId === currentSelectedRunId,
+  )
   if (hasMatchingTask) return currentSelectedRunId
 
   const hasMatchingRun = runs.some((run) => run.id === currentSelectedRunId)
@@ -53,8 +67,7 @@ function resolveSelectedRunId(params: {
 
 export const useRunsStore = create<RunsState>((set, get) => {
   let refreshTasksTimer: ReturnType<typeof setTimeout> | null = null
-  let latestRunsSnapshotToken = 0
-  let latestTasksSnapshotToken = 0
+  let latestWorkSnapshotToken = 0
   let latestOperationsSnapshotToken = 0
 
   async function refreshOperationsSnapshot(): Promise<void> {
@@ -65,77 +78,91 @@ export const useRunsStore = create<RunsState>((set, get) => {
   }
 
   async function refreshTasksSnapshot(): Promise<void> {
-    const taskSnapshotToken = ++latestTasksSnapshotToken
-    const [response, operationsResponse] = await Promise.all([api.tasks(), api.runOperationsSummary()])
-    if (taskSnapshotToken !== latestTasksSnapshotToken) return
+    const workSnapshotToken = ++latestWorkSnapshotToken
     set((state) => ({
-      tasks: sortTasks(response.tasks),
-      operationsSummary: operationsResponse.summary,
-      selectedRunId: resolveSelectedRunId({
-        currentSelectedRunId: state.selectedRunId,
-        tasks: response.tasks,
-        runs: state.runs,
-      }),
+      readState: reduceResourceReadState(state.readState, { type: "load_started" }),
     }))
+    try {
+      const response = await api.workSnapshot()
+      if (workSnapshotToken !== latestWorkSnapshotToken) return
+      set((state) => ({
+        runs: sortRuns(response.runs),
+        executionOutcomes: response.executionOutcomes ?? {},
+        tasks: sortTasks(response.tasks),
+        operationsSummary: response.operationsSummary,
+        selectedRunId: resolveSelectedRunId({
+          currentSelectedRunId: state.selectedRunId,
+          tasks: response.tasks,
+          runs: response.runs,
+        }),
+        readState: reduceResourceReadState(state.readState, {
+          type: "load_succeeded",
+          data: { snapshot: true },
+          observedAt: response.observedAt,
+        }),
+      }))
+    } catch (error) {
+      if (workSnapshotToken !== latestWorkSnapshotToken) return
+      const failure = projectUserRecovery(error, "read")
+      set((state) => ({
+        readState: reduceResourceReadState(state.readState, { type: "load_failed", failure }),
+      }))
+    }
   }
 
   function queueTasksRefresh(): void {
     if (refreshTasksTimer) clearTimeout(refreshTasksTimer)
     refreshTasksTimer = setTimeout(() => {
       refreshTasksTimer = null
-      void refreshTasksSnapshot().catch(() => {
-        // keep the latest raw runs even if task projection refresh fails transiently
-      })
+      void refreshTasksSnapshot()
     }, 50)
   }
 
   return {
     initialized: false,
     loading: false,
-    lastError: "",
+    readState: initialResourceReadState<WorkSnapshotMarker>(),
     runs: [],
+    executionOutcomes: {},
     tasks: [],
     operationsSummary: null,
     selectedRunId: null,
     ensureInitialized: async (force = false) => {
       if (!force && (get().initialized || get().loading)) return
-      const runsSnapshotToken = ++latestRunsSnapshotToken
-      const tasksSnapshotToken = ++latestTasksSnapshotToken
-      const operationsSnapshotToken = ++latestOperationsSnapshotToken
-      set({ loading: true })
+      const workSnapshotToken = ++latestWorkSnapshotToken
+      set((state) => ({
+        loading: true,
+        readState: reduceResourceReadState(state.readState, { type: "load_started" }),
+      }))
       try {
-        const [runsResponse, tasksResponse, operationsResponse] = await Promise.all([api.runs(), api.tasks(), api.runOperationsSummary()])
-        if (
-          runsSnapshotToken !== latestRunsSnapshotToken
-          || tasksSnapshotToken !== latestTasksSnapshotToken
-          || operationsSnapshotToken !== latestOperationsSnapshotToken
-        ) {
-          return
-        }
+        const response = await api.workSnapshot()
+        if (workSnapshotToken !== latestWorkSnapshotToken) return
         set({
-          runs: sortRuns(runsResponse.runs),
-          tasks: sortTasks(tasksResponse.tasks),
-          operationsSummary: operationsResponse.summary,
+          runs: sortRuns(response.runs),
+          executionOutcomes: response.executionOutcomes ?? {},
+          tasks: sortTasks(response.tasks),
+          operationsSummary: response.operationsSummary,
           selectedRunId: resolveSelectedRunId({
             currentSelectedRunId: get().selectedRunId,
-            tasks: tasksResponse.tasks,
-            runs: runsResponse.runs,
+            tasks: response.tasks,
+            runs: response.runs,
           }),
           initialized: true,
           loading: false,
-          lastError: "",
+          readState: reduceResourceReadState(get().readState, {
+            type: "load_succeeded",
+            data: { snapshot: true },
+            observedAt: response.observedAt,
+          }),
         })
       } catch (error) {
-        if (
-          runsSnapshotToken !== latestRunsSnapshotToken
-          || tasksSnapshotToken !== latestTasksSnapshotToken
-          || operationsSnapshotToken !== latestOperationsSnapshotToken
-        ) {
-          return
-        }
-        const message = error instanceof Error ? error.message : String(error)
-        useConnectionStore.getState().setDisconnected(message)
-        set({ loading: false, initialized: true, lastError: message })
+        if (workSnapshotToken !== latestWorkSnapshotToken) return
+        const failure = projectUserRecovery(error, "read")
+        set((state) => ({
+          loading: false,
+          initialized: true,
+          readState: reduceResourceReadState(state.readState, { type: "load_failed", failure }),
+        }))
       }
     },
     refresh: async () => {
@@ -181,7 +208,7 @@ export const useRunsStore = create<RunsState>((set, get) => {
           ? state.runs.map((item) => (item.id === run.id ? run : item))
           : [run, ...state.runs]
         const isNewRootTask = !exists && run.id === run.requestGroupId
-        queueTasksRefresh()
+        if (state.initialized) queueTasksRefresh()
         return {
           runs: sortRuns(runs),
           selectedRunId: isNewRootTask ? run.requestGroupId : (state.selectedRunId ?? run.id),
@@ -189,7 +216,7 @@ export const useRunsStore = create<RunsState>((set, get) => {
       }),
     replaceRun: (run) =>
       set((state) => {
-        queueTasksRefresh()
+        if (state.initialized) queueTasksRefresh()
         return {
           runs: sortRuns(state.runs.map((item) => (item.id === run.id ? run : item))),
           selectedRunId: state.selectedRunId ?? run.id,

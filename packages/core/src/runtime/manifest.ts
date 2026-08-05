@@ -3,7 +3,8 @@ import { execFileSync } from "node:child_process"
 import { existsSync, mkdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import BetterSqlite3 from "better-sqlite3"
-import { getConfig, PATHS } from "../config/index.js"
+import type { RuntimePaths } from "../config/paths.js"
+import type { KnowbeeConfig } from "../config/types.js"
 import { getDatabaseMigrationStatus } from "../config/operations.js"
 import { getMqttBrokerSnapshot, getMqttExtensionSnapshots } from "../mqtt/broker.js"
 import { checkPromptSourceLocaleParity, loadPromptSourceRegistry } from "../memory/knowbee-md.js"
@@ -11,9 +12,16 @@ import { buildReleaseManifest } from "../release/package.js"
 import { getCurrentAppVersion, getCurrentDisplayVersion, getWorkspaceRootPath } from "../version.js"
 import { getProviderCapabilityMatrix, type ProviderCapabilityMatrix } from "../ai/capabilities.js"
 import { buildRolloutSafetySnapshot, type RolloutSafetySnapshot } from "./rollout-safety.js"
-import { resolveAdminUiActivation } from "../ui/mode.js"
+import { resolveAdminUiActivation, type AdminUiActivationInput } from "../ui/mode.js"
 import { getWebUiWsClientCount } from "../api/ws/stream.js"
 import { listYeonjangRegistryInstances } from "../yeonjang/registry.js"
+import { redactLogText } from "../logger/index.js"
+import { hasOpenAICodexAuthFile } from "../auth/openai-codex-oauth.js"
+
+function runtimeManifestErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 
 export interface RuntimeManifestEnvironment {
   node: string
@@ -128,6 +136,10 @@ export interface RuntimeManifestReleasePackage {
   manifestId: string | null
   releaseVersion: string | null
   requiredMissingCount: number | null
+  yeonjangPlatformCapabilityReady: boolean | null
+  yeonjangPlatformCapabilityRequiredMethods: string[]
+  yeonjangPlatformCapabilityEvidenceCount: number | null
+  yeonjangPlatformCapabilityFailureCount: number | null
 }
 
 export interface RuntimeManifestAdminUi {
@@ -185,9 +197,15 @@ export interface RuntimeManifestOptions {
   now?: Date
   includeEnvironment?: boolean
   includeReleasePackage?: boolean
+  adminActivation?: AdminUiActivationInput
+  config: KnowbeeConfig
+  paths: RuntimePaths
+  processCwd?: string
 }
 
 let lastRuntimeManifest: RuntimeManifest | null = null
+
+const RELEASE_PACKAGE_YEONJANG_CAPABILITY_METHODS = ["clipboard.read", "clipboard.write"] as const
 
 function commandOutput(command: string, args: string[], cwd = getWorkspaceRootPath()): string | null {
   try {
@@ -247,6 +265,7 @@ function readPromptSources(workDir: string): RuntimeManifestPromptSources {
       })),
     }
   } catch (error) {
+    const message = runtimeManifestErrorMessage(error)
     return {
       workDir,
       count: 0,
@@ -254,7 +273,7 @@ function readPromptSources(workDir: string): RuntimeManifestPromptSources {
       requiredCount: 0,
       enabledCount: 0,
       localeParityOk: false,
-      diagnostics: [{ severity: "error", code: "prompt_registry_unreadable", message: error instanceof Error ? error.message : String(error) }],
+      diagnostics: [{ severity: "error", code: "prompt_registry_unreadable", message }],
     }
   }
 }
@@ -278,22 +297,21 @@ function readLatestTimestamp(db: BetterSqlite3.Database, tableName: string, colu
   return row?.value ?? null
 }
 
-function readMemoryState(): RuntimeManifestMemory {
-  const cfg = getConfig()
+function readMemoryState(config: KnowbeeConfig, paths: RuntimePaths): RuntimeManifestMemory {
   const base: RuntimeManifestMemory = {
-    dbPath: PATHS.dbFile,
-    dbExists: existsSync(PATHS.dbFile),
-    searchMode: cfg.memory.searchMode ?? null,
+    dbPath: paths.dbFile,
+    dbExists: existsSync(paths.dbFile),
+    searchMode: config.memory.searchMode ?? null,
     ftsAvailable: null,
     vectorTableAvailable: null,
     embeddingRows: null,
-    embeddingProvider: cfg.memory.embedding?.provider ?? null,
-    embeddingModel: cfg.memory.embedding?.model ?? null,
+    embeddingProvider: config.memory.embedding?.provider ?? null,
+    embeddingModel: config.memory.embedding?.model ?? null,
   }
 
   if (!base.dbExists) return base
   try {
-    const db = new BetterSqlite3(PATHS.dbFile, { readonly: true, fileMustExist: true })
+    const db = new BetterSqlite3(paths.dbFile, { readonly: true, fileMustExist: true })
     try {
       const ftsAvailable = tableExists(db, "memory_chunks_fts") || tableExists(db, "memory_fts")
       const vectorTableAvailable = tableExists(db, "memory_embeddings")
@@ -315,18 +333,22 @@ function readMemoryState(): RuntimeManifestMemory {
   }
 }
 
-function buildProviderProfile(): RuntimeManifestProviderProfile {
-  const cfg = getConfig()
-  const connection = cfg.ai.connection
+function buildProviderProfile(config: KnowbeeConfig): RuntimeManifestProviderProfile {
+  const connection = config.ai.connection
   const auth = connection.auth
-  const embedding = cfg.memory.embedding
-  const capabilityMatrix = getProviderCapabilityMatrix({ connection, memory: cfg.memory })
+  const embedding = config.memory.embedding
+  const capabilityMatrix = getProviderCapabilityMatrix({ connection, memory: config.memory })
   const normalized = {
     provider: connection.provider,
     model: connection.model,
     endpointConfigured: Boolean(connection.endpoint?.trim()),
     authMode: auth?.mode ?? null,
-    credentialConfigured: Boolean(auth?.apiKey || auth?.oauthAuthFilePath || auth?.username || auth?.password),
+    credentialConfigured: auth?.mode === "chatgpt_oauth"
+      ? hasOpenAICodexAuthFile({
+          authFilePath: auth.oauthAuthFilePath,
+          clientId: auth.clientId,
+        })
+      : Boolean(auth?.apiKey || auth?.username || auth?.password),
     embeddingProvider: embedding?.provider ?? null,
     embeddingModel: embedding?.model ?? null,
   }
@@ -347,17 +369,16 @@ function buildProviderProfile(): RuntimeManifestProviderProfile {
   }
 }
 
-function buildChannels(): RuntimeManifestChannelSummary {
-  const cfg = getConfig()
+function buildChannels(config: KnowbeeConfig): RuntimeManifestChannelSummary {
   const mqtt = getMqttBrokerSnapshot()
-  const telegram = cfg.telegram
-  const slack = cfg.slack
+  const telegram = config.telegram
+  const slack = config.slack
   return {
     webui: {
-      enabled: cfg.webui.enabled,
-      host: cfg.webui.host,
-      port: cfg.webui.port,
-      authEnabled: cfg.webui.auth.enabled,
+      enabled: config.webui.enabled,
+      host: config.webui.host,
+      port: config.webui.port,
+      authEnabled: config.webui.auth.enabled,
     },
     telegram: {
       enabled: telegram?.enabled ?? false,
@@ -389,7 +410,7 @@ function buildYeonjang(): RuntimeManifest["yeonjang"] {
     const live = liveSnapshots.get(node.nodeId)
     return {
     extensionId: node.nodeId,
-    instanceId: node.instanceId,
+    instanceId: null,
     instanceAlias: node.instanceAlias,
     state: node.state,
     version: node.version,
@@ -411,7 +432,7 @@ function buildYeonjang(): RuntimeManifest["yeonjang"] {
     ? registryNodes
     : getMqttExtensionSnapshots().map((node) => ({
       extensionId: node.extensionId,
-      instanceId: node.instanceId ?? null,
+      instanceId: null,
       instanceAlias: node.instanceAlias ?? null,
       state: node.state,
       version: node.version,
@@ -435,24 +456,53 @@ function buildYeonjang(): RuntimeManifest["yeonjang"] {
   }
 }
 
-function buildReleasePackageState(includeReleasePackage: boolean): RuntimeManifestReleasePackage {
+function buildReleasePackageState(includeReleasePackage: boolean, config: KnowbeeConfig, paths: RuntimePaths): RuntimeManifestReleasePackage {
   if (!includeReleasePackage) {
-    return { manifestId: null, releaseVersion: null, requiredMissingCount: null }
+    return {
+      manifestId: null,
+      releaseVersion: null,
+      requiredMissingCount: null,
+      yeonjangPlatformCapabilityReady: null,
+      yeonjangPlatformCapabilityRequiredMethods: [],
+      yeonjangPlatformCapabilityEvidenceCount: null,
+      yeonjangPlatformCapabilityFailureCount: null,
+    }
   }
   try {
-    const manifest = buildReleaseManifest({ rootDir: getWorkspaceRootPath() })
+    const manifest = buildReleaseManifest({
+      rootDir: getWorkspaceRootPath(),
+      config,
+      runtimePaths: paths,
+      yeonjangPlatformRequiredCapabilityMethods: RELEASE_PACKAGE_YEONJANG_CAPABILITY_METHODS,
+      yeonjangAutoCollectPlatformCapabilityReadiness: true,
+    })
+    const capabilityRows = manifest.yeonjangPlatformAcceptance.platforms.flatMap(
+      (platform) => platform.capabilityReadiness,
+    )
     return {
       manifestId: hashObject({ releaseVersion: manifest.releaseVersion, artifacts: manifest.checksums, missing: manifest.requiredMissing }).slice(0, 16),
       releaseVersion: manifest.releaseVersion,
       requiredMissingCount: manifest.requiredMissing.length,
+      yeonjangPlatformCapabilityReady: manifest.yeonjangPlatformAcceptance.capabilityReady,
+      yeonjangPlatformCapabilityRequiredMethods: [...RELEASE_PACKAGE_YEONJANG_CAPABILITY_METHODS],
+      yeonjangPlatformCapabilityEvidenceCount: capabilityRows.filter((row) => Boolean(row.evidenceRef)).length,
+      yeonjangPlatformCapabilityFailureCount: capabilityRows.filter((row) => row.status !== "passed").length,
     }
   } catch {
-    return { manifestId: null, releaseVersion: null, requiredMissingCount: null }
+    return {
+      manifestId: null,
+      releaseVersion: null,
+      requiredMissingCount: null,
+      yeonjangPlatformCapabilityReady: null,
+      yeonjangPlatformCapabilityRequiredMethods: [...RELEASE_PACKAGE_YEONJANG_CAPABILITY_METHODS],
+      yeonjangPlatformCapabilityEvidenceCount: null,
+      yeonjangPlatformCapabilityFailureCount: null,
+    }
   }
 }
 
-function buildAdminUiState(): RuntimeManifestAdminUi {
-  const activation = resolveAdminUiActivation()
+function buildAdminUiState(input?: AdminUiActivationInput): RuntimeManifestAdminUi {
+  const activation = resolveAdminUiActivation(input)
   return {
     enabled: activation.enabled,
     configEnabled: activation.configEnabled,
@@ -477,8 +527,8 @@ function buildEnvironment(includeEnvironment: boolean): RuntimeManifestEnvironme
   }
 }
 
-function buildDatabase(): RuntimeManifestDatabase {
-  const status = getDatabaseMigrationStatus(PATHS.dbFile)
+function buildDatabase(paths: RuntimePaths): RuntimeManifestDatabase {
+  const status = getDatabaseMigrationStatus(paths.dbFile)
   return {
     path: status.databasePath,
     exists: status.exists,
@@ -490,8 +540,10 @@ function buildDatabase(): RuntimeManifestDatabase {
   }
 }
 
-export function buildRuntimeManifest(options: RuntimeManifestOptions = {}): RuntimeManifest {
-  mkdirSync(dirname(PATHS.dbFile), { recursive: true })
+export function buildRuntimeManifest(options: RuntimeManifestOptions): RuntimeManifest {
+  const paths = options.paths
+  mkdirSync(dirname(paths.dbFile), { recursive: true })
+  const config = options.config
   const now = options.now ?? new Date()
   const includeEnvironment = options.includeEnvironment ?? true
   const includeReleasePackage = options.includeReleasePackage ?? true
@@ -511,24 +563,24 @@ export function buildRuntimeManifest(options: RuntimeManifestOptions = {}): Runt
     },
     process: {
       pid: process.pid,
-      cwd: process.cwd(),
+      cwd: options.processCwd ?? config.profile.workspace,
       startedAt: null,
     },
     environment: buildEnvironment(includeEnvironment),
-    database: buildDatabase(),
+    database: buildDatabase(paths),
     promptSources: readPromptSources(workspaceRoot),
-    provider: buildProviderProfile(),
-    channels: buildChannels(),
+    provider: buildProviderProfile(config),
+    channels: buildChannels(config),
     yeonjang: buildYeonjang(),
-    memory: readMemoryState(),
-    releasePackage: buildReleasePackageState(includeReleasePackage),
-    adminUi: buildAdminUiState(),
-    rollout: buildRolloutSafetySnapshot(PATHS.dbFile),
+    memory: readMemoryState(config, paths),
+    releasePackage: buildReleasePackageState(includeReleasePackage, config, paths),
+    adminUi: buildAdminUiState(options.adminActivation),
+    rollout: buildRolloutSafetySnapshot(paths.dbFile),
     paths: {
-      stateDir: PATHS.stateDir,
-      configFile: PATHS.configFile,
-      dbFile: PATHS.dbFile,
-      memoryDbFile: PATHS.memoryDbFile,
+      stateDir: paths.stateDir,
+      configFile: paths.configFile,
+      dbFile: paths.dbFile,
+      memoryDbFile: paths.memoryDbFile,
     },
   }
   const id = hashObject({ ...base, createdAt: undefined }).slice(0, 24)
@@ -540,6 +592,6 @@ export function getLastRuntimeManifest(): RuntimeManifest | null {
   return lastRuntimeManifest
 }
 
-export function refreshRuntimeManifest(options: RuntimeManifestOptions = {}): RuntimeManifest {
+export function refreshRuntimeManifest(options: RuntimeManifestOptions): RuntimeManifest {
   return buildRuntimeManifest(options)
 }

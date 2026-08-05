@@ -42,7 +42,7 @@ export function CollapsibleText({
       {canCollapse ? (
         <button
           type="button"
-          className={buttonClassName}
+          className={`min-h-11 min-w-11 items-center ${buttonClassName}`}
           aria-expanded={expanded}
           onClick={(event) => {
             event.stopPropagation()

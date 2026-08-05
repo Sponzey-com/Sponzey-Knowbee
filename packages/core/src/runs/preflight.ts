@@ -1,5 +1,9 @@
-import type { AIProvider } from "../ai/index.js"
-import { detectAvailableProvider, getDefaultModel } from "../ai/index.js"
+import {
+  detectAvailableProvider,
+  getDefaultModel,
+  type AIProvider,
+  type AIProviderConfigSnapshot,
+} from "../ai/index.js"
 import { getSlackRuntimeStatus } from "../channels/slack/runtime.js"
 import { getTelegramRuntimeStatus } from "../channels/telegram/runtime.js"
 import { getMqttExtensionSnapshots } from "../mqtt/broker.js"
@@ -29,7 +33,7 @@ export interface StartContextPlan {
   toolPolicy: {
     toolsEnabled: boolean
     requiresApproval: boolean
-    requiresYeonjang: boolean
+    requiresYeonjang: "unknown" | "required" | "not_required"
   }
   preflightFailure: StartPreflightFailure | null
 }
@@ -40,6 +44,7 @@ export interface StartPreflightFailure {
     | "ai_model_unavailable"
     | "channel_unavailable"
     | "yeonjang_unavailable"
+    | "execution_queue_full"
   summary: string
   userMessage: string
   eventLabel: string
@@ -60,6 +65,7 @@ export interface StartPreflightInput {
   contextMode?: AgentContextMode | undefined
   runScope?: "root" | "child" | "analysis" | undefined
   skipIntake?: boolean | undefined
+  config?: AIProviderConfigSnapshot | undefined
 }
 
 const YEONJANG_APPROVAL_TOOLS = new Set<string>([
@@ -101,6 +107,14 @@ function requiresYeonjangRuntime(input: StartPreflightInput): boolean {
   return YEONJANG_APPROVAL_TOOLS.has(approvalTool) || approvalTool.startsWith("yeonjang_")
 }
 
+function resolveYeonjangRequirement(
+  input: StartPreflightInput,
+): StartContextPlan["toolPolicy"]["requiresYeonjang"] {
+  if (input.toolsEnabled === false) return "not_required"
+  if (!input.executionSemantics) return "unknown"
+  return requiresYeonjangRuntime(input) ? "required" : "not_required"
+}
+
 function resolveContextPlanMemoryScopes(input: StartPreflightInput): ContextMemoryScope[] {
   const scopes = new Set<ContextMemoryScope>(["short-term", "flash-feedback"])
   if (input.executionSemantics) scopes.add("task")
@@ -139,7 +153,16 @@ function resolveChannelFailure(input: StartPreflightInput): StartPreflightFailur
 function resolveAiFailure(input: StartPreflightInput): StartPreflightFailure | null {
   if (!requiresAiRoute(input)) return null
 
-  if (!hasExplicitAiRoute(input) && !detectAvailableProvider()) {
+  if (!input.config) {
+    return {
+      code: "ai_connection_unavailable",
+      summary: "AI 설정 스냅샷이 없어 요청을 시작할 수 없습니다.",
+      userMessage: "AI 설정을 확인할 수 없습니다. 설정에서 AI 연결을 저장한 뒤 다시 요청해 주세요.",
+      eventLabel: "preflight_failed: ai_config_unavailable",
+    }
+  }
+
+  if (!hasExplicitAiRoute(input) && !detectAvailableProvider(input.config)) {
     return {
       code: "ai_connection_unavailable",
       summary: "사용 가능한 AI 연결이 없어 요청을 시작할 수 없습니다.",
@@ -148,7 +171,7 @@ function resolveAiFailure(input: StartPreflightInput): StartPreflightFailure | n
     }
   }
 
-  if (!input.model?.trim() && !getDefaultModel()) {
+  if (!input.model?.trim() && !getDefaultModel(input.config)) {
     return {
       code: "ai_model_unavailable",
       summary: "기본 모델이 설정되어 있지 않아 요청을 시작할 수 없습니다.",
@@ -161,7 +184,7 @@ function resolveAiFailure(input: StartPreflightInput): StartPreflightFailure | n
 }
 
 function resolveYeonjangFailure(input: StartPreflightInput): StartPreflightFailure | null {
-  if (!requiresYeonjangRuntime(input)) return null
+  if (resolveYeonjangRequirement(input) !== "required") return null
   if (hasConnectedYeonjangSnapshot()) return null
 
   return {
@@ -180,7 +203,7 @@ export function resolveStartPreflightFailure(input: StartPreflightInput): StartP
 
 export function resolveStartContextPlan(input: StartPreflightInput): StartContextPlan {
   const requiresApproval = Boolean(input.executionSemantics?.approvalRequired)
-  const requiresYeonjang = requiresYeonjangRuntime(input)
+  const requiresYeonjang = resolveYeonjangRequirement(input)
 
   return {
     promptSources: [

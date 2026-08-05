@@ -28,8 +28,8 @@ import { resolveTopologyRootRunRouting } from "../packages/core/src/topology-run
 
 const now = Date.UTC(2026, 4, 2, 17, 0, 0)
 
-describe("task013 Executor-first release gate", () => {
-  it("defines the Executor-first gate around three typed inputs, hidden default concepts, and internal stability", () => {
+describe("task013 sub-agent-first release gate", () => {
+  it("defines the sub-agent-first gate around three typed inputs, hidden default concepts, and internal stability", () => {
     const gate = buildEnterpriseTopologyWorkspaceUsabilityGate({
       now: new Date("2026-05-02T17:00:00.000Z"),
     })
@@ -57,7 +57,7 @@ describe("task013 Executor-first release gate", () => {
       ),
       allowedTypingInputs: ["executor_name", "executor_work"],
       defaultHiddenConcepts: ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_DEFAULT_HIDDEN_CONCEPTS.filter((concept) =>
-        concept !== "WorkOrder Template"
+        concept !== "Internal work template"
       ),
       defaultRequiredSurfaces: ENTERPRISE_TOPOLOGY_EXECUTOR_FIRST_REQUIRED_SURFACES.filter((surface) =>
         surface !== "executor-understanding-panel"
@@ -77,14 +77,14 @@ describe("task013 Executor-first release gate", () => {
     expect(summary.gateStatus).toBe("failed")
     expect(failures).toContain("workspace_usability:missing_executor_first_step:review_understanding")
     expect(failures).toContain("workspace_usability:missing_allowed_typing_input:run_input")
-    expect(failures).toContain("workspace_usability:missing_hidden_default_concept:workorder_template")
+    expect(failures).toContain("workspace_usability:missing_hidden_default_concept:internal_work_template")
     expect(failures).toContain("workspace_usability:missing_default_surface:executor-understanding-panel")
     expect(failures).toContain("workspace_usability:rule_based_inference_fallback_missing")
     expect(failures).toContain("workspace_usability:advanced_topology_surface_still_exposed")
     expect(failures).toContain("topology_workspace_executor_first_usability")
   })
 
-  it("wires Executor-first checks and task013 regressions into release readiness", () => {
+  it("wires sub-agent-first checks and task013 regressions into release readiness", () => {
     const summary = buildEnterpriseTopologyReleaseReadinessSummary({
       now: new Date("2026-05-02T17:00:00.000Z"),
     })
@@ -101,7 +101,7 @@ describe("task013 Executor-first release gate", () => {
       "tests/task013-executor-first-release-gate.test.ts",
       "tests/task012-advanced-escape-hatch.test.tsx",
     ]))
-    expect(usabilityCommand?.description).toContain("Executor-first usability")
+    expect(usabilityCommand?.description).toContain("sub-agent-first usability")
   })
 
   it("proves profile-based executor draft creation, ExecutorGraph compile, metadata boundary, and feature flag fallback", () => {
@@ -163,16 +163,16 @@ describe("task013 Executor-first release gate", () => {
     }))
   })
 
-  it("documents Executor-first release and rollback checks", () => {
+  it("documents sub-agent-first release and rollback checks", () => {
     const runbook = readFileSync(new URL("../docs/release-runbook.md", import.meta.url), "utf-8")
 
-    expect(runbook).toContain("Executor-first usability gate")
-    expect(runbook).toContain("executor name, executor work, and run input")
+    expect(runbook).toContain("Sub-agent-first usability gate")
+    expect(runbook).toContain("sub-agent name, what the sub-agent does, and run input")
     expect(runbook).toContain("Default UX leak gate")
     expect(runbook).toContain("Internal stability gate")
-    expect(runbook).toContain("WorkOrder Template")
+    expect(runbook).toContain("work template")
     expect(runbook).toContain("Simple mode rollback check")
-    expect(runbook).toContain("노비가 이해한 내용")
+    expect(runbook).toContain("review of what the main agent understood")
   })
 })
 

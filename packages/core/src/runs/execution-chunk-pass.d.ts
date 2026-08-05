@@ -1,10 +1,12 @@
 import type { AgentChunk } from "../agent/index.js";
+import type { UserFacingTextSource } from "./loop-directive.js";
 import { applyToolEndChunk, applyToolStartChunk, type ToolChunkApplicationDependencies } from "./tool-chunk-application.js";
 import { applyExecutionRecoveryAttempt, type ExecutionRecoveryAttemptDependencies, type ExecutionRecoveryPayload } from "./execution-retry-application.js";
 import { applyExternalRecoveryAttempt, type ExternalRecoveryAttemptDependencies } from "./external-retry-application.js";
 import type { FinalizationSource } from "./finalization.js";
 import type { RecoveryBudgetUsage } from "./recovery-budget.js";
 import type { FailedCommandTool, SuccessfulToolEvidence } from "./recovery.js";
+import type { YeonjangSideEffectGoalValidationCandidate } from "../yeonjang/side-effect-goal-validation-review.js";
 type ChunkPassChunk = Exclude<AgentChunk, {
     type: "error";
 } | {
@@ -13,6 +15,7 @@ type ChunkPassChunk = Exclude<AgentChunk, {
 export interface ExecutionChunkPassResult {
     handled: boolean;
     preview?: string;
+    previewSource?: UserFacingTextSource;
     executionRecovery?: ExecutionRecoveryPayload;
     executionRecoveryLimitStop?: {
         summary: string;
@@ -24,6 +27,7 @@ export interface ExecutionChunkPassResult {
         summary: string;
         reason: string;
         message: string;
+        providerFailureReasonCode?: import("../ai/provider-failure.js").AIProviderFailureReasonCode;
     };
     aiRecoveryLimitStop?: {
         summary: string;
@@ -55,6 +59,7 @@ export declare function applyExecutionChunkPass(params: {
     filesystemMutationPaths: Set<string>;
     failedCommandTools: FailedCommandTool[];
     commandFailureSeen: boolean;
+    yeonjangSideEffectGoalValidationCandidates?: YeonjangSideEffectGoalValidationCandidate[];
     recoveryBudgetUsage: RecoveryBudgetUsage;
     usedTurns: number;
     maxDelegationTurns: number;

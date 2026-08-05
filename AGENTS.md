@@ -1,310 +1,426 @@
-# Sponzey Knowbee Project Agent Prompt
+# Project Context and Method Selection
 
-이 문서는 이 프로젝트에서 작업하는 모든 에이전트와 자동화 실행자가 지속적으로 따라야 하는 기본 개발 프롬프트이다. 사용자의 명시적 지시가 이 문서와 충돌하지 않는 한, 모든 코드 수정, 설계 판단, 테스트 작성, 리팩터링, 문서화 작업에 적용한다.
+This document governs every code, test, script, prompt, release, and documentation
+change in Sponzey Knowbee. `PROJECT.md` is the authoritative product goal; this file
+defines the mandatory engineering boundary. Preserve user changes outside the requested
+scope.
 
-## 1. 핵심 지향점
+Knowbee is a local-first agent platform in an active stabilization and convergence stage,
+not a greenfield chatbot. The confirmed execution and deployment units are:
 
-- Layered Architecture를 기본 구조로 삼고, Clean Architecture 경계를 함께 지킨다.
-- Clean Architecture를 지향한다.
-- TDD 기반으로 코드를 작성하고 개발한다.
-- Tidy First 설계를 지향한다.
-- 추상화를 통한 기능 확장과 단순함을 함께 지향한다.
+- a Node.js `>=22.0.0 <26.0.0` pnpm workspace using strict TypeScript, ESM, and NodeNext;
+- `@knowbee/core`, the CLI/launcher packages, and the local Gateway;
+- a React/Vite WebUI with Zustand and channel delivery through WebUI, Telegram, and Slack;
+- SQLite persistence and external AI, MCP, browser, network, and channel adapters;
+- the Rust 2024 Yeonjang runtime, with OS-specific adapters and a macOS Swift camera helper;
+- generated `.js`, `.d.ts`, and source-map compatibility artifacts beside core `.ts` sources.
 
-이 원칙들은 우선순위가 아니라 동시에 만족해야 하는 기준이다. 어느 한 원칙을 이유로 다른 원칙을 무시하지 않는다. 예를 들어 추상화를 추가할 때도 테스트 가능성과 단순성을 해치지 않아야 하며, 빠른 구현을 하더라도 아키텍처 경계를 무너뜨리지 않아야 한다.
+The dominant risks are incorrect approval or target binding for side effects, duplicate
+execution, split state ownership, stale events after restart, secret or private evidence
+exposure, external contract drift, and background work that cannot be cancelled or shut
+down. Optimize for a simple and fast user path, but never use a timeout, retry count, or
+latency target alone to declare terminal failure.
 
-## 2. 작업 기본 자세
+Before each task, record this decision in the task note or work update:
 
-- 먼저 현재 코드와 문서를 읽고, 이미 존재하는 구조와 의도를 파악한다.
-- 기존 패턴, 네이밍, 테스트 스타일, 런타임 계약을 우선한다.
-- 사용자가 요청한 목표를 실제 동작 기준으로 해석한다.
-- 추측으로 넓은 리팩터링을 하지 않는다.
-- 관련 없는 파일, 포맷, 생성물, 사용자 변경 사항을 건드리지 않는다.
-- 기능을 끝냈다고 말하기 전에 검증 가능한 근거를 만든다.
-- 실패하거나 막히면 같은 시도를 반복하지 말고 입력, 경로, 대상, 도구, 검증 방식을 바꿔서 해결한다.
+```text
+Current moment / target language and execution unit / dominant risk
+Selected method and pattern / verification evidence and exit criteria
+```
 
-## 3. Clean Architecture 적용 기준
+Choose the smallest process that matches the current evidence:
 
-### 3.0 Layered Architecture 기본 경계
+- For a small reversible change, bug fix, or clear first vertical slice, use a short TDD
 
-- 도메인, 애플리케이션 유스케이스, 어댑터, 인프라, UI 계층을 구분한다.
-- 안쪽 계층은 바깥 계층을 직접 알지 않아야 한다.
-- 외부 입력, 환경, 파일, 프로세스 상태는 가장자리 계층에서 읽고, 내부 계층에는 명시적 인자와 계약 타입으로 전달한다.
-- 계층을 건너뛰는 편의 호출을 만들지 않는다. 필요한 경우 작은 포트/어댑터 계약을 먼저 만든다.
-- 계층 분리가 테스트를 어렵게 만들면 구조가 잘못된 것으로 보고, 테스트 가능한 경계를 다시 잡는다.
+  cycle: failing behavior test, minimum implementation, focused regression, then refactor.
+- For legacy behavior without coverage, establish a characterization test before changing it.
+- Use a minimal Tidy First change only when duplicated or misplaced structure directly blocks
 
-### 3.1 의존성 방향
+  the behavior change. Verify behavior before and after it and keep it separately reviewable.
+- For performance work, define the measured baseline, workload, budget, and allowed regression
 
-- 도메인 규칙은 UI, 채널, DB, 외부 API, 특정 모델 제공자에 의존하지 않는다.
-- 외부 시스템 연동은 어댑터, 게이트웨이, 인프라 계층으로 격리한다.
-- UI는 도메인 결정을 직접 구현하지 않고, 상태와 명령을 명확한 계약으로 전달한다.
-- DB 스키마나 저장 형식이 도메인 규칙 자체가 되지 않게 한다.
-- 테스트 편의를 위해 내부 규칙을 외부 구현 세부사항에 묶지 않는다.
+  before optimizing.
+- Use a time-boxed disposable prototype only when user value or technical feasibility is
 
-### 3.2 계약 중심 설계
+  genuinely unknown. Isolate it from production credentials, user data, and irreversible
+  effects; never promote prototype code into production.
+- For schema migrations, security boundaries, device effects, external protocols, startup,
 
-- 실행 흐름, 토폴로지, 위임, 결과 취합, 채널 전달은 명시적인 계약 타입과 스키마로 표현한다.
-- 문자열 상태값, 이벤트 라벨, JSON 필드는 가능한 한 타입, enum, validator, normalizer로 보호한다.
-- 계약 변경이 필요하면 변환 계층과 회귀 테스트를 함께 둔다.
-- 레거시 필드는 무조건 유지하지 않는다. 실제 사용 경로가 사라졌다면 제거 계획을 세우고 제거한다.
+  packaging, or irreversible releases, use a complete risk cycle: alternatives and failure
+  modes, prototype or rehearsal where useful, TDD implementation, compatibility checks,
+  rollback evidence, and a release gate.
+- Re-select the method and verification strength when new evidence changes the risk.
 
-### 3.3 경계 보존
+# Architecture and Dependency Rules
 
-- 프롬프트, 하네스, 런타임, WebUI, DB, 채널 어댑터의 책임을 섞지 않는다.
-- LLM이 판단해야 하는 자연어 의미 해석을 코드의 키워드 검색으로 대체하지 않는다.
-- 코드 하네스는 구조, 권한, 연결 가능성, 스키마, 안전 경계를 검증한다.
-- 의미 판단, 역할 판단, 위임 적합성 판단은 제공된 구조화 컨텍스트와 프롬프트 계약을 통해 수행한다.
+- Separate Presentation/Delivery, Application/Use Case, Domain, Infrastructure, and External
 
-## 4. 설정과 환경 주입 기준
+  Interface responsibilities. Small modules may remain colocated only while their ownership
+  and dependency direction remain identifiable.
+- Dependencies point inward. Domain depends only on values and rules. Application depends on
 
-설정은 실행 가능성과 재현성을 해치지 않도록 최소화한다. 외부 파일, 환경 변수, 프로세스 전역 상태는 필요한 시작 지점에서만 읽고, 그 이후 내부 실행 흐름에서는 명시적인 값으로 전달한다.
+  Domain contracts and purpose-specific ports. Infrastructure and Presentation implement or
+  invoke those contracts.
+- Domain and Application must not directly use framework, HTTP, database, filesystem, network,
 
-### 4.1 외부 설정 최소화
+  shell, process, environment, UI, logger configuration, model SDK, channel SDK, MQTT, or OS
+  APIs. Select concrete implementations only in a composition root.
+- Do not instantiate concrete clients inside a Use Case. Inject validated configuration, ports,
 
-- 외부 파일에 설정되는 항목은 최소화한다.
-- 외부 설정 파일은 사용자/배포 환경마다 달라져야 하는 값에만 사용한다.
-- 도메인 정책, 실행 규칙, validator 기준, 아키텍처 경계는 외부 파일로 우회하지 않는다.
-- 설정 파일이 필요하면 스키마, 기본값, migration, 검증 테스트를 함께 둔다.
-- 테스트 편의를 위해 임의 설정 파일을 늘리지 않는다. 테스트에는 명시적 fixture나 생성자 인자를 우선한다.
+  clocks, cancellation, and repositories explicitly.
+- Convert framework requests, persistence rows, external JSON, prompt output, and UI state at
 
-### 4.2 환경 상수 수용 시점
+  their boundaries. Do not reuse one shape as DTO, persistence record, domain model, and view
+  model.
+- Give each Use Case explicit input and output models. Return a closed discriminated result such
 
-- 환경 변수와 외부 환경 상수는 프로세스 시작 또는 명시적인 bootstrap 단계에서만 읽는다.
-- bootstrap 이후에는 `process.env`, 전역 mutable config, singleton config를 중간에 다시 읽거나 수정하지 않는다.
-- 외부 환경 상수는 프로그램 내부의 숨은 상수로 만들지 않는다. 필요한 값은 설정 객체, 유스케이스 인자, 함수 인자, command option처럼 명시적으로 전달한다.
-- 실행 중간에 환경 설정 내용을 삽입해 동작을 바꾸는 방식은 반드시 거부한다.
-- 기능별 런타임 변경이 필요하면 환경 변수 변경이 아니라 명시적 API, 명령 인자, 저장된 사용자 설정, 또는 검증된 런타임 계약으로 처리한다.
+  as success, failure, blocked, cancelled, or additional-input-required; do not return ambiguous
+  booleans or leak external exceptions across the Application boundary.
+- Keep prompt assembly, LLM policy validation, runtime orchestration, persistence, channel
 
-### 4.3 프로세스 중간 설정 변경 금지
+  delivery, WebUI projection, and extension transport in distinct responsibilities.
+- Define a component or port only when it has an independent responsibility, public contract,
 
-- 코드가 실행 도중 `process.env`를 수정해 하위 모듈 동작을 바꾸는 패턴을 만들지 않는다.
-- 테스트가 필요한 경우에도 전역 환경을 직접 바꾸는 대신 의존성을 인자로 주입한다.
-- 외부 라이브러리 때문에 환경 변수가 필요하면 가장자리 어댑터에서만 설정하고, 영향 범위와 복구 방식을 테스트에 남긴다.
-- 스크립트가 환경 변수를 사용해야 할 때도 시작 전에 export하고, 실행 중 상태 전환 수단으로 사용하지 않는다.
-- 기존 코드가 중간 환경 변경에 의존한다면 새 기능에서 확대하지 말고, 명시적 인자 주입으로 전환하는 정리 계획을 세운다.
+  dependency, lifecycle, or contract-test boundary. Do not create interface-per-class wrappers.
+- One canonical state has one write owner. Other components request a transition through a
 
-## 5. 로그 기준
+  command or explicit port and consume read-only projections.
 
-로그는 목적별로 세 가지 수준을 기준으로 한다.
+Current-to-target state convergence is mandatory:
 
-- `product`: 프로덕트용 최소 로그. 사용자가 운영 중 알아야 하는 시작, 종료, 실패, 보안/권한, 최종 상태만 남긴다.
-- `debug`: 현장 확인용 디버그 로그. 배포/고객 환경에서 문제 원인을 확인할 수 있도록 요청 ID, run ID, adapter 상태, 외부 호출 결과 요약, 재시도/복구 흐름을 남긴다.
-- `dev`: 개발 및 테스트 확인용 로그. 개발 중 내부 상태, 상세 trace, fixture, 계약 조립 과정, 테스트 진단 정보를 볼 수 있게 한다.
+- Canonical work aggregates, transition contracts, and durable receipts exist. Legacy run-store
 
-적용 기준:
+  status and step APIs still exist as compatibility projections in supported paths. Do not add
+  a new writer to those legacy APIs; move an affected path behind the canonical transition owner
+  when the task provides the required compatibility and recovery tests.
+- The SQLite approval registry is the durable source for approval requests, decisions, scope,
 
-- 기본값은 `product`에 가까워야 하며, 사용자가 보는 UI나 일반 로그에 내부 복잡도를 노출하지 않는다.
-- `debug`와 `dev` 로그는 secret, token, private memory, 내부 원문 payload를 그대로 출력하지 않는다.
-- 로그 레벨은 bootstrap에서 결정하고, 실행 중 환경 변수 삽입으로 바꾸지 않는다.
-- 런타임 중 로그 상세도가 바뀌어야 하면 명시적인 관리자 API나 설정 저장소를 통해 검증된 계약으로 바꾼다.
-- 로그는 관찰 가능성을 위한 것이며, 도메인 흐름이나 성공/실패 판정의 근거가 되어서는 안 된다.
+  expiry, and consumption. Process-local promises or waiters may wake an execution but must not
+  decide whether approval exists.
+- Side-effect preparation, authorization binding, dispatch, receipt, post-check, and delivery
 
-## 6. TDD 기준
+  are separate contracts. The same immutable operation and exact-target identity must cross
+  those boundaries without reconstruction from prose.
+- Presentation and channel code read projections and submit commands. They do not perform
 
-### 6.1 기본 사이클
+  canonical persistence writes or reinterpret internal state.
 
-1. 현재 실패나 요구사항을 재현하는 테스트를 먼저 찾거나 작성한다.
-2. 실패 이유가 목표와 맞는지 확인한다.
-3. 가장 작은 구현으로 테스트를 통과시킨다.
-4. 필요한 만큼만 정리한다.
-5. 관련 테스트와 타입체크를 실행한다.
+Every non-conversational request follows `diagnose -> plan -> execute -> verify -> report`.
+The LLM owns request meaning, plan selection, evidence interpretation, result sufficiency, and
+changed-strategy selection. Code owns schemas, policy, permissions, state transitions,
+transport, persistence, redaction, and deterministic invariants. Do not use keyword tables,
+locale-specific matching, regular expressions, vector similarity, or other semantic heuristics
+to replace the required LLM judgments.
 
-### 6.2 테스트 작성 원칙
+Keep agent relationships explicit. The main agent delegates only to direct children; a child
+delegates only to its direct children. Keep credentials, runtime connections, sessions, history,
+and short- and long-term memory isolated per agent. Exchange only explicit task input, approved
+context, evidence, and typed result contracts. A parent validates child evidence before final
+delivery.
 
-- 테스트는 구현 세부가 아니라 사용자 관찰 가능 동작과 계약을 검증한다.
-- 버그 수정에는 회귀 테스트를 추가한다.
-- 런타임 계약 변경에는 validator, normalizer, persistence, projection 테스트를 포함한다.
-- WebUI 변경에는 사용자가 보는 상태, 버튼, 입력, 저장, 스크롤, 접근 흐름을 검증한다.
-- 채널/토폴로지/위임 변경에는 이벤트, trace, DB snapshot, parent-child 관계, final delivery를 확인한다.
-- 숫자 제한, timeout, retry, attempt 같은 값은 실패 조건으로 쓰지 않는다. 단, 사용자가 명시한 제한이나 안전 경계는 테스트한다.
-- 환경/설정 변경에는 bootstrap 시점 수용, 명시적 인자 전달, 중간 `process.env` 변경 금지, 로그 레벨 경계 테스트를 포함한다.
+# Language and Design Pattern Rules
 
-### 6.3 검증 기준
+For TypeScript:
 
-- 단위 테스트만으로 충분하지 않은 변경은 통합 테스트 또는 smoke 검증을 추가한다.
-- 로컬 런타임 변경은 가능한 경우 실제 서버 재시작과 API/DB 확인으로 검증한다.
-- 프롬프트 변경은 prompt source 적재, assembly, regression test를 함께 고려한다.
-- 테스트를 실행하지 못했다면 이유와 남은 위험을 명확히 남긴다.
+- Use the repository's strict compiler settings: ES2022, ESM/NodeNext,
 
-## 7. Tidy First 기준
+  `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, and `noImplicitOverride`.
+- Represent closed outcomes and lifecycle events with readonly discriminated unions and exhaust
 
-### 7.1 구조 변경과 동작 변경 분리
+  them with explicit narrowing. Parse `unknown` at external boundaries with a versioned schema;
+  do not spread `any` inward.
+- Prefer immutable value objects, pure functions, and pure reducers for calculation and
 
-- 구조 정리와 동작 변경을 가능한 한 분리한다.
-- 동작 변경 전에 필요한 작은 정리를 먼저 하되, 정리 자체가 기능 변경이 되지 않게 한다.
-- 이름 변경, 파일 이동, 포맷 변경, dead code 제거는 목적과 범위를 분명히 한다.
-- 큰 리팩터링은 여러 작은 단계로 나눈다.
+  transition rules. Use classes only when they protect state, invariants, or resource lifecycle;
+  prefer composition over inheritance.
+- Pass `AbortSignal` through cancellable asynchronous boundaries. Every started promise,
 
-### 7.2 작은 변경 단위
-
-- 한 번의 수정은 하나의 명확한 문제를 해결해야 한다.
-- 범위가 커지면 계획을 세우고 태스크로 나눈다.
-- 관련 없는 개선 아이디어는 즉시 구현하지 않고 별도 후속 항목으로 남긴다.
-- 중간 상태에서도 테스트 가능한 단위를 유지한다.
+  subscription, timer, socket, and worker must have an owner and a shutdown path.
+- Keep React views pure and one-way. Commands and effects belong in adapters/stores, not render.
 
-### 7.3 정리의 우선순위
+  The WebUI must not write persistence or credentials directly.
+- Treat core `.ts` files as source. Never hand-edit colocated `.js`, `.d.ts`, or map files.
 
-다음 정리는 기능 개발 전에 우선할 수 있다.
+  Regenerate them with `pnpm run core:sync-src-artifacts` and verify with
+  `pnpm run test:architecture:generated`.
 
-- 중복된 조건이 실제 버그를 만들고 있는 경우
-- 잘못된 추상화가 새 기능 구현을 방해하는 경우
-- 테스트가 불가능한 결합 때문에 회귀를 막을 수 없는 경우
-- 사용되지 않는 레거시 경로가 현재 목표와 충돌하는 경우
-- 이름이나 계약이 실제 의미와 달라 잘못된 사용을 유도하는 경우
-- 환경/설정이 프로세스 중간에 주입되어 재현성과 테스트 가능성을 해치는 경우
-- 로그가 secret이나 내부 원문 payload를 노출하거나, product/debug/dev 목적이 섞여 운영 판단을 흐리는 경우
+For Rust, Swift, and mixed-language boundaries:
 
-단, 단순히 보기 좋은 정리는 사용자 요청 범위 밖이면 하지 않는다.
+- Keep the Rust Yeonjang core independent from macOS-specific APIs; isolate Linux, Windows, and
 
-## 8. 추상화와 단순함
-
-### 8.1 추상화를 추가할 때
+  macOS behavior in platform adapters.
+- Use ownership and scoped resource guards for device, process, file, singleton-instance, and
 
-추상화는 다음 조건 중 하나 이상을 만족할 때만 추가한다.
+  connection lifecycles. Do not hide a long-running resource owner in a global.
+- Treat the Swift camera helper as an OS adapter, not an authorization or workflow decision
 
-- 실제 중복을 줄인다.
-- 변경 가능성이 높은 외부 구현을 안정된 내부 계약 뒤로 숨긴다.
-- 테스트 가능성을 높인다.
-- 런타임 정책과 구현 세부사항을 분리한다.
-- 여러 기능이 같은 도메인 개념을 공유하게 만든다.
-
-추상화를 만들 때는 이름, 입력, 출력, 실패 조건, 소유 계층을 명확히 한다.
-
-### 8.2 추상화를 피할 때
+  maker.
+- Version MQTT/IPC DTOs and define serialization, identity, timeout, cancellation, error mapping,
 
-다음 경우에는 추상화를 만들지 않는다.
-
-- 아직 한 곳에서만 쓰이고 변화 방향이 불분명하다.
-- 단순한 조건문보다 이해하기 어렵다.
-- 도메인 개념이 아니라 구현 편의만 감춘다.
-- 테스트가 오히려 더 복잡해진다.
-- 기존 계약과 의미가 겹친다.
+  and ownership on both sides. Add compatibility tests on the TypeScript and extension sides.
 
-### 8.3 단순함의 기준
+Use patterns only for observed forces:
 
-- 사용자가 보는 UX는 가능한 한 단순해야 한다.
-- 내부 프로세스는 고도화될 수 있지만, UI에 내부 복잡도를 노출하지 않는다.
-- 단순함은 기능 누락이 아니라 명확한 기본 흐름, 적은 선택지, 안전한 자동 처리, 필요한 때의 진단 정보로 만든다.
-- GUI로 처리할 수 있는 것은 GUI로 처리하고, 텍스트 입력은 필요한 경우에만 요구한다.
-
-## 9. Knowbee 토폴로지와 위임 개발 원칙
-
-이 프로젝트의 핵심 목표는 사용자가 이해하기 쉬운 토폴로지 화면과, 내부적으로 강한 위임/검증/취합 런타임을 함께 제공하는 것이다.
-
-- 노비도 에이전트이고, 모든 에이전트는 자신의 direct child를 가질 수 있다.
-- 모든 에이전트와 팀은 사용자-facing 별명 또는 이름이 중복되면 안 된다.
-- 내부 ID는 시스템에서만 사용하고, 사용자 대화와 결과 전달에서는 에이전트 이름/별명으로 표시한다.
-- 상위 에이전트는 자신의 direct child 프로필과 연결만 보고 위임을 결정한다.
-- 연결되지 않은 실행자나 diagnostic-only 실행자를 임의로 선택하지 않는다.
-- 자식 결과는 최종 답변이 아니다. 부모가 검증하고 취합한 뒤 최종 전달한다.
-- 위임할 수 없으면 현재 에이전트가 자신의 능력과 허용 도구 안에서 자체 처리할 수 있는지 먼저 판단한다.
-- 자체 처리도 불가능하면 상위로 반환하거나 사용자 확인으로 전환한다.
-- provider direct 실행은 명시적 provider target이 있을 때만 허용한다.
-- `compiled_default_entry`, 암묵적 첫 노드 선택, 전체 목록 기반 우회 선택 같은 대표/기본 경로는 사용하지 않는다.
-- Skill/MCP 카탈로그는 공통 설정을 공유하되, 실제 enabled binding과 런타임 연결 상태는 에이전트별로 독립되어야 한다.
-- 저장 전 초안, 저장된 토폴로지, 런타임 활성 projection은 서로 다른 상태로 취급한다.
+- Adapter for external providers, channels, SQLite records, MQTT/IPC, OS APIs, and legacy models.
+- Repository when aggregate consistency, persistence replacement, or contract testing is needed;
 
-## 10. 자연어 의미 판단 금지 경계
+  do not create a repository for every entity or simple query.
+- State as a union and reducer for multi-event lifecycle rules; do not reproduce a GoF class
 
-- 요청이 어느 영역인지, 어떤 실행자가 적합한지, 어떤 행동 패턴인지 코드의 키워드 검색으로 결정하지 않는다.
-- 한국어, 영어, 오타, 혼합 언어, 별칭을 코드 테이블로 의미 매칭하지 않는다.
-- 코드가 할 일은 구조화된 컨텍스트를 만들고, 프롬프트/하네스가 판단할 수 있는 계약을 제공하며, 결과가 계약과 경계를 지키는지 검증하는 것이다.
-- 허용되는 문자열 처리는 구조적 처리로 한정한다.
-  - 명시적 ID, enum, JSON field, URL, path, file name, quoted literal, tool receipt, schema field
-  - redaction, validation, serialization, deserialization, exact ID/display-name normalization
-- 자연어 의미를 판단해야 하면 프롬프트와 하네스 계약을 개선한다.
-
-## 11. 실패와 복구 기준
-
-- retry count, attempt count, delegation turn count, queue retry count는 실패 조건이 아니다.
-- 횟수는 같은 방식이 통하지 않는다는 신호이며, 다른 방법을 찾기 위한 조건이다.
-- 실패는 더 이상 안전하게 바꿀 수 있는 방법이 없거나, 권한/안전/개인정보/외부 전송/삭제/결제 같은 경계를 넘는 경우에만 선언한다.
-- 복구할 때는 같은 대상과 같은 입력으로 같은 시도를 반복하지 않는다.
-- 복구 시 바꿀 수 있는 것은 작업 분할, 대상 실행자, 도구, 입력 형태, 실행 순서, 검증 방법, 권한 요청, 사용자 확인 경로다.
-- 사용자가 명시적으로 중단하면 즉시 취소를 전파한다.
-
-## 12. WebUI 개발 기준
-
-- 토폴로지 화면은 노드를 그리고 연결하고 선택한 노드를 정의하는 기본 흐름이 중심이다.
-- 상시 필요한 버튼만 노출한다.
-- 고급 설정, 내부 계약, 진단 정보는 기본 사용자 흐름에 노출하지 않는다.
-- 노드 이름, 성격, 하는 일은 사용자가 쉽게 정의하고 AI 도움을 받을 수 있어야 한다.
-- 초보/고급 화면 분리는 제거하고, 하나의 통합 설정 화면에서 기본값 중심의 간단 흐름과 필요 시 펼치는 세부 설정을 함께 제공한다.
-- 서브 에이전트 설정은 단일 source-of-truth에서 파생된 통합 view model로 다루며, 모델, Skill/MCP, 메모리, 권한, 위임, 모니터링은 선택한 에이전트의 접힘 섹션에서 다룬다.
-- `beginner`, `advanced`, `simple` 같은 기존 UI 모드 용어는 compatibility 계층과 테스트 migration 범위에서만 임시로 다루고, 새 사용자-facing 화면의 제품 구조로 확장하지 않는다.
-- 단일 노비 모드에서 서브 에이전트가 없다는 이유만으로 오류 상태를 만들지 않는다.
-- 통합 설정 화면에서도 raw 배열, raw contract, secret, token, 내부 ID를 그대로 편집/노출하지 않는다.
-- 저장은 명확해야 하며, 새로고침이나 페이지 이동 후에도 데이터가 DB 기준으로 유지되어야 한다.
-- 스크롤, 사이드바, 카드, 하단 영역은 화면 밖으로 숨어 조작 불가능해지면 안 된다.
-- 드래그 중인 노드는 드래그하는 동안 실제로 움직이는 피드백을 보여야 한다.
-- 실행 중인 노드는 화면에서 진행 상태가 보이고, 최종 결과와 실패 이유가 trace로 이어져야 한다.
-
-## 13. 프롬프트와 코드의 역할 분담
-
-코드로 구현할 것:
-
-- 스키마, 타입, validator, normalizer
-- DB 저장, migration, projection, trace persistence
-- 권한, 연결, direct-child 여부, channel boundary, risk boundary 검증
-- parent-child 실행 관계와 결과 취합
-- 이벤트 기록과 Runtime Inspector 표시
-- bootstrap 설정 적재, 명시적 인자 주입, 로그 레벨 계약
-- 테스트와 smoke 검증
-
-프롬프트로 처리할 것:
-
-- 자연어 요청의 목적과 영역 이해
-- 현재 에이전트가 받은 업무의 목적, 목표, 작업 단위 분할
-- direct child 프로필을 읽고 위임 가능성 판단
-- 결과 검토, 누락 판단, 취합 방향
-- 사용자에게 설명할 말투와 요약 방식
-
-프롬프트로만 처리하면 안 되는 것:
-
-- 권한 우회
-- 연결되지 않은 실행자 선택 허용
-- DB 영속성 보장
-- 환경/설정 주입 우회
-- 실패 상태 은폐
-- 테스트 생략
-- 채널 경계 무시
-
-코드로만 처리하면 안 되는 것:
-
-- 자연어 의미 기반 실행자 선택
-- 언어별 키워드 라우팅
-- 사용자 의도 추론을 고정 규칙으로 대체
-
-## 14. 작업 완료 조건
-
-작업은 다음을 만족해야 완료로 본다.
-
-- 사용자 요청의 실제 목표가 처리되었다.
-- 변경 범위가 요청과 관련된 곳으로 제한되었다.
-- Clean Architecture 경계를 해치지 않았다.
-- 설정은 bootstrap에서만 수용하고, 내부 흐름에는 명시적 인자로 전달되었다.
-- 로그는 product/debug/dev 목적 중 하나에 맞고 secret/private data를 노출하지 않는다.
-- 필요한 테스트가 추가되거나 갱신되었다.
-- 관련 테스트, 타입체크, 빌드, 또는 smoke 검증 중 필요한 것을 실행했다.
-- 실행하지 못한 검증은 이유와 남은 위험을 남겼다.
-- 사용자가 이해할 수 있는 결과, 변경 파일, 검증 결과를 간결하게 보고했다.
-
-## 15. Architecture Cleanup Gate
-
-아키텍처 정리, prompt/source 문서 정리, 레거시 경로 제거, 토폴로지/위임/복구 정책 변경은 다음 검증 묶음을 기준으로 삼는다.
-
-- `pnpm run test:architecture:static`: source-of-truth 문서, 삭제된 routing 개념, critical-decision audit, direct-child 계약을 확인한다.
-- `pnpm run test:architecture:runtime`: current-agent fallback, child result aggregation, final validation, direct child-channel delivery 금지를 확인한다.
-- `pnpm run test:architecture:webui`: 기본 topology UI가 ExecutorGraph 중심이고 EnterpriseTopology V1/WorkOrder/manual run/compile preview를 노출하지 않는지 확인한다.
-- `pnpm run test:architecture:prompts`: AGENTS.md와 runtime prompt source가 위임, 자체 처리, 복구, 완료 정책에서 충돌하지 않는지 확인한다.
-- `pnpm run test:architecture:generated`: TypeScript 원본과 core source compatibility artifact가 동기화되어 있는지 확인한다.
-
-이 suite가 실패하면 해당 실패는 단순 테스트 실패가 아니라 아키텍처 정책 회귀로 본다. 테스트 기대값이 오래된 경우에도 현재 지향점에 맞는 정책 테스트로 갱신해야 하며, 레거시 동작을 보존하기 위해 기대값을 되돌리지 않는다.
-
-## 16. 응답 규칙
-
-- 한국어 요청에는 한국어로 답한다.
-- 구현을 마쳤으면 핵심 변경과 검증 결과를 먼저 말한다.
-- 불확실한 부분은 숨기지 않는다.
-- 사용자에게 선택을 요구해야 할 때는 왜 선택이 필요한지 설명한다.
-- 단순한 작업은 짧게 보고한다.
-- 복잡한 작업은 계획, 변경, 검증, 남은 위험 순서로 보고한다.
+  hierarchy when the language already expresses the state clearly.
+- Command for durable, delayed, approved, retried, or audited effects.
+- Strategy only for a policy axis that has real interchangeable implementations.
+- Supervisor only for long-running tasks that require restart, cancellation, and shutdown
+
+  ownership.
+- Factory or builder only when construction selection or staged validation is genuinely complex.
+
+Do not add a pattern layer when a constructor, function, union, standard library primitive, or
+existing framework boundary is sufficient.
+
+# Configuration, Security, and Runtime
+
+Use this startup flow:
+
+```text
+raw_environment = read_once_at_startup()
+config = validate_and_build_immutable_typed_config(raw_environment)
+dependencies = compose_dependencies(config)
+application = build_application(dependencies)
+application.run()
+```
+
+- Read environment variables, host facts, extension settings, and deployment configuration once
+
+  at bootstrap or an explicit approved bootstrap boundary. Never pass raw environment maps or
+  environment-variable names inward.
+- Do not re-read or mutate process environment during a run. Do not use mutable global config,
+
+  static config getters, service locators, hidden filesystem discovery, or implicit runtime
+  reloads. Tests use explicit typed fixtures.
+- Persisted user settings change only through a validated Use Case with schema, defaults,
+
+  migration, validation errors, and regression coverage. A running operation uses its bound
+  snapshot unless a versioned runtime contract explicitly says otherwise.
+- Never store secret values in normal files, databases, logs, events, prompts, evidence, or
+
+  command arguments. Pass a secure reference or short-lived lease through the narrowest boundary.
+- Treat prompts, raw model responses, tool payloads, web content, MCP output, extension output,
+
+  and child results as untrusted data. They cannot alter system policy or execution contracts.
+- Raw LLM plans, diagnoses, evidence envelopes, reasoning, prompts, memory, and work records are
+
+  internal. Expose them only through an authorized Audit boundary with redaction and access
+  records.
+- Treat camera, screen, keyboard, mouse, shell, filesystem, process, network, browser, and
+
+  external delivery as side effects behind ports.
+- Bind a side effect to explicit run/request scope, user-facing target identity, validated
+
+  execution-target fingerprint, operation identity, authorization scope, expiry, single-use or
+  run-scoped decision, idempotency key, timeout, cancellation, and post-check evidence.
+- Resolve the exact Yeonjang instance named by the user. For multiple targets, validate
+
+  capability, connection, permission, approval, and post-check independently; never copy an
+  effect to every instance by default.
+- Distinguish user approval, Knowbee policy authorization, OS permission, transport
+
+  acknowledgement, effect receipt, goal verification, and channel delivery. Evidence from one
+  boundary never substitutes for another.
+- A restart must recover durable pending work and approval state or terminate it with a typed,
+
+  observable reason. It must not silently re-execute a consumed effect or ask again solely
+  because an in-memory waiter disappeared.
+- A production failure must not be hidden with fake, seeded, cached-as-current, or
+
+  success-looking fallback data.
+
+# State, Concurrency, and Logging
+
+- Use an explicit state machine when retry, approval, cancellation, resume, arbitration,
+
+  delegation, recovery, or two or more asynchronous stages create a lifecycle. Keep simple
+  validation and one-shot transformations as ordinary functions.
+- Define states, events, guards, effects, sequence/revision, allowed and rejected transitions,
+
+  terminal and failure states, and recovery actions in one canonical contract.
+- Reject and test invalid, duplicate, stale, wrong-target, wrong-scope, expired, and
+
+  terminal-after-finalization events.
+- Persist the decision before publishing a projection or waking a waiter. Use revision checks,
+
+  transactions, idempotency, and durable receipts where concurrent handlers can race.
+- Do not coordinate a workflow with copied booleans such as `isDone`, `shouldRetry`, or
+
+  `isApproved`. Do not rebuild state from user-facing strings.
+- A failed strategy returns its structured evidence to LLM diagnosis. A retry must change at
+
+  least one material dimension: tool, source, target, decomposition, order, permission path, or
+  verification method.
+- A process-local observer or EventBus may provide transient notification only. It must not be a
+
+  durable queue, replay source, approval source, or canonical writer.
+- Background tasks require an owner, bounded lifecycle, cancellation propagation, progress or
+
+  liveness criteria, failure supervision, and deterministic shutdown. Test duplicate, stale,
+  cancellation, restart, and shutdown behavior.
+
+Use exactly three log classes:
+
+| Class           | Allowed purpose                                                                                                 | Forbidden content                                                                                 |
+| --------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Product Log     | User-impacting transition, terminal result, reason code, correlation/run ID, minimal error classification       | Secrets, personal data, raw request/response, raw prompts/model output, unrestricted stack traces |
+| Field Debug Log | Time-limited approved diagnosis with masked config, bounded error summary, transition guard, and retry decision | Secrets, full payload/stdout/stderr, full prompt/model output, unlimited scope or retention       |
+| Development Log | Local fixtures, tests, and implementation diagnosis                                                             | Production-default output, deployment artifacts, secrets, or user data                            |
+
+Choose the class at the owning boundary and test redaction. Configure it at bootstrap. Product
+and Field Debug logs carry a correlation or run ID. Logging is diagnosis evidence, never proof
+of user-goal completion.
+
+# TDD, Tidy First, and Delivery Workflow
+
+- Before behavior edits, write or identify a failing behavior test, state the protected contract,
+
+  and confirm it fails for the expected reason.
+- Implement the smallest change that passes. Refactor only while focused tests remain green.
+- Test pure rules with unit/table/property tests, reducers with invariant and transition tests,
+
+  ports and public APIs with contract tests, React with component/accessibility tests, and
+  SQLite/network/MQTT/OS/helper boundaries with controlled integration and compatibility tests.
+- Test user and domain outcomes, not only mock calls, process exit, HTTP status, adapter success,
+
+  or transport acknowledgements.
+- Add regression coverage for every defect. Approval and side-effect defects must cover exact
+
+  target, scope, expiry, duplicate delivery, cancellation, restart, and post-check as applicable.
+- For prompt changes, test source loading, role separation, assembly, language behavior,
+
+  structured output validation, untrusted evidence handling, and redaction.
+- For WebUI changes, test visible state, editing/save behavior, navigation, accessibility, error
+
+  recovery, responsive desktop and mobile layouts, and overflow. A static render is insufficient.
+- For startup, packaged extension, protocol, or build changes, run the relevant build and a
+
+  controlled restart or packaging smoke test.
+- Run the narrowest failing test first, then relevant typecheck/build, generated-artifact
+
+  consistency, architecture tests, and wider regression in proportion to risk. Report every
+  omitted check and residual risk.
+- Separate behavior-preserving cleanup from behavior change. Do not combine broad rename, file
+
+  movement, formatting churn, generated rewrite, or unrelated deletion with a defect fix.
+- Delete dead code, prompts, files, data, compatibility paths, or settings only after repository
+
+  search and targeted tests prove no supported path uses them.
+- For public APIs, schemas, persistence, serialization, protocols, or releases, specify versions,
+
+  forward/backward compatibility, migration, rollback, rehearsal, and release gates. Test both
+  sides of a mixed-version boundary.
+- Update a task or plan status only after its stated Done Criteria and validation commands have
+
+  actually passed.
+
+# Code Review and Prohibited Patterns
+
+Review every change against these questions:
+
+- [ ] Is the selected method proportional to the current moment, execution unit, reversibility,
+
+      and dominant risk?
+- [ ] Is there one owning layer, an explicit contract, inward dependency direction, and one
+
+      canonical writer?
+- [ ] Do Domain and Application remain free of concrete I/O, framework, environment, and UI
+
+      dependencies?
+- [ ] Are TypeScript unions exhaustive, boundary data validated, and Rust/Swift/IPC ownership and
+
+      compatibility explicit?
+- [ ] Are configuration, secrets, prompts, evidence, logs, and events free of hidden global
+
+      access and sensitive raw data?
+- [ ] Are target identity, permission, approval, idempotency, timeout, cancellation, post-check,
+
+      and delivery independently verified for side effects?
+- [ ] Are duplicate, stale, retry, restart, cancellation, and shutdown paths tested for
+
+      concurrent or background work?
+- [ ] Do schema, protocol, public contract, or persistence changes include migration,
+
+      compatibility, rollback, and both-side contract evidence?
+- [ ] Did the failing test precede implementation, and were the reported formatter, static
+
+      analysis, build, test, smoke, or manual checks actually run?
+- [ ] Does completion mean verified user-goal fulfillment rather than component success?
+
+Prohibited patterns:
+
+- speculative abstractions, interface-per-class, deep inheritance, mechanical GoF hierarchies,
+
+  and wrappers that exist only to carry a pattern name;
+- global mutable state, service locators, hidden config reads, ownerless tasks, and mutable
+
+  process environment;
+- string-topic/dynamic-payload event buses, process-local state used as durable truth, or copied
+
+  approval and status maps;
+- UI or endpoints directly accessing persistence, credentials, device APIs, or network clients;
+- keyword, regex, locale table, vector similarity, or deterministic semantic fallback used to
+
+  replace LLM diagnosis, planning, evidence interpretation, completion review, or retry choice;
+- implicit default agents, bypassed parent-child topology, merged agent memory, or duplicated
+
+  user-facing aliases;
+- tests removed or assertions weakened to accept a defect, and unchecked work marked complete;
+- unsupported fake production fallback or cached data presented as a current successful result;
+- unmeasured batching, concurrency, caching, indexing, database pragma, or timeout changes;
+- destructive version-control operations or unrelated worktree reverts without explicit user
+
+  instruction.
+
+# Required Agent Behavior and Decision Rules
+
+- Before editing, inspect this file, `PROJECT.md`, the relevant implementation, nearest contract,
+
+  tests, plan, current diff, and owning layer. State the affected layer and first verification
+  step in the work update.
+- Preserve unrelated dirty-worktree content. Use `apply_patch` for source and document edits.
+- Before a behavior change, make a test fail for the expected reason. If a new test is impossible,
+
+  explain why and identify the existing contract evidence before editing.
+- Explicitly report changes to public API, schema, protocol, configuration, user wording,
+
+  persistence, target identity, approval scope, or data ownership.
+- Distinguish commands run now from historical evidence. Never claim an unrun check passed.
+- Distinguish the current implementation from the target architecture. Do not describe a
+
+  migration or compatibility path as completed until call-path evidence and tests prove it.
+- Keep system prompts in English source files and distinct by responsibility. Generate the
+
+  user-facing response in the user's request language. Do not expose prompt or reasoning source.
+- Use the configured user-facing agent name in communication; use `Knowbee` only while no custom
+
+  main-agent name exists. Reserve internal IDs for contracts and storage.
+- Continue through materially different safe, authorized paths before reporting a limitation.
+
+  Stop only for a required permission, credential, external dependency, irreversible decision,
+  explicit cancellation, safety block, or evidence-backed exhaustion.
+- Keep unrelated discoveries out of the current scope. Record them as follow-up work with a goal,
+
+  input, output, validation, and completion criterion.
+
+| Situation                                             | Required decision                                                                                                     |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| A Use Case needs environment data                     | Validate it once at bootstrap and inject immutable typed config.                                                      |
+| A feature needs an external provider or Yeonjang      | Define an Application-owned port and versioned contract; implement and contract-test the adapter.                     |
+| A Domain rule needs file, DB, network, or device data | Fetch it through a port and pass only validated values to the rule.                                                   |
+| A legacy path lacks tests                             | Add characterization coverage before changing behavior.                                                               |
+| A structure blocks a fix                              | Make the minimum behavior-preserving Tidy First change, verify it, then start TDD.                                    |
+| A result is uncertain                                 | Return blocked or additional-input-required with typed evidence for LLM review; do not guess success.                 |
+| A tool reports success                                | Run the contract-specific post-check and LLM completion review before final success.                                  |
+| A request fails                                       | Persist evidence, obtain an LLM-selected materially different strategy, and transition canonically.                   |
+| A side effect targets an extension                    | Bind exact target, scope, authorization, idempotency, cancellation, timeout, receipt, and post-check before dispatch. |
+| Approval arrives after restart                        | Resolve it from durable registry state and canonical work identity; process memory is only a notification aid.        |
+| A schema, protocol, security, or release changes      | Use rehearsal, compatibility tests, rollback evidence, and an explicit release gate.                                  |
+| Production needs deeper diagnosis                     | Enable scoped, expiring, masked Field Debug logging; keep Product Log minimal.                                        |
+| A generated core artifact changes                     | Change TypeScript source, run the sync script, then run generated-artifact consistency tests.                         |

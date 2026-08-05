@@ -1,5 +1,5 @@
 import type { SubAgentResultReview } from "../agent/sub-agent-result-review.js";
-import type { DataExchangePackage, ExpectedOutputContract, FeedbackRequest, FeedbackTargetAgentPolicy, ResultReport, SubSessionContract } from "../contracts/sub-agent-orchestration.js";
+import type { DataExchangePackage, ExpectedOutputContract, FeedbackRequest, FeedbackTargetAgentPolicy, ResultReport, StructuredTaskScope, SubSessionContract } from "../contracts/sub-agent-orchestration.js";
 import { persistDataExchangePackage } from "../memory/isolation.js";
 import { type SubSessionFeedbackCycleDirective } from "../runs/review-cycle-pass.js";
 import type { RunSubSessionInput } from "./sub-session-runner.js";
@@ -30,9 +30,11 @@ export interface BuildFeedbackLoopPackageInput {
     expectedOutputs: ExpectedOutputContract[];
     targetAgentPolicy: FeedbackTargetAgentPolicy;
     targetAgentId?: string;
-    targetAgentNicknameSnapshot?: string;
+    targetAgentName?: string;
+    targetAgentNameSnapshot?: string;
     requestingAgentId?: string;
-    requestingAgentNicknameSnapshot?: string;
+    requestingAgentName?: string;
+    requestingAgentNameSnapshot?: string;
     parentRunId?: string;
     parentSessionId?: string;
     parentRequestId?: string;
@@ -54,14 +56,27 @@ export interface BuildRedelegatedSubSessionInput {
     sourceSubSession: SubSessionContract;
     feedbackRequest: FeedbackRequest;
     targetAgentId: string;
-    targetAgentDisplayName?: string;
-    targetAgentNickname?: string;
+    targetAgentName?: string;
+    targetAgentNameSnapshot?: string;
     subSessionId?: string;
     commandRequestId?: string;
+    redelegationAuthorizationReceiptId: string;
     idProvider?: () => string;
 }
+export declare function buildRedelegatedTaskScope(input: {
+    sourceSubSession: SubSessionContract;
+    feedbackRequest: FeedbackRequest;
+}): StructuredTaskScope;
 export declare function decideFeedbackLoopContinuation(input: {
     review: SubAgentResultReview;
+    retryCount: number;
+    retryLimit: number;
+    currentStrategyFingerprint?: string;
+    previousAttempts?: Array<{
+        normalizedFailureKey: string;
+        strategyFingerprint: string;
+    }>;
+    /** @deprecated Diagnostic compatibility only; failure identity alone cannot prove repetition. */
     previousFailureKeys?: string[];
 }): FeedbackLoopContinuationDecision;
 export declare function validateRedelegationTarget(input: RedelegationTargetValidationInput): RedelegationTargetValidationResult;

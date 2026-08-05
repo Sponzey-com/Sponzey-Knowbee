@@ -6,6 +6,7 @@ import type {
   SkillMcpAllowlist,
   SubAgentConfig,
 } from "../../../core/src/contracts/sub-agent-orchestration.js"
+import { canonicalizeLegacyAgentIdentity } from "../../../core/src/adapters/legacy-agent-identity.js"
 import {
   type SubAgentSettingsValidationIssue,
   type UpdateSubAgentCapabilityPolicyCommand,
@@ -30,6 +31,7 @@ import type {
 } from "../contracts/setup"
 import type { UiLanguage } from "../stores/uiLanguage"
 import { pickUiText } from "../stores/uiLanguage"
+import { describeMcpConnectionTarget, formatExternalToolDisplayName } from "./mcp-display"
 
 export type {
   UpdateSubAgentIdentityCommand,
@@ -56,7 +58,7 @@ export interface SubAgentAdvancedSettingsView {
   selectedAgent: SubAgentAdvancedDetailView | null
   selectedAgentId: string | null
   emptyState: {
-    kind: "single_knowbee" | "orchestration_empty" | "filtered_empty" | "none"
+    kind: "direct_main_agent" | "orchestration_empty" | "filtered_empty" | "none"
     title: string
     message: string
     ctaLabel: string
@@ -85,8 +87,7 @@ export interface SubAgentAdvancedGlobalPolicyView {
 
 export interface SubAgentAdvancedListRowView {
   agentId: string
-  displayName: string
-  nickname: string
+  agentName: string
   role: string
   lifecycleState: SetupSubAgentDraftItem["status"]
   lifecycleLabel: string
@@ -111,8 +112,7 @@ export interface SubAgentAdvancedDetailSectionView {
 
 export interface SubAgentAdvancedDetailView {
   agentId: string
-  displayName: string
-  nickname: string
+  agentName: string
   role: string
   description: string
   lifecycleLabel: string
@@ -130,13 +130,11 @@ export interface SubAgentAdvancedDetailView {
 }
 
 export interface SubAgentAdvancedIdentityView {
-  displayName: string
-  nickname: string
+  agentName: string
   role: string
   description: string
   parentLabel: string
   attributionLabel: string
-  internalDebugId: string
   rootReadOnly: boolean
   warnings: string[]
   errors: string[]
@@ -280,8 +278,7 @@ export interface SubAgentAdvancedPermissionPolicyView {
 
 export interface SubAgentAdvancedDelegationChildView {
   agentId: string
-  displayName: string
-  nickname: string
+  agentName: string
   role: string
   readinessState: "ready" | "needs_attention" | "disabled"
   readinessLabel: string
@@ -328,6 +325,7 @@ export interface SubAgentAdvancedMonitoringTraceItemView {
   summary: string
   reason: string
   reviewStatus: SetupSubAgentMonitoringReviewStatus | ""
+  reviewStatusLabel: string
   quality: SetupSubAgentMonitoringQuality | ""
   qualityLabel: string
   latestResultSummary: string
@@ -380,11 +378,7 @@ export interface SubAgentAdvancedMutationResult {
 }
 
 const CONTRACT_SCHEMA_VERSION = 1 as const
-const rootAgent = {
-  agentId: "agent:knowbee",
-  displayName: "Knowbee",
-  nickname: "Knowbee",
-}
+const ROOT_AGENT_ID = "agent:knowbee"
 
 const emptyAllowlist: SkillMcpAllowlist = {
   enabledSkillIds: [],
@@ -488,10 +482,10 @@ const capabilityCatalog: Array<{
   },
   {
     id: "capability:network_mcp",
-    labelKo: "네트워크/MCP 접근",
-    labelEn: "Network/MCP access",
-    descriptionKo: "외부 네트워크와 MCP 호출",
-    descriptionEn: "External network and MCP calls",
+    labelKo: "네트워크/외부 기능 접근",
+    labelEn: "Network/external feature access",
+    descriptionKo: "외부 네트워크와 외부 기능 호출",
+    descriptionEn: "External network and external feature calls",
     riskLabel: "external",
   },
 ]
@@ -616,48 +610,52 @@ function buildGlobalPolicy(
   language: UiLanguage,
 ): SubAgentAdvancedGlobalPolicyView {
   const enabledBackends = draft.aiBackends.filter((backend) => backend.enabled)
-  const defaultBackend = enabledBackends[0] ?? draft.aiBackends[0]
   const affectedAgentCount = activeItems.length
   const overriddenAgentCount = activeItems.filter(
     (item) => item.modelPolicy?.mode === "override",
   ).length
   const inheritedAgentCount = affectedAgentCount - overriddenAgentCount
-  const defaultModelLabel = defaultBackend
-    ? `${defaultBackend.label} / ${defaultBackend.defaultModel || pickUiText(language, "모델 미지정", "No model")}`
-    : pickUiText(language, "기본 모델 없음", "No default model")
+  const defaultModelLabel = defaultModelStatusLabel(draft, language)
   const enabledSkillCount = draft.skills.items.filter((item) => item.enabled).length
   const enabledMcpCount = draft.mcp.servers.filter((server) => server.enabled).length
+  const rootAgentLabel = rootAgentRefForDraft(draft, language).agentName
 
   return {
-    rootAgentLabel: "Knowbee",
+    rootAgentLabel,
     rootAgentNotice: pickUiText(
       language,
-      "Knowbee는 메인 agent입니다. 이 화면에서는 일반 서브 에이전트 전용 설정만 편집합니다.",
-      "Knowbee is the main agent. This screen edits sub-agent-only settings.",
+      `${rootAgentLabel}는 이 화면에서 편집하지 않습니다. 이 화면에서는 일반 서브 에이전트 전용 설정만 편집합니다.`,
+      `${rootAgentLabel} is not edited on this screen. This screen edits sub-agent-only settings.`,
     ),
     orchestrationModeLabel: draft.subAgents?.orchestrationEnabled
       ? pickUiText(language, "오케스트레이션", "Orchestration")
-      : pickUiText(language, "단일 노비", "Single Knowbee"),
-    featureFlagLabel: draft.subAgents?.orchestrationEnabled ? "on" : "off",
+      : pickUiText(language, "메인 에이전트 직접 처리", "Main-agent direct handling"),
+    featureFlagLabel: draft.subAgents?.orchestrationEnabled
+      ? pickUiText(language, "사용 중", "On")
+      : pickUiText(language, "꺼짐", "Off"),
     defaultModelLabel,
-    defaultMemoryLabel: pickUiText(language, "agent별 독립 메모리", "Private memory per agent"),
+    defaultMemoryLabel: pickUiText(
+      language,
+      "서브 에이전트별 독립 메모리",
+      "Private memory per sub-agent",
+    ),
     defaultPermissionLabel: pickUiText(language, "안전 기본 권한", "Safe default permissions"),
     commonSkillMcpLabel: pickUiText(
       language,
-      `Skill ${enabledSkillCount}개 / MCP ${enabledMcpCount}개`,
-      `${enabledSkillCount} skills / ${enabledMcpCount} MCP`,
+      `작업 능력 ${enabledSkillCount}개 / 외부 기능 ${enabledMcpCount}개`,
+      `${enabledSkillCount} work abilities / ${enabledMcpCount} external feature connections`,
     ),
     affectedAgentCount,
     inheritedAgentCount,
     overriddenAgentCount,
     catalogSummary: pickUiText(
       language,
-      "공통 catalog는 여기에서 요약만 보고, agent별 binding은 상세에서 조정합니다.",
+      "공통 목록은 여기에서 요약만 보고, 서브 에이전트별 연결은 상세에서 조정합니다.",
       "The common catalog is summarized here; per-agent bindings are adjusted in detail.",
     ),
     impactSummary: pickUiText(
       language,
-      `공통 정책 변경 시 ${affectedAgentCount}개 agent가 영향을 받습니다.`,
+      `공통 정책 변경 시 ${affectedAgentCount}개 서브 에이전트가 영향을 받습니다.`,
       `${affectedAgentCount} agents inherit global policy changes.`,
     ),
   }
@@ -672,6 +670,7 @@ function rowForItem(input: {
   now: number
 }): SubAgentAdvancedListRowView {
   const disabled = input.item.status === "disabled" || input.item.status === "degraded"
+  const agentName = displayAgentNameForItem(input.item, input.language)
   const readinessState: SubAgentAdvancedListRowView["readinessState"] = disabled
     ? "needs_attention"
     : input.runtimeActive
@@ -679,8 +678,7 @@ function rowForItem(input: {
       : "runtime_pending"
   return {
     agentId: input.item.agentId,
-    displayName: input.item.displayName,
-    nickname: input.item.nickname || input.item.displayName,
+    agentName,
     role: input.item.role,
     lifecycleState: input.item.status,
     lifecycleLabel: lifecycleLabel(input.item.status, input.language),
@@ -696,8 +694,12 @@ function rowForItem(input: {
   }
 }
 
-function attributionLabelForItem(item: SetupSubAgentDraftItem): string {
-  return item.nickname.trim() || item.displayName.trim()
+function agentNameForItem(item: SetupSubAgentDraftItem): string {
+  return item.agentName?.trim() ?? ""
+}
+
+function displayAgentNameForItem(item: SetupSubAgentDraftItem, language: UiLanguage): string {
+  return agentNameForItem(item) || pickUiText(language, "이름 미정", "Unnamed agent")
 }
 
 function identityForItem(
@@ -706,26 +708,18 @@ function identityForItem(
   draft: SetupDraft,
   language: UiLanguage,
 ): SubAgentAdvancedIdentityView {
-  const attributionLabel = attributionLabelForItem(item)
+  const agentName = agentNameForItem(item)
   return {
-    displayName: item.displayName,
-    nickname: item.nickname,
+    agentName,
     role: item.role,
     description: item.description,
     parentLabel,
-    attributionLabel,
-    internalDebugId: item.agentId,
+    attributionLabel: agentName,
     rootReadOnly: false,
     warnings: identityWarningsForItem(item, draft, language),
-    errors: attributionLabel
+    errors: agentName
       ? []
-      : [
-          pickUiText(
-            language,
-            "표시 이름 또는 별명이 필요합니다.",
-            "A display name or nickname is required.",
-          ),
-        ],
+      : [pickUiText(language, "에이전트 이름이 필요합니다.", "Agent name is required.")],
   }
 }
 
@@ -758,32 +752,33 @@ function identityWarningsForItem(
       ),
     )
   }
-  const normalizedNickname = normalizeLabel(item.nickname)
+  const normalizedAgentName = normalizeLabel(agentNameForItem(item))
   const duplicate = (draft.subAgents?.items ?? []).find(
     (candidate) =>
       candidate.agentId !== item.agentId &&
       candidate.status !== "archived" &&
-      normalizeLabel(candidate.nickname) === normalizedNickname &&
-      normalizedNickname.length > 0,
+      normalizeLabel(agentNameForItem(candidate)) === normalizedAgentName &&
+      normalizedAgentName.length > 0,
   )
   if (duplicate) {
     warnings.push(
       pickUiText(
         language,
-        "별명이 다른 active agent와 중복됩니다.",
-        "Nickname duplicates another active agent.",
+        "에이전트 이름이 다른 active agent와 중복됩니다.",
+        "Agent name duplicates another active agent.",
       ),
     )
   }
-  if (
-    normalizedNickname === normalizeLabel(rootAgent.displayName) ||
-    normalizedNickname === normalizeLabel(rootAgent.nickname)
-  ) {
+  const rootAgentRef = rootAgentRefForDraft(draft, language)
+  const reservedNames = new Set(
+    ["knowbee", "노비", normalizeLabel(rootAgentRef.agentName)].filter(Boolean),
+  )
+  if (reservedNames.has(normalizedAgentName)) {
     warnings.push(
       pickUiText(
         language,
-        "Knowbee 이름은 메인 agent 전용입니다.",
-        "The Knowbee name is reserved for the main agent.",
+        "메인 에이전트 이름은 서브 에이전트가 사용할 수 없습니다.",
+        "The main-agent name is reserved and cannot be used by a sub-agent.",
       ),
     )
   }
@@ -798,7 +793,7 @@ function modelPolicyForItem(
   const catalog = modelCatalogFromDraft(draft, language)
   const modelPolicy =
     item.modelPolicy?.mode === "override" ? item.modelPolicy : { mode: "inherit" as const }
-  const inheritedModelLabel = defaultModelLabel(draft, language)
+  const inheritedModelLabel = defaultModelStatusLabel(draft, language)
   const providerId = modelPolicy.mode === "override" ? (modelPolicy.providerId?.trim() ?? "") : ""
   const modelId = modelPolicy.mode === "override" ? (modelPolicy.modelId?.trim() ?? "") : ""
   const fallbackModelId =
@@ -820,7 +815,7 @@ function modelPolicyForItem(
       ? [
           pickUiText(
             language,
-            "선택한 provider가 현재 사용할 수 없습니다.",
+            "선택한 제공자를 현재 사용할 수 없습니다.",
             "Selected provider is unavailable.",
           ),
         ]
@@ -829,7 +824,7 @@ function modelPolicyForItem(
       ? [
           pickUiText(
             language,
-            "fallback provider가 현재 사용할 수 없습니다.",
+            "대체 모델 제공자를 현재 사용할 수 없습니다.",
             "Fallback provider is unavailable.",
           ),
         ]
@@ -840,7 +835,7 @@ function modelPolicyForItem(
       ? [
           pickUiText(
             language,
-            "override에는 provider와 model이 필요합니다.",
+            "개별 설정에는 제공자와 모델이 필요합니다.",
             "Override requires provider and model.",
           ),
         ]
@@ -849,7 +844,7 @@ function modelPolicyForItem(
       ? [
           pickUiText(
             language,
-            "fallback 모델은 primary 모델과 달라야 합니다.",
+            "대체 모델은 기본 모델과 달라야 합니다.",
             "Fallback model must differ from primary model.",
           ),
         ]
@@ -858,7 +853,7 @@ function modelPolicyForItem(
       ? [
           pickUiText(
             language,
-            "선택한 모델이 catalog에 없습니다.",
+            "선택한 모델이 공통 목록에 없습니다.",
             "Selected model is not in the catalog.",
           ),
         ]
@@ -867,7 +862,7 @@ function modelPolicyForItem(
       ? [
           pickUiText(
             language,
-            "fallback 모델이 catalog에 없습니다.",
+            "대체 모델이 공통 목록에 없습니다.",
             "Fallback model is not in the catalog.",
           ),
         ]
@@ -881,15 +876,17 @@ function modelPolicyForItem(
     inheritedModelLabel,
     effectiveModelLabel:
       modelPolicy.mode === "override"
-        ? (selected?.label ?? `${providerId || "-"} / ${modelId || "-"}`)
+        ? selected
+          ? pickUiText(language, "개별 AI 모델 설정됨", "Custom AI model configured")
+          : pickUiText(language, "개별 AI 모델 확인 필요", "Custom AI model needs check")
         : inheritedModelLabel,
     badges: [
       modelPolicy.mode === "override"
-        ? pickUiText(language, "overridden", "overridden")
-        : pickUiText(language, "inherited", "inherited"),
-      ...(warnings.length > 0 ? [pickUiText(language, "unavailable", "unavailable")] : []),
+        ? pickUiText(language, "개별 설정", "overridden")
+        : pickUiText(language, "공통 상속", "inherited"),
+      ...(warnings.length > 0 ? [pickUiText(language, "사용 불가", "unavailable")] : []),
       ...(modelPolicy.mode === "override"
-        ? [pickUiText(language, "publish required", "publish required")]
+        ? [pickUiText(language, "활성화 필요", "publish required")]
         : []),
     ],
     options: catalog.options,
@@ -949,13 +946,12 @@ function connectionStateLabel(
   state: SubAgentAdvancedConnectionState,
   language: UiLanguage,
 ): string {
-  if (state === "connected") return pickUiText(language, "connected", "connected")
-  if (state === "connecting") return pickUiText(language, "connecting", "connecting")
-  if (state === "degraded") return pickUiText(language, "degraded", "degraded")
-  if (state === "permission_required")
-    return pickUiText(language, "approval required", "approval required")
-  if (state === "unavailable") return pickUiText(language, "unavailable", "unavailable")
-  return pickUiText(language, "disconnected", "disconnected")
+  if (state === "connected") return pickUiText(language, "연결됨", "connected")
+  if (state === "connecting") return pickUiText(language, "연결 중", "connecting")
+  if (state === "degraded") return pickUiText(language, "확인 필요", "degraded")
+  if (state === "permission_required") return pickUiText(language, "승인 필요", "approval required")
+  if (state === "unavailable") return pickUiText(language, "사용 불가", "unavailable")
+  return pickUiText(language, "연결 안 됨", "disconnected")
 }
 
 function redactedDiagnosticText(value: string | undefined, language: UiLanguage): string {
@@ -965,6 +961,32 @@ function redactedDiagnosticText(value: string | undefined, language: UiLanguage)
     .replace(/sk-[A-Za-z0-9_-]{8,}/gu, "[secret redacted]")
     .replace(/(?:api[_-]?key|token|password|secret)=\S+/giu, "$1=[redacted]")
     .replace(/Bearer\s+[A-Za-z0-9._-]+/giu, "Bearer [redacted]")
+}
+
+function textForLanguage(language: UiLanguage): (ko: string, en: string) => string {
+  return (ko, en) => pickUiText(language, ko, en)
+}
+
+function numberedCatalogLabel(
+  value: string | undefined,
+  fallbackKo: string,
+  fallbackEn: string,
+  index: number,
+  language: UiLanguage,
+): string {
+  const label = value?.trim()
+  if (label) return label
+  return pickUiText(language, `${fallbackKo} ${index + 1}`, `${fallbackEn} ${index + 1}`)
+}
+
+function skillSourceDisplayLabel(source: string, language: UiLanguage): string {
+  if (source === "builtin") return pickUiText(language, "기본 제공", "Built in")
+  if (source === "local") return pickUiText(language, "로컬 추가", "Local")
+  return pickUiText(language, "출처 확인 필요", "Source needs check")
+}
+
+function externalToolDisplayLabel(toolName: string, index: number, language: UiLanguage): string {
+  return formatExternalToolDisplayName(toolName, index + 1, textForLanguage(language))
 }
 
 function skillMcpViewForItem(
@@ -979,7 +1001,7 @@ function skillMcpViewForItem(
   const recommendedSkillIds = new Set(bindings.recommendedSkillIds)
   const recommendedMcpServerIds = new Set(bindings.recommendedMcpServerIds)
   const connectionStateByCatalogId = bindings.connectionStateByCatalogId ?? {}
-  const skillItems: SubAgentAdvancedSkillMcpCatalogItemView[] = draft.skills.items.map((skill) => {
+  const skillItems: SubAgentAdvancedSkillMcpCatalogItemView[] = draft.skills.items.map((skill, index) => {
     const available = skill.enabled && skill.status === "ready"
     const enabledForAgent = enabledSkillIds.has(skill.id)
     const connectionState = connectionStateForCatalogItem({
@@ -993,9 +1015,9 @@ function skillMcpViewForItem(
     return {
       id: skill.id,
       kind: "skill",
-      label: skill.label || skill.id,
+      label: numberedCatalogLabel(skill.label, "작업 능력", "Work ability", index, language),
       description: skill.description || pickUiText(language, "설명 없음", "No description"),
-      sourceLabel: skill.source,
+      sourceLabel: skillSourceDisplayLabel(skill.source, language),
       available,
       required: skill.required,
       enabledForAgent,
@@ -1020,7 +1042,7 @@ function skillMcpViewForItem(
     }
   })
   const mcpServerItems: SubAgentAdvancedSkillMcpCatalogItemView[] = draft.mcp.servers.map(
-    (server) => {
+    (server, index) => {
       const available = server.enabled && server.status === "ready"
       const enabledForAgent = enabledMcpServerIds.has(server.id)
       const connectionState = connectionStateForCatalogItem({
@@ -1034,12 +1056,12 @@ function skillMcpViewForItem(
       return {
         id: server.id,
         kind: "mcp_server",
-        label: server.name || server.id,
+        label: numberedCatalogLabel(server.name, "외부 기능 연결", "External feature connection", index, language),
         description:
           server.tools.length > 0
-            ? pickUiText(language, `도구 ${server.tools.length}개`, `${server.tools.length} tools`)
-            : pickUiText(language, "등록된 tool 없음", "No tools registered"),
-        sourceLabel: server.transport,
+            ? pickUiText(language, `외부 도구 ${server.tools.length}개`, `${server.tools.length} external tools`)
+            : pickUiText(language, "등록된 외부 도구 없음", "No external tools registered"),
+        sourceLabel: describeMcpConnectionTarget(server.transport, textForLanguage(language)),
         available,
         required: server.required,
         enabledForAgent,
@@ -1058,8 +1080,9 @@ function skillMcpViewForItem(
     },
   )
   const mcpToolItems: SubAgentAdvancedSkillMcpCatalogItemView[] = draft.mcp.servers.flatMap(
-    (server) =>
-      server.tools.map((toolName) => {
+    (server, serverIndex) => {
+      const serverLabel = numberedCatalogLabel(server.name, "외부 기능 연결", "External feature connection", serverIndex, language)
+      return server.tools.map((toolName, toolIndex) => {
         const parentEnabled = enabledMcpServerIds.has(server.id)
         const disabled = disabledToolNames.has(toolName)
         const available = server.enabled && server.status === "ready"
@@ -1075,13 +1098,13 @@ function skillMcpViewForItem(
           id: toolName,
           kind: "mcp_tool" as const,
           parentId: server.id,
-          label: toolName,
+          label: externalToolDisplayLabel(toolName, toolIndex, language),
           description: pickUiText(
             language,
-            `${server.name || server.id} 서버의 tool`,
-            `Tool from ${server.name || server.id}`,
+            `${serverLabel}의 외부 도구`,
+            `External tool from ${serverLabel}`,
           ),
-          sourceLabel: server.name || server.id,
+          sourceLabel: serverLabel,
           available,
           required: false,
           enabledForAgent: parentEnabled && !disabled,
@@ -1094,11 +1117,12 @@ function skillMcpViewForItem(
             ? ""
             : pickUiText(
                 language,
-                "상위 MCP 서버가 agent에 enabled 되어야 합니다.",
-                "Enable the parent MCP server for this agent first.",
+                "상위 외부 기능 연결이 이 서브 에이전트에 활성화되어야 합니다.",
+                "Enable the parent external feature connection for this agent first.",
               ),
         }
-      }),
+      })
+    },
   )
   const items = [...skillItems, ...mcpServerItems, ...mcpToolItems]
   const unavailableCount = items.filter((catalogItem) => !catalogItem.available).length
@@ -1112,8 +1136,8 @@ function skillMcpViewForItem(
   return {
     commonCatalogLabel: pickUiText(
       language,
-      `공통 catalog Skill ${skillItems.length}개 / MCP ${mcpServerItems.length}개`,
-      `Common catalog: ${skillItems.length} skills / ${mcpServerItems.length} MCP`,
+      `공통 목록 작업 능력 ${skillItems.length}개 / 외부 기능 ${mcpServerItems.length}개`,
+      `Common list: ${skillItems.length} work abilities / ${mcpServerItems.length} external feature connections`,
     ),
     enabledSkillIds: bindings.enabledSkillIds,
     enabledMcpServerIds: bindings.enabledMcpServerIds,
@@ -1132,7 +1156,7 @@ function skillMcpViewForItem(
         ? [
             pickUiText(
               language,
-              "공통 catalog에 사용할 수 없는 항목이 있습니다.",
+              "공통 목록에 사용할 수 없는 항목이 있습니다.",
               "Some common catalog items are unavailable.",
             ),
           ]
@@ -1141,8 +1165,8 @@ function skillMcpViewForItem(
         ? [
             pickUiText(
               language,
-              "선택 agent의 binding connection 상태를 확인해야 합니다.",
-              "Check this agent's binding connection state.",
+              "선택한 서브 에이전트의 작업 능력/외부 기능 연결 상태를 확인해야 합니다.",
+              "Check this agent's work ability/external feature connection state.",
             ),
           ]
         : []),
@@ -1175,10 +1199,12 @@ function defaultMemoryPolicyForItem(
   }
 }
 
-function displayLabelForAgentId(agentId: string, draft: SetupDraft): string {
-  if (agentId === rootAgent.agentId) return rootAgent.nickname
+function displayLabelForAgentId(agentId: string, draft: SetupDraft, language: UiLanguage): string {
+  if (agentId === ROOT_AGENT_ID) return rootAgentRefForDraft(draft, language).agentName
   const item = draft.subAgents?.items.find((candidate) => candidate.agentId === agentId)
-  return item?.nickname?.trim() || item?.displayName?.trim() || agentId
+  return item
+    ? displayAgentNameForItem(item, language)
+    : pickUiText(language, "알 수 없는 서브 에이전트", "Unknown sub-agent")
 }
 
 function memoryPolicyViewForItem(
@@ -1207,7 +1233,7 @@ function memoryPolicyViewForItem(
       ? [
           pickUiText(
             language,
-            "다른 agent memory scope가 섞인 설정은 저장할 수 없습니다.",
+            "다른 서브 에이전트 메모리 범위가 섞인 설정은 저장할 수 없습니다.",
             "Mixed agent memory scopes cannot be saved.",
           ),
         ]
@@ -1216,7 +1242,7 @@ function memoryPolicyViewForItem(
       ? [
           pickUiText(
             language,
-            "compact threshold가 raw window보다 작거나 같습니다.",
+            "압축 기준이 원본 유지 범위보다 작거나 같습니다.",
             "Compact threshold is not larger than the raw window.",
           ),
         ]
@@ -1224,7 +1250,7 @@ function memoryPolicyViewForItem(
   ]
   return {
     owner: policy.owner,
-    ownerLabel: displayLabelForAgentId(policy.owner.ownerId, draft),
+    ownerLabel: displayLabelForAgentId(policy.owner.ownerId, draft, language),
     visibility: policy.visibility,
     readScopes: policy.readScopes,
     writeScope: policy.writeScope,
@@ -1245,22 +1271,14 @@ function memoryPolicyViewForItem(
     warnings,
     errors: isolationState === "degraded" ? warnings : [],
     exchangePolicyItems: [
+      pickUiText(language, "상위->하위 전달 캡슐 허용", "Parent to child handoff capsule allowed"),
+      pickUiText(language, "하위->상위 결과 캡슐 허용", "Child to parent result capsule allowed"),
       pickUiText(
         language,
-        "parent -> child handoff capsule 허용",
-        "Parent to child handoff capsule allowed",
-      ),
-      pickUiText(
-        language,
-        "child -> parent result capsule 허용",
-        "Child to parent result capsule allowed",
-      ),
-      pickUiText(
-        language,
-        "sibling direct memory exchange 금지",
+        "동일 상위의 하위끼리 직접 메모리 교환 금지",
         "Sibling direct memory exchange is blocked",
       ),
-      pickUiText(language, "명시적 exchange package 필요", "Explicit exchange package is required"),
+      pickUiText(language, "명시적 교환 패키지 필요", "Explicit exchange package is required"),
     ],
   }
 }
@@ -1269,13 +1287,63 @@ function memoryIsolationLabel(
   state: SubAgentAdvancedMemoryIsolationState,
   language: UiLanguage,
 ): string {
-  if (state === "handoff_allowed") return pickUiText(language, "handoff allowed", "handoff allowed")
+  if (state === "handoff_allowed") return pickUiText(language, "전달 허용", "handoff allowed")
   if (state === "shared_summary_allowed")
-    return pickUiText(language, "shared summary allowed", "shared summary allowed")
+    return pickUiText(language, "요약 공유 허용", "shared summary allowed")
   if (state === "unsafe_mixed_blocked")
-    return pickUiText(language, "unsafe mixed blocked", "unsafe mixed blocked")
-  if (state === "degraded") return pickUiText(language, "degraded", "degraded")
-  return pickUiText(language, "isolated", "isolated")
+    return pickUiText(language, "혼합 차단", "unsafe mixed blocked")
+  if (state === "degraded") return pickUiText(language, "확인 필요", "degraded")
+  return pickUiText(language, "분리됨", "isolated")
+}
+
+function riskLevelLabel(level: string, language: UiLanguage): string {
+  if (level === "safe") return pickUiText(language, "안전", "Safe")
+  if (level === "moderate") return pickUiText(language, "중간 위험", "Moderate risk")
+  if (level === "external") return pickUiText(language, "외부 접근", "External access")
+  if (level === "sensitive") return pickUiText(language, "민감", "Sensitive")
+  if (level === "dangerous") return pickUiText(language, "위험", "Dangerous")
+  return pickUiText(language, "확인 필요", "Needs review")
+}
+
+function approvalThresholdLabel(level: string, language: UiLanguage): string {
+  return pickUiText(language, `승인 기준 ${riskLevelLabel(level, language)}`, `Approval threshold: ${riskLevelLabel(level, language)}`)
+}
+
+function logVisibilityLabel(
+  visibility: SetupSubAgentMonitoringLogLevel | string,
+  language: UiLanguage,
+): string {
+  if (visibility === "debug") return pickUiText(language, "현장 확인 로그", "Field debug log")
+  if (visibility === "dev") return pickUiText(language, "개발 로그", "Development log")
+  return pickUiText(language, "제품 최소 로그", "Product log")
+}
+
+function memoryVisibilityLabel(
+  visibility: MemoryPolicy["visibility"],
+  language: UiLanguage,
+): string {
+  if (visibility === "private") return pickUiText(language, "개별 메모리", "Private memory")
+  if (visibility === "coordinator_visible")
+    return pickUiText(language, "상위 요약 공개", "Parent summary visible")
+  return pickUiText(language, "확인 필요", "Needs review")
+}
+
+function memoryRetentionLabel(
+  retention: MemoryPolicy["retentionPolicy"],
+  language: UiLanguage,
+): string {
+  if (retention === "short_term") return pickUiText(language, "단기 보관", "Short-term retention")
+  if (retention === "long_term") return pickUiText(language, "장기 보관", "Long-term retention")
+  return pickUiText(language, "확인 필요", "Needs review")
+}
+
+function capsuleModeLabel(
+  mode: SubAgentAdvancedMemoryPolicyView["capsuleMode"],
+  language: UiLanguage,
+): string {
+  if (mode === "session_compaction") return pickUiText(language, "대화 기록 압축", "Conversation history compression")
+  if (mode === "rolling_summary") return pickUiText(language, "누적 요약", "Rolling summary")
+  return pickUiText(language, "확인 필요", "Needs review")
 }
 
 function defaultPermissionProfile(profileId = "profile:advanced-safe"): PermissionProfile {
@@ -1375,7 +1443,7 @@ function permissionViewForItem(
     logVisibility: policy.logVisibility ?? "product",
     summary: pickUiText(
       language,
-      `allowed ${policy.allowedCapabilityIds.length}개 / approval ${policy.approvalRequiredCapabilityIds.length}개 / OS 승인 ${osPermissionRequiredCount}개`,
+      `허용 ${policy.allowedCapabilityIds.length}개 / 승인 필요 ${policy.approvalRequiredCapabilityIds.length}개 / OS 승인 ${osPermissionRequiredCount}개`,
       `${policy.allowedCapabilityIds.length} allowed / ${policy.approvalRequiredCapabilityIds.length} approval / ${osPermissionRequiredCount} OS permissions`,
     ),
     warnings: [
@@ -1418,7 +1486,7 @@ function defaultDelegationPolicyForItem(): NonNullable<SetupSubAgentDraftItem["d
 function directChildItems(parentAgentId: string, draft: SetupDraft): SetupSubAgentDraftItem[] {
   return (draft.subAgents?.items ?? [])
     .filter((candidate) => candidate.status !== "archived")
-    .filter((candidate) => (candidate.parentAgentId ?? rootAgent.agentId) === parentAgentId)
+    .filter((candidate) => (candidate.parentAgentId ?? ROOT_AGENT_ID) === parentAgentId)
 }
 
 function delegationViewForItem(
@@ -1433,8 +1501,7 @@ function delegationViewForItem(
     const disabled = child.status === "disabled" || child.status === "degraded"
     return {
       agentId: child.agentId,
-      displayName: child.displayName,
-      nickname: child.nickname || child.displayName,
+      agentName: displayAgentNameForItem(child, language),
       role: child.role,
       readinessState: disabled ? "disabled" : "ready",
       readinessLabel: disabled
@@ -1448,7 +1515,7 @@ function delegationViewForItem(
     return (
       !child ||
       child.status !== "enabled" ||
-      (child.parentAgentId ?? rootAgent.agentId) !== item.agentId
+      (child.parentAgentId ?? ROOT_AGENT_ID) !== item.agentId
     )
   }).length
   return {
@@ -1464,8 +1531,8 @@ function delegationViewForItem(
     blockedTargetCount,
     summary: pickUiText(
       language,
-      `direct child ${directChildren.length}개 / 위임 허용 ${policy.allowedChildAgentIds.length}개`,
-      `${directChildren.length} direct children / ${policy.allowedChildAgentIds.length} allowed`,
+      `직속 서브 에이전트 ${directChildren.length}개 / 위임 허용 ${policy.allowedChildAgentIds.length}개`,
+      `${directChildren.length} immediate sub-agents / ${policy.allowedChildAgentIds.length} allowed`,
     ),
     reviewPolicyLabel: policy.resultReviewRequired
       ? pickUiText(language, "결과 검토 후 최종 전달", "Review before final delivery")
@@ -1482,8 +1549,8 @@ function delegationViewForItem(
         ? [
             pickUiText(
               language,
-              "위임 대상 중 direct child가 아니거나 비활성인 agent가 있습니다.",
-              "Some delegation targets are not direct enabled children.",
+              "위임 대상 중 직속 서브 에이전트가 아니거나 비활성인 항목이 있습니다.",
+              "Some delegation targets are not immediate enabled sub-agents.",
             ),
           ]
         : []),
@@ -1491,7 +1558,7 @@ function delegationViewForItem(
         ? [
             pickUiText(
               language,
-              "child 결과는 부모 검토 없이 최종 전달되면 안 됩니다.",
+              "하위 결과는 상위 검토 없이 최종 전달되면 안 됩니다.",
               "Child results must not bypass parent review.",
             ),
           ]
@@ -1526,18 +1593,16 @@ function monitoringLabelForAgentId(
   language: UiLanguage,
 ): string {
   if (!agentId) return pickUiText(language, "대상 없음", "No target")
-  if (agentId === rootAgent.agentId) return rootAgent.nickname
+  if (agentId === ROOT_AGENT_ID) return rootAgentRefForDraft(draft, language).agentName
   const item = draft.subAgents?.items.find((candidate) => candidate.agentId === agentId)
-  return (
-    item?.nickname?.trim() ||
-    item?.displayName?.trim() ||
-    pickUiText(language, "알 수 없는 agent", "Unknown agent")
-  )
+  return item
+    ? displayAgentNameForItem(item, language)
+    : pickUiText(language, "알 수 없는 서브 에이전트", "Unknown agent")
 }
 
 function agentPathIds(agentId: string | undefined, draft: SetupDraft): string[] {
   if (!agentId) return []
-  if (agentId === rootAgent.agentId) return [rootAgent.agentId]
+  if (agentId === ROOT_AGENT_ID) return [ROOT_AGENT_ID]
   const byId = new Map((draft.subAgents?.items ?? []).map((item) => [item.agentId, item]))
   const path: string[] = []
   const seen = new Set<string>()
@@ -1545,11 +1610,11 @@ function agentPathIds(agentId: string | undefined, draft: SetupDraft): string[] 
   while (current && !seen.has(current)) {
     seen.add(current)
     path.unshift(current)
-    if (current === rootAgent.agentId) break
+    if (current === ROOT_AGENT_ID) break
     const item = byId.get(current)
-    current = item ? (item.parentAgentId ?? rootAgent.agentId) : undefined
+    current = item ? (item.parentAgentId ?? ROOT_AGENT_ID) : undefined
   }
-  if (path[0] !== rootAgent.agentId) path.unshift(rootAgent.agentId)
+  if (path[0] !== ROOT_AGENT_ID) path.unshift(ROOT_AGENT_ID)
   return path
 }
 
@@ -1597,6 +1662,9 @@ function redactedMonitoringText(
     .replace(/\b(api[_-]?key|token|password|secret)=\S+/giu, "$1=[redacted]")
     .replace(/Bearer\s+[A-Za-z0-9._-]+/giu, "Bearer [redacted]")
     .replace(/\b(?:agent|node|run|task|evt|trace):[A-Za-z0-9_.:-]+/giu, "[internal id]")
+    .replace(/\bdirect[- ]child\b/giu, pickUiText(language, "직속 서브 에이전트", "immediate sub-agent"))
+    .replace(/\bruntime active\b/giu, pickUiText(language, "실행 반영", "runtime active"))
+    .replace(/\battemptCount=(\d+)/giu, pickUiText(language, "시도=$1", "attemptCount=$1"))
     .replace(
       /\b(?:raw payload|raw tool input|raw tool output|raw screenshot binary|stack trace)\b/giu,
       pickUiText(language, "[진단 원문 숨김]", "[diagnostic redacted]"),
@@ -1639,8 +1707,8 @@ function monitoringKindLabel(kind: SetupSubAgentMonitoringEventKind, language: U
     child_accepted: pickUiText(language, "하위 수락", "Child accepted"),
     child_running: pickUiText(language, "하위 실행", "Child running"),
     child_result_returned: pickUiText(language, "하위 결과 반환", "Child result returned"),
-    parent_reviewing: pickUiText(language, "부모 검토", "Parent reviewing"),
-    parent_aggregating: pickUiText(language, "부모 취합", "Parent aggregating"),
+    parent_reviewing: pickUiText(language, "상위 검토", "Parent reviewing"),
+    parent_aggregating: pickUiText(language, "상위 취합", "Parent aggregating"),
     redelegation_planned: pickUiText(language, "재위임 계획", "Redelegation planned"),
     final_delivery_prepared: pickUiText(language, "최종 전달 준비", "Final delivery prepared"),
     completed: pickUiText(language, "완료", "Completed"),
@@ -1663,7 +1731,25 @@ function qualityLabel(
   if (quality === "permission_required")
     return pickUiText(language, "권한 필요", "Permission required")
   if (quality === "split_required") return pickUiText(language, "분리 필요", "Split required")
-  return pickUiText(language, "다른 하위 agent 필요", "Different child required")
+  return pickUiText(language, "다른 하위 서브 에이전트 필요", "Different child required")
+}
+
+function reviewStatusLabel(
+  reviewStatus: SetupSubAgentMonitoringReviewStatus | undefined,
+  language: UiLanguage,
+): string {
+  if (!reviewStatus) return ""
+  const labels: Record<SetupSubAgentMonitoringReviewStatus, string> = {
+    waiting_for_child_result: pickUiText(language, "하위 결과 대기", "Waiting for child result"),
+    reviewing_child_result: pickUiText(language, "하위 결과 검토", "Reviewing child result"),
+    accepted: pickUiText(language, "수락됨", "Accepted"),
+    needs_clarification: pickUiText(language, "명확화 필요", "Needs clarification"),
+    needs_redelegation: pickUiText(language, "재위임 필요", "Needs redelegation"),
+    aggregated: pickUiText(language, "취합됨", "Aggregated"),
+    final_ready: pickUiText(language, "최종 전달 준비", "Final delivery ready"),
+    returned_to_parent: pickUiText(language, "상위 반환", "Returned to parent"),
+  }
+  return labels[reviewStatus]
 }
 
 function redelegationSummaryForEvent(
@@ -1714,7 +1800,13 @@ function monitoringDebugLabel(
 ): string {
   if (logLevel === "product" || !event.debug) return ""
   return [
-    typeof event.debug.attemptCount === "number" ? `attempt ${event.debug.attemptCount}` : "",
+    typeof event.debug.attemptCount === "number"
+      ? pickUiText(
+          language,
+          `시도 ${event.debug.attemptCount}`,
+          `attempt ${event.debug.attemptCount}`,
+        )
+      : "",
     event.debug.internalTraceId
       ? redactedMonitoringText(event.debug.internalTraceId, language)
       : "",
@@ -1748,6 +1840,7 @@ function monitoringTraceItemForEvent(input: {
     ),
     reason,
     reviewStatus: input.event.reviewStatus ?? "",
+    reviewStatusLabel: reviewStatusLabel(input.event.reviewStatus, input.language),
     quality: input.event.quality ?? "",
     qualityLabel: qualityLabel(input.event.quality, input.language),
     latestResultSummary: redactedMonitoringText(input.event.latestResultSummary, input.language),
@@ -1823,23 +1916,23 @@ function monitoringViewForItem(
   const hasRedelegation = traceItems.some((event) => event.kind === "redelegation_planned")
   const reviewSummary =
     traceItems.length === 0
-      ? pickUiText(language, "아직 trace event가 없습니다.", "No trace events yet.")
+      ? pickUiText(language, "아직 실행 기록이 없습니다.", "No run records yet.")
       : hasFinalReady
         ? pickUiText(
             language,
-            "부모 검토 후 final delivery 준비",
+            "상위 검토 후 최종 전달 준비",
             "Final delivery prepared after parent review",
           )
         : hasAggregation
           ? pickUiText(
               language,
-              "부모가 하위 결과를 취합 중입니다.",
+              "상위 에이전트가 하위 결과를 취합 중입니다.",
               "Parent is aggregating child results.",
             )
           : hasReview
             ? pickUiText(
                 language,
-                "부모가 하위 결과를 검토 중입니다.",
+                "상위 에이전트가 하위 결과를 검토 중입니다.",
                 "Parent is reviewing child results.",
               )
             : hasRedelegation
@@ -1850,8 +1943,8 @@ function monitoringViewForItem(
                 )
               : pickUiText(
                   language,
-                  "runtime trace를 확인 중입니다.",
-                  "Runtime trace is being checked.",
+                  "실행 기록을 확인 중입니다.",
+                  "Run records are being checked.",
                 )
   const stale =
     typeof monitoring?.refreshedAt === "number" &&
@@ -1884,8 +1977,8 @@ function monitoringViewForItem(
     reviewSummary,
     statusSummary: pickUiText(
       language,
-      `trace ${traceItems.length}개 / 실행 ${activeRuns.length}개 / ${reviewSummary}`,
-      `${traceItems.length} trace events / ${activeRuns.length} runs / ${reviewSummary}`,
+      `실행 기록 ${traceItems.length}개 / 실행 ${activeRuns.length}개 / ${reviewSummary}`,
+      `${traceItems.length} run records / ${activeRuns.length} executions / ${reviewSummary}`,
     ),
     stale,
     staleLabel,
@@ -1909,7 +2002,11 @@ function detailForItem(input: {
   language: UiLanguage
   now: number
 }): SubAgentAdvancedDetailView {
-  const parentLabel = "Knowbee"
+  const parentLabel = displayLabelForAgentId(
+    input.item.parentAgentId ?? ROOT_AGENT_ID,
+    input.draft,
+    input.language,
+  )
   const identity = identityForItem(input.item, parentLabel, input.draft, input.language)
   const modelPolicy = modelPolicyForItem(input.item, input.draft, input.language)
   const skillMcp = skillMcpViewForItem(input.item, input.draft, input.language)
@@ -1919,10 +2016,9 @@ function detailForItem(input: {
   const monitoring = monitoringViewForItem(input.item, input.draft, input.language, input.now)
   return {
     agentId: input.item.agentId,
-    displayName: input.item.displayName,
-    nickname: input.item.nickname || input.item.displayName,
+    agentName: displayAgentNameForItem(input.item, input.language),
     role: input.item.role,
-    description: input.item.description,
+    description: input.item.role,
     lifecycleLabel: input.row.lifecycleLabel,
     readinessLabel: input.row.readinessLabel,
     runtimeLabel: input.row.runtimeLabel,
@@ -1945,15 +2041,14 @@ function detailForItem(input: {
         ),
         helper: pickUiText(
           input.language,
-          "별명은 root Knowbee나 다른 active agent와 중복될 수 없습니다.",
-          "Nickname cannot duplicate root Knowbee or another active agent.",
+          "에이전트 이름은 메인 에이전트나 다른 active agent와 중복될 수 없습니다.",
+          "Agent name cannot duplicate the main agent or another active agent.",
         ),
         inheritanceState: "agent_only",
         tone:
           identity.errors.length > 0 ? "error" : identity.warnings.length > 0 ? "warning" : "info",
         items: [
-          input.item.displayName,
-          input.item.nickname || input.item.displayName,
+          identity.attributionLabel || displayAgentNameForItem(input.item, input.language),
           input.item.role,
           parentLabel,
         ],
@@ -1965,12 +2060,12 @@ function detailForItem(input: {
         helper: modelPolicy.runtimeReflectionRequired
           ? pickUiText(
               input.language,
-              "저장 후 runtime 반영이 필요합니다.",
+              "저장 후 실행 반영이 필요합니다.",
               "Runtime activation is required after saving.",
             )
           : pickUiText(
               input.language,
-              "global default 모델을 그대로 상속합니다.",
+              "공통 기본 모델을 그대로 상속합니다.",
               "Inherits the global default model.",
             ),
         inheritanceState: modelPolicy.mode === "override" ? "overridden" : "inherited",
@@ -1984,15 +2079,15 @@ function detailForItem(input: {
       },
       {
         id: "skill_mcp",
-        title: "Skill/MCP",
+        title: pickUiText(input.language, "작업 능력/외부 기능", "Work ability / external feature"),
         summary: pickUiText(
           input.language,
-          `agent별 enabled ${skillMcp.enabledCount}개 / connection 확인 ${skillMcp.connectionIssueCount}개`,
+          `서브 에이전트별 활성 ${skillMcp.enabledCount}개 / 연결 확인 ${skillMcp.connectionIssueCount}개`,
           `${skillMcp.enabledCount} enabled for this agent / ${skillMcp.connectionIssueCount} connection issues`,
         ),
         helper: pickUiText(
           input.language,
-          "공통 catalog와 agent별 binding은 분리되어 저장됩니다.",
+          "공통 목록과 서브 에이전트별 연결은 분리되어 저장됩니다.",
           "Common catalog and per-agent bindings are stored separately.",
         ),
         inheritanceState: "agent_only",
@@ -2001,21 +2096,25 @@ function detailForItem(input: {
       },
       {
         id: "memory",
-        title: "Memory",
+        title: pickUiText(input.language, "메모리", "Memory"),
         summary: pickUiText(
           input.language,
-          `${memory.isolationLabel} · compact ${memory.compactThreshold}`,
+          `${memory.isolationLabel} · 압축 기준 ${memory.compactThreshold}`,
           `${memory.isolationLabel} · compact ${memory.compactThreshold}`,
         ),
         helper: pickUiText(
           input.language,
-          "명시적 데이터 교환 외에는 다른 agent 메모리와 섞지 않습니다.",
+          "명시적 데이터 교환 외에는 다른 서브 에이전트 메모리와 섞지 않습니다.",
           "Memory is not mixed with other agents except explicit exchanges.",
         ),
         inheritanceState: "agent_only",
         tone:
           memory.errors.length > 0 ? "error" : memory.warnings.length > 0 ? "warning" : "success",
-        items: [memory.visibility, memory.retentionPolicy, memory.capsuleMode],
+        items: [
+          memoryVisibilityLabel(memory.visibility, input.language),
+          memoryRetentionLabel(memory.retentionPolicy, input.language),
+          capsuleModeLabel(memory.capsuleMode, input.language),
+        ],
       },
       {
         id: "permission",
@@ -2029,9 +2128,9 @@ function detailForItem(input: {
         inheritanceState: permission.elevatedCount > 0 ? "overridden" : "agent_only",
         tone: permission.elevatedCount > 0 ? "warning" : "info",
         items: [
-          permission.riskCeiling,
-          `approval ${permission.approvalRequiredFrom}`,
-          `log ${permission.logVisibility}`,
+          riskLevelLabel(permission.riskCeiling, input.language),
+          approvalThresholdLabel(permission.approvalRequiredFrom, input.language),
+          logVisibilityLabel(permission.logVisibility, input.language),
         ],
       },
       {
@@ -2040,7 +2139,7 @@ function detailForItem(input: {
         summary: delegation.summary,
         helper: pickUiText(
           input.language,
-          "하위 agent 결과가 부족하면 상위가 정리 후 다시 위임할 수 있어야 합니다.",
+          "하위 서브 에이전트 결과가 부족하면 상위가 정리 후 다시 위임할 수 있어야 합니다.",
           "A parent can refine and redelegate when a child result is insufficient.",
         ),
         inheritanceState: "agent_only",
@@ -2053,7 +2152,11 @@ function detailForItem(input: {
         items: [
           delegation.reviewPolicyLabel,
           delegation.redelegationPolicyLabel,
-          `max parallel ${delegation.maxParallelSessions}`,
+          pickUiText(
+            input.language,
+            `동시 실행 ${delegation.maxParallelSessions}`,
+            `max parallel ${delegation.maxParallelSessions}`,
+          ),
         ],
       },
       {
@@ -2062,7 +2165,7 @@ function detailForItem(input: {
         summary: monitoring.statusSummary,
         helper: pickUiText(
           input.language,
-          "저장 상태와 runtime active 상태를 구분하고 부모 검토 후 final delivery만 확인합니다.",
+          "저장 상태와 실행 반영 상태를 구분하고 상위 검토 후 최종 전달만 확인합니다.",
           "Separate saved state from runtime active state and confirm final delivery after parent review.",
         ),
         inheritanceState: "global",
@@ -2084,6 +2187,14 @@ function normalizeLabel(value: string | undefined): string {
   return (value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("ko-KR")
 }
 
+function rootAgentRefForDraft(draft: SetupDraft, language: UiLanguage) {
+  const label = draft.mainAgent?.name.trim() || pickUiText(language, "메인 에이전트", "Main agent")
+  return {
+    agentId: ROOT_AGENT_ID,
+    agentName: label,
+  }
+}
+
 function cloneDraft(draft: SetupDraft): SetupDraft {
   return JSON.parse(JSON.stringify(draft)) as SetupDraft
 }
@@ -2099,10 +2210,12 @@ function ensureSubAgentDraft(draft: SetupDraft): SetupSubAgentDraft {
   }
 }
 
-function defaultModelLabel(draft: SetupDraft, language: UiLanguage): string {
+function defaultModelStatusLabel(draft: SetupDraft, language: UiLanguage): string {
   const backend = draft.aiBackends.find((item) => item.enabled) ?? draft.aiBackends[0]
-  if (!backend) return pickUiText(language, "기본 모델 없음", "No default model")
-  return `${backend.label} / ${backend.defaultModel || pickUiText(language, "모델 미지정", "No model")}`
+  if (!backend) return pickUiText(language, "기본 AI 모델 없음", "No default AI model")
+  return backend.defaultModel.trim()
+    ? pickUiText(language, "기본 AI 모델 설정됨", "Default AI model configured")
+    : pickUiText(language, "기본 AI 모델 확인 필요", "Default AI model needs check")
 }
 
 function modelCatalogFromDraft(
@@ -2133,7 +2246,7 @@ function modelCatalogFromDraft(
         : backend.reason ||
           pickUiText(
             language,
-            "provider가 비활성 또는 준비 전입니다.",
+            "제공자가 비활성 상태이거나 준비 전입니다.",
             "Provider is disabled or not ready.",
           ),
     }))
@@ -2196,8 +2309,7 @@ function itemToSubAgentConfig(item: SetupSubAgentDraftItem): SubAgentConfig {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     agentType: "sub_agent",
     agentId: item.agentId,
-    displayName: item.displayName,
-    nickname: item.nickname,
+    agentName: item.agentName,
     status: item.status,
     role: item.role,
     personality: item.description || item.role,
@@ -2235,8 +2347,8 @@ function relationshipsFor(items: SetupSubAgentDraftItem[]): AgentRelationship[] 
   return items
     .filter((item) => item.status !== "archived")
     .map((item, index) => ({
-      edgeId: `edge:${item.parentAgentId ?? rootAgent.agentId}:${item.agentId}`,
-      parentAgentId: item.parentAgentId ?? rootAgent.agentId,
+      edgeId: `edge:${item.parentAgentId ?? ROOT_AGENT_ID}:${item.agentId}`,
+      parentAgentId: item.parentAgentId ?? ROOT_AGENT_ID,
       childAgentId: item.agentId,
       relationshipType: "parent_child" as const,
       status: "active" as const,
@@ -2248,7 +2360,7 @@ function validationContextFromDraft(draft: SetupDraft, language: UiLanguage) {
   const subAgents = ensureSubAgentDraft(draft)
   const catalog = modelCatalogFromDraft(draft, language)
   return {
-    rootAgent,
+    rootAgent: rootAgentRefForDraft(draft, language),
     agents: subAgents.items.map(itemToSubAgentConfig),
     relationships: relationshipsFor(subAgents.items),
     catalogs: {
@@ -2272,60 +2384,56 @@ function validationContextFromDraft(draft: SetupDraft, language: UiLanguage) {
 
 function validationMessage(issue: SubAgentSettingsValidationIssue, language: UiLanguage): string {
   switch (issue.code) {
-    case "display_name_required":
-      return pickUiText(language, "이름은 비워둘 수 없습니다.", "Display name is required.")
+    case "agent_name_required":
+      return pickUiText(language, "이름은 비워둘 수 없습니다.", "Name is required.")
     case "attribution_label_required":
       return pickUiText(
         language,
         "대화에 표시할 이름이 필요합니다.",
         "A conversation label is required.",
       )
-    case "nickname_duplicate":
-      return pickUiText(
-        language,
-        "별명 또는 표시 이름이 중복됩니다.",
-        "Nickname or display label is duplicated.",
-      )
+    case "agent_name_duplicate":
+      return pickUiText(language, "에이전트 이름이 중복됩니다.", "Agent name is duplicated.")
     case "reserved_knowbee_name":
       return pickUiText(
         language,
-        "Knowbee 이름은 메인 agent 전용입니다.",
-        "The Knowbee name is reserved for the main agent.",
+        "메인 에이전트 이름은 서브 에이전트가 사용할 수 없습니다.",
+        "The main-agent name is reserved and cannot be used by a sub-agent.",
       )
     case "model_provider_unavailable":
       return pickUiText(
         language,
-        "선택한 provider가 현재 사용할 수 없습니다.",
+        "선택한 제공자를 현재 사용할 수 없습니다.",
         "Selected provider is unavailable.",
       )
     case "model_id_missing":
       return pickUiText(
         language,
-        "선택한 모델이 catalog에 없습니다.",
+        "선택한 모델이 공통 목록에 없습니다.",
         "Selected model is not in the catalog.",
       )
     case "catalog_id_missing":
       return pickUiText(
         language,
-        "공통 catalog에 없는 Skill/MCP 항목입니다.",
-        "Skill/MCP item is missing from the common catalog.",
+        "공통 목록에 없는 작업 능력/외부 기능 항목입니다.",
+        "Work ability/external feature item is missing from the common list.",
       )
     case "catalog_item_unavailable":
       return pickUiText(
         language,
-        "현재 사용할 수 없는 Skill/MCP 항목입니다.",
-        "Skill/MCP item is currently unavailable.",
+        "현재 사용할 수 없는 작업 능력/외부 기능 항목입니다.",
+        "Work ability/external feature item is currently unavailable.",
       )
     case "fallback_model_same_as_primary":
       return pickUiText(
         language,
-        "fallback 모델은 primary 모델과 달라야 합니다.",
+        "대체 모델은 기본 모델과 달라야 합니다.",
         "Fallback model must differ from primary model.",
       )
     case "archived_agent_not_editable":
       return pickUiText(
         language,
-        "보관된 서브 에이전트의 binding은 수정할 수 없습니다.",
+        "보관된 서브 에이전트의 연결은 수정할 수 없습니다.",
         "Archived sub-agent bindings cannot be edited.",
       )
     case "agent_missing":
@@ -2337,7 +2445,7 @@ function validationMessage(issue: SubAgentSettingsValidationIssue, language: UiL
     case "memory_owner_scope_mismatch":
       return pickUiText(
         language,
-        "다른 agent memory scope는 참조할 수 없습니다.",
+        "다른 서브 에이전트 메모리 범위는 참조할 수 없습니다.",
         "Another agent's memory scope cannot be referenced.",
       )
     case "permission_escalation_requires_advanced":
@@ -2355,20 +2463,20 @@ function validationMessage(issue: SubAgentSettingsValidationIssue, language: UiL
     case "delegation_target_not_direct_child":
       return pickUiText(
         language,
-        "direct child가 아닌 agent에게 위임할 수 없습니다.",
-        "Delegation target must be a direct child.",
+        "직속 서브 에이전트가 아닌 대상에게 위임할 수 없습니다.",
+        "Delegation target must be an immediate sub-agent.",
       )
     case "delegation_target_unavailable":
       return pickUiText(
         language,
-        "비활성 또는 사용할 수 없는 child에게 위임할 수 없습니다.",
+        "비활성 또는 사용할 수 없는 하위 서브 에이전트에게 위임할 수 없습니다.",
         "Unavailable children cannot be delegated to.",
       )
     case "direct_child_only_required":
       return pickUiText(
         language,
-        "위임은 direct child로만 제한해야 합니다.",
-        "Delegation must stay direct-child only.",
+        "위임은 직속 서브 에이전트로만 제한해야 합니다.",
+        "Delegation must stay within immediate sub-agents.",
       )
     case "invalid_numeric_limit":
       return pickUiText(
@@ -2415,21 +2523,23 @@ export function applySubAgentAdvancedIdentityCommand(input: {
   const now = input.now ?? Date.now()
   const next = cloneDraft(input.draft)
   const subAgents = ensureSubAgentDraft(next)
+  const agentName = input.command.agentName.trim()
   next.subAgents = {
     ...subAgents,
-    items: subAgents.items.map((item) =>
-      item.agentId === input.command.agentId
-        ? {
-            ...item,
-            displayName: input.command.displayName.trim(),
-            nickname: input.command.nickname?.trim() || input.command.displayName.trim(),
-            role: input.command.role.trim(),
-            description: input.command.description.trim(),
-            updatedAt: now,
-            profileVersion: item.profileVersion + 1,
-          }
-        : item,
-    ),
+    items: subAgents.items.map((item) => {
+      if (item.agentId !== input.command.agentId) return item
+      const canonicalItem = canonicalizeLegacyAgentIdentity(
+        item as SetupSubAgentDraftItem & Record<string, unknown>,
+      )
+      return {
+        ...canonicalItem,
+        agentName,
+        role: input.command.role.trim(),
+        description: item.description,
+        updatedAt: now,
+        profileVersion: item.profileVersion + 1,
+      }
+    }),
   }
   return {
     ok: true,
@@ -2493,7 +2603,7 @@ export function applySubAgentAdvancedModelPolicyCommand(input: {
     draft: next,
     message: pickUiText(
       language,
-      "모델 정책을 저장했습니다. runtime 반영이 필요합니다.",
+      "모델 정책을 저장했습니다. 실행 반영이 필요합니다.",
       "Model policy saved. Runtime activation is required.",
     ),
     fieldErrors: {},
@@ -2544,8 +2654,8 @@ export function applySubAgentAdvancedSkillMcpBindingsCommand(input: {
     draft: next,
     message: pickUiText(
       language,
-      "Skill/MCP binding을 저장했습니다. runtime 반영이 필요합니다.",
-      "Skill/MCP bindings saved. Runtime activation is required.",
+      "작업 능력/외부 기능 연결을 저장했습니다. 실행 반영이 필요합니다.",
+      "Work ability/external feature bindings saved. Runtime activation is required.",
     ),
     fieldErrors: {},
     issueCodes: [],
@@ -2599,7 +2709,7 @@ export function applySubAgentAdvancedMemoryPolicyCommand(input: {
     draft: next,
     message: pickUiText(
       language,
-      "메모리 정책을 저장했습니다. runtime 반영이 필요합니다.",
+      "메모리 정책을 저장했습니다. 실행 반영이 필요합니다.",
       "Memory policy saved. Runtime activation is required.",
     ),
     fieldErrors: {},
@@ -2678,7 +2788,7 @@ export function applySubAgentAdvancedCapabilityPolicyCommand(input: {
     draft: next,
     message: pickUiText(
       language,
-      "권한 정책을 저장했습니다. runtime 반영이 필요합니다.",
+      "권한 정책을 저장했습니다. 실행 반영이 필요합니다.",
       "Permission policy saved. Runtime activation is required.",
     ),
     fieldErrors: {},
@@ -2729,7 +2839,7 @@ export function applySubAgentAdvancedDelegationPolicyCommand(input: {
     draft: next,
     message: pickUiText(
       language,
-      "위임/결과 검토 정책을 저장했습니다. runtime 반영이 필요합니다.",
+      "위임/결과 검토 정책을 저장했습니다. 실행 반영이 필요합니다.",
       "Delegation and review policy saved. Runtime activation is required.",
     ),
     fieldErrors: {},
@@ -2746,8 +2856,8 @@ function rowMatches(
   if (filter === "runtime_pending" && row.runtimeState !== "pending") return false
   const normalized = query.toLowerCase()
   if (!normalized) return true
-  return [row.displayName, row.nickname, row.role, row.lifecycleLabel, row.readinessLabel].some(
-    (value) => value.toLowerCase().includes(normalized),
+  return [row.agentName, row.role, row.lifecycleLabel, row.readinessLabel].some((value) =>
+    value.toLowerCase().includes(normalized),
   )
 }
 
@@ -2796,8 +2906,8 @@ function emptyStateFor(input: {
     }
   }
   return {
-    kind: "single_knowbee",
-    title: pickUiText(input.language, "단일 노비 모드", "Single Knowbee mode"),
+    kind: "direct_main_agent",
+    title: pickUiText(input.language, "메인 에이전트 직접 처리", "Main-agent direct handling"),
     message: pickUiText(
       input.language,
       "서브 에이전트가 없어도 정상입니다. 필요할 때 추가하세요.",

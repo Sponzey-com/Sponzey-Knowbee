@@ -65,4 +65,18 @@ describe("task007 run target ui", () => {
     expect(summaryMarkup).toContain("윈도우 오피스")
     expect(summaryMarkup).toContain("윈도우 오피스 대상을 선택했습니다.")
   })
+
+  it("renders semantic execution and delivery outcomes instead of the lossy run status", () => {
+    const markup = renderToStaticMarkup(createElement(RunStatusCard, {
+      run: run({ status: "failed" }),
+      outcome: {
+        executionStatus: "exhausted",
+        deliveryStatus: "delivered",
+      },
+    }))
+
+    expect(markup).toContain("해결 경로 소진")
+    expect(markup).toContain("전달 완료")
+    expect(markup).not.toContain(">실패<")
+  })
 })

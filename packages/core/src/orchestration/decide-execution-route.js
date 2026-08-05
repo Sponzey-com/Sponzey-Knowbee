@@ -1,3 +1,4 @@
+import { resolveAgentConfigAgentName } from "../contracts/sub-agent-orchestration.js";
 import { buildAgentExecutionContextFromGraphSnapshot, } from "./execution-context-builder.js";
 import { buildExecutionGraphSnapshot, EXECUTION_GRAPH_ROOT_AGENT_ID, } from "./execution-graph-snapshot.js";
 import { runAgentExecutionHarness, } from "./execution-harness.js";
@@ -47,6 +48,7 @@ export async function decideExecutionRoute(input) {
     const executionGraph = buildGraph({
         mode: "active_deployment",
         currentExecutorId: input.currentExecutorId ?? EXECUTION_GRAPH_ROOT_AGENT_ID,
+        config: input.config,
     });
     const buildContext = input.buildExecutionContext ?? buildAgentExecutionContextFromGraphSnapshot;
     const explicitTarget = normalizeExplicitExecutionTarget(input.preferredTarget);
@@ -58,6 +60,7 @@ export async function decideExecutionRoute(input) {
         request: buildDecisionRequest(input),
         requester: buildDecisionRequester(input),
         directExecutionRequested: false,
+        ...(input.availableTools ? { availableTools: input.availableTools } : {}),
         ...(explicitTarget ? { explicitTargetExecutorId: explicitTarget } : {}),
         ...(explicitProviderTarget ? { explicitProviderTargetId: explicitProviderTarget } : {}),
     });
@@ -116,7 +119,7 @@ function buildDecisionRequester(input) {
     return {
         requester_id: input.sessionId,
         requester_type: "channel",
-        display_name: input.source,
+        agent_name: input.source,
     };
 }
 function isDelegateToChildDecision(decision) {
@@ -133,6 +136,12 @@ function fallbackRouteKind(decision) {
     return "self_solve";
 }
 function executorLabel(graph, executorId) {
-    return graph.agentsById[executorId]?.displayName?.trim() || executorId;
+    const agent = graph.agentsById[executorId];
+    if (!agent)
+        return executorId;
+    return resolveAgentConfigAgentName({
+        agentType: executorId === graph.rootAgentId ? "knowbee" : "sub_agent",
+        agentName: agent.agentName ?? "",
+    });
 }
 //# sourceMappingURL=decide-execution-route.js.map

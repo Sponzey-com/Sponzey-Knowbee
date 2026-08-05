@@ -4,11 +4,16 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerAdminRoute } from "../packages/core/src/api/routes/admin.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import { recordControlEvent } from "../packages/core/src/control-plane/timeline.ts"
 import { closeDb, insertSession } from "../packages/core/src/db/index.js"
 import { recordMessageLedgerEvent } from "../packages/core/src/runs/message-ledger.ts"
 import { createRootRun } from "../packages/core/src/runs/store.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: { logger: boolean }) => {
@@ -18,33 +23,18 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousAdminUi = process.env["KNOWBEE_ADMIN_UI"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
-const previousNodeEnv = process.env["NODE_ENV"]
+let runtimeFixture: TestRuntimeConfigFixture
 
-function useTempState(): void {
+function useTempRuntime(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-admin-tool-lab-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_ADMIN_UI"] = "1"
-  delete process.env["KNOWBEE_CONFIG"]
-  delete process.env["NODE_ENV"]
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-admin-tool-lab-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
-function restoreEnv(): void {
+function disposeTempRuntime(): void {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousAdminUi === undefined) delete process.env["KNOWBEE_ADMIN_UI"]
-  else process.env["KNOWBEE_ADMIN_UI"] = previousAdminUi
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  if (previousNodeEnv === undefined) delete process.env["NODE_ENV"]
-  else process.env["NODE_ENV"] = previousNodeEnv
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -74,12 +64,24 @@ function seedRun(): { runId: string; requestGroupId: string; sessionKey: string 
   return { runId, requestGroupId, sessionKey }
 }
 
+function adminRuntimeOptions() {
+  return {
+    uiModeRuntime: {
+      adminActivation: {
+        env: { KNOWBEE_ADMIN_UI: "1" },
+        nodeEnv: undefined,
+      },
+      rollbackActivation: { env: {} },
+    },
+  }
+}
+
 beforeEach(() => {
-  useTempState()
+  useTempRuntime()
 })
 
 afterEach(() => {
-  restoreEnv()
+  disposeTempRuntime()
 })
 
 describe("task012 admin tool calls and web retrieval lab", () => {
@@ -115,7 +117,8 @@ describe("task012 admin tool calls and web retrieval lab", () => {
     })
 
     const app = Fastify({ logger: false })
-    registerAdminRoute(app)
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerAdminRoute(app, adminRuntimeOptions())
     await app.ready()
     try {
       const response = await app.inject({ method: "GET", url: `/api/admin/tool-lab?requestGroupId=${encodeURIComponent(requestGroupId)}&limit=50` })
@@ -136,7 +139,7 @@ describe("task012 admin tool calls and web retrieval lab", () => {
     }
   })
 
-  it("tracks web retrieval source ladder, attempts, candidate extraction, completion checks, cache, and adapter metadata", async () => {
+  it("tracks provenance attempts and the LLM result-diagnosis receipt", async () => {
     const { runId, requestGroupId } = seedRun()
     recordMessageLedgerEvent({
       runId,
@@ -169,62 +172,41 @@ describe("task012 admin tool calls and web retrieval lab", () => {
           sourceTimestamp: null,
           fetchTimestamp: "2026-04-17T05:55:24.000Z",
           freshnessPolicy: "latest_approximate",
-          adapterId: "finance-index-known-source",
-          adapterVersion: "2026.04.17",
-          parserVersion: "finance-parser-1",
-          adapterStatus: "active",
         },
       },
     })
     recordControlEvent({
-      eventType: "web_retrieval.candidate.extracted",
+      eventType: "web_retrieval.result_diagnosis.completed",
       component: "web_retrieval",
       runId,
       requestGroupId,
-      summary: "candidate extracted",
-      detail: { candidateCount: 1, candidates: [{ normalizedValue: "3085.42", evidenceField: "quote_card" }] },
-    })
-    recordControlEvent({
-      eventType: "web_retrieval.verification.completed",
-      component: "web_retrieval",
-      runId,
-      requestGroupId,
-      summary: "completion check passed",
+      summary: "LLM result diagnosis completed",
       detail: {
-        status: "ready",
-        mustAvoidGuessing: false,
-        verdict: {
-          canAnswer: true,
-          evidenceSufficiency: "sufficient_approximate",
-          acceptedValue: "3085.42",
-          rejectionReason: null,
-          policy: "latest_approximate",
-          conflicts: [],
+        status: "complete",
+        contextReceipt: {
+          contextFingerprint: `sha256:${"a".repeat(64)}`,
+          criterionKeys: ["existence", "accuracy", "freshness", "target_match"],
+          conditionCount: 1,
+          evidenceRefs: [`tool-result:tool:${"b".repeat(64)}`],
         },
       },
     })
 
     const app = Fastify({ logger: false })
-    registerAdminRoute(app)
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerAdminRoute(app, adminRuntimeOptions())
     await app.ready()
     try {
       const response = await app.inject({ method: "GET", url: `/api/admin/tool-lab?requestGroupId=${encodeURIComponent(requestGroupId)}&query=${encodeURIComponent("지금 코스피 지수 얼마야")}` })
       expect(response.statusCode).toBe(200)
       const session = response.json().webRetrieval.sessions[0]
-      expect(session.sourceLadder.map((source: any) => source.sourceDomain)).toEqual(expect.arrayContaining(["www.google.com", "www.investing.com", "finance.naver.com"]))
-      expect(session.queryVariants).toEqual(expect.arrayContaining(["지금 코스피 지수 얼마야", "https://www.google.com/finance/quote/KOSPI:KRX"]))
+      expect(session.queryVariants).toEqual(expect.arrayContaining(["지금 코스피 지수 얼마야"]))
       expect(session.fetchAttempts.length).toBeGreaterThanOrEqual(1)
-      expect(session.candidateExtraction).toEqual(expect.objectContaining({ candidateCount: 1 }))
-      expect(session.verification).toEqual(expect.objectContaining({
-        canAnswer: true,
-        evidenceSufficiency: "sufficient_approximate",
-        completionStrict: true,
-        semanticComparisonAllowed: false,
-        verificationMode: "contract_fields",
-      }))
-      expect(session.cache).toEqual(expect.objectContaining({ status: expect.any(String), entryCount: expect.any(Number) }))
-      expect(session.adapterMetadata[0]).toEqual(expect.objectContaining({ adapterId: "finance-index-known-source", parserVersion: "finance-parser-1", checksum: expect.any(String) }))
-      expect(session.policySeparation).toEqual({ discovery: "loose_search", completion: "strict_contract_fields", semanticComparisonAllowed: false })
+      expect(session.resultDiagnosis).toBe("[internal-llm-data-hidden]")
+      expect(JSON.stringify(session)).not.toMatch(
+        /contextFingerprint|criterionKeys|conditionCount|evidenceRefs/u,
+      )
+      expect(session.policySeparation).toEqual({ evidence: "provenance_only", completion: "llm_result_diagnosis", semanticComparisonAllowed: false })
     } finally {
       await app.close()
     }
@@ -232,7 +214,8 @@ describe("task012 admin tool calls and web retrieval lab", () => {
 
   it("replays web retrieval fixtures offline without semantic string checks", async () => {
     const app = Fastify({ logger: false })
-    registerAdminRoute(app)
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerAdminRoute(app, adminRuntimeOptions())
     await app.ready()
     try {
       const response = await app.inject({
@@ -244,11 +227,11 @@ describe("task012 admin tool calls and web retrieval lab", () => {
       const body = response.json()
       expect(body.networkUsed).toBe(false)
       expect(body.semanticComparisonAllowed).toBe(false)
-      expect(body.verificationMode).toBe("contract_fields")
+      expect(body.verificationMode).toBe("llm_result_diagnosis_contract")
       expect(body.fixtureCount).toBe(3)
       expect(body.summary.status).toBe("passed")
       expect(body.results.map((result: any) => result.fixtureId)).toEqual(["finance-kospi-latest", "finance-nasdaq-browser-timeout-fallback", "weather-dongcheon-partial"])
-      expect(JSON.stringify(body)).not.toMatch(/semantic_match|embedding_judge|llm_judge/i)
+      expect(JSON.stringify(body)).not.toMatch(/canAnswer|acceptedValue|evidenceSufficiency/i)
     } finally {
       await app.close()
     }

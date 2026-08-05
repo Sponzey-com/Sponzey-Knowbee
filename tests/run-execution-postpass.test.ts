@@ -69,7 +69,7 @@ describe("execution post-pass recovery", () => {
     expect(decision.state.nextMessage).toContain("[Execution Recovery]")
   })
 
-  it("returns stop when command failure has no unseen alternative path left", () => {
+  it("returns to LLM result review when deterministic command recovery has no unseen path", () => {
     const decision = decideExecutionPostPassRecovery({
       originalRequest: "스크린샷을 보내줘",
       preview: "screencapture failed",
@@ -101,15 +101,10 @@ describe("execution post-pass recovery", () => {
       maxDelegationTurns: 3,
     })
 
-    expect(decision).toEqual({
-      kind: "stop",
-      summary: "실행 실패 뒤 사용할 새 명령 대안을 찾지 못해 자동 진행을 멈춥니다.",
-      reason: "실행 명령을 찾지 못해 다른 명령이나 다른 도구 경로를 찾아야 합니다. 이미 시도한 명령 실패 복구 경로와 같은 대안만 남았습니다.",
-      remainingItems: ["다른 명령/도구/실행 대상을 사용하려면 수동 판단이나 추가 입력이 필요합니다."],
-    })
+    expect(decision).toEqual({ kind: "none" })
   })
 
-  it("returns stop when generic execution recovery has no new alternative path left", () => {
+  it("returns to LLM result review when generic recovery has no unseen deterministic path", () => {
     const decision = decideExecutionPostPassRecovery({
       originalRequest: "예약을 등록해줘",
       preview: "create_schedule failed",
@@ -140,12 +135,7 @@ describe("execution post-pass recovery", () => {
       maxDelegationTurns: 3,
     })
 
-    expect(decision).toEqual({
-      kind: "stop",
-      summary: "실행 실패 뒤 사용할 새 대안을 찾지 못해 자동 진행을 멈춥니다.",
-      reason: "invalid schedule registration path 이미 시도한 실행 복구 경로와 같은 대안만 남았거나 구조화된 대안이 부족합니다.",
-      remainingItems: ["다른 도구 조합이나 다른 실행 전략을 쓰려면 수동 판단이나 추가 입력이 필요합니다."],
-    })
+    expect(decision).toEqual({ kind: "none" })
   })
 
   it("does not retry stale execution recovery after direct artifact delivery is already satisfied", () => {

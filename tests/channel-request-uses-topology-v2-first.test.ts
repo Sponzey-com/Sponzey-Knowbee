@@ -1,50 +1,57 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.ts"
+import { createArtifactStorageContext } from "../packages/core/src/artifacts/lifecycle.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import {
   AGENT_EXECUTION_DECISION_V2_CONTRACT_VERSION,
   type AgentExecutionContext,
   type AgentExecutionDecisionV2,
 } from "../packages/core/src/orchestration/execution-decision-contract.ts"
-import {
-  buildExecutionGraphSnapshot,
-} from "../packages/core/src/orchestration/execution-graph-snapshot.ts"
+import { buildExecutionGraphSnapshot } from "../packages/core/src/orchestration/execution-graph-snapshot.ts"
 import { runAgentExecutionHarness } from "../packages/core/src/orchestration/execution-harness.ts"
 import {
   buildExampleEnterpriseTopology,
   createEnterpriseTopologyRegistry,
 } from "../packages/core/src/index.ts"
 import { runIntakeBridgePass } from "../packages/core/src/runs/intake-bridge-pass.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const now = Date.UTC(2026, 4, 8, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-channel-topology-v2-first-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json")
-  writeFileSync(process.env.KNOWBEE_CONFIG, JSON.stringify({
-    orchestration: {
-      mode: "orchestration",
-      featureFlagEnabled: true,
-      subAgents: [],
-      teams: [],
-    },
-    ai: {
-      connection: {
-        provider: "openai",
-        model: "gpt-test",
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-channel-topology-v2-first-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: JSON.stringify(
+      {
+        orchestration: {
+          mode: "orchestration",
+          featureFlagEnabled: true,
+          subAgents: [],
+          teams: [],
+        },
+        ai: {
+          connection: {
+            provider: "openai",
+            model: "gpt-test",
+          },
+        },
       },
-    },
-  }, null, 2))
-  reloadConfig()
+      null,
+      2,
+    ),
+  })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 afterEach(() => {
@@ -52,11 +59,6 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
 })
 
 function activateExampleTopology(): { topologyId: string; selectedExecutorId: string } {
@@ -83,6 +85,10 @@ function createDependencies() {
     scheduleDelayedRun: vi.fn(),
     startDelegatedRun: vi.fn(),
     normalizeTaskProfile: vi.fn((taskProfile: string | undefined) => taskProfile ?? "general_chat"),
+    recordCanonicalIntakeDiagnosis: vi.fn(async () => ({ ok: true as const })),
+    authorizeCanonicalIntakePlan: vi.fn(async () => ({ ok: true as const })),
+    recordCanonicalExecutionStart: vi.fn(async () => ({ ok: true as const })),
+    releaseCanonicalSimplePath: vi.fn(async () => ({ ok: true as const })),
     recordExecutionDecisionTrace: vi.fn(),
     logInfo: vi.fn(),
   }
@@ -99,14 +105,16 @@ function taskIntakeResult() {
       mode: "accepted_receipt" as const,
       text: "요청을 접수했습니다.",
     },
-    action_items: [{
-      id: "run-task-1",
-      type: "run_task" as const,
-      title: "채널 요청 처리",
-      priority: "normal" as const,
-      reason: "위임 실행이 필요합니다.",
-      payload: { goal: "채널 요청을 처리한다." },
-    }],
+    action_items: [
+      {
+        id: "run-task-1",
+        type: "run_task" as const,
+        title: "채널 요청 처리",
+        priority: "normal" as const,
+        reason: "위임 실행이 필요합니다.",
+        payload: { goal: "채널 요청을 처리한다." },
+      },
+    ],
     structured_request: {
       source_language: "ko" as const,
       normalized_english: "Handle the channel request.",
@@ -168,7 +176,10 @@ function taskIntakeResult() {
   }
 }
 
-function v2Decision(context: AgentExecutionContext, selectedExecutorId: string): AgentExecutionDecisionV2 {
+function v2Decision(
+  context: AgentExecutionContext,
+  selectedExecutorId: string,
+): AgentExecutionDecisionV2 {
   return {
     contract_version: AGENT_EXECUTION_DECISION_V2_CONTRACT_VERSION,
     current_executor_id: context.current_executor.executor_id,
@@ -184,11 +195,13 @@ function v2Decision(context: AgentExecutionContext, selectedExecutorId: string):
       task_units: [],
       success_criteria: ["direct child 실행자에게만 위임된다."],
     },
-    task_split: [{
-      executor_id: selectedExecutorId,
-      objective: "채널 요청을 처리하고 결과를 반환한다.",
-      expected_return: "처리 결과",
-    }],
+    task_split: [
+      {
+        executor_id: selectedExecutorId,
+        objective: "채널 요청을 처리하고 결과를 반환한다.",
+        expected_return: "처리 결과",
+      },
+    ],
     required_outputs: [{ id: "answer", label: "최종 답변" }],
     risk_boundary: {
       requires_user_approval: false,
@@ -206,32 +219,40 @@ describe("channel request topology v2 first routing", () => {
     const dependencies = createDependencies()
     const resolveRunRoute = vi.fn()
     const buildGraph = vi.fn((input) => buildExecutionGraphSnapshot(input))
-    const decisionHarness = vi.fn((input) => runAgentExecutionHarness({
-      ...input,
-      callModel: async ({ context }) => JSON.stringify(v2Decision(context, selectedExecutorId)),
-    }))
+    const decisionHarness = vi.fn((input) =>
+      runAgentExecutionHarness({
+        ...input,
+        callModel: async ({ context }) => JSON.stringify(v2Decision(context, selectedExecutorId)),
+      }),
+    )
 
-    const result = await runIntakeBridgePass({
-      message: "요청을 처리해줘",
-      originalRequest: "요청을 처리해줘",
-      sessionId: "session:topology-v2-first",
-      requestGroupId: "run:topology-v2-first",
-      model: "gpt-test",
-      workDir: "/tmp",
-      source: "telegram",
-      runId: "run:topology-v2-first",
-      onChunk: undefined,
-      reuseConversationContext: false,
-    }, dependencies, {
-      analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
-      resolveRunRoute,
-      executeScheduleActions: vi.fn(),
-      createDefaultScheduleActionDependencies: vi.fn(),
-      inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
-      buildFollowupPrompt: vi.fn().mockReturnValue("followup prompt"),
-      buildExecutionGraphSnapshot: buildGraph,
-      runAgentExecutionHarness: decisionHarness,
-    })
+    const result = await runIntakeBridgePass(
+      {
+        config: runtimeFixture.config,
+        message: "요청을 처리해줘",
+        originalRequest: "요청을 처리해줘",
+        sessionId: "session:topology-v2-first",
+        requestGroupId: "run:topology-v2-first",
+        model: "gpt-test",
+        workDir: "/tmp",
+        source: "telegram",
+        runId: "run:topology-v2-first",
+        artifactStorage: createArtifactStorageContext(runtimeFixture.paths),
+        onChunk: undefined,
+        reuseConversationContext: false,
+      },
+      dependencies,
+      {
+        analyzeTaskIntake: vi.fn().mockResolvedValue(taskIntakeResult()),
+        resolveRunRoute,
+        executeScheduleActions: vi.fn(),
+        createDefaultScheduleActionDependencies: vi.fn(),
+        inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
+        buildFollowupPrompt: vi.fn().mockReturnValue("followup prompt"),
+        buildExecutionGraphSnapshot: buildGraph,
+        runAgentExecutionHarness: decisionHarness,
+      },
+    )
 
     expect(result?.kind).toBe("complete_silent")
     expect(resolveRunRoute).not.toHaveBeenCalled()
@@ -241,22 +262,26 @@ describe("channel request topology v2 first routing", () => {
     expect(buildGraph.mock.invocationCallOrder[0]).toBeLessThan(
       dependencies.startDelegatedRun.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     )
-    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(expect.objectContaining({
-      targetId: selectedExecutorId,
-      agentExecutionDecision: expect.objectContaining({
-        execution_route: "delegate_to_child",
-        selected_executor_id: selectedExecutorId,
+    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetId: selectedExecutorId,
+        agentExecutionDecision: expect.objectContaining({
+          execution_route: "delegate_to_child",
+          selected_executor_id: selectedExecutorId,
+        }),
+        agentExecutionDecisionTrace: expect.objectContaining({
+          available_executor_ids: expect.arrayContaining([selectedExecutorId]),
+          selected_executor_id: selectedExecutorId,
+        }),
       }),
-      agentExecutionDecisionTrace: expect.objectContaining({
-        available_executor_ids: expect.arrayContaining([selectedExecutorId]),
-        selected_executor_id: selectedExecutorId,
+    )
+    expect(dependencies.recordExecutionDecisionTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentExecutionDecision: expect.objectContaining({
+          execution_route: "delegate_to_child",
+          selected_executor_id: selectedExecutorId,
+        }),
       }),
-    }))
-    expect(dependencies.recordExecutionDecisionTrace).toHaveBeenCalledWith(expect.objectContaining({
-      agentExecutionDecision: expect.objectContaining({
-        execution_route: "delegate_to_child",
-        selected_executor_id: selectedExecutorId,
-      }),
-    }))
+    )
   })
 })

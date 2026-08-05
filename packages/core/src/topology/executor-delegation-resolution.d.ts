@@ -53,6 +53,7 @@ export declare function resolveNodeDelegation(input: {
     candidates?: DelegationCandidate[];
     executionDecision?: Pick<AgentExecutionDecision, "selected_executor_id" | "selected_connection_path" | "execution_route" | "reason">;
     executionGraphSnapshot?: Pick<ExecutionGraphSnapshot, "currentExecutorId" | "agentsById" | "directChildAgentIdsByParent" | "edgeIndex" | "allActiveExecutorIds" | "allRegisteredExecutorIds">;
+    rootAgentNameSnapshot?: string;
     now?: string;
 }): NodeDelegationResolution;
 export declare function validateDelegationPath(input: {

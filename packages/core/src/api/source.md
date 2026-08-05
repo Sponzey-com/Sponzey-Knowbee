@@ -19,4 +19,5 @@
 - `/api/tasks`의 task projection은 이제 free-form recent event label만 넘기지 않고, `activities`의 표준 kind(`attempt.*`, `recovery.*`, `delivery.*`), `monitor` 관측 포인트(`activeAttemptCount`, `duplicateExecutionRisk`, `deliveryStatus` 등), checklist state(`request / execution / delivery / completion`)를 함께 내려 상태 모니터가 더 안정적인 기준으로 읽을 수 있게 정리 중입니다.
 - `/api/tasks`는 이제 `runIds`, `latestAttemptId`, `attempt.prompt`까지 함께 내려 WebUI가 raw run을 다시 request-group heuristic으로 묶지 않고 explicit task ownership만 따라가게 정리 중입니다.
 - WebUI 상태 모니터도 이제 이 `/api/tasks` projection을 직접 소비하기 시작해, 프런트가 raw run을 다시 request-group heuristic으로 묶는 구형 경로를 줄이는 방향으로 정리 중입니다.
+- live acceptance 실행은 채널·도구 preflight보다 먼저 Gateway 시작 시 고정한 bundle hash와 현재 manifest/artifact, source/build 상태, process/artifact 순서를 검증합니다. 불일치하면 실제 채널 또는 장치 작업을 시작하지 않고 bounded reason code로 차단하며, 통과한 실행 결과에만 경로·원문을 제외한 runtime identity receipt를 첨부합니다.
 - 다만 WebSocket 승인 경로는 예외적으로 상태 전달의 단일 진실 원천 역할을 해야 하므로, 브라우저 클릭과 서버 타임아웃을 같은 `deny`로 뭉개지 않고 원인을 함께 전달해야 합니다.

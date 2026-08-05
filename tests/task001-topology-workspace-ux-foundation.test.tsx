@@ -102,9 +102,9 @@ describe("task001 topology workspace UX foundation", () => {
     ])
     expect(TOPOLOGY_TEMPLATE_CATALOG.workspaceStarterTemplates.every((item) => item.noTypingRequired)).toBe(true)
     expect(TOPOLOGY_TEMPLATE_CATALOG.nodePresets.map((item) => item.labelKo)).toEqual([
-      "업무 단계",
-      "검토 단계",
-      "도구 사용 단계",
+      "서브 에이전트",
+      "검토 서브 에이전트",
+      "자동화 서브 에이전트",
     ])
   })
 

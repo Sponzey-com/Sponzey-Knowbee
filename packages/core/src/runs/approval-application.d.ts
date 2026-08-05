@@ -9,6 +9,7 @@ export type SyntheticApprovalContinuation = {
     reviewSummary: string;
     executingSummary: string;
     continuationPrompt: string;
+    toolName: string;
     grantMode: "reuse_scope" | "run" | "single";
     clearWorkerRuntime: true;
     clearProvider: true;
@@ -24,9 +25,9 @@ export type AppliedSyntheticApprovalContinuation = {
     kind: "continue";
 } & AppliedRunningContinuation);
 interface SyntheticApprovalApplicationDependencies extends RunningContinuationDependencies {
-    rememberRunApprovalScope: (runId: string) => void;
-    grantRunApprovalScope: (runId: string) => void;
-    grantRunSingleApproval: (runId: string) => void;
+    rememberRunApprovalScope: (runId: string, toolName: string) => void;
+    grantRunApprovalScope: (runId: string, toolName: string) => void;
+    grantRunSingleApproval: (runId: string, toolName: string) => void;
 }
 export declare function applySyntheticApprovalContinuation(params: {
     runId: string;

@@ -144,26 +144,42 @@ export function describeYeonjangPermissionState(
   return text("사용 가능", "Available")
 }
 
+export function describeYeonjangSupportProfile(
+  instance: Pick<YeonjangProjectedInstance, "supportProfile">,
+  text: TextFn,
+): string {
+  switch (instance.supportProfile) {
+    case "desktop_interactive":
+      return text("화면 조작 가능", "Screen control available")
+    case "desktop_limited":
+      return text("일부 기능 제한", "Some features limited")
+    case "headless_managed":
+      return text("백그라운드 관리 전용", "Background management only")
+    default:
+      return text("지원 방식 확인 필요", "Support mode needs review")
+  }
+}
+
 export function describeYeonjangReasonCode(code: string, text: TextFn): string {
   switch (code) {
     case "single_trusted_local_interactive":
-      return text("신뢰 가능한 로컬 interactive 연장을 자동 선택합니다.", "A trusted local interactive extension is selected automatically.")
+      return text("신뢰된 이 컴퓨터의 연장을 자동 선택합니다.", "A trusted extension on this computer is selected automatically.")
     case "multiple_trusted_local_candidates":
-      return text("신뢰 가능한 로컬 연장이 여러 개라서 직접 선택해야 합니다.", "Multiple trusted local extensions are available, so you must choose one.")
+      return text("신뢰된 이 컴퓨터의 연장이 여러 개라서 직접 선택해야 합니다.", "Multiple trusted extensions on this computer are available, so you must choose one.")
     case "multiple_local_candidates":
-      return text("로컬 후보가 여러 개라서 자동 선택을 중단했습니다.", "Multiple local candidates are available, so automatic selection is blocked.")
+      return text("이 컴퓨터에서 쓸 수 있는 연장이 여러 개라서 자동 선택을 중단했습니다.", "Multiple extensions on this computer are available, so automatic selection is blocked.")
     case "local_profile_not_interactive":
-      return text("로컬 연장이 interactive desktop을 지원하지 않아 직접 선택이 필요합니다.", "The local extension does not support an interactive desktop, so explicit selection is required.")
+      return text("이 컴퓨터의 연장이 화면 조작을 지원하지 않아 직접 선택이 필요합니다.", "The extension on this computer does not support screen control, so direct selection is required.")
     case "local_not_trusted":
-      return text("로컬 연장을 신뢰 가능한 내 기기로 확정하지 못했습니다.", "The local extension could not be confirmed as a trusted local device.")
+      return text("이 컴퓨터의 연장을 신뢰된 내 기기로 확정하지 못했습니다.", "The extension on this computer could not be confirmed as a trusted device.")
     case "pinned_default_remote_instance":
       return text("고정한 원격 연장을 기본 대상으로 사용합니다.", "The pinned remote extension is used as the default target.")
     case "pinned_remote_unavailable":
       return text("고정한 원격 연장이 현재 사용할 수 없습니다.", "The pinned remote extension is not currently available.")
     case "remote_only_requires_explicit_selection":
-      return text("원격 연장만 online 상태라서 명시적으로 지정해야 합니다.", "Only remote extensions are online, so an explicit target is required.")
+      return text("현재 원격 컴퓨터의 연장만 연결되어 직접 선택해야 합니다.", "Only extensions on remote computers are online, so direct selection is required.")
     case "no_online_target_candidate":
-      return text("현재 online 대상이 없어 실행 대상을 선택할 수 없습니다.", "There is no online target available right now.")
+      return text("현재 연결된 연장이 없어 실행 대상을 선택할 수 없습니다.", "There is no connected extension available right now.")
     case "version_mismatch":
       return text("버전 차이", "Version mismatch")
     case "protocol_version_mismatch":
@@ -175,23 +191,23 @@ export function describeYeonjangReasonCode(code: string, text: TextFn): string {
     case "platform_mismatch":
       return text("플랫폼 차이", "Platform mismatch")
     case "heartbeat_age_mismatch":
-      return text("최근 heartbeat 차이", "Heartbeat freshness mismatch")
+      return text("최근 연결 신호 차이", "Connection freshness mismatch")
     case "latency_unavailable":
       return text("지연 시간 정보 없음", "Latency unavailable")
     case "missing_capability_on_remote":
-      return text("원격에 없는 기능이 있습니다.", "Some capabilities are missing on the remote instance.")
+      return text("원격 컴퓨터에 없는 기능이 있습니다.", "Some features are missing on the remote computer.")
     case "missing_capability_on_local":
-      return text("로컬에 없는 기능이 있습니다.", "Some capabilities are missing on the local instance.")
+      return text("이 컴퓨터에 없는 기능이 있습니다.", "Some features are missing on this computer.")
     case "update_required":
       return text("업데이트가 필요합니다.", "An update is required.")
     case "matched_gateway_host_fingerprint":
-      return text("현재 게이트웨이와 일치하는 내 기기입니다.", "This device matches the current gateway fingerprint.")
+      return text("현재 실행 중인 연장과 일치하는 내 기기입니다.", "This device matches the currently running extension.")
     case "matched_gateway_default_node":
-      return text("기본 로컬 노드로 관찰되었습니다.", "Observed as the default local node.")
+      return text("기본 로컬 연장으로 확인되었습니다.", "Confirmed as the default local extension.")
     case "gateway_host_mismatch":
-      return text("현재 게이트웨이와 다른 인스턴스입니다.", "This instance does not match the current gateway host.")
+      return text("현재 실행 중인 연장과 다른 컴퓨터입니다.", "This computer does not match the currently running extension.")
     default:
-      return code.replace(/_/g, " ")
+      return text("추가 상태 확인 필요", "Additional state needs review")
   }
 }
 
@@ -201,7 +217,7 @@ export function describeYeonjangDefaultTargetSelection(
 ): string {
   switch (selection.status) {
     case "auto_selected_local_interactive":
-      return text("대상을 따로 지정하지 않으면 로컬 interactive 연장을 자동 사용합니다.", "If no target is specified, the local interactive extension is selected automatically.")
+      return text("대상을 따로 지정하지 않으면 이 컴퓨터의 화면 조작 연장을 자동 사용합니다.", "If no target is specified, the screen-control extension on this computer is selected automatically.")
     case "auto_selected_pinned_remote":
       return text("대상을 따로 지정하지 않으면 고정한 원격 연장을 사용합니다.", "If no target is specified, the pinned remote extension is used.")
     case "ambiguous_state":
@@ -229,10 +245,11 @@ export function summarizeYeonjangCapabilities(
   instance: Pick<YeonjangProjectedInstance, "supportedMethods" | "methodCount">,
   text: TextFn,
 ): string {
-  const preview = instance.supportedMethods.slice(0, 3).join(", ")
   const count = instance.supportedMethods.length || instance.methodCount
-  if (!preview) return text(`기능 ${count}개`, `${count} capabilities`)
-  return text(`기능 ${count}개 · ${preview}`, `${count} capabilities · ${preview}`)
+  if (count <= 0) {
+    return text("지원 기능 정보 없음", "Supported feature information unavailable")
+  }
+  return text(`지원 기능 ${count}개`, `${count} supported features`)
 }
 
 export function buildYeonjangTargetPickerPlacements(text: TextFn): YeonjangTargetPickerPlacement[] {
@@ -240,17 +257,17 @@ export function buildYeonjangTargetPickerPlacements(text: TextFn): YeonjangTarge
     {
       id: "chat_composer",
       label: text("채팅 작성창", "Chat composer"),
-      description: text("원격 연장만 online일 때는 메시지 작성 단계에서 명시 대상을 고릅니다.", "When only remote extensions are online, choose the explicit target in the composer."),
+      description: text("원격 컴퓨터의 연장만 연결되어 있을 때는 메시지를 보내기 전에 사용할 연장을 고릅니다.", "When only extensions on remote computers are online, choose which extension to use before sending the message."),
     },
     {
       id: "advanced_run_panel",
-      label: text("고급 실행 패널", "Advanced run panel"),
-      description: text("운영자는 실행 전에 대상을 확인하고 바꿀 수 있어야 합니다.", "Operators should be able to inspect and change the target before execution."),
+      label: text("실행 전 확인 패널", "Pre-run review panel"),
+      description: text("실행하기 전에 사용할 연장을 확인하고 바꿀 수 있어야 합니다.", "You should be able to review and change the extension before execution."),
     },
     {
       id: "admin_control_panel",
-      label: text("관리 제어면", "Admin control panel"),
-      description: text("stale, trust blocked, ambiguity 상태를 receipt와 함께 확인합니다.", "Show stale, trust-blocked, and ambiguous receipts in the admin control surface."),
+      label: text("관리 화면", "Management screen"),
+      description: text("연결 끊김, 신뢰 차단, 대상 불명확 상태를 실행 기록과 함께 확인합니다.", "Show disconnected, trust-blocked, and ambiguous target states with execution history."),
     },
   ]
 }

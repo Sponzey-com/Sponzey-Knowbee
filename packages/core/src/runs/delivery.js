@@ -1,14 +1,32 @@
 import crypto from "node:crypto";
 import { homedir } from "node:os";
 import { basename } from "node:path";
-import { recordArtifactMetadata } from "../artifacts/lifecycle.js";
+import { recordArtifactMetadata, } from "../artifacts/lifecycle.js";
 import { buildCapabilityFallbackNotice } from "../channels/delivery-fallback.js";
+import { isExternalChannelProvider, } from "../channels/contracts.js";
 import { getTaskContinuity, hasArtifactReceipt, insertArtifactReceipt, insertChannelMessageRef, insertDiagnosticEvent, insertMessage, upsertTaskContinuity, } from "../db/index.js";
 import { eventBus } from "../events/index.js";
+import { redactLogText } from "../logger/index.js";
 import { sanitizeUserFacingError } from "./error-sanitizer.js";
-import { buildArtifactDeliveryKey as buildLedgerArtifactDeliveryKey, buildTextDeliveryKey as buildLedgerTextDeliveryKey, findMessageLedgerEventByIdempotencyKey, messageLedgerEventSucceeded, recordMessageLedgerEvent, } from "./message-ledger.js";
+import { buildArtifactDeliveryKey as buildLedgerArtifactDeliveryKey, buildTextDeliveryKey as buildLedgerTextDeliveryKey, cancelMessageDeliveryAdmission, completeMessageDeliveryAdmission, messageLedgerEventHasRequiredDeliveryEvidence, messageLedgerEventSucceeded, recordMessageLedgerEvent, reserveMessageDeliveryAdmission, } from "./message-ledger.js";
+import { buildAssistantTextDeliveryNotice } from "./assistant-text-delivery-notice.js";
 import { enqueueBackpressureTask, recordQueueRecoveryAttempt } from "./queue-backpressure.js";
 import { getRootRun } from "./store.js";
+function safeDeliveryErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
+const SUCCESSFUL_EXTERNAL_DELIVERY_STATUSES = new Set([
+    "sent",
+    "delivered",
+]);
+function hasMatchingExternalTextDeliveryEvidence(input) {
+    return input.receipts.some((receipt) => (receipt?.textDeliveries ?? []).some((delivery) => delivery.channel === input.source &&
+        delivery.text.trim() === input.text &&
+        (delivery.deliveryReceipts ?? []).some((providerReceipt) => providerReceipt.provider === input.source &&
+            SUCCESSFUL_EXTERNAL_DELIVERY_STATUSES.has(providerReceipt.status) &&
+            providerReceipt.idempotencyKey.trim().length > 0)));
+}
 const defaultAssistantTextDeliveryDependencies = {
     now: () => Date.now(),
     createId: () => crypto.randomUUID(),
@@ -40,7 +58,12 @@ const MAX_COMPLETED_ARTIFACT_DELIVERY_KEYS = 2_000;
 const activeArtifactDeliveryLocks = new Map();
 const completedArtifactDeliveryKeys = new Map();
 export function buildArtifactDeliveryKey(params) {
-    return `${params.runId}:${params.channel}:${params.filePath}`;
+    return [
+        params.runId,
+        params.channel,
+        params.channelTarget ?? "unbound-target",
+        params.filePath,
+    ].join(":");
 }
 function rememberCompletedArtifactDelivery(key) {
     completedArtifactDeliveryKeys.set(key, Date.now());
@@ -58,17 +81,27 @@ export async function deliverArtifactOnce(params) {
         runId,
         channel: params.channel,
         filePath: params.filePath,
+        ...(params.channelTarget
+            ? { channelTarget: params.channelTarget }
+            : {}),
     });
     if (!params.force && completedArtifactDeliveryKeys.has(key))
         return undefined;
     const run = getRootRun(runId);
     if (!params.force &&
         run &&
-        hasArtifactReceipt({ runId, channel: params.channel, artifactPath: params.filePath })) {
+        hasArtifactReceipt({
+            runId,
+            channel: params.channel,
+            artifactPath: params.filePath,
+            ...(params.channelTarget
+                ? { channelTarget: params.channelTarget }
+                : {}),
+        })) {
         rememberCompletedArtifactDelivery(key);
         return undefined;
     }
-    if (!params.force && run) {
+    if (!params.force && run && !params.channelTarget) {
         const continuity = getTaskContinuity(run.requestGroupId);
         const deliveryReceipts = [
             `${params.channel}:${params.filePath}`,
@@ -88,7 +121,9 @@ export async function deliverArtifactOnce(params) {
     const delivery = params
         .task()
         .then((result) => {
-        if (result !== undefined) {
+        const verified = result !== undefined
+            && (params.isVerifiedDelivery?.(result) ?? true);
+        if (verified) {
             rememberCompletedArtifactDelivery(key);
             if (run) {
                 try {
@@ -106,7 +141,7 @@ export async function deliverArtifactOnce(params) {
                         ...(params.channelTarget ? { channelTarget: params.channelTarget } : {}),
                         ...(params.mimeType ? { mimeType: params.mimeType } : {}),
                         ...(params.sizeBytes !== undefined ? { sizeBytes: params.sizeBytes } : {}),
-                    });
+                    }, params.artifactStorage);
                     insertArtifactReceipt({
                         runId,
                         requestGroupId: run.requestGroupId,
@@ -163,6 +198,7 @@ export async function deliverArtifactOnce(params) {
         return result;
     })
         .catch((error) => {
+        const message = safeDeliveryErrorMessage(error);
         recordMessageLedgerEvent({
             runId,
             requestGroupId: run?.requestGroupId ?? runId,
@@ -175,7 +211,7 @@ export async function deliverArtifactOnce(params) {
             detail: {
                 filePath: displayHomePath(params.filePath),
                 channel: params.channel,
-                error: error instanceof Error ? error.message : String(error),
+                error: message,
             },
         });
         throw error;
@@ -277,6 +313,18 @@ export async function emitAssistantTextDelivery(params) {
     const deliveryKind = params.deliveryKind ?? "final";
     const deliveryKey = buildLedgerTextDeliveryKey(params.source, params.sessionId, normalized);
     const idempotencyKey = `text-delivery:${params.runId}:${params.source}:${deliveryKey}`;
+    let deliveryAdmissionEventId;
+    const isCancelled = params.isCancelled ??
+        (() => {
+            const status = getRootRun(params.runId)?.status;
+            return status === "cancelled" || status === "interrupted";
+        });
+    const cancellationAuthorization = params.cancellationReportAuthorization;
+    const cancellationReportAuthorized = Boolean(cancellationAuthorization &&
+        cancellationAuthorization.runId === params.runId &&
+        cancellationAuthorization.finalOutcome === "cancelled" &&
+        cancellationAuthorization.receiptRef.startsWith(`receipt:cancellation:${params.runId}:`));
+    const cancellationBlocksDelivery = () => isCancelled() && !cancellationReportAuthorized;
     if (deliveryKind === "final" && params.subSessionId) {
         recordMessageLedgerEvent({
             runId: params.runId,
@@ -292,6 +340,10 @@ export async function emitAssistantTextDelivery(params) {
             status: "suppressed",
             summary: "child sub-session final delivery was blocked; parent finalizer must deliver.",
             detail: {
+                deliveryNotice: buildAssistantTextDeliveryNotice({
+                    deliveryKind,
+                    delivered: false,
+                }),
                 reasonCode: "child_direct_final_delivery_blocked",
                 textLength: normalized.length,
                 ...(params.speaker ? { speaker: params.speaker } : {}),
@@ -304,9 +356,54 @@ export async function emitAssistantTextDelivery(params) {
             doneDelivered: false,
         };
     }
+    if (deliveryKind === "final" && cancellationBlocksDelivery()) {
+        recordMessageLedgerEvent({
+            runId: params.runId,
+            sessionKey: params.sessionId,
+            channel: params.source,
+            eventKind: "text_delivery_suppressed",
+            deliveryKind,
+            deliveryKey,
+            idempotencyKey: `${idempotencyKey}:cancelled`,
+            status: "suppressed",
+            summary: "final delivery cancelled before admission",
+            detail: { reasonCode: "root_run_cancelled" },
+        });
+        return {
+            persisted: false,
+            textDelivered: false,
+            doneDelivered: false,
+            admissionStatus: "cancelled",
+        };
+    }
+    if (isExternalChannelProvider(params.source) && !params.onChunk) {
+        return {
+            persisted: false,
+            textDelivered: false,
+            doneDelivered: false,
+            admissionStatus: "provider_evidence_unavailable",
+        };
+    }
     if (!params.force && deliveryKind === "final") {
-        const previousDelivery = findMessageLedgerEventByIdempotencyKey(idempotencyKey);
-        if (messageLedgerEventSucceeded(previousDelivery)) {
+        const admission = reserveMessageDeliveryAdmission({
+            runId: params.runId,
+            ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
+            ...(params.subSessionId ? { subSessionId: params.subSessionId } : {}),
+            ...(params.agentId ? { agentId: params.agentId } : {}),
+            sessionKey: params.sessionId,
+            channel: params.source,
+            deliveryKind,
+            deliveryKey,
+            idempotencyKey,
+            detail: {
+                textLength: normalized.length,
+                ...(params.speaker ? { speaker: params.speaker } : {}),
+                ...(params.sourceAttributions ? { sourceAttributions: params.sourceAttributions } : {}),
+            },
+        });
+        if (admission.status === "existing" &&
+            messageLedgerEventSucceeded(admission.event) &&
+            messageLedgerEventHasRequiredDeliveryEvidence(admission.event)) {
             recordMessageLedgerEvent({
                 runId: params.runId,
                 ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
@@ -321,8 +418,12 @@ export async function emitAssistantTextDelivery(params) {
                 status: "suppressed",
                 summary: "중복 최종 응답 전송을 억제했습니다.",
                 detail: {
-                    duplicateLedgerEventId: previousDelivery?.id ?? null,
-                    duplicateCreatedAt: previousDelivery?.created_at ?? null,
+                    deliveryNotice: buildAssistantTextDeliveryNotice({
+                        deliveryKind,
+                        delivered: false,
+                    }),
+                    duplicateLedgerEventId: admission.event.id,
+                    duplicateCreatedAt: admission.event.created_at,
                     textLength: normalized.length,
                     ...(params.speaker ? { speaker: params.speaker } : {}),
                     ...(params.sourceAttributions ? { sourceAttributions: params.sourceAttributions } : {}),
@@ -334,8 +435,58 @@ export async function emitAssistantTextDelivery(params) {
                 doneDelivered: params.emitDone !== false,
             };
         }
+        if (admission.status !== "admitted") {
+            const admissionStatus = admission.status === "persistence_unavailable"
+                ? "persistence_unavailable"
+                : admission.event.status === "suppressed"
+                    ? "cancelled"
+                    : admission.event.status === "failed"
+                        ? "previous_failed"
+                        : "in_flight_unknown";
+            return {
+                persisted: false,
+                textDelivered: false,
+                doneDelivered: false,
+                admissionStatus,
+            };
+        }
+        deliveryAdmissionEventId = admission.eventId;
+        if (cancellationBlocksDelivery()) {
+            const cancelled = cancelMessageDeliveryAdmission({
+                idempotencyKey,
+                detail: { reasonCode: "root_run_cancelled_after_admission" },
+            });
+            return {
+                persisted: false,
+                textDelivered: false,
+                doneDelivered: false,
+                admissionStatus: cancelled ? "cancelled" : "in_flight_unknown",
+            };
+        }
     }
-    dependencies.emitStart({ sessionId: params.sessionId, runId: params.runId });
+    if (deliveryKind === "final" && cancellationBlocksDelivery()) {
+        const cancelled = !params.force &&
+            cancelMessageDeliveryAdmission({
+                idempotencyKey,
+                detail: { reasonCode: "root_run_cancelled_before_delivery_events" },
+            });
+        return {
+            persisted: false,
+            textDelivered: false,
+            doneDelivered: false,
+            admissionStatus: cancelled || params.force ? "cancelled" : "in_flight_unknown",
+        };
+    }
+    let cancelledBeforeProvider = false;
+    const guardedOnChunk = params.onChunk
+        ? async (chunk) => {
+            if (cancellationBlocksDelivery()) {
+                cancelledBeforeProvider = true;
+                throw new Error("delivery_cancelled_before_provider");
+            }
+            return params.onChunk?.(chunk);
+        }
+        : params.onChunk;
     if (params.persistMessage !== false) {
         dependencies.insertMessage({
             id: dependencies.createId(),
@@ -348,12 +499,14 @@ export async function emitAssistantTextDelivery(params) {
             created_at: dependencies.now(),
         });
     }
-    dependencies.writeReplyLog(params.source, normalized);
-    dependencies.emitStream({ sessionId: params.sessionId, runId: params.runId, delta: normalized });
     let textDeliveryFailed = false;
-    await deliverChunk({
-        onChunk: params.onChunk,
-        chunk: { type: "text", delta: normalized },
+    const textChunkReceipt = await deliverChunk({
+        onChunk: guardedOnChunk,
+        chunk: {
+            type: "text",
+            delta: normalized,
+            textSource: params.textSource ?? "llm_reviewed",
+        },
         runId: params.runId,
         source: params.source,
         deliveryKind,
@@ -363,12 +516,11 @@ export async function emitAssistantTextDelivery(params) {
             params.onError?.(message);
         },
     });
-    let doneDelivered = false;
+    let doneDeliveryFailed = false;
+    let doneChunkReceipt;
     if (params.emitDone !== false) {
-        dependencies.emitEnd({ sessionId: params.sessionId, runId: params.runId, durationMs: 0 });
-        let doneDeliveryFailed = false;
-        await deliverChunk({
-            onChunk: params.onChunk,
+        doneChunkReceipt = await deliverChunk({
+            onChunk: guardedOnChunk,
             chunk: { type: "done", totalTokens: 0 },
             runId: params.runId,
             source: params.source,
@@ -379,36 +531,106 @@ export async function emitAssistantTextDelivery(params) {
                 params.onError?.(message);
             },
         });
-        doneDelivered = !doneDeliveryFailed;
     }
-    const receipt = {
+    const externalEvidenceConfirmed = isExternalChannelProvider(params.source)
+        ? hasMatchingExternalTextDeliveryEvidence({
+            source: params.source,
+            text: normalized,
+            receipts: [textChunkReceipt, doneChunkReceipt],
+        })
+        : true;
+    const textDelivered = !textDeliveryFailed && !cancelledBeforeProvider && externalEvidenceConfirmed;
+    const doneDelivered = params.emitDone !== false &&
+        !doneDeliveryFailed &&
+        !cancelledBeforeProvider &&
+        externalEvidenceConfirmed;
+    if (textDelivered) {
+        dependencies.emitStart({ sessionId: params.sessionId, runId: params.runId });
+        dependencies.writeReplyLog(params.source, normalized);
+        dependencies.emitStream({ sessionId: params.sessionId, runId: params.runId, delta: normalized });
+    }
+    if (doneDelivered) {
+        dependencies.emitEnd({ sessionId: params.sessionId, runId: params.runId, durationMs: 0 });
+    }
+    let receipt = {
         persisted: params.persistMessage !== false,
-        textDelivered: params.onChunk == null || !textDeliveryFailed,
+        textDelivered,
         doneDelivered,
     };
-    const delivered = receipt.textDelivered;
-    recordMessageLedgerEvent({
-        runId: params.runId,
-        ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
-        ...(params.subSessionId ? { subSessionId: params.subSessionId } : {}),
-        ...(params.agentId ? { agentId: params.agentId } : {}),
-        sessionKey: params.sessionId,
-        channel: params.source,
-        eventKind: delivered ? "text_delivered" : "text_delivery_failed",
+    const delivered = receipt.textDelivered && (params.emitDone === false || receipt.doneDelivered);
+    const deliveryNotice = buildAssistantTextDeliveryNotice({
         deliveryKind,
-        deliveryKey,
-        idempotencyKey,
-        status: delivered ? "delivered" : "failed",
-        summary: delivered ? "응답 텍스트 전달 완료" : "응답 텍스트 전달 실패",
-        detail: {
-            persisted: receipt.persisted,
-            textDelivered: receipt.textDelivered,
-            doneDelivered: receipt.doneDelivered,
-            textLength: normalized.length,
-            ...(params.speaker ? { speaker: params.speaker } : {}),
-            ...(params.sourceAttributions ? { sourceAttributions: params.sourceAttributions } : {}),
-        },
+        delivered,
     });
+    const detail = {
+        deliveryNotice,
+        persisted: receipt.persisted,
+        textDelivered: receipt.textDelivered,
+        doneDelivered: receipt.doneDelivered,
+        textLength: normalized.length,
+        ...(isExternalChannelProvider(params.source)
+            ? { providerEvidence: externalEvidenceConfirmed ? "confirmed" : "missing_or_rejected" }
+            : {}),
+        ...(params.speaker ? { speaker: params.speaker } : {}),
+        ...(params.sourceAttributions ? { sourceAttributions: params.sourceAttributions } : {}),
+    };
+    if (!params.force && deliveryKind === "final") {
+        const completed = cancelledBeforeProvider
+            ? cancelMessageDeliveryAdmission({
+                idempotencyKey,
+                detail: { ...detail, reasonCode: "root_run_cancelled_before_provider" },
+            })
+            : completeMessageDeliveryAdmission({ idempotencyKey, delivered, detail });
+        if (cancelledBeforeProvider) {
+            receipt = {
+                persisted: receipt.persisted,
+                textDelivered: false,
+                doneDelivered: false,
+                admissionStatus: completed ? "cancelled" : "in_flight_unknown",
+            };
+        }
+        else if (!completed) {
+            receipt = {
+                persisted: receipt.persisted,
+                textDelivered: false,
+                doneDelivered: false,
+                admissionStatus: "in_flight_unknown",
+            };
+        }
+        else if (delivered && deliveryAdmissionEventId) {
+            receipt = {
+                ...receipt,
+                runId: params.runId,
+                receiptRef: `message-ledger:${deliveryAdmissionEventId}`,
+                deliveredAtMs: (params.monotonicNow ?? (() => performance.now()))(),
+            };
+        }
+    }
+    else {
+        const receiptId = recordMessageLedgerEvent({
+            runId: params.runId,
+            ...(params.parentRunId ? { parentRunId: params.parentRunId } : {}),
+            ...(params.subSessionId ? { subSessionId: params.subSessionId } : {}),
+            ...(params.agentId ? { agentId: params.agentId } : {}),
+            sessionKey: params.sessionId,
+            channel: params.source,
+            eventKind: delivered ? "text_delivered" : "text_delivery_failed",
+            deliveryKind,
+            deliveryKey,
+            idempotencyKey,
+            status: delivered ? "delivered" : "failed",
+            summary: delivered ? "응답 텍스트 전달 완료" : "응답 텍스트 전달 실패",
+            detail,
+        });
+        if (delivered && receiptId) {
+            receipt = {
+                ...receipt,
+                runId: params.runId,
+                receiptRef: `message-ledger:${receiptId}`,
+                deliveredAtMs: (params.monotonicNow ?? (() => performance.now()))(),
+            };
+        }
+    }
     return receipt;
 }
 export function resolveAssistantTextDeliveryOutcome(receipt) {
@@ -434,6 +656,7 @@ export function resolveAssistantTextDeliveryOutcome(receipt) {
         hasDeliveryFailure,
         failureStage,
         summary,
+        ...(receipt.admissionStatus ? { reasonCode: `delivery_admission_${receipt.admissionStatus}` } : {}),
     };
 }
 function inferChunkDeliveryKind(chunk) {
@@ -444,7 +667,15 @@ function inferChunkDeliveryKind(chunk) {
     if (chunk.type === "error" || chunk.type === "execution_recovery" || chunk.type === "ai_recovery") {
         return "diagnostic";
     }
+    if (chunk.type === "text" && chunk.notice?.finalAnswer === false) {
+        return chunk.notice.deliveryMode === "diagnostic" ? "diagnostic" : "progress";
+    }
     return "final";
+}
+function chunkNoticeForOutbox(chunk) {
+    if (chunk.type !== "text" || !chunk.notice)
+        return undefined;
+    return chunk.notice;
 }
 function getDeliveryProvider(params) {
     if (params.source)
@@ -559,6 +790,7 @@ export async function deliverChunk(params) {
         ...(params.targetKey ? { targetKey: params.targetKey } : {}),
     });
     const deliveryKind = params.deliveryKind ?? inferChunkDeliveryKind(params.chunk);
+    const chunkNotice = chunkNoticeForOutbox(params.chunk);
     const deliveryKey = `chunk:${providerKey}:${recoveryKey}`;
     const priority = params.priority ?? "normal";
     try {
@@ -581,6 +813,7 @@ export async function deliverChunk(params) {
                             delayMs: backoffDelayMs,
                             priority,
                             chunkType: params.chunk.type,
+                            ...(chunkNotice ? { chunkNotice } : {}),
                         },
                     });
                     await deliveryOutboxHooks.sleep(backoffDelayMs);
@@ -598,6 +831,7 @@ export async function deliverChunk(params) {
                     detail: {
                         priority,
                         chunkType: params.chunk.type,
+                        ...(chunkNotice ? { chunkNotice } : {}),
                     },
                 });
                 const receipt = ((await enqueueBackpressureTask({
@@ -622,6 +856,7 @@ export async function deliverChunk(params) {
                         detail: {
                             priority,
                             chunkType: params.chunk.type,
+                            ...(chunkNotice ? { chunkNotice } : {}),
                             receipts: summarizeReceiptsForOutbox(deliveryReceipts),
                         },
                     });
@@ -631,6 +866,7 @@ export async function deliverChunk(params) {
         });
     }
     catch (error) {
+        const safeErrorMessage = safeDeliveryErrorMessage(error);
         const retryAfterMs = getRetryAfterMs(error);
         rememberProviderBackoff(providerKey, retryAfterMs);
         recordOutboxEvent({
@@ -648,12 +884,12 @@ export async function deliverChunk(params) {
             detail: {
                 priority,
                 chunkType: params.chunk.type,
+                ...(chunkNotice ? { chunkNotice } : {}),
                 retryAfterMs: retryAfterMs ?? null,
-                error: error instanceof Error ? error.message : String(error),
+                error: safeErrorMessage,
             },
         });
-        const rawMessage = error instanceof Error ? error.message : String(error);
-        const sanitized = sanitizeUserFacingError(`chunk delivery failed: ${rawMessage}`);
+        const sanitized = sanitizeUserFacingError(`chunk delivery failed: ${safeErrorMessage}`);
         const recoveryDecision = recordQueueRecoveryAttempt({
             queueName: "delivery",
             runId: params.runId,

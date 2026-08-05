@@ -11,7 +11,10 @@ import {
   runMemoryInspectorControl,
   type MemoryInspectorControlAction,
 } from "../../memory/inspector.js"
+import { sanitizeUserFacingError } from "../../runs/error-sanitizer.js"
+import { redactLogText } from "../../logger/index.js"
 import type { MemoryWritebackStatus } from "../../db/index.js"
+import type { KnowbeeConfig } from "../../config/types.js"
 
 const ALLOWED_STATUSES = new Set<MemoryWritebackStatus | "all">(["pending", "writing", "failed", "completed", "discarded", "all"])
 const ALLOWED_ACTIONS = new Set<MemoryWritebackReviewAction>(["approve_long_term", "approve_edited", "keep_session", "discard"])
@@ -42,7 +45,16 @@ function normalizeOwnerType(value: unknown): "main_agent" | "sub_agent" | undefi
     : undefined
 }
 
-export function registerMemoryRoute(app: FastifyInstance): void {
+function memoryWritebackReviewErrorMessage(error: unknown): string {
+  const rawMessage = error instanceof Error ? error.message : String(error)
+  return redactLogText(rawMessage)
+}
+
+function memoryWritebackReviewErrorStatus(message: string): 400 | 404 {
+  return /not found/i.test(message) ? 404 : 400
+}
+
+export function registerMemoryRoute(app: FastifyInstance, config: KnowbeeConfig): void {
   app.get("/api/memory/quality", { preHandler: authMiddleware }, async () => {
     return { snapshot: buildMemoryQualitySnapshot() }
   })
@@ -70,6 +82,7 @@ export function registerMemoryRoute(app: FastifyInstance): void {
           ? { requestGroupId: req.query.requestGroupId.trim() }
           : {}),
         limit: normalizeLimit(req.query.limit),
+        config,
       }),
     }
   })
@@ -103,6 +116,7 @@ export function registerMemoryRoute(app: FastifyInstance): void {
           ? { requestGroupId: req.body.requestGroupId.trim() }
           : {}),
         ...(typeof req.body?.limit === "number" ? { limit: req.body.limit } : {}),
+        config,
       }),
     }
   })
@@ -135,9 +149,13 @@ export function registerMemoryRoute(app: FastifyInstance): void {
       })
       return result
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      const status = /not found/i.test(message) ? 404 : 400
-      return reply.status(status).send({ error: message })
+      const message = memoryWritebackReviewErrorMessage(error)
+      const sanitized = sanitizeUserFacingError(message)
+      return reply.status(memoryWritebackReviewErrorStatus(message)).send({
+        error: sanitized.userMessage,
+        kind: sanitized.kind,
+        actionHint: sanitized.actionHint,
+      })
     }
   })
 }

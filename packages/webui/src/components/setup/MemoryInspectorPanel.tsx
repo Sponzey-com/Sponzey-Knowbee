@@ -26,20 +26,70 @@ function formatAt(value: number | null | undefined): string {
 function displayControlLabel(text: (ko: string, en: string) => string, action: MemoryInspectorControlAction): string {
   switch (action) {
     case "dry_run_compaction":
-      return text("dry-run compact", "Dry-run compact")
+      return text("압축 미리보기", "Dry-run compaction")
     case "latest_capsule_inspect":
-      return text("최신 capsule", "Latest capsule")
+      return text("최신 압축 메모리", "Latest compacted memory")
     case "rollup_inspect":
-      return text("rollup 보기", "Inspect rollup")
+      return text("묶음 요약 보기", "Inspect rollup")
     case "safe_restore":
-      return text("safe restore", "Safe restore")
+      return text("복원 미리보기", "Safe restore")
     case "force_compaction":
-      return text("강제 compact", "Force compact")
+      return text("지금 압축", "Force compaction")
     case "capsule_invalidate":
-      return text("capsule 무효화", "Invalidate capsule")
+      return text("압축 메모리 해제", "Invalidate compacted memory")
     default:
-      return action
+      return text("메모리 관리 작업", "Memory management action")
   }
+}
+
+function memoryOwnerAgentName(
+  text: (ko: string, en: string) => string,
+  card: MemoryInspectorSnapshot["ownerCards"][number],
+): string {
+  const agentName = card.agentNameSnapshot?.trim()
+  if (agentName) return agentName
+  if (card.ownerType === "main_agent") return text("메인 에이전트", "Main agent")
+  if (card.ownerType === "sub_agent") return text("이름 없는 서브 에이전트", "Unnamed sub-agent")
+  return text("이름 없는 메모리 대상", "Unnamed memory owner")
+}
+
+function ownerTypeLabel(text: (ko: string, en: string) => string, ownerType: string): string {
+  if (ownerType === "main_agent") return text("메인", "Main")
+  if (ownerType === "sub_agent") return text("서브 에이전트", "Sub-agent")
+  return text("대상 확인 필요", "Owner needs review")
+}
+
+function memoryStateLabel(text: (ko: string, en: string) => string, state: string | null | undefined): string {
+  switch (state) {
+    case "ok":
+    case "healthy":
+    case "ready":
+      return text("정상", "Ready")
+    case "warning":
+    case "degraded":
+      return text("주의", "Warning")
+    case "error":
+    case "failed":
+      return text("오류", "Error")
+    default:
+      return text("확인 필요", "Needs review")
+  }
+}
+
+function hiddenRecordSummary(
+  text: (ko: string, en: string) => string,
+  value: string | null | undefined,
+): string {
+  if (!value?.trim()) return text("기록 없음", "No record")
+  const lineCount = value.split(/\r?\n/).filter((line) => line.trim()).length
+  return text(`기록 있음 · ${lineCount}줄 원문 숨김`, `Record exists · ${lineCount} raw lines hidden`)
+}
+
+function reasonRecordLabel(
+  text: (ko: string, en: string) => string,
+  value: string | null | undefined,
+): string {
+  return value?.trim() ? text("사유 기록 있음", "Reason recorded") : "-"
 }
 
 export function MemoryInspectorPanel({
@@ -73,11 +123,11 @@ export function MemoryInspectorPanel({
     <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <div className="text-sm font-semibold text-stone-900">{text("Memory inspector", "Memory inspector")}</div>
+          <div className="text-sm font-semibold text-stone-900">{text("메모리 점검", "Memory inspection")}</div>
           <p className="mt-1 text-sm leading-6 text-stone-600">
             {text(
-              "compact 상태, capsule chain, recall trace, compaction audit를 운영 화면에서 확인합니다.",
-              "Inspect compact state, capsule chain, recall trace, and compaction audit from the operations screen.",
+              "압축 상태, 압축 메모리 흐름, 불러온 기록, 압축 이력을 운영 화면에서 확인합니다. 원문 메모리와 내부 ID는 기본 화면에서 숨깁니다.",
+              "Inspect compaction state, compacted memory flow, recall records, and compaction audit from the operations screen. Raw memory and internal IDs are hidden by default.",
             )}
           </p>
         </div>
@@ -99,54 +149,54 @@ export function MemoryInspectorPanel({
 
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("Owner", "Owner")}</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("대상", "Owner")}</div>
           <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.summary.owners ?? 0}</div>
-          <div className="mt-1 text-xs text-stone-500">warning {snapshot?.summary.warningOwners ?? 0}</div>
+          <div className="mt-1 text-xs text-stone-500">{text("주의 필요", "Warnings")} {snapshot?.summary.warningOwners ?? 0}</div>
         </div>
         <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("Recall", "Recall")}</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("불러온 기록", "Recall")}</div>
           <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.summary.recallEvents ?? 0}</div>
-          <div className="mt-1 text-xs text-stone-500">quality {snapshot?.summary.qualityStatus ?? "-"}</div>
+          <div className="mt-1 text-xs text-stone-500">{text("품질", "Quality")} {memoryStateLabel(text, snapshot?.summary.qualityStatus)}</div>
         </div>
         <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("Compact runs", "Compact runs")}</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("압축 실행", "Compaction runs")}</div>
           <div className="mt-2 text-sm font-semibold text-stone-900">{snapshot?.summary.compactionRuns ?? 0}</div>
           <div className="mt-1 text-xs text-stone-500">{text("정책 최소 토큰", "Min tokens")} {snapshot?.configuredPolicy.minContextTokens ?? 0}</div>
         </div>
         <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("Latest capsule", "Latest capsule")}</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("최신 압축 메모리", "Latest compacted memory")}</div>
           <div className="mt-2 text-sm font-semibold text-stone-900">{selected ? formatAgo(selected.latestCapsuleAgeMs) : "-"}</div>
-          <div className="mt-1 text-xs text-stone-500">{text("chain", "chain")} {selected?.activeCapsuleChainDepth ?? 0}</div>
+          <div className="mt-1 text-xs text-stone-500">{text("연결 깊이", "Chain depth")} {selected?.activeCapsuleChainDepth ?? 0}</div>
         </div>
         <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("Latest rollup", "Latest rollup")}</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">{text("최신 묶음 요약", "Latest rollup")}</div>
           <div className="mt-2 text-sm font-semibold text-stone-900">{selected ? formatAgo(selected.latestRollupAgeMs) : "-"}</div>
-          <div className="mt-1 text-xs text-stone-500">{displayText(selected?.lastCompactionReason ?? "-")}</div>
+          <div className="mt-1 text-xs text-stone-500">{reasonRecordLabel(text, selected?.lastCompactionReason)}</div>
         </div>
       </div>
 
       {ownerCards.length > 0 ? (
         <div className="mt-4 overflow-hidden rounded-2xl border border-stone-200 bg-white">
           <div className="grid grid-cols-[1fr_0.9fr_0.8fr_0.8fr_0.9fr_0.9fr] gap-2 border-b border-stone-200 bg-stone-100 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-stone-500">
-            <span>{text("Agent", "Agent")}</span>
-            <span>{text("raw tokens", "raw tokens")}</span>
-            <span>{text("pending", "pending")}</span>
-            <span>{text("recall", "recall")}</span>
-            <span>{text("capsule", "capsule")}</span>
-            <span>{text("drift", "drift")}</span>
+            <span>{text("에이전트", "Agent")}</span>
+            <span>{text("최근 대화 크기", "Recent context size")}</span>
+            <span>{text("보존 대기", "Pending")}</span>
+            <span>{text("불러옴", "Recall")}</span>
+            <span>{text("압축", "Compacted")}</span>
+            <span>{text("변화", "Drift")}</span>
           </div>
           {ownerCards.map((card) => (
             <div key={card.ownerScopeKey} className="grid grid-cols-[1fr_0.9fr_0.8fr_0.8fr_0.9fr_0.9fr] gap-2 border-b border-stone-100 px-4 py-2 text-xs text-stone-600 last:border-b-0">
               <span className="min-w-0">
-                <span className="font-semibold text-stone-900">{displayText(card.nicknameSnapshot || card.ownerId)}</span>
-                <span className="ml-2 text-stone-400">{card.ownerType}</span>
+                <span className="font-semibold text-stone-900">{displayText(memoryOwnerAgentName(text, card))}</span>
+                <span className="ml-2 text-stone-400">{ownerTypeLabel(text, card.ownerType)}</span>
               </span>
               <span>{card.currentRawTokenEstimate}</span>
               <span>{card.pendingPreservationCount}</span>
               <span>{card.recallHitCount}</span>
               <span>{formatAgo(card.latestCapsuleAgeMs)}</span>
               <span className={card.driftWarningState === "warning" ? "font-semibold text-amber-700" : "text-emerald-700"}>
-                {card.driftWarningState}
+                {memoryStateLabel(text, card.driftWarningState)}
               </span>
             </div>
           ))}
@@ -156,49 +206,51 @@ export function MemoryInspectorPanel({
       {snapshot?.compactPreview ? (
         <div className="mt-4 rounded-2xl border border-stone-200 bg-white p-4">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-xs font-semibold text-stone-500">{text("Compact preview", "Compact preview")}</div>
+            <div className="text-xs font-semibold text-stone-500">{text("압축 미리보기", "Compaction preview")}</div>
             <div className="text-xs text-stone-500">
-              {text("head 범위와 preserved pinned 항목만 보여주고 실제 write는 하지 않습니다.", "Shows the head range and preserved pinned items without writing state.")}
+              {text("보존 범위와 고정 항목만 보여주고 실제 저장은 하지 않습니다.", "Shows the head range and preserved pinned items without writing state.")}
             </div>
           </div>
           <div className="mt-3 grid gap-3 md:grid-cols-4">
-            <div className="rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">source {snapshot.compactPreview.sourceMessageCount}</div>
-            <div className="rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">tail {snapshot.compactPreview.tailMessageCount}</div>
-            <div className="rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">drop {snapshot.compactPreview.droppedRawCount}</div>
+            <div className="rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">{text("전체", "Total")} {snapshot.compactPreview.sourceMessageCount}</div>
+            <div className="rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">{text("유지", "Kept")} {snapshot.compactPreview.tailMessageCount}</div>
+            <div className="rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">{text("제외", "Hidden")} {snapshot.compactPreview.droppedRawCount}</div>
             <div className="rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">
               {snapshot.compactPreview.headRange
-                ? `head ${snapshot.compactPreview.headRange.start}-${snapshot.compactPreview.headRange.end}`
-                : "head -"}
+                ? text("앞부분 범위 기록 있음", "Head range recorded")
+                : text("앞부분 범위 없음", "No head range")}
             </div>
           </div>
           <div className="mt-3 rounded-xl bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-600">
-            {displayText(snapshot.compactPreview.capsuleSummary || "-")}
+            {snapshot.compactPreview.capsuleSummary
+              ? text("압축 요약 미리보기 기록 있음", "Compaction summary preview recorded")
+              : text("압축 요약 미리보기 없음", "No compaction summary preview")}
           </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {snapshot.compactPreview.preservedPinnedItems.slice(0, 8).map((item) => (
-              <span key={item} className="rounded-full bg-stone-100 px-3 py-1 text-[11px] text-stone-700">{displayText(item)}</span>
-            ))}
+          <div className="mt-3 rounded-xl bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-600">
+            {text("보존 고정 항목", "Preserved pinned items")} {snapshot.compactPreview.preservedPinnedItems.length}
           </div>
         </div>
       ) : null}
 
       {snapshot?.maintenanceRestorePromptBlock ? (
         <div className="mt-4 rounded-2xl border border-stone-200 bg-white p-4">
-          <div className="text-xs font-semibold text-stone-500">{text("Restore trace", "Restore trace")}</div>
-          <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-stone-950/95 px-4 py-3 text-[11px] leading-5 text-stone-100">
-            {snapshot.maintenanceRestorePromptBlock}
-          </pre>
+          <div className="text-xs font-semibold text-stone-500">{text("복원 기록", "Restore record")}</div>
+          <div className="mt-3 rounded-xl bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-600">
+            {hiddenRecordSummary(text, snapshot.maintenanceRestorePromptBlock)}
+          </div>
         </div>
       ) : null}
 
       {snapshot?.recentCompactionRuns.length ? (
         <div className="mt-4 rounded-2xl border border-stone-200 bg-white p-4">
-          <div className="text-xs font-semibold text-stone-500">{text("Compaction audit", "Compaction audit")}</div>
+          <div className="text-xs font-semibold text-stone-500">{text("압축 이력", "Compaction audit")}</div>
           <div className="mt-3 space-y-2">
             {snapshot.recentCompactionRuns.slice(0, 6).map((run) => (
               <div key={run.id} className="rounded-xl bg-stone-50 px-3 py-2 text-xs text-stone-600">
-                <div className="font-semibold text-stone-900">{displayText(run.modelId || "-")} · {run.status}</div>
-                <div className="mt-1">{formatAt(run.createdAt)} · {displayText(run.triggerReasonCodes.join(", ") || "-")}</div>
+                <div className="font-semibold text-stone-900">
+                  {run.modelId ? text("AI 기록 있음", "AI record exists") : text("AI 기록 없음", "No AI record")} · {memoryStateLabel(text, run.status)}
+                </div>
+                <div className="mt-1">{formatAt(run.createdAt)} · {text("사유", "Reasons")} {run.triggerReasonCodes.length}</div>
               </div>
             ))}
           </div>
@@ -207,7 +259,7 @@ export function MemoryInspectorPanel({
 
       {isAdmin ? (
         <div className="mt-4 rounded-2xl border border-stone-200 bg-white p-4">
-          <div className="text-xs font-semibold text-stone-500">{text("Manual controls", "Manual controls")}</div>
+          <div className="text-xs font-semibold text-stone-500">{text("관리자 조작", "Manual controls")}</div>
           <div className="mt-3 flex flex-wrap gap-2">
             {(snapshot?.controls ?? []).map((control) => (
               <button
@@ -229,54 +281,56 @@ export function MemoryInspectorPanel({
           {actionResult ? (
             <div className="mt-3 rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-700">
               <div className="font-semibold text-stone-900">{displayControlLabel(text, actionResult.action)}</div>
-              <div className="mt-1 text-xs text-stone-500">{displayText(actionResult.reason)}</div>
+              <div className="mt-1 text-xs text-stone-500">{reasonRecordLabel(text, actionResult.reason)}</div>
               {actionResult.compactPreview ? (
                 <div className="mt-3 grid gap-2 md:grid-cols-4">
                   <div className="rounded-xl bg-white px-3 py-2 text-xs text-stone-600">
-                    source {actionResult.compactPreview.sourceMessageCount}
+                    {text("전체", "Total")} {actionResult.compactPreview.sourceMessageCount}
                   </div>
                   <div className="rounded-xl bg-white px-3 py-2 text-xs text-stone-600">
-                    tail {actionResult.compactPreview.tailMessageCount}
+                    {text("유지", "Kept")} {actionResult.compactPreview.tailMessageCount}
                   </div>
                   <div className="rounded-xl bg-white px-3 py-2 text-xs text-stone-600">
-                    drop {actionResult.compactPreview.droppedRawCount}
+                    {text("제외", "Hidden")} {actionResult.compactPreview.droppedRawCount}
                   </div>
                   <div className="rounded-xl bg-white px-3 py-2 text-xs text-stone-600">
                     {actionResult.compactPreview.headRange
-                      ? `head ${actionResult.compactPreview.headRange.start}-${actionResult.compactPreview.headRange.end}`
-                      : "head -"}
+                      ? text("앞부분 범위 기록 있음", "Head range recorded")
+                      : text("앞부분 범위 없음", "No head range")}
                   </div>
                   <div className="md:col-span-4 rounded-xl bg-white px-3 py-2 text-xs leading-5 text-stone-600">
-                    {displayText(actionResult.compactPreview.capsuleSummary || "-")}
+                    {actionResult.compactPreview.capsuleSummary
+                      ? text("압축 요약 미리보기 기록 있음", "Compaction summary preview recorded")
+                      : text("압축 요약 미리보기 없음", "No compaction summary preview")}
                   </div>
                 </div>
               ) : null}
               {actionResult.latestCapsule ? (
                 <div className="mt-3 rounded-xl bg-white px-3 py-2 text-xs leading-5 text-stone-600">
-                  <div className="font-semibold text-stone-900">{displayText(actionResult.latestCapsule.summary)}</div>
+                  <div className="font-semibold text-stone-900">{text("압축 메모리 기록 있음", "Compacted memory record exists")}</div>
                   <div className="mt-1 text-stone-500">
-                    {text("pending", "pending")} {actionResult.latestCapsule.pendingItems.length} ·
+                    {text("보존 대기", "pending")} {actionResult.latestCapsule.pendingItems.length} ·
                     {" "}
-                    {text("facts", "facts")} {actionResult.latestCapsule.confirmedFacts.length}
+                    {text("확인된 사실", "facts")} {actionResult.latestCapsule.confirmedFacts.length}
                   </div>
                 </div>
               ) : null}
               {actionResult.latestRollup ? (
                 <div className="mt-3 rounded-xl bg-white px-3 py-2 text-xs leading-5 text-stone-600">
                   <div className="font-semibold text-stone-900">
-                    {text("rollup capsule", "Rollup capsule")} {displayText(actionResult.latestRollup.resultRollupCapsuleId)}
+                    {text("묶음 압축 메모리 기록 있음", "Rollup memory record exists")}
                   </div>
                   <div className="mt-1 text-stone-500">
-                    source {actionResult.latestRollup.sourceCapsuleCount} ·
+                    {text("원본 묶음", "Source capsules")} {actionResult.latestRollup.sourceCapsuleCount} ·
                     {" "}
-                    {displayText(actionResult.latestRollup.reasonCode)}
+                    {reasonRecordLabel(text, actionResult.latestRollup.reasonCode)}
                   </div>
                 </div>
               ) : null}
               {actionResult.maintenanceRestorePromptBlock ? (
-                <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-stone-950/95 px-4 py-3 text-[11px] leading-5 text-stone-100">
-                  {actionResult.maintenanceRestorePromptBlock}
-                </pre>
+                <div className="mt-3 rounded-xl bg-white px-3 py-2 text-xs leading-5 text-stone-600">
+                  {hiddenRecordSummary(text, actionResult.maintenanceRestorePromptBlock)}
+                </div>
               ) : null}
             </div>
           ) : null}

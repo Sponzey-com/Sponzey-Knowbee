@@ -243,7 +243,7 @@ function validateMcp(draft: SetupDraft): StepValidation {
     const errors: McpServerErrors = {}
 
     if (server.required && !server.enabled) {
-      errors.status = "필수 MCP 서버는 꺼둘 수 없습니다."
+      errors.status = "필수 외부 기능 연결은 꺼둘 수 없습니다."
     }
 
     if (server.enabled) {
@@ -269,7 +269,7 @@ function validateMcp(draft: SetupDraft): StepValidation {
 
     if (Object.keys(errors).length > 0) {
       mcpErrors[server.id] = errors
-      summary.push(`'${server.name || "새 MCP 서버"}' 설정을 다시 확인해야 합니다.`)
+      summary.push(`'${server.name || "새 외부 기능 연결"}' 설정을 다시 확인해야 합니다.`)
     }
   }
 
@@ -291,16 +291,16 @@ function validateSkills(draft: SetupDraft): StepValidation {
     const errors: SkillItemErrors = {}
 
     if (item.required && !item.enabled) {
-      errors.status = "필수 Skill은 꺼둘 수 없습니다."
+      errors.status = "필수 작업 능력은 꺼둘 수 없습니다."
     }
 
     if (item.enabled) {
       if (!item.label.trim()) {
-        errors.label = "Skill 이름을 입력해야 합니다."
+        errors.label = "작업 능력 이름을 입력해야 합니다."
       }
 
       if (item.source === "local" && !item.path.trim()) {
-        errors.path = "로컬 Skill 경로를 입력해야 합니다."
+        errors.path = "로컬 작업 능력 경로를 입력해야 합니다."
       }
 
       if (item.status !== "ready") {
@@ -310,7 +310,7 @@ function validateSkills(draft: SetupDraft): StepValidation {
 
     if (Object.keys(errors).length > 0) {
       skillErrors[item.id] = errors
-      summary.push(`'${item.label || "새 Skill"}' 설정을 다시 확인해야 합니다.`)
+      summary.push(`'${item.label || "새 작업 능력"}' 설정을 다시 확인해야 합니다.`)
     }
   }
 
@@ -331,6 +331,10 @@ function validateSecurity(draft: SetupDraft): StepValidation {
   if (!Number.isFinite(draft.security.approvalTimeout) || draft.security.approvalTimeout < 5 || draft.security.approvalTimeout > 300) {
     fieldErrors.approvalTimeout = "승인 대기 시간은 5초에서 300초 사이여야 합니다."
     summary.push(fieldErrors.approvalTimeout)
+  }
+  if (!Number.isInteger(draft.security.maxDelegationTurns) || draft.security.maxDelegationTurns < 0) {
+    fieldErrors.maxDelegationTurns = "최대 위임 단계는 0 이상의 정수여야 합니다."
+    summary.push(fieldErrors.maxDelegationTurns)
   }
 
   return {

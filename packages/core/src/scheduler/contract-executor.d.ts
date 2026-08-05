@@ -1,7 +1,10 @@
+import type { KnowbeeConfig } from "../config/types.js";
+import type { ArtifactStorageContext } from "../artifacts/lifecycle.js";
+import type { MemoryJournalRepository } from "../memory/journal.js";
+import type { AgentHierarchyStorage } from "../orchestration/hierarchy.js";
 import { type ScheduleContract } from "../contracts/index.js";
 import { type DbSchedule } from "../db/index.js";
-import { runAgent } from "../agent/index.js";
-import type { ToolContext, ToolResult } from "../tools/types.js";
+import { startIngressRun } from "../runs/ingress.js";
 export interface ScheduledExecutionResult {
     success: boolean;
     summary: string | null;
@@ -10,6 +13,7 @@ export interface ScheduledExecutionResult {
     deliverySuccess?: boolean | null;
     deliveryDedupeKey?: string | null;
     deliveryError?: string | null;
+    retryable?: boolean | undefined;
 }
 export type ScheduleContractExecutionResult = {
     handled: false;
@@ -18,9 +22,9 @@ export type ScheduleContractExecutionResult = {
     result: ScheduledExecutionResult;
 };
 export interface ScheduleContractExecutorDependencies {
-    runAgentImpl?: typeof runAgent;
-    dispatchTool?: (name: string, params: Record<string, unknown>, ctx: ToolContext) => Promise<ToolResult>;
+    startIngressRunImpl?: typeof startIngressRun;
     deliverTelegramText?: (sessionId: string, text: string) => Promise<unknown>;
+    deliverTelegramFile?: (sessionId: string, filePath: string, caption?: string) => Promise<unknown>;
     deliverSlackText?: (sessionId: string, text: string) => Promise<unknown>;
     deliverSlackFile?: (sessionId: string, filePath: string, caption?: string) => Promise<unknown>;
     logInfo?: (message: string, payload?: Record<string, unknown>) => void;
@@ -28,6 +32,10 @@ export interface ScheduleContractExecutorDependencies {
     logError?: (message: string, payload?: Record<string, unknown>) => void;
 }
 interface ExecuteScheduleContractInput {
+    artifactStorage: ArtifactStorageContext;
+    memoryJournal: MemoryJournalRepository;
+    hierarchyStorage: AgentHierarchyStorage;
+    config: KnowbeeConfig;
     schedule: DbSchedule;
     scheduleRunId: string;
     trigger: string;

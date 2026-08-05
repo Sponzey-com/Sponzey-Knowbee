@@ -1,5 +1,10 @@
 import { recordLatencyMetric } from "../observability/latency.js";
+import { redactLogText } from "../logger/index.js";
 const scheduleDeliveryQueues = new Map();
+function scheduleDeliveryQueueErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 export function buildScheduleDeliveryQueueId(params) {
     return `${params.targetChannel}:${params.targetSessionId}`;
 }
@@ -23,7 +28,8 @@ export function enqueueScheduledDelivery(params, dependencies) {
     }
     const next = (previous ?? Promise.resolve())
         .catch((error) => {
-        dependencies.logWarn(`previous scheduled delivery queue recovered: ${error instanceof Error ? error.message : String(error)}`);
+        const message = scheduleDeliveryQueueErrorMessage(error);
+        dependencies.logWarn(`previous scheduled delivery queue recovered: ${message}`);
     })
         .then(async () => {
         const startedAt = Date.now();
@@ -48,13 +54,14 @@ export function enqueueScheduledDelivery(params, dependencies) {
         }
     })
         .catch((error) => {
+        const message = scheduleDeliveryQueueErrorMessage(error);
         dependencies.logError("scheduled delivery queue task failed", {
             queueId,
             targetChannel: params.targetChannel,
             targetSessionId: params.targetSessionId,
             scheduleId: params.scheduleId ?? null,
             scheduleRunId: params.scheduleRunId ?? null,
-            error: error instanceof Error ? error.message : String(error),
+            error: message,
         });
         throw error;
     })

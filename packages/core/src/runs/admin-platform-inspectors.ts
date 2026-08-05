@@ -10,7 +10,7 @@ import {
   type MqttExtensionSnapshot,
 } from "../mqtt/broker.js"
 import { getDatabaseMigrationStatus, type MigrationVersionStatus } from "../config/operations.js"
-import { PATHS } from "../config/paths.js"
+import type { RuntimePaths } from "../config/paths.js"
 import {
   getDb,
   insertAuditLog,
@@ -31,13 +31,27 @@ import {
   type ControlTimelineEvent,
   type ControlTimelineQuery,
 } from "../control-plane/timeline.js"
+import { redactLogText } from "../logger/index.js"
+import {
+  containsInternalLlmStructuredDataText,
+  INTERNAL_LLM_DATA_MASK,
+  isInternalLlmStructuredDataKey,
+} from "../security/internal-llm-data.js"
+import {
+  INTERNAL_EVIDENCE_REDACTION_MASK,
+  isInternalEvidenceKey,
+  redactInternalEvidenceText,
+} from "../security/internal-evidence-redaction.js"
 
 export interface AdminPlatformInspectorInput {
   timeline: ControlTimeline
   ledgerEvents: DbMessageLedgerEvent[]
+  paths: AdminPlatformPaths
   limit?: number
   filters?: AdminDiagnosticExportFilters
 }
+
+export type AdminPlatformPaths = Pick<RuntimePaths, "stateDir" | "dbFile">
 
 export interface AdminDiagnosticExportFilters {
   runId?: string
@@ -283,7 +297,9 @@ function tableExists(name: string): boolean {
 }
 
 function sanitizeText(value: string): string {
+  if (containsInternalLlmStructuredDataText(value)) return INTERNAL_LLM_DATA_MASK
   let next = value
+  next = redactInternalEvidenceText(next)
   for (const [pattern, replacement] of TEXT_SECRET_PATTERNS) next = next.replace(pattern, replacement)
   if (HTML_PATTERN.test(next)) return "[redacted-html]"
   next = next.replace(LOCAL_PATH_PATTERN, "[redacted-path]")
@@ -293,11 +309,16 @@ function sanitizeText(value: string): string {
 function sanitizeExportValue(value: unknown, parentKey = "", depth = 0): unknown {
   if (value == null) return value
   if (depth > 8) return "[truncated]"
+  if (isInternalLlmStructuredDataKey(parentKey)) return INTERNAL_LLM_DATA_MASK
+  if (isInternalEvidenceKey(parentKey)) return INTERNAL_EVIDENCE_REDACTION_MASK
   if (SECRET_KEY_PATTERN.test(parentKey)) return "[redacted]"
   if (typeof value === "string") return sanitizeText(value)
   if (typeof value !== "object") return value
   if (Array.isArray(value)) return value.slice(0, 100).map((item) => sanitizeExportValue(item, parentKey, depth + 1))
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, sanitizeExportValue(nested, key, depth + 1)]))
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, nested]) => {
+    const outputKey = isInternalEvidenceKey(key) ? "internalEvidence" : key
+    return [outputKey, sanitizeExportValue(nested, key, depth + 1)]
+  }))
 }
 
 function normalizeFilters(input: AdminDiagnosticExportStartInput | AdminDiagnosticExportFilters | undefined): AdminDiagnosticExportFilters {
@@ -470,8 +491,8 @@ function buildYeonjangInspector(timeline: ControlTimeline): AdminYeonjangInspect
   }
 }
 
-function listBackupSnapshots(limit: number): AdminDatabaseInspector["backups"] {
-  const root = join(PATHS.stateDir, "backups", "snapshots")
+function listBackupSnapshots(limit: number, paths: AdminPlatformPaths): AdminDatabaseInspector["backups"] {
+  const root = join(paths.stateDir, "backups", "snapshots")
   const degradedReasons: string[] = []
   if (!existsSync(root)) return { snapshots: [], degradedReasons }
   try {
@@ -495,7 +516,7 @@ function listBackupSnapshots(limit: number): AdminDatabaseInspector["backups"] {
       .slice(0, limit)
     return { snapshots, degradedReasons }
   } catch (error) {
-    degradedReasons.push(error instanceof Error ? error.message : String(error))
+    degradedReasons.push(adminInspectorErrorMessage(error))
     return { snapshots: [], degradedReasons }
   }
 }
@@ -521,15 +542,20 @@ function listMigrationDiagnostics(limit: number): AdminDatabaseInspector["diagno
   }))
 }
 
-function buildDatabaseInspector(limit: number): AdminDatabaseInspector {
+function adminInspectorErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
+
+function buildDatabaseInspector(limit: number, paths: AdminPlatformPaths): AdminDatabaseInspector {
   const degradedReasons: string[] = []
   let migrations: MigrationVersionStatus
   try {
-    migrations = getDatabaseMigrationStatus()
+    migrations = getDatabaseMigrationStatus(paths.dbFile)
   } catch (error) {
-    degradedReasons.push(`migration_status_failed:${error instanceof Error ? error.message : String(error)}`)
+    degradedReasons.push(`migration_status_failed:${adminInspectorErrorMessage(error)}`)
     migrations = {
-      databasePath: resolve(PATHS.dbFile),
+      databasePath: resolve(paths.dbFile),
       exists: false,
       currentVersion: 0,
       latestVersion: 0,
@@ -544,15 +570,15 @@ function buildDatabaseInspector(limit: number): AdminDatabaseInspector {
   let active: MigrationLockRow | null = null
   let latest: MigrationLockRow | null = null
   try {
-    const db = getDb()
+    const db = getDb({ paths })
     integrity = verifyMigrationState(db)
     active = getActiveMigrationLock(db)
     latest = getLatestMigrationLock(db)
   } catch (error) {
-    degradedReasons.push(`migration_verification_failed:${error instanceof Error ? error.message : String(error)}`)
+    degradedReasons.push(`migration_verification_failed:${adminInspectorErrorMessage(error)}`)
   }
 
-  const backups = listBackupSnapshots(limit)
+  const backups = listBackupSnapshots(limit, paths)
   const diagnostics = listMigrationDiagnostics(limit)
   return {
     summary: {
@@ -716,7 +742,7 @@ function listAuditForExport(filters: AdminDiagnosticExportFilters, limit: number
   return getDb().prepare(sql).all(...params, limit) as AuditLogRow[]
 }
 
-function buildExportBundle(input: AdminDiagnosticExportStartInput): Record<string, unknown> {
+function buildExportBundle(input: AdminDiagnosticExportStartInput, paths: AdminPlatformPaths): Record<string, unknown> {
   const filters = normalizeFilters(input)
   const limit = Math.max(1, Math.min(input.limit ?? 500, 1_000))
   const timeline = input.includeTimeline === false
@@ -734,6 +760,7 @@ function buildExportBundle(input: AdminDiagnosticExportStartInput): Record<strin
     : buildAdminPlatformInspectors({
       timeline: timeline ?? getControlTimeline(buildTimelineQuery(filters, limit), "user"),
       ledgerEvents,
+      paths,
       limit: Math.min(limit, 200),
       filters,
     })
@@ -797,12 +824,12 @@ function buildExportBundle(input: AdminDiagnosticExportStartInput): Record<strin
   }) as Record<string, unknown>
 }
 
-async function runExportJob(id: string, input: AdminDiagnosticExportStartInput): Promise<void> {
+async function runExportJob(id: string, input: AdminDiagnosticExportStartInput, paths: AdminPlatformPaths): Promise<void> {
   updateJob(id, { status: "running", progress: 10 })
   try {
-    const bundle = buildExportBundle(input)
+    const bundle = buildExportBundle(input, paths)
     updateJob(id, { progress: 70 })
-    const outputDir = join(PATHS.stateDir, "admin-exports")
+    const outputDir = join(paths.stateDir, "admin-exports")
     mkdirSync(outputDir, { recursive: true })
     const bundleFile = `admin-export-${new Date().toISOString().replace(/[:.]/g, "-")}-${id}.json`
     const bundlePath = join(outputDir, bundleFile)
@@ -822,7 +849,7 @@ async function runExportJob(id: string, input: AdminDiagnosticExportStartInput):
       approved_by: null,
     })
   } catch (error) {
-    const message = sanitizeText(error instanceof Error ? error.message : String(error))
+    const message = adminInspectorErrorMessage(error)
     updateJob(id, { status: "failed", progress: 100, error: message })
     insertDiagnosticEvent({
       kind: "admin.diagnostic_export.failed",
@@ -836,7 +863,7 @@ export function buildAdminPlatformInspectors(input: AdminPlatformInspectorInput)
   const limit = Math.max(1, Math.min(input.limit ?? 120, 500))
   return {
     yeonjang: buildYeonjangInspector(input.timeline),
-    database: buildDatabaseInspector(limit),
+    database: buildDatabaseInspector(limit, input.paths),
     orchestration: buildPlatformOrchestrationInspector(input),
     exports: {
       jobs: listAdminDiagnosticExportJobs().slice(0, limit),
@@ -849,7 +876,10 @@ export function buildAdminPlatformInspectors(input: AdminPlatformInspectorInput)
   }
 }
 
-export function startAdminDiagnosticExport(input: AdminDiagnosticExportStartInput = {}): AdminDiagnosticExportJob {
+export function startAdminDiagnosticExport(
+  input: AdminDiagnosticExportStartInput,
+  paths: AdminPlatformPaths,
+): AdminDiagnosticExportJob {
   const now = Date.now()
   const job: AdminDiagnosticExportJob = {
     id: `admin-export-${randomUUID()}`,
@@ -866,8 +896,9 @@ export function startAdminDiagnosticExport(input: AdminDiagnosticExportStartInpu
     error: null,
   }
   rememberJob(job)
+  const jobPaths = Object.freeze({ stateDir: paths.stateDir, dbFile: paths.dbFile })
   queueMicrotask(() => {
-    void runExportJob(job.id, { ...input, ...job.filters })
+    void runExportJob(job.id, { ...input, ...job.filters }, jobPaths)
   })
   return cloneJob(job)
 }

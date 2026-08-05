@@ -1,5 +1,7 @@
+import type { SecurityConfig } from "../../config/types.js";
 import type { AgentTool } from "../types.js";
-export declare function assertAllowedPath(filePath: string): void;
+type FileToolSecurityConfig = Pick<SecurityConfig, "allowedPaths">;
+export declare function assertAllowedPath(filePath: string, securityConfig?: FileToolSecurityConfig): void;
 interface FileReadParams {
     path: string;
     encoding?: string;

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { bootstrapLoopState } from "../packages/core/src/runs/loop-bootstrap.ts"
+import { applyLoopDirective } from "../packages/core/src/runs/loop-directive-application.ts"
 
 function createDependencies() {
   return {
@@ -29,8 +30,70 @@ describe("bootstrap loop state", () => {
     expect(result.pendingLoopDirective).toEqual({
       kind: "complete",
       text: "안녕",
+      textSource: "user_supplied_literal",
       eventLabel: "예약 직접 전달 실행",
     })
+  })
+
+  it("routes immediate completion literals through final response rendering", async () => {
+    const dependencies = createDependencies()
+    const result = bootstrapLoopState({
+      runId: "run-1b",
+      sessionId: "session-1b",
+      immediateCompletionText: "안녕",
+      reconnectNeedsClarification: false,
+      queuedBehindRequestGroupRun: false,
+      aborted: false,
+      requiresFilesystemMutation: false,
+      requiresPrivilegedToolExecution: false,
+    }, dependencies)
+    const directive = result.pendingLoopDirective
+    if (!directive || directive.kind !== "complete") throw new Error("expected complete directive")
+
+    const finalizationDependencies = {
+      appendRunEvent: vi.fn(),
+      setRunStepStatus: vi.fn(),
+      updateRunStatus: vi.fn(),
+      rememberRunSuccess: vi.fn(),
+      rememberRunFailure: vi.fn(),
+    }
+    const renderFinalResponseText = vi.fn().mockResolvedValue({
+      text: "안녕하세요.",
+    })
+    const completeRunWithAssistantMessage = vi.fn().mockResolvedValue(undefined)
+
+    await applyLoopDirective({
+      runId: "run-1b",
+      sessionId: "session-1b",
+      source: "telegram",
+      onChunk: undefined,
+      directive,
+      responseContext: {
+        originalRequest: "예약된 응답을 보내줘",
+        model: "gpt-test",
+        providerId: "openai",
+        workDir: "/tmp/project",
+      },
+      finalizationDependencies,
+    }, {
+      completeRunWithAssistantMessage,
+      markRunCompleted: vi.fn(),
+      applyTerminalApplication: vi.fn(),
+      renderFinalResponseText,
+    })
+
+    expect(renderFinalResponseText).not.toHaveBeenCalled()
+    expect(completeRunWithAssistantMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: "안녕",
+      textSource: "user_supplied_literal",
+      responseContext: expect.objectContaining({
+        originalRequest: "예약된 응답을 보내줘",
+        model: "gpt-test",
+        providerId: "openai",
+        workDir: "/tmp/project",
+      }),
+      renderFinalResponseText,
+    }))
   })
 
   it("creates reconnect clarification directive when clarification is needed", () => {

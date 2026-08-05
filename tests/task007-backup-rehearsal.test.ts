@@ -1,8 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { PATHS, reloadConfig } from "../packages/core/src/config/index.js"
 import {
   buildBackupTargetInventory,
   buildMigrationPreflightReport,
@@ -10,12 +9,13 @@ import {
   runRestoreRehearsal,
   verifyBackupSnapshotManifest,
 } from "../packages/core/src/config/backup-rehearsal.ts"
-import { closeDb, getDb, insertSession } from "../packages/core/src/db/index.ts"
+import type { RuntimePaths } from "../packages/core/src/config/paths.ts"
+import { closeDb, getDb, insertSession } from "../packages/core/src/db/index.js"
 import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 
 function makeTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -23,22 +23,26 @@ function makeTempDir(prefix: string): string {
   return dir
 }
 
-function useTempState(): { stateDir: string; workDir: string } {
+function useTempState(): { workDir: string; paths: RuntimePaths } {
   closeDb()
-  const stateDir = makeTempDir("knowbee-task007-state-")
+  const rootDir = makeTempDir("knowbee-task007-state-")
   const workDir = makeTempDir("knowbee-task007-work-")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
-  reloadConfig()
+  const runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: `{
+      ai: { connection: { provider: "openai", model: "gpt-test", auth: { apiKey: "sk-testsecretvalue1234567890" } } },
+      telegram: { enabled: true, botToken: "123456:telegramtokenabcdefghijklmnopqrstuvwxyz" }
+    }`,
+  })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
   ensurePromptSourceFiles(workDir)
-  mkdirSync(dirname(PATHS.configFile), { recursive: true })
-  writeFileSync(PATHS.configFile, `{
-    ai: { connection: { provider: "openai", model: "gpt-test", auth: { apiKey: "sk-testsecretvalue1234567890" } } },
-    telegram: { enabled: true, botToken: "123456:telegramtokenabcdefghijklmnopqrstuvwxyz" }
-  }`, "utf-8")
-  mkdirSync(join(stateDir, "artifacts"), { recursive: true })
-  writeFileSync(join(stateDir, "artifacts", "large.bin"), "artifact-binary", "utf-8")
-  return { stateDir, workDir }
+  mkdirSync(join(runtimeFixture.paths.stateDir, "artifacts"), { recursive: true })
+  writeFileSync(
+    join(runtimeFixture.paths.stateDir, "artifacts", "large.bin"),
+    "artifact-binary",
+    "utf-8",
+  )
+  return { workDir, paths: runtimeFixture.paths }
 }
 
 beforeEach(() => {
@@ -47,11 +51,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -60,38 +59,85 @@ afterEach(() => {
 
 describe("task007 backup restore rehearsal", () => {
   it("builds a target inventory with checksums, excludes raw secrets and large runtime artifacts", () => {
-    const { stateDir, workDir } = useTempState()
-    insertSession({ id: "session-backup-inventory", source: "webui", source_id: null, created_at: 1, updated_at: 1, summary: null })
+    const { workDir, paths } = useTempState()
+    insertSession({
+      id: "session-backup-inventory",
+      source: "webui",
+      source_id: null,
+      created_at: 1,
+      updated_at: 1,
+      summary: null,
+    })
 
-    const inventory = buildBackupTargetInventory({ stateDir, workDir })
+    const inventory = buildBackupTargetInventory({ paths, workDir })
 
-    expect(inventory.included.some((target) => target.id === "sqlite:main" && target.checksum)).toBe(true)
-    expect(inventory.included.filter((target) => target.kind === "prompt_source").length).toBeGreaterThan(0)
-    expect(inventory.excluded).toEqual(expect.arrayContaining([expect.objectContaining({ id: "config", reason: "secret_reentry_required" })]))
-    expect(inventory.excluded).toEqual(expect.arrayContaining([expect.objectContaining({ id: "exclude:artifacts", reason: "large_retention_binary" })]))
+    expect(
+      inventory.included.some((target) => target.id === "sqlite:main" && target.checksum),
+    ).toBe(true)
+    expect(
+      inventory.included.filter((target) => target.kind === "prompt_source").length,
+    ).toBeGreaterThan(0)
+    expect(inventory.excluded).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "config", reason: "secret_reentry_required" }),
+      ]),
+    )
+    expect(inventory.excluded).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "exclude:artifacts", reason: "large_retention_binary" }),
+      ]),
+    )
   })
 
   it("creates a safe snapshot manifest and restores it into a rehearsal directory", () => {
-    const { stateDir, workDir } = useTempState()
-    insertSession({ id: "session-before-snapshot", source: "webui", source_id: null, created_at: 1, updated_at: 1, summary: null })
+    const { workDir, paths } = useTempState()
+    insertSession({
+      id: "session-before-snapshot",
+      source: "webui",
+      source_id: null,
+      created_at: 1,
+      updated_at: 1,
+      summary: null,
+    })
 
     const snapshotDir = makeTempDir("knowbee-task007-snapshot-")
     const restoreDir = makeTempDir("knowbee-task007-restore-")
-    const manifest = createBackupSnapshot({ stateDir, workDir, snapshotDir, appVersion: "test-version", gitTag: "v-test", gitCommit: "abc123", checkpointSqlite: false, now: 1_765_000_000_000 })
+    const manifest = createBackupSnapshot({
+      paths,
+      workDir,
+      snapshotDir,
+      appVersion: "test-version",
+      gitTag: "v-test",
+      gitCommit: "abc123",
+      checkpointSqlite: false,
+      now: 1_765_000_000_000,
+    })
     const manifestPayload = readFileSync(join(snapshotDir, "manifest.json"), "utf-8")
 
     expect(manifest.kind).toBe("knowbee.backup.snapshot")
-    expect(manifest.files.some((file) => file.kind === "sqlite_db" && file.relativePath === "state/data.db")).toBe(true)
+    expect(
+      manifest.files.some(
+        (file) => file.kind === "sqlite_db" && file.relativePath === "state/data.db",
+      ),
+    ).toBe(true)
     expect(manifest.files.some((file) => file.kind === "config")).toBe(false)
     expect(manifestPayload).not.toContain("sk-testsecretvalue")
     expect(manifestPayload).not.toContain("telegramtoken")
-    expect(manifest.secretReentryRequired.map((entry) => entry.scope)).toEqual(expect.arrayContaining(["config.ai.connection.auth", "config.telegram.botToken"]))
+    expect(manifest.secretReentryRequired.map((entry) => entry.scope)).toEqual(
+      expect.arrayContaining(["config.ai.connection.auth", "config.telegram.botToken"]),
+    )
     expect(verifyBackupSnapshotManifest(manifest)).toMatchObject({ ok: true })
 
     const rehearsal = runRestoreRehearsal({ manifest, restoreDir, writeReport: true })
 
     expect(rehearsal.ok).toBe(true)
-    expect(rehearsal.checks.map((check) => check.name)).toEqual(["manifest_checksum", "file_copy", "sqlite_integrity", "migration_status", "prompt_source_registry"])
+    expect(rehearsal.checks.map((check) => check.name)).toEqual([
+      "manifest_checksum",
+      "file_copy",
+      "sqlite_integrity",
+      "migration_status",
+      "prompt_source_registry",
+    ])
     expect(rehearsal.migrationStatus?.upToDate).toBe(true)
     expect(rehearsal.promptSourceCount).toBeGreaterThan(0)
     expect(rehearsal.reportPath && existsSync(rehearsal.reportPath)).toBe(true)
@@ -100,13 +146,21 @@ describe("task007 backup restore rehearsal", () => {
   })
 
   it("blocks restore rehearsal before copying when a snapshot checksum is invalid", () => {
-    const { stateDir, workDir } = useTempState()
+    const { workDir, paths } = useTempState()
     getDb()
-    const manifest = createBackupSnapshot({ stateDir, workDir, snapshotDir: makeTempDir("knowbee-task007-corrupt-snapshot-"), checkpointSqlite: false })
+    const manifest = createBackupSnapshot({
+      paths,
+      workDir,
+      snapshotDir: makeTempDir("knowbee-task007-corrupt-snapshot-"),
+      checkpointSqlite: false,
+    })
     writeFileSync(manifest.files[0].snapshotPath, "corrupted", "utf-8")
 
     const verification = verifyBackupSnapshotManifest(manifest)
-    const rehearsal = runRestoreRehearsal({ manifest, restoreDir: makeTempDir("knowbee-task007-corrupt-restore-") })
+    const rehearsal = runRestoreRehearsal({
+      manifest,
+      restoreDir: makeTempDir("knowbee-task007-corrupt-restore-"),
+    })
 
     expect(verification.ok).toBe(false)
     expect(verification.failures[0]).toMatchObject({ reason: "checksum_mismatch" })
@@ -116,17 +170,39 @@ describe("task007 backup restore rehearsal", () => {
   })
 
   it("requires a verified backup before migration and links rollback runbook", () => {
-    const { stateDir, workDir } = useTempState()
+    const { workDir, paths } = useTempState()
     getDb()
-    const noBackup = buildMigrationPreflightReport({ dbPath: PATHS.dbFile, diskFreeBytes: 10, requiredFreeBytes: 20 })
+    const pendingDbPath = join(makeTempDir("knowbee-task007-pending-preflight-"), "missing.db")
+    const noBackup = buildMigrationPreflightReport({
+      dbPath: pendingDbPath,
+      diskFreeBytes: 20,
+      requiredFreeBytes: 20,
+    })
     expect(noBackup).toMatchObject({ ok: false, risk: "blocking" })
-    expect(noBackup.checks.find((check) => check.name === "backup_available")).toMatchObject({ ok: false, risk: "blocking" })
+    expect(noBackup.checks.find((check) => check.name === "backup_available")).toMatchObject({
+      ok: false,
+      risk: "blocking",
+    })
 
-    const manifest = createBackupSnapshot({ stateDir, workDir, snapshotDir: makeTempDir("knowbee-task007-preflight-snapshot-"), checkpointSqlite: false })
-    const report = buildMigrationPreflightReport({ dbPath: PATHS.dbFile, manifest, diskFreeBytes: 1_000_000, requiredFreeBytes: 1, canWrite: true, providerConfigSane: true })
+    const manifest = createBackupSnapshot({
+      paths,
+      workDir,
+      snapshotDir: makeTempDir("knowbee-task007-preflight-snapshot-"),
+      checkpointSqlite: false,
+    })
+    const report = buildMigrationPreflightReport({
+      dbPath: paths.dbFile,
+      manifest,
+      diskFreeBytes: 1_000_000,
+      requiredFreeBytes: 1,
+      canWrite: true,
+      providerConfigSane: true,
+    })
 
     expect(report.ok).toBe(true)
-    expect(report.checks.find((check) => check.name === "snapshot_checksum")).toMatchObject({ ok: true })
+    expect(report.checks.find((check) => check.name === "snapshot_checksum")).toMatchObject({
+      ok: true,
+    })
     expect(report.dryRun.changesDatabase).toBe(false)
     expect(report.runbook.id).toBe("migration-rollback-runbook")
     expect(report.runbook.retryForbiddenWhen.length).toBeGreaterThan(0)

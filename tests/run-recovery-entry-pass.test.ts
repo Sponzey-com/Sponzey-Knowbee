@@ -28,6 +28,12 @@ function createBaseParams() {
     seenKeys: new Set<string>(),
     originalRequest: "hello",
     previousResult: "preview",
+    responseContext: {
+      originalRequest: "hello",
+      model: "gpt-4o-mini",
+      providerId: "openai",
+      workDir: "/tmp/project",
+    },
     finalizationDependencies: {
       appendRunEvent: vi.fn(),
       setRunStepStatus: vi.fn(),
@@ -58,7 +64,12 @@ describe("recovery entry pass", () => {
     })
 
     expect(result).toEqual({ kind: "break" })
-    expect(applyTerminalApplication).toHaveBeenCalled()
+    expect(applyTerminalApplication).toHaveBeenCalledWith(expect.objectContaining({
+      responseContext: expect.objectContaining({
+        originalRequest: "hello",
+        providerId: "openai",
+      }),
+    }))
   })
 
   it("retries when external recovery sequence returns retry", async () => {
@@ -95,7 +106,15 @@ describe("recovery entry pass", () => {
       },
       nextMessage: "retry prompt",
     })
-    expect(runExternalRecoverySequence).toHaveBeenCalled()
+    expect(runExternalRecoverySequence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        responseContext: expect.objectContaining({
+          originalRequest: "hello",
+          providerId: "openai",
+        }),
+      }),
+      expect.anything(),
+    )
   })
 
   it("breaks when execution already failed and no recovery applies", async () => {
@@ -111,6 +130,21 @@ describe("recovery entry pass", () => {
     })
 
     expect(result).toEqual({ kind: "break" })
+  })
+
+  it("continues to completion review when failed ai recovery is unchanged", async () => {
+    const result = await runRecoveryEntryPass({
+      ...createBaseParams(),
+      failed: true,
+    }, {
+      appendRunEvent: vi.fn(),
+    }, {
+      applyTerminalApplication: vi.fn(),
+      runExternalRecoverySequence: vi.fn().mockResolvedValue({ kind: "review" }),
+      enqueueRunRecovery: async ({ task }) => task(),
+    })
+
+    expect(result).toEqual({ kind: "continue" })
   })
 
   it("continues when there is no stop, retry, or failure", async () => {

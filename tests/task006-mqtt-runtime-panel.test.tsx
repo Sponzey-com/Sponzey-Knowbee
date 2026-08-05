@@ -42,7 +42,7 @@ describe("task006 mqtt runtime panel", () => {
     )
 
     expect(html).toContain("연장 메인")
-    expect(html).toContain("메서드 수")
+    expect(html).toContain("실행 기능")
     expect(html).toContain("7")
   })
 })

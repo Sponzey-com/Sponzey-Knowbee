@@ -1,5 +1,10 @@
+import { redactLogText } from "../logger/index.js"
+import {
+  DEFAULT_QUEUE_BUDGETS,
+  QueueBackpressureError,
+  recordQueueBackpressureEvent,
+} from "./queue-backpressure.js"
 import type { RootRun } from "./types.js"
-import { recordQueueBackpressureEvent } from "./queue-backpressure.js"
 
 interface ExecutionQueueLoggingDependencies {
   logInfo: (message: string, payload?: Record<string, unknown>) => void
@@ -10,9 +15,20 @@ interface ExecutionQueueLoggingDependencies {
 
 interface RequestGroupExecutionQueueDependencies extends ExecutionQueueLoggingDependencies {
   getRootRun: (runId: string) => RootRun | undefined
+  onAdmissionRejected?: (input: {
+    error: QueueBackpressureError
+    runId: string
+    requestGroupId: string
+    pendingCount: number
+  }) => Promise<RootRun | undefined>
 }
 
-const requestGroupExecutionQueues = new Map<string, Promise<RootRun | undefined>>()
+interface RequestGroupExecutionQueueState {
+  tail: Promise<RootRun | undefined>
+  outstanding: number
+}
+
+const requestGroupExecutionQueues = new Map<string, RequestGroupExecutionQueueState>()
 
 function appendExecutionQueueEvent(
   dependencies: ExecutionQueueLoggingDependencies,
@@ -26,6 +42,11 @@ function appendExecutionQueueEvent(
   }
 }
 
+function safeQueueErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
+
 export function hasRequestGroupExecutionQueue(requestGroupId: string): boolean {
   return requestGroupExecutionQueues.has(requestGroupId)
 }
@@ -34,12 +55,46 @@ export function enqueueRequestGroupExecution(
   params: {
     requestGroupId: string
     runId: string
+    maxPending?: number
     task: () => Promise<RootRun | undefined>
   },
   dependencies: RequestGroupExecutionQueueDependencies,
 ): Promise<RootRun | undefined> {
-  const previous = requestGroupExecutionQueues.get(params.requestGroupId)
-  if (previous) {
+  const existing = requestGroupExecutionQueues.get(params.requestGroupId)
+  const maxPending = Math.max(
+    0,
+    Math.floor(params.maxPending ?? DEFAULT_QUEUE_BUDGETS.interactive_run.maxPending),
+  )
+  const pendingCount = existing ? Math.max(0, existing.outstanding - 1) : 0
+  if (existing && pendingCount >= maxPending) {
+    dependencies.logWarn(
+      `request-group execution admission rejected: queue full; runId=${params.runId}; requestGroupId=${params.requestGroupId}; pending=${pendingCount}`,
+    )
+    appendExecutionQueueEvent(dependencies, params.runId, "execution_queue_rejected:queue_full")
+    recordQueueBackpressureEvent({
+      queueName: "interactive_run",
+      eventKind: "rejected",
+      actionTaken: "queue_full",
+      runId: params.runId,
+      requestGroupId: params.requestGroupId,
+      pendingCount,
+    })
+    const error = new QueueBackpressureError(
+      "queue_full",
+      "interactive_run",
+      "interactive_run queue is full",
+    )
+    return dependencies.onAdmissionRejected
+      ? dependencies.onAdmissionRejected({
+          error,
+          runId: params.runId,
+          requestGroupId: params.requestGroupId,
+          pendingCount,
+        })
+      : Promise.reject(error)
+  }
+
+  if (existing) {
     dependencies.logInfo("request-group execution queued behind active execution task", {
       runId: params.runId,
       requestGroupId: params.requestGroupId,
@@ -51,15 +106,19 @@ export function enqueueRequestGroupExecution(
       actionTaken: "wait_request_group_execution",
       runId: params.runId,
       requestGroupId: params.requestGroupId,
-      pendingCount: 1,
+      pendingCount: pendingCount + 1,
     })
   }
 
-  const next = (previous ?? Promise.resolve<RootRun | undefined>(undefined))
+  const state = existing ?? {
+    tail: Promise.resolve<RootRun | undefined>(undefined),
+    outstanding: 0,
+  }
+  state.outstanding += 1
+  const next = state.tail
     .catch((error) => {
-      dependencies.logWarn(
-        `previous request-group execution queue recovered: ${error instanceof Error ? error.message : String(error)}`,
-      )
+      const message = safeQueueErrorMessage(error)
+      dependencies.logWarn(`previous request-group execution queue recovered: ${message}`)
       return undefined
     })
     .then(() => {
@@ -74,10 +133,11 @@ export function enqueueRequestGroupExecution(
       return params.task()
     })
     .catch((error) => {
+      const message = safeQueueErrorMessage(error)
       dependencies.logError("request-group execution queue task failed", {
         runId: params.runId,
         requestGroupId: params.requestGroupId,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
       })
       recordQueueBackpressureEvent({
         queueName: "interactive_run",
@@ -85,12 +145,16 @@ export function enqueueRequestGroupExecution(
         actionTaken: "request_group_execution_failed",
         runId: params.runId,
         requestGroupId: params.requestGroupId,
-        detail: { error: error instanceof Error ? error.message : String(error) },
+        detail: { error: message },
       })
       return dependencies.getRootRun(params.runId)
     })
     .finally(() => {
-      if (requestGroupExecutionQueues.get(params.requestGroupId) === next) {
+      state.outstanding = Math.max(0, state.outstanding - 1)
+      if (
+        requestGroupExecutionQueues.get(params.requestGroupId) === state &&
+        state.outstanding === 0
+      ) {
         requestGroupExecutionQueues.delete(params.requestGroupId)
       }
       appendExecutionQueueEvent(dependencies, params.runId, "execution_queue_released")
@@ -103,6 +167,7 @@ export function enqueueRequestGroupExecution(
       })
     })
 
-  requestGroupExecutionQueues.set(params.requestGroupId, next)
+  state.tail = next
+  requestGroupExecutionQueues.set(params.requestGroupId, state)
   return next
 }

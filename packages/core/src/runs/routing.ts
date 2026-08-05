@@ -4,7 +4,7 @@ import {
   type AIProvider,
   type ProviderAuditTrace,
 } from "../ai/index.js"
-import type { AIConnectionConfig } from "../config/types.js"
+import type { AIConnectionConfig, KnowbeeConfig } from "../config/types.js"
 import { attachCapabilityProfileToTrace, getProviderCapabilityMatrix } from "../ai/capabilities.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 
@@ -28,8 +28,8 @@ export interface ResolvedRunRoute {
 
 export interface RouteResolutionOptions {}
 
-export function resolveRunRoute(input: RouteActionInput): ResolvedRunRoute {
-  return resolveRunRouteFromDraft(buildSetupDraft(), input)
+export function resolveRunRoute(input: RouteActionInput, config: KnowbeeConfig): ResolvedRunRoute {
+  return resolveRunRouteFromDraft(buildSetupDraft(config, null), input)
 }
 
 export function isExplicitProviderRouteTarget(value: string | undefined): boolean {

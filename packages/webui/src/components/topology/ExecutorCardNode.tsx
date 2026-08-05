@@ -2,6 +2,7 @@ import * as React from "react"
 import type { ExecutorDraft, ExecutorRuntimeMode } from "../../lib/executor-graph"
 import type { ExecutorCardResourceChip } from "../../lib/executor-graph-viewmodel"
 import { normalizeLegacyExecutorDefaultText } from "../../lib/executor-graph-relations"
+import { mainAgentSubjectEn, mainAgentSubjectKo } from "../../lib/main-agent-copy"
 import type { TopologySubAgentSummary } from "../../lib/topology-sub-agent-sync"
 import { useUiI18n } from "../../lib/ui-i18n"
 
@@ -91,7 +92,7 @@ export function ExecutorCardNode({
   relationLabel,
   relationDescription,
   roleLabel,
-  shortId,
+  rootAgentLabel,
   duplicateName = false,
   selectableWithoutPath = true,
   subAgentSummary,
@@ -105,6 +106,7 @@ export function ExecutorCardNode({
   relationLabel?: string
   relationDescription?: string
   roleLabel?: string
+  rootAgentLabel?: string
   shortId?: string
   duplicateName?: boolean
   selectableWithoutPath?: boolean
@@ -116,6 +118,8 @@ export function ExecutorCardNode({
   const summary = normalizeLegacyExecutorDefaultText(executor.description) || text("하는 일이 아직 정리되지 않았습니다.", "Work is not described yet.")
   const capabilities = selectExecutorCardCapabilities(summary, executor.inferredCapabilities)
   const roleName = normalizeLegacyExecutorDefaultText(executor.executorProfile?.roleName?.trim() ?? "")
+  const rootAgentSubjectKo = mainAgentSubjectKo(rootAgentLabel)
+  const rootAgentSubjectEn = mainAgentSubjectEn(rootAgentLabel)
 
   return (
     <article
@@ -166,9 +170,12 @@ export function ExecutorCardNode({
                 {roleLabel}
               </span>
             ) : null}
-            {duplicateName && shortId ? (
-              <span className="rounded-full bg-stone-50 px-2 py-0.5 text-[10px] font-semibold text-stone-600">
-                {shortId}
+            {duplicateName ? (
+              <span
+                className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-stone-600"
+                data-testid="executor-card-duplicate-name"
+              >
+                {text("이름 중복", "Duplicate name")}
               </span>
             ) : null}
             {subAgentSummary ? (
@@ -184,7 +191,7 @@ export function ExecutorCardNode({
                   className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-stone-700"
                   data-testid="executor-card-sub-agent-child-count"
                 >
-                  {text("하위", "Children")} {subAgentSummary.childCount}
+                  {text("하위 서브 에이전트", "Child sub-agents")} {subAgentSummary.childCount}
                 </span>
               </>
             ) : null}
@@ -220,7 +227,13 @@ export function ExecutorCardNode({
       ) : null}
 
       {capabilities.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1" aria-label={text("노비가 이해한 내용", "What Knowbee understood")}>
+        <div
+          className="mt-2 flex flex-wrap gap-1"
+          aria-label={text(
+            `${rootAgentSubjectKo} 이해한 내용`,
+            `What ${rootAgentSubjectEn} understood`,
+          )}
+        >
           {capabilities.map((capability) => (
             <span
               key={capability}

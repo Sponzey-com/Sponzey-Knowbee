@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, renameSync } from "node:fs";
 import { join, dirname, isAbsolute } from "node:path";
 import { assertAllowedPath } from "./file.js";
+import { toolUserFacingErrorMessage } from "./error-redaction.js";
 function resolveFilePath(filePath, workDir) {
     if (isAbsolute(filePath))
         return filePath;
@@ -54,15 +55,15 @@ function applyHunkToLines(lines, hunk) {
     result.push(...lines.slice(fileIdx));
     return result;
 }
-export function applyPatch(patch, workDir) {
+export function applyPatch(patch, workDir, securityConfig) {
     const filesChanged = [];
     for (const op of patch.operations) {
         const absPath = resolveFilePath(op.filePath, workDir);
         try {
-            assertAllowedPath(absPath);
+            assertAllowedPath(absPath, securityConfig);
         }
         catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = toolUserFacingErrorMessage(err);
             return { success: false, message: `Path check failed for "${op.filePath}": ${msg}`, filesChanged };
         }
         if (op.type === "add") {
@@ -79,7 +80,7 @@ export function applyPatch(patch, workDir) {
                 filesChanged.push(absPath);
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
+                const msg = toolUserFacingErrorMessage(err);
                 return { success: false, message: `Add File failed for "${absPath}": ${msg}`, filesChanged };
             }
             continue;
@@ -91,7 +92,7 @@ export function applyPatch(patch, workDir) {
                     filesChanged.push(absPath);
                 }
                 catch (err) {
-                    const msg = err instanceof Error ? err.message : String(err);
+                    const msg = toolUserFacingErrorMessage(err);
                     return { success: false, message: `Delete File failed for "${absPath}": ${msg}`, filesChanged };
                 }
             }
@@ -111,7 +112,7 @@ export function applyPatch(patch, workDir) {
                 lines = raw.split(/\r?\n/);
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
+                const msg = toolUserFacingErrorMessage(err);
                 return { success: false, message: `Failed to read "${absPath}": ${msg}`, filesChanged };
             }
             for (const hunk of op.hunks) {
@@ -137,7 +138,7 @@ export function applyPatch(patch, workDir) {
                 filesChanged.push(absPath);
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
+                const msg = toolUserFacingErrorMessage(err);
                 try {
                     unlinkSync(tmpPath);
                 }

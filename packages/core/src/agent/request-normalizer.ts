@@ -1,4 +1,6 @@
-export type IntakeNormalizedRequestLanguage = "ko" | "en" | "mixed" | "unknown"
+import { detectPrimaryMessageLanguage } from "../channels/language.js"
+
+export type IntakeNormalizedRequestLanguage = "ko" | "en" | "unknown"
 
 export interface IntakeNormalizedRequest {
   sourceLanguage: IntakeNormalizedRequestLanguage
@@ -11,13 +13,7 @@ function normalizeWhitespace(text: string): string {
 }
 
 function detectSourceLanguage(text: string): IntakeNormalizedRequestLanguage {
-  const hangulCount = (text.match(/[가-힣]/gu) ?? []).length
-  const latinCount = (text.match(/[A-Za-z]/g) ?? []).length
-
-  if (hangulCount > 0 && latinCount > 0) return "mixed"
-  if (hangulCount > 0) return "ko"
-  if (latinCount > 0) return "en"
-  return "unknown"
+  return detectPrimaryMessageLanguage(text)
 }
 
 // Preserve the latest user message for intake without language-bound semantic rewriting.

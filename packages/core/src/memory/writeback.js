@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { getMemoryWritebackCandidate, insertAuditLog, listMemoryWritebackCandidates, updateMemoryWritebackCandidate, } from "../db/index.js";
-import { containsPromptInjectionDirective, isUntrustedTag, sourceToTrustTag, } from "../security/trust-boundary.js";
+import { createUntrustedEvidenceEnvelope, evaluateUntrustedEvidenceConsumption, isUntrustedTag, sourceToTrustTag, } from "../security/trust-boundary.js";
+import { validateLongTermMemoryWriteGate, } from "./long-term-write-gate.js";
 import { storeMemoryDocument } from "./store.js";
+import { evaluateLongTermMemoryMutation } from "../contracts/long-term-memory-governance.js";
 const EXPLICIT_MEMORY_PATTERNS = [
     /(?:기억해|기억\s*해|기억해줘|기억\s*해줘|메모해|메모\s*해|저장해|저장\s*해|잊지\s*마)/u,
     /\b(?:remember|memorize|keep in mind|save this|note that|don't forget)\b/i,
@@ -60,6 +62,15 @@ function readStringArrayMetadata(metadata, key) {
     return Array.isArray(value)
         ? value.filter((item) => typeof item === "string" && item.trim().length > 0)
         : [];
+}
+function readOwnerTypeMetadata(metadata, key) {
+    const value = metadata[key];
+    return value === "knowbee" ||
+        value === "sub_agent" ||
+        value === "team" ||
+        value === "system"
+        ? value
+        : undefined;
 }
 function readTrustTagMetadata(metadata) {
     const value = metadata?.sourceTrust;
@@ -127,6 +138,22 @@ function looksLikeStackTrace(value) {
 function isDiagnosticSource(sourceType) {
     return /(?:diagnostic|failure|error|exception|stack|trace)/iu.test(sourceType);
 }
+function buildLongTermReviewWriteGateMetadata(decision) {
+    if (!decision)
+        return {};
+    return {
+        longTermWriteGate: decision.ok ? "approved" : "blocked",
+        ...(decision.category ? { longTermWriteGateCategory: decision.category } : {}),
+        longTermWriteGateIssueCodes: decision.issueCodes,
+        ...(decision.storageNeed ? { longTermWriteGateStorageNeed: decision.storageNeed } : {}),
+        ...(decision.sensitivity ? { longTermWriteGateSensitivity: decision.sensitivity } : {}),
+        ...(decision.userIntent ? { longTermWriteGateUserIntent: decision.userIntent } : {}),
+        longTermWriteGateSourceEvidenceRefs: decision.sourceEvidenceRefs,
+        ...(decision.retentionPurpose
+            ? { longTermWriteGateRetentionPurpose: decision.retentionPurpose }
+            : {}),
+    };
+}
 export function inspectMemoryWritebackSafety(input) {
     const blockReasons = [];
     let masked = false;
@@ -153,9 +180,20 @@ export function inspectMemoryWritebackSafety(input) {
 export function prepareMemoryWritebackQueueInput(candidate) {
     const safety = inspectMemoryWritebackSafety(candidate);
     const sourceTrust = readTrustTagMetadata(candidate.metadata);
-    const untrustedInjectionBlocked = sourceTrust !== undefined &&
-        isUntrustedTag(sourceTrust) &&
-        containsPromptInjectionDirective(safety.content);
+    const untrustedInjectionBlocked = sourceTrust !== undefined && isUntrustedTag(sourceTrust)
+        ? !evaluateUntrustedEvidenceConsumption({
+            envelope: createUntrustedEvidenceEnvelope({
+                sourceKind: trustTagToEvidenceSourceKind(sourceTrust),
+                sourceRef: readStringMetadata(candidate.metadata ?? {}, "sourceRef") ??
+                    `memory-writeback:${candidate.sourceType}:${candidate.ownerId ?? "global"}`,
+                ownerScope: { ownerType: "system", ownerId: candidate.ownerId ?? "global" },
+                content: safety.content,
+                redactionState: safety.masked ? "redacted" : "not_required",
+            }),
+            purpose: "memory_write",
+            expectedOwnerScope: { ownerType: "system", ownerId: candidate.ownerId ?? "global" },
+        }).allowed
+        : false;
     const reviewDedupeKey = buildReviewDedupeKey({
         scope: candidate.scope,
         sourceType: candidate.sourceType,
@@ -191,6 +229,21 @@ export function prepareMemoryWritebackQueueInput(candidate) {
             ? { status: "discarded", lastError: `blocked: ${blockReasons.join(", ")}` }
             : {}),
     };
+}
+function trustTagToEvidenceSourceKind(tag) {
+    if (tag === "web_content")
+        return "web";
+    if (tag === "mcp_result")
+        return "mcp";
+    if (tag === "capability_result")
+        return "skill";
+    if (tag === "yeonjang_result")
+        return "yeonjang";
+    if (tag === "file_content")
+        return "file";
+    if (tag === "user_input" || tag === "channel_input")
+        return "channel";
+    return "tool";
 }
 export function isExplicitMemoryRequest(content) {
     const normalized = normalizedContent(content);
@@ -572,6 +625,79 @@ export async function reviewMemoryWritebackCandidate(params) {
         : resolveLongTermReviewOwner(row, metadata);
     if (!ownerId)
         throw new Error("session owner is required for session-only memory");
+    const targetOwner = {
+        ownerType: readOwnerTypeMetadata(metadata, "targetOwnerType") ??
+            readOwnerTypeMetadata(metadata, "ownerType") ??
+            "knowbee",
+        ownerId,
+    };
+    const longTermWriteGateInput = targetScope === "long-term"
+        ? {
+            targetOwner,
+            category: "approved_work_context",
+            storageNeed: "approved_child_result",
+            sensitivity: safety.masked ? "sensitive" : "not_sensitive",
+            userIntent: "admin_review_approved",
+            sourceEvidenceRefs: [
+                ...readStringArrayMetadata(metadata, "evidenceRefs"),
+                ...(row.run_id ? [`run:${row.run_id}`] : []),
+                `memory_writeback:${row.id}`,
+            ],
+            retentionPurpose: "approved memory writeback review",
+        }
+        : undefined;
+    const longTermWriteGate = longTermWriteGateInput
+        ? validateLongTermMemoryWriteGate(longTermWriteGateInput, { expectedOwner: targetOwner })
+        : undefined;
+    const mutationDecision = targetScope === "long-term"
+        ? evaluateLongTermMemoryMutation({
+            mutationId: `memory_writeback:${row.id}`,
+            action: "create",
+            requesterAgentId: targetOwner.ownerId,
+            targetAgentId: targetOwner.ownerId,
+            expectedTargetAgentId: ownerId,
+            targetNamespaceId: `${ownerId}:long_term`,
+            storageNeedReviewed: Boolean(longTermWriteGate?.storageNeed),
+            sensitivity: longTermWriteGate?.sensitivity ?? "secret",
+            userIntent: longTermWriteGate?.userIntent ?? "admin_review_approved",
+            evidenceRefs: longTermWriteGate?.sourceEvidenceRefs ?? [],
+            reviewerRef: params.reviewerId ?? "",
+        })
+        : undefined;
+    if (mutationDecision?.status === "blocked") {
+        const reason = `long-term memory mutation blocked: ${mutationDecision.issueCodes.join(", ")}`;
+        const updated = updateMemoryWritebackCandidate({ id: row.id, status: "discarded", content: safety.content, metadata, lastError: reason }) ?? row;
+        recordMemoryWritebackReviewAudit({ row: updated, action: params.action, result: "blocked", reviewerId: params.reviewerId, reason });
+        return { ok: false, candidate: toReviewItem(updated), action: params.action, reason };
+    }
+    if (longTermWriteGate && !longTermWriteGate.ok) {
+        const reason = `long-term memory write gate failed: ${longTermWriteGate.issueCodes.join(", ")}`;
+        const updated = updateMemoryWritebackCandidate({
+            id: row.id,
+            status: "discarded",
+            content: safety.content,
+            metadata: mergeReviewMetadata({
+                row,
+                action: params.action,
+                metadata: {
+                    ...metadata,
+                    ...buildLongTermReviewWriteGateMetadata(longTermWriteGate),
+                },
+                safety,
+                reviewerId: params.reviewerId,
+                edited: Boolean(editedContent),
+            }),
+            lastError: reason,
+        }) ?? row;
+        recordMemoryWritebackReviewAudit({
+            row: updated,
+            action: params.action,
+            result: "blocked",
+            reviewerId: params.reviewerId,
+            reason,
+        });
+        return { ok: false, candidate: toReviewItem(updated), action: params.action, reason };
+    }
     const result = await storeMemoryDocument({
         rawText: safety.content,
         scope: targetScope,
@@ -579,8 +705,10 @@ export async function reviewMemoryWritebackCandidate(params) {
         sourceType: params.action === "keep_session" ? "session_review_memory" : "reviewed_long_term_memory",
         sourceRef: row.id,
         title: params.action === "keep_session" ? "session memory" : "approved long-term memory",
+        ...(longTermWriteGateInput ? { longTermWriteGate: longTermWriteGateInput } : {}),
         metadata: {
             ...metadata,
+            ...buildLongTermReviewWriteGateMetadata(longTermWriteGate),
             approved: params.action !== "keep_session",
             reviewApproved: params.action !== "keep_session",
             requiresReview: false,

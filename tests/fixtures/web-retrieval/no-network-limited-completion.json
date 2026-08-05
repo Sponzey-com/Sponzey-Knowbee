@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "no-network-limited-completion",
   "title": "No network completes deterministically after minimum ladder",
   "freshnessPolicy": "latest_approximate",
@@ -56,9 +56,12 @@
     }
   ],
   "expected": {
-    "canAnswer": false,
-    "evidenceSufficiency": "insufficient_candidate_missing",
-    "minAttempts": 3,
-    "limitedCompletionOk": true
+    "minimumAttempts": 3,
+    "llmDiagnosisExpectation": {
+      "status": "followup",
+      "requiredEvidenceSourceIds": [],
+      "requiredConditionVerdicts": ["existence:unsatisfied"],
+      "changedStrategyRequired": true
+    }
   }
 }

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "finance-kospi-latest",
   "title": "KOSPI latest approximate from search snippet",
   "freshnessPolicy": "latest_approximate",
@@ -26,9 +26,12 @@
     }
   ],
   "expected": {
-    "canAnswer": true,
-    "acceptedValue": "3085.42",
-    "evidenceSufficiency": "sufficient_approximate",
-    "minAttempts": 1
+    "minimumAttempts": 1,
+    "llmDiagnosisExpectation": {
+      "status": "followup",
+      "requiredEvidenceSourceIds": ["kospi-search-snippet"],
+      "requiredConditionVerdicts": ["freshness:uncertain"],
+      "changedStrategyRequired": true
+    }
   }
 }

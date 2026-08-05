@@ -10,14 +10,14 @@
 - 사용자가 항상 볼 기본 조작은 서브 에이전트 추가, 서브 에이전트 삭제, 저장, 화면 맞춤 또는 자동 배치 정도로 제한한다.
 - 선택한 서브 에이전트 카드에는 이름, 역할명, 성격과 하는 일, AI 제안, 저장 흐름을 우선 둔다.
 - 실행 흐름은 사용자가 붙인 서브 에이전트 이름과 연결 경로로 표시한다.
-- raw executor id, request group uuid, 내부 route code는 기본 UI가 아니라 diagnostic UI에서만 보여준다.
+- 서브 에이전트 내부 id, request group uuid, 내부 route code는 기본 UI가 아니라 diagnostic UI에서만 보여준다.
 
 ## 고급/레거시 컴포넌트 경계
 
 - `EnterpriseTopologyPalette`, `EnterpriseTopologyInspector`, `EnterpriseTopologyCanvas`는 EnterpriseTopology V1 compatibility 또는 legacy/admin/diagnostic 경로로 격리해야 한다.
 - 이 컴포넌트들은 `LegacyEnterpriseTopologyPage` 계열에서만 조합하고 기본 `TopologyWorkspacePage` import graph로 끌어오지 않는다.
 - 기본 route인 `TopologyWorkspacePage`는 V1 palette/inspector/page를 직접 import하지 않아야 한다.
-- WorkOrder Template, Context, compile preview, manual run launcher는 기본 topology UX에 노출하지 않는다.
+- 내부 작업 템플릿, 실행 맥락, 실행 구조 미리보기, 수동 실행 launcher는 기본 topology UX에 노출하지 않는다.
 
 ## 컴포넌트 책임
 
@@ -35,5 +35,5 @@
 ## 검증 게이트
 
 - 기본 topology 컴포넌트 변경은 `pnpm run test:architecture:webui`를 기준으로 검증한다.
-- `EnterpriseTopologyPalette`, `EnterpriseTopologyInspector`, `EnterpriseTopologyCanvas`, WorkOrder/manual run, compile preview가 기본 route로 다시 들어오면 architecture static/webui gate가 실패해야 한다.
+- `EnterpriseTopologyPalette`, `EnterpriseTopologyInspector`, `EnterpriseTopologyCanvas`, 내부 작업 템플릿, 수동 실행, 실행 구조 미리보기가 기본 route로 다시 들어오면 architecture static/webui gate가 실패해야 한다.
 - 서브 에이전트 선택, 자연어 의미 판단, 위험 경계 판단을 React 컴포넌트 안에 넣는 변경은 금지한다. 필요한 판단은 core API/use case와 prompt/harness 계약으로 이동한다.

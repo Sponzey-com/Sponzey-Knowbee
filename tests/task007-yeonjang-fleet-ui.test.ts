@@ -299,27 +299,27 @@ describe("task007 yeonjang fleet ui", () => {
   it("renders advanced fleet list, inspector, diff viewer, and explicit picker guidance", () => {
     const markup = renderFleet("advanced")
 
-    expect(markup).toContain("연장 Fleet")
-    expect(markup).toContain("전체 연장 Fleet")
+    expect(markup).toContain("연장 목록")
+    expect(markup).toContain("전체 연장 목록")
     expect(markup).toContain("윈도우 오피스")
     expect(markup).toContain("내 맥북")
-    expect(markup).toContain("원격 연장만 online 상태라서 명시적으로 지정해야 합니다.")
-    expect(markup).toContain("명시 대상 선택 위치")
-    expect(markup).toContain("관리 제어면")
-    expect(markup).toContain("로컬 대비 차이")
-    expect(markup).toContain("신뢰와 Pairing")
-    expect(markup).toContain("Governance 이력")
+    expect(markup).toContain("현재 원격 컴퓨터의 연장만 연결되어 직접 선택해야 합니다.")
+    expect(markup).toContain("직접 선택 위치")
+    expect(markup).toContain("관리 화면")
+    expect(markup).toContain("이 컴퓨터와 선택한 컴퓨터 차이")
+    expect(markup).toContain("연결 승인과 신뢰")
+    expect(markup).toContain("연장 관리 이력")
     expect(markup).toContain("버전 차이")
-    expect(markup).toContain("원격 전용 기능")
-    expect(markup).toContain("app_launch")
+    expect(markup).toContain("원격 컴퓨터에서만 가능한 기능 1개")
+    expect(markup).not.toContain("app_launch")
   })
 
   it("keeps beginner mode to current-device summary only", () => {
     const markup = renderFleet("beginner")
 
     expect(markup).toContain("현재 연결된 내 기기")
-    expect(markup).not.toContain("전체 연장 Fleet")
-    expect(markup).not.toContain("로컬 대비 차이")
+    expect(markup).not.toContain("전체 연장 목록")
+    expect(markup).not.toContain("이 컴퓨터와 선택한 컴퓨터 차이")
   })
 
   it("resolves selected inspector instance and default target copy deterministically", () => {

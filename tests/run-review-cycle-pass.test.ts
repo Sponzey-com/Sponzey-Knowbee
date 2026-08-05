@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import { runReviewCyclePass } from "../packages/core/src/runs/review-cycle-pass.ts"
+import { buildStructuredFollowupKey } from "../packages/core/src/runs/completion-application.ts"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.js"
 
 function createDependencies() {
   return {
@@ -67,6 +69,7 @@ function createParams() {
     },
     requiresFilesystemMutation: false,
     originalRequest: "original request",
+    config: DEFAULT_CONFIG,
     model: "gpt-test",
     workDir: "/tmp",
     usesWorkerRuntime: true,
@@ -88,7 +91,15 @@ function createParams() {
       delivery: 0,
       external: 0,
     },
-    seenFollowupPrompts: new Set(["need more detail"]),
+    seenFollowupPrompts: new Set([
+      buildStructuredFollowupKey({
+        kind: "followup",
+        summary: "need followup",
+        reason: "",
+        remainingItems: [],
+        followupPrompt: "Need   more detail",
+      }),
+    ]),
     syntheticApprovalAlreadyApproved: false,
     syntheticApprovalRuntimeDependencies: {
       timeoutSec: 30,
@@ -119,11 +130,18 @@ describe("run review cycle pass", () => {
     const dependencies = createDependencies()
     const moduleDependencies = createModuleDependencies()
     const params = createParams()
+    params.requiresSuccessfulToolEvidence = true
 
     const result = await runReviewCyclePass(params, dependencies, moduleDependencies)
 
     expect(result).toEqual({ kind: "break" })
     expect(params.priorAssistantMessages).toEqual(["old preview", "preview text"])
+    expect(moduleDependencies.runReviewPass).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requiresSuccessfulToolEvidence: true,
+      }),
+      expect.any(Object),
+    )
     expect(moduleDependencies.runReviewOutcomePass).toHaveBeenCalledWith(
       expect.objectContaining({
         runId: "run-1",
@@ -144,7 +162,7 @@ describe("run review cycle pass", () => {
       kind: "retry",
       nextMessage: "retry prompt",
       clearWorkerRuntime: true,
-      normalizedFollowupPrompt: "need more detail",
+      structuredFollowupKey: "completion-followup:test-key",
     })
 
     const result = await runReviewCyclePass(createParams(), dependencies, moduleDependencies)
@@ -153,8 +171,25 @@ describe("run review cycle pass", () => {
       kind: "retry",
       nextMessage: "retry prompt",
       clearWorkerRuntime: true,
-      normalizedFollowupPrompt: "need more detail",
+      structuredFollowupKey: "completion-followup:test-key",
     })
+  })
+
+  it("records only a reason code when the LLM completion review contract is rejected", async () => {
+    const dependencies = createDependencies()
+    const moduleDependencies = createModuleDependencies()
+    moduleDependencies.runReviewPass.mockImplementation(async (_params, reviewDependencies) => {
+      reviewDependencies.onReviewRejected?.("completion_review_criteria_missing", 1)
+      return { review: null, syntheticApproval: null }
+    })
+
+    await runReviewCyclePass(createParams(), dependencies, moduleDependencies)
+
+    expect(dependencies.appendRunEvent).toHaveBeenCalledWith(
+      "run-1",
+      "completion_review_rejected:completion_review_criteria_missing:attempt_1",
+    )
+    expect(JSON.stringify(dependencies.appendRunEvent.mock.calls)).not.toContain("preview text")
   })
 
   it("skips review pass when direct delivery already satisfies completion", async () => {
@@ -190,6 +225,46 @@ describe("run review cycle pass", () => {
     expect(moduleDependencies.runReviewOutcomePass).toHaveBeenCalledWith(
       expect.objectContaining({
         review: null,
+      }),
+      expect.any(Object),
+    )
+  })
+
+  it("routes a verified pending camera artifact directly to the delivery tool before LLM review", async () => {
+    const dependencies = createDependencies()
+    const moduleDependencies = createModuleDependencies()
+    const params = createParams()
+    params.executionSemantics = {
+      ...params.executionSemantics,
+      artifactDelivery: "direct",
+    }
+    params.deliveryOutcome = {
+      directArtifactDeliveryRequested: true,
+      hasSuccessfulArtifactDelivery: false,
+      deliverySatisfied: false,
+      requiresDirectArtifactRecovery: true,
+    }
+    params.successfulTools = [{
+      toolName: "yeonjang_camera_capture",
+      output: "camera artifact ready",
+      details: {
+        kind: "camera_artifact",
+        artifactRef: "artifact:32742982-7e55-4c4c-bfa5-fcfa10092231",
+        mimeType: "image/jpeg",
+        sizeBytes: 128,
+      },
+    }]
+
+    await runReviewCyclePass(params, dependencies, moduleDependencies)
+
+    expect(moduleDependencies.runReviewPass).not.toHaveBeenCalled()
+    expect(moduleDependencies.runReviewOutcomePass).toHaveBeenCalledWith(
+      expect.objectContaining({
+        review: expect.objectContaining({
+          status: "followup",
+          followupRequiredToolNames: ["telegram_send_file"],
+          followupEvidenceRefs: ["artifact:32742982-7e55-4c4c-bfa5-fcfa10092231"],
+        }),
       }),
       expect.any(Object),
     )

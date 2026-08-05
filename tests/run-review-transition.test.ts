@@ -13,7 +13,7 @@ function createDeps() {
 }
 
 describe("run review transition", () => {
-  it("records worker shutdown, persists runtime preview, and enters review", () => {
+  it("records worker shutdown, persists reviewed runtime preview, and enters review", () => {
     const deps = createDeps()
 
     prepareRunForReview({
@@ -21,6 +21,7 @@ describe("run review transition", () => {
       sessionId: "session-1",
       source: "telegram",
       preview: "중간 실행 결과",
+      previewSource: "llm_reviewed",
       workerSessionId: "worker-1",
       persistRuntimePreview: true,
       dependencies: deps,
@@ -68,7 +69,7 @@ describe("run review transition", () => {
 
     expect(deps.appendRunEvent).not.toHaveBeenCalled()
     expect(deps.insertMessage).not.toHaveBeenCalled()
-    expect(deps.writeReplyLog).toHaveBeenCalledWith("webui", "")
+    expect(deps.writeReplyLog).not.toHaveBeenCalled()
     expect(deps.setRunStepStatus).toHaveBeenNthCalledWith(
       1,
       "run-2",

@@ -15,10 +15,23 @@ export interface ChannelAccessPolicy {
     allowUnlisted?: boolean | undefined;
     emptyAllowlistAllows?: boolean | undefined;
 }
+export type ChannelAccessPolicyBlockedScope = "user" | "room" | "user_and_room" | "unknown";
+export interface ChannelAccessPolicyNotice {
+    kind: "channel_access_policy_blocked";
+    reasonCode: ChannelAccessReasonCode;
+    blockedScope: ChannelAccessPolicyBlockedScope;
+    textSource: "channel_access_policy_notice";
+    renderingRequired: "llm_final_response";
+    finalAnswer: false;
+    assistantIdentityClaim: false;
+    fallbackDelivery: "block_without_llm_rendering";
+}
 export interface ChannelAccessPolicyResult {
     allowed: boolean;
     envelope: InboundEnvelope;
     policy: ChannelAccessPolicySnapshot;
+    notice?: ChannelAccessPolicyNotice;
+    /** @deprecated Use notice and route user-facing text through the final response renderer. */
     responseText?: string;
 }
 export declare function buildAccessPolicyFromAllowedIds(input: {

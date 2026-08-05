@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { type KnowbeeConfig, type OrchestrationConfig, getConfig } from "../config/index.js"
+import type { KnowbeeConfig, OrchestrationConfig } from "../config/types.js"
 import {
   type AgentConfig,
   type AgentRelationship,
@@ -10,9 +10,11 @@ import {
   type SubAgentConfig,
   type TeamConfig,
   type TeamMembership,
+  resolveAgentConfigAgentName,
   validateAgentConfig,
   validateTeamConfig,
 } from "../contracts/sub-agent-orchestration.js"
+import { assertAgentLifecycleTransition } from "./agent-lifecycle.js"
 import type { EnterpriseMetadataValue } from "../contracts/enterprise-topology.js"
 import {
   type AgentConfigPersistenceOptions,
@@ -46,6 +48,7 @@ import {
   type LegacyNode,
   type LegacyRelation,
 } from "../topology/legacy-enterprise-topology-adapter.js"
+import { createLogger, redactLogText } from "../logger/index.js"
 
 export interface AgentRuntimeLoadSnapshot {
   activeSubSessions: number
@@ -103,8 +106,7 @@ export interface OrchestrationRegistryDiagnostic {
 
 export interface AgentRegistryEntry {
   agentId: string
-  displayName: string
-  nickname?: string
+  agentName: string
   status: SubAgentConfig["status"]
   role: string
   specialtyTags: string[]
@@ -127,7 +129,6 @@ export interface AgentRegistryEntry {
 export interface TeamRegistryEntry {
   teamId: string
   displayName: string
-  nickname?: string
   status: TeamConfig["status"]
   purpose: string
   roleHints: string[]
@@ -289,8 +290,11 @@ export interface OrchestrationRegistrySnapshot {
   diagnostics: OrchestrationRegistryDiagnostic[]
 }
 
+export type RegistryConfigSnapshot = Pick<KnowbeeConfig, "orchestration"> &
+  Partial<Pick<KnowbeeConfig, "ai">>
+
 export interface RegistryServiceDependencies {
-  getConfig?: () => Pick<KnowbeeConfig, "orchestration"> & Partial<Pick<KnowbeeConfig, "ai">>
+  config: RegistryConfigSnapshot
   now?: () => number
   failureWindowMs?: number
 }
@@ -298,11 +302,13 @@ export interface RegistryServiceDependencies {
 const DEFAULT_ROOT_AGENT_ID = "agent:knowbee"
 const COLD_REGISTRY_TARGET_P95_MS = 500
 const HOT_INDEX_TARGET_P95_MS = 100
+const REGISTRY_LOAD_FAILED_REASON = "Registry snapshot is unavailable. Single main-agent mode is active."
 const TEAM_RECALCULATION_KEYS = [
   "task008.skill_mcp_binding_recalculated",
   "task009.model_state_recalculated",
 ]
 const HOT_CAPABILITY_INDEX_CACHE = new Map<string, AgentCapabilityIndex>()
+const log = createLogger("orchestration:registry")
 
 function uniqueStrings(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value?.trim())))]
@@ -336,6 +342,11 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex")
 }
 
+function registryFallbackFailureLogDetail(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
+
 function parseJsonObject(value: string): unknown {
   try {
     return JSON.parse(value)
@@ -364,8 +375,9 @@ function rootAgentIdFromConfig(config: OrchestrationConfig): string {
   return config.knowbee?.agentId ?? DEFAULT_ROOT_AGENT_ID
 }
 
-function runtimeConfigModelProfile(config: Pick<KnowbeeConfig, "orchestration"> & Partial<Pick<KnowbeeConfig, "ai">>): ModelProfile | undefined {
-  const connection = config.ai?.connection ?? getConfig().ai.connection
+function runtimeConfigModelProfile(config: Partial<Pick<KnowbeeConfig, "ai">>): ModelProfile | undefined {
+  const connection = config.ai?.connection
+  if (!connection) return undefined
   const rawProviderId = connection.provider?.trim()
   const modelId = connection.model?.trim()
   if (!rawProviderId || !modelId) return undefined
@@ -560,11 +572,11 @@ function topologySubAgentConfigs(
         .filter((node) => node.status !== "archived")
         .map((node): SubAgentConfig => {
           const agentId = topologyAgentId(topologyRecord.topologyId, node.id)
-          const displayName = node.displayName?.trim() || node.name.trim() || node.id
+          const agentName = node.displayName?.trim() || node.name.trim() || node.id
           const executorProfile = {
-            ...buildExecutorProfileFromNode(node, { executorId: agentId, displayName }),
+            ...buildExecutorProfileFromNode(node, { executorId: agentId, displayName: agentName }),
             executorId: agentId,
-            displayName,
+            displayName: agentName,
           }
           const role = executorProfile.roleName
           const specialtyTags = sortedUniqueStrings([
@@ -576,9 +588,7 @@ function topologySubAgentConfigs(
             schemaVersion: 1,
             agentType: "sub_agent",
             agentId,
-            displayName,
-            nickname: displayName,
-            normalizedNickname: displayName.normalize("NFKC").toLowerCase(),
+            agentName,
             status: "enabled",
             role,
             personality: executorProfile.definition,
@@ -1117,10 +1127,10 @@ function agentEntry(
 ): AgentRegistryEntry {
   const capabilityModelSummary = resolveAgentCapabilityModelSummary(config)
   const executorProfile = (config as SubAgentConfig & { executorProfile?: ExecutorProfile }).executorProfile
+  const agentName = resolveAgentConfigAgentName(config)
   return {
     agentId: config.agentId,
-    displayName: config.displayName,
-    ...(config.nickname ? { nickname: config.nickname } : {}),
+    agentName,
     status: config.status,
     role: config.role,
     specialtyTags: [...config.specialtyTags],
@@ -1149,7 +1159,6 @@ function teamEntry(
   return {
     teamId: config.teamId,
     displayName: config.displayName,
-    ...(config.nickname ? { nickname: config.nickname } : {}),
     status: config.status,
     purpose: config.purpose,
     roleHints: [...config.roleHints],
@@ -1565,11 +1574,12 @@ function buildAgentCapabilityIndex(input: {
 }
 
 function buildOrchestrationRegistrySnapshotUnsafe(input: {
+  config: RegistryConfigSnapshot
   dependencies: RegistryServiceDependencies
   startedAt: number
   clock: () => number
 }): OrchestrationRegistrySnapshot {
-  const cfg = input.dependencies.getConfig?.() ?? getConfig()
+  const cfg = input.config
   const now = input.startedAt
   const failureWindowMs = input.dependencies.failureWindowMs ?? 7 * 24 * 60 * 60 * 1000
   const diagnostics: OrchestrationRegistrySnapshot["diagnostics"] = []
@@ -1724,10 +1734,12 @@ function fallbackRegistrySnapshot(input: {
   generatedAt: number
   buildLatencyMs: number
 }): OrchestrationRegistrySnapshot {
-  const detail = input.error instanceof Error ? input.error.message : String(input.error)
+  const logDetail = registryFallbackFailureLogDetail(input.error)
+  log.fieldDebug(`Registry snapshot fallback activated: ${logDetail}`)
+  const cacheKey = sha256("registry_load_failed")
   const invalidation: RegistryInvalidationSnapshot = {
-    cacheKey: sha256(`registry_load_failed:${detail}`),
-    configHash: sha256("registry_load_failed"),
+    cacheKey,
+    configHash: cacheKey,
     tables: {},
   }
   const hierarchy: RegistryHierarchySnapshot = {
@@ -1762,14 +1774,14 @@ function fallbackRegistrySnapshot(input: {
     fallback: {
       mode: "single_knowbee",
       reasonCode: "registry_load_failed",
-      reason: `Registry snapshot failed and fell back to single Knowbee mode: ${detail}`,
+      reason: REGISTRY_LOAD_FAILED_REASON,
     },
     membershipEdges: [],
     diagnostics: [
       {
         code: "registry_load_failed",
         severity: "invalid",
-        message: `Registry snapshot failed: ${detail}`,
+        message: REGISTRY_LOAD_FAILED_REASON,
       },
     ],
   }
@@ -1780,12 +1792,13 @@ export function clearAgentCapabilityIndexCache(): void {
 }
 
 export function buildOrchestrationRegistrySnapshot(
-  dependencies: RegistryServiceDependencies = {},
+  dependencies: RegistryServiceDependencies,
 ): OrchestrationRegistrySnapshot {
   const clock = dependencies.now ?? (() => Date.now())
   const startedAt = clock()
   try {
-    return buildOrchestrationRegistrySnapshotUnsafe({ dependencies, startedAt, clock })
+    const config = dependencies.config
+    return buildOrchestrationRegistrySnapshotUnsafe({ config, dependencies, startedAt, clock })
   } catch (error) {
     return fallbackRegistrySnapshot({
       error,
@@ -1795,7 +1808,8 @@ export function buildOrchestrationRegistrySnapshot(
   }
 }
 
-export function createAgentRegistryService(dependencies: RegistryServiceDependencies = {}) {
+export function createAgentRegistryService(dependencies: RegistryServiceDependencies) {
+  const config = dependencies.config
   const now = () => dependencies.now?.() ?? Date.now()
   return {
     get(agentId: string): AgentConfig | undefined {
@@ -1808,9 +1822,16 @@ export function createAgentRegistryService(dependencies: RegistryServiceDependen
         .filter((config): config is AgentConfig => config != null)
     },
     snapshot(): OrchestrationRegistrySnapshot {
-      return buildOrchestrationRegistrySnapshot(dependencies)
+      return buildOrchestrationRegistrySnapshot({ ...dependencies, config })
     },
     createOrUpdate(input: AgentConfig, options: AgentConfigPersistenceOptions = {}): void {
+      const current = this.get(input.agentId)
+      if (current) {
+        assertAgentLifecycleTransition({
+          fromStatus: current.status,
+          toStatus: input.status,
+        })
+      }
       upsertAgentConfig(input, { ...options, now: options.now ?? now() })
     },
     disable(agentId: string): boolean {
@@ -1828,7 +1849,8 @@ export function createAgentRegistryService(dependencies: RegistryServiceDependen
   }
 }
 
-export function createTeamRegistryService(dependencies: RegistryServiceDependencies = {}) {
+export function createTeamRegistryService(dependencies: RegistryServiceDependencies) {
+  const config = dependencies.config
   const now = () => dependencies.now?.() ?? Date.now()
   return {
     get(teamId: string): TeamConfig | undefined {
@@ -1841,7 +1863,7 @@ export function createTeamRegistryService(dependencies: RegistryServiceDependenc
         .filter((config): config is TeamConfig => config != null)
     },
     snapshot(): OrchestrationRegistrySnapshot {
-      return buildOrchestrationRegistrySnapshot(dependencies)
+      return buildOrchestrationRegistrySnapshot({ ...dependencies, config })
     },
     createOrUpdate(input: TeamConfig, options: TeamConfigPersistenceOptions = {}): void {
       upsertTeamConfig(input, { ...options, now: options.now ?? now() })

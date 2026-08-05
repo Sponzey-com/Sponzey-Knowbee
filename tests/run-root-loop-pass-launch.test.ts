@@ -36,6 +36,7 @@ function createDependencies() {
     tryHandleActiveQueueCancellation: vi.fn(async () => null),
     tryHandleIntakeBridge: vi.fn(async () => null),
     getSyntheticApprovalAlreadyApproved: vi.fn(() => false),
+    getAdmittedCapabilityExecutionScope: vi.fn(() => undefined),
     onBootstrapInfo: vi.fn(),
   }
 }
@@ -67,6 +68,35 @@ describe("root loop pass launch", () => {
 
   it("prepares execution-cycle launch with delegated verification and approval state", async () => {
     const dependencies = createDependencies()
+    const admittedCapabilityExecutionScope = {
+      schemaVersion: 1 as const,
+      runId: "run-1",
+      ownerAgentId: "agent:main",
+      receiptId: "receipt:selection:run-1",
+      capabilitySnapshotFingerprint: `sha256:${"a".repeat(64)}` as const,
+      selectedCapabilityId: "skill:web-research",
+      toolNames: ["web_fetch", "web_search", "telegram_send_file"],
+      selectedToolTargets: [{
+        stepId: "step-delivery",
+        capabilityId: "telegram_send_file",
+        bindingTargetId: "agent:main",
+        targetId: `destination:telegram:sha256:${"a".repeat(64)}`,
+        toolNames: ["telegram_send_file"],
+      }],
+    }
+    dependencies.getAdmittedCapabilityExecutionScope.mockReturnValue(
+      admittedCapabilityExecutionScope,
+    )
+    const successfulTools = [{
+      toolName: "web_fetch",
+      output: "direct source evidence",
+      evidenceSource: {
+        sourceKind: "web" as const,
+        sourceRef: `tool-result:web:${"a".repeat(64)}`,
+        trustClass: "untrusted_external" as const,
+        instructionIsolation: "data_only" as const,
+      },
+    }]
     const launch = prepareRootExecutionCyclePassLaunch({
       runId: "run-1",
       sessionId: "session-1",
@@ -88,6 +118,7 @@ describe("root loop pass launch", () => {
         sawRealFilesystemMutation: false,
         filesystemMutationRecoveryAttempted: false,
         truncatedOutputRecoveryAttempted: false,
+        successfulTools,
       },
       executionSemantics: {
         filesystemEffect: "none",
@@ -144,7 +175,14 @@ describe("root loop pass launch", () => {
     expect(launch.params.syntheticApprovalAlreadyApproved).toBe(false)
     expect(launch.params.state.currentMessage).toContain("[Root Task Execution]")
     expect(launch.params.state.currentMessage).toContain("[checklist]")
-    expect(launch.params.state.currentMessage).toContain("- [ ] 목표 확인:")
+    expect(launch.params.state.currentMessage).toContain("- [ ] Confirm goal:")
+    expect(launch.params.completionConditions).toEqual(["The requested work is completed."])
+    expect(launch.params.executionSemantics.artifactDelivery).toBe("direct")
+    expect(launch.params.wantsDirectArtifactDelivery).toBe(true)
+    expect(launch.params.successfulTools).toBe(successfulTools)
+    expect(launch.params.admittedCapabilityExecutionScope).toBe(
+      admittedCapabilityExecutionScope,
+    )
     await launch.dependencies.runVerificationSubtask()
     expect(dependencies.runVerificationSubtask).toHaveBeenCalledTimes(1)
   })

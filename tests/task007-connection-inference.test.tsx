@@ -146,7 +146,7 @@ describe("task007 connection inference and simple edit menu", () => {
 
     expect(html).toContain('data-testid="enterprise-relation-mode-toolbar"')
     expect(html).toContain('data-active-relation-type="delegates_to"')
-    expect(html).toContain("Smart Connect")
+    expect(html).toContain("추천 연결")
   })
 })
 

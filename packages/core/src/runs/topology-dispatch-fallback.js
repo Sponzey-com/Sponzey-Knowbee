@@ -11,6 +11,9 @@ const ROOT_NODE_ID = "node:knowbee";
 function uniqueStrings(values) {
     return [...new Set(values.filter((value) => Boolean(value?.trim())))];
 }
+function outcomeAgentName(outcome) {
+    return outcome.agentName?.trim() || undefined;
+}
 function isTopologyOutcome(outcome) {
     return outcome.agentSource === "topology" || Boolean(outcome.topologyId?.trim() || outcome.topologyExecutorId?.trim());
 }
@@ -34,13 +37,13 @@ export function resolveTopologyDispatchFollowupDecision(input) {
         .filter((executorId) => !attemptedExecutorIds.has(executorId));
     const failedReasonCodes = uniqueStrings(failedOrSkipped.map((outcome) => outcome.reasonCode));
     const failedExecutorIds = uniqueStrings(failedOrSkipped.map((outcome) => outcome.agentId));
-    const failedExecutorNames = uniqueStrings(failedOrSkipped.map((outcome) => outcome.agentDisplayName));
+    const failedExecutorNames = uniqueStrings(failedOrSkipped.map(outcomeAgentName));
     const blockedByPreflight = failedReasonCodes.some(isPromptPreflightReason);
     if (alternativeExecutorIds.length > 0) {
         return {
             action: "redelegate",
             reasonCode: "redelegate_after_delegation_failure",
-            summary: "토폴로지 위임 실패 후 대체 가능한 direct child 실행자 후보가 있어 재위임 판단이 필요합니다.",
+            summary: "서브 에이전트 위임 실패 후 대체 가능한 직속 하위 서브 에이전트 후보가 있어 재위임 판단이 필요합니다.",
             failedExecutorIds,
             failedExecutorNames,
             failedReasonCodes,
@@ -54,7 +57,7 @@ export function resolveTopologyDispatchFollowupDecision(input) {
         return {
             action: "self_solve",
             reasonCode: "self_solve_after_delegation_failure",
-            summary: "토폴로지 위임이 실패했고 대체 direct child 후보가 없어 현재 실행자가 자체 처리합니다.",
+            summary: "서브 에이전트 위임이 실패했고 대체 직속 하위 후보가 없어 현재 에이전트가 자체 처리합니다.",
             failedExecutorIds,
             failedExecutorNames,
             failedReasonCodes,
@@ -66,13 +69,38 @@ export function resolveTopologyDispatchFollowupDecision(input) {
     return {
         action: "fail_with_reason",
         reasonCode: "final_failure_after_exhaustion",
-        summary: "토폴로지 위임이 실패했고 대체 위임이나 자체 처리 경로가 없습니다.",
+        summary: "서브 에이전트 위임이 실패했고 대체 위임이나 자체 처리 경로가 없습니다.",
         failedExecutorIds,
         failedExecutorNames,
         failedReasonCodes,
         blockedByPreflight,
         alternativeExecutorIds,
         rootLoopContinuation: "blocked",
+    };
+}
+export function buildTopologyDispatchFollowupDirective(decision) {
+    if (decision.action === "self_solve")
+        return null;
+    const common = {
+        preview: "",
+        summary: decision.summary,
+        userMessage: decision.summary,
+        userMessageSource: "runtime_deterministic",
+        eventLabel: `topology dispatch follow-up terminal directive:${decision.action}`,
+    };
+    if (decision.action === "fail_with_reason") {
+        return {
+            kind: "stop",
+            ...common,
+            reason: "서브 에이전트 위임 실패 후 대체 위임이나 자체 처리 경로가 없습니다.",
+        };
+    }
+    return {
+        kind: "awaiting_user",
+        ...common,
+        reason: decision.action === "redelegate"
+            ? "서브 에이전트 위임 실패 후 대체 직속 하위 서브 에이전트 후보 검토가 필요합니다."
+            : "서브 에이전트 위임 실패 후 사용자 확인이 필요합니다.",
     };
 }
 function safeId(value) {
@@ -157,7 +185,7 @@ export function recordTopologyDispatchFollowupTrace(input) {
                 taskId: outcome.taskId,
                 nodeId,
                 executorId: outcome.agentId,
-                executorName: outcome.agentDisplayName,
+                executorName: outcomeAgentName(outcome),
             },
             at: now + sequence,
             sequence: sequence++,
@@ -174,7 +202,7 @@ export function recordTopologyDispatchFollowupTrace(input) {
                 taskId: outcome.taskId,
                 nodeId,
                 executorId: outcome.agentId,
-                executorName: outcome.agentDisplayName,
+                executorName: outcomeAgentName(outcome),
                 failureCode: outcome.reasonCode,
                 status: outcome.status,
                 summary: outcome.summary,
@@ -242,7 +270,7 @@ export function recordTopologyDispatchFollowupTrace(input) {
            metrics_json = excluded.metrics_json`).run(nodeRunId, topologyRunId, workOrderId, nodeId, null, outcome.status, outcome.status, now, now + events.length, now, now + events.length, JSON.stringify({
                 reasonCode: outcome.reasonCode ?? null,
                 executorId: outcome.agentId ?? null,
-                executorName: outcome.agentDisplayName ?? null,
+                executorName: outcomeAgentName(outcome) ?? null,
             }));
             db.prepare(`INSERT INTO topology_work_orders
          (work_order_id, topology_run_id, node_run_id, parent_work_order_id, from_node_id,
@@ -267,7 +295,7 @@ export function recordTopologyDispatchFollowupTrace(input) {
              report_json = excluded.report_json`).run(`failure:${safeId(topologyRunId)}:${safeId(outcome.taskId)}`, topologyRunId, nodeRunId, workOrderId, nodeId, isPromptPreflightReason(outcome.reasonCode) ? "permission" : "child_delegation", JSON.stringify({
                     nodeId,
                     executorId: outcome.agentId,
-                    executorName: outcome.agentDisplayName,
+                    executorName: outcomeAgentName(outcome),
                     reasonCode: outcome.reasonCode,
                     recommendedAction: input.decision.summary,
                 }), now + events.length);

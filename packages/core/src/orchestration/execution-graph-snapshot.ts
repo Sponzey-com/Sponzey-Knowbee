@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
-import { getConfig, type KnowbeeConfig } from "../config/index.js"
+import type { KnowbeeConfig } from "../config/types.js"
+import { resolveAgentConfigAgentName } from "../contracts/sub-agent-orchestration.js"
 import { listAgentRelationships } from "../db/index.js"
 import {
   createLegacyTopologyRegistry,
@@ -24,6 +25,7 @@ import {
 export const EXECUTION_GRAPH_ROOT_AGENT_ID = "agent:knowbee" as const
 export const WORKSPACE_DRAFT_TOPOLOGY_ID = "workspace:draft" as const
 
+export type ExecutionGraphConfigSnapshot = Pick<KnowbeeConfig, "orchestration"> & Partial<Pick<KnowbeeConfig, "ai">>
 export type ExecutionGraphBuildMode = "workspace" | "active_deployment" | "db_config"
 export type ExecutionGraphSource = "workspace_draft" | "active_topology" | "db_config"
 export type ExecutionGraphIssueSeverity = "info" | "warning" | "invalid"
@@ -44,7 +46,7 @@ export interface ExecutionGraphValidationIssue {
 
 export interface ExecutorRuntimeProjection {
   agentId: string
-  displayName: string
+  agentName: string
   source: "topology" | "db" | "config"
   status: string
   delegationEnabled: boolean
@@ -107,7 +109,7 @@ export interface BuildExecutionGraphSnapshotInput {
   registrySnapshot?: OrchestrationRegistrySnapshot
   loadRegistrySnapshot?: () => OrchestrationRegistrySnapshot
   registryDependencies?: RegistryServiceDependencies
-  getConfig?: () => Pick<KnowbeeConfig, "orchestration"> & Partial<Pick<KnowbeeConfig, "ai">>
+  config: ExecutionGraphConfigSnapshot
 }
 
 interface SelectedTopologyGraph {
@@ -138,7 +140,7 @@ function sha256(value: string): string {
 
 function rootAgentIdFromInput(input: BuildExecutionGraphSnapshotInput): string {
   if (input.rootAgentId?.trim()) return input.rootAgentId
-  const cfg = input.getConfig?.() ?? getConfig()
+  const cfg = input.config
   return cfg.orchestration.knowbee?.agentId ?? EXECUTION_GRAPH_ROOT_AGENT_ID
 }
 
@@ -320,10 +322,10 @@ function projectTopologyAgents(input: {
     if (node.status === "archived") continue
     const agentId = topologyAgentId(topology.id, node.id)
     const executionCandidate = nodeExecutionCandidate(node)
-    const displayName = nodeDisplayName(node)
+    const agentName = nodeDisplayName(node)
     agents[agentId] = {
       agentId,
-      displayName,
+      agentName,
       source: "topology",
       status: node.status,
       delegationEnabled: executionCandidate,
@@ -333,7 +335,7 @@ function projectTopologyAgents(input: {
       topologyId: topology.id,
       topologyVersion,
       executorId: node.id,
-      executorProfile: buildExecutorProfileFromNode(node, { executorId: agentId, displayName }),
+      executorProfile: buildExecutorProfileFromNode(node, { executorId: agentId, displayName: agentName }),
       reasonCodes: executionCandidate ? [] : [`node_${node.status}`],
     }
   }
@@ -342,9 +344,10 @@ function projectTopologyAgents(input: {
 
 function projectRegistryAgent(agent: AgentRegistryEntry): ExecutorRuntimeProjection {
   const executionCandidate = agent.status === "enabled" && agent.delegationEnabled
+  const agentName = resolveAgentConfigAgentName(agent.config)
   return {
     agentId: agent.agentId,
-    displayName: agent.displayName,
+    agentName,
     source: agent.source,
     status: agent.status,
     delegationEnabled: agent.delegationEnabled,
@@ -353,7 +356,7 @@ function projectRegistryAgent(agent: AgentRegistryEntry): ExecutorRuntimeProject
     specialtyTags: [...agent.specialtyTags],
     executorProfile: agent.executorProfile ?? normalizeExecutorProfile(undefined, {
       executorId: agent.agentId,
-      displayName: agent.displayName,
+      displayName: agentName,
       roleName: agent.role,
       definition: agent.config.personality,
       does: agent.specialtyTags,
@@ -372,7 +375,10 @@ function projectRegistryAgent(agent: AgentRegistryEntry): ExecutorRuntimeProject
 function loadDbConfigRegistrySnapshot(input: BuildExecutionGraphSnapshotInput): OrchestrationRegistrySnapshot {
   if (input.registrySnapshot) return input.registrySnapshot
   if (input.loadRegistrySnapshot) return input.loadRegistrySnapshot()
-  return buildOrchestrationRegistrySnapshot(input.registryDependencies)
+  return buildOrchestrationRegistrySnapshot({
+    ...input.registryDependencies,
+    config: input.config,
+  })
 }
 
 function appendEdge(input: {
@@ -872,7 +878,7 @@ function buildDbConfigExecutionGraphSnapshot(input: {
 }
 
 export function buildExecutionGraphSnapshot(
-  input: BuildExecutionGraphSnapshotInput = {},
+  input: BuildExecutionGraphSnapshotInput,
 ): ExecutionGraphSnapshot {
   const generatedAt = input.now?.() ?? Date.now()
   const rootAgentId = rootAgentIdFromInput(input)

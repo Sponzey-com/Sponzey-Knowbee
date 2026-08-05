@@ -5,24 +5,35 @@ import type { ApprovalDecision, ApprovalResolutionReason } from "../../events/in
 import { createLogger } from "../../logger/index.js"
 import { recordLatencyMetric } from "../../observability/latency.js"
 import { listRunsForActiveRequestGroups } from "../../runs/store.js"
-import { listPendingInteractions, resolvePendingInteraction } from "../../tools/dispatcher.js"
+import {
+  listPendingInteractions,
+  resolveApprovalDecision,
+  resolvePendingInteraction,
+} from "../../tools/runtime-dispatcher.js"
+import { redactUiValue } from "../../ui/redaction.js"
 import { authMiddleware } from "../middleware/auth.js"
+import type { KnowbeeEvents } from "../../events/index.js"
 
 const log = createLogger("api:ws")
 
 const clients = new Set<WebSocket>()
+const REDACTED_RAW_PAYLOAD_REF = "[redacted-raw-payload-ref]"
 
 export function getWebUiWsClientCount(): number {
   return clients.size
 }
 
 function broadcast(data: unknown): void {
-  const msg = JSON.stringify(stampBroadcastPayload(data))
+  const msg = JSON.stringify(projectWebUiBroadcastPayload(data))
   for (const ws of clients) {
     if (ws.readyState === 1 /* OPEN */) {
       ws.send(msg)
     }
   }
+}
+
+export function projectWebUiBroadcastPayload<T>(data: T): T {
+  return redactWebUiTransportValue(stampBroadcastPayload(data)) as T
 }
 
 function stampBroadcastPayload(data: unknown): unknown {
@@ -35,43 +46,103 @@ function stampBroadcastPayload(data: unknown): unknown {
   }
 }
 
+export function redactWebUiTransportValue<T>(value: T): T {
+  return redactUiValue(value, { audience: "advanced" }).value as T
+}
+
+export function projectToolBeforeForWebUi(event: KnowbeeEvents["tool.before"]): { type: "tool.before" } & KnowbeeEvents["tool.before"] {
+  return {
+    type: "tool.before",
+    ...event,
+    params: redactWebUiTransportValue(event.params),
+  }
+}
+
+export function projectRunEventForWebUi<T extends Record<string, unknown>>(type: string, event: T): { type: string } & T {
+  return {
+    type,
+    ...redactWebUiTransportValue(event),
+  }
+}
+
+export function projectScheduleEventForWebUi<T extends Record<string, unknown>>(type: string, event: T): { type: string } & T {
+  return {
+    type,
+    ...redactWebUiTransportValue(event),
+  }
+}
+
+export function projectControlEventForWebUi(event: KnowbeeEvents["control.event"]): { type: "control.event" } & KnowbeeEvents["control.event"] {
+  return {
+    type: "control.event",
+    ...redactWebUiTransportValue(event),
+  }
+}
+
+export function projectOrchestrationEventForWebUi(
+  event: KnowbeeEvents["orchestration.event"],
+): { type: "orchestration.event" } & KnowbeeEvents["orchestration.event"] {
+  const redacted = redactWebUiTransportValue(event)
+  return {
+    type: "orchestration.event",
+    ...redacted,
+    payloadRawRef: redacted.payloadRawRef ? REDACTED_RAW_PAYLOAD_REF : null,
+  }
+}
+
+export function projectApprovalRequestForWebUi(
+  event: Pick<KnowbeeEvents["approval.request"], "approvalId" | "runId" | "toolName" | "params" | "kind" | "guidance" | "expiresAt">,
+): {
+  type: "approval.request"
+  approvalId?: string
+  runId: string
+  toolName: string
+  params: unknown
+  kind?: KnowbeeEvents["approval.request"]["kind"]
+  guidance?: string
+  expiresAt?: number | null
+} {
+  return {
+    type: "approval.request",
+    ...(event.approvalId ? { approvalId: event.approvalId } : {}),
+    runId: event.runId,
+    toolName: event.toolName,
+    params: redactWebUiTransportValue(event.params),
+    ...(event.kind ? { kind: event.kind } : {}),
+    ...(typeof event.guidance === "string" ? { guidance: redactWebUiTransportValue(event.guidance) } : {}),
+    ...(event.expiresAt !== undefined ? { expiresAt: event.expiresAt } : {}),
+  }
+}
+
 // Forward event bus events to all WebSocket clients
 function setupEventForwarding(): void {
   eventBus.on("agent.start", (e) => broadcast({ type: "agent.start", ...e }))
   eventBus.on("agent.stream", (e) => broadcast({ type: "agent.stream", ...e }))
   eventBus.on("agent.artifact", (e) => broadcast({ type: "agent.artifact", ...e }))
   eventBus.on("agent.end", (e) => broadcast({ type: "agent.end", ...e }))
-  eventBus.on("control.event", (e) => broadcast({ type: "control.event", ...e }))
-  eventBus.on("orchestration.event", (e) => broadcast({ type: "orchestration.event", ...e }))
-  eventBus.on("run.created", (e) => broadcast({ type: "run.created", ...e }))
-  eventBus.on("run.status", (e) => broadcast({ type: "run.status", ...e }))
-  eventBus.on("run.step.started", (e) => broadcast({ type: "run.step.started", ...e }))
-  eventBus.on("run.step.completed", (e) => broadcast({ type: "run.step.completed", ...e }))
-  eventBus.on("run.progress", (e) => broadcast({ type: "run.progress", ...e }))
-  eventBus.on("run.summary", (e) => broadcast({ type: "run.summary", ...e }))
-  eventBus.on("run.completed", (e) => broadcast({ type: "run.completed", ...e }))
-  eventBus.on("run.failed", (e) => broadcast({ type: "run.failed", ...e }))
+  eventBus.on("control.event", (e) => broadcast(projectControlEventForWebUi(e)))
+  eventBus.on("orchestration.event", (e) => broadcast(projectOrchestrationEventForWebUi(e)))
+  eventBus.on("run.created", (e) => broadcast(projectRunEventForWebUi("run.created", e)))
+  eventBus.on("run.status", (e) => broadcast(projectRunEventForWebUi("run.status", e)))
+  eventBus.on("run.step.started", (e) => broadcast(projectRunEventForWebUi("run.step.started", e)))
+  eventBus.on("run.step.completed", (e) => broadcast(projectRunEventForWebUi("run.step.completed", e)))
+  eventBus.on("run.progress", (e) => broadcast(projectRunEventForWebUi("run.progress", e)))
+  eventBus.on("run.summary", (e) => broadcast(projectRunEventForWebUi("run.summary", e)))
+  eventBus.on("run.completed", (e) => broadcast(projectRunEventForWebUi("run.completed", e)))
+  eventBus.on("run.failed", (e) => broadcast(projectRunEventForWebUi("run.failed", e)))
   eventBus.on("run.cancel.requested", (e) => broadcast({ type: "run.cancel.requested", ...e }))
-  eventBus.on("run.cancelled", (e) => broadcast({ type: "run.cancelled", ...e }))
-  eventBus.on("tool.before", (e) => broadcast({ type: "tool.before", ...e }))
+  eventBus.on("run.cancelled", (e) => broadcast(projectRunEventForWebUi("run.cancelled", e)))
+  eventBus.on("tool.before", (e) => broadcast(projectToolBeforeForWebUi(e)))
   eventBus.on("tool.after", (e) => broadcast({ type: "tool.after", ...e }))
   eventBus.on(
     "approval.request",
-    ({ approvalId, runId, toolName, params, kind, guidance, expiresAt, resolve }) => {
-      registerApprovalFromWs(runId, resolve, approvalId)
+    (event) => {
+      const { approvalId, runId, toolName, resolve } = event
+      if (!approvalId) registerApprovalFromWs(runId, resolve)
       log.info(
         `approval.request registered for approvalId=${approvalId ?? "none"} runId=${runId} tool=${toolName}`,
       )
-      broadcast({
-        type: "approval.request",
-        approvalId,
-        runId,
-        toolName,
-        params,
-        kind,
-        guidance,
-        expiresAt,
-      })
+      broadcast(projectApprovalRequestForWebUi(event))
     },
   )
   eventBus.on("approval.resolved", (e) => {
@@ -80,11 +151,11 @@ function setupEventForwarding(): void {
     log.info(`approval.resolved runId=${e.runId} decision=${e.decision} tool=${e.toolName}`)
     broadcast({ type: "approval.resolved", ...e })
   })
-  eventBus.on("schedule.created", (e) => broadcast({ type: "schedule.created", ...e }))
-  eventBus.on("schedule.cancelled", (e) => broadcast({ type: "schedule.cancelled", ...e }))
-  eventBus.on("schedule.run.start", (e) => broadcast({ type: "schedule.run.start", ...e }))
-  eventBus.on("schedule.run.complete", (e) => broadcast({ type: "schedule.run.complete", ...e }))
-  eventBus.on("schedule.run.failed", (e) => broadcast({ type: "schedule.run.failed", ...e }))
+  eventBus.on("schedule.created", (e) => broadcast(projectScheduleEventForWebUi("schedule.created", e)))
+  eventBus.on("schedule.cancelled", (e) => broadcast(projectScheduleEventForWebUi("schedule.cancelled", e)))
+  eventBus.on("schedule.run.start", (e) => broadcast(projectScheduleEventForWebUi("schedule.run.start", e)))
+  eventBus.on("schedule.run.complete", (e) => broadcast(projectScheduleEventForWebUi("schedule.run.complete", e)))
+  eventBus.on("schedule.run.failed", (e) => broadcast(projectScheduleEventForWebUi("schedule.run.failed", e)))
 }
 
 // Map of runId → approval resolve fn (for WebSocket-based approval)
@@ -110,6 +181,41 @@ export interface WebUiApprovalResponseMessage {
   toolName?: string
 }
 
+export function resolveRegisteredWebUiApproval(input: {
+  approvalId?: string | undefined
+  runId: string
+  decision: ApprovalDecision
+}): boolean {
+  if (input.approvalId) {
+    try {
+      return resolveApprovalDecision({
+        approvalId: input.approvalId,
+        runId: input.runId,
+        decision: input.decision,
+        decisionBy: "webui",
+        decisionSource: "user",
+      }).accepted
+    } catch {
+      return false
+    }
+  }
+  const resolve = input.approvalId
+    ? (pendingApprovals.get(input.approvalId) ?? pendingApprovals.get(input.runId))
+    : pendingApprovals.get(input.runId)
+  if (resolve) {
+    resolve(input.decision, "user")
+    pendingApprovals.delete(input.runId)
+    if (input.approvalId) pendingApprovals.delete(input.approvalId)
+    return true
+  }
+
+  try {
+    return resolvePendingInteraction(input.runId, input.decision)
+  } catch {
+    return false
+  }
+}
+
 export interface WebUiLiveUpdateAckMessage {
   type?: string
   eventType?: string
@@ -132,26 +238,11 @@ export function resolveWebUiApprovalResponse(msg: WebUiApprovalResponseMessage):
       : msg.decision === "allow_once"
         ? "allow_once"
         : "deny"
-  const resolve =
-    typeof msg.approvalId === "string"
-      ? (pendingApprovals.get(msg.approvalId) ?? pendingApprovals.get(msg.runId))
-      : pendingApprovals.get(msg.runId)
-  if (resolve) {
-    resolve(decision, "user")
-    pendingApprovals.delete(msg.runId)
-    if (typeof msg.approvalId === "string") pendingApprovals.delete(msg.approvalId)
-    eventBus.emit("approval.resolved", {
-      ...(typeof msg.approvalId === "string" ? { approvalId: msg.approvalId } : {}),
-      runId: msg.runId,
-      decision,
-      toolName: typeof msg.toolName === "string" ? msg.toolName : "unknown",
-      reason: "user",
-    })
-    return true
-  }
-
-  if (resolvePendingInteraction(msg.runId, decision)) {
-    log.info(`approval.respond fallback resolved runId=${msg.runId} decision=${decision}`)
+  if (resolveRegisteredWebUiApproval({
+    ...(typeof msg.approvalId === "string" ? { approvalId: msg.approvalId } : {}),
+    runId: msg.runId,
+    decision,
+  })) {
     eventBus.emit("approval.resolved", {
       ...(typeof msg.approvalId === "string" ? { approvalId: msg.approvalId } : {}),
       runId: msg.runId,

@@ -1,14 +1,17 @@
 import { type MqttBrokerSnapshot, type MqttExchangeLogEntry } from "../mqtt/broker.js";
 import { type MigrationVersionStatus } from "../config/operations.js";
+import type { RuntimePaths } from "../config/paths.js";
 import { type DbMessageLedgerEvent } from "../db/index.js";
 import { type MigrationLockRow, type MigrationVerificationReport } from "../db/migration-safety.js";
 import { type ControlTimeline } from "../control-plane/timeline.js";
 export interface AdminPlatformInspectorInput {
     timeline: ControlTimeline;
     ledgerEvents: DbMessageLedgerEvent[];
+    paths: AdminPlatformPaths;
     limit?: number;
     filters?: AdminDiagnosticExportFilters;
 }
+export type AdminPlatformPaths = Pick<RuntimePaths, "stateDir" | "dbFile">;
 export interface AdminDiagnosticExportFilters {
     runId?: string;
     requestGroupId?: string;
@@ -153,7 +156,7 @@ export interface AdminPlatformInspectors {
     };
 }
 export declare function buildAdminPlatformInspectors(input: AdminPlatformInspectorInput): AdminPlatformInspectors;
-export declare function startAdminDiagnosticExport(input?: AdminDiagnosticExportStartInput): AdminDiagnosticExportJob;
+export declare function startAdminDiagnosticExport(input: AdminDiagnosticExportStartInput, paths: AdminPlatformPaths): AdminDiagnosticExportJob;
 export declare function getAdminDiagnosticExportJob(id: string): AdminDiagnosticExportJob | null;
 export declare function listAdminDiagnosticExportJobs(): AdminDiagnosticExportJob[];
 //# sourceMappingURL=admin-platform-inspectors.d.ts.map

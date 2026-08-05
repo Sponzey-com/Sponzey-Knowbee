@@ -10,9 +10,16 @@ import type { AgentExecutionDecision } from "./execution-decision-contract.js"
 import {
   buildDefaultStructuredTaskScope,
   buildOrchestrationPlan,
+  type OrchestrationPlannerInput,
   type OrchestrationPlannerIntent,
 } from "./planner.js"
 import type { OrchestrationRegistrySnapshot } from "./registry.js"
+import {
+  authorizeDelegationInForest,
+  validateDelegationForestSnapshot,
+  type DelegationForestSnapshot,
+} from "./delegation-forest.js"
+import { resolveAgentConfigAgentName } from "../contracts/sub-agent-orchestration.js"
 
 const DEFAULT_ROOT_AGENT_ID = "agent:knowbee"
 const DEFAULT_MAX_DEPTH = 5
@@ -42,6 +49,7 @@ export interface NestedSpawnBudgetDecision {
 }
 
 export interface NestedDelegationPlannerInput {
+  config: OrchestrationPlannerInput["config"]
   parentRunId: string
   parentRequestId: string
   parentAgentId: string
@@ -70,6 +78,7 @@ export interface NestedDelegationPlanResult {
   childDepth: number
   budget: NestedSpawnBudgetDecision
   reasonCodes: string[]
+  delegationAuthorizationReceiptIds?: string[]
 }
 
 function normalizedPositiveInteger(value: number | undefined, fallback: number): number {
@@ -256,6 +265,41 @@ function blockedResult(input: {
   }
 }
 
+function delegationForestFromRegistry(registry: OrchestrationRegistrySnapshot): DelegationForestSnapshot {
+  const rootAgentId = rootAgentIdFor(registry)
+  const directChildrenByParent = registry.hierarchy?.directChildrenByParent ?? {}
+  const relationships = Object.entries(directChildrenByParent)
+    .flatMap(([parentAgentId, childAgentIds]) => childAgentIds.map((childAgentId, index) => ({
+      edgeId: `registry:${parentAgentId}:${childAgentId}`,
+      parentAgentId,
+      childAgentId,
+      relationshipType: "parent_child" as const,
+      status: "active" as const,
+      sortOrder: index,
+    })))
+  return validateDelegationForestSnapshot({
+    rootAgentId,
+    agents: [
+      {
+        agentId: rootAgentId,
+        agentName: "Knowbee",
+        agentType: "knowbee",
+        status: "enabled",
+      },
+      ...registry.agents
+        .filter((agent) => agent.agentId !== rootAgentId)
+        .map((agent) => ({
+          agentId: agent.agentId,
+          agentName: resolveAgentConfigAgentName(agent.config),
+          agentType: "sub_agent" as const,
+          status: agent.status,
+          delegationPolicy: agent.config.delegation,
+        })),
+    ],
+    relationships,
+  })
+}
+
 export function buildNestedDelegationPlan(
   input: NestedDelegationPlannerInput,
 ): NestedDelegationPlanResult {
@@ -301,6 +345,7 @@ export function buildNestedDelegationPlan(
   }
 
   const plannerResult = buildOrchestrationPlan({
+    config: input.config,
     parentRunId: input.parentRunId,
     parentRequestId: input.parentRequestId,
     userRequest: input.userRequest,
@@ -344,6 +389,41 @@ export function buildNestedDelegationPlan(
     })
   }
 
+  let forest: DelegationForestSnapshot
+  try {
+    forest = delegationForestFromRegistry(input.registrySnapshot)
+  } catch {
+    return blockedResult({
+      parentAgentId: input.parentAgentId,
+      ...(input.parentSubSessionId ? { parentSubSessionId: input.parentSubSessionId } : {}),
+      parentSubSessionDepth,
+      childDepth,
+      budget,
+      reasonCodes: ["delegation_forest_invalid"],
+    })
+  }
+  const authorizationReceiptIds: string[] = []
+  for (const task of plan.delegatedTasks) {
+    if (!task.assignedAgentId) continue
+    const authorization = authorizeDelegationInForest({
+      snapshot: forest,
+      expectedSnapshotFingerprint: forest.snapshotFingerprint,
+      callerAgentId: input.parentAgentId,
+      targetAgentId: task.assignedAgentId,
+    })
+    if (!authorization.ok) {
+      return blockedResult({
+        parentAgentId: input.parentAgentId,
+        ...(input.parentSubSessionId ? { parentSubSessionId: input.parentSubSessionId } : {}),
+        parentSubSessionDepth,
+        childDepth,
+        budget,
+        reasonCodes: [authorization.reasonCode],
+      })
+    }
+    authorizationReceiptIds.push(authorization.authorizationReceiptId)
+  }
+
   return {
     ok: true,
     status: budget.status === "shrunk" ? "shrunk" : "planned",
@@ -354,5 +434,6 @@ export function buildNestedDelegationPlan(
     childDepth,
     budget,
     reasonCodes: [...new Set([...(plannerResult.reasonCodes ?? []), ...nestedReasonCodes])],
+    delegationAuthorizationReceiptIds: authorizationReceiptIds,
   }
 }

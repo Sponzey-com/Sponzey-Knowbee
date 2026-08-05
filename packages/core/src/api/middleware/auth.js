@@ -1,4 +1,8 @@
-import { getConfig } from "../../config/index.js";
+import { getApiRuntimeConfig } from "../runtime-context.js";
+const authenticatedPrincipals = new WeakMap();
+export function getApiAuthenticationPrincipal(request) {
+    return authenticatedPrincipals.get(request) ?? null;
+}
 const LOCALHOST_IPS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 function isLocalhost(req) {
     const ip = req.socket.remoteAddress ?? "";
@@ -34,20 +38,33 @@ function recordSuccess(ip) {
 function extractToken(req) {
     const header = req.headers.authorization ?? "";
     if (header.startsWith("Bearer "))
-        return header.slice(7);
+        return { token: header.slice(7), transport: "header" };
     const url = req.url ?? "";
     const match = /[?&]token=([^&]+)/.exec(url);
     if (match)
-        return decodeURIComponent(match[1] ?? "");
-    return "";
+        return { token: decodeURIComponent(match[1] ?? ""), transport: "query" };
+    return { token: "", transport: "none" };
 }
 export async function authMiddleware(req, reply) {
-    const cfg = getConfig();
+    const localhost = isLocalhost(req);
+    if (localhost && !req.headers.authorization?.startsWith("Bearer "))
+        return;
+    const cfg = getApiRuntimeConfig(req);
     const staticAuthEnabled = cfg.webui.auth.enabled;
     const staticToken = cfg.webui.auth.token?.trim() ?? "";
-    if (!staticAuthEnabled)
+    const provided = extractToken(req);
+    const matchesStaticToken = Boolean(staticToken && provided.token === staticToken);
+    if (localhost) {
+        if (matchesStaticToken && provided.transport === "header") {
+            authenticatedPrincipals.set(req, Object.freeze({
+                principalRef: "api:static-token-owner",
+                role: "administrator",
+                authenticationMethod: "static_bearer_token",
+            }));
+        }
         return;
-    if (isLocalhost(req))
+    }
+    if (!staticAuthEnabled)
         return;
     const ip = req.socket.remoteAddress ?? "unknown";
     const { allowed, retryAfter } = checkRateLimit(ip);
@@ -58,13 +75,18 @@ export async function authMiddleware(req, reply) {
         });
         return;
     }
-    const provided = extractToken(req);
-    const matchesStaticToken = Boolean(staticAuthEnabled && staticToken && provided === staticToken);
     if (!matchesStaticToken) {
         recordFailure(ip);
         await reply.status(401).send({ error: "Unauthorized" });
         return;
     }
     recordSuccess(ip);
+    if (provided.transport === "header") {
+        authenticatedPrincipals.set(req, Object.freeze({
+            principalRef: "api:static-token-owner",
+            role: "administrator",
+            authenticationMethod: "static_bearer_token",
+        }));
+    }
 }
 //# sourceMappingURL=auth.js.map

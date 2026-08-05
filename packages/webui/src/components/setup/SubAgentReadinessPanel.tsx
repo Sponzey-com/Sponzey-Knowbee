@@ -135,6 +135,7 @@ function MiniStat({ label, value }: { label: string; value: string }) {
 export function BeginnerSubAgentCreateDialog({
   open,
   language,
+  mainAgentName,
   value,
   fieldErrors = {},
   saving,
@@ -144,6 +145,7 @@ export function BeginnerSubAgentCreateDialog({
 }: {
   open: boolean
   language: UiLanguage
+  mainAgentName?: string
   value: BeginnerSubAgentCreateInput
   fieldErrors?: Partial<Record<keyof BeginnerSubAgentCreateInput, string>>
   saving: boolean
@@ -152,6 +154,7 @@ export function BeginnerSubAgentCreateDialog({
   onSubmit: () => void
 }) {
   if (!open) return null
+  const rootAgentName = mainAgentName?.trim() || pickUiText(language, "메인 에이전트", "the main agent")
 
   return (
     <div
@@ -167,8 +170,8 @@ export function BeginnerSubAgentCreateDialog({
             <p className="mt-2 break-words text-sm leading-6 text-stone-600 [overflow-wrap:anywhere]">
               {pickUiText(
                 language,
-                "이름과 맡길 일을 정하면 노비의 직접 하위 에이전트로 저장됩니다.",
-                "Set a name and job. It will be saved as Knowbee's direct child.",
+                `이름과 맡길 일을 정하면 ${rootAgentName}의 직속 서브 에이전트로 저장됩니다.`,
+                `Set a name and job. It will be saved as an immediate sub-agent of ${rootAgentName}.`,
               )}
             </p>
           </div>
@@ -183,16 +186,10 @@ export function BeginnerSubAgentCreateDialog({
 
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           <TextField
-            label={pickUiText(language, "이름", "Name")}
-            value={value.displayName}
-            error={fieldErrors.displayName}
-            onChange={(next) => onChange({ displayName: next })}
-          />
-          <TextField
-            label={pickUiText(language, "별명", "Nickname")}
-            value={value.nickname}
-            error={fieldErrors.nickname}
-            onChange={(next) => onChange({ nickname: next })}
+            label={pickUiText(language, "에이전트 이름", "Agent name")}
+            value={value.agentName}
+            error={fieldErrors.agentName}
+            onChange={(next) => onChange({ agentName: next })}
           />
         </div>
         <div className="mt-4 grid gap-4">

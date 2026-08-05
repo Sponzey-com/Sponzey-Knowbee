@@ -1,7 +1,7 @@
 import type { AIProvider, ProviderAuditTrace } from "../ai/index.js";
 import { type BuildAgentExecutionContextFromGraphInput } from "./execution-context-builder.js";
-import type { AgentExecutionContext, AgentExecutionDecision, AgentExecutionDecisionTraceSnapshot } from "./execution-decision-contract.js";
-import { type BuildExecutionGraphSnapshotInput, type ExecutionGraphSnapshot } from "./execution-graph-snapshot.js";
+import type { AgentExecutionContext, AgentExecutionDecision, AgentExecutionDecisionTraceSnapshot, AgentExecutionToolBinding } from "./execution-decision-contract.js";
+import { type BuildExecutionGraphSnapshotInput, type ExecutionGraphConfigSnapshot, type ExecutionGraphSnapshot } from "./execution-graph-snapshot.js";
 import { runAgentExecutionHarness, type AgentExecutionHarnessResult, type AgentExecutionModelCaller } from "./execution-harness.js";
 export declare const DECIDE_EXECUTION_ROUTE_KINDS: readonly ["delegate_to_child", "self_solve", "ask_user", "boundary_failure", "explicit_provider_target"];
 export type DecideExecutionRouteKind = (typeof DECIDE_EXECUTION_ROUTE_KINDS)[number];
@@ -29,10 +29,12 @@ export interface DecideExecutionRouteInput {
     preferredTarget?: string | undefined;
     fallbackModel?: string | undefined;
     currentExecutorId?: string | undefined;
-    buildExecutionGraphSnapshot?: ((input?: BuildExecutionGraphSnapshotInput) => ExecutionGraphSnapshot) | undefined;
+    config: ExecutionGraphConfigSnapshot;
+    buildExecutionGraphSnapshot?: ((input: BuildExecutionGraphSnapshotInput) => ExecutionGraphSnapshot) | undefined;
     buildExecutionContext?: ((input: BuildAgentExecutionContextFromGraphInput) => AgentExecutionContext) | undefined;
     runAgentExecutionHarness?: typeof runAgentExecutionHarness | undefined;
     callModel?: AgentExecutionModelCaller | undefined;
+    availableTools?: AgentExecutionToolBinding[] | undefined;
     resolveExplicitProviderTarget?: ((input: ResolveExplicitProviderTargetInput) => DecideExecutionResolvedTarget | undefined) | undefined;
 }
 export type DecideExecutionRouteResult = {

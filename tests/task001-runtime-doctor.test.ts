@@ -2,25 +2,25 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb, getDb, insertSession } from "../packages/core/src/db/index.js"
 import { buildRuntimeManifest } from "../packages/core/src/runtime/manifest.js"
 import { runDoctor, writeDoctorReportArtifact } from "../packages/core/src/diagnostics/doctor.js"
 import { createRootRun } from "../packages/core/src/runs/store.js"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempConfig(configBody: string): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task001-doctor-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, configBody, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task001-doctor-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir, configText: configBody })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 beforeEach(() => {
@@ -72,11 +72,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -89,6 +84,8 @@ describe("task001 runtime manifest and doctor", () => {
       now: new Date("2026-04-16T00:00:00.000Z"),
       includeEnvironment: false,
       includeReleasePackage: false,
+      config: runtimeFixture.config,
+      paths: runtimeFixture.paths,
     })
     const serialized = JSON.stringify(manifest)
 
@@ -108,14 +105,15 @@ describe("task001 runtime manifest and doctor", () => {
   })
 
   it("runs required doctor checks and writes a sanitized report artifact", () => {
-    const report = runDoctor({
+    const paths = runtimeFixture.paths
+    const report = runDoctor({ config: runtimeFixture.config, paths,
       mode: "quick",
       now: new Date("2026-04-16T00:00:00.000Z"),
       includeEnvironment: false,
       includeReleasePackage: false,
     })
     const names = report.checks.map((check) => check.name)
-    const artifactPath = writeDoctorReportArtifact(report)
+    const artifactPath = writeDoctorReportArtifact(report, paths)
     const serialized = JSON.stringify(report)
 
     expect(names).toEqual(expect.arrayContaining([
@@ -156,7 +154,12 @@ describe("task001 runtime manifest and doctor", () => {
       updated_at: Date.now(),
       summary: null,
     })
-    const manifestAfterDb = buildRuntimeManifest({ includeEnvironment: false, includeReleasePackage: false })
+    const manifestAfterDb = buildRuntimeManifest({
+      includeEnvironment: false,
+      includeReleasePackage: false,
+      config: runtimeFixture.config,
+      paths: runtimeFixture.paths,
+    })
 
     const run = createRootRun({
       id: "run-manifest",

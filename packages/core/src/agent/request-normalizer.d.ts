@@ -1,4 +1,4 @@
-export type IntakeNormalizedRequestLanguage = "ko" | "en" | "mixed" | "unknown";
+export type IntakeNormalizedRequestLanguage = "ko" | "en" | "unknown";
 export interface IntakeNormalizedRequest {
     sourceLanguage: IntakeNormalizedRequestLanguage;
     originalMessage: string;

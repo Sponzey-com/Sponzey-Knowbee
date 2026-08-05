@@ -29,6 +29,7 @@ describe("apply loop directive", () => {
       directive: {
         kind: "complete",
         text: "done",
+        textSource: "llm_generated",
         eventLabel: "완료 전달",
       },
       finalizationDependencies,
@@ -36,6 +37,7 @@ describe("apply loop directive", () => {
 
     expect(result).toBe("break")
     expect(finalizationDependencies.appendRunEvent).toHaveBeenCalledWith("run-1", "완료 전달")
+    expect(finalizationDependencies.appendRunEvent).toHaveBeenCalledWith("run-1", "user_facing_text_source:llm_generated")
     expect(moduleDependencies.completeRunWithAssistantMessage).toHaveBeenCalledWith(expect.objectContaining({
       runId: "run-1",
       sessionId: "session-1",
@@ -83,7 +85,9 @@ describe("apply loop directive", () => {
     const finalizationDependencies = createFinalizationDependencies()
     const moduleDependencies = {
       completeRunWithAssistantMessage: vi.fn(),
+      markRunCompleted: vi.fn(),
       applyTerminalApplication: vi.fn().mockResolvedValue("awaiting_user"),
+      renderFinalResponseText: vi.fn(),
     }
 
     const result = await applyLoopDirective({
@@ -115,6 +119,53 @@ describe("apply loop directive", () => {
     }))
   })
 
+  it("routes stop directives through terminal application without successful completion", async () => {
+    const finalizationDependencies = createFinalizationDependencies()
+    const moduleDependencies = {
+      completeRunWithAssistantMessage: vi.fn(),
+      markRunCompleted: vi.fn(),
+      applyTerminalApplication: vi.fn().mockResolvedValue("cancelled"),
+      renderFinalResponseText: vi.fn(),
+    }
+
+    const result = await applyLoopDirective({
+      runId: "run-stop",
+      sessionId: "session-stop",
+      source: "telegram",
+      onChunk: undefined,
+      directive: {
+        kind: "stop",
+        preview: "",
+        summary: "요청을 처리할 수 없습니다.",
+        userMessage: "현재 정보로는 요청을 처리할 수 없습니다.",
+        userMessageSource: "llm_reviewed",
+        eventLabel: "intake 실패 응답 종료",
+      },
+      finalizationDependencies,
+    }, moduleDependencies)
+
+    expect(result).toBe("break")
+    expect(finalizationDependencies.appendRunEvent).toHaveBeenCalledWith("run-stop", "intake 실패 응답 종료")
+    expect(moduleDependencies.completeRunWithAssistantMessage).not.toHaveBeenCalled()
+    expect(moduleDependencies.markRunCompleted).not.toHaveBeenCalled()
+    expect(moduleDependencies.applyTerminalApplication).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "run-stop",
+      sessionId: "session-stop",
+      source: "telegram",
+      dependencies: finalizationDependencies,
+      application: expect.objectContaining({
+        kind: "stop",
+        summary: "요청을 처리할 수 없습니다.",
+        userMessage: "현재 정보로는 요청을 처리할 수 없습니다.",
+        userMessageSource: "llm_reviewed",
+      }),
+    }))
+    expect(finalizationDependencies.appendRunEvent).toHaveBeenCalledWith(
+      "run-stop",
+      "user_facing_stop_message_source:llm_reviewed",
+    )
+  })
+
   it("throws for retry_intake directives", async () => {
     const finalizationDependencies = createFinalizationDependencies()
 
@@ -134,6 +185,7 @@ describe("apply loop directive", () => {
       completeRunWithAssistantMessage: vi.fn(),
       markRunCompleted: vi.fn(),
       applyTerminalApplication: vi.fn(),
+      renderFinalResponseText: vi.fn(),
     })).rejects.toThrow("retry_intake directive must be handled inside the main loop before applyLoopDirective")
   })
 })

@@ -444,6 +444,8 @@ export interface FailureReport {
   attempts: AttemptRecord[]
   untriedOptions: string[]
   partialResult?: EnterpriseMetadata
+  partialResultRefs?: string[]
+  workaroundGuidance?: string[]
   organizationalCause?: string
   processCause?: string
   authorityCause?: string
@@ -1160,6 +1162,8 @@ export function validateFailureReport(value: unknown): EnterpriseTopologyValidat
     addIssue(issues, "$.attempts", "missing_required_field", "attempts must be an array.")
   }
   validateStringArray(value.untriedOptions, "$.untriedOptions", issues)
+  if (value.partialResultRefs !== undefined) validateStringArray(value.partialResultRefs, "$.partialResultRefs", issues)
+  if (value.workaroundGuidance !== undefined) validateStringArray(value.workaroundGuidance, "$.workaroundGuidance", issues)
   validateOptionalEnumString(value, "issueKind", FAILURE_ISSUE_KINDS, "$", issues)
   validateOptionalEnumString(value, "recoveryActionKind", FAILURE_RECOVERY_ACTION_KINDS, "$", issues)
   validateOptionalEnumString(value, "nextActionKind", FAILURE_NEXT_ACTION_KINDS, "$", issues)

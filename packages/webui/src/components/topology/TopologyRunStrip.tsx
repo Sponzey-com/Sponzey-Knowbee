@@ -139,8 +139,18 @@ function targetIssueText(
   return text("실행할 서브 에이전트를 선택합니다.", "Select a sub-agent to run.")
 }
 
+function topologyNodeDisplayLabel(topology: EnterpriseTopology | null | undefined, nodeId: string | null | undefined): string | null {
+  if (!nodeId) return null
+  const node = topology?.nodes.find((item) => item.id === nodeId)
+  const displayName = node?.displayName?.trim()
+  if (displayName) return displayName
+  const name = node?.name?.trim()
+  return name || null
+}
+
 export function TopologyRunStrip({
   exposureMode = "simple",
+  topology,
   templates,
   selectedTemplateId,
   selectedContextPresetId,
@@ -162,6 +172,7 @@ export function TopologyRunStrip({
   onStartNodeQuickFix,
 }: {
   exposureMode?: TopologyWorkspaceExposureMode
+  topology?: EnterpriseTopology | null
   templates: WorkOrderTemplatePreset[]
   selectedTemplateId?: string
   selectedContextPresetId?: string
@@ -187,6 +198,9 @@ export function TopologyRunStrip({
   const contextPresets = selectedTemplate?.contextPresets ?? TOPOLOGY_RUN_CONTEXT_PRESETS
   const selectedContextId = selectedContextPresetId ?? contextPresets[0]?.id ?? ""
   const effectiveTargetNodeId = runTargetNodeId ?? targetState?.targetNodeId ?? null
+  const effectiveTargetLabel = effectiveTargetNodeId
+    ? topologyNodeDisplayLabel(topology, effectiveTargetNodeId) ?? text("선택한 서브 에이전트", "Selected sub-agent")
+    : null
   const targetIssue = targetState?.issue ?? (effectiveTargetNodeId ? null : "missing_target")
   const canRun = Boolean(effectiveTargetNodeId && selectedTemplate && !loading)
   const latestRun = recentRuns[0] ?? traceOverlay?.run ?? null
@@ -215,7 +229,7 @@ export function TopologyRunStrip({
               data-testid="topology-run-target"
             >
               <span className="max-w-48 truncate">
-                {effectiveTargetNodeId ?? text("시작 서브 에이전트 자동 선택 대기", "Waiting for start sub-agent")}
+                {effectiveTargetLabel ?? text("시작 서브 에이전트 자동 선택 대기", "Waiting for start sub-agent")}
               </span>
             </div>
           </div>
@@ -281,7 +295,7 @@ export function TopologyRunStrip({
                 }`}
                 data-testid="topology-run-history-item"
               >
-                {run.entryNodeId ?? text("실행", "Run")} · {formatRunTime(run.startedAt)}
+                {(topologyNodeDisplayLabel(topology, run.entryNodeId) ?? (run.entryNodeId ? text("서브 에이전트 실행", "Sub-agent run") : text("실행", "Run")))} · {formatRunTime(run.startedAt)}
               </button>
             ))}
           </div>
@@ -302,18 +316,18 @@ export function TopologyRunStrip({
       >
         <div className="min-w-36 shrink-0">
           <div className="text-sm font-semibold text-stone-950">
-            {text("Manual Run", "Manual Run")}
+            {text("수동 실행", "Manual run")}
           </div>
           <div className="mt-1 text-[11px] text-stone-500">
             {targetState?.source === "auto_entry"
-              ? text("entry 자동 선택", "entry auto-selected")
-              : text("workspace 실행", "workspace run")}
+              ? text("시작점 자동 선택", "Start point auto-selected")
+              : text("작업 화면 실행", "Workspace run")}
           </div>
         </div>
 
         <div className="min-w-44 shrink-0">
           <div className="text-[11px] font-semibold uppercase text-stone-500">
-            {text("Target", "Target")}
+            {text("실행 대상", "Run target")}
           </div>
           <div
             className={`mt-1 flex h-9 items-center rounded-lg border px-2 text-xs font-semibold ${
@@ -324,13 +338,13 @@ export function TopologyRunStrip({
             data-testid="topology-run-target"
           >
             <span className="max-w-40 truncate">
-              {effectiveTargetNodeId ?? text("대상 없음", "No target")}
+              {effectiveTargetLabel ?? text("대상 없음", "No target")}
             </span>
           </div>
         </div>
 
         <label className="grid min-w-52 shrink-0 gap-1 text-xs font-semibold text-stone-500">
-          <span>{text("WorkOrder Template", "WorkOrder Template")}</span>
+          <span>{text("작업 요청 유형", "Work order template")}</span>
           <select
             value={selectedTemplate?.templateId ?? ""}
             onChange={(event) => onSelectTemplate?.(event.currentTarget.value)}
@@ -346,7 +360,7 @@ export function TopologyRunStrip({
         </label>
 
         <label className="grid min-w-44 shrink-0 gap-1 text-xs font-semibold text-stone-500">
-          <span>{text("Context", "Context")}</span>
+          <span>{text("실행 조건", "Run context")}</span>
           <select
             value={selectedContextId}
             onChange={(event) => onSelectContextPreset?.(event.currentTarget.value)}
@@ -395,7 +409,7 @@ export function TopologyRunStrip({
             className="h-9 min-w-28 shrink-0 rounded-lg border border-sky-200 bg-sky-50 px-3 text-xs font-semibold text-sky-800"
             data-testid="topology-run-trace-cta"
           >
-            {text("Trace 보기", "View trace")}
+            {text("실행 기록 보기", "View trace")}
           </button>
         ) : null}
       </div>
@@ -433,7 +447,7 @@ export function TopologyRunStrip({
               }`}
               data-testid="topology-run-history-item"
             >
-              {run.entryNodeId ?? text("실행", "Run")} · {formatRunTime(run.startedAt)}
+              {(topologyNodeDisplayLabel(topology, run.entryNodeId) ?? (run.entryNodeId ? text("서브 에이전트 실행", "Sub-agent run") : text("실행", "Run")))} · {formatRunTime(run.startedAt)}
             </button>
           ))}
         </div>

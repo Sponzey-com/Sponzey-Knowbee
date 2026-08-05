@@ -9,6 +9,11 @@ export type LoopEntryPassResult = {
     kind: "retry";
     nextMessage: string;
 } | {
+    kind: "execute";
+    nextMessage: string;
+    requiredToolNames: string[];
+    intakeProcessed: true;
+} | {
     kind: "set_directive";
     directive: LoopDirective;
     intakeProcessed: boolean;

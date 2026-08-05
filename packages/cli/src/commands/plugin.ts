@@ -4,6 +4,7 @@
 
 import { resolve } from "node:path"
 import { existsSync } from "node:fs"
+import { reportCliCommandFailure } from "../command-error.js"
 
 async function getCore() {
   return import("@knowbee/core")
@@ -35,24 +36,21 @@ export async function pluginInstallCommand(entryPath: string, opts: { name?: str
 
   const absPath = resolve(entryPath)
   if (!existsSync(absPath)) {
-    console.error(`파일이 존재하지 않습니다: ${absPath}`)
-    process.exit(1)
+    reportCliCommandFailure(`파일이 존재하지 않습니다: ${absPath}`)
   }
 
   // Load plugin to get metadata
   const mod = await import(absPath) as { default?: { name?: string; version?: string; description?: string } }
   const plugin = mod.default
   if (!plugin) {
-    console.error("플러그인 모듈이 default export를 제공하지 않습니다.")
-    process.exit(1)
+    reportCliCommandFailure("플러그인 모듈이 default export를 제공하지 않습니다.")
   }
 
   const name = opts.name ?? plugin.name
   const version = opts.version ?? plugin.version ?? "0.0.1"
 
   if (!name) {
-    console.error("플러그인 이름을 지정하세요: --name <name>")
-    process.exit(1)
+    reportCliCommandFailure("플러그인 이름을 지정하세요: --name <name>")
   }
 
   const { PluginLoader } = await import("@knowbee/core/src/plugins/loader.js" as string)
@@ -72,8 +70,7 @@ export async function pluginUninstallCommand(name: string): Promise<void> {
   const db = getDb()
   const existing = db.prepare("SELECT id FROM plugins WHERE name = ?").get(name)
   if (!existing) {
-    console.error(`플러그인 "${name}"을(를) 찾을 수 없습니다.`)
-    process.exit(1)
+    reportCliCommandFailure(`플러그인 "${name}"을(를) 찾을 수 없습니다.`)
   }
   db.prepare("DELETE FROM plugins WHERE name = ?").run(name)
   console.log(`✓ 플러그인 "${name}" 제거 완료`)
@@ -105,8 +102,7 @@ export async function pluginInfoCommand(name: string): Promise<void> {
   } | undefined
 
   if (!p) {
-    console.error(`플러그인 "${name}"을(를) 찾을 수 없습니다.`)
-    process.exit(1)
+    reportCliCommandFailure(`플러그인 "${name}"을(를) 찾을 수 없습니다.`)
   }
 
   console.log(`이름:     ${p.name}`)

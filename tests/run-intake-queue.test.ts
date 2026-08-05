@@ -73,4 +73,46 @@ describe("session intake queue", () => {
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-2", "intake_queue_running")
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith("run-2", "intake_queue_released")
   })
+
+  it("redacts intake queue failure and recovery warning details before logging", async () => {
+    const sessionId = "session-intake-redaction"
+    const deferred = createDeferred<void>()
+    const secret = "sk-task0580-intake-secret-1234567890"
+    const localPath = "/Users/dongwooshin/private/intake-queue-secret.txt"
+    const dependencies = {
+      logInfo: vi.fn(),
+      logWarn: vi.fn(),
+      logError: vi.fn(),
+      appendRunEvent: vi.fn(),
+    }
+
+    const first = enqueueSessionIntake({
+      sessionId,
+      runId: "run-intake-redaction-1",
+      requestGroupId: "group-intake-redaction-1",
+      task: async () => {
+        await deferred.promise
+        throw new Error(`token=${secret} path=${localPath}`)
+      },
+    }, dependencies)
+
+    const second = enqueueSessionIntake({
+      sessionId,
+      runId: "run-intake-redaction-2",
+      requestGroupId: "group-intake-redaction-2",
+      task: async () => 2,
+    }, dependencies)
+
+    deferred.resolve()
+
+    await expect(first).rejects.toThrow("token=")
+    await expect(second).resolves.toBe(2)
+
+    const errorPayload = JSON.stringify(dependencies.logError.mock.calls[0]?.[1] ?? {})
+    const warningMessage = String(dependencies.logWarn.mock.calls[0]?.[0] ?? "")
+    expect(`${errorPayload}\n${warningMessage}`).toContain("token=***")
+    expect(`${errorPayload}\n${warningMessage}`).toContain("[internal-path-redacted]")
+    expect(`${errorPayload}\n${warningMessage}`).not.toContain(secret)
+    expect(`${errorPayload}\n${warningMessage}`).not.toContain(localPath)
+  })
 })

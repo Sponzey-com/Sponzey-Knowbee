@@ -1,3 +1,5 @@
+import BetterSqlite3 from "better-sqlite3";
+import type { RuntimePaths } from "../config/paths.js";
 export type MemoryJournalKind = "instruction" | "success" | "failure" | "response";
 export type MemoryJournalScope = "global" | "session" | "task";
 export interface MemoryJournalRecord {
@@ -27,21 +29,35 @@ export interface MemoryJournalRecordInput {
     source?: string;
     tags?: string[];
 }
-export declare function closeMemoryJournalDb(): void;
-export declare function condenseMemoryText(text: string, maxChars?: number): string;
-export declare function extractFocusedErrorMessage(text: string, maxChars?: number): string;
-export declare function insertMemoryJournalRecord(input: MemoryJournalRecordInput): string;
-export declare function searchMemoryJournal(query: string, options?: {
+export interface MemoryJournalStorageDependencies {
+    makeDirectory(path: string): void;
+    openDatabase(path: string): BetterSqlite3.Database;
+}
+export interface MemoryJournalRepository {
+    readonly memoryDbFile: string;
+    insert(input: MemoryJournalRecordInput): string;
+    search(query: string, options?: MemoryJournalSearchOptions): MemoryJournalRecord[];
+    buildContext(query: string, options?: MemoryJournalContextOptions): string;
+    close(): void;
+}
+export interface MemoryJournalSearchOptions {
     limit?: number;
     kinds?: MemoryJournalKind[];
     sessionId?: string;
     requestGroupId?: string;
     runId?: string;
-}): MemoryJournalRecord[];
-export declare function buildMemoryJournalContext(query: string, options?: {
+}
+export interface MemoryJournalContextOptions {
     limit?: number;
     sessionId?: string;
     requestGroupId?: string;
     runId?: string;
-}): string;
+}
+export declare const NODE_MEMORY_JOURNAL_STORAGE: MemoryJournalStorageDependencies;
+export declare function condenseMemoryText(text: string, maxChars?: number): string;
+export declare function extractFocusedErrorMessage(text: string, maxChars?: number): string;
+export declare function createMemoryJournalRepository(paths: Pick<RuntimePaths, "memoryDbFile">, dependencies?: MemoryJournalStorageDependencies): MemoryJournalRepository;
+export declare function insertMemoryJournalRecord(input: MemoryJournalRecordInput, repository: MemoryJournalRepository): string;
+export declare function searchMemoryJournal(query: string, options: MemoryJournalSearchOptions | undefined, repository: MemoryJournalRepository): MemoryJournalRecord[];
+export declare function buildMemoryJournalContext(query: string, options: MemoryJournalContextOptions | undefined, repository: MemoryJournalRepository): string;
 //# sourceMappingURL=journal.d.ts.map

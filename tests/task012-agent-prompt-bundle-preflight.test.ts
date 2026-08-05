@@ -1,8 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type {
   AgentPromptBundle,
@@ -17,6 +16,7 @@ import type {
   TeamConfig,
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import type { LoadedPromptSource } from "../packages/core/src/memory/knowbee-md.ts"
 import {
   buildAgentPromptBundle,
@@ -30,8 +30,6 @@ import {
 } from "../packages/core/src/orchestration/sub-session-runner.ts"
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 const tempDirs: string[] = []
 
 function owner(ownerId = "agent:researcher"): RuntimeIdentity["owner"] {
@@ -191,7 +189,7 @@ function command(bundle: AgentPromptBundle, outputs = [expectedOutput()]): Comma
     parentRunId: "run:task012",
     subSessionId: "sub-session:task012",
     targetAgentId: bundle.agentId,
-    targetNicknameSnapshot: bundle.nicknameSnapshot,
+    targetAgentNameSnapshot: bundle.agentNameSnapshot,
     taskScope: bundle.taskScope,
     contextPackageIds: [],
     expectedOutputs: outputs,
@@ -203,38 +201,26 @@ function runInput(bundle: AgentPromptBundle, outputs = [expectedOutput()]): RunS
     command: command(bundle, outputs),
     agent: {
       agentId: bundle.agentId,
-      displayName: bundle.displayNameSnapshot,
-      ...(bundle.nicknameSnapshot ? { nickname: bundle.nicknameSnapshot } : {}),
+      displayName: bundle.agentNameSnapshot,
     },
     parentSessionId: "session:task012",
     promptBundle: bundle,
   }
 }
 
-function useTempConfig(): void {
+function useTempDb(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task012-prompt-bundle-"))
   tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(
-    configPath,
-    "{ webui: { enabled: true, auth: { enabled: false } }, security: { approvalMode: 'off' } }",
-    "utf-8",
-  )
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = configPath
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 beforeEach(() => {
-  useTempConfig()
+  useTempDb()
 })
 
 afterEach(() => {
   closeDb()
-  process.env.KNOWBEE_STATE_DIR = previousStateDir
-  process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -242,9 +228,9 @@ afterEach(() => {
 })
 
 describe("task012 agent prompt bundle and preflight", () => {
-  it("builds worker bundle snapshots with nickname rules, capability catalog, bindings, model, and checksum", () => {
+  it("builds worker bundle snapshots with agent name rules, capability catalog, bindings, model, and checksum", () => {
     const result = buildAgentPromptBundle({
-      agent: subAgent(),
+      agent: subAgent({ agentName: "Research Canonical" }),
       taskScope: taskScope(),
       teams: [team()],
       promptSources: [promptSource("identity"), promptSource("planner")],
@@ -252,12 +238,16 @@ describe("task012 agent prompt bundle and preflight", () => {
     })
 
     const fragmentKinds = result.bundle.fragments?.map((fragment) => fragment.kind)
+    expect(result.bundle.agentName).toBe("Research Canonical")
+    expect(result.bundle.agentNameSnapshot).toBe("Research Canonical")
+    expect(result.bundle).not.toHaveProperty("displayNameSnapshot")
+    expect(result.bundle).not.toHaveProperty("nicknameSnapshot")
     expect(result.bundle.profileVersionSnapshot).toBe(1)
     expect(result.bundle.promptChecksum).toMatch(/^sha256:/)
     expect(fragmentKinds).toEqual(
       expect.arrayContaining([
-        "self_nickname_rule",
-        "nickname_attribution_rule",
+        "self_agent_name_rule",
+        "agent_name_attribution_rule",
         "capability_catalog",
         "capability_binding",
         "model_profile",
@@ -265,8 +255,12 @@ describe("task012 agent prompt bundle and preflight", () => {
       ]),
     )
     expect(result.bundle.renderedPrompt).toContain(
-      "deliveryRule: Preserve source agent nickname attribution",
+      "deliveryRule: Preserve source agent name attribution",
     )
+    expect(result.bundle.renderedPrompt).toContain("agentName: Research Canonical")
+    expect(result.bundle.renderedPrompt).not.toContain("displayName: Researcher")
+    expect(result.bundle.renderedPrompt).not.toContain("nickname: Res")
+    expect(result.bundle.renderedPrompt).not.toContain("nickname attribution")
     expect(result.bundle.renderedPrompt).toContain("enabledTools: web_search")
     expect(result.bundle.renderedPrompt).toContain("modelId: gpt-5.4")
     expect(JSON.stringify(result.bundle)).not.toContain("sk-task012-secret-scope")
@@ -309,7 +303,7 @@ describe("task012 agent prompt bundle and preflight", () => {
     expect(result.bundle.validation?.issueCodes).toEqual(
       expect.arrayContaining([
         "unsafe_permission_expansion",
-        "unsafe_nickname_attribution_removal",
+        "unsafe_agent_name_attribution_removal",
         "unsafe_secret_access",
       ]),
     )

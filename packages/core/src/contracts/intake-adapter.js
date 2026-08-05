@@ -7,8 +7,6 @@ function mapIntentType(value) {
             return "question";
         case "clarification":
             return "clarification";
-        case "reject":
-            return "impossible";
         default:
             return "execute_now";
     }
@@ -24,8 +22,6 @@ function inferActionType(envelope) {
         return "answer";
     if (envelope.intent_type === "clarification")
         return "ask_user";
-    if (envelope.intent_type === "reject")
-        return "none";
     return envelope.needs_tools ? "run_tool" : "answer";
 }
 function inferDeliveryMode(envelope, actionType) {
@@ -59,12 +55,7 @@ export function intentContractFromTaskIntentEnvelope(envelope) {
         delivery,
         constraints: envelope.complete_condition,
         requiresApproval: envelope.requires_approval,
-        impossibility: envelope.intent_type === "reject"
-            ? {
-                reasonCode: "rejected_by_intake",
-                message: envelope.normalized_english.trim() || "The request was rejected by intake.",
-            }
-            : null,
+        impossibility: null,
         ...(envelope.normalized_english.trim() ? { summary: envelope.normalized_english.trim() } : {}),
     };
 }

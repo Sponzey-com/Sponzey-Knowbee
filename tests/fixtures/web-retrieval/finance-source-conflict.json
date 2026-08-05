@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "finance-source-conflict",
   "title": "Finance source conflict must not average NASDAQ values",
   "freshnessPolicy": "latest_approximate",
@@ -43,9 +43,12 @@
     }
   ],
   "expected": {
-    "canAnswer": false,
-    "evidenceSufficiency": "insufficient_conflict",
-    "minAttempts": 2,
-    "limitedCompletionOk": true
+    "minimumAttempts": 2,
+    "llmDiagnosisExpectation": {
+      "status": "followup",
+      "requiredEvidenceSourceIds": ["google-finance-ixic", "bad-search-snippet"],
+      "requiredConditionVerdicts": ["accuracy:uncertain"],
+      "changedStrategyRequired": true
+    }
   }
 }

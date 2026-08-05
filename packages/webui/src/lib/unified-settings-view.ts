@@ -5,6 +5,7 @@ import {
 } from "../../../core/src/ui/unified-settings.js"
 import type { SetupDraft, SetupSubAgentDraftItem, SetupSubAgentMonitoringEvent } from "../contracts/setup"
 import type { UiLanguage } from "../stores/uiLanguage"
+import { defaultMainAgentNameForLanguage, mainAgentNameForDraft } from "./main-agent-copy"
 
 const ROOT_AGENT_ID = "agent:knowbee"
 
@@ -21,23 +22,22 @@ export function buildUnifiedSettingsViewForSetupDraft(
 ): UnifiedSettingsViewModel {
   const subAgents = input.draft.subAgents
   const activeItems = activeSubAgentItems(subAgents?.items ?? [])
-  const productName = input.language === "ko" ? "노비" : "Knowbee"
+  const productName = defaultMainAgentNameForLanguage(input.language)
+  const rootAgentName = mainAgentNameForDraft(input.draft, input.language)
 
   return buildUnifiedSettingsViewModel({
     locale: input.language,
     productName,
     lifecycleState: input.lifecycleState ?? "drafting",
-    mode: subAgents?.orchestrationEnabled ? "orchestration" : "single_knowbee",
+    mode: subAgents?.orchestrationEnabled ? "orchestration" : "direct_main_agent",
     rootAgent: {
       id: ROOT_AGENT_ID,
-      displayName: "Knowbee",
-      nickname: productName,
+      agentName: rootAgentName,
     },
     selectedAgentId: input.selectedAgentId ?? undefined,
     agents: activeItems.map((item) => ({
       id: item.agentId,
-      displayName: item.displayName,
-      nickname: item.nickname,
+      agentName: setupSubAgentAgentName(item),
       role: item.role,
       workDescription: item.description,
       parentId: item.parentAgentId ?? ROOT_AGENT_ID,
@@ -175,9 +175,26 @@ function monitoringLabelForAgentId(
   language: UiLanguage,
 ): string {
   if (!agentId) return language === "ko" ? "대상 없음" : "No target"
-  if (agentId === ROOT_AGENT_ID) return language === "ko" ? "노비" : "Knowbee"
+  if (agentId === ROOT_AGENT_ID) return mainAgentNameForDraft(draft, language)
   const item = draft.subAgents?.items.find((candidate) => candidate.agentId === agentId)
-  return item?.nickname?.trim() || item?.displayName?.trim() || (language === "ko" ? "알 수 없는 에이전트" : "Unknown agent")
+  return item ? setupSubAgentDisplayLabel(item, language) : unknownAgentLabel(language)
+}
+
+function setupSubAgentAgentName(
+  item: Pick<SetupSubAgentDraftItem, "agentName">,
+): string | undefined {
+  return item.agentName?.trim() || undefined
+}
+
+function setupSubAgentDisplayLabel(
+  item: Pick<SetupSubAgentDraftItem, "agentName">,
+  language: UiLanguage,
+): string {
+  return setupSubAgentAgentName(item) ?? unknownAgentLabel(language)
+}
+
+function unknownAgentLabel(language: UiLanguage): string {
+  return language === "ko" ? "알 수 없는 에이전트" : "Unknown agent"
 }
 
 function agentPathIds(agentId: string | undefined, draft: SetupDraft): string[] {

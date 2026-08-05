@@ -2,7 +2,35 @@ import { describe, expect, it } from "vitest"
 import { planExternalRecovery } from "../packages/core/src/runs/external-recovery.ts"
 
 describe("external recovery planning", () => {
-  it("stops when the same ai recovery repeats on the same route", () => {
+  it("does not resend a deterministic provider contract rejection", () => {
+    const plan = planExternalRecovery({
+      kind: "ai",
+      taskProfile: "general_chat",
+      current: {
+        model: "gpt-5",
+        providerId: "openai",
+        provider: undefined,
+        targetId: "provider:openai",
+        targetLabel: "OpenAI",
+        workerRuntime: undefined,
+      },
+      payload: {
+        summary: "AI 실행 계약 오류",
+        reason: "AI provider invocation failed.",
+        message: "AI provider invocation failed.",
+        providerFailureReasonCode: "provider_contract_rejected",
+      },
+      seenKeys: new Set(),
+      originalRequest: "카메라로 사진을 찍어줘",
+      previousResult: "",
+    })
+
+    expect(plan.nextMessage).toBe("")
+    expect(plan.reviewRequired).toBe(true)
+    expect(plan.duplicateStop).toBeUndefined()
+  })
+
+  it("returns the same ai recovery to completion review instead of deciding terminal state", () => {
     const seenKeys = new Set<string>()
     const firstPlan = planExternalRecovery({
       kind: "ai",
@@ -66,8 +94,9 @@ describe("external recovery planning", () => {
       },
     })
 
-    expect(repeatedPlan.duplicateStop?.summary).toContain("같은 AI 오류")
-    expect(repeatedPlan.duplicateStop?.rawMessage).toBe("challenge")
+    expect(repeatedPlan.reviewRequired).toBe(true)
+    expect(repeatedPlan.nextMessage).toBe("")
+    expect(repeatedPlan.duplicateStop).toBeUndefined()
   })
 
   it("falls back from worker runtime to default inference path when route does not change", () => {
@@ -116,9 +145,9 @@ describe("external recovery planning", () => {
     expect(plan.nextState.workerRuntime).toBeUndefined()
     expect(plan.routeEventLabel).toContain("기본 추론 경로")
     expect(plan.nextMessage).toContain("[Worker Runtime Error Recovery]")
-    expect(plan.nextMessage).toContain("실패한 접근 방식: 외부 작업 세션 / gpt-4o-mini")
-    expect(plan.nextMessage).toContain("같은 AI 연결(외부 작업 세션)과 같은 대상")
-    expect(plan.nextMessage).not.toContain("다시 사용 금지 대상:")
+    expect(plan.nextMessage).toContain("Failed approach: 외부 작업 세션 / gpt-4o-mini")
+    expect(plan.nextMessage).toContain("Recover on the same AI connection (외부 작업 세션) and target")
+    expect(plan.nextMessage).not.toContain("Avoid these targets:")
   })
 
   it("keeps recovery on the same AI connection even when another target is proposed", () => {
@@ -155,8 +184,8 @@ describe("external recovery planning", () => {
     expect(plan.routeChanged).toBe(false)
     expect(plan.nextState.targetLabel).toBe("OpenAI")
     expect(plan.routeEventLabel).toBeUndefined()
-    expect(plan.nextMessage).toContain("실패한 접근 방식: OpenAI / openai / gpt-4o-mini")
-    expect(plan.nextMessage).toContain("같은 AI 연결(OpenAI)과 같은 대상")
+    expect(plan.nextMessage).toContain("Failed approach: OpenAI / openai / gpt-4o-mini")
+    expect(plan.nextMessage).toContain("Recover on the same AI connection (OpenAI) and target")
     expect(plan.nextMessage).not.toContain("Anthropic")
   })
 })

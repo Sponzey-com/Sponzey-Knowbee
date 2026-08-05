@@ -21,7 +21,7 @@ import type { BackendCardErrors } from "../../lib/setupFlow"
 import { CapabilityBadge } from "../CapabilityBadge"
 
 function getKindLabel(text: (ko: string, en: string) => string): string {
-  return text("직접 연결 (Provider)", "Direct Provider")
+  return text("직접 AI 연결", "Direct AI connection")
 }
 
 function getOpenAIAuthModeLabel(mode: AIAuthMode, text: (ko: string, en: string) => string): string {
@@ -56,6 +56,38 @@ function capabilityStatusLabel(status: ProviderCapabilityItem["status"], text: (
   }
 }
 
+function capabilityLastCheckStatusLabel(
+  status: NonNullable<AIBackendCard["capabilityMatrix"]>["lastCheckResult"]["status"],
+  text: (ko: string, en: string) => string,
+): string {
+  switch (status) {
+    case "ok":
+      return text("확인됨", "Confirmed")
+    case "warning":
+      return text("주의 필요", "Needs attention")
+    case "failed":
+      return text("확인 실패", "Check failed")
+    case "not_checked":
+      return text("아직 확인 전", "Not checked yet")
+  }
+}
+
+function capabilityLastCheckSummary(
+  status: NonNullable<AIBackendCard["capabilityMatrix"]>["lastCheckResult"]["status"],
+  text: (ko: string, en: string) => string,
+): string {
+  switch (status) {
+    case "ok":
+      return text("연결 확인과 모델 조회가 완료되었습니다.", "Connection check and model lookup completed.")
+    case "warning":
+      return text("연결은 확인했지만 일부 기능은 점검이 필요합니다.", "Connection was checked, but some capabilities need review.")
+    case "failed":
+      return text("연결 주소, 인증 정보, 네트워크 상태를 확인해야 합니다.", "Check the endpoint, credentials, and network state.")
+    case "not_checked":
+      return text("아직 실제 연결 확인을 실행하지 않았습니다.", "No live connection check has been run yet.")
+  }
+}
+
 export function BackendHealthCard({
   backend,
   routingProfiles,
@@ -81,13 +113,11 @@ export function BackendHealthCard({
   const [testingConnection, setTestingConnection] = useState(false)
   const [discoveryError, setDiscoveryError] = useState("")
   const [successMessage, setSuccessMessage] = useState("")
-  const [sourceUrl, setSourceUrl] = useState("")
   const { text, displayText, language } = useUiI18n()
 
   function clearDiscoveryState() {
     setDiscoveryError("")
     setSuccessMessage("")
-    setSourceUrl("")
   }
 
   async function runDiscovery(mode: "test" | "models") {
@@ -108,7 +138,6 @@ export function BackendHealthCard({
         reason: undefined,
         ...(result.capabilityMatrix ? { capabilityMatrix: result.capabilityMatrix } : {}),
       })
-      setSourceUrl(result.sourceUrl)
       setSuccessMessage(
         result.models.length > 0
           ? text(
@@ -206,7 +235,7 @@ export function BackendHealthCard({
 
       <div className="mt-3 space-y-3">
         <div>
-          <label className="mb-1 block text-sm font-medium text-stone-700">{text("AI 종류 (Provider Type)", "AI Type (Provider Type)")}</label>
+          <label className="mb-1 block text-sm font-medium text-stone-700">{text("AI 종류", "AI type")}</label>
           <select
             className="input"
             value={backend.providerType}
@@ -258,7 +287,7 @@ export function BackendHealthCard({
                     value={backend.credentials[field.key] ?? ""}
                     onChange={(event) => patchCredential(field.key, event.target.value)}
                     placeholder={field.placeholder}
-                    autoComplete="off"
+                    autoComplete={field.inputType === "password" ? "new-password" : "off"}
                   />
                 </div>
               ))}
@@ -316,7 +345,6 @@ export function BackendHealthCard({
           </div>
           {errors?.endpoint ? <p className="mt-2 text-xs leading-5 text-red-600">{errors.endpoint}</p> : null}
           {successMessage ? <p className="mt-2 text-xs leading-5 text-emerald-700">{successMessage}</p> : null}
-          {sourceUrl ? <p className="mt-1 text-xs text-emerald-700">{text("조회 경로", "Source URL")}: {sourceUrl}</p> : null}
           {discoveryError ? <p className="mt-2 text-xs leading-5 text-red-600">{displayText(discoveryError)}</p> : null}
           {!hasRequiredProviderCredentials(backend.providerType, backend.credentials, backend.authMode ?? "api_key") ? (
             <p className="mt-2 text-xs text-amber-700">{text("필수 인증 정보를 입력해야 연결 확인과 모델 조회를 진행할 수 있습니다.", "Enter the required credentials before checking the connection and loading models.")}</p>
@@ -377,23 +405,25 @@ export function BackendHealthCard({
           <div className="rounded-xl border border-stone-200 bg-white p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <div className="text-sm font-semibold text-stone-900">{text("Provider 기능", "Provider capabilities")}</div>
-                <div className="mt-1 font-mono text-[11px] text-stone-500">profile {capabilityMatrix.profileId} · {capabilityMatrix.adapterType} · {capabilityMatrix.authType}</div>
+                <div className="text-sm font-semibold text-stone-900">{text("AI 연결 기능", "AI connection capabilities")}</div>
+                <div className="mt-1 text-xs text-stone-500">
+                  {text("연결 기능 점검 결과를 요약해서 표시합니다.", "Capability check results are shown as a summary.")}
+                </div>
               </div>
               <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${capabilityTone(capabilityMatrix.endpointMismatch.status)}`}>
-                {capabilityMatrix.endpointMismatch.status === "supported" ? text("endpoint 일치", "endpoint ok") : text("endpoint 확인", "check endpoint")}
+                {capabilityMatrix.endpointMismatch.status === "supported" ? text("연결 주소 일치", "endpoint ok") : text("연결 주소 확인", "check endpoint")}
               </span>
             </div>
             <div className="mt-3 grid gap-2 md:grid-cols-2">
               {[
-                [text("Chat", "Chat"), capabilityMatrix.chatCompletions],
-                [text("Responses", "Responses"), capabilityMatrix.responsesApi],
-                [text("도구 호출", "Tool calling"), capabilityMatrix.toolCalling],
+                [text("대화", "Chat"), capabilityMatrix.chatCompletions],
+                [text("응답 처리", "Responses"), capabilityMatrix.responsesApi],
+                [text("외부 도구 호출", "External tool calling"), capabilityMatrix.toolCalling],
                 [text("JSON 출력", "JSON output"), capabilityMatrix.jsonSchemaOutput],
                 [text("모델 목록", "Model listing"), capabilityMatrix.modelListing],
-                [text("Embedding", "Embedding"), capabilityMatrix.embeddings],
-                [text("Auth refresh", "Auth refresh"), capabilityMatrix.authRefresh],
-                [text("Context", "Context"), capabilityMatrix.contextWindow],
+                [text("임베딩", "Embedding"), capabilityMatrix.embeddings],
+                [text("인증 갱신", "Auth refresh"), capabilityMatrix.authRefresh],
+                [text("문맥 길이", "Context"), capabilityMatrix.contextWindow],
               ].map(([label, item]) => {
                 const capability = item as ProviderCapabilityItem
                 return (
@@ -408,7 +438,7 @@ export function BackendHealthCard({
               })}
             </div>
             <div className="mt-3 text-[11px] leading-5 text-stone-500">
-              {text("마지막 확인", "Last check")}: {capabilityMatrix.lastCheckResult.status} · {displayText(capabilityMatrix.lastCheckResult.message)}
+              {text("마지막 확인", "Last check")}: {capabilityLastCheckStatusLabel(capabilityMatrix.lastCheckResult.status, text)} · {capabilityLastCheckSummary(capabilityMatrix.lastCheckResult.status, text)}
             </div>
           </div>
         ) : null}

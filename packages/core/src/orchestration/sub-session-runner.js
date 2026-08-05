@@ -1,9 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { reviewSubAgentResult, } from "../agent/sub-agent-result-review.js";
 import { CONTRACT_SCHEMA_VERSION } from "../contracts/index.js";
-import { normalizeNicknameSnapshot, } from "../contracts/sub-agent-orchestration.js";
+import { validateDelegatedExecutionSnapshot, } from "../contracts/delegated-execution-snapshot.js";
+import { runResultDiagnosisProviderWithRepair, } from "../contracts/llm-diagnosis-provider.js";
+import { evaluateWorkBoundMemoryHandoff } from "../contracts/memory-handoff-compaction.js";
+import { evaluateMemoryExchangeOwnerBinding } from "../contracts/memory-exchange-owner-binding.js";
+import { authorizeDiagnosisActionRoute } from "../contracts/diagnosis-action-routing.js";
+import { auditRuntimeChildWorkResultProjection, } from "../contracts/structured-work-audit.js";
+import { normalizeAgentNameSnapshot, } from "../contracts/sub-agent-orchestration.js";
 import { recordControlEvent } from "../control-plane/timeline.js";
 import { getRunSubSessionByIdempotencyKey, getSession, insertRunSubSession, listMemoryCapsulesForOwner, updateRunSubSession, upsertAgentMemoryState, } from "../db/index.js";
+import { redactLogText } from "../logger/index.js";
 import { buildAgentMemoryStateFromBootstrap, buildChildOwnMemoryBootstrap, } from "../memory/agent-state.js";
 import { buildSubSessionHandoffCapsulePayload, buildSubSessionHandoffPinnedItems, } from "../memory/flow-capsules.js";
 import { createDataExchangePackage, persistDataExchangePackage } from "../memory/isolation.js";
@@ -13,6 +20,8 @@ import { recordLateResultNoReply } from "../runs/channel-finalizer.js";
 import { recordMessageLedgerEvent } from "../runs/message-ledger.js";
 import { appendRunEvent, getRootRun } from "../runs/store.js";
 import { recordOrchestrationEvent } from "./event-ledger.js";
+import { recordStructuredWorkAuditEventSafely } from "./structured-work-audit-ledger.js";
+import { recordRuntimeWorkRecordSnapshotSafely } from "./work-record-snapshot-ledger.js";
 import { buildModelExecutionAuditSummary, estimateTokenCount, resolveModelExecutionPolicy, } from "./model-execution-policy.js";
 import { validateNestedCommandRequest } from "./nested-delegation.js";
 import { createSubSessionProgressAggregator, } from "./sub-session-progress-aggregation.js";
@@ -77,6 +86,35 @@ function recordLateResultNoReplySafely(input) {
         // Late-result policy telemetry must not change sub-session lifecycle.
     }
 }
+function renderResultJsonValue(value) {
+    if (value === undefined)
+        return undefined;
+    return typeof value === "string" ? value : JSON.stringify(value);
+}
+function resultReportSummary(report) {
+    const outputs = report.outputs
+        .map((output) => {
+        const value = renderResultJsonValue(output.value);
+        return value
+            ? `${output.outputId}:${output.status}:${value}`
+            : `${output.outputId}:${output.status}`;
+    })
+        .join("\n");
+    return outputs || `${report.status}:${report.resultReportId}`;
+}
+function resultReportEvidenceRefs(report) {
+    return [
+        ...report.evidence.map((item) => `${item.kind}:${item.sourceRef}`),
+        ...report.artifacts.map((item) => item.path
+            ? `${item.kind}:${item.path}`
+            : `${item.kind}:${item.artifactId}`),
+    ];
+}
+function expectedOutputSummary(input) {
+    return input.command.expectedOutputs
+        .map((output) => `${output.outputId}:${output.description}`)
+        .join("\n") || input.command.taskScope.goal;
+}
 function isReplayableStatus(status) {
     return REPLAY_STATUSES.has(status);
 }
@@ -111,8 +149,12 @@ function isAbortLike(error) {
 }
 function asErrorMessage(error) {
     return error instanceof Error && error.message.trim()
-        ? error.message
+        ? redactLogText(error.message)
         : "sub-session execution failed";
+}
+function subSessionReasonDetail(error) {
+    const raw = error instanceof Error && error.message.trim() ? error.message.trim() : "unknown_error";
+    return redactLogText(raw).replace(/\s+/g, "_").slice(0, 80) || "unknown_error";
 }
 function parseStoredSubSession(value) {
     try {
@@ -127,7 +169,7 @@ function defaultIdProvider() {
     return randomUUID();
 }
 function buildProgressEvent(input) {
-    const speaker = commandTargetNicknameSnapshot(input.command);
+    const speaker = commandTargetAgentNameSnapshot(input.command);
     return {
         identity: {
             ...input.command.identity,
@@ -148,31 +190,43 @@ function buildProgressEvent(input) {
         at: input.now,
     };
 }
-function commandTargetNicknameSnapshot(command) {
-    const nicknameSnapshot = command.targetNicknameSnapshot
-        ? normalizeNicknameSnapshot(command.targetNicknameSnapshot)
-        : "";
-    if (!nicknameSnapshot)
+function commandTargetAgentNameSnapshot(command) {
+    const agentNameSnapshot = commandTargetAgentNameValue(command);
+    if (!agentNameSnapshot)
         return undefined;
     return {
         entityType: "sub_agent",
         entityId: command.targetAgentId,
-        nicknameSnapshot,
+        agentNameSnapshot,
     };
 }
-function normalizeTargetNicknameSnapshot(input) {
-    const nickname = input.command.targetNicknameSnapshot ?? input.agent.nickname;
-    const normalized = nickname ? normalizeNicknameSnapshot(nickname) : "";
+function normalizeOptionalAgentName(value) {
+    const normalized = value ? normalizeAgentNameSnapshot(value) : "";
     return normalized || undefined;
 }
-function withEffectiveNicknameSnapshots(input) {
-    if (input.command.targetNicknameSnapshot || !input.agent.nickname)
+function commandTargetAgentNameValue(command) {
+    return normalizeOptionalAgentName(command.targetAgentName) ?? normalizeOptionalAgentName(command.targetAgentNameSnapshot);
+}
+function runtimeAgentNameValue(agent) {
+    return normalizeOptionalAgentName(agent.agentName);
+}
+function targetAgentNameSnapshot(input) {
+    return commandTargetAgentNameValue(input.command) ?? runtimeAgentNameValue(input.agent);
+}
+function withEffectiveAgentNameSnapshots(input) {
+    const agentNameSnapshot = targetAgentNameSnapshot(input);
+    if (!agentNameSnapshot)
+        return input;
+    const commandHasAgentName = normalizeOptionalAgentName(input.command.targetAgentName) ??
+        normalizeOptionalAgentName(input.command.targetAgentNameSnapshot);
+    if (commandHasAgentName)
         return input;
     return {
         ...input,
         command: {
             ...input.command,
-            targetNicknameSnapshot: normalizeNicknameSnapshot(input.agent.nickname),
+            targetAgentName: agentNameSnapshot,
+            targetAgentNameSnapshot: agentNameSnapshot,
         },
     };
 }
@@ -186,11 +240,8 @@ function parentAgentIdSnapshot(input) {
     }
     return undefined;
 }
-function parentAgentNicknameSnapshot(input) {
-    const normalized = input.parentAgent?.nickname
-        ? normalizeNicknameSnapshot(input.parentAgent.nickname)
-        : "";
-    return normalized || undefined;
+function parentAgentNameSnapshot(input) {
+    return normalizeOptionalAgentName(input.parentAgent?.agentName);
 }
 function buildErrorReport(input) {
     return {
@@ -260,11 +311,10 @@ function buildPreparedSubSessionMemoryBootstrap(input, now) {
         payload: handoffPayload,
         now,
     });
+    const agentNameSnapshot = targetAgentNameSnapshot(input);
     return buildChildOwnMemoryBootstrap({
         agentId: input.agent.agentId,
-        ...((input.agent.nickname ?? input.command.targetNicknameSnapshot)
-            ? { nicknameSnapshot: input.agent.nickname ?? input.command.targetNicknameSnapshot }
-            : {}),
+        ...(agentNameSnapshot ? { agentNameSnapshot } : {}),
         sessionId: input.parentSessionId,
         requestGroupId: input.command.commandRequestId,
         lineageId: input.command.subSessionId,
@@ -292,24 +342,76 @@ function ownerScopeForSubSessionAgent(agentId) {
         : { ownerType: "sub_agent", ownerId: agentId };
 }
 function createAndPersistSubSessionHandoffExchange(input) {
-    const sourceOwner = ownerScopeForSubSessionAgent(input.input.parentAgent?.agentId ?? "agent:knowbee");
+    const sourceOwner = input.input.parentAgent?.agentId
+        ? ownerScopeForSubSessionAgent(input.input.parentAgent.agentId)
+        : input.input.delegationSnapshot
+            ? input.input.command.identity.owner
+            : ownerScopeForSubSessionAgent("agent:knowbee");
     const recipientOwner = ownerScopeForSubSessionAgent(input.input.agent.agentId);
+    const sourceAgentNameSnapshot = parentAgentNameSnapshot(input.input);
+    const recipientAgentNameSnapshot = targetAgentNameSnapshot(input.input) ?? "Unnamed sub-agent";
+    const allowedPayloadFieldNames = [
+        "kind",
+        "currentGoal",
+        "completionCriteria",
+        "constraints",
+        "artifactRefs",
+        "targetContext",
+        "latestSafeContextSummary",
+        "doNotRepeat",
+        "contextPackageIds",
+    ];
+    const ownerBinding = input.input.delegationSnapshot
+        ? evaluateMemoryExchangeOwnerBinding({
+            commandOwner: input.input.command.identity.owner,
+            sourceOwner,
+            recipientOwner,
+            targetAgentId: input.input.command.targetAgentId,
+            handoffId: input.input.delegationSnapshot.handoff.handoff_id,
+            executionSnapshotFingerprint: input.input.delegationSnapshot.fingerprint,
+        })
+        : undefined;
+    if (ownerBinding && !ownerBinding.allowed) {
+        throw new Error(`sub-session memory owner binding blocked: ${ownerBinding.reasonCode}`);
+    }
+    const canonicalProvenanceRefs = ownerBinding?.provenanceRefs ?? [];
+    const handoffDecision = evaluateWorkBoundMemoryHandoff({
+        handoffId: `exchange:handoff:${input.input.command.commandRequestId}`,
+        sourceAgentId: sourceOwner.ownerId,
+        recipientAgentId: recipientOwner.ownerId,
+        assignedWorkId: input.input.command.commandRequestId,
+        receiptWorkId: input.payload.targetContext.commandRequestId,
+        purpose: "Structured handoff capsule for child sub-session start.",
+        payloadFieldNames: Object.keys(input.payload),
+        allowedPayloadFieldNames,
+        contextRefs: input.payload.contextPackageIds,
+        allowedContextRefs: input.input.command.contextPackageIds,
+        provenanceRefs: uniqueValues([
+            ...canonicalProvenanceRefs,
+            `opaque:command_request:${input.input.command.commandRequestId}`,
+            ...input.input.command.contextPackageIds,
+            ...(input.payload.artifactRefs ?? []),
+        ]),
+        containsRawMemory: false,
+        containsUnrelatedHistory: false,
+        grantsLongTermRetention: false,
+        expiresAt: input.now + 24 * 60 * 60 * 1_000,
+        evaluatedAt: input.now,
+    });
+    if (handoffDecision.status === "blocked") {
+        throw new Error(`sub-session handoff blocked: ${handoffDecision.issueCodes.join(",")}`);
+    }
     const exchange = createDataExchangePackage({
         sourceOwner,
         recipientOwner,
-        ...(input.input.parentAgent?.nickname
-            ? { sourceNicknameSnapshot: input.input.parentAgent.nickname }
-            : input.input.parentAgent?.displayName
-                ? { sourceNicknameSnapshot: input.input.parentAgent.displayName }
-                : {}),
-        ...(input.input.agent.nickname
-            ? { recipientNicknameSnapshot: input.input.agent.nickname }
-            : { recipientNicknameSnapshot: input.input.agent.displayName }),
+        ...(sourceAgentNameSnapshot ? { sourceAgentNameSnapshot } : {}),
+        recipientAgentNameSnapshot,
         purpose: "Structured handoff capsule for child sub-session start.",
         allowedUse: "temporary_context",
         retentionPolicy: "session_only",
         redactionState: "not_sensitive",
         provenanceRefs: uniqueValues([
+            ...canonicalProvenanceRefs,
             `opaque:command_request:${input.input.command.commandRequestId}`,
             ...input.input.command.contextPackageIds,
             ...(input.payload.artifactRefs ?? []),
@@ -327,9 +429,10 @@ function createAndPersistSubSessionHandoffExchange(input) {
     return exchange;
 }
 export function buildSubSessionContract(input) {
-    const agentNickname = normalizeTargetNicknameSnapshot(input);
+    const agentNameSnapshot = targetAgentNameSnapshot(input);
+    const agentName = agentNameSnapshot ?? "Unnamed sub-agent";
     const parentAgentId = parentAgentIdSnapshot(input);
-    const parentAgentNickname = parentAgentNicknameSnapshot(input);
+    const parentAgentName = parentAgentNameSnapshot(input);
     const identity = {
         ...input.command.identity,
         schemaVersion: CONTRACT_SCHEMA_VERSION,
@@ -350,17 +453,18 @@ export function buildSubSessionContract(input) {
         parentSessionId: input.parentSessionId,
         parentRunId: input.command.parentRunId,
         ...(parentAgentId ? { parentAgentId } : {}),
-        ...(input.parentAgent?.displayName
-            ? { parentAgentDisplayName: input.parentAgent.displayName }
-            : {}),
-        ...(parentAgentNickname ? { parentAgentNickname } : {}),
+        ...(parentAgentName ? { parentAgentName } : {}),
+        ...(parentAgentName ? { parentAgentNameSnapshot: parentAgentName } : {}),
         agentId: input.agent.agentId,
-        agentDisplayName: input.agent.displayName,
-        ...(agentNickname ? { agentNickname } : {}),
+        agentName,
+        ...(agentNameSnapshot ? { agentNameSnapshot } : {}),
         commandRequestId: input.command.commandRequestId,
         status: "created",
         promptBundleId: input.promptBundle.bundleId,
         promptBundleSnapshot: input.promptBundle,
+        ...(input.delegationSnapshot
+            ? { delegatedExecutionSnapshotFingerprint: input.delegationSnapshot.fingerprint }
+            : {}),
         ...(input.memoryBootstrap ? { memoryBootstrap: input.memoryBootstrap } : {}),
         ...(input.modelExecutionPolicy ? { modelExecutionSnapshot: input.modelExecutionPolicy } : {}),
     };
@@ -576,11 +680,10 @@ function buildDeferredWaveSummary(groupId, waves) {
     return `sub_session_waiting:${groupId}:${waitingEntries.join(", ")}`;
 }
 function buildNamedHandoffLabel(input, subSession) {
-    const sender = subSession.parentAgentNickname ??
-        input.parentAgent?.displayName ??
+    const sender = subSession.parentAgentNameSnapshot ??
         subSession.parentAgentId ??
         "parent";
-    const recipient = subSession.agentNickname ?? subSession.agentDisplayName ?? subSession.agentId;
+    const recipient = subSession.agentNameSnapshot ?? "Unnamed sub-agent";
     return `sub_session_handoff:${subSession.subSessionId}:${sender}->${recipient}:${input.command.commandRequestId}`;
 }
 function numericEstimate(value) {
@@ -647,6 +750,8 @@ export class SubSessionRunner {
     idProvider;
     dependencies;
     customReviewResultReport;
+    diagnosisProvider;
+    diagnosisRepairProvider;
     progressAggregator;
     recordLedgerEvent;
     activeControllers = new Map();
@@ -666,13 +771,40 @@ export class SubSessionRunner {
             progressAggregator: dependencies.progressAggregator ?? createSubSessionProgressAggregator({ now: this.now }),
             recordLedgerEvent: dependencies.recordLedgerEvent ?? recordMessageLedgerEvent,
             recordReviewEvent: dependencies.recordReviewEvent ?? defaultRecordSubSessionReviewEvent,
+            prepareMemoryBootstrap: dependencies.prepareMemoryBootstrap ?? buildPreparedSubSessionMemoryBootstrap,
+            initializeAgentMemoryState: dependencies.initializeAgentMemoryState ?? ((bootstrap) => {
+                upsertAgentMemoryState(buildAgentMemoryStateFromBootstrap({ bootstrap }));
+            }),
         };
         this.customReviewResultReport = dependencies.reviewResultReport;
+        this.diagnosisProvider = dependencies.diagnosisProvider;
+        this.diagnosisRepairProvider = dependencies.diagnosisRepairProvider;
         this.progressAggregator = this.dependencies.progressAggregator;
         this.recordLedgerEvent = this.dependencies.recordLedgerEvent;
     }
     async runSubSession(input, handler) {
-        const namedInput = withEffectiveNicknameSnapshots(input);
+        const namedInput = withEffectiveAgentNameSnapshots(input);
+        if (namedInput.delegationSnapshot) {
+            const snapshotValidation = validateDelegatedExecutionSnapshot(namedInput.delegationSnapshot, {
+                commandRequestId: namedInput.command.commandRequestId,
+                subSessionId: namedInput.command.subSessionId,
+                agentId: namedInput.agent.agentId,
+                promptBundleId: namedInput.promptBundle.bundleId,
+            });
+            if (!snapshotValidation.valid) {
+                const subSession = buildSubSessionContract(namedInput);
+                subSession.status = "failed";
+                const errorReport = buildErrorReport({
+                    idProvider: this.idProvider,
+                    command: namedInput.command,
+                    reasonCode: snapshotValidation.reasonCode,
+                    safeMessage: `Delegated execution snapshot is invalid: ${snapshotValidation.reasonCode}`,
+                    retryable: false,
+                });
+                await this.dependencies.appendParentEvent(subSession.parentRunId, `sub_session_blocked_by_execution_snapshot:${subSession.subSessionId}:${snapshotValidation.reasonCode}`);
+                return { subSession, status: "failed", errorReport, replayed: false };
+            }
+        }
         const modelPolicy = resolveModelExecutionPolicy({
             agentId: namedInput.agent.agentId,
             promptBundle: namedInput.promptBundle,
@@ -685,8 +817,8 @@ export class SubSessionRunner {
             ...(modelPolicy.snapshot ? { modelExecutionPolicy: modelPolicy.snapshot } : {}),
         };
         const queuedAt = this.now();
-        const memoryBootstrap = buildPreparedSubSessionMemoryBootstrap(effectiveInput, queuedAt);
-        upsertAgentMemoryState(buildAgentMemoryStateFromBootstrap({ bootstrap: memoryBootstrap }));
+        const memoryBootstrap = this.dependencies.prepareMemoryBootstrap(effectiveInput, queuedAt);
+        this.dependencies.initializeAgentMemoryState(memoryBootstrap);
         const subSession = buildSubSessionContract({
             ...effectiveInput,
             memoryBootstrap,
@@ -848,6 +980,83 @@ export class SubSessionRunner {
                 },
             });
             const review = await this.reviewResultReport(effectiveInput, result, subSession);
+            const diagnosedResult = await this.resolvePostReviewResultDiagnosis(effectiveInput, result, review, subSession);
+            const childResultAudit = auditRuntimeChildWorkResultProjection({
+                resultReport: result,
+                agentName: subSession.agentNameSnapshot ?? "Unnamed sub-agent",
+                taskGoal: effectiveInput.command.taskScope.goal,
+                ...(diagnosedResult
+                    ? {
+                        resultDiagnosis: diagnosedResult.resultDiagnosis,
+                        actionDecision: diagnosedResult.actionDecision,
+                    }
+                    : {}),
+                review: {
+                    accepted: review.accepted,
+                    status: review.status,
+                    missingItems: review.missingItems,
+                    requiredChanges: review.requiredChanges,
+                    risksOrGaps: review.risksOrGaps,
+                    canRetry: review.canRetry,
+                    ...(review.impossibleReason ? { impossibleReason: review.impossibleReason } : {}),
+                },
+            });
+            recordStructuredWorkAuditEventSafely({
+                audit: childResultAudit,
+                runId: subSession.parentRunId,
+                subSessionId: subSession.subSessionId,
+                agentId: subSession.agentId,
+                correlationId: subSession.parentRunId,
+                stage: "post_review_child_result",
+                source: "sub-session-runner",
+                dedupeKey: [
+                    "orchestration:structured-work-audit",
+                    "post_review_child_result",
+                    subSession.parentRunId,
+                    subSession.subSessionId,
+                    result.resultReportId,
+                ].join(":"),
+                payload: {
+                    resultReportId: result.resultReportId,
+                },
+            });
+            if (childResultAudit.status === "valid" && childResultAudit.value) {
+                recordRuntimeWorkRecordSnapshotSafely({
+                    snapshotKind: "child_work_result",
+                    stage: "post_review_child_result",
+                    record: childResultAudit.value,
+                    parentRunId: subSession.parentRunId,
+                    subSessionId: subSession.subSessionId,
+                    agentId: subSession.agentId,
+                    resultReportId: result.resultReportId,
+                    source: "sub-session-runner",
+                });
+            }
+            if (childResultAudit.status !== "valid") {
+                const reasonCode = "result_diagnosis_required";
+                const detail = childResultAudit.reasonCode ?? "unknown_result_diagnosis_audit_failure";
+                const safeMessage = `Sub-session result integration blocked because a valid result diagnosis is required: ${detail}`;
+                await this.changeStatus(subSession, "failed");
+                await this.flushProgressBatch(subSession.parentRunId, "terminal_flush");
+                await this.dependencies.appendParentEvent(subSession.parentRunId, `sub_session_result_diagnosis_blocked:${subSession.subSessionId}:${detail}`);
+                const errorReport = buildErrorReport({
+                    idProvider: this.idProvider,
+                    command: effectiveInput.command,
+                    reasonCode,
+                    safeMessage,
+                    retryable: true,
+                });
+                this.recordSubSessionLifecycleEvent(subSession, "sub_session_failed", "failed", safeMessage, { resultReportId: result.resultReportId, reasonCode, auditReasonCode: detail });
+                return {
+                    subSession,
+                    status: "failed",
+                    resultReport: result,
+                    errorReport,
+                    review,
+                    modelExecution,
+                    replayed: false,
+                };
+            }
             const terminalStatus = review.status;
             await this.changeStatus(subSession, terminalStatus);
             await this.flushProgressBatch(subSession.parentRunId, "terminal_flush");
@@ -886,9 +1095,9 @@ export class SubSessionRunner {
                 recordOrchestrationEvent: recordOrchestrationEventSafely,
             }).execute({
                 parentRunId: subSession.parentRunId,
-                ...(subSession.parentAgentId
-                    ? { parentAgentId: subSession.parentAgentId, requestingAgentId: subSession.parentAgentId }
-                    : {}),
+                parentAgentId: subSession.parentAgentId ?? "agent:knowbee",
+                directChildAgentIds: [subSession.agentId],
+                ...(subSession.parentAgentId ? { requestingAgentId: subSession.parentAgentId } : {}),
                 successCriteria: effectiveInput.command.expectedOutputs.map((output) => output.description || output.outputId),
                 childResults: [
                     {
@@ -1054,12 +1263,13 @@ export class SubSessionRunner {
                 },
             });
         }
+        const agentName = subSession.agentNameSnapshot ?? subSession.agentName;
         const batch = this.progressAggregator.push({
             parentRunId: subSession.parentRunId,
             subSessionId: subSession.subSessionId,
             agentId: subSession.agentId,
-            agentDisplayName: subSession.agentDisplayName,
-            ...(subSession.agentNickname ? { agentNickname: subSession.agentNickname } : {}),
+            agentName,
+            ...(subSession.agentNameSnapshot ? { agentNameSnapshot: subSession.agentNameSnapshot } : {}),
             status: progress.status,
             summary: progress.summary,
             at: progress.at,
@@ -1089,8 +1299,8 @@ export class SubSessionRunner {
                 items: batch.items.map((item) => ({
                     subSessionId: item.subSessionId,
                     agentId: item.agentId,
-                    agentDisplayName: item.agentDisplayName,
-                    agentNickname: item.agentNickname ?? null,
+                    agentName: item.agentName ?? item.agentNameSnapshot ?? "Unnamed sub-agent",
+                    agentNameSnapshot: item.agentNameSnapshot ?? null,
                     status: item.status,
                     summary: item.summary,
                     at: item.at,
@@ -1099,6 +1309,7 @@ export class SubSessionRunner {
         });
     }
     recordSubSessionLifecycleEvent(subSession, eventKind, status, summary, detail = {}) {
+        const agentName = subSession.agentNameSnapshot ?? subSession.agentName;
         this.recordLedgerEvent({
             parentRunId: subSession.parentRunId,
             subSessionId: subSession.subSessionId,
@@ -1109,9 +1320,8 @@ export class SubSessionRunner {
             summary,
             idempotencyKey: `${eventKind}:${subSession.parentRunId}:${subSession.subSessionId}:${subSession.status}`,
             detail: {
-                agentDisplayName: subSession.agentDisplayName,
-                agentNickname: subSession.agentNickname ?? null,
-                agentNicknameSnapshot: subSession.agentNickname ?? null,
+                agentName,
+                agentNameSnapshot: subSession.agentNameSnapshot ?? null,
                 status: subSession.status,
                 ...detail,
             },
@@ -1131,6 +1341,61 @@ export class SubSessionRunner {
             retryClass: classifyRetryClass(input),
             additionalContextRefs: input.command.contextPackageIds,
         });
+    }
+    async resolvePostReviewResultDiagnosis(input, resultReport, review, subSession) {
+        if (!this.diagnosisProvider || !this.diagnosisRepairProvider)
+            return undefined;
+        try {
+            const diagnosisInput = {
+                provider: this.diagnosisProvider,
+                repairProvider: this.diagnosisRepairProvider,
+                ownerAgentName: subSession.agentNameSnapshot ?? "Unnamed sub-agent",
+                resultSummary: resultReportSummary(resultReport),
+                expectedOutput: expectedOutputSummary(input),
+                evidence: resultReportEvidenceRefs(resultReport),
+                risks: [
+                    ...resultReport.risksOrGaps,
+                    ...review.risksOrGaps,
+                    ...review.missingItems.map((item) => `missing:${item}`),
+                    ...review.requiredChanges.map((item) => `required_change:${item}`),
+                ],
+                workId: `work:${subSession.subSessionId}`,
+                stepId: `result:${resultReport.resultReportId}`,
+                evidenceSourceKind: "child",
+                diagnosisSubjectKind: "sub_agent_result",
+            };
+            const result = await runResultDiagnosisProviderWithRepair(diagnosisInput);
+            if (result.status === "valid" && result.target === "result_diagnosis") {
+                authorizeDiagnosisActionRoute({
+                    receipt: result.receipt,
+                    subjectPayload: {
+                        ownerAgentName: diagnosisInput.ownerAgentName,
+                        resultSummary: diagnosisInput.resultSummary,
+                        expectedOutput: diagnosisInput.expectedOutput,
+                        evidence: diagnosisInput.evidence,
+                        risks: diagnosisInput.risks,
+                        workId: diagnosisInput.workId,
+                        stepId: diagnosisInput.stepId,
+                        evidenceSourceKind: diagnosisInput.evidenceSourceKind,
+                    },
+                    diagnosis: result.diagnosis,
+                });
+                return {
+                    resultDiagnosis: result.diagnosis,
+                    actionDecision: {
+                        selected_action: result.diagnosis.recommended_action,
+                        reason: result.diagnosis.reason,
+                    },
+                };
+            }
+            await this.dependencies.appendParentEvent(subSession.parentRunId, `result_diagnosis_unavailable:${subSession.subSessionId}:${result.status}`);
+            return undefined;
+        }
+        catch (error) {
+            const reason = subSessionReasonDetail(error);
+            await this.dependencies.appendParentEvent(subSession.parentRunId, `result_diagnosis_unavailable:${subSession.subSessionId}:provider_error:${reason}`);
+            return undefined;
+        }
     }
     async executeWithModelPolicy(input) {
         if (!input.modelPolicy.snapshot) {
@@ -1532,7 +1797,7 @@ function defaultIsParentFinalized(parentRunId) {
 export function createTextResultReport(input) {
     const idProvider = input.idProvider ?? defaultIdProvider;
     const value = input.text ?? "";
-    const source = commandTargetNicknameSnapshot(input.command);
+    const source = commandTargetAgentNameSnapshot(input.command);
     return {
         identity: {
             ...input.command.identity,

@@ -1,0 +1,1 @@
+{"version":3,"file":"authorization-binding.d.ts","sourceRoot":"","sources":["../../src/tools/authorization-binding.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,8BAA8B,EAAE,MAAM,YAAY,CAAA;AAIhE,wBAAgB,6BAA6B,CAC3C,UAAU,EAAE,MAAM,CAAC,MAAM,EAAE,OAAO,CAAC,EACnC,KAAK,CAAC,EAAE,8BAA8B,GACrC,MAAM,CAAC,MAAM,EAAE,OAAO,CAAC,GAAG,IAAI,CAQhC"}

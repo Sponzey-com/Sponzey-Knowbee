@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { api } from "../api/client"
+import { UserRecoveryNotice } from "./UserRecoveryNotice"
 import type {
   CommandPaletteSearchResult,
   FocusBinding,
@@ -8,38 +9,42 @@ import type {
 import {
   commandPaletteA11yState,
   commandPaletteOptionId,
+  type CommandPaletteGroupLabels,
   groupCommandPaletteResults,
   moveCommandPaletteSelection,
   parseCommandPaletteInput,
 } from "../lib/command-palette"
+import { initialInputSubmission, reduceInputSubmission } from "../lib/input-submission"
+import { resolveTrappedFocusIndex } from "../lib/focus-trap"
 import { useUiI18n } from "../lib/ui-i18n"
+import { type UserRecoveryProjection, UiRequestFailure, projectUserRecovery } from "../lib/user-recovery"
 
-function focusLabel(binding: FocusBinding | null): string {
+function focusLabel(binding: FocusBinding | null, text: ReturnType<typeof useUiI18n>["text"]): string {
   if (!binding) return "No focus"
   const label = binding.target.label ?? binding.target.id
-  if (binding.target.kind === "agent") return `Agent: ${label}`
-  if (binding.target.kind === "team") return `Team: ${label}`
-  return `Sub-session: ${label}`
+  if (binding.target.kind === "agent") return `${text("에이전트", "Agent")}: ${label}`
+  if (binding.target.kind === "team") return `${text("팀", "Team")}: ${label}`
+  return `${text("서브 에이전트 실행", "Sub-agent run")}: ${label}`
 }
 
 function targetLabel(target: FocusTarget): string {
   return target.label ?? target.id
 }
 
-function resultKindLabel(kind: CommandPaletteSearchResult["kind"]): string {
+function resultKindLabel(kind: CommandPaletteSearchResult["kind"], text: ReturnType<typeof useUiI18n>["text"]): string {
   switch (kind) {
     case "agent":
-      return "Agent"
+      return text("에이전트", "Agent")
     case "team":
-      return "Team"
+      return text("팀", "Team")
     case "sub_session":
-      return "Sub-session"
+      return text("서브 에이전트 실행", "Sub-agent run")
     case "agent_template":
-      return "Agent template"
+      return text("에이전트 템플릿", "Agent template")
     case "team_template":
-      return "Team template"
+      return text("팀 템플릿", "Team template")
     case "command":
-      return "Command"
+      return text("명령", "Command")
   }
 }
 
@@ -50,11 +55,33 @@ export function CommandPalette({ threadId }: { threadId: string }) {
   const [results, setResults] = useState<CommandPaletteSearchResult[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [loading, setLoading] = useState(false)
-  const [message, setMessage] = useState("")
+  const [notice, setNotice] = useState("")
+  const [recovery, setRecovery] = useState<UserRecoveryProjection | null>(null)
+  const [submission, setSubmission] = useState(initialInputSubmission)
   const [focus, setFocus] = useState<FocusBinding | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const panelRef = useRef<HTMLElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const openRef = useRef(false)
+  const commandSequenceRef = useRef(0)
+  const queryRevisionRef = useRef(0)
+  const submittingRef = useRef(false)
 
-  const groups = useMemo(() => groupCommandPaletteResults(results), [results])
+  function setPaletteOpen(nextOpen: boolean) {
+    if (!nextOpen) invalidateCommand()
+    openRef.current = nextOpen
+    setOpen(nextOpen)
+  }
+
+  const groupLabels = useMemo<CommandPaletteGroupLabels>(() => ({
+    command: text("명령", "Commands"),
+    agent: text("에이전트", "Agents"),
+    team: text("팀", "Teams"),
+    sub_session: text("서브 에이전트 실행", "Sub-agent runs"),
+    agent_template: text("에이전트 템플릿", "Agent templates"),
+    team_template: text("팀 템플릿", "Team templates"),
+  }), [text])
+  const groups = useMemo(() => groupCommandPaletteResults(results, groupLabels), [groupLabels, results])
   const flatResults = useMemo(() => groups.flatMap((group) => group.items), [groups])
   const a11y = commandPaletteA11yState({
     open,
@@ -66,7 +93,7 @@ export function CommandPalette({ threadId }: { threadId: string }) {
     function handleGlobalKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault()
-        setOpen((value) => !value)
+        setPaletteOpen(!openRef.current)
       }
     }
     window.addEventListener("keydown", handleGlobalKeyDown)
@@ -76,6 +103,11 @@ export function CommandPalette({ threadId }: { threadId: string }) {
   useEffect(() => {
     if (!open) return
     inputRef.current?.focus()
+    return () => triggerRef.current?.focus()
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
     let cancelled = false
     void api.getFocus(threadId).then((response) => {
       if (!cancelled) setFocus(response.binding)
@@ -97,13 +129,13 @@ export function CommandPalette({ threadId }: { threadId: string }) {
           if (cancelled) return
           setResults(response.results)
           setSelectedIndex(response.results.length > 0 ? 0 : -1)
-          setMessage("")
+          setRecovery(null)
         })
         .catch((error) => {
           if (cancelled) return
           setResults([])
           setSelectedIndex(-1)
-          setMessage(error instanceof Error ? error.message : String(error))
+          setRecovery(projectUserRecovery(error, "read"))
         })
         .finally(() => {
           if (!cancelled) setLoading(false)
@@ -115,57 +147,101 @@ export function CommandPalette({ threadId }: { threadId: string }) {
     }
   }, [open, query])
 
-  async function refreshFocus() {
+  function invalidateCommand() {
+    const sequence = ++commandSequenceRef.current
+    queryRevisionRef.current += 1
+    submittingRef.current = false
+    setSubmission((current) => reduceInputSubmission(current, { type: "reset", sequence }))
+  }
+
+  async function runCommandMutation(
+    draft: string,
+    operation: () => Promise<() => void>,
+  ) {
+    if (submittingRef.current) return
+    const sequence = ++commandSequenceRef.current
+    const queryRevision = queryRevisionRef.current
+    submittingRef.current = true
+    setRecovery(null)
+    setNotice("")
+    setSubmission((current) => reduceInputSubmission(current, {
+      type: "submit_started",
+      sequence,
+      draft,
+    }))
     try {
-      const response = await api.getFocus(threadId)
-      setFocus(response.binding)
-    } catch {
-      setFocus(null)
+      const commit = await operation()
+      if (sequence !== commandSequenceRef.current || queryRevision !== queryRevisionRef.current) return
+      commit()
+      setSubmission((current) => reduceInputSubmission(current, {
+        type: "submit_succeeded",
+        sequence,
+      }))
+    } catch (error) {
+      if (sequence !== commandSequenceRef.current || queryRevision !== queryRevisionRef.current) return
+      const nextRecovery = projectUserRecovery(error, "mutation")
+      setRecovery(nextRecovery)
+      setSubmission((current) => reduceInputSubmission(current, {
+        type: "submit_failed",
+        sequence,
+        recovery: nextRecovery,
+      }))
+      window.requestAnimationFrame(() => inputRef.current?.focus())
+    } finally {
+      if (sequence === commandSequenceRef.current) submittingRef.current = false
     }
   }
 
   async function executeSlashCommand(commandText: string) {
-    const response = await api.executeCommand({ command: commandText, threadId })
-    setMessage(response.reasonCode)
-    await refreshFocus()
-    if (response.ok && commandText.trim() === "/unfocus") setQuery("")
+    await runCommandMutation(commandText, async () => {
+      const response = await api.executeCommand({ command: commandText, threadId })
+      if (!response.ok) {
+        throw new UiRequestFailure({
+          status: null,
+          reasonCode: response.reasonCode,
+          safeMessage: null,
+        })
+      }
+      const focusResponse = await api.getFocus(threadId)
+      return () => {
+        setFocus(focusResponse.binding)
+        setNotice(text("명령을 처리했습니다.", "Command completed."))
+        if (commandText.trim() === "/unfocus") setQuery("")
+      }
+    })
   }
 
   async function activateResult(result: CommandPaletteSearchResult) {
-    try {
+    await runCommandMutation(result.title, async () => {
       if (result.kind === "agent_template") {
         await api.instantiateAgentTemplate(result.id.replace(/^agent-template:/, ""))
-        setMessage("agent_template_draft_created")
-        return
+        return () => setNotice(text("에이전트 초안을 만들었습니다.", "Agent draft created."))
       }
       if (result.kind === "team_template") {
         await api.instantiateTeamTemplate(result.id.replace(/^team-template:/, ""))
-        setMessage("team_template_draft_created")
-        return
+        return () => setNotice(text("팀 초안을 만들었습니다.", "Team draft created."))
       }
       if (result.target) {
         const response = await api.setFocus(threadId, result.target)
-        setFocus(response.focus.binding)
-        setMessage(`focus: ${targetLabel(result.target)}`)
-        return
+        return () => {
+          setFocus(response.focus.binding)
+          setNotice(text(`초점: ${targetLabel(result.target)}`, `Focus: ${targetLabel(result.target)}`))
+        }
       }
       if (result.command) {
-        setQuery(result.command)
-        inputRef.current?.focus()
+        return () => {
+          setQuery(result.command ?? "")
+          inputRef.current?.focus()
+        }
       }
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error))
-    }
+      return () => undefined
+    })
   }
 
   async function submitCurrent() {
     const state = parseCommandPaletteInput(query)
     if (state.mode === "slash_command" && state.query) {
-      try {
-        await executeSlashCommand(state.query)
-      } catch (error) {
-        setMessage(error instanceof Error ? error.message : String(error))
-      }
+      await executeSlashCommand(state.query)
       return
     }
     const selected = flatResults[selectedIndex]
@@ -173,11 +249,6 @@ export function CommandPalette({ threadId }: { threadId: string }) {
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Escape") {
-      event.preventDefault()
-      setOpen(false)
-      return
-    }
     if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
       event.preventDefault()
       const direction =
@@ -206,8 +277,9 @@ export function CommandPalette({ threadId }: { threadId: string }) {
   return (
     <>
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => setPaletteOpen(true)}
         className="mt-3 flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-left text-xs font-semibold text-stone-200 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/20"
       >
         <span>{text("명령", "Command")}</span>
@@ -220,13 +292,38 @@ export function CommandPalette({ threadId }: { threadId: string }) {
         <div
           className="fixed inset-0 z-[120] bg-stone-950/50 px-4 py-10 backdrop-blur-sm"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setOpen(false)
+            if (event.target === event.currentTarget) {
+              setPaletteOpen(false)
+            }
           }}
         >
           <section
+            ref={panelRef}
             role={a11y.role}
             aria-modal="true"
             aria-label={text("명령 팔레트", "Command palette")}
+            tabIndex={-1}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault()
+                setPaletteOpen(false)
+                return
+              }
+              if (event.key !== "Tab") return
+              const focusable = [
+                ...(panelRef.current?.querySelectorAll<HTMLElement>(
+                  "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+                ) ?? []),
+              ].filter((element) => element.getClientRects().length > 0)
+              if (focusable.length === 0) return
+              const nextIndex = resolveTrappedFocusIndex({
+                currentIndex: focusable.indexOf(document.activeElement as HTMLElement),
+                focusableCount: focusable.length,
+                shiftKey: event.shiftKey,
+              })
+              event.preventDefault()
+              focusable[nextIndex]?.focus()
+            }}
             className="mx-auto flex max-h-[80vh] max-w-2xl flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-2xl"
           >
             <div className="border-b border-stone-200 p-4">
@@ -235,16 +332,20 @@ export function CommandPalette({ threadId }: { threadId: string }) {
                   <div className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
                     {text("명령 팔레트", "Command Palette")}
                   </div>
-                  <div className="mt-1 truncate text-xs text-stone-500">{focusLabel(focus)}</div>
+                  <div className="mt-1 truncate text-xs text-stone-500">{focusLabel(focus, text)}</div>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
-                    void api.clearFocus(threadId).then(() => {
-                      setFocus(null)
-                      setMessage("focus_binding_cleared")
+                    void runCommandMutation("/unfocus", async () => {
+                      await api.clearFocus(threadId)
+                      return () => {
+                        setFocus(null)
+                        setNotice(text("초점을 해제했습니다.", "Focus cleared."))
+                      }
                     })
                   }}
+                  disabled={submission.status === "submitting"}
                   className="rounded-xl border border-stone-200 px-3 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-stone-900/10"
                 >
                   {text("초점 해제", "Unfocus")}
@@ -257,18 +358,27 @@ export function CommandPalette({ threadId }: { threadId: string }) {
                 ref={inputRef}
                 id="command-palette-input"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  invalidateCommand()
+                  setQuery(event.target.value)
+                  setRecovery(null)
+                  setNotice("")
+                }}
                 onKeyDown={handleKeyDown}
                 role="combobox"
                 aria-expanded={a11y.expanded}
                 aria-controls="command-palette-results"
                 aria-activedescendant={a11y.activeDescendant}
-                placeholder={text("agent, team, sub-session 또는 /command", "agent, team, sub-session, or /command")}
+                placeholder={text("에이전트, 팀, 서브 에이전트 실행 또는 /명령", "agent, team, sub-agent run, or /command")}
                 className="mt-4 w-full rounded-xl border border-stone-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-stone-900/10"
               />
-              {message ? (
+              {recovery ? (
+                <div className="mt-3">
+                  <UserRecoveryNotice projection={recovery} subject="command" text={text} />
+                </div>
+              ) : notice ? (
                 <div className="mt-3 rounded-xl bg-stone-100 px-3 py-2 text-xs text-stone-600">
-                  {message}
+                  {notice}
                 </div>
               ) : null}
             </div>
@@ -319,7 +429,7 @@ export function CommandPalette({ threadId }: { threadId: string }) {
                               <span className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold ${
                                 selected ? "bg-white/10 text-stone-200" : "bg-stone-100 text-stone-500"
                               }`}>
-                                {resultKindLabel(result.kind)}
+                                {resultKindLabel(result.kind, text)}
                               </span>
                             </div>
                             {result.subtitle ? (

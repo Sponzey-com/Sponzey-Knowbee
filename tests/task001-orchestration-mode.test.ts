@@ -11,7 +11,9 @@ import type {
   SkillMcpAllowlist,
   SubAgentConfig,
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
-import { reloadConfig, type OrchestrationConfig } from "../packages/core/src/config/index.js"
+import type { OrchestrationConfig } from "../packages/core/src/config/index.js"
+import { createUpdateRuntimeContext } from "../packages/core/src/update/service.ts"
+import { initializeToolDispatcher } from "../packages/core/src/tools/index.ts"
 import { closeDb, upsertAgentConfig } from "../packages/core/src/db/index.js"
 import {
   orchestrationCapabilityStatus,
@@ -19,19 +21,19 @@ import {
 } from "../packages/core/src/orchestration/mode.ts"
 import { buildExampleEnterpriseTopology } from "../packages/core/src/topology/examples.js"
 import { createEnterpriseTopologyRegistry } from "../packages/core/src/topology/registry.js"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const now = Date.UTC(2026, 3, 23, 0, 0, 0)
+let runtimeFixture: ReturnType<typeof createTestRuntimeConfigFixture>
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task001-orchestration-mode-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task001-orchestration-mode-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 beforeEach(() => {
@@ -40,11 +42,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -127,13 +124,13 @@ function subAgent(input: {
 describe("task001 orchestration mode baseline", () => {
   it("does not load the registry when the feature flag is off", () => {
     const snapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: () => ({
+      config: {
         orchestration: orchestrationConfig({
           mode: "orchestration",
           featureFlagEnabled: false,
           subAgents: [subAgent({ agentId: "agent:ready" })],
         }),
-      }),
+      },
       loadRegistry: () => {
         throw new Error("registry should not be loaded")
       },
@@ -150,16 +147,34 @@ describe("task001 orchestration mode baseline", () => {
     })
   })
 
+  it("uses the configured main agent name in fallback reasons", () => {
+    const snapshot = resolveOrchestrationModeSnapshotSync({
+      config: {
+        orchestration: orchestrationConfig({
+          mode: "orchestration",
+          featureFlagEnabled: false,
+          subAgents: [subAgent({ agentId: "agent:ready" })],
+        }),
+      },
+      mainAgentNameSnapshot: "마당쇠",
+      now: () => now,
+    })
+
+    expect(snapshot.mainAgentNameSnapshot).toBe("마당쇠")
+    expect(snapshot.reason).toContain("마당쇠 직접 처리 모드")
+    expect(snapshot.reason).not.toContain("단일 노비")
+  })
+
   it("falls back to single_knowbee and counts disabled DB agents when no active agent is available", () => {
     upsertAgentConfig(subAgent({ agentId: "agent:disabled", status: "disabled" }), { now })
 
     const snapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: () => ({
+      config: {
         orchestration: orchestrationConfig({
           mode: "orchestration",
           featureFlagEnabled: true,
         }),
-      }),
+      },
       now: () => now,
     })
 
@@ -177,12 +192,12 @@ describe("task001 orchestration mode baseline", () => {
     upsertAgentConfig(subAgent({ agentId: "agent:no-delegation", delegationEnabled: false }), { now })
 
     const snapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: () => ({
+      config: {
         orchestration: orchestrationConfig({
           mode: "orchestration",
           featureFlagEnabled: true,
         }),
-      }),
+      },
       now: () => now,
     })
 
@@ -202,12 +217,12 @@ describe("task001 orchestration mode baseline", () => {
     })
 
     const snapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: () => ({
+      config: {
         orchestration: orchestrationConfig({
           mode: "orchestration",
           featureFlagEnabled: true,
         }),
-      }),
+      },
       now: () => now,
     })
 
@@ -219,31 +234,35 @@ describe("task001 orchestration mode baseline", () => {
       totalSubAgentCount: 2,
       disabledSubAgentCount: 0,
     })
-    expect(snapshot.reason).toContain("토폴로지 실행자 2개")
+    expect(snapshot.reason).toContain("서브 에이전트 2개")
     expect(snapshot.activeSubAgents).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        displayName: "Customer Request Intake",
+        agentName: "Customer Request Intake",
         source: "topology",
         topologyId: topology.id,
         executorId: "node:intake",
       }),
       expect.objectContaining({
-        displayName: "Customer Request Triage",
+        agentName: "Customer Request Triage",
         source: "topology",
         topologyId: topology.id,
         executorId: "node:triage",
       }),
     ]))
+    for (const activeSubAgent of snapshot.activeSubAgents) {
+      expect(activeSubAgent).not.toHaveProperty("displayName")
+      expect(activeSubAgent).not.toHaveProperty("nickname")
+    }
   })
 
   it("returns a degraded single_knowbee snapshot when registry loading fails", () => {
     const snapshot = resolveOrchestrationModeSnapshotSync({
-      getConfig: () => ({
+      config: {
         orchestration: orchestrationConfig({
           mode: "orchestration",
           featureFlagEnabled: true,
         }),
-      }),
+      },
       loadRegistry: () => {
         throw new Error("boom")
       },
@@ -259,17 +278,58 @@ describe("task001 orchestration mode baseline", () => {
     expect(orchestrationCapabilityStatus(snapshot)).toEqual({ status: "error", enabled: false })
   })
 
+  it("redacts registry loading failure details before building fallback reasons", () => {
+    const secret = "sk-task0586-orchestration-secret-1234567890"
+    const localPath = "/Users/dongwooshin/private/orchestration-registry.json"
+    const snapshot = resolveOrchestrationModeSnapshotSync({
+      config: {
+        orchestration: orchestrationConfig({
+          mode: "orchestration",
+          featureFlagEnabled: true,
+        }),
+      },
+      loadRegistry: () => {
+        throw new Error(`registry failed token=${secret} path=${localPath}`)
+      },
+      mainAgentNameSnapshot: "마당쇠",
+      now: () => now,
+    })
+
+    expect(snapshot).toMatchObject({
+      mode: "single_knowbee",
+      status: "degraded",
+      reasonCode: "registry_load_failed",
+      mainAgentNameSnapshot: "마당쇠",
+    })
+    expect(snapshot.reason).toContain("마당쇠 직접 처리 모드")
+    expect(snapshot.reason).toContain("token=***")
+    expect(snapshot.reason).toContain("[internal-path-redacted]")
+    expect(snapshot.reason).not.toContain(secret)
+    expect(snapshot.reason).not.toContain(localPath)
+  })
+
   it("exposes the orchestration mode snapshot through status and capabilities APIs", async () => {
-    const routes = new Map<string, () => unknown | Promise<unknown>>()
+    const routes = new Map<string, (request: unknown) => unknown | Promise<unknown>>()
     const app = {
-      get(path: string, _options: unknown, handler: () => unknown | Promise<unknown>) {
+      get(path: string, _options: unknown, handler: (request: unknown) => unknown | Promise<unknown>) {
         routes.set(path, handler)
       },
+      post(path: string, _options: unknown, handler: (request: unknown) => unknown | Promise<unknown>) {
+        routes.set(`POST ${path}`, handler)
+      },
     }
-    registerStatusRoute(app as never)
+    const paths = runtimeFixture.paths
+    const config = runtimeFixture.config
+    initializeToolDispatcher(config)
+    const request = {
+      server: { knowbeeRuntimeContext: { config, paths } },
+    }
+    registerStatusRoute(app as never, {
+      updateRuntime: createUpdateRuntimeContext(paths, {}),
+    })
     registerCapabilitiesRoute(app as never)
 
-    const statusBody = await routes.get("/api/status")?.()
+    const statusBody = await routes.get("/api/status")?.(request)
     expect(statusBody).toMatchObject({
       orchestration: {
         mode: "single_knowbee",
@@ -282,7 +342,7 @@ describe("task001 orchestration mode baseline", () => {
       },
     })
 
-    const capabilitiesBody = await routes.get("/api/capabilities")?.() as {
+    const capabilitiesBody = await routes.get("/api/capabilities")?.(request) as {
       orchestration: unknown
       items: Array<{ key: string }>
     }

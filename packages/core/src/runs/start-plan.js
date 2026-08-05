@@ -8,6 +8,7 @@ import { buildActiveRunProjections, buildIncomingIntentContract, } from "./activ
 import { findLatestWorkerSessionRun, getRequestGroupDelegationTurnCount, isReusableRequestGroup, listActiveSessionRequestGroups, } from "./store.js";
 import { shouldInspectActiveRunCandidates } from "./request-isolation.js";
 import { resolveTopologyRootRunRouting, } from "../topology-runtime/harness.js";
+import { authorWorkflowFromExecutionDecision } from "../orchestration/workflow-authoring.js";
 const defaultDependencies = {
     analyzeRequestEntrySemantics,
     isReusableRequestGroup,
@@ -37,7 +38,11 @@ export async function buildStartPlan(params, dependencies) {
         ...(params.source ? { source: params.source } : {}),
     })));
     const orchestrationModeStartedAt = Date.now();
-    const orchestrationRegistrySnapshot = await (dependencies.resolveOrchestrationMode ?? resolveOrchestrationModeSnapshot)();
+    const mainAgentNameSnapshot = params.mainAgentNameSnapshot?.trim() || undefined;
+    const orchestrationRegistrySnapshot = await dependencies.resolveOrchestrationMode({
+        config: params.config,
+        ...(mainAgentNameSnapshot ? { mainAgentNameSnapshot } : {}),
+    });
     const orchestrationRegistryLatencyMs = Date.now() - orchestrationModeStartedAt;
     recordLatencyMetric({
         name: "registry_lookup_latency_ms",
@@ -207,7 +212,7 @@ export async function buildStartPlan(params, dependencies) {
     const reusableWorkerSessionRun = workerSessionId
         ? dependencies.findLatestWorkerSessionRun(requestGroupId, workerSessionId)
         : undefined;
-    const topologyRouting = (dependencies.resolveTopologyRootRunRouting ?? resolveTopologyRootRunRouting)({
+    const topologyRouting = dependencies.resolveTopologyRootRunRouting({
         message: params.message,
         runId: params.runId,
         sessionId: params.sessionId,
@@ -220,16 +225,20 @@ export async function buildStartPlan(params, dependencies) {
     });
     latencyEvents.push(`topology_routing:${topologyRouting.mode}:${topologyRouting.reasonCode}`);
     const effectiveAgentExecutionDecision = params.agentExecutionDecision;
+    const workflowDraft = authorWorkflowFromExecutionDecision(effectiveAgentExecutionDecision);
     const orchestrationPlanStartedAt = Date.now();
-    const orchestrationPlanSnapshot = (dependencies.buildOrchestrationPlan ?? buildOrchestrationPlan)({
+    const orchestrationPlanSnapshot = dependencies.buildOrchestrationPlan({
+        config: params.config,
         parentRunId: params.runId,
         parentRequestId: params.runId,
         userRequest: params.message,
         modeSnapshot: orchestrationRegistrySnapshot,
+        ...(mainAgentNameSnapshot ? { rootAgentNameSnapshot: mainAgentNameSnapshot } : {}),
         ...(params.orchestrationPlannerIntent ? { intent: params.orchestrationPlannerIntent } : {}),
         ...(effectiveAgentExecutionDecision
             ? { agentExecutionDecision: effectiveAgentExecutionDecision }
             : {}),
+        ...(workflowDraft ? { workflowDraft } : {}),
     }).plan;
     latencyEvents.push(`${buildLatencyEventLabel(recordLatencyMetric({
         name: "orchestration_planning_latency_ms",

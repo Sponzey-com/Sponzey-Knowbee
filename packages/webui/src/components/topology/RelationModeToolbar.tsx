@@ -39,35 +39,35 @@ const EASY_RELATION_MODES: Array<{
 }> = [
   {
     modeId: "next",
-    labelKo: "Next",
+    labelKo: "다음 단계",
     labelEn: "Next",
     descriptionKo: "다음 업무 단계로 연결",
     descriptionEn: "Connect as the next work step",
   },
   {
     modeId: "delegate",
-    labelKo: "Delegate",
+    labelKo: "위임",
     labelEn: "Delegate",
     descriptionKo: "하위 업무 위임 경로로 연결",
     descriptionEn: "Connect as a delegation path",
   },
   {
     modeId: "approve",
-    labelKo: "Approve",
+    labelKo: "승인",
     labelEn: "Approve",
     descriptionKo: "승인 단계 또는 승인 주체와 연결",
     descriptionEn: "Connect approval step or authority holder",
   },
   {
     modeId: "use",
-    labelKo: "Use",
+    labelKo: "사용",
     labelEn: "Use",
     descriptionKo: "도구 또는 데이터 사용으로 연결",
     descriptionEn: "Connect tool or data usage",
   },
   {
     modeId: "report",
-    labelKo: "Report",
+    labelKo: "보고",
     labelEn: "Report",
     descriptionKo: "보고 관계로 연결",
     descriptionEn: "Connect as reporting relation",
@@ -82,7 +82,7 @@ export const FALLBACK_RELATION_TEMPLATE_CATALOG: TopologyRelationTemplateCatalog
       labelKo: "위임",
       labelEn: "Delegates to",
       descriptionKo: "실행 가능한 서브 에이전트 간 위임 경로",
-      descriptionEn: "Executable delegation path between work nodes",
+      descriptionEn: "Executable delegation path between sub-agents",
       group: "primary",
       layer: "runtime",
       runtimeCandidate: true,
@@ -659,7 +659,7 @@ export function RelationModeToolbar({
               : "border-stone-200 bg-white text-stone-700"
           }`}
         >
-          Smart Connect
+          {text("추천 연결", "Smart Connect")}
         </button>
         {EASY_RELATION_MODES.map((mode) => (
           <button
@@ -710,7 +710,7 @@ export function RelationModeToolbar({
       </div>
       <div className="mt-1 text-[11px] leading-4 text-stone-500" data-testid="relation-mode-compile-note">
         {text(
-          "Next와 Delegate는 실행 path 후보로 저장되며, Approve/Use/Report는 권한·도구·분석 관계로 구분됩니다.",
+          "다음 단계와 위임은 실행 경로 후보로 저장되며, 승인/사용/보고는 권한·도구·분석 관계로 구분됩니다.",
           "Next and Delegate are saved as runtime path candidates; Approve, Use, and Report are separated as authority, technical, or analysis relations.",
         )}
       </div>

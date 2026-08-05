@@ -104,7 +104,7 @@ describe("task006 executor create and understanding", () => {
     expect(createHtml).not.toContain("Context")
     expect(createHtml).not.toContain("업무유형")
     expect(understandingHtml).toContain('data-testid="executor-understanding-panel"')
-    expect(understandingHtml).toContain("노비가 이해한 내용")
+    expect(understandingHtml).toContain("메인 에이전트가 이해한 내용")
     expect(understandingHtml).toContain("저장")
     expect(understandingHtml).not.toContain("필요한 도구")
     expect(understandingHtml).not.toContain("성공 기준")
@@ -163,6 +163,60 @@ describe("task006 executor create and understanding", () => {
     expect(executor.inferredRuntimeMode).toBe("unknown")
     expect(html).toContain('data-testid="executor-understanding-low-confidence"')
     expect(html).toContain('data-ready-for-auto-run="false"')
+  })
+
+  it("uses the current main agent label instead of fixed Knowbee copy in the create panel", () => {
+    const customHtml = renderToStaticMarkup(
+      createElement(ExecutorCreatePanel, {
+        initialName: "고객 접수 담당자",
+        initialDescription: "",
+        rootAgentLabel: "마당쇠",
+        hideUnderstandingUntilReady: true,
+      }),
+    )
+    const defaultAliasHtml = renderToStaticMarkup(
+      createElement(ExecutorCreatePanel, {
+        initialName: "고객 접수 담당자",
+        initialDescription: "",
+        rootAgentLabel: "노비",
+        hideUnderstandingUntilReady: true,
+      }),
+    )
+    const noRootLabelHtml = renderToStaticMarkup(
+      createElement(ExecutorCreatePanel, {
+        initialName: "Customer intake",
+        initialDescription: "",
+        hideUnderstandingUntilReady: true,
+      }),
+    )
+
+    expect(customHtml).toContain("마당쇠가 먼저 추론")
+    expect(customHtml).toContain("마당쇠가 이해한 내용")
+    expect(defaultAliasHtml).toContain("메인 에이전트가 먼저 추론")
+    expect(defaultAliasHtml).toContain("메인 에이전트가 이해한 내용")
+    expect(noRootLabelHtml).toContain("메인 에이전트가 먼저 추론")
+    expect(noRootLabelHtml).not.toContain("Knowbee")
+  })
+
+  it("uses the current main agent label in the visible understanding panel title", () => {
+    const customHtml = renderToStaticMarkup(
+      createElement(ExecutorCreatePanel, {
+        initialName: "고객 접수 담당자",
+        initialDescription: "고객 요청을 읽고 정리한다.",
+        rootAgentLabel: "마당쇠",
+      }),
+    )
+    const defaultAliasHtml = renderToStaticMarkup(
+      createElement(ExecutorCreatePanel, {
+        initialName: "고객 접수 담당자",
+        initialDescription: "고객 요청을 읽고 정리한다.",
+        rootAgentLabel: "Knowbee",
+      }),
+    )
+
+    expect(customHtml).toContain("마당쇠가 이해한 내용")
+    expect(defaultAliasHtml).toContain("메인 에이전트가 이해한 내용")
+    expect(defaultAliasHtml).not.toContain("Knowbee understood")
   })
 })
 

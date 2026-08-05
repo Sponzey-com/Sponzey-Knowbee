@@ -1,44 +1,66 @@
-import { CONTRACT_SCHEMA_VERSION, } from "./index.js";
-export const SUB_AGENT_CONTRACT_SCHEMA_VERSION = CONTRACT_SCHEMA_VERSION;
+export const SUB_AGENT_CONTRACT_SCHEMA_VERSION = 1;
+export const AGENT_STATUSES = [
+    "enabled",
+    "disabled",
+    "archived",
+    "degraded",
+];
 function isRecord(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 function addIssue(issues, path, message) {
     issues.push({ path, code: "contract_validation_failed", message });
 }
-function collapseNicknameWhitespace(value) {
+function collapseAgentNameWhitespace(value) {
     return value.trim().replace(/\s+/gu, " ");
 }
-export function normalizeNicknameSnapshot(value) {
-    return collapseNicknameWhitespace(value);
+export function normalizeAgentNameSnapshot(value) {
+    return collapseAgentNameWhitespace(value);
 }
-export function normalizeNickname(value) {
-    return collapseNicknameWhitespace(value).toLowerCase();
+export function normalizeAgentName(value) {
+    return collapseAgentNameWhitespace(value).toLowerCase();
 }
-export function findNicknameNamespaceConflict(entries) {
+export const DEFAULT_KNOWBEE_AGENT_NAME = "Knowbee";
+export function findAgentNameNamespaceConflict(entries) {
     const seen = new Map();
     for (const entry of entries) {
-        const normalizedNickname = normalizeNickname(entry.nicknameSnapshot);
-        if (!normalizedNickname)
+        const normalizedAgentName = normalizeAgentName(entry.agentNameSnapshot);
+        if (!normalizedAgentName)
             continue;
-        const existing = seen.get(normalizedNickname);
+        const existing = seen.get(normalizedAgentName);
         if (existing &&
             (existing.entityType !== entry.entityType || existing.entityId !== entry.entityId)) {
             return {
-                normalizedNickname,
+                normalizedAgentName,
                 existing,
                 attempted: entry,
             };
         }
-        seen.set(normalizedNickname, entry);
+        seen.set(normalizedAgentName, entry);
     }
     return undefined;
 }
+export function resolveAgentConfigAgentName(config) {
+    const agentName = normalizeAgentNameSnapshot(config.agentName ?? "");
+    if (agentName)
+        return agentName;
+    return config.agentType === "knowbee" ? DEFAULT_KNOWBEE_AGENT_NAME : "Unnamed sub-agent";
+}
+export function buildAgentNameSnapshotFromAgentConfig(config) {
+    const agentName = resolveAgentConfigAgentName(config);
+    return {
+        entityType: config.agentType,
+        entityId: config.agentId,
+        agentName,
+        agentNameSnapshot: agentName,
+    };
+}
 const USER_FACING_DISPLAY_NAME_ALIASES = ["displayName", "display_name", "nameForDisplay"];
+const INTERNAL_IDENTIFIER_PREFIXES = ["agent:", "team:", "session:", "sub_session:"];
 function rejectUserFacingDisplayNameAliases(record, path, issues) {
     for (const key of USER_FACING_DISPLAY_NAME_ALIASES) {
         if (key in record)
-            addIssue(issues, `${path}.${key}`, `${key} is not allowed in user-facing nickname attribution contracts.`);
+            addIssue(issues, `${path}.${key}`, `${key} is not allowed in user-facing agent name attribution contracts.`);
     }
 }
 function hasNonEmptyString(record, key, path, issues) {
@@ -47,11 +69,54 @@ function hasNonEmptyString(record, key, path, issues) {
     addIssue(issues, `${path}.${key}`, `${key} must be a non-empty string.`);
     return false;
 }
-function hasNonEmptyNickname(record, key, path, issues) {
-    if (typeof record[key] === "string" && normalizeNickname(record[key]).length > 0)
+function hasNonEmptyAgentName(record, key, path, issues) {
+    if (typeof record[key] === "string" && normalizeAgentName(record[key]).length > 0)
         return true;
-    addIssue(issues, `${path}.${key}`, `${key} must be a non-empty nickname.`);
+    addIssue(issues, `${path}.${key}`, `${key} must be a non-empty agent name.`);
     return false;
+}
+function looksLikeInternalIdentifier(value) {
+    if (typeof value !== "string")
+        return false;
+    const normalized = normalizeAgentName(value);
+    return INTERNAL_IDENTIFIER_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+function validateAgentConfigNameFields(record, path, issues) {
+    const agentNameIsPresent = hasNonEmptyAgentName(record, "agentName", path, issues);
+    if (agentNameIsPresent &&
+        typeof record.agentName === "string" &&
+        typeof record.agentId === "string" &&
+        normalizeAgentName(record.agentName) === normalizeAgentName(record.agentId)) {
+        addIssue(issues, `${path}.agentName`, "agentName must be a user-facing name, not the internal agentId.");
+    }
+    else if (agentNameIsPresent && looksLikeInternalIdentifier(record.agentName)) {
+        addIssue(issues, `${path}.agentName`, "agentName must not use internal identifier syntax.");
+    }
+    if ("normalizedAgentName" in record && record.normalizedAgentName !== undefined) {
+        const normalizedAgentNameIsPresent = hasNonEmptyAgentName(record, "normalizedAgentName", path, issues);
+        if (normalizedAgentNameIsPresent && looksLikeInternalIdentifier(record.normalizedAgentName)) {
+            addIssue(issues, `${path}.normalizedAgentName`, "normalizedAgentName must not use internal identifier syntax.");
+        }
+        if (typeof record.agentName === "string" &&
+            typeof record.normalizedAgentName === "string" &&
+            normalizedAgentNameIsPresent) {
+            const expected = normalizeAgentName(record.agentName);
+            const actual = normalizeAgentName(record.normalizedAgentName);
+            if (actual !== expected) {
+                addIssue(issues, `${path}.normalizedAgentName`, "normalizedAgentName must match the normalized agentName.");
+            }
+        }
+    }
+    for (const key of USER_FACING_DISPLAY_NAME_ALIASES) {
+        if (key in record)
+            addIssue(issues, `${path}.${key}`, `${key} is not allowed in agent config; use agentName.`);
+    }
+    if ("nickname" in record) {
+        addIssue(issues, `${path}.nickname`, "nickname is not allowed in agent config; use agentName.");
+    }
+    if ("normalizedNickname" in record) {
+        addIssue(issues, `${path}.normalizedNickname`, "normalizedNickname is not allowed in agent config; use normalizedAgentName.");
+    }
 }
 function hasArray(record, key, path, issues) {
     if (Array.isArray(record[key]))
@@ -162,6 +227,14 @@ const MEMORY_RETENTION_POLICIES = new Set([
     "short_term",
     "long_term",
 ]);
+const MEMORY_CAPSULE_MODES = new Set([
+    "session_compaction",
+    "rolling_summary",
+]);
+const MEMORY_ARCHIVE_REFERENCE_MODES = new Set([
+    "summary_reference",
+    "full_reference_disabled",
+]);
 const RESOURCE_LOCK_KINDS = new Set([
     "file",
     "display",
@@ -200,6 +273,25 @@ function hasFiniteNumber(record, key, path, issues, options = {}) {
     addIssue(issues, `${path}.${key}`, `${key} must be ${qualifier}.`);
     return false;
 }
+function optionalNonNegativeIntegerIsValid(value) {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+function validateOptionalNonNegativeInteger(record, key, path, issues) {
+    if (!(key in record) || record[key] === undefined)
+        return true;
+    if (optionalNonNegativeIntegerIsValid(record[key]))
+        return true;
+    addIssue(issues, `${path}.${key}`, `${key} must be a non-negative integer.`);
+    return false;
+}
+function validateOptionalBoolean(record, key, path, issues) {
+    if (!(key in record) || record[key] === undefined)
+        return true;
+    if (typeof record[key] === "boolean")
+        return true;
+    addIssue(issues, `${path}.${key}`, `${key} must be a boolean.`);
+    return false;
+}
 function validateStringArray(value, path, issues, options = {}) {
     if (!Array.isArray(value)) {
         addIssue(issues, path, `${path.split(".").pop() ?? "value"} must be an array.`);
@@ -231,6 +323,37 @@ function validateOwnerScope(value, path, issues) {
     hasNonEmptyString(value, "ownerId", path, issues);
     return true;
 }
+function expectedAgentOwnerScope(value) {
+    if ((value.agentType === "knowbee" || value.agentType === "sub_agent") &&
+        typeof value.agentId === "string" &&
+        value.agentId.trim().length > 0) {
+        return { ownerType: value.agentType, ownerId: value.agentId };
+    }
+    return undefined;
+}
+function ownerScopeMatches(value, expected) {
+    return (isRecord(value) &&
+        value.ownerType === expected.ownerType &&
+        typeof value.ownerId === "string" &&
+        value.ownerId.trim() === expected.ownerId.trim());
+}
+function validateMemoryPolicyAgentOwnerScope(value, path, expectedOwner, issues) {
+    if (!expectedOwner || !isRecord(value))
+        return;
+    if (!ownerScopeMatches(value.owner, expectedOwner)) {
+        addIssue(issues, `${path}.owner`, "memoryPolicy.owner must match the agent owner scope.");
+    }
+    if (Array.isArray(value.readScopes)) {
+        value.readScopes.forEach((scope, index) => {
+            if (!ownerScopeMatches(scope, expectedOwner)) {
+                addIssue(issues, `${path}.readScopes[${index}]`, "memoryPolicy.readScopes must include only the agent owner scope.");
+            }
+        });
+    }
+    if (!ownerScopeMatches(value.writeScope, expectedOwner)) {
+        addIssue(issues, `${path}.writeScope`, "memoryPolicy.writeScope must match the agent owner scope.");
+    }
+}
 function validateMemoryPolicy(value, path, issues) {
     if (!isRecord(value)) {
         addIssue(issues, path, "memoryPolicy must be an object.");
@@ -254,6 +377,30 @@ function validateMemoryPolicy(value, path, issues) {
     }
     if (typeof value.writebackReviewRequired !== "boolean") {
         addIssue(issues, `${path}.writebackReviewRequired`, "writebackReviewRequired must be a boolean.");
+    }
+    const rawWindowSizeIsValid = validateOptionalNonNegativeInteger(value, "rawWindowSize", path, issues);
+    const compactThresholdIsValid = validateOptionalNonNegativeInteger(value, "compactThreshold", path, issues);
+    if ("capsuleMode" in value &&
+        value.capsuleMode !== undefined &&
+        (typeof value.capsuleMode !== "string" ||
+            !MEMORY_CAPSULE_MODES.has(value.capsuleMode))) {
+        addIssue(issues, `${path}.capsuleMode`, "capsuleMode must be session_compaction or rolling_summary.");
+    }
+    if ("archiveReferenceMode" in value &&
+        value.archiveReferenceMode !== undefined &&
+        (typeof value.archiveReferenceMode !== "string" ||
+            !MEMORY_ARCHIVE_REFERENCE_MODES.has(value.archiveReferenceMode))) {
+        addIssue(issues, `${path}.archiveReferenceMode`, "archiveReferenceMode must be summary_reference or full_reference_disabled.");
+    }
+    validateOptionalBoolean(value, "handoffCapsuleAllowed", path, issues);
+    validateOptionalNonNegativeInteger(value, "lastCompactedAt", path, issues);
+    validateOptionalNonNegativeInteger(value, "capsuleCount", path, issues);
+    if (rawWindowSizeIsValid &&
+        compactThresholdIsValid &&
+        optionalNonNegativeIntegerIsValid(value.rawWindowSize) &&
+        optionalNonNegativeIntegerIsValid(value.compactThreshold) &&
+        value.compactThreshold < value.rawWindowSize) {
+        addIssue(issues, `${path}.compactThreshold`, "compactThreshold must be greater than or equal to rawWindowSize.");
     }
     return true;
 }
@@ -484,7 +631,7 @@ function validateRuntimeIdentity(value, path, issues) {
         addIssue(issues, path, "identity must be an object.");
         return false;
     }
-    if (value.schemaVersion !== CONTRACT_SCHEMA_VERSION)
+    if (value.schemaVersion !== SUB_AGENT_CONTRACT_SCHEMA_VERSION)
         addIssue(issues, `${path}.schemaVersion`, "Unsupported contract schema version.");
     if (typeof value.entityType !== "string" ||
         !RELATIONSHIP_ENTITY_TYPES.has(value.entityType)) {
@@ -495,9 +642,9 @@ function validateRuntimeIdentity(value, path, issues) {
     validateOwnerScope(value.owner, `${path}.owner`, issues);
     return true;
 }
-function validateNicknameSnapshot(value, path, issues) {
+function validateAgentNameSnapshot(value, path, issues) {
     if (!isRecord(value)) {
-        addIssue(issues, path, "nickname attribution snapshot must be an object.");
+        addIssue(issues, path, "agent name attribution snapshot must be an object.");
         return false;
     }
     rejectUserFacingDisplayNameAliases(value, path, issues);
@@ -507,8 +654,23 @@ function validateNicknameSnapshot(value, path, issues) {
         addIssue(issues, `${path}.entityType`, "entityType must be knowbee, sub_agent, or team.");
     }
     hasNonEmptyString(value, "entityId", path, issues);
-    hasNonEmptyNickname(value, "nicknameSnapshot", path, issues);
+    hasNonEmptyString(value, "agentNameSnapshot", path, issues);
+    if ("agentName" in value && value.agentName !== undefined) {
+        hasNonEmptyString(value, "agentName", path, issues);
+        if (typeof value.agentName === "string" &&
+            typeof value.agentNameSnapshot === "string" &&
+            normalizeAgentNameSnapshot(value.agentName) !== normalizeAgentNameSnapshot(value.agentNameSnapshot)) {
+            addIssue(issues, `${path}.agentName`, "agentName must match agentNameSnapshot.");
+        }
+    }
     return true;
+}
+function validateAgentAttributionSnapshot(value, path, issues) {
+    if (!isRecord(value)) {
+        addIssue(issues, path, "agent name attribution snapshot must be an object.");
+        return false;
+    }
+    return validateAgentNameSnapshot(value, path, issues);
 }
 function usesExtendedTeamShape(value) {
     return [
@@ -711,17 +873,16 @@ export function validateAgentConfig(value) {
             ],
         };
     }
-    if (value.schemaVersion !== CONTRACT_SCHEMA_VERSION)
+    if (value.schemaVersion !== SUB_AGENT_CONTRACT_SCHEMA_VERSION)
         addIssue(issues, "$.schemaVersion", "Unsupported contract schema version.");
     if (value.agentType !== "knowbee" && value.agentType !== "sub_agent") {
         addIssue(issues, "$.agentType", "agentType must be knowbee or sub_agent.");
     }
-    hasNonEmptyString(value, "agentId", "$", issues);
-    hasNonEmptyString(value, "displayName", "$", issues);
-    hasNonEmptyNickname(value, "nickname", "$", issues);
-    if ("normalizedNickname" in value && value.normalizedNickname !== undefined) {
-        hasNonEmptyNickname(value, "normalizedNickname", "$", issues);
+    if (!AGENT_STATUSES.includes(value.status)) {
+        addIssue(issues, "$.status", "status must be enabled, disabled, archived, or degraded.");
     }
+    hasNonEmptyString(value, "agentId", "$", issues);
+    validateAgentConfigNameFields(value, "$", issues);
     hasNonEmptyString(value, "role", "$", issues);
     hasNonEmptyString(value, "personality", "$", issues);
     validateStringArray(value.specialtyTags, "$.specialtyTags", issues, {
@@ -731,6 +892,7 @@ export function validateAgentConfig(value) {
     if ("modelProfile" in value && value.modelProfile !== undefined)
         validateModelProfile(value.modelProfile, "$.modelProfile", issues);
     validateMemoryPolicy(value.memoryPolicy, "$.memoryPolicy", issues);
+    validateMemoryPolicyAgentOwnerScope(value.memoryPolicy, "$.memoryPolicy", expectedAgentOwnerScope(value), issues);
     validateCapabilityPolicy(value.capabilityPolicy, "$.capabilityPolicy", issues);
     if ("delegationPolicy" in value && value.delegationPolicy !== undefined) {
         validateDelegationPolicy(value.delegationPolicy, "$.delegationPolicy", issues);
@@ -785,14 +947,14 @@ export function validateTeamConfig(value) {
             ],
         };
     }
-    if (value.schemaVersion !== CONTRACT_SCHEMA_VERSION)
+    if (value.schemaVersion !== SUB_AGENT_CONTRACT_SCHEMA_VERSION)
         addIssue(issues, "$.schemaVersion", "Unsupported contract schema version.");
     hasNonEmptyString(value, "teamId", "$", issues);
     hasNonEmptyString(value, "displayName", "$", issues);
-    hasNonEmptyNickname(value, "nickname", "$", issues);
-    if ("normalizedNickname" in value && value.normalizedNickname !== undefined) {
-        hasNonEmptyNickname(value, "normalizedNickname", "$", issues);
-    }
+    if ("nickname" in value)
+        addIssue(issues, "$.nickname", "nickname is not allowed in team config; use displayName.");
+    if ("normalizedNickname" in value)
+        addIssue(issues, "$.normalizedNickname", "normalizedNickname is not allowed in team config.");
     hasNonEmptyString(value, "purpose", "$", issues);
     validateStringArray(value.memberAgentIds, "$.memberAgentIds", issues, {
         requireNonEmptyItems: true,
@@ -863,7 +1025,7 @@ export function validateTeamConfig(value) {
         "permissionProfile",
     ]) {
         if (forbidden in value)
-            addIssue(issues, `$.${forbidden}`, "Teams cannot directly own tools, skills, MCP servers, or permission profiles.");
+            addIssue(issues, `$.${forbidden}`, "Teams cannot directly own tools, work abilities, external feature connections, or permission profiles.");
     }
     return issues.length === 0
         ? { ok: true, value: value, issues: [] }
@@ -886,8 +1048,13 @@ export function validateTeamExecutionPlan(value) {
     hasNonEmptyString(value, "teamExecutionPlanId", "$", issues);
     hasNonEmptyString(value, "parentRunId", "$", issues);
     hasNonEmptyString(value, "teamId", "$", issues);
-    if ("teamNicknameSnapshot" in value && value.teamNicknameSnapshot !== undefined) {
-        hasNonEmptyNickname(value, "teamNicknameSnapshot", "$", issues);
+    if ("teamNameSnapshot" in value &&
+        value.teamNameSnapshot !== undefined &&
+        !(typeof value.teamNameSnapshot === "string" && normalizeAgentName(value.teamNameSnapshot))) {
+        addIssue(issues, "$.teamNameSnapshot", "teamNameSnapshot must be a non-empty team name.");
+    }
+    if ("teamAgentNameSnapshot" in value) {
+        addIssue(issues, "$.teamAgentNameSnapshot", "teamAgentNameSnapshot is not allowed; use teamNameSnapshot.");
     }
     hasNonEmptyString(value, "ownerAgentId", "$", issues);
     hasNonEmptyString(value, "leadAgentId", "$", issues);
@@ -1145,8 +1312,16 @@ export function validateCommandRequest(value) {
     hasNonEmptyString(value, "parentRunId", "$", issues);
     hasNonEmptyString(value, "subSessionId", "$", issues);
     hasNonEmptyString(value, "targetAgentId", "$", issues);
-    if ("targetNicknameSnapshot" in value && value.targetNicknameSnapshot !== undefined) {
-        hasNonEmptyNickname(value, "targetNicknameSnapshot", "$", issues);
+    if ("targetAgentName" in value && value.targetAgentName !== undefined) {
+        hasNonEmptyAgentName(value, "targetAgentName", "$", issues);
+    }
+    if ("targetAgentNameSnapshot" in value && value.targetAgentNameSnapshot !== undefined) {
+        hasNonEmptyAgentName(value, "targetAgentNameSnapshot", "$", issues);
+    }
+    if (typeof value.targetAgentName === "string" &&
+        typeof value.targetAgentNameSnapshot === "string" &&
+        normalizeAgentNameSnapshot(value.targetAgentName) !== normalizeAgentNameSnapshot(value.targetAgentNameSnapshot)) {
+        addIssue(issues, "$.targetAgentName", "targetAgentName must match targetAgentNameSnapshot when both are present.");
     }
     validateStructuredTaskScope(value.taskScope, "$.taskScope", issues);
     validateStringArray(value.contextPackageIds, "$.contextPackageIds", issues, {
@@ -1180,8 +1355,29 @@ export function validateDataExchangePackage(value) {
     hasNonEmptyString(value, "exchangeId", "$", issues);
     validateOwnerScope(value.sourceOwner, "$.sourceOwner", issues);
     validateOwnerScope(value.recipientOwner, "$.recipientOwner", issues);
-    hasNonEmptyNickname(value, "sourceNicknameSnapshot", "$", issues);
-    hasNonEmptyNickname(value, "recipientNicknameSnapshot", "$", issues);
+    if (!(typeof value.sourceAgentNameSnapshot === "string" && normalizeAgentName(value.sourceAgentNameSnapshot))) {
+        addIssue(issues, "$.sourceAgentNameSnapshot", "sourceAgentNameSnapshot must be a non-empty agent name.");
+    }
+    if ("sourceAgentName" in value && value.sourceAgentName !== undefined) {
+        hasNonEmptyString(value, "sourceAgentName", "$", issues);
+        if (typeof value.sourceAgentName === "string" &&
+            typeof value.sourceAgentNameSnapshot === "string" &&
+            normalizeAgentNameSnapshot(value.sourceAgentName) !== normalizeAgentNameSnapshot(value.sourceAgentNameSnapshot)) {
+            addIssue(issues, "$.sourceAgentName", "sourceAgentName must match sourceAgentNameSnapshot.");
+        }
+    }
+    if (!(typeof value.recipientAgentNameSnapshot === "string" && normalizeAgentName(value.recipientAgentNameSnapshot))) {
+        addIssue(issues, "$.recipientAgentNameSnapshot", "recipientAgentNameSnapshot must be a non-empty agent name.");
+    }
+    if ("recipientAgentName" in value && value.recipientAgentName !== undefined) {
+        hasNonEmptyString(value, "recipientAgentName", "$", issues);
+        if (typeof value.recipientAgentName === "string" &&
+            typeof value.recipientAgentNameSnapshot === "string" &&
+            normalizeAgentNameSnapshot(value.recipientAgentName) !==
+                normalizeAgentNameSnapshot(value.recipientAgentNameSnapshot)) {
+            addIssue(issues, "$.recipientAgentName", "recipientAgentName must match recipientAgentNameSnapshot.");
+        }
+    }
     hasNonEmptyString(value, "purpose", "$", issues);
     if (typeof value.allowedUse !== "string" ||
         !DATA_EXCHANGE_ALLOWED_USE.has(value.allowedUse)) {
@@ -1230,7 +1426,7 @@ export function validateResultReport(value, options = {}) {
     hasNonEmptyString(value, "parentRunId", "$", issues);
     hasNonEmptyString(value, "subSessionId", "$", issues);
     if ("source" in value && value.source !== undefined)
-        validateNicknameSnapshot(value.source, "$.source", issues);
+        validateAgentAttributionSnapshot(value.source, "$.source", issues);
     if (typeof value.status !== "string" ||
         !RESULT_REPORT_STATUSES.has(value.status)) {
         addIssue(issues, "$.status", "status must be completed, needs_revision, or failed.");
@@ -1382,12 +1578,33 @@ export function validateFeedbackRequest(value) {
         typeof value.targetAgentId !== "string") {
         addIssue(issues, "$.targetAgentId", "targetAgentId must be a string when present.");
     }
-    if ("targetAgentNicknameSnapshot" in value && value.targetAgentNicknameSnapshot !== undefined) {
-        hasNonEmptyNickname(value, "targetAgentNicknameSnapshot", "$", issues);
+    if ("targetAgentName" in value && value.targetAgentName !== undefined) {
+        hasNonEmptyAgentName(value, "targetAgentName", "$", issues);
     }
-    if ("requestingAgentNicknameSnapshot" in value &&
-        value.requestingAgentNicknameSnapshot !== undefined) {
-        hasNonEmptyNickname(value, "requestingAgentNicknameSnapshot", "$", issues);
+    if ("targetAgentNameSnapshot" in value &&
+        value.targetAgentNameSnapshot !== undefined &&
+        !(typeof value.targetAgentNameSnapshot === "string" && normalizeAgentName(value.targetAgentNameSnapshot))) {
+        addIssue(issues, "$.targetAgentNameSnapshot", "targetAgentNameSnapshot must be a non-empty agent name.");
+    }
+    if (typeof value.targetAgentName === "string" &&
+        typeof value.targetAgentNameSnapshot === "string" &&
+        normalizeAgentNameSnapshot(value.targetAgentName) !== normalizeAgentNameSnapshot(value.targetAgentNameSnapshot)) {
+        addIssue(issues, "$.targetAgentName", "targetAgentName must match targetAgentNameSnapshot when both are present.");
+    }
+    if ("requestingAgentName" in value && value.requestingAgentName !== undefined) {
+        hasNonEmptyAgentName(value, "requestingAgentName", "$", issues);
+    }
+    if ("requestingAgentNameSnapshot" in value &&
+        value.requestingAgentNameSnapshot !== undefined &&
+        !(typeof value.requestingAgentNameSnapshot === "string" &&
+            normalizeAgentName(value.requestingAgentNameSnapshot))) {
+        addIssue(issues, "$.requestingAgentNameSnapshot", "requestingAgentNameSnapshot must be a non-empty agent name.");
+    }
+    if (typeof value.requestingAgentName === "string" &&
+        typeof value.requestingAgentNameSnapshot === "string" &&
+        normalizeAgentNameSnapshot(value.requestingAgentName) !==
+            normalizeAgentNameSnapshot(value.requestingAgentNameSnapshot)) {
+        addIssue(issues, "$.requestingAgentName", "requestingAgentName must match requestingAgentNameSnapshot when both are present.");
     }
     if ("synthesizedContextExchangeId" in value &&
         value.synthesizedContextExchangeId !== undefined &&
@@ -1450,9 +1667,25 @@ export function validateAgentPromptBundle(value) {
     hasNonEmptyString(value, "bundleId", "$", issues);
     hasNonEmptyString(value, "agentId", "$", issues);
     hasNonEmptyString(value, "role", "$", issues);
-    hasNonEmptyString(value, "displayNameSnapshot", "$", issues);
-    hasNonEmptyString(value, "personalitySnapshot", "$", issues);
+    hasNonEmptyString(value, "agentNameSnapshot", "$", issues);
+    if ("agentName" in value && value.agentName !== undefined) {
+        hasNonEmptyString(value, "agentName", "$", issues);
+        if (typeof value.agentName === "string" &&
+            typeof value.agentNameSnapshot === "string" &&
+            normalizeAgentNameSnapshot(value.agentName) !== normalizeAgentNameSnapshot(value.agentNameSnapshot)) {
+            addIssue(issues, "$.agentName", "agentName must match agentNameSnapshot.");
+        }
+    }
+    if ("personalitySnapshot" in value && value.personalitySnapshot !== undefined) {
+        hasNonEmptyString(value, "personalitySnapshot", "$", issues);
+    }
+    if ("promptLayerStack" in value && value.promptLayerStack !== undefined) {
+        if (!Array.isArray(value.promptLayerStack)) {
+            addIssue(issues, "$.promptLayerStack", "promptLayerStack must be an array when present.");
+        }
+    }
     validateMemoryPolicy(value.memoryPolicy, "$.memoryPolicy", issues);
+    validateMemoryPolicyAgentOwnerScope(value.memoryPolicy, "$.memoryPolicy", expectedAgentOwnerScope(value), issues);
     validateCapabilityPolicy(value.capabilityPolicy, "$.capabilityPolicy", issues);
     validateStructuredTaskScope(value.taskScope, "$.taskScope", issues);
     validateStringArray(value.safetyRules, "$.safetyRules", issues, { requireNonEmptyItems: true });
@@ -1506,7 +1739,7 @@ export function validateUserVisibleAgentMessage(value) {
     validateRuntimeIdentity(value.identity, "$.identity", issues);
     hasNonEmptyString(value, "messageId", "$", issues);
     hasNonEmptyString(value, "parentRunId", "$", issues);
-    validateNicknameSnapshot(value.speaker, "$.speaker", issues);
+    validateAgentAttributionSnapshot(value.speaker, "$.speaker", issues);
     hasNonEmptyString(value, "text", "$", issues);
     return issues.length === 0
         ? { ok: true, value: value, issues: [] }
@@ -1530,8 +1763,8 @@ export function validateNamedHandoffEvent(value) {
     validateRuntimeIdentity(value.identity, "$.identity", issues);
     hasNonEmptyString(value, "handoffId", "$", issues);
     hasNonEmptyString(value, "parentRunId", "$", issues);
-    validateNicknameSnapshot(value.sender, "$.sender", issues);
-    validateNicknameSnapshot(value.recipient, "$.recipient", issues);
+    validateAgentAttributionSnapshot(value.sender, "$.sender", issues);
+    validateAgentAttributionSnapshot(value.recipient, "$.recipient", issues);
     hasNonEmptyString(value, "purpose", "$", issues);
     return issues.length === 0
         ? { ok: true, value: value, issues: [] }
@@ -1560,8 +1793,8 @@ export function validateNamedDeliveryEvent(value) {
         value.deliveryKind !== "handoff_context") {
         addIssue(issues, "$.deliveryKind", "deliveryKind must be data_exchange, result_report, or handoff_context.");
     }
-    validateNicknameSnapshot(value.sender, "$.sender", issues);
-    validateNicknameSnapshot(value.recipient, "$.recipient", issues);
+    validateAgentAttributionSnapshot(value.sender, "$.sender", issues);
+    validateAgentAttributionSnapshot(value.recipient, "$.recipient", issues);
     hasNonEmptyString(value, "summary", "$", issues);
     return issues.length === 0
         ? { ok: true, value: value, issues: [] }

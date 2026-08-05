@@ -16,21 +16,50 @@ import {
   type StoreMemoryDocumentResult,
 } from "../db/index.js"
 import { getEmbeddingProvider, encodeEmbedding } from "./embedding.js"
-import { getConfig } from "../config/index.js"
 import { searchMemoryChunks, searchMemoryItems2, type MemoryChunkSearchResult, type MemorySearchResult } from "./search.js"
-import { buildMemoryJournalContext } from "./journal.js"
+import {
+  buildMemoryJournalContext,
+  type MemoryJournalRepository,
+} from "./journal.js"
+import { loadPromptValue } from "./prompt-fragments.js"
+import type { PromptTemplateVariables } from "./knowbee-md.js"
 import { appendRunEvent } from "../runs/store.js"
+import { redactLogText } from "../logger/index.js"
+import {
+  validateLongTermMemoryWriteGate,
+  type LongTermMemoryWriteGateDecision,
+  type LongTermMemoryWriteGateInput,
+} from "./long-term-write-gate.js"
+import type { OwnerScope } from "../contracts/sub-agent-orchestration.js"
+import type { MemoryConfig } from "../config/types.js"
 
 export type { DbMemoryItem }
 export type { MemorySearchResult }
 export type { MemoryChunkSearchResult }
+type MemorySearchMode = "fts" | "vector" | "hybrid"
+type MemoryEmbeddingConfig = Pick<MemoryConfig, "embedding">
 
 const MAX_MEMORY_CHUNK_LENGTH = 1600
 const MEMORY_CHUNK_OVERLAP = 160
+
+function memoryStoreErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
 const DEFAULT_MEMORY_CONTEXT_MAX_CHUNKS = 4
 const DEFAULT_MEMORY_CONTEXT_MAX_CHARS = 2200
 const DEFAULT_MEMORY_CONTEXT_MAX_CHUNK_CHARS = 420
 const MEMORY_CONTEXT_OVERFLOW_NOTE = "..."
+const MEMORY_PROMPT_CONTEXT_LABELS_SOURCE_ID = "memory_prompt_context_labels_user"
+
+function memoryPromptContextLabel(key: string, variables: PromptTemplateVariables = {}): string {
+  const value = loadPromptValue(MEMORY_PROMPT_CONTEXT_LABELS_SOURCE_ID, variables)
+    .split(/\r?\n/u)
+    .find((line) => line.startsWith(`${key}=`))
+    ?.slice(key.length + 1)
+    .trim()
+  return value ?? key
+}
 
 export interface StoreMemoryDocumentParams {
   rawText: string
@@ -41,6 +70,8 @@ export interface StoreMemoryDocumentParams {
   sourceRef?: string
   title?: string
   metadata?: Record<string, unknown>
+  longTermWriteGate?: LongTermMemoryWriteGateInput
+  memoryConfig?: MemoryEmbeddingConfig
 }
 
 export interface DetailedMemorySearchResult extends MemoryChunkSearchResult {}
@@ -90,9 +121,57 @@ function resolveDocumentOwnerId(params: { scope: MemoryScope; ownerId?: string; 
   return undefined
 }
 
+function resolveLongTermDocumentOwnerId(ownerId: string | undefined): string {
+  return ownerId?.trim() || "global"
+}
+
+function buildMissingLongTermWriteGate(ownerId: string): LongTermMemoryWriteGateInput {
+  return {
+    targetOwner: { ownerType: "knowbee", ownerId },
+    category: undefined as never,
+    storageNeed: undefined as never,
+    sensitivity: undefined as never,
+    userIntent: undefined as never,
+    sourceEvidenceRefs: [],
+    retentionPurpose: "",
+  }
+}
+
+function validateStoreLongTermWriteGate(params: StoreMemoryDocumentParams): LongTermMemoryWriteGateDecision | undefined {
+  if (params.scope !== "long-term") return undefined
+  const ownerId = resolveLongTermDocumentOwnerId(params.ownerId)
+  const input = params.longTermWriteGate ?? buildMissingLongTermWriteGate(ownerId)
+  const expectedOwner: OwnerScope = {
+    ownerType: input.targetOwner.ownerType,
+    ownerId,
+  }
+  const decision = validateLongTermMemoryWriteGate(input, { expectedOwner })
+  if (!decision.ok) {
+    throw new Error(`long-term memory write gate failed: ${decision.issueCodes.join(", ")}`)
+  }
+  return decision
+}
+
+function buildLongTermWriteGateMetadata(
+  decision: LongTermMemoryWriteGateDecision | undefined,
+): Record<string, unknown> {
+  if (!decision) return {}
+  return {
+    longTermWriteGate: "approved",
+    longTermWriteGateCategory: decision.category,
+    longTermWriteGateTargetOwnerScopeKey: decision.targetOwnerScopeKey,
+    longTermWriteGateStorageNeed: decision.storageNeed,
+    longTermWriteGateSensitivity: decision.sensitivity,
+    longTermWriteGateUserIntent: decision.userIntent,
+    longTermWriteGateSourceEvidenceRefs: decision.sourceEvidenceRefs,
+    longTermWriteGateRetentionPurpose: decision.retentionPurpose,
+  }
+}
+
 export async function storeMemoryDocument(params: StoreMemoryDocumentParams): Promise<StoreMemoryDocumentResult> {
   const rawText = params.rawText.trim()
   if (!rawText) throw new Error("memory document text is empty")
+  const longTermWriteGate = validateStoreLongTermWriteGate(params)
   const chunks = chunkMemoryText(rawText)
   const result = storeMemoryDocumentRecord({
     scope: params.scope,
@@ -102,7 +181,10 @@ export async function storeMemoryDocument(params: StoreMemoryDocumentParams): Pr
     ...(params.title ? { title: params.title } : {}),
     rawText,
     checksum: checksumText(rawText),
-    ...(params.metadata ? { metadata: params.metadata } : {}),
+    metadata: {
+      ...(params.metadata ?? {}),
+      ...buildLongTermWriteGateMetadata(longTermWriteGate),
+    },
     chunks: chunks.map((content, ordinal) => ({
       ordinal,
       tokenEstimate: estimateTokens(content),
@@ -113,14 +195,14 @@ export async function storeMemoryDocument(params: StoreMemoryDocumentParams): Pr
   })
 
   if (!result.deduplicated) {
-    await ensureChunkEmbeddings(result.documentId, result.chunkIds)
+    await ensureChunkEmbeddings(result.documentId, result.chunkIds, params.memoryConfig)
   }
 
   return result
 }
 
-async function ensureChunkEmbeddings(documentId: string, chunkIds: string[]): Promise<void> {
-  const provider = getEmbeddingProvider()
+async function ensureChunkEmbeddings(documentId: string, chunkIds: string[], memoryConfig?: MemoryEmbeddingConfig): Promise<void> {
+  const provider = getEmbeddingProvider(memoryConfig)
   if (provider.dimensions <= 0 || chunkIds.length === 0) {
     markMemoryIndexJobDisabled(documentId, "embedding provider is not configured")
     return
@@ -148,7 +230,7 @@ async function ensureChunkEmbeddings(documentId: string, chunkIds: string[]): Pr
     }
     markMemoryIndexJobCompleted(documentId)
   } catch (err) {
-    markMemoryIndexJobFailed(documentId, err instanceof Error ? err.message : String(err))
+    markMemoryIndexJobFailed(documentId, memoryStoreErrorMessage(err))
   }
 }
 
@@ -164,6 +246,8 @@ export async function storeMemory(params: {
   requestGroupId?: string
   runId?: string
   type?: "user_fact" | "session_summary" | "project_note"
+  longTermWriteGate?: LongTermMemoryWriteGateInput
+  memoryConfig?: MemoryEmbeddingConfig
 }): Promise<string> {
   const id = insertMemoryItem(params)
   const ownerId = resolveDocumentOwnerId({
@@ -182,6 +266,8 @@ export async function storeMemory(params: {
     sourceType: params.type ?? "user_fact",
     sourceRef: id,
     title: params.type ?? "memory_item",
+    ...(params.longTermWriteGate ? { longTermWriteGate: params.longTermWriteGate } : {}),
+    ...(params.memoryConfig ? { memoryConfig: params.memoryConfig } : {}),
     metadata: {
       tags: params.tags ?? [],
       importance: params.importance ?? "medium",
@@ -190,7 +276,7 @@ export async function storeMemory(params: {
   })
 
   // Async embed and update
-  const provider = getEmbeddingProvider()
+  const provider = getEmbeddingProvider(params.memoryConfig)
   if (provider.dimensions > 0) {
     try {
       const vec = await provider.embed(params.content)
@@ -218,6 +304,8 @@ export function storeMemorySync(params: {
   requestGroupId?: string
   runId?: string
   type?: "user_fact" | "session_summary" | "project_note"
+  longTermWriteGate?: LongTermMemoryWriteGateInput
+  memoryConfig?: MemoryEmbeddingConfig
 }): string {
   const id = insertMemoryItem(params)
   const ownerId = resolveDocumentOwnerId({
@@ -235,6 +323,8 @@ export function storeMemorySync(params: {
     sourceType: params.type ?? "session_summary",
     sourceRef: id,
     title: params.type ?? "memory_item",
+    ...(params.longTermWriteGate ? { longTermWriteGate: params.longTermWriteGate } : {}),
+    ...(params.memoryConfig ? { memoryConfig: params.memoryConfig } : {}),
     metadata: {
       tags: params.tags ?? [],
       importance: params.importance ?? "medium",
@@ -245,9 +335,20 @@ export function storeMemorySync(params: {
   return id
 }
 
-export async function searchMemoryDetailed(query: string, limit = 5, filters?: MemorySearchFilters): Promise<DetailedMemorySearchResult[]> {
-  const mode = getConfig().memory?.searchMode ?? "fts"
-  const results = await searchMemoryChunks(query, limit, mode, filters)
+export async function searchMemoryDetailed(
+  query: string,
+  limit = 5,
+  filters?: MemorySearchFilters,
+  options: { searchMode?: MemorySearchMode | undefined; memoryConfig?: MemoryEmbeddingConfig } = {},
+): Promise<DetailedMemorySearchResult[]> {
+  const mode = options.searchMode ?? "fts"
+  const results = await searchMemoryChunks(
+    query,
+    limit,
+    mode,
+    filters,
+    options.memoryConfig ? { memoryConfig: options.memoryConfig } : undefined,
+  )
   for (const result of results) {
     recordMemoryAccessLog({
       ...(filters?.runId ? { runId: filters.runId } : {}),
@@ -287,10 +388,16 @@ export async function searchMemory(query: string, limit = 5, filters?: {
   sessionId?: string
   runId?: string
   requestGroupId?: string
-}): Promise<DbMemoryItem[]> {
-  const mode = getConfig().memory?.searchMode ?? "fts"
+}, options: { searchMode?: MemorySearchMode | undefined; memoryConfig?: MemoryEmbeddingConfig } = {}): Promise<DbMemoryItem[]> {
+  const mode = options.searchMode ?? "fts"
   try {
-    const results = await searchMemoryItems2(query, limit, mode, filters)
+    const results = await searchMemoryItems2(
+      query,
+      limit,
+      mode,
+      filters,
+      options.memoryConfig ? { memoryConfig: options.memoryConfig } : undefined,
+    )
     return results.map((r) => r.item)
   } catch {
     return []
@@ -344,20 +451,25 @@ export function buildMemoryInjectionContext(
     usedChars += line.length + 1
   }
 
-  return lines.length > 0 ? `[관련 기억]\n${lines.join("\n")}` : ""
+  return lines.length > 0 ? `${memoryPromptContextLabel("relevant_memory_header")}\n${lines.join("\n")}` : ""
 }
 
 /** Build a formatted memory context block for system prompt injection */
 export async function buildMemoryContext(params: {
+  journalRepository: MemoryJournalRepository
   query: string
   sessionId?: string
   requestGroupId?: string
   runId?: string
   scheduleId?: string
+  ownerScope?: MemorySearchFilters["ownerScope"]
+  recipientScope?: MemorySearchFilters["recipientScope"]
   includeSchedule?: boolean
   includeArtifact?: boolean
   includeDiagnostic?: boolean
   includeFlashFeedback?: boolean
+  searchMode?: MemorySearchMode
+  memoryConfig?: MemoryEmbeddingConfig
   budget?: MemoryContextBudget
 }): Promise<string> {
   const memoryBudget = params.budget ?? {}
@@ -368,17 +480,22 @@ export async function buildMemoryContext(params: {
       ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
       ...(params.runId ? { runId: params.runId } : {}),
       ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
+      ...(params.ownerScope ? { ownerScope: params.ownerScope } : {}),
+      ...(params.recipientScope ? { recipientScope: params.recipientScope } : {}),
       ...(params.includeSchedule ? { includeSchedule: params.includeSchedule } : {}),
       ...(params.includeArtifact ? { includeArtifact: params.includeArtifact } : {}),
       ...(params.includeDiagnostic ? { includeDiagnostic: params.includeDiagnostic } : {}),
       ...(params.includeFlashFeedback ? { includeFlashFeedback: params.includeFlashFeedback } : {}),
+    }, {
+      searchMode: params.searchMode ?? "fts",
+      ...(params.memoryConfig ? { memoryConfig: params.memoryConfig } : {}),
     }),
     Promise.resolve(buildMemoryJournalContext(params.query, {
       limit: 6,
       ...(params.sessionId ? { sessionId: params.sessionId } : {}),
       ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
       ...(params.runId ? { runId: params.runId } : {}),
-    })),
+    }, params.journalRepository)),
   ])
 
   const relatedMemoryContext = buildMemoryInjectionContext(results, memoryBudget)

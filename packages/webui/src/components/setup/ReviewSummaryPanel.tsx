@@ -17,14 +17,14 @@ export function ReviewSummaryPanel({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.18em] opacity-70">
-              {text("Readiness Board", "Readiness Board")}
+              {text("준비 상태", "Readiness Board")}
             </div>
             <div className="mt-2 text-lg font-semibold">{board.overallTitle}</div>
             <div className="mt-2 text-sm leading-6">{displayText(board.overallMessage)}</div>
           </div>
           <div className="grid gap-2 text-sm">
             <MetricPill label={text("준비 단계", "Ready steps")} value={`${board.readyCount}/${board.totalCount}`} />
-            <MetricPill label={text("준비 capability", "Ready capabilities")} value={`${board.capabilityReadyCount}/${board.capabilityTotalCount}`} />
+            <MetricPill label={text("준비 기능", "Ready capabilities")} value={`${board.capabilityReadyCount}/${board.capabilityTotalCount}`} />
           </div>
         </div>
       </div>
@@ -83,7 +83,7 @@ export function ReviewSummaryPanel({
           onSelectStep={onSelectStep}
         />
         <div className="rounded-3xl border border-stone-200 bg-white p-5">
-          <div className="text-sm font-semibold text-stone-900">{text("저장 전 snapshot", "Pre-finish snapshot")}</div>
+          <div className="text-sm font-semibold text-stone-900">{text("저장 전 요약", "Pre-finish snapshot")}</div>
           <div className="mt-4 space-y-3">
             {board.snapshot.map((item) => (
               <div key={item.label} className="rounded-2xl bg-stone-50 px-4 py-3 text-sm text-stone-700">

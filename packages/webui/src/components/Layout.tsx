@@ -1,18 +1,23 @@
+// biome-ignore lint/style/useImportType: the SSR test transform requires the classic JSX runtime.
 import * as React from "react"
 import { Link, useLocation } from "react-router-dom"
 import { uiCatalogText } from "../lib/message-catalog"
 import { useUiI18n } from "../lib/ui-i18n"
 import { getUiNavigation } from "../lib/ui-mode"
 import { useCapabilitiesStore } from "../stores/capabilities"
+import { useChatStore } from "../stores/chat"
 import { useConnectionStore } from "../stores/connection"
 import { useRunsStore } from "../stores/runs"
-import { useChatStore } from "../stores/chat"
 import { useSetupStore } from "../stores/setup"
 import { pickUiText, useUiLanguageStore } from "../stores/uiLanguage"
 import { useUiModeStore } from "../stores/uiMode"
 import { CapabilityBadge } from "./CapabilityBadge"
 import { CommandPalette } from "./CommandPalette"
 import { UiLanguageSwitcher } from "./UiLanguageSwitcher"
+import {
+  SettingsNavigationGuardProvider,
+  useSettingsNavigationGuard,
+} from "./settings/SettingsNavigationGuard"
 
 function isActive(pathname: string, itemPath: string) {
   return pathname === itemPath || pathname.startsWith(`${itemPath}/`)
@@ -28,6 +33,14 @@ function SetupStatusRow({ label, value }: { label: string; value: string }) {
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <SettingsNavigationGuardProvider>
+      <LayoutContent>{children}</LayoutContent>
+    </SettingsNavigationGuardProvider>
+  )
+}
+
+function LayoutContent({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const uiLanguage = useUiLanguageStore((state) => state.language)
   const msg = (
@@ -61,10 +74,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
       ? tasksComponent.configSummary.total
       : storeActiveRuns
   const setupInProgress = location.pathname === "/setup" && !setupCompleted
+  const { interceptLink } = useSettingsNavigationGuard()
 
   return (
     <div className="flex h-screen overflow-hidden flex-col bg-stone-100 text-stone-900 lg:flex-row">
-      <aside className="relative z-[80] flex max-h-48 w-full shrink-0 flex-col border-b border-stone-200 bg-[#111111] text-stone-100 lg:max-h-none lg:w-72 lg:border-b-0 lg:border-r">
+      <a
+        href="#main-content"
+        className="sr-only fixed left-3 top-3 z-[120] bg-white px-4 py-3 text-sm font-semibold text-stone-950 shadow-lg focus:not-sr-only focus:outline-none focus:shadow-[var(--ui-focus-shadow)]"
+      >
+        {pickUiText(uiLanguage, "본문으로 건너뛰기", "Skip to main content")}
+      </a>
+      <aside className="relative z-[80] flex max-h-48 w-full shrink-0 flex-col overflow-x-hidden overflow-y-auto border-b border-stone-200 bg-[#111111] text-stone-100 lg:max-h-none lg:w-72 lg:overflow-hidden lg:border-b-0 lg:border-r">
         <div className="border-b border-white/10 px-6 py-5">
           <div className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">
             {msg("layout.brand.eyebrow")}
@@ -80,12 +100,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
           <UiLanguageSwitcher className="mt-4 border-white/10 bg-white/5" />
           {setupInProgress ? (
-            <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3 text-xs leading-5 text-stone-300" data-layout-setup-locked-command="true">
+            <div
+              className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3 text-xs leading-5 text-stone-300"
+              data-layout-setup-locked-command="true"
+            >
               <div className="font-semibold text-stone-100">
                 {pickUiText(uiLanguage, "초기 설정 진행 중", "Initial setup in progress")}
               </div>
               <div className="mt-1 text-stone-500">
-                {pickUiText(uiLanguage, "설정을 마친 뒤 대화와 명령을 사용할 수 있습니다.", "Chat and commands become available after setup is complete.")}
+                {pickUiText(
+                  uiLanguage,
+                  "설정을 마친 뒤 대화와 명령을 사용할 수 있습니다.",
+                  "Chat and commands become available after setup is complete.",
+                )}
               </div>
             </div>
           ) : (
@@ -120,7 +147,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
           ) : null}
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-4" aria-label={setupInProgress ? pickUiText(uiLanguage, "초기 설정 상태", "Initial setup status") : msg("layout.nav.title")}>
+        <nav
+          className="flex-1 overflow-y-auto px-3 py-4"
+          aria-label={
+            setupInProgress
+              ? pickUiText(uiLanguage, "초기 설정 상태", "Initial setup status")
+              : msg("layout.nav.title")
+          }
+        >
           {setupInProgress ? (
             <div className="space-y-3" data-layout-setup-status-panel="true">
               <div className="px-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-500">
@@ -131,7 +165,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   {pickUiText(uiLanguage, "초기 설정", "Initial setup")}
                 </div>
                 <div className="mt-2 text-xs leading-5 text-stone-500">
-                  {pickUiText(uiLanguage, "필수 설정 완료 전 상태 요약입니다.", "Status summary before required setup is complete.")}
+                  {pickUiText(
+                    uiLanguage,
+                    "필수 설정 완료 전 상태 요약입니다.",
+                    "Status summary before required setup is complete.",
+                  )}
                 </div>
               </div>
               <div className="grid gap-2 px-1 text-xs text-stone-400">
@@ -145,7 +183,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 />
                 <SetupStatusRow
                   label={pickUiText(uiLanguage, "연장", "Extension")}
-                  value={yeonjangComponent?.statusLabel ?? pickUiText(uiLanguage, "대기 중", "Idle")}
+                  value={
+                    yeonjangComponent?.statusLabel ?? pickUiText(uiLanguage, "대기 중", "Idle")
+                  }
                 />
               </div>
             </div>
@@ -165,6 +205,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     <Link
                       key={item.path}
                       to={item.path}
+                      onClick={(event) => interceptLink(event, item.path)}
                       className={`block rounded-2xl border px-3 py-3 transition ${
                         active
                           ? "border-stone-700 bg-stone-800 text-white"
@@ -181,7 +222,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
                         </div>
                       ) : item.descriptionKo || item.descriptionEn ? (
                         <div className="mt-2 text-xs text-stone-500">
-                          {pickUiText(uiLanguage, item.descriptionKo ?? "", item.descriptionEn ?? "")}
+                          {pickUiText(
+                            uiLanguage,
+                            item.descriptionKo ?? "",
+                            item.descriptionEn ?? "",
+                          )}
                         </div>
                       ) : capability?.reason ? (
                         <div className="mt-2 line-clamp-2 text-xs leading-5 text-stone-500">
@@ -210,7 +255,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <main className="relative z-0 min-h-0 min-w-0 flex-1 overflow-hidden">{children}</main>
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="relative z-0 min-h-0 min-w-0 flex-1 overflow-hidden focus:outline-none"
+      >
+        {children}
+      </main>
     </div>
   )
 }

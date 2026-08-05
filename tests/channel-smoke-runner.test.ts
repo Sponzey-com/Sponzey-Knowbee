@@ -3,18 +3,25 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 import { DEFAULT_CONFIG, type KnowbeeConfig } from "../packages/core/src/config/types.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { closeDb, listChannelSmokeRuns, listChannelSmokeSteps } from "../packages/core/src/db/index.js"
+import {
+  closeDb,
+  getChannelSmokeRun,
+  insertChannelSmokeRun,
+  listChannelSmokeRuns,
+  listChannelSmokeSteps,
+} from "../packages/core/src/db/index.js"
 import {
   createDryRunChannelSmokeExecutor,
   getDefaultChannelSmokeScenarios,
   resolveChannelSmokeReadiness,
+  recoverInterruptedGatewayChannelSmokeRuns,
   runChannelSmokeScenarios,
   runPersistedChannelSmokeScenarios,
   validateChannelSmokeTrace,
   type ChannelSmokeScenario,
   type ChannelSmokeTrace,
 } from "../packages/core/src/channels/smoke-runner.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 function configWithChannels(patch: Partial<KnowbeeConfig> = {}): KnowbeeConfig {
   return {
@@ -39,8 +46,41 @@ function passingTrace(current: ChannelSmokeScenario): ChannelSmokeTrace {
       requestGroupId: `run-${current.id}`,
       requestGroupMatchesRunId: true,
       decisionTracePresent: true,
+      requestDiagnosisReceiptId: `diagnosis-${current.id}`,
+      solutionPlanReceiptId: `plan-${current.id}`,
+      resultReviewReceiptId: `review-${current.id}`,
+      finalResponseReceiptId: `final-response-${current.id}`,
+      decisionReceiptOrderValid: true,
+      ...(current.kind === "web_skill" ||
+      current.kind === "approval_required_tool" ||
+      current.kind === "artifact_delivery"
+        ? {
+            capabilityAdmissionRequired: true,
+            capabilityAdmissionReceiptId: `capability-admission-${current.id}`,
+          }
+        : {}),
       topologyRunCreated: true,
       providerDirectUsed: false,
+    },
+    finalization: {
+      rootOwnerFinalized: true,
+      finalAnswerCount: 1,
+    },
+    latency: {
+      metricId: `latency-${current.id}`,
+      runId: `run-${current.id}`,
+      requestGroupId: `run-${current.id}`,
+      firstResponseLatencyMs: 500,
+      firstResponseBudgetMs: 30_000,
+      firstResponseStatus: "ok",
+      terminalResponseLatencyMs: 800,
+    },
+    finalDelivery: {
+      delivered: true,
+      targetChannel: current.expectedTarget,
+      correlationKey: current.correlationKey,
+      receiptRef: `delivery-${current.id}`,
+      userVisible: true,
     },
     auditLogId: `audit-${current.id}`,
     toolCalls: current.expectedTool
@@ -72,12 +112,43 @@ function passingTrace(current: ChannelSmokeScenario): ChannelSmokeTrace {
 }
 
 describe("channel smoke runner", () => {
+  it("accepts a basic query completed by the canonical direct-response path", () => {
+    const webui = scenario("webui.basic_query")
+    const trace = passingTrace(webui)
+    trace.requestFlow = {
+      runId: "run-webui.basic_query",
+      requestGroupId: "run-webui.basic_query",
+      requestGroupMatchesRunId: true,
+      flowKind: "direct_response",
+      directResponseReceiptId: "llm-invocation:direct",
+      topologyRunCreated: false,
+      providerDirectUsed: false,
+    }
+
+    expect(validateChannelSmokeTrace(webui, trace)).toEqual({
+      status: "passed",
+      failures: [],
+    })
+  })
+
+  it("accepts canonical self-solve execution without a delegated topology run", () => {
+    const webui = scenario("webui.web_skill")
+    const trace = passingTrace(webui)
+    if (!trace.requestFlow) throw new Error("request flow required")
+    trace.requestFlow.topologyRunCreated = false
+
+    expect(validateChannelSmokeTrace(webui, trace)).toEqual({
+      status: "passed",
+      failures: [],
+    })
+  })
+
   it("defines four smoke scenarios per supported user channel", () => {
     const scenarios = getDefaultChannelSmokeScenarios()
 
-    expect(scenarios).toHaveLength(28)
-    expect(scenarios.filter((item) => item.channel === "webui")).toHaveLength(4)
-    expect(scenarios.filter((item) => item.channel === "telegram")).toHaveLength(4)
+    expect(scenarios).toHaveLength(30)
+    expect(scenarios.filter((item) => item.channel === "webui")).toHaveLength(5)
+    expect(scenarios.filter((item) => item.channel === "telegram")).toHaveLength(5)
     expect(scenarios.filter((item) => item.channel === "slack")).toHaveLength(4)
     expect(scenarios.filter((item) => item.channel === "discord")).toHaveLength(4)
     expect(scenarios.filter((item) => item.channel === "google_chat")).toHaveLength(4)
@@ -128,6 +199,37 @@ describe("channel smoke runner", () => {
     const slack = scenario("slack.approval_required_tool")
 
     expect(validateChannelSmokeTrace(slack, passingTrace(slack))).toEqual({
+      status: "passed",
+      failures: [],
+    })
+  })
+
+  it("requires run-bound latency evidence without making the 30-second objective terminal", () => {
+    const webui = scenario("webui.basic_query")
+    const missing = passingTrace(webui)
+    delete missing.latency
+    expect(validateChannelSmokeTrace(webui, missing)).toMatchObject({
+      status: "failed",
+      failures: expect.arrayContaining(["latency_evidence_missing"]),
+    })
+
+    const crossRun = passingTrace(webui)
+    crossRun.latency = {
+      ...crossRun.latency!,
+      runId: "run:other",
+    }
+    expect(validateChannelSmokeTrace(webui, crossRun)).toMatchObject({
+      status: "failed",
+      failures: expect.arrayContaining(["latency_evidence_binding_mismatch"]),
+    })
+
+    const late = passingTrace(webui)
+    late.latency = {
+      ...late.latency!,
+      firstResponseLatencyMs: 30_001,
+      firstResponseStatus: "timeout",
+    }
+    expect(validateChannelSmokeTrace(webui, late)).toEqual({
       status: "passed",
       failures: [],
     })
@@ -226,7 +328,25 @@ describe("channel smoke runner", () => {
     expect(result.failures).toContain("unsupported_capability_ui_missing")
   })
 
-  it("fails traces that bypass root-run isolation or topology execution", () => {
+  it("uses one explicit unsupported method request for provider failure scenarios", () => {
+    const failureScenarios = getDefaultChannelSmokeScenarios().filter(
+      (candidate) =>
+        candidate.kind === "failure_tool" &&
+        ["webui", "telegram", "slack", "discord", "google_chat"].includes(candidate.channel),
+    )
+
+    expect(failureScenarios).toHaveLength(5)
+    for (const failureScenario of failureScenarios) {
+      expect(failureScenario.request).toBe(
+        '기능 ID "missing_capability"를 우선 사용해 그 기능의 health 상태를 확인해줘. 사용할 수 없다면 허용된 대체 경로를 검토하고, 확인할 수 없으면 실패 결과를 보고해.',
+      )
+      expect(failureScenario.request).not.toContain("현재 선택된 연장")
+      expect(failureScenario.request).not.toContain("missing_extension_tool")
+      expect(failureScenario.request).not.toBe("지원하지 않는 연장 기능을 실행해줘")
+    }
+  })
+
+  it("fails traces that bypass root-run isolation or use provider-direct execution", () => {
     const webui = scenario("webui.basic_query")
 
     const result = validateChannelSmokeTrace(webui, {
@@ -245,8 +365,23 @@ describe("channel smoke runner", () => {
     expect(result.failures).toEqual(expect.arrayContaining([
       "request_group_id_not_run_id",
       "decision_trace_missing",
-      "topology_run_missing",
       "provider_direct_used",
+    ]))
+  })
+
+  it("fails action traces that omit the capability admission requirement and receipt", () => {
+    const webui = scenario("webui.web_skill")
+    const trace = passingTrace(webui)
+    if (!trace.requestFlow) throw new Error("request flow required")
+    delete trace.requestFlow.capabilityAdmissionRequired
+    delete trace.requestFlow.capabilityAdmissionReceiptId
+
+    const result = validateChannelSmokeTrace(webui, trace)
+
+    expect(result.status).toBe("failed")
+    expect(result.failures).toEqual(expect.arrayContaining([
+      "capability_admission_requirement_missing",
+      "capability_admission_receipt_missing",
     ]))
   })
 
@@ -266,14 +401,35 @@ describe("channel smoke runner", () => {
     expect(executeScenario).toHaveBeenCalledTimes(1)
   })
 
+  it("redacts scenario execution failures before storing smoke reasons", async () => {
+    const rawToken = "sk-smoke-secret-1234567890"
+    const rawPath = "/Users/example/private/channel-smoke.json"
+    const scenarios = [scenario("webui.basic_query")]
+
+    const results = await runChannelSmokeScenarios({
+      config: configWithChannels(),
+      scenarios,
+      executeScenario: async () => {
+        throw new Error(`smoke failed token=${rawToken} path=${rawPath}`)
+      },
+    })
+    const serialized = JSON.stringify(results)
+
+    expect(results[0]).toMatchObject({
+      status: "failed",
+      failures: ["scenario_execution_failed"],
+    })
+    expect(results[0]?.reason).toContain("***")
+    expect(results[0]?.reason).toContain("[internal-path-redacted]")
+    expect(serialized).not.toContain(rawToken)
+    expect(serialized).not.toContain(rawPath)
+  })
+
+
   it("persists sanitized dry-run smoke results for later UI and CLI inspection", async () => {
-    const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-    const previousConfig = process.env["KNOWBEE_CONFIG"]
     const stateDir = mkdtempSync(join(tmpdir(), "knowbee-channel-smoke-runner-"))
     closeDb()
-    process.env["KNOWBEE_STATE_DIR"] = stateDir
-    delete process.env["KNOWBEE_CONFIG"]
-    reloadConfig()
+    initializeTestDbRuntime(stateDir)
 
     try {
       const result = await runPersistedChannelSmokeScenarios({
@@ -314,11 +470,68 @@ describe("channel smoke runner", () => {
       expect(steps[0]?.trace_json).toContain("***")
     } finally {
       closeDb()
-      if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-      else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-      if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-      else process.env["KNOWBEE_CONFIG"] = previousConfig
-      reloadConfig()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it("reconciles only prior Gateway-owned smoke runs after restart", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "knowbee-channel-smoke-recovery-"))
+    closeDb()
+    initializeTestDbRuntime(stateDir)
+
+    try {
+      insertChannelSmokeRun({
+        id: "gateway-webui-old",
+        mode: "live-run",
+        status: "running",
+        startedAt: 1_000,
+        scenarioCount: 3,
+        initiatedBy: "webui",
+      })
+      insertChannelSmokeRun({
+        id: "gateway-release-old",
+        mode: "live-run",
+        status: "running",
+        startedAt: 1_001,
+        scenarioCount: 2,
+        initiatedBy: "release-live-acceptance",
+      })
+      insertChannelSmokeRun({
+        id: "cli-old",
+        mode: "dry-run",
+        status: "running",
+        startedAt: 900,
+        scenarioCount: 1,
+        initiatedBy: "cli",
+      })
+      insertChannelSmokeRun({
+        id: "gateway-current",
+        mode: "live-run",
+        status: "running",
+        startedAt: 2_000,
+        scenarioCount: 1,
+        initiatedBy: "webui",
+      })
+
+      expect(recoverInterruptedGatewayChannelSmokeRuns({
+        gatewayStartedAt: 2_000,
+        recoveredAt: 2_100,
+      })).toEqual({ recoveredCount: 2 })
+      expect(getChannelSmokeRun("gateway-webui-old")).toMatchObject({
+        status: "failed",
+        finished_at: 2_100,
+        scenario_count: 3,
+        summary: "channel smoke failed: gateway_restart_interrupted",
+      })
+      expect(getChannelSmokeRun("gateway-release-old")?.status).toBe("failed")
+      expect(getChannelSmokeRun("cli-old")?.status).toBe("running")
+      expect(getChannelSmokeRun("gateway-current")?.status).toBe("running")
+      expect(recoverInterruptedGatewayChannelSmokeRuns({
+        gatewayStartedAt: 2_000,
+        recoveredAt: 2_200,
+      })).toEqual({ recoveredCount: 0 })
+    } finally {
+      closeDb()
       rmSync(stateDir, { recursive: true, force: true })
     }
   })

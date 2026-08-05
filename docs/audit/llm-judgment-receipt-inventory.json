@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "requirementId": "PRJ-a502bdca",
+  "paths": [
+    {
+      "id": "canonical-loop-root",
+      "status": "enforced",
+      "requestDiagnosisOwner": "agent/intake.ts and runs/canonical-intake-diagnosis.ts",
+      "solutionProcedureOwner": "runs/canonical-intake-plan.ts and canonical work lifecycle",
+      "resultDiagnosisOwner": "agent/completion-review.ts and runs/canonical-finalization-lifecycle.ts",
+      "terminalGate": "runs/review-outcome-pass.ts"
+    },
+    {
+      "id": "topology-root",
+      "status": "enforced",
+      "requestDiagnosisOwner": "topology-runtime/harness.ts request diagnosis provider",
+      "solutionProcedureOwner": "topology-runtime/harness.ts solution plan provider",
+      "resultDiagnosisOwner": "topology-runtime/harness.ts result diagnosis provider",
+      "terminalGate": "runs/canonical-topology-lifecycle.ts"
+    },
+    {
+      "id": "simple-conversation",
+      "status": "enforced",
+      "requestDiagnosisOwner": "agent/intake.ts LLM intake",
+      "solutionProcedureOwner": "not applicable: no external execution; LLM direct-answer contract is explicit",
+      "resultDiagnosisOwner": "runs/finalization.ts LLM response review",
+      "terminalGate": "runs/intake-bridge-pass.ts and runs/user-facing-response-gate.ts"
+    },
+    {
+      "id": "tool-backed-loop-root",
+      "status": "enforced",
+      "requestDiagnosisOwner": "agent/intake.ts",
+      "solutionProcedureOwner": "root execution loop and admitted execution decision",
+      "resultDiagnosisOwner": "agent/completion-review.ts",
+      "terminalGate": "runs/review-gate.ts forbids review skip when successful tool evidence exists"
+    },
+    {
+      "id": "delegated-child",
+      "status": "enforced",
+      "requestDiagnosisOwner": "runs/orchestration-dispatch.ts",
+      "solutionProcedureOwner": "contracts/work-handoff-projection.ts",
+      "resultDiagnosisOwner": "agent/sub-agent-result-review.ts and child result contracts",
+      "terminalGate": "runs/review-gate.ts and parent aggregation gate"
+    }
+  ]
+}

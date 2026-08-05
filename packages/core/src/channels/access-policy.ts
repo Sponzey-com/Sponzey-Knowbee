@@ -43,10 +43,25 @@ export interface ChannelAccessPolicy {
   emptyAllowlistAllows?: boolean | undefined
 }
 
+export type ChannelAccessPolicyBlockedScope = "user" | "room" | "user_and_room" | "unknown"
+
+export interface ChannelAccessPolicyNotice {
+  kind: "channel_access_policy_blocked"
+  reasonCode: ChannelAccessReasonCode
+  blockedScope: ChannelAccessPolicyBlockedScope
+  textSource: "channel_access_policy_notice"
+  renderingRequired: "llm_final_response"
+  finalAnswer: false
+  assistantIdentityClaim: false
+  fallbackDelivery: "block_without_llm_rendering"
+}
+
 export interface ChannelAccessPolicyResult {
   allowed: boolean
   envelope: InboundEnvelope
   policy: ChannelAccessPolicySnapshot
+  notice?: ChannelAccessPolicyNotice
+  /** @deprecated Use notice and route user-facing text through the final response renderer. */
   responseText?: string
 }
 
@@ -172,7 +187,7 @@ export function evaluateInboundAccessPolicy(input: {
     allowed: decision === "allowed",
     envelope,
     policy: snapshot,
-    ...(decision === "blocked" ? { responseText: buildPolicyFailureText(snapshot) } : {}),
+    ...(decision === "blocked" ? { notice: buildPolicyBlockedNotice(snapshot) } : {}),
   }
 }
 
@@ -216,12 +231,22 @@ function summarizePolicyDecision(input: {
   return `Channel policy ${input.decision}: ${input.provider} user=${input.sender.id}${target} reason=${input.reasonCode}`
 }
 
-function buildPolicyFailureText(snapshot: ChannelAccessPolicySnapshot): string {
-  if (snapshot.reasonCode === "blocked_room") {
-    return "This room is not allowed to use Knowbee. Ask an administrator to add it to the channel allowlist."
+function resolveBlockedScope(reasonCode: ChannelAccessReasonCode): ChannelAccessPolicyBlockedScope {
+  if (reasonCode === "blocked_user") return "user"
+  if (reasonCode === "blocked_room") return "room"
+  if (reasonCode === "blocked_user_and_room") return "user_and_room"
+  return "unknown"
+}
+
+function buildPolicyBlockedNotice(snapshot: ChannelAccessPolicySnapshot): ChannelAccessPolicyNotice {
+  return {
+    kind: "channel_access_policy_blocked",
+    reasonCode: snapshot.reasonCode as ChannelAccessReasonCode,
+    blockedScope: resolveBlockedScope(snapshot.reasonCode as ChannelAccessReasonCode),
+    textSource: "channel_access_policy_notice",
+    renderingRequired: "llm_final_response",
+    finalAnswer: false,
+    assistantIdentityClaim: false,
+    fallbackDelivery: "block_without_llm_rendering",
   }
-  if (snapshot.reasonCode === "blocked_user") {
-    return "Your account is not allowed to use Knowbee in this channel. Ask an administrator to add you to the channel allowlist."
-  }
-  return "This channel request is blocked by Knowbee's access policy. Ask an administrator to update the channel allowlist."
 }

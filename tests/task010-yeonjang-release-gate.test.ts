@@ -2,14 +2,22 @@ import { createRequire } from "node:module"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { registerDoctorRoute } from "../packages/core/src/api/routes/doctor.ts"
 import { registerStatusRoute } from "../packages/core/src/api/routes/status.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
+import { createUpdateRuntimeContext } from "../packages/core/src/update/service.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
 import { buildReleaseManifest } from "../packages/core/src/release/package.ts"
 import { upsertYeonjangRegistryObservation } from "../packages/core/src/yeonjang/registry.ts"
+import { initializeToolDispatcher } from "../packages/core/src/tools/index.js"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.js"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: { logger: boolean }) => {
@@ -18,10 +26,11 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
   inject(options: { method: string; url: string; payload?: unknown }): Promise<{ statusCode: number; json(): any }>
 }
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 let observedBase = 0
+let runtimeFixture: TestRuntimeConfigFixture
+
+beforeAll(() => initializeToolDispatcher(DEFAULT_CONFIG))
 
 function tempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -31,10 +40,9 @@ function tempDir(prefix: string): string {
 
 function useTempState(): void {
   closeDb()
-  const stateDir = tempDir("knowbee-task010-yeonjang-release-state-")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  const rootDir = tempDir("knowbee-task010-yeonjang-release-state-")
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function writeFile(rootDir: string, relativePath: string, content: string): void {
@@ -110,11 +118,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -159,7 +162,10 @@ describe("task010 yeonjang release evidence", () => {
     }))
 
     const app = Fastify({ logger: false })
-    registerStatusRoute(app)
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerStatusRoute(app, {
+      updateRuntime: createUpdateRuntimeContext(runtimeFixture.paths, {}),
+    })
     registerDoctorRoute(app)
     await app.ready()
     try {
@@ -223,6 +229,7 @@ describe("task010 yeonjang release evidence", () => {
 
     const manifest = buildReleaseManifest({
       rootDir: createReleaseRoot(),
+      runtimePaths: runtimeFixture.paths,
       releaseVersion: "v-task010",
       gitTag: "v-task010",
       gitCommit: "abc1234",

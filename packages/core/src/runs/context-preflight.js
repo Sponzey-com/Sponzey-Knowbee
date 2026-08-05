@@ -1,7 +1,14 @@
 import { insertDiagnosticEvent } from "../db/index.js";
-import { buildRootSessionCompactionReasonCodes, executeRootSessionCompaction, extractRootSessionDeterministicState, hasBalancedToolUsePairs, needsSessionCompaction, rewriteRootSessionActiveWindow, rewriteRootSessionRetrievalOnlyWindow, } from "../memory/compaction.js";
+import { redactLogText } from "../logger/index.js";
+import { buildRootSessionCompactionReasonCodes, executeRootSessionCompaction, extractRootSessionDeterministicState, hasBalancedToolUsePairs, needsSessionCompaction, resolveShortTermCompactionPolicy, rewriteRootSessionActiveWindow, rewriteRootSessionRetrievalOnlyWindow, } from "../memory/compaction.js";
+import { loadPromptValue } from "../memory/prompt-fragments.js";
 import { buildMaintenanceRestoreContext, buildPromptTimeRecallContext, recordMaintenanceRestoreTrace, recordPromptTimeRecallTrace, renderMaintenanceRestorePromptBlock, } from "../memory/retrieval-restore.js";
 import { appendRunEvent } from "./store.js";
+const CONTEXT_PREFLIGHT_PRUNING_LABELS_SOURCE_ID = "context_preflight_pruning_labels_user";
+function contextPreflightErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
 const TOKEN_CHAR_RATIO = 4;
 const DEFAULT_OUTPUT_RESERVE_TOKENS = 2_048;
 const SAFETY_HEADROOM_TOKENS = 1_024;
@@ -66,7 +73,9 @@ export function runContextPreflight(input) {
         durationMs: Date.now() - startedAt,
         pruningDecisions: input.pruningDecisions ?? [],
         ...(status === "blocked_context_overflow"
-            ? { userMessage: "모델에 보낼 문맥이 너무 커서 호출을 시작하지 않았습니다. 오래된 도구 결과를 줄이거나 대화를 새로 시작한 뒤 다시 시도해 주세요." }
+            ? {
+                userMessage: "모델에 보낼 문맥이 너무 커서 호출을 시작하지 않았습니다. 오래된 도구 결과를 줄이거나 대화를 새로 시작한 뒤 다시 시도해 주세요.",
+            }
             : {}),
     };
     recordContextPreflightResult(result, input.metadata);
@@ -105,6 +114,7 @@ export function pruneMessagesForContext(input) {
     return { messages, decisions };
 }
 export async function prepareChatContext(input) {
+    const compactionPolicy = resolveShortTermCompactionPolicy(input.memoryConfig);
     const initial = runContextPreflight({
         provider: input.provider,
         model: input.model,
@@ -113,7 +123,8 @@ export async function prepareChatContext(input) {
         ...(input.tools !== undefined ? { tools: input.tools } : {}),
         ...(input.metadata ? { metadata: input.metadata } : {}),
     });
-    if (initial.status === "ok" && !needsSessionCompaction(input.messages, initial.breakdown.totalTokens)) {
+    if (initial.status === "ok" &&
+        !needsSessionCompaction(input.messages, initial.breakdown.totalTokens, compactionPolicy)) {
         return { ...initial, initialStatus: initial.status, messages: input.messages };
     }
     const pruned = pruneMessagesForContext({ messages: input.messages });
@@ -135,25 +146,26 @@ export async function prepareChatContext(input) {
         totalTokens: afterPruning.breakdown.totalTokens,
         pruningDecisionCount: pruned.decisions.length,
         deterministicState,
+        policy: compactionPolicy,
     });
     const blockedReasonCodes = collectBlockedCompactionReasons(pruned.messages, deterministicState);
-    const shouldAttemptCompaction = Boolean(input.metadata?.sessionId)
-        && (afterPruning.status === "needs_compaction"
-            || afterPruning.breakdown.totalTokens > afterPruning.breakdown.hardBudgetTokens
-            || needsSessionCompaction(pruned.messages, afterPruning.breakdown.totalTokens));
+    const shouldAttemptCompaction = Boolean(input.metadata?.sessionId) &&
+        (afterPruning.status === "needs_compaction" ||
+            afterPruning.breakdown.totalTokens > afterPruning.breakdown.hardBudgetTokens ||
+            needsSessionCompaction(pruned.messages, afterPruning.breakdown.totalTokens, compactionPolicy));
     if (shouldAttemptCompaction && blockedReasonCodes.length === 0 && input.metadata?.sessionId) {
         try {
             const executed = await executeRootSessionCompaction({
                 provider: input.provider,
                 model: input.model,
                 sessionId: input.metadata.sessionId,
+                agentNameSnapshot: input.metadata.mainAgentNameSnapshot ?? "Knowbee",
                 messages: pruned.messages,
                 sourceTokenEstimate: afterPruning.breakdown.totalTokens,
-                triggerReasonCodes: compactionReasonCodes.length > 0
-                    ? compactionReasonCodes
-                    : ["token_threshold_exceeded"],
+                triggerReasonCodes: compactionReasonCodes.length > 0 ? compactionReasonCodes : ["token_threshold_exceeded"],
                 ...(input.metadata.runId ? { runId: input.metadata.runId } : {}),
                 ...(input.metadata.requestGroupId ? { requestGroupId: input.metadata.requestGroupId } : {}),
+                ...(input.memoryConfig ? { memoryConfig: input.memoryConfig } : {}),
             });
             const compacted = await selectCompactedWindow({
                 provider: input.provider,
@@ -196,12 +208,14 @@ export async function prepareChatContext(input) {
                         : {}),
                 },
                 ...(finalStatus === "blocked_context_overflow"
-                    ? { userMessage: "문맥 compact 후에도 모델 한도를 초과해 호출을 중단했습니다. 더 짧은 최신 대화만 남기거나 새 세션으로 이어서 시도해 주세요." }
+                    ? {
+                        userMessage: "문맥 compact 후에도 모델 한도를 초과해 호출을 중단했습니다. 더 짧은 최신 대화만 남기거나 새 세션으로 이어서 시도해 주세요.",
+                    }
                     : {}),
             };
         }
         catch (error) {
-            blockedReasonCodes.push(error instanceof Error ? error.message : String(error));
+            blockedReasonCodes.push(contextPreflightErrorMessage(error));
         }
     }
     const finalStatus = afterPruning.breakdown.totalTokens > afterPruning.breakdown.hardBudgetTokens
@@ -225,7 +239,9 @@ export async function prepareChatContext(input) {
             }
             : {}),
         ...(finalStatus === "blocked_context_overflow"
-            ? { userMessage: "문맥 정리 후에도 모델 한도를 초과해 호출을 중단했습니다. 오래된 도구 결과나 긴 파일 내용을 줄인 뒤 다시 시도해 주세요." }
+            ? {
+                userMessage: "문맥 정리 후에도 모델 한도를 초과해 호출을 중단했습니다. 오래된 도구 결과나 긴 파일 내용을 줄인 뒤 다시 시도해 주세요.",
+            }
             : {}),
     };
 }
@@ -240,8 +256,27 @@ export async function* chatWithContextPreflight(input) {
         messages: prepared.messages,
         ...(input.system !== undefined ? { system: input.system } : {}),
         ...(input.tools !== undefined ? { tools: input.tools } : {}),
+        ...(input.toolChoice !== undefined ? { toolChoice: input.toolChoice } : {}),
         ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}),
         ...(input.signal !== undefined ? { signal: input.signal } : {}),
+        ...(input.observability
+            ? { observability: input.observability }
+            : input.metadata?.llmStage && (input.metadata.runId || input.metadata.requestGroupId)
+                ? {
+                    observability: {
+                        ...(input.metadata.invocationId
+                            ? { invocationId: input.metadata.invocationId }
+                            : {}),
+                        ...(input.metadata.runId ? { runId: input.metadata.runId } : {}),
+                        ...(input.metadata.requestGroupId
+                            ? { requestGroupId: input.metadata.requestGroupId }
+                            : {}),
+                        ...(input.metadata.sessionId ? { sessionId: input.metadata.sessionId } : {}),
+                        stage: input.metadata.llmStage,
+                        operationCode: input.metadata.operation ?? "context_preflight",
+                    },
+                }
+                : {}),
     });
 }
 export function validateAgentPromptBundleContextScope(input) {
@@ -268,7 +303,10 @@ export function validateAgentPromptBundleContextScope(input) {
             blockedSourceRefs.add(ref.sourceRef);
             continue;
         }
-        if (exchange && exchange.expiresAt !== undefined && exchange.expiresAt !== null && exchange.expiresAt <= now) {
+        if (exchange &&
+            exchange.expiresAt !== undefined &&
+            exchange.expiresAt !== null &&
+            exchange.expiresAt <= now) {
             issueCodes.add("data_exchange_expired");
             blockedSourceRefs.add(ref.sourceRef);
             continue;
@@ -283,12 +321,16 @@ export function validateAgentPromptBundleContextScope(input) {
             blockedSourceRefs.add(ref.sourceRef);
             continue;
         }
-        if (exchange && exchange.recipientOwner.ownerId !== input.bundle.agentId && exchange.recipientOwner.ownerId !== input.bundle.memoryPolicy.owner.ownerId) {
+        if (exchange &&
+            exchange.recipientOwner.ownerId !== input.bundle.agentId &&
+            exchange.recipientOwner.ownerId !== input.bundle.memoryPolicy.owner.ownerId) {
             issueCodes.add("data_exchange_wrong_recipient");
             blockedSourceRefs.add(ref.sourceRef);
             continue;
         }
-        if (exchange && exchange.allowedUse !== "temporary_context" && exchange.allowedUse !== "verification_only") {
+        if (exchange &&
+            exchange.allowedUse !== "temporary_context" &&
+            exchange.allowedUse !== "verification_only") {
             issueCodes.add("data_exchange_not_context_allowed");
             blockedSourceRefs.add(ref.sourceRef);
         }
@@ -329,7 +371,9 @@ function hasLargeOldToolResult(messages) {
             return false;
         return message.content.some((block) => {
             const typed = block;
-            return typed.type === "tool_result" && typeof typed.content === "string" && typed.content.length > OLD_TOOL_RESULT_MAX_CHARS;
+            return (typed.type === "tool_result" &&
+                typeof typed.content === "string" &&
+                typed.content.length > OLD_TOOL_RESULT_MAX_CHARS);
         });
     });
 }
@@ -355,21 +399,33 @@ function estimateTextTokens(value) {
         return 0;
     return Math.max(1, Math.ceil(normalized.length / TOKEN_CHAR_RATIO));
 }
+function contextPreflightPruningLabel(key, variables = {}) {
+    const value = loadPromptValue(CONTEXT_PREFLIGHT_PRUNING_LABELS_SOURCE_ID, variables, {
+        required: true,
+    })
+        .split(/\r?\n/u)
+        .find((line) => line.startsWith(`${key}=`))
+        ?.slice(key.length + 1)
+        .trim();
+    if (!value) {
+        throw new Error(`context preflight pruning label missing: ${key}`);
+    }
+    return value;
+}
 function condenseToolResult(value, maxChars) {
     const normalized = value.replace(/\r/g, "").trim();
     if (normalized.length <= maxChars)
         return normalized;
+    const marker = contextPreflightPruningLabel("tool_result_pruned_marker", {
+        originalChars: normalized.length,
+    });
     if (maxChars < 300)
-        return `[tool_result_pruned: original_chars=${normalized.length}]`;
+        return marker;
     const headLength = Math.max(120, Math.floor(maxChars * 0.62));
     const tailLength = Math.max(80, maxChars - headLength - 120);
     const head = normalized.slice(0, headLength).trimEnd();
     const tail = normalized.slice(Math.max(headLength, normalized.length - tailLength)).trimStart();
-    return [
-        head,
-        `[tool_result_pruned: original_chars=${normalized.length}]`,
-        tail,
-    ].filter(Boolean).join("\n");
+    return [head, marker, tail].filter(Boolean).join("\n");
 }
 function cloneBlock(block) {
     return { ...block };
@@ -413,8 +469,12 @@ async function selectCompactedWindow(input) {
         ...(input.metadata?.runId ? { runId: input.metadata.runId } : {}),
         ...(input.metadata?.sessionId ? { sessionId: input.metadata.sessionId } : {}),
         ...(input.metadata?.requestGroupId ? { requestGroupId: input.metadata.requestGroupId } : {}),
-        ...(input.capsule.ownerScope.channelKey ? { channelKey: input.capsule.ownerScope.channelKey } : {}),
-        ...(input.capsule.ownerScope.threadKey ? { threadKey: input.capsule.ownerScope.threadKey } : {}),
+        ...(input.capsule.ownerScope.channelKey
+            ? { channelKey: input.capsule.ownerScope.channelKey }
+            : {}),
+        ...(input.capsule.ownerScope.threadKey
+            ? { threadKey: input.capsule.ownerScope.threadKey }
+            : {}),
     });
     recordPromptTimeRecallTrace({
         context: promptRecall,
@@ -423,7 +483,9 @@ async function selectCompactedWindow(input) {
         ...(input.metadata?.sessionId ? { sessionId: input.metadata.sessionId } : {}),
         ...(input.metadata?.requestGroupId ? { requestGroupId: input.metadata.requestGroupId } : {}),
     });
-    const restorePathCodes = ["maintenance_restore"];
+    const restorePathCodes = [
+        "maintenance_restore",
+    ];
     if (promptRecall.results.length > 0)
         restorePathCodes.push("prompt_time_recall");
     let messages = rewriteRootSessionActiveWindow({
@@ -457,7 +519,9 @@ async function selectCompactedWindow(input) {
             messages,
             preflight,
             restorePathCodes,
-            ...(maintenanceRestore.rollupCapsule ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId } : {}),
+            ...(maintenanceRestore.rollupCapsule
+                ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId }
+                : {}),
         };
     }
     for (const tailSize of [6, 4, 2, 0]) {
@@ -489,7 +553,8 @@ async function selectCompactedWindow(input) {
         messages = rewritten.messages;
         preflight = candidate;
         degradedTailMessageCount = rewritten.degradedTailMessageCount;
-        degradeMode = rewritten.degradedTailMessageCount !== undefined ? "smaller_raw_tail" : degradeMode;
+        degradeMode =
+            rewritten.degradedTailMessageCount !== undefined ? "smaller_raw_tail" : degradeMode;
         if (candidate.breakdown.totalTokens <= candidate.breakdown.hardBudgetTokens)
             break;
     }
@@ -528,7 +593,9 @@ async function selectCompactedWindow(input) {
                 degradeMode,
                 retrievalSnippetCount: retrievalOnly.snippetCount,
                 ...(degradedTailMessageCount !== undefined ? { degradedTailMessageCount } : {}),
-                ...(maintenanceRestore.rollupCapsule ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId } : {}),
+                ...(maintenanceRestore.rollupCapsule
+                    ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId }
+                    : {}),
             };
         }
     }
@@ -538,7 +605,9 @@ async function selectCompactedWindow(input) {
         restorePathCodes,
         ...(degradeMode ? { degradeMode } : {}),
         ...(degradedTailMessageCount !== undefined ? { degradedTailMessageCount } : {}),
-        ...(maintenanceRestore.rollupCapsule ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId } : {}),
+        ...(maintenanceRestore.rollupCapsule
+            ? { rollupCapsuleId: maintenanceRestore.rollupCapsule.capsuleId }
+            : {}),
     };
 }
 function recordContextPreflightResult(result, metadata) {

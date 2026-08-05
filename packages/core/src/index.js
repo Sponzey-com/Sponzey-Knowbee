@@ -1,11 +1,64 @@
 // Config
-export { loadConfig, loadEnv, getConfig, reloadConfig, PATHS } from "./config/index.js";
+export { loadConfigSnapshot, loadEnv } from "./config/index.js";
+export { captureRuntimePaths, createRuntimePaths } from "./config/paths.js";
+export { projectPlatformCapabilities } from "./capabilities/platform.js";
+export { IDENTITY_NAME_MUTATION_TARGETS, authorizeIdentityNameMutation, executeAuthorizedIdentityNameMutation, } from "./agent/identity-name-mutation-authorization.js";
+export { IMPROVEMENT_MUTATION_TARGET_KINDS, PROTECTED_COMMON_PROMPT_SOURCES, authorizeImprovementMutation, executeAuthorizedImprovementMutation, } from "./memory/improvement-mutation-boundary.js";
+export { DOCUMENTED_PROMPT_RUNTIME_ACTIVATION_METHODS, PROMPT_IMPROVEMENT_REPORT_STATES, authorizePromptImprovementReportTransition, authorizePromptRuntimeActivation, bindPromptImprovementRuntimeContext, } from "./contracts/prompt-improvement-runtime-context.js";
+export { auditPromptImprovementIdentitySnapshot, createPromptImprovementIdentityReview, projectProductIdentityInvariantReview, } from "./contracts/prompt-improvement-identity-invariants.js";
+export { PROMPT_MEMORY_EXCHANGE_METHODS, authorizePromptImprovementMemoryInvariant, evaluatePromptMemoryExchangeReceipt, projectMemoryIsolationInvariantReview, } from "./contracts/prompt-improvement-memory-invariants.js";
+export { REQUIRED_DELEGATION_HANDOFF_FIELDS, REQUIRED_PARENT_DELEGATION_ACTIONS, authorizePromptImprovementDelegationInvariant, projectDelegationRulesInvariantReview, } from "./contracts/prompt-improvement-delegation-invariants.js";
+export { authorizePromptImprovementYeonjangInvariant, projectYeonjangToolBoundaryInvariantReview, } from "./contracts/prompt-improvement-yeonjang-invariants.js";
+export { EXTERNAL_EFFECT_APPROVAL_KINDS, authorizePromptImprovementToolMcpInvariant, projectToolMcpBoundaryInvariantReview, } from "./contracts/prompt-improvement-tool-mcp-invariants.js";
+export { PROMPT_SAFETY_BOUNDARY_KINDS, PROMPT_SAFETY_MANDATORY_CONTROLS, authorizePromptImprovementSafetyInvariant, projectSafetyRulesInvariantReview, } from "./contracts/prompt-improvement-safety-invariants.js";
+export { PROMPT_IMPROVEMENT_IMPACT_KINDS, authorizePromptInvariantCoverage, } from "./contracts/prompt-invariant-coverage.js";
+export { authorizeHarnessSelfImprovementActivation, authorizeHarnessSelfImprovementReview, decideHarnessSelfImprovementFailure, executeAuthorizedHarnessSelfImprovement, publishAuthorizedHarnessSelfImprovement, } from "./contracts/harness-self-improvement-invariants.js";
+export { CANONICAL_RECURSIVE_IMPROVEMENT_EVENTS, CANONICAL_RECURSIVE_IMPROVEMENT_STATES, CANONICAL_RECURSIVE_IMPROVEMENT_TRANSITIONS, authorizeRecursiveImprovementTransition, } from "./contracts/recursive-improvement-state-machine.js";
+export { PROMPT_IMPROVEMENT_BASELINE_ROLLBACK_SOURCE_TYPES, REQUIRED_PROMPT_IMPROVEMENT_REGRESSION_AREAS, authorizePromptImprovementBaselineCapture, draftFromAuthorizedPromptImprovementBaseline, } from "./contracts/prompt-improvement-baseline-capture.js";
+export { REQUIRED_HARNESS_GUARDRAILS } from "./contracts/harness-guardrails.js";
+export { HARNESS_MUTABLE_SOURCE_KINDS, authorizeHarnessApplication, authorizeHarnessSourceMutation, executeAuthorizedHarnessApplication, executeAuthorizedHarnessSourceMutation, } from "./memory/harness-source-authorization.js";
+export { HIGH_RISK_IMPROVEMENT_CHECKS, authorizeHighRiskImprovementVerification, executeVerifiedHighRiskImprovement, } from "./contracts/high-risk-improvement-verification.js";
+export { HIGH_RISK_PERMISSION_CAPABILITIES, projectPromptActivation, publishConfirmedPromptActivation, verifyHighRiskSourceEvidence, } from "./contracts/high-risk-source-activation-evidence.js";
+export { CURRENT_HARNESS_CONTROL_EVIDENCE, HARNESS_STATE_MACHINE_COMPONENTS, authorizeHarnessPublication, publishAuthorizedHarness, verifyCurrentHarnessControl, verifyHarnessStateMachineCompleteness, } from "./contracts/harness-publication-control.js";
+export { HARNESS_APPROVAL_SCOPES, authorizeHarnessApprovalScope, authorizeHarnessImprovementEntry, enterAuthorizedHarnessImprovement, executeApprovedHarnessScope, } from "./contracts/harness-entry-approval-scope.js";
+export { APPROVAL_SOURCE_KINDS, applyExactApprovedSource, authorizeExactSourceApproval, } from "./contracts/exact-source-approval.js";
+export { applyRiskApprovedPromptChange, authorizeRiskBasedPromptChange, } from "./contracts/risk-approval-audit.js";
+export { applyCanonicalApprovedChange, decideDefaultRiskApprovalPolicy, validateCanonicalApprovalRequest, } from "./contracts/canonical-approval-policy.js";
+export { RESPONSE_FEEDBACK_KINDS, RESPONSE_STRATEGY_PROTECTED_INVARIANTS, RESPONSE_STRATEGY_TARGETS, applyAuthorizedResponseStrategyImprovement, authorizeResponseStrategyImprovement, verifyResponseFeedbackEvidence, } from "./contracts/response-strategy-improvement.js";
+export { AMBIGUOUS_PROMPT_PHRASES, authorizePromptComposition, composeAuthorizedPrompts, validateCanonicalPromptUses, validatePromptRuleClarity, } from "./contracts/prompt-composition-governance.js";
+export { MULTILINGUAL_RESPONSE_EXCEPTION_KINDS, authorizeLlmResponseLanguages, renderAuthorizedResponseLanguages, } from "./contracts/llm-response-language-boundary.js";
+export { CLEANUP_ARTIFACT_KINDS, CLEANUP_REFERENCE_SCOPES, PROTECTED_CLEANUP_DATA_KINDS, authorizeArtifactCleanup, deleteAuthorizedArtifact, } from "./contracts/artifact-cleanup-authorization.js";
+export { PRODUCT_PARAMETER_KEYS, applyAuthorizedProductParameterChange, authorizeProductParameterChange, } from "./contracts/product-parameter-change-governance.js";
+export { DUPLICATE_ARTIFACT_CATEGORIES, INDIRECT_IMPLEMENTATION_KINDS, TEMPORARY_ARTIFACT_KINDS, TEMPORARY_REMOVAL_CONDITIONS, applyMaintenanceSimplification, authorizeCanonicalArtifactConsolidation, authorizeIndirectImplementation, authorizeTemporaryArtifactDisposition, } from "./contracts/maintenance-simplification-policy.js";
+export { UX_CHANGE_INTENTS, UX_RECOVERY_CAPABILITIES, authorizeUxChange, publishAuthorizedUxChange, } from "./contracts/ux-change-authorization.js";
+export { IMPROVEMENT_VALIDATION_EVIDENCE_KINDS, INDEPENDENT_IMPROVEMENT_VALIDATION_KINDS, activateValidatedImprovement, authorizeImprovementValidation, } from "./contracts/improvement-validation-evidence.js";
+export { DOCUMENTED_PROMPT_ACTIVATION_METHODS, PROMPT_ACTIVATION_LOADER_KINDS, authorizePromptActivationEvidence, publishPromptActivationEvidence, } from "./contracts/prompt-activation-evidence.js";
+export { authorizeCompletePromptActivation, authorizePreActivationTests, publishCompletePromptActivation, } from "./contracts/complete-prompt-activation.js";
+export { authorizePromptUpdateReport, publishAuthorizedPromptUpdateReport, } from "./contracts/prompt-update-report-boundary.js";
+export { PROMPT_ROLLBACK_SOURCE_MANIFEST, PROMPT_ROLLBACK_SOURCE_TYPES, validatePromptImprovementRollbackSource, } from "./contracts/prompt-rollback-source-policy.js";
+export { PROMPT_ROLLBACK_VERIFICATION_METHODS, authorizePromptChangeRollbackReadiness, } from "./contracts/prompt-change-rollback-readiness.js";
+export { PROMPT_ROLLBACK_TRIGGER_KINDS, authorizePromptRollbackTrigger, executeAuthorizedPromptRollback, } from "./contracts/prompt-rollback-execution.js";
+export { authorizePromptRollbackReport, publishAuthorizedPromptRollbackReport, } from "./contracts/prompt-rollback-report.js";
+export { PROMPT_IMPROVEMENT_LOG_FIELD_MANIFEST, authorizePromptImprovementLogProjection, writeAuthorizedPromptImprovementLog, } from "./contracts/prompt-improvement-log-projection.js";
+export { PROMPT_IMPROVEMENT_TERMINAL_OUTPUT_FIELDS, authorizePromptImprovementTerminalOutput, renderAuthorizedPromptImprovementTerminalOutput, } from "./contracts/prompt-improvement-terminal-output.js";
+export { RECURSIVE_HARNESS_ADDENDUM_SENTENCES, auditRecursiveHarnessAddendum, } from "./contracts/recursive-harness-addendum.js";
+export { PROMPT_IMPROVEMENT_ESCALATION_STAGES, applyPromptOnlyDecision, decidePromptImprovementCapability, executeApprovedImplementation, executeValidatedEscalationArtifact, validatePromptImprovementEscalationArtifact, } from "./memory/prompt-improvement-escalation.js";
+export { captureStartupProcessContext, createStartupProcessContext, } from "./runtime/startup-process-context.js";
 export { generateAuthToken } from "./config/auth.js";
 export { MIGRATION_ROLLBACK_RUNBOOK, buildBackupTargetInventory, buildMigrationPreflightReport, createBackupSnapshot, formatInventoryPathForDisplay, runRestoreRehearsal, verifyBackupSnapshotManifest, } from "./config/backup-rehearsal.js";
 export { getCurrentAppVersion, getCurrentDisplayVersion, getWorkspacePackageJsonPath, getWorkspaceRootPath, } from "./version.js";
 // Benchmarks
 export { SUB_AGENT_BENCHMARK_SCENARIO_IDS, buildSubAgentBenchmarkReleaseGateSummary, evaluateSubAgentBenchmarkReleaseGate, getLatestSubAgentBenchmarkRun, getSubAgentBenchmarkRun, listSubAgentBenchmarkScenarios, resetSubAgentBenchmarkRunsForTest, runAndStoreSubAgentBenchmarkSuite, runSubAgentBenchmarkSuite, } from "./benchmarks/sub-agent-benchmarks.js";
-export { DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS, SUB_AGENT_RELEASE_MODE_SEQUENCE, buildSubAgentReleaseReadinessSummary, buildSubAgentRollbackEvidence, runSubAgentRestartResumeSoak, } from "./release/sub-agent-release-gate.js";
+export { DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS, SUB_AGENT_OPERATIONAL_REFERENCE_THRESHOLDS, SUB_AGENT_RELEASE_MODE_SEQUENCE, buildSubAgentReleaseReadinessSummary, buildSubAgentRollbackEvidence, runSubAgentRestartResumeSoak, } from "./release/sub-agent-release-gate.js";
+export { activateSubAgentRolloutThresholdPolicy, validateSubAgentRolloutThresholdPolicy, } from "./release/sub-agent-rollout-threshold-policy.js";
+export { authorizeSubAgentRolloutThresholdPolicy, createSubAgentRolloutThresholdAuthorizationPort, selectReleaseRolloutThresholdPolicy, } from "./release/release-policy-authorization.js";
+export { SqliteReleasePolicyAuthorizationRepository } from "./release/sqlite-release-policy-authorization-repository.js";
+export { authorizePerformanceAcceptanceMatrix, createPerformanceAcceptanceAuthorizationPort, selectPerformanceAcceptanceMatrix, } from "./release/performance-acceptance-authorization.js";
+export { SqlitePerformanceAcceptanceAuthorizationRepository } from "./release/sqlite-performance-acceptance-authorization-repository.js";
+export { buildPerformanceAcceptanceEvidence } from "./release/performance-acceptance-evidence.js";
+export { collectLivePerformanceAcceptanceEvidence } from "./release/live-performance-acceptance-collection.js";
+export { parseLivePerformanceAcceptanceCliArguments } from "./maintenance/live-performance-acceptance-cli.js";
+export { activatePerformanceAcceptanceMatrix, evaluateMeasuredFlowWithAcceptanceMatrix, validatePerformanceAcceptanceMatrix, } from "./maintenance/performance-acceptance-matrix.js";
 export { ENTERPRISE_TOPOLOGY_RELEASE_FEATURE_FLAGS, ENTERPRISE_TOPOLOGY_RELEASE_MODE_SEQUENCE, ENTERPRISE_TOPOLOGY_RELEASE_REGRESSION_COMMANDS, buildEnterpriseTopologyReleaseFlagMatrix, buildEnterpriseTopologyReleaseReadinessSummary, buildEnterpriseTopologyRollbackRunbook, buildEnterpriseTopologyRollbackSmoke, buildEnterpriseTopologyRuntimeSmoke, inferEnterpriseTopologyReleaseMode, } from "./release/enterprise-topology-release-gate.js";
 // Runtime manifest and diagnostics
 export { buildRuntimeManifest, getLastRuntimeManifest, refreshRuntimeManifest, } from "./runtime/manifest.js";
@@ -19,13 +72,18 @@ export { FAST_PATH_CLASSIFIER_TARGET_P95_MS, ORCHESTRATION_PLANNER_TARGET_P95_MS
 export { AGENT_EXECUTION_BEHAVIOR_PATTERNS, AGENT_EXECUTION_DECISION_CONTRACT_VERSION, AGENT_EXECUTION_FALLBACK_REASONS, AGENT_EXECUTION_RISK_BOUNDARY_KINDS, AGENT_EXECUTION_ROUTES, AgentExecutionFallbackReason, isAgentExecutionFallbackReason, isAgentExecutionRoute, normalizeAgentExecutionConfidence, validateAgentExecutionDecisionShape, } from "./orchestration/execution-decision-contract.js";
 export { buildAgentExecutionDecisionTraceSnapshot, buildAgentExecutionDecisionPrompt, createAgentExecutionDecision, formatAgentExecutionDecisionTraceRunEvent, parseAgentExecutionDecisionModelOutput, runAgentExecutionHarness, validateAgentExecutionDecisionAgainstContext, } from "./orchestration/execution-harness.js";
 export { buildOrchestrationRegistrySnapshot, clearAgentCapabilityIndexCache, createAgentRegistryService, createTeamRegistryService, } from "./orchestration/registry.js";
+export { AgentLifecycleTransitionError, assertAgentLifecycleTransition, validateAgentLifecycleTransition, } from "./orchestration/agent-lifecycle.js";
+export { GOAL_OWNERSHIP_CATALOG, REQUIRED_GOAL_OWNERSHIP_CHAPTERS, auditGoalOwnership, validateGoalOwnershipCatalog, } from "./maintenance/goal-ownership.js";
+export { evaluateDelegationEligibility } from "./orchestration/delegation-eligibility.js";
+export { authorWorkflowFromExecutionDecision } from "./orchestration/workflow-authoring.js";
 export { buildExecutionGraphSnapshot, EXECUTION_GRAPH_ROOT_AGENT_ID, WORKSPACE_DRAFT_TOPOLOGY_ID, } from "./orchestration/execution-graph-snapshot.js";
 export { buildAgentCapabilitySummary, buildAgentModelSummary, resolveAgentCapabilityModelSummary, } from "./orchestration/capability-model.js";
 export { ORCHESTRATION_EVENT_KINDS, buildOrchestrationMonitoringSnapshot, buildRestartResumeProjection, formatOrchestrationEventSse, installOrchestrationEventProjection, listOrchestrationEventLedger, openOrchestrationEventRawPayload, parseOrchestrationReplayCursor, recordOrchestrationEvent, resetOrchestrationEventProjectionForTest, validateOrchestrationEventInput, } from "./orchestration/event-ledger.js";
 export { DEFAULT_PROVIDER_MODEL_CAPABILITY_MATRIX, buildModelAvailabilityDoctorSnapshot, buildModelExecutionAuditSummary, estimateModelExecutionCost, estimateTokenCount, resolveFallbackModelExecutionPolicy, resolveModelExecutionPolicy, } from "./orchestration/model-execution-policy.js";
-export { createAgentHierarchyService } from "./orchestration/hierarchy.js";
+export { createAgentHierarchyService, createAgentHierarchyStorage, } from "./orchestration/hierarchy.js";
 export { createAgentTopologyService } from "./orchestration/topology-projection.js";
-export { AGENT_TEMPLATES, TEAM_TEMPLATES, clearFocusBinding, createOneClickBackgroundTask, executeWorkspaceCommand, getFocusBinding, importExternalAgentProfileDraft, instantiateAgentTemplate, instantiateTeamTemplate, lintAgentDescription, resolveFocusBinding, searchCommandPalette, setFocusBinding, } from "./orchestration/command-workspace.js";
+export { AGENT_TEMPLATES, TEAM_TEMPLATES, clearFocusBinding, createCommandWorkspaceStorage, createOneClickBackgroundTask, executeWorkspaceCommand, getFocusBinding, importExternalAgentProfileDraft, instantiateAgentTemplate, instantiateTeamTemplate, lintAgentDescription, resolveFocusBinding, searchCommandPalette, setFocusBinding, } from "./orchestration/command-workspace.js";
+export { createMemoryJournalRepository } from "./memory/journal.js";
 export { createTeamCompositionService } from "./orchestration/team-composition.js";
 export { buildTeamExecutionPlan, createTeamExecutionPlanService, } from "./orchestration/team-execution-plan.js";
 export { orchestrationCapabilityStatus, resolveOrchestrationModeSnapshot, resolveOrchestrationModeSnapshotSync, } from "./orchestration/mode.js";
@@ -34,10 +92,18 @@ export { lastDoctorReportExists, runDoctor, writeDoctorReportArtifact, } from ".
 export { buildReleaseNoteEvidenceSummary, parseTaskMetadata, runPlanDriftCheck, } from "./diagnostics/plan-drift.js";
 export { attachCapabilityProfileToTrace, buildProviderProfileId, clearProviderCapabilityCache, getProviderCapabilityMatrix, resolveEmbeddingProviderResolutionSnapshot, } from "./ai/capabilities.js";
 // Release package
-export { buildCleanMachineInstallChecklist, buildReleaseArtifactDefinitions, buildReleaseManifest, buildReleasePipelinePlan, buildReleaseRollbackRunbook, buildReleaseUpdatePreflightReport, writeReleasePackage, } from "./release/package.js";
+export { buildCleanMachineInstallChecklist, buildReleaseArtifactDefinitions, buildReleaseManifest, buildReleasePipelinePlan, buildReleaseRollbackRunbook, buildReleaseUpdatePreflightReport, evaluateReleaseReadiness, writePreparedReleasePackage, writeReleasePackage, } from "./release/package.js";
+export { ARTIFACT_CLEANUP_CONFIRMATION, executeArtifactCleanup, previewArtifactCleanup, projectArtifactCleanupForUser, } from "./release/artifact-retention.js";
+export { REQUIRED_NPM_RELEASE_PACKAGE_NAMES, buildNpmCleanInstallReceipt, verifyNpmCleanInstallReceipt, } from "./release/npm-install-receipt.js";
+export { REQUIRED_RESTORE_REHEARSAL_CHECKS, buildBackupRestoreRehearsalReceipt, verifyBackupRestoreRehearsalReceipt, } from "./release/backup-restore-receipt.js";
+export { verifyOperationalRehearsalEvidence } from "./release/operational-rehearsal-evidence.js";
 export { RELEASE_PERFORMANCE_TARGETS, buildReleasePerformanceSummary, } from "./release/performance-gate.js";
+export { buildReleaseWindowMetricReport, projectReleaseMetricFieldDebugLog, projectReleaseMetricProductLog, } from "./release/release-window-metrics.js";
+export { collectReleaseWindowMetricReport } from "./release/release-window-metrics-use-case.js";
+export { buildConversationProcessReleaseEvidence, } from "./release/conversation-process-release-evidence.js";
+export { SqliteReleaseMetricRecordPort } from "./release/sqlite-release-metric-record-port.js";
 // Logger
-export { createLogger, logger } from "./logger/index.js";
+export { createLogger, logger, normalizeLogPurposeVisibility } from "./logger/index.js";
 // Events
 export { eventBus } from "./events/index.js";
 // Control-plane timeline
@@ -45,10 +111,51 @@ export { exportControlTimeline, getControlTimeline, installControlEventProjectio
 // Message ledger and delivery finalization
 export { buildArtifactDeliveryKey as buildMessageLedgerArtifactDeliveryKey, buildTextDeliveryKey as buildMessageLedgerTextDeliveryKey, buildToolCallIdempotencyKey, finalizeDeliveryForRun, findDuplicateToolCall, getAllowRepeatReason, hashLedgerValue, isDedupeTargetTool, recordMessageLedgerEvent, stableStringify, } from "./runs/message-ledger.js";
 export { ValidateAndFinalize, completeRunWithAssistantMessage, markRunCompleted, validateAndFinalize, } from "./runs/finalization.js";
+export { renderUserFacingNoticeText } from "./runs/user-facing-notice-rendering.js";
+export { buildFinalResponseIdentityContext } from "./runs/final-response-renderer.js";
+export { authorizeUserFacingResponse, buildLlmResponseReviewReceipt, } from "./runs/user-facing-response-gate.js";
+export { assembleAssistantFinalLlmInput, authorizeAssistantFinalDelivery, buildAssistantFinalReviewReceipt, selectCanonicalAssistantFlow, } from "./runs/assistant-flow-finalization.js";
+export { projectOrdinarySubAgentConfiguration, validateSubAgentPromptLayerStack, } from "./contracts/sub-agent-prompt-layer.js";
+export { projectUserFacingAgentIdentity, projectUserFacingAgentMessage, } from "./contracts/user-facing-agent-identity.js";
+export { authorizeDelegationInForest, validateDelegationForestSnapshot, } from "./orchestration/delegation-forest.js";
+export { createExplicitAgentExchange } from "./contracts/explicit-agent-exchange.js";
+export { aggregateDiagnosedResults, decideMandatoryResultReview, decideParentResultAction, normalizeResultReviewSubject, } from "./contracts/result-review-decision.js";
+export { buildVerifiedFailureReportFacts } from "./contracts/verified-failure-report.js";
+export { buildCanonicalResultReportFacts, mapCanonicalResultReportFacts, } from "./contracts/canonical-result-report.js";
+export { applyCanonicalResultReport, renderCanonicalResultReport, } from "./runs/canonical-result-final-delivery.js";
+export { projectYeonjangUserFacingIdentities, validateYeonjangIdentityBoundarySnapshot, } from "./contracts/yeonjang-identity-boundary.js";
+export { authorizeExactYeonjangTarget, resolveExactYeonjangTarget, } from "./contracts/yeonjang-target-resolution.js";
+export { buildTruthfulNoYeonjangResult, decideNoYeonjangCapabilityGap, } from "./contracts/no-yeonjang-capability-gap.js";
+export { authorizeYeonjangSensitiveOperation, dispatchAuthorizedYeonjangSensitiveOperation, YEONJANG_SENSITIVE_EFFECTS, } from "./contracts/yeonjang-sensitive-operation-authorization.js";
+export { buildResponseStrategyImprovementIntake, RESPONSE_EVIDENCE_SIGNAL_KINDS, RESPONSE_STRATEGY_CATEGORIES, } from "./contracts/response-strategy-improvement-intake.js";
+export { buildCanonicalResponseStrategyProposal, RESPONSE_STRATEGY_CANONICAL_MODULES, } from "./contracts/canonical-response-strategy-proposal.js";
+export { applyAuthorizedAgentPromptImprovement, authorizeAgentPromptImprovement, PROMPT_IMPROVEMENT_PROTECTED_INVARIANTS, } from "./contracts/agent-prompt-improvement-authorization.js";
+export { activateAuthorizedPromptSnapshot, authorizeNextRunPromptActivation, authorizePromptSourceApplication, PROMPT_IMPROVEMENT_PLATFORM_IMPACTS, writeAuthorizedPromptSources, } from "./contracts/platform-prompt-activation-boundary.js";
+export { applyConfirmedPromptImprovement, authorizePromptImprovementApplication, PLATFORM_PROMPT_PROTECTED_INVARIANTS, PROMPT_IMPROVEMENT_INPUT_PROVENANCES, } from "./contracts/prompt-improvement-application-gate.js";
+export { registerLanguageEligibleSystemPrompt, SYSTEM_PROMPT_SEGMENT_KINDS, validateSystemPromptLanguageSource, } from "./contracts/system-prompt-language-boundary.js";
+export { authorizeSystemPromptDisclosure, authorizeRestrictedUiDisclosure, deliverAuthorizedSystemPrompt, projectOrdinaryUi, ORDINARY_UI_ALLOWED_FIELDS, RAW_SYSTEM_PROMPT_DISCLOSURE_PURPOSES, } from "./contracts/system-prompt-disclosure-boundary.js";
+export { authorizeRedactedPromptDisclosure, BEHAVIOR_POLICY_SUMMARY_CATEGORIES, createBehaviorPolicySummaryProjection, deliverVerifiedRedactedPrompt, PROMPT_DISCLOSURE_SENSITIVE_CATEGORIES, } from "./contracts/prompt-disclosure-redaction.js";
+export { evaluatePromptRuleQuality, writeQualityEligiblePromptRules, } from "./contracts/prompt-rule-quality.js";
+export { evaluatePromptDefinitionOwnership, writeOwnershipEligiblePrompt, } from "./contracts/prompt-definition-ownership.js";
+export { evaluatePromptModuleReferenceGraph, writeReferenceEligiblePromptModules, } from "./contracts/prompt-module-reference-graph.js";
+export { CANONICAL_PROMPT_MODULE_IDS, CANONICAL_PROMPT_RESPONSIBILITY_MANIFEST, validateCanonicalPromptResponsibilityManifest, } from "./contracts/canonical-prompt-responsibility-manifest.js";
+export { evaluatePromptScopeNarrowing, writeNarrowedPromptScope, } from "./contracts/prompt-scope-narrowing.js";
+export { evaluateShortTermCompaction, evaluateWorkBoundMemoryHandoff, runEligibleMemoryOperation, } from "./contracts/memory-handoff-compaction.js";
+export { COMPACTION_PRESERVATION_CATEGORIES, evaluateCompactionPreservation, evaluateLongTermMemoryMutation, executeEligibleMemoryGovernance, } from "./contracts/long-term-memory-governance.js";
+export { evaluateBlockedStopReportDecision, evaluateStopReportDecision, executeContinuingAction, normalizeStartupAttemptLimitPolicy, } from "./contracts/stop-report-decision.js";
+export { evaluateSafetyRisk, evaluateSelfSolveBeforeStop, evaluateUserExecutionControl, executeAfterControlDecision, } from "./contracts/safety-control-self-solve.js";
+export { applyUserExecutionControl } from "./runs/user-execution-control-application.js";
+export { applySafetyRiskDecision } from "./runs/safety-risk-application.js";
+export { applyStructuredFailureRecoveryDecision } from "./runs/failure-recovery-application.js";
+export { AGENT_MEMORY_STORE_KINDS, evaluateAgentMemoryOwnership, SHORT_TERM_MEMORY_CATEGORIES, writeAgentMemoryEntry, } from "./contracts/agent-memory-ownership.js";
+export { authorizePromptImprovementEntry, authorizeRecursivePromptImprovement, enterAuthorizedPromptImprovement, PROMPT_IMPROVEMENT_ENTRY_TRIGGER_KINDS, REQUIRED_HARNESS_REGRESSION_TEST_IDS, RECURSIVE_PROMPT_BEHAVIOR_INVARIANTS, writeRecursivePromptImprovement, } from "./contracts/recursive-prompt-improvement-gate.js";
+export { AGENT_PERSONA_PROTECTED_POLICY_AXES, evaluateAgentPersonaPolicyBoundary, } from "./contracts/agent-persona-policy-boundary.js";
+export { authorizeEvidenceBackedRedelegation, buildParentResultDisposition, fingerprintStructuredTaskScope, isRedelegationReasonCode, } from "./orchestration/evidence-redelegation.js";
+export { validateConversationDecision } from "./agent/conversation-decision.js";
 export { buildFinalDeliveryAttributions, buildNamedResultDeliveryEvent, buildKnowbeeFinalAnswer, commitFinalDelivery, findCommittedFinalDelivery, listPendingFinalizers, recordApprovalAggregation, recordLateResultNoReply, } from "./runs/channel-finalizer.js";
 export { buildRunRuntimeInspectorProjection } from "./runs/runtime-inspector-projection.js";
-export { buildCurrentFactFinalValidationInput, buildFinancialInformationBoundaryNotice, buildRetrievalVerificationPlan, chooseNextRetrievalVerificationSource, evaluateRetrievalVerificationPlan, formatCurrentFactVerificationAnswer, sourceCandidateFromEvidence, } from "./runs/current-fact-retrieval.js";
-export { WEB_RETRIEVAL_FIXTURE_SCHEMA_VERSION, buildFixtureRegressionFromWorkspace, buildWebRetrievalReleaseGateSummary, createDryRunWebRetrievalLiveSmokeExecutor, fixtureFileNameForId, getDefaultWebRetrievalLiveSmokeScenarios, isLiveWebSmokeEnabled, loadWebRetrievalFixturesFromDir, runWebRetrievalFixtureRegression, runWebRetrievalLiveSmokeScenarios, validateWebRetrievalLiveSmokeTrace, writeWebRetrievalSmokeArtifact, } from "./runs/web-retrieval-smoke.js";
+export { WEB_RETRIEVAL_EVIDENCE_CONTRACT_VERSION, WEB_RETRIEVAL_FIXTURE_SCHEMA_VERSION, buildFixtureRegressionFromWorkspace, buildWebRetrievalReleaseGateSummary, createDryRunWebRetrievalLiveSmokeExecutor, fixtureFileNameForId, getDefaultWebRetrievalLiveSmokeScenarios, isLiveWebSmokeEnabled, loadWebRetrievalFixturesFromDir, runWebRetrievalFixtureRegression, runWebRetrievalLiveSmokeScenarios, validateWebRetrievalLiveSmokeTrace, writeWebRetrievalSmokeArtifact, } from "./runs/web-retrieval-smoke.js";
+export { createArtifactStorageContext, createArtifactStorageContextFromRoot, } from "./artifacts/lifecycle.js";
 export { WEB_RETRIEVAL_POLICY_VERSION } from "./runs/web-retrieval-policy.js";
 export { DEFAULT_QUEUE_BUDGETS, QUEUE_NAMES, QueueBackpressureError, buildBackpressureUserMessage, buildQueueBackpressureSnapshot, enqueueBackpressureTask, recordQueueBackpressureEvent, recordQueueRecoveryAttempt, resetQueueBackpressureState, resetQueueRecoveryAttempt, } from "./runs/queue-backpressure.js";
 export { ContextPreflightBlockedError, chatWithContextPreflight, estimateContextTokens, estimateMessagesTokens, prepareChatContext, pruneMessagesForContext, runContextPreflight, validateAgentPromptBundleContextScope, } from "./runs/context-preflight.js";
@@ -59,63 +166,67 @@ export { decideSubSessionReviewGate } from "./runs/review-gate.js";
 export { buildSubSessionFeedbackCycleDirective } from "./runs/review-cycle-pass.js";
 export { decideSubSessionCompletionPass } from "./runs/completion-pass.js";
 export { activateExtensionWithTrustPolicy, buildExtensionRegistrySnapshot, createExtensionRollbackPoint, extensionIdsForToolName, getExtensionFailureState, isToolExtensionSelectable, listExtensionFailureStates, recordExtensionFailure, recordExtensionRegistryChange, recordExtensionToolFailure, resetExtensionFailureState, rollbackExtensionToPoint, runExtensionHookSafely, } from "./security/extension-governance.js";
-export { DEFAULT_EVIDENCE_CONFLICT_POLICY, conflictResolutionToVerdict, conflictSufficiencyIsBlocking, resolveEvidenceConflict, } from "./runs/web-conflict-resolver.js";
-export { DEFAULT_RETRIEVAL_CACHE_TTL_POLICY, InMemoryRetrievalCache, buildRetrievalCacheEntry, buildRetrievalCacheKey, buildRetrievalTargetHash, createInMemoryRetrievalCache, evaluateRetrievalCacheEntry, getPersistentRetrievalCacheEntry, listPersistentRetrievalCacheEntriesForTarget, putPersistentRetrievalCacheEntry, resolveRetrievalCacheTtlMs, } from "./runs/web-retrieval-cache.js";
-export { buildAnswerDirective, buildWebRetrievalPolicyDecision, evaluateSourceReliabilityGuard, extractSourceTimestampFromHtml, recordBrowserSearchEvidence, } from "./runs/web-retrieval-policy.js";
-export { RetrievalSessionController, buildRetrievalDedupeKey, buildRetrievalSessionDirective, createGenericTargetFromPolicy, createRetrievalSessionController, createRetrievalTargetContract, defaultRetrievalBudget, defaultSourceLadder, evaluateLimitedCompletionReadiness, getNextRetrievalMethods, isRetrievalSessionRecoverable, } from "./runs/web-retrieval-session.js";
-export { buildCandidateExtractionFailureEvent, extractRetrievedValueCandidates, sourceKindSatisfiesOfficialRequired, verifyRetrievedValueCandidate, verifyRetrievedValueCandidates, } from "./runs/web-retrieval-verification.js";
-export { attemptsToPlannerSummaries, buildPlannerCallIdempotencyKey, buildWebRetrievalPlannerPrompt, methodToToolName, runWebRetrievalPlanner, validateWebRetrievalPlannerOutput, } from "./runs/web-retrieval-planner.js";
-export { buildFinalAnswerDeliveryKey, buildFinalAnswerIdempotencyKey, buildProgressMessageIdempotencyKey, canGenerateFinalAnswerFromVerdict, finalizeRetrievalCompletion, protectRunFailureAfterFinalAnswer, recordFinalAnswerDelivery, recordProgressMessageSent, } from "./runs/retrieval-finalizer.js";
-export { buildFinanceKnownSources, buildFinanceSourceEvidence, buildWeatherKnownSources, buildWeatherSourceEvidence, buildWebSourceAdapterDegradationState, buildWebSourceAdapterRegistrySnapshot, checkAdapterFixtureParserVersions, createFinanceIndexTargetContract, createWeatherTargetContract, createWebLocationContract, FINANCE_ADAPTER_ID, FINANCE_ADAPTER_METADATA, FINANCE_ADAPTER_VERSION, FINANCE_INDEX_DEFINITIONS, FINANCE_PARSER_VERSION, listWebSourceAdapters, locationHierarchyContains, parseFinanceQuoteCandidates, parseWeatherMetricCandidates, rankWebSourceAdaptersForTarget, resolveFinanceIndexTarget, resolveWeatherLocationContract, stableAdapterChecksum, WEATHER_ADAPTER_ID, WEATHER_ADAPTER_METADATA, WEATHER_ADAPTER_VERSION, WEATHER_PARSER_VERSION, DEFAULT_ADAPTER_DEGRADATION_POLICY, withAdapterChecksum, } from "./runs/web-source-adapters/index.js";
+export { buildWebRetrievalPolicyDecision, extractSourceTimestampFromHtml, recordBrowserSearchEvidence, } from "./runs/web-retrieval-policy.js";
 // Contracts
 export { CANONICAL_JSON_POLICY, CONTRACT_SCHEMA_VERSION, buildDeliveryDedupeKey, buildDeliveryKey, buildDeliveryProjection, buildPayloadHash, buildScheduleIdentityKey, buildScheduleIdentityProjection, buildSchedulePayloadProjection, buildToolTargetProjection, formatContractValidationFailureForUser, stableContractHash, toCanonicalJson, validateDeliveryContract, validateIntentContract, validateScheduleContract, validateToolTargetContract, } from "./contracts/index.js";
 export { ENTERPRISE_NODE_TYPES, ENTERPRISE_RELATION_TYPES, ENTERPRISE_TOPOLOGY_SCHEMA_VERSION, validateEnterpriseOrgUnit, validateEnterpriseRelation, validateEnterpriseTeam, validateEnterpriseTopology, validateFailureReport, validateNodeResultReport, validateNodeContract, validateTraceEvent, validateWorkOrder, } from "./contracts/enterprise-topology.js";
 export { intentContractFromTaskIntentEnvelope } from "./contracts/intake-adapter.js";
-export { findNicknameNamespaceConflict, normalizeNickname, normalizeNicknameSnapshot, SUB_AGENT_CONTRACT_SCHEMA_VERSION, validateAgentRelationship, validateAgentConfig, validateAgentPromptBundle, validateCommandRequest, validateFeedbackRequest, validateNamedDeliveryEvent, validateNamedHandoffEvent, validateOrchestrationPlan, validateResultReport, validateDataExchangePackage as validateSubAgentDataExchangePackage, validateTeamExecutionPlan, validateTeamMembership, validateTeamConfig, validateUserVisibleAgentMessage, } from "./contracts/sub-agent-orchestration.js";
+export { AGENT_STATUSES, buildAgentNameSnapshotFromAgentConfig, findAgentNameNamespaceConflict, normalizeAgentName, normalizeAgentNameSnapshot, SUB_AGENT_CONTRACT_SCHEMA_VERSION, validateAgentRelationship, resolveAgentConfigAgentName, validateAgentConfig, validateAgentPromptBundle, validateCommandRequest, validateFeedbackRequest, validateNamedDeliveryEvent, validateNamedHandoffEvent, validateOrchestrationPlan, validateResultReport, validateDataExchangePackage as validateSubAgentDataExchangePackage, validateTeamExecutionPlan, validateTeamMembership, validateTeamConfig, validateUserVisibleAgentMessage, } from "./contracts/sub-agent-orchestration.js";
 export { buildAdvancedSubAgentSettingsView, buildBeginnerSubAgentSetupView, buildSubAgentStateProjection, validateSubAgentSettingsCommand, } from "./ui/sub-agent-settings.js";
 export { createInMemoryTopologyDraftStore, createTopologyDocumentEnvelope, } from "./topology/draft-store.js";
 export { applyEnterpriseTopologyGuiCommands, buildEnterpriseTopologyQuickFixOperationPlan, createEnterpriseTopologyGuiDraft, createGuiDraftOperationId, enterpriseTopologyGuiOperationScope, ENTERPRISE_TOPOLOGY_GUI_DRAFT_SCHEMA_VERSION, EnterpriseTopologyGuiOperationError, isEnterpriseRelationType, isEnterpriseTopologyGuiCommandKind, isEnterpriseTopologyGuiOperationKind, previewEnterpriseTopologyGuiOperation, } from "./topology/gui-operations.js";
 export { buildCompiledEntityRefKey, buildCompiledTopologySnapshotId, compileTopology, compileTopologyOrThrow, computeTopologySourceHash, getCompiledChildCandidates, getCompiledEntryNode, normalizeSourceTopologyVersion, TOPOLOGY_COMPILER_VERSION, TopologyCompileError, } from "./topology/compiler.js";
 export { buildCompiledTopologyCacheKey, createInMemoryTopologyCompilerCache, } from "./topology/compiler-cache.js";
-export { createEnterpriseTopologyRegistry, } from "./topology/registry.js";
-export { buildAgentTeamTopologyImportPreview, } from "./topology/agent-team-import.js";
+export { createEnterpriseTopologyRegistry } from "./topology/registry.js";
+export { buildAgentTeamTopologyImportPreview } from "./topology/agent-team-import.js";
 export { EXECUTOR_GRAPH_METADATA_KEY, EXECUTOR_GRAPH_SCHEMA_VERSION, EXECUTOR_GRAPH_SOURCE_OF_TRUTH, attachExecutorGraphMetadata, buildExecutorGraphFromEnterpriseTopology, buildExecutorGraphGuiOperations, buildExecutorGraphRollbackEvidence, buildExecutorGraphTopologyMetadata, compileExecutorGraphToEnterpriseTopology, readExecutorGraphMetadata, } from "./topology/executor-graph.js";
 export { EXECUTOR_TOPOLOGY_V2_SCHEMA_VERSION, KNOWBEE_ROOT_AGENT_ID, buildExecutorRuntimeGraphSnapshotV2, buildExecutorTopologyV2MigrationDryRunReport, buildExecutorTopologyV2RuntimeReadModelFromEnterpriseTopology, enterpriseTopologyFromExecutorTopologyV2, isExecutorTopologyV2, loadExecutorTopologyV2ReadModelFromRegistry, migrateEnterpriseTopologyToExecutorTopologyV2, materializeExecutorTopologyV2ReadModelInRegistry, previewExecutorTopologyV2RegistryMigration, repairExecutorTopologyV2ForPersistence, validateExecutorTopologyV2, } from "./topology/executor-topology-v2.js";
 export { EXECUTOR_UNDERSTANDING_DRAFT_VERSION, EXECUTOR_UNDERSTANDING_VERSION, buildExecutorInferenceEvidence, confirmExecutorUnderstanding, createExecutorDraftFromInference, inferExecutorFromDescription, inferExecutorTaskAnalysis, } from "./topology/executor-inference.js";
 export { EXECUTOR_FAILURE_OBSERVABILITY_METADATA_KEY, EXECUTOR_OBSERVABILITY_METADATA_KEY, EXECUTOR_OBSERVABILITY_SCHEMA_VERSION, attachExecutorFailureEvidence, buildExecutorRunObservabilityEvidence, buildExecutorRunObservabilityMetadata, buildExecutorTraceEventPayload, executorInferenceEvidenceForNode, executorObservabilityFromWorkOrder, } from "./topology/executor-observability.js";
 export { EXECUTOR_CONNECTION_LABELS, applyExecutorConnectionRecommendation, createExecutorConnectionDraft, enterpriseRelationTypeToExecutorConnectionRelation, executorConnectionLabel, executorConnectionRelationToEnterpriseRelationType, executorConnectionToSafeEnterpriseRelationType, recommendExecutorConnectionRelations, } from "./topology/executor-relation-inference.js";
-export { buildNodeTaskAnalysis, } from "./topology/executor-task-analysis.js";
+export { buildNodeTaskAnalysis } from "./topology/executor-task-analysis.js";
 export { delegationCandidatesFromRegistry, resolveNodeDelegation, } from "./topology/executor-delegation-resolution.js";
 export { NODE_DEFINITION_FIELDS, NODE_DEFINITION_OUTPUT_CHIPS, NODE_DEFINITION_ROLE_CHIPS, NODE_DEFINITION_STYLE_CHIPS, applyNodeDefinitionAlternative, buildNodeDefinitionGraphContext, buildNodeDefinitionPromptInput, createNodeDefinitionSuggestion, defaultNodeDefinitionFieldLocks, executorFromNodeDefinitionDraft, fieldLocksForNodeDefinitionTrigger, nodeDefinitionDraftFromExecutor, normalizeNodeDefinitionSuggestionRequest, targetFieldsForNodeDefinitionTrigger, validateNodeDefinitionSuggestionPayload, } from "./topology/node-definition-suggestion.js";
 export { redactNodeDefinitionSuggestionRequest, redactNodeDefinitionText, } from "./topology/node-definition-redaction.js";
 export { buildGraphExecutionPlan, validateGraphExecutionPlan, } from "./topology/graph-execution-plan.js";
 export { assertVisibleUserWorkOrder, buildWorkOrderFromNodeExecutionPlan, normalizeGraphExecutionOutcome, readGraphWorkOrderMetadata, simulateGraphExecutionPlan, } from "./topology/graph-execution-runner.js";
 export { getGraphExecutionPlan, listGraphExecutionEvents, persistGraphExecutionEvents, persistGraphExecutionPlan, persistRecoveryStrategyAttempt, } from "./topology/graph-execution-store.js";
-export { createGraphCancellationController, } from "./topology/graph-cancellation.js";
+export { createGraphCancellationController } from "./topology/graph-cancellation.js";
 export { inferTopologyDocumentFormat, normalizeTopologyDocumentFormat, parseTopologyImportDocument, stringifyTopologyDocument, } from "./topology/import-export.js";
 export { analyzeTopologyGaps, listDeclaredTopologyEdges, } from "./topology/gap-analysis.js";
 export { listObservedTopologyEdges, listTopologyGapFindings, listTopologyMetricsDaily, projectEnterpriseOrgWorkloadMetrics, projectTopologyMetricsDaily, projectTopologyRunMetricsDaily, refreshTopologyMetricsDaily, } from "./topology/metrics.js";
-export { simulateApprovalLine, } from "./topology/enterprise-rules.js";
-export { extractObservedTopologyEdges, } from "./topology/observed.js";
+export { simulateApprovalLine } from "./topology/enterprise-rules.js";
+export { extractObservedTopologyEdges } from "./topology/observed.js";
 export { buildTopologyHistoryId, buildTopologyValidationSnapshotId, buildTopologyVersionId, compiledSnapshotMatchesTopologyVersion, computeTopologyRegistrySourceHash, describeCompiledSnapshotMismatch, } from "./topology/versioning.js";
-export { aggregateNodeRuntimeResults, } from "./topology-runtime/aggregation.js";
-export { checkNodeRuntimeAuthority, } from "./topology-runtime/authority-checker.js";
-export { dispatchChildWorkOrders, } from "./topology-runtime/child-dispatcher.js";
-export { checkFinalFailureExhaustion, } from "./topology-runtime/exhaustion-checker.js";
-export { generateFailureReport, } from "./topology-runtime/failure-report.js";
+export { aggregateNodeRuntimeResults } from "./topology-runtime/aggregation.js";
+export { checkNodeRuntimeAuthority } from "./topology-runtime/authority-checker.js";
+export { dispatchChildWorkOrders } from "./topology-runtime/child-dispatcher.js";
+export { checkFinalFailureExhaustion } from "./topology-runtime/exhaustion-checker.js";
+export { REQUIRED_SOLUTION_PATHS, assessSolutionPathExhaustion, } from "./topology-runtime/solution-path-exhaustion.js";
+export { applyProtectedCleanupPlan, decideCleanupCandidate, evaluatePostDeletionVerification, evaluateProtectedCleanupPlan, } from "./maintenance/cleanup-decision.js";
+export { PROTECTED_CLEANUP_CONSUMERS } from "./maintenance/cleanup-ownership.js";
+export { auditGoalRequirementMatrix, createGoalRequirementSkeleton, extractGoalNormativeClauses, verifyGoalEvidenceOwners, } from "./maintenance/goal-requirement-audit.js";
+export { collectRepositoryArtifactInventory, } from "./maintenance/repository-filesystem-inventory.js";
+export { buildRepositoryReferenceIndex, createIndexedReferenceAdapters, } from "./maintenance/repository-reference-index.js";
+export { classifyRepositoryArtifact, describeRepositoryArtifact, inspectRepositoryArtifact, } from "./maintenance/artifact-inventory.js";
+export { applyArtifactOwnerConsolidation, evaluateArtifactOwnerConsolidation, } from "./maintenance/artifact-owner-consolidation.js";
+export { applyTemporaryArtifactLifecycleDecision, evaluateTemporaryArtifactLifecycle, } from "./maintenance/temporary-artifact-lifecycle.js";
+export { TEMPORARY_ARTIFACT_LIFECYCLES } from "./maintenance/temporary-artifact-registry.js";
+export { evaluateArchitectureSimplicity, evaluateNewModuleProposal, } from "./maintenance/architecture-simplicity.js";
+export { generateFailureReport } from "./topology-runtime/failure-report.js";
 export { DEFAULT_TOPOLOGY_RUNTIME_MAX_DELEGATION_DEPTH, buildChildWorkOrder, calculateWorkOrderDelegationDepth, describeTopologyNestedDelegationCompatibilityBoundary, isTopologyChildFailureStatus, listDirectChildDelegationCandidates, planChildDelegation, } from "./topology-runtime/delegation-planner.js";
 export { runNodeRuntime, validateNodeRuntimeInputSchema, } from "./topology-runtime/node-runtime.js";
-export { checkNodeRuntimePermission, } from "./topology-runtime/permission-checker.js";
+export { checkNodeRuntimePermission } from "./topology-runtime/permission-checker.js";
 export { FallbackController, RecoveryController, RedelegationController, ToolRecoveryController, buildNodeRecoveryReview, } from "./topology-runtime/recovery-controller.js";
 export { createLegacyResultReportFromNodeResult, createNodeResultReportFromRuntime, legacyResultStatusForNodeResultStatus, } from "./topology-runtime/reporter.js";
 export { buildNodeRuntimeProfileSnapshotId, createNodeRuntimeProfileSnapshot, } from "./topology-runtime/runtime-profile.js";
 export { createNodeRuntimeTraceEvent, getTopologyRun, getTopologyRunTraceProjection, listTopologyFailureReports, listTopologyNodeRuns, listTopologyResultReports, listTopologyRuns, listTopologyRunsForRootRun, listTopologyToolCalls, listTopologyTraceEvents, listTopologyWorkOrders, recordTopologyRuntimeExecution, tracePhaseForNodeRuntimeState, } from "./topology-runtime/trace.js";
-export { dispatchPlannedNodeTools, } from "./topology-runtime/tool-dispatcher.js";
+export { dispatchPlannedNodeTools } from "./topology-runtime/tool-dispatcher.js";
 export { TOPOLOGY_RUNTIME_FEATURE_KEY, resolveTopologyRootRunRouting, runTopologyRootRun, } from "./topology-runtime/harness.js";
 export { isApprovalRequiredToolType, planNodeToolExecution, resolveAllowedNodeTools, } from "./topology-runtime/tool-planner.js";
 export { validateAggregatedNodeResult, validationStatusToNodeResultStatus, } from "./topology-runtime/validation.js";
 export { buildExpectedOutputsForWorkOrder, buildWorkOrder, buildWorkOrderSubSessionIdempotencyKey, createWorkOrderRuntimeEnvelope, deriveEffectiveWorkOrderPermissionScope, deriveWorkOrderCapabilityPolicy, evaluateWorkOrderAuthorityPreflight, successCriterionToExpectedOutputContract, workOrderExpectedOutputSchemaToExpectedOutputContract, } from "./topology-runtime/work-order.js";
-export { buildExampleEnterpriseTopology, } from "./topology/examples.js";
+export { buildExampleEnterpriseTopology } from "./topology/examples.js";
 export { createTopologyFixtureStore, inferTopologyFixtureFormat, loadTopologyFixtureDirectory, loadTopologyFixtureFile, parseTopologyDocumentText, } from "./topology/fixtures.js";
 export { DEFAULT_TOPOLOGY_MAX_DELEGATION_DEPTH, isEnterpriseRelationEndpointAllowed, TOPOLOGY_RELATION_ENDPOINT_RULES, TOPOLOGY_VALIDATOR_BLOCKING_SEVERITIES, } from "./topology/schema.js";
 export { planTopologySmartConnect, recommendTopologySmartConnectRelation, recommendTopologySmartConnectRelations, TOPOLOGY_RELATION_TEMPLATE_CATALOG, } from "./topology/relation-templates.js";
@@ -124,17 +235,19 @@ export { assertTopologyValidationExecutable, createTopologyValidatorIssue, ENTER
 export { findScheduleCandidatesByContract, parseScheduleContractJson, scheduleContractDestinationEquals, scheduleContractTimeEquals, } from "./schedules/candidates.js";
 export { buildScheduleContractComparisonSystemPrompt, compareScheduleContractsWithAI, parseScheduleContractComparisonResult, } from "./schedules/comparison.js";
 // Candidate Providers
-export { buildCandidateDecisionAuditDetails, createExplicitIdProvider, createMemoryVectorProvider, createStoreCandidateProvider, createStructuredKeyProvider, decideCandidateFinal, runCandidateProviders, } from "./candidates/index.js";
+export { buildCandidateDecisionAuditDetails, createExplicitIdProvider, createStoreCandidateProvider, createStructuredKeyProvider, decideCandidateFinal, runCandidateProviders, } from "./candidates/index.js";
 // Observability
 export { LATENCY_BUDGET_MS, buildLatencyEventLabel, buildLatencyEventLabelForMeasurement, getFastResponseHealthSnapshot, listLatencyMetrics, recordLatencyMetric, resetLatencyMetrics, } from "./observability/latency.js";
 // DB
-export { getDb, closeDb, insertSession, getSession, insertMessage, getMessages, insertAuditLog, getChannelSmokeRun, getAgentCapabilityBinding, getCapabilityDelegation, listAgentCapabilityBindings, insertChannelSmokeRun, insertChannelSmokeStep, listCapabilityDelegations, listMcpServerCatalogEntries, listSkillCatalogEntries, listChannelSmokeRuns, listChannelSmokeSteps, upsertAgentCapabilityBinding, upsertMcpServerCatalogEntry, upsertSkillCatalogEntry, updateCapabilityDelegation, updateChannelSmokeRun, } from "./db/index.js";
+export { DbRuntimeInitializationError, DbRuntimeNotInitializedError, DbRuntimePathMismatchError, createDbRuntimeContext, initializeDbRuntime, getDbRuntimeState, getDb, closeDb, insertSession, getSession, insertMessage, getMessages, insertAuditLog, getChannelSmokeRun, getAgentCapabilityBinding, getCapabilityDelegation, listAgentCapabilityBindings, insertChannelSmokeRun, insertChannelSmokeStep, interruptGatewayOwnedChannelSmokeRunsStartedBefore, listCapabilityDelegations, listMcpServerCatalogEntries, listSkillCatalogEntries, listChannelSmokeRuns, listChannelSmokeSteps, upsertAgentCapabilityBinding, upsertMcpServerCatalogEntry, upsertSkillCatalogEntry, updateCapabilityDelegation, updateChannelSmokeRun, } from "./db/index.js";
 // Tools
 export { toolDispatcher, ToolDispatcher, registerBuiltinTools } from "./tools/index.js";
 // Capability isolation
 export { acquireAgentCapabilityRateLimit, buildCapabilityApprovalAggregationEvent, buildCapabilityDelegationRequest, buildCapabilityResultDataExchange, buildDangerousCapabilityFixtureMatrix, createCapabilityPolicySnapshot, applyCapabilityDelegationApprovalDecision, classifyDepthScopedToolKind, evaluateAgentToolCapabilityPolicy, evaluateDepthScopedToolPolicy, evaluateDangerousCapabilityApprovalFixture, isMcpServerAllowed, isToolAllowedBySkillMcpAllowlist, mapDangerousFixtureRiskLevel, parseMcpRegisteredToolName, persistCapabilityResultDataExchange, recordCapabilityDelegationRequest, resetAgentCapabilityRateLimitsForTest, resolveToolCapabilityRisk, toAgentCapabilityCallContext, updateCapabilityDelegationLifecycle, } from "./security/capability-isolation.js";
 // Agent
 export { runAgent } from "./agent/index.js";
+export { sanitizeUserFacingError } from "./runs/error-sanitizer.js";
+export { redactUiValue } from "./ui/redaction.js";
 export { buildTaskIntakeSystemPrompt } from "./agent/intake-prompt.js";
 export { approveLearningEvent, buildHistoryVersion, dbHistoryVersionToContract, dbLearningEventToContract, dbRestoreEventToContract, dryRunRestoreHistoryVersion, evaluateLearningPolicy, listAgentLearningEvents, listHistoryVersions, listLearningReviewQueue, listRestoreEvents, recordHistoryVersion, recordLearningEvent, restoreHistoryVersion, } from "./agent/learning.js";
 // Instructions
@@ -145,9 +258,11 @@ export { storeMemory, storeMemorySync, searchMemory, searchMemorySync, recentMem
 export { runMemoryRetrievalEvaluation, seedMemoryRetrievalEvaluationFixture, evaluateMemoryRetrievalQuery, } from "./memory/evaluation.js";
 export { diagnoseVectorEmbeddingRows } from "./memory/search.js";
 export { buildLearningWritebackCandidate, listMemoryWritebackReviewItems, reviewMemoryWritebackCandidate, inspectMemoryWritebackSafety, } from "./memory/writeback.js";
-export { MemoryIsolationError, assertMemoryAccessAllowed, buildDataExchangeAdminRawView, buildDataExchangeContextMemoryRefs, buildDataExchangeSanitizedView, buildMemorySummaryDataExchange, createDataExchangePackage, dbAgentDataExchangeToPackage, getDataExchangePackage, inspectDataExchangePayloadRisk, isDataExchangeUsableForMemoryAccess, listActiveDataExchangePackagesForRecipient, listActiveDataExchangePackagesForSource, memoryOwnerScopeKey, persistDataExchangePackage, prepareAgentMemoryWritebackQueueInput, preparePolicyControlledMemoryWritebackQueueInput, resolveMemoryOwnerScopePolicy, searchOwnerScopedMemory, storeOwnerScopedMemory, validateDataExchangePackage, } from "./memory/isolation.js";
-export { loadKnowbeeMd, initKnowbeeMd, loadWizbyMd, initWizbyMd, loadHowieMd, initHowieMd, ensurePromptSourceFiles, loadFirstRunPromptSourceAssembly, loadPromptSourceRegistry, loadSystemPromptSourceAssembly, loadSystemPromptSources, dryRunPromptSourceAssembly, buildPromptSourceContentDiff, writePromptSourceWithBackup, rollbackPromptSourceBackup, checkPromptSourceLocaleParity, detectPromptSourceSecretMarkers, isPromptSourceContentSafe, } from "./memory/knowbee-md.js";
+export { MemoryIsolationError, assertMemoryAccessAllowed, buildDataExchangeAdminRawView, buildDataExchangeContextMemoryRefs, buildDataExchangeSanitizedView, buildMemorySummaryDataExchange, createDataExchangePackage, dbAgentDataExchangeToPackage, getDataExchangePackage, inspectDataExchangePayloadRisk, isDataExchangeUsableForMemoryAccess, listActiveDataExchangePackagesForRecipient, listActiveDataExchangePackagesForSource, memoryOwnerScopeKey, persistDataExchangePackage, prepareAgentMemoryWritebackQueueInput, preparePolicyControlledMemoryWritebackQueueInput, resolveMemoryOwnerScopePolicy, searchOwnerScopedMemory, storeOwnerScopedMemory, validateDataExchangePackage, validateLongTermMemoryWriteGate, } from "./memory/isolation.js";
+export { LONG_TERM_MEMORY_CATEGORIES } from "./memory/isolation.js";
+export { loadKnowbeeMd, initKnowbeeMd, loadWizbyMd, initWizbyMd, loadHowieMd, initHowieMd, ensurePromptSourceFiles, loadFirstRunPromptSourceAssembly, listPromptSourceDefinitions, loadPromptSourceRegistry, loadSystemPromptSourceAssembly, loadSystemPromptSources, dryRunPromptSourceAssembly, buildPromptSourceContentDiff, writePromptSourceWithBackup, rollbackPromptSourceBackup, checkPromptSourceLocaleParity, detectPromptSourceSecretMarkers, isPromptSourceContentSafe, } from "./memory/knowbee-md.js";
 export { runPromptSourceRegression } from "./memory/prompt-regression.js";
+export { activateAgentPromptProposal, approveAgentPromptProposal, createAgentPromptProposal, rollbackAgentPromptVersion, } from "./memory/agent-prompt-improvement.js";
 export { fileIndexer, FileIndexer } from "./memory/file-indexer.js";
 export { getEmbeddingProvider, NullEmbeddingProvider, OllamaEmbeddingProvider, VoyageEmbeddingProvider, OpenAIEmbeddingProvider, } from "./memory/embedding.js";
 // Plugins
@@ -158,100 +273,74 @@ export { McpStdioClient, buildMcpToolCallPayload } from "./mcp/client.js";
 // MQTT
 export { startMqttBroker, stopMqttBroker, getMqttBrokerSnapshot } from "./mqtt/broker.js";
 // Channels
-export { startChannels, DiscordChannelAdapter, GoogleChatChannelAdapter, TelegramChannel, TelegramChannelAdapter, SlackChannel, CHANNEL_REGISTRY_RUNTIME_FEATURE_KEY, ChannelRegistry, applyChannelConnectionSettingsCompatPatch, buildCapabilityFallbackNotice, buildChannelRegistryRuntimeDiagnostics, buildChannelRuntimeSummary, buildCompatChannelConnectionsFromConfig, buildDiscordCapabilityManifest, buildDiscordContinuationLookupCandidate, buildDiscordPermissionDoctor, buildGoogleChatCapabilityManifest, buildGoogleChatContinuationLookupCandidate, buildGoogleChatWorkspaceDoctor, buildIMessageCapabilityManifest, buildIMessageLocalBridgeConfig, buildIMessageLocalBridgeDoctor, buildKakaoTalkLocalBridgeCapabilityManifest, buildKakaoTalkLocalBridgeConfig, buildKakaoTalkLocalBridgeDoctor, buildKakaoTalkOfficialCapabilityManifest, buildKakaoTalkOfficialDoctor, buildLocalBridgeCapabilityManifest, buildLocalBridgeDoctor, buildSettingsChannelConnectionSnapshot, buildTelegramCapabilityManifest, buildTelegramContinuationLookupCandidate, buildUnsupportedCapabilityReceipt, channelConnectionSecretsToJson, createDiscordChannelAdapter, createGoogleChatChannelAdapter, createIMessageChannelAdapter, createKakaoTalkLocalBridgeChannelAdapter, createLocalBridgeChannelAdapter, createRawPayloadRef, createTelegramChannelAdapter, describeUnsupportedCapability, defineChannelAdapter, defineChannelCapabilities, isBuiltInChannelProvider, isExternalChannelProvider, isInternalChannelSurface, isPositiveDeliveryReceipt, normalizeChannelSource, normalizeDiscordComponentInteraction, normalizeDiscordInboundEvent, normalizeDiscordInteractionRequest, normalizeGoogleChatCardAction, normalizeGoogleChatInboundEvent, namespaceChannelIdentity, parseNamespacedChannelIdentity, persistChannelConnections, recordChannelRuntimeEvent, normalizeTelegramInboundUpdate, normalizeTelegramInteractionUpdate, resolveChannelDeliveryFallbackPlan, resolveDeliveryReceiptStatus, resolveChannelRegistryRuntimeMode, resolveChannelSurface, resolveDiscordConnectionPolicy, resolveGoogleChatConnectionPolicy, resolveTelegramConnectionPolicy, sanitizeChannelContractValue, updateConnectionRuntimeHealth, validateDiscordInteractionSignature, validateGoogleChatRequestAuth, validateTelegramWebhookSecretToken, createDryRunChannelSmokeExecutor, getDefaultChannelSmokeScenarios, resolveChannelSmokeReadiness, runChannelSmokeScenarios, runPersistedChannelSmokeScenarios, sanitizeChannelSmokeTrace, sanitizeChannelSmokeValue, splitTextForChannel, validateChannelSmokeTrace, } from "./channels/index.js";
+export { startChannels, closeChannelRuntimeStorage, DiscordChannelAdapter, GoogleChatChannelAdapter, TelegramChannel, TelegramChannelAdapter, SlackChannel, CHANNEL_REGISTRY_RUNTIME_FEATURE_KEY, ChannelRegistry, applyChannelConnectionSettingsCompatPatch, buildCapabilityFallbackNotice, buildChannelRegistryRuntimeDiagnostics, buildChannelRuntimeSummary, buildCompatChannelConnectionsFromConfig, buildDiscordCapabilityManifest, buildDiscordContinuationLookupCandidate, buildDiscordPermissionDoctor, buildGoogleChatCapabilityManifest, buildGoogleChatContinuationLookupCandidate, buildGoogleChatWorkspaceDoctor, buildIMessageCapabilityManifest, buildIMessageLocalBridgeConfig, buildIMessageLocalBridgeDoctor, buildKakaoTalkLocalBridgeCapabilityManifest, buildKakaoTalkLocalBridgeConfig, buildKakaoTalkLocalBridgeDoctor, buildKakaoTalkOfficialCapabilityManifest, buildKakaoTalkOfficialDoctor, buildLocalBridgeCapabilityManifest, buildLocalBridgeDoctor, buildSettingsChannelConnectionSnapshot, buildTelegramCapabilityManifest, buildTelegramContinuationLookupCandidate, buildUnsupportedCapabilityReceipt, channelConnectionSecretsToJson, createDiscordChannelAdapter, createGoogleChatChannelAdapter, createIMessageChannelAdapter, createKakaoTalkLocalBridgeChannelAdapter, createLocalBridgeChannelAdapter, createRawPayloadRef, createTelegramChannelAdapter, detectPrimaryMessageLanguage, describeUnsupportedCapability, defineChannelAdapter, defineChannelCapabilities, isBuiltInChannelProvider, isExternalChannelProvider, isInternalChannelSurface, isPositiveDeliveryReceipt, normalizeChannelSource, normalizeDiscordComponentInteraction, normalizeDiscordInboundEvent, normalizeDiscordInteractionRequest, normalizeGoogleChatCardAction, normalizeGoogleChatInboundEvent, namespaceChannelIdentity, parseNamespacedChannelIdentity, persistChannelConnections, recordChannelRuntimeEvent, normalizeTelegramInboundUpdate, normalizeTelegramInteractionUpdate, resolveChannelDeliveryFallbackPlan, resolveDeliveryReceiptStatus, resolveChannelRegistryRuntimeMode, resolveChannelSurface, resolveUserFacingMessageLanguage, resolveDiscordConnectionPolicy, resolveGoogleChatConnectionPolicy, resolveTelegramConnectionPolicy, sanitizeChannelContractValue, updateConnectionRuntimeHealth, validateDiscordInteractionSignature, validateGoogleChatRequestAuth, validateTelegramWebhookSecretToken, createDryRunChannelSmokeExecutor, getDefaultChannelSmokeScenarios, resolveChannelSmokeReadiness, recoverInterruptedGatewayChannelSmokeRuns, runChannelSmokeScenarios, runPersistedChannelSmokeScenarios, sanitizeChannelSmokeTrace, sanitizeChannelSmokeValue, splitTextForChannel, validateChannelSmokeTrace, CameraConversationProbeAdapter, createStartRootRunConversationProbe, projectCameraConversationCompletedSnapshot, projectCameraConversationDeliveryApprovalSnapshot, projectCameraConversationPostEffectSnapshot, projectCameraConversationPreEffectSnapshot, VerifyConversationProcessUseCase, projectConversationProcessBaseline, validateConversationControlRecoveryParity, validateConversationDeliveryParity, } from "./channels/index.js";
 // Runs
 export { startRootRun } from "./runs/start.js";
 export { buildStartPlan, defaultStartPlanDependencies, } from "./runs/start-plan.js";
-export { buildIngressReceipt, resolveIngressStartParams, startIngressRun } from "./runs/ingress.js";
+export { buildIngressAcknowledgement, buildSubmitUserRequestCommand, defaultIngressRunDependencies, resolveIngressStartParams, startIngressRun, submitUserRequest, } from "./runs/ingress.js";
 export { buildIngressDedupeKey } from "./runs/ingress.js";
+export { buildIntakeAcknowledgementControl, deliverIntakeAcknowledgementControl, renderIntakeAcknowledgementControl, } from "./channels/intake-acknowledgement-control.js";
+export { buildTypedObservabilityEvent, projectTypedObservabilityTrace, } from "./observability/typed-event-contract.js";
+export { writeTypedObservabilityLog } from "./observability/typed-event-logger.js";
+export { recordTypedObservabilityEventSafely } from "./observability/typed-event-repository.js";
+export { buildCanonicalTransitionObservabilityEvent, recordCanonicalTransitionObservability, } from "./observability/canonical-transition-events.js";
+export { SqliteTypedObservabilityEventRepository } from "./db/typed-observability-event-repository.js";
+export { LLM_INVOCATION_RECEIPT_SCHEMA_VERSION, buildLlmInvocationReceipt, } from "./observability/llm-invocation-receipt.js";
+export { ObservedAIProvider } from "./ai/observed-provider.js";
+export { SqliteLlmInvocationReceiptRepository } from "./db/llm-invocation-receipt-repository.js";
+export { buildRuntimeInspectorTypedTrace } from "./runs/runtime-inspector-typed-trace.js";
 export { buildInboundMessageKey, createInboundMessageRecord, detectExplicitToolIntent, hasExplicitContinuationReference, shouldInspectActiveRunCandidates, } from "./runs/request-isolation.js";
-export { canTransitionRunStatus, deriveRunCompletionOutcome, isTerminalRunStatus, resolveRunFlowIdentifiers, } from "./runs/flow-contract.js";
+export { canTransitionRunStatus, isTerminalRunStatus, projectRequestExecutionOutcome, resolveRunFlowIdentifiers, } from "./runs/flow-contract.js";
+export { projectCanonicalWorkStateToRunStatus } from "./runs/canonical-work-run-projection.js";
+export { executeCanonicalWorkTransition } from "./runs/canonical-work-transition-use-case.js";
+export { CanonicalWorkPersistenceCorruptionError, SqliteCanonicalWorkRepository, } from "./db/canonical-work-repository.js";
+export { applyCanonicalRunTransition } from "./runs/store.js";
+export { CanonicalWorkReceiptPersistenceError, SqliteCanonicalWorkReceiptRepository, } from "./db/canonical-work-receipt-repository.js";
+export { buildCanonicalPlanPolicyReceiptDescriptor, evaluateCanonicalPlanPolicy, } from "./runs/canonical-plan-policy.js";
+export { projectCanonicalCapabilitySnapshot } from "./runs/canonical-capability-snapshot.js";
+export { projectCapabilitySelectionSnapshot } from "./runs/capability-selection-snapshot.js";
+export { executeCapabilitySelection } from "./runs/capability-selection-use-case.js";
+export { executeWebResearchMethodProposal } from "./runs/web-research-method-use-case.js";
+export { projectMcpRuntimeHealthObservations, projectYeonjangRuntimeHealthObservations, } from "./runs/runtime-capability-health.js";
+export { extractIntakeMethodConstraints } from "./agent/intake-method-constraints.js";
 export { buildStartupRecoverySummary, classifyStartupRecovery, getLastStartupRecoverySummary, } from "./runs/startup-recovery.js";
 export { DEFAULT_RETENTION_POLICY, DEFAULT_RETRY_POLICIES, DEFAULT_SOAK_HEALTH_THRESHOLDS, DEFAULT_SOAK_PROFILES, buildSoakHealthSummary, buildSoakReportArtifact, buildSoakReportPayload, buildRetentionCleanupPlan, buildRetryFailureFingerprint, calculateSoakLatencyStats, collectSoakResourceMetrics, evaluateRetryBackoff, expandSoakOperationMix, getSoakProfile, runRetentionCleanup, runSoakProfile, shouldStopRepeatedFailure, } from "./runs/soak-retention.js";
 export { COUNT_BASED_FAILURE_SIGNAL_REASONS, NON_TERMINAL_RECOVERY_REASONS, TERMINAL_FAILURE_REASONS, createDefaultExecutionPolicySnapshot, isCountBasedFailureSignalReason, isTerminalFailureReason, normalizeFailureReason, } from "./runs/execution-policy.js";
 export { assertTerminalFailureAllowed, guardTerminalFailure, } from "./runs/terminal-failure-guard.js";
-export { chooseRecoveryAlternative, } from "./runs/recovery-controller.js";
+export { chooseRecoveryAlternative } from "./runs/recovery-controller.js";
 export { RECOVERY_STRATEGY_CHANGE_AXES, createRecoveryStrategyLedger, hasRecoveryStrategyAttempt, recordRecoveryStrategyAttempt, recoveryStrategyFingerprint, } from "./runs/recovery-strategy-ledger.js";
+export { ExtensionLiveSmokeRunnerError, runExtensionLiveSmokeScenarios, } from "./runs/extension-live-smoke-runner.js";
+export { createExtensionLiveToolDispatchAdapter } from "./runs/extension-live-tool-dispatch-adapter.js";
+export { YeonjangLiveSmokeRunnerError, runYeonjangLiveSmokeScenario, runYeonjangLiveSmokeScenarios, } from "./runs/yeonjang-live-smoke-runner.js";
+export { createYeonjangLiveTransportAdapter } from "./runs/yeonjang-live-transport-adapter.js";
+export { WebRetrievalLiveRunnerError, runWebRetrievalLiveScenario, } from "./runs/web-retrieval-live-runner.js";
+export { createWebRetrievalToolDispatchAdapter } from "./runs/web-retrieval-tool-dispatch-adapter.js";
+export { validateLiveAcceptanceExecutionRequest } from "./release/live-acceptance-execution-request.js";
+export { captureLiveAcceptanceRuntimeSnapshot } from "./release/live-acceptance-runtime-snapshot-adapter.js";
+export { inspectLiveAcceptanceSelectionAvailability, resolveLiveAcceptanceExecutionSelections, } from "./release/live-acceptance-selection-preflight.js";
+export { LiveAcceptanceLlmAdapterError, createFileBackedLiveAcceptanceLlmPorts, selectLiveAcceptancePromptSource, } from "./release/live-acceptance-llm-adapter.js";
+export { createPreflightedLiveAcceptanceExecutor } from "./release/live-acceptance-preflighted-executor.js";
+export { createVerifiedLiveAcceptanceExecutor } from "./release/live-acceptance-verified-executor.js";
+export { createLiveAcceptanceSigningRequestFileSink } from "./release/live-acceptance-signing-request-file-sink.js";
+export { YEONJANG_SENSITIVE_TOOL_OPERATIONS, getYeonjangSensitiveOperationForTool, requiresDefaultYeonjangToolApproval, } from "./orchestration/product-parameter-policy.js";
+export { requiresApprovalAtExecutionBoundary } from "./tools/dispatcher.js";
 // Scheduler
 export { runSchedule, runScheduleAndWait } from "./scheduler/index.js";
+// Built-in skills
+export { registerBuiltinSkills, WEB_RESEARCH_SKILL_ID, WEB_RESEARCH_SKILL_TOOL_NAMES, YEONJANG_SKILL_ID, YEONJANG_SKILL_TOOL_NAMES, } from "./skills/builtin.js";
 // API server
 export { startServer, closeServer } from "./api/server.js";
-import { startServer as _startServer } from "./api/server.js";
-import { startChannels as _startChannels } from "./channels/index.js";
-// Bootstrap: configure defaults and register built-in tools
-import { loadConfig as _loadConfig } from "./config/index.js";
-import { getDb as _getDb, insertAuditLog as _insertAuditLog, upsertPromptSources as _upsertPromptSources, } from "./db/index.js";
-import { mcpRegistry as _mcpRegistry } from "./mcp/registry.js";
-import { ensurePromptSourceFiles as _ensurePromptSourceFiles } from "./memory/knowbee-md.js";
-import { startMqttBroker as _startMqttBroker, stopMqttBroker as _stopMqttBroker, } from "./mqtt/broker.js";
-import { recoverActiveRunsOnStartup as _recoverActiveRunsOnStartup } from "./runs/store.js";
-import { refreshRuntimeManifest as _refreshRuntimeManifest } from "./runtime/manifest.js";
-import { registerBuiltinTools as _registerBuiltinTools } from "./tools/index.js";
-export function bootstrap() {
-    _loadConfig();
-    _getDb();
-    try {
-        const promptSeed = _ensurePromptSourceFiles(process.cwd());
-        _upsertPromptSources(promptSeed.registry.map(({ content: _content, ...metadata }) => metadata));
-        _insertAuditLog({
-            timestamp: Date.now(),
-            session_id: null,
-            source: "system",
-            tool_name: "prompt_bootstrap",
-            params: JSON.stringify({ promptsDir: promptSeed.promptsDir }),
-            output: JSON.stringify({
-                created: promptSeed.created,
-                existing: promptSeed.existing.length,
-                sources: promptSeed.registry.length,
-            }),
-            result: "success",
-            duration_ms: null,
-            approval_required: 0,
-            approved_by: null,
-        });
-    }
-    catch {
-        try {
-            _insertAuditLog({
-                timestamp: Date.now(),
-                session_id: null,
-                source: "system",
-                tool_name: "prompt_bootstrap",
-                params: null,
-                output: "Prompt bootstrap failed with a safe initialization error summary.",
-                result: "failed",
-                duration_ms: null,
-                approval_required: 0,
-                approved_by: null,
-            });
-        }
-        catch {
-            // Keep startup alive; prompt bootstrap failures are surfaced through diagnostics when DB is available.
-        }
-    }
-    _registerBuiltinTools();
-    try {
-        _refreshRuntimeManifest({ includeEnvironment: false, includeReleasePackage: false });
-    }
-    catch {
-        // Runtime manifest failures are surfaced through doctor checks; bootstrap must stay alive.
-    }
+import { bootstrap as _runtimeBootstrap, bootstrapAsync as _runtimeBootstrapAsync, bootstrapRuntime as _runtimeBootstrapRuntime, } from "./runtime/bootstrap.js";
+export function bootstrap(config, options = {}) {
+    const runtimeConfig = _runtimeBootstrap(config, options);
+    return runtimeConfig;
 }
-export async function bootstrapRuntime() {
-    bootstrap();
-    _recoverActiveRunsOnStartup();
-    await _mcpRegistry.loadFromConfig();
+export async function bootstrapRuntime(config, options = {}) {
+    const runtimeConfig = await _runtimeBootstrapRuntime(config, options);
+    return runtimeConfig;
 }
-export async function bootstrapAsync() {
-    await bootstrapRuntime();
-    await _startMqttBroker();
-    await _startChannels();
-    try {
-        await _startServer();
-    }
-    catch (error) {
-        await _stopMqttBroker();
-        throw error;
-    }
+export async function bootstrapAsync(config, options = {}) {
+    const runtimeConfig = await _runtimeBootstrapAsync(config, options);
+    return runtimeConfig;
 }
 //# sourceMappingURL=index.js.map

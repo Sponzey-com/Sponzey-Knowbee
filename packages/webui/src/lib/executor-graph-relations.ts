@@ -2,6 +2,13 @@ import type {
   ExecutorDraft,
   ExecutorGraphWorkspace,
 } from "./executor-graph"
+import {
+  mainAgentLabelEn,
+  mainAgentLabelKo,
+  mainAgentPossessiveEn,
+  mainAgentSubjectEn,
+  mainAgentSubjectKo,
+} from "./main-agent-copy"
 
 export type ExecutorGraphRelationKind = "root_direct" | "child" | "indirect"
 
@@ -74,7 +81,8 @@ export function buildExecutorGraphRelationInfoMap(
   for (const executor of graph.executors) {
     const parentExecutorIds = [...(incoming.get(executor.id) ?? [])].sort((left, right) => left.localeCompare(right))
     const firstParent = parentExecutorIds[0] ? executorById.get(parentExecutorIds[0]) : undefined
-    const parentLabel = firstParent ? executorNameForDisplay(firstParent) : undefined
+    const parentLabelKo = firstParent ? executorNameForDisplay(firstParent, "ko") : undefined
+    const parentLabelEn = firstParent ? executorNameForDisplay(firstParent, "en") : undefined
     const depth = depthFor(executor.id)
     const duplicateName = (nameCounts.get(normalizedName(executor.name)) ?? 0) > 1
     const roleLabel = executorRoleLabel(executor)
@@ -88,13 +96,13 @@ export function buildExecutorGraphRelationInfoMap(
     result.set(executor.id, {
       executorId: executor.id,
       relationKind,
-      relationLabelKo: relationLabelKo(relationKind, parentLabel, rootAgent),
-      relationLabelEn: relationLabelEn(relationKind, parentLabel, rootAgent),
-      relationDetailKo: relationDetailKo(relationKind, parentLabel, rootAgent),
-      relationDetailEn: relationDetailEn(relationKind, parentLabel, rootAgent),
+      relationLabelKo: relationLabelKo(relationKind, parentLabelKo, rootAgent),
+      relationLabelEn: relationLabelEn(relationKind, parentLabelEn, rootAgent),
+      relationDetailKo: relationDetailKo(relationKind, parentLabelKo, rootAgent),
+      relationDetailEn: relationDetailEn(relationKind, parentLabelEn, rootAgent),
       selectableWithoutPath: relationKind === "root_direct",
       parentExecutorIds,
-      ...(parentLabel ? { parentLabel } : {}),
+      ...(parentLabelKo ? { parentLabel: parentLabelKo } : {}),
       roleLabel,
       shortId,
       duplicateName,
@@ -104,8 +112,10 @@ export function buildExecutorGraphRelationInfoMap(
   return result
 }
 
-export function executorNameForDisplay(executor: ExecutorDraft): string {
-  return normalizeLegacyExecutorDefaultText(executor.name.trim()) || executor.id
+export function executorNameForDisplay(executor: ExecutorDraft, language: "ko" | "en" = "ko"): string {
+  const name = normalizeLegacyExecutorDefaultText(executor.name.trim())
+  if (name) return name
+  return language === "en" ? "unnamed sub-agent" : "이름 없는 서브 에이전트"
 }
 
 export function executorRoleLabel(executor: ExecutorDraft): string {
@@ -128,6 +138,7 @@ function normalizedName(name: string): string {
 export function normalizeLegacyExecutorDefaultText(value: string): string {
   const trimmed = value.trim()
   if (/^새 실행자\s+\d+$/.test(trimmed)) return trimmed.replace(/^새 실행자/, "새 서브 에이전트")
+  if (trimmed.toLocaleLowerCase() === "executor") return "서브 에이전트"
   if (trimmed === "실행자") return "서브 에이전트"
   if (trimmed === "이 실행자가 맡을 일을 적어주세요.") return "이 서브 에이전트가 맡을 일을 적어주세요."
   return trimmed
@@ -135,39 +146,13 @@ export function normalizeLegacyExecutorDefaultText(value: string): string {
 
 function rootAgentRelationText(value: string | undefined): RootAgentRelationText {
   const trimmed = value?.trim() ?? ""
-  if (!trimmed || isDefaultMainAgentAlias(trimmed)) {
-    return {
-      koLabel: "메인 에이전트",
-      koSubject: "메인 에이전트가",
-      enLabel: "main agent",
-      enSubject: "The main agent",
-      enPossessive: "the main agent's",
-    }
-  }
   return {
-    koLabel: trimmed,
-    koSubject: withKoreanSubjectParticle(trimmed),
-    enLabel: trimmed,
-    enSubject: trimmed,
-    enPossessive: `${trimmed}'s`,
+    koLabel: mainAgentLabelKo(trimmed),
+    koSubject: mainAgentSubjectKo(trimmed),
+    enLabel: mainAgentLabelEn(trimmed),
+    enSubject: mainAgentSubjectEn(trimmed, { sentenceStart: true }),
+    enPossessive: mainAgentPossessiveEn(trimmed),
   }
-}
-
-function isDefaultMainAgentAlias(value: string): boolean {
-  const normalized = value.trim().normalize("NFKC").toLocaleLowerCase()
-  return normalized === "knowbee" || normalized === "노비"
-}
-
-function withKoreanSubjectParticle(value: string): string {
-  return `${value}${hasKoreanFinalConsonant(value) ? "이" : "가"}`
-}
-
-function hasKoreanFinalConsonant(value: string): boolean {
-  const lastHangul = [...value.trim()].reverse().find((char) => /[가-힣]/u.test(char))
-  if (!lastHangul) return false
-  const code = lastHangul.charCodeAt(0) - 0xac00
-  if (code < 0 || code > 11171) return false
-  return code % 28 !== 0
 }
 
 function relationLabelKo(kind: ExecutorGraphRelationKind, parentLabel: string | undefined, rootAgent: RootAgentRelationText): string {

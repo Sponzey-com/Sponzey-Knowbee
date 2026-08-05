@@ -3,9 +3,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import type { AIProvider } from "../packages/core/src/ai/index.ts"
-import { analyzeTaskIntake, type TaskIntakeActionItem, type TaskIntakeResult } from "../packages/core/src/agent/intake.ts"
+import type { TaskIntakeActionItem, TaskIntakeResult } from "../packages/core/src/agent/intake.ts"
 import { executeScheduleActions, type ScheduleActionDependencies } from "../packages/core/src/runs/action-execution.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 import {
   CONTRACT_SCHEMA_VERSION,
   buildDeliveryKey,
@@ -17,19 +17,17 @@ import {
   toCanonicalJson,
   type ScheduleContract,
 } from "../packages/core/src/index.ts"
-import { closeDb, getDb, getSchedule } from "../packages/core/src/db/index.js"
+import { closeDb, getSchedule } from "../packages/core/src/db/index.js"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
+let runtimeDb: ReturnType<typeof initializeTestDbRuntime>
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task004-schedule-"))
   tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  runtimeDb = initializeTestDbRuntime(stateDir)
 }
 
 beforeEach(() => {
@@ -38,11 +36,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -81,12 +74,12 @@ function scheduleContract(overrides: Partial<ScheduleContract> = {}): ScheduleCo
 
 function insertContractSchedule(id: string, contract: ScheduleContract): void {
   const now = Date.parse("2026-04-15T00:00:00.000Z")
-  getDb()
+  runtimeDb
     .prepare(`INSERT INTO schedules
       (id, name, cron_expression, timezone, prompt, enabled, target_channel, target_session_id,
        execution_driver, origin_run_id, origin_request_group_id, model, max_retries, timeout_sec,
        contract_json, identity_key, payload_hash, delivery_key, contract_schema_version, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(
       id,
       contract.displayName ?? id,
@@ -306,63 +299,6 @@ describe("task004 schedule contract candidates", () => {
     })
   })
 
-  it("marks vector or fts candidates as semantic-only and comparison-required", () => {
-    const contract = scheduleContract()
-    const semanticContract = scheduleContract({
-      time: {
-        cron: "0 10 * * *",
-        timezone: "Asia/Seoul",
-        missedPolicy: "next_only",
-      },
-      payload: { kind: "literal_message", literalText: "다른 알림" },
-      delivery: {
-        schemaVersion: CONTRACT_SCHEMA_VERSION,
-        mode: "channel_message",
-        channel: "slack",
-        sessionId: "slack:C999",
-        threadId: "main",
-      },
-      displayName: "semantic only",
-    })
-    insertContractSchedule("schedule-semantic-task004", semanticContract)
-    const semanticSchedule = getSchedule("schedule-semantic-task004")
-    expect(semanticSchedule).toBeTruthy()
-
-    const candidates = findScheduleCandidatesByContract({
-      contract,
-      semanticCandidates: semanticSchedule ? [semanticSchedule] : [],
-    })
-
-    expect(candidates.find((candidate) => candidate.schedule.id === "schedule-semantic-task004")).toMatchObject({
-      candidateReason: "semantic_candidate",
-      confidenceKind: "semantic",
-      requiresComparison: true,
-    })
-  })
-
-  it("does not turn a natural-language cancel heuristic into a final cancel action", async () => {
-    insertContractSchedule("schedule-cancel-choice-task004", scheduleContract({
-      delivery: {
-        schemaVersion: CONTRACT_SCHEMA_VERSION,
-        mode: "channel_message",
-        channel: "telegram",
-        sessionId: "session-cancel-task004",
-        threadId: "main",
-      },
-    }))
-
-    const result = await analyzeTaskIntake({
-      userMessage: "/cancel schedule",
-      sessionId: "session-cancel-task004",
-      source: "telegram",
-      model: "mock-model",
-    })
-
-    expect(result?.intent.category).toBe("clarification")
-    expect(result?.action_items.map((action) => action.type)).toEqual(["ask_user"])
-    expect(result?.action_items.some((action) => action.type === "cancel_schedule")).toBe(false)
-  })
-
   it("returns a user choice message instead of silently rejecting duplicate schedules", () => {
     const dependencies: ScheduleActionDependencies = {
       scheduleDelayedRun: () => undefined,
@@ -418,6 +354,7 @@ describe("task004 schedule contract ai comparison", () => {
   it("accepts a valid same decision only when the candidate id exists", async () => {
     const contract = scheduleContract()
     const result = await compareScheduleContractsWithAI({
+      config: DEFAULT_CONFIG,
       incoming: contract,
       candidates: [{ id: "candidate-1", contract }],
       model: "mock-model",
@@ -450,6 +387,7 @@ describe("task004 schedule contract ai comparison", () => {
     })
 
     await compareScheduleContractsWithAI({
+      config: DEFAULT_CONFIG,
       incoming,
       candidates: [{
         id: "candidate-raw-task004",
@@ -528,6 +466,7 @@ describe("task004 schedule contract ai comparison", () => {
 
     const contract = scheduleContract()
     const result = await compareScheduleContractsWithAI({
+      config: DEFAULT_CONFIG,
       incoming: contract,
       candidates: [{ id: "candidate-1", contract }],
       model: "mock-model",
@@ -537,5 +476,38 @@ describe("task004 schedule contract ai comparison", () => {
     })
 
     expect(result).toMatchObject({ decision: "clarify", reasonCode: "comparator_timeout" })
+  })
+
+  it("redacts provider failures before returning comparator user messages", async () => {
+    const rawToken = "sk-schedule-comparison-secret-1234567890"
+    const rawPath = "/Users/me/private/schedule-comparison.json"
+    const failingProvider: AIProvider = {
+      id: "failing",
+      supportedModels: ["mock-model"],
+      maxContextTokens: () => 4096,
+      async *chat() {
+        throw new Error(`403 provider failed token=${rawToken} path=${rawPath} <html><body>blocked</body></html>`)
+      },
+    }
+
+    const contract = scheduleContract()
+    const result = await compareScheduleContractsWithAI({
+      config: DEFAULT_CONFIG,
+      incoming: contract,
+      candidates: [{ id: "candidate-1", contract }],
+      model: "mock-model",
+      providerId: "failing",
+      provider: failingProvider,
+    })
+
+    expect(result).toMatchObject({
+      decision: "clarify",
+      reasonCode: "provider_error",
+      userMessage: "인증 또는 접근 차단 문제로 서버가 HTML 오류 페이지를 반환했습니다.",
+    })
+    const serialized = JSON.stringify(result)
+    expect(serialized).not.toContain(rawToken)
+    expect(serialized).not.toContain(rawPath)
+    expect(serialized).not.toContain("<html>")
   })
 })

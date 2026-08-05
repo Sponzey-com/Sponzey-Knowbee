@@ -16,6 +16,39 @@
 - `packages/core/src/**/*.js`, `*.d.ts`, `*.map`은 삭제 전 compatibility sidecar이다. 직접 수정하지 않고 `pnpm run core:sync-src-artifacts`로 TS 원본에서 다시 생성한다.
 - 현재 `scripts/release-package.mjs`는 `packages/core/src/release/package.js` sidecar를 compatibility entry로 사용한다. 이 경로는 generated consistency gate로 보호하고, 후속 정리에서 `dist` 기반으로 이동한다.
 - JS-only compatibility sidecar는 명시 allowlist로만 남기고, 신규 JS-only source는 만들지 않는다.
+- production live acceptance는 `release/live-acceptance-runtime-identity.ts`의 순수 admission과 `runtime/live-acceptance-runtime-identity-adapter.ts`의 startup-captured bundle identity를 사용합니다. Gateway bundle manifest v2는 bundle, launcher entry와 정렬된 bundled-input 집합의 SHA-256을 함께 고정합니다. adapter는 현재 build 상태와 이 manifest/files를 명시적 live gate에서 다시 읽되, 실행 중인 bundle hash는 bootstrap 시점 값으로 고정합니다. build 필요, process보다 새 artifact, manifest/input 불일치 또는 bootstrap 이후 bundle 교체는 실제 외부 작업 전에 차단하며 일반 Gateway ingress에는 적용하지 않습니다.
+- `runtime/approved-operation-continuation-recovery.ts`는 API와 채널이 준비된 뒤
+  durable continuation을 lease-claim하는 startup adapter입니다. 현재 Yeonjang
+  registry 후보를 기존 side-effect projector로 다시 계산해 exact operation/binding
+  일치, 현재 policy allow와 authorization receipt를 모두 통과한 camera 작업만 기존
+  side-effect ledger에 전달합니다. 새 LLM 호출, 새 승인 요청, 추정 target fallback은
+  하지 않습니다.
+- verified recovery 결과는 exact 원 tool-use에 bounded ToolResult와 canonical
+  attempt receipt를 먼저 기록한 뒤에만 continuation을 완료합니다. 이 handoff는
+  새 root run이나 camera 전용 workflow를 만들지 않으며 duplicate/restart에서 같은
+  message와 receipt를 재검증합니다.
+- continuation supervisor는 completed run ID를 raw log에 노출하지 않고 started
+  channel runtime의 same-run re-entry port로 전달합니다. 이 비동기 re-entry는
+  supervisor signal을 공유하고 shutdown에서 settle될 때까지 기다립니다.
+- `telegram_send_file`은 카메라 effect의 성공으로 위장하지 않고 별도의 approved
+  artifact-delivery operation으로 결속됩니다. 이 operation은 opaque artifactRef와
+  현재 session target fingerprint만 승인/continuation identity에 사용하며 raw
+  path나 chat ID를 queue에 복제하지 않습니다. restart adapter는 원 assistant
+  tool-use에서 같은 artifactRef를 복원하고 기존 channel delivery handler가 만든
+  exact-target provider receipt를 확인한 뒤에만 성공 결과를 handoff합니다.
+- recovered delivery receipt가 있으면 same-run re-entry의 recovered attempt에
+  `successfulFileDeliveries`를 함께 주입해 이미 전달한 artifact를 새 LLM Tool
+  호출이나 새 승인으로 반복하지 않습니다. provider receipt가 없으면 실패
+  ToolResult를 원 run review에 넘겨 LLM이 다른 허용 전략을 선택하게 하며, 코드가
+  오류 문자열로 재촬영을 결정하지 않습니다.
+- bootstrap은 continuation recovery의 `AbortController`와 Promise를 단일 owner로
+  supervisor 내부에 보유합니다. 초기 drain과 durable enqueue wake를 같은 직렬
+  runner로 처리하며, 재시작 또는 종료 전에는 listener를 제거하고 owner를 취소한
+  뒤 settle될 때까지 기다립니다. Product Log에는 raw payload나 식별자 없이 bounded
+  집계와 reason code만 기록합니다.
+- Gateway bootstrap은 API·채널 활성화 전에 이전 Gateway가 남긴 WebUI/release
+  channel-smoke `running` row를 현재 process start 시각으로 구분해 명시적 실패로
+  수렴시킵니다. 별도 CLI 프로세스 소유 row는 이 경계가 변경하지 않습니다.
 
 ## 검증 게이트
 

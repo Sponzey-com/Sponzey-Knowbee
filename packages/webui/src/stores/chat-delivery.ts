@@ -11,7 +11,6 @@ export interface ArtifactAttachment {
   downloadUrl?: string
   previewable?: boolean
   fileName: string
-  filePath?: string
   mimeType?: string
   caption?: string
 }

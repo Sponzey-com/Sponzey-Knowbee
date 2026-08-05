@@ -38,6 +38,8 @@ export const ORCHESTRATION_EVENT_KINDS = [
     "named_delivery_attributed",
     "learning_recorded",
     "history_restored",
+    "structured_work_audit",
+    "work_record_snapshot",
 ];
 const EVENT_KIND_SET = new Set(ORCHESTRATION_EVENT_KINDS);
 const SECRET_KEY_PATTERN = /api[_-]?key|authorization|bearer|cookie|credential|password|private|raw|refresh[_-]?token|secret|token/i;

@@ -29,7 +29,7 @@ describe("topology V2 trace status card", () => {
         traceView: traceView({
           status: "failed",
           events: [
-            traceEvent("selected_node", "선택된 노드", "행랑아범", "topology_entry_node_selected"),
+            traceEvent("selected_node", "선택된 서브 에이전트", "행랑아범", "topology_entry_node_selected"),
             traceEvent("sub_agent_dispatch", "서브 에이전트 위임", "행랑아범", "sub_agent_dispatch_started"),
             traceEvent("prompt_preflight_blocked", "안전 경계 차단", "행랑아범", "prompt_bundle_preflight_failed"),
             traceEvent("failed", "실패", "행랑아범", "final_failure_after_exhaustion"),
@@ -38,7 +38,7 @@ describe("topology V2 trace status card", () => {
             executorId: "node:finance",
             executorName: "행랑아범",
             failureCode: "exhaustion",
-            summary: "다른 금융 실행자에게 재위임해야 합니다.",
+            summary: "다른 금융 서브 에이전트에게 재위임해야 합니다.",
           }],
         }),
         text,
@@ -54,7 +54,9 @@ describe("topology V2 trace status card", () => {
     expect(html).toContain("안전 경계 차단")
     expect(html).toContain('data-testid="topology-v2-trace-failure"')
     expect(html).toContain('data-failure-code="exhaustion"')
-    expect(html).toContain("다른 금융 실행자에게 재위임해야 합니다.")
+    expect(html).toContain("처리 방법 소진")
+    expect(html).toContain("다른 금융 서브 에이전트에게 재위임해야 합니다.")
+    expect(visibleText(html)).not.toContain("exhaustion")
   })
 
   it("shows self-solve mode and trace-missing diagnostic state", () => {
@@ -72,7 +74,7 @@ describe("topology V2 trace status card", () => {
           status: "trace_missing",
           selfSolveMode: "self_solve_after_delegation_failure",
           events: [
-            traceEvent("trace_missing", "trace 없음", undefined, "topology_trace_missing"),
+            traceEvent("trace_missing", "기록 없음", undefined, "topology_trace_missing"),
           ],
           failedExecutors: [],
         }),
@@ -81,7 +83,8 @@ describe("topology V2 trace status card", () => {
     ))
 
     expect(html).toContain('data-trace-status="trace_missing"')
-    expect(html).toContain("trace 없음")
+    expect(html).toContain("기록 없음")
+    expect(visibleText(html)).not.toContain("trace 없음")
     expect(html).toContain('data-testid="topology-v2-self-solve-mode"')
     expect(html).toContain('data-self-solve-mode="self_solve_after_delegation_failure"')
     expect(html).toContain("위임 실패 후 자체 처리")
@@ -96,7 +99,7 @@ describe("topology V2 trace status card", () => {
     expect(rootRunId).toBe("run:latest")
   })
 
-  it("explains when the latest activity request has no topology trace", () => {
+  it("explains when the latest activity request has no sub-agent execution history", () => {
     const html = normalized(renderToStaticMarkup(
       createElement(TopologyV2FlowStatusCard, {
         loadStatus: "ready",
@@ -117,7 +120,7 @@ describe("topology V2 trace status card", () => {
       }),
     ))
 
-    expect(html).toContain("실행 현황의 최근 요청에 연결된 토폴로지 실행 기록이 없습니다.")
+    expect(html).toContain("실행 현황의 최근 요청에 연결된 서브 에이전트 실행 기록이 없습니다.")
   })
 })
 
@@ -182,4 +185,8 @@ function traceEvent(
 
 function normalized(value: string): string {
   return value.replace(/\s+/g, " ")
+}
+
+function visibleText(value: string): string {
+  return normalized(value.replace(/<[^>]*>/g, " "))
 }

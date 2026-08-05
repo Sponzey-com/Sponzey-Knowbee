@@ -50,7 +50,6 @@ describe("architecture boundary static gate", () => {
       "packages/core/src/topology/source.md",
       "packages/webui/src/source.md",
       "packages/webui/src/components/topology/source.md",
-      ".tasks/architecture-cleanup-inventory.md",
     ]
 
     for (const file of requiredDocs) {
@@ -60,7 +59,6 @@ describe("architecture boundary static gate", () => {
     expect(source("packages/core/src/topology/source.md")).toContain("ExecutorGraph")
     expect(source("packages/core/src/topology/source.md")).toContain("EnterpriseTopology V1")
     expect(source("packages/webui/src/components/topology/source.md")).toContain("기본 topology")
-    expect(source(".tasks/architecture-cleanup-inventory.md")).toContain("compatibility")
     expect(source("docs/release-runbook.md")).toContain("pnpm run test:architecture")
     expect(source("docs/execution-decision-regression.md")).toContain("pnpm run test:architecture")
   })

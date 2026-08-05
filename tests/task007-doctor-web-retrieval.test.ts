@@ -1,31 +1,31 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { runDoctor } from "../packages/core/src/diagnostics/doctor.js"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempConfig(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task007-doctor-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task007-doctor-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir, configText: `{
     ai: { connection: { provider: "ollama", endpoint: "http://127.0.0.1:11434", model: "llama3.2" } },
-    search: { web: { provider: "duckduckgo", maxResults: 5 } },
+    search: {},
     webui: { enabled: true, host: "127.0.0.1", port: 18181, auth: { enabled: false } },
     security: { approvalMode: "off" },
     memory: { searchMode: "fts", sessionRetentionDays: 30 },
     scheduler: { enabled: false, timezone: "Asia/Seoul" }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  }` })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 beforeEach(() => {
@@ -34,11 +34,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -46,22 +41,24 @@ afterEach(() => {
 })
 
 describe("task007 doctor web retrieval", () => {
-  it("reports provider order, browser fallback, adapter checksum, and recent counters", () => {
-    const report = runDoctor({ mode: "quick", includeEnvironment: false, includeReleasePackage: false })
+  it("reports direct fetch provider order and recent counters without web search", () => {
+    const report = runDoctor({ config: runtimeFixture.config, paths: runtimeFixture.paths, mode: "quick", includeEnvironment: false, includeReleasePackage: false })
     const check = report.checks.find((item) => item.name === "web.retrieval")
     expect(check).toBeTruthy()
     expect(check?.status).toBe("ok")
     expect(check?.detail).toEqual(expect.objectContaining({
-      searchProvider: "duckduckgo",
-      activeAdapterCount: expect.any(Number),
-      degradedAdapterCount: 0,
-      browser: expect.objectContaining({ driver: "selenium-webdriver", fallback: "duckduckgo_lite" }),
+      webSearch: "removed",
+      providerOrder: [
+        "web_fetch: direct fetch",
+        "llm_planner: next evidence-acquisition action",
+        "llm_result_diagnosis: completion or changed strategy",
+      ],
       recent: expect.objectContaining({ conflictCount: 0, plannerSchemaFailureCount: 0, failedAttemptCount: 0 }),
     }))
     const serialized = JSON.stringify(check?.detail)
-    expect(serialized).toContain("finance")
-    expect(serialized).toContain("weather")
-    expect(serialized).toContain("checksum")
+    expect(serialized).not.toContain("duckduckgo")
+    expect(serialized).not.toContain("selenium-webdriver")
+    expect(serialized).not.toContain("browserPreference")
     expect(serialized).not.toMatch(/sk-|Bearer\s+/u)
   })
 })

@@ -3,6 +3,9 @@ import react from "@vitejs/plugin-react"
 import { fileURLToPath } from "node:url"
 
 const knowbeeMdBrowserShim = fileURLToPath(new URL("./src/shims/knowbee-md-browser.ts", import.meta.url))
+const VITE_RUNTIME_ENV = Object.freeze({
+  webuiPort: Number(process.env.KNOWBEE_WEBUI_PORT ?? 4220),
+})
 
 export default defineConfig({
   plugins: [react()],
@@ -24,7 +27,7 @@ export default defineConfig({
     ],
   },
   server: {
-    port: Number(process.env.KNOWBEE_WEBUI_PORT ?? 4220),
+    port: VITE_RUNTIME_ENV.webuiPort,
     strictPort: true,
     proxy: {
       "/api": "http://localhost:18888",
@@ -34,5 +37,6 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    manifest: true,
   },
 })

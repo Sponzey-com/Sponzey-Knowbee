@@ -1,3 +1,5 @@
+import { createReadStream, existsSync, statSync } from "node:fs";
+import { basename } from "node:path";
 import { authMiddleware } from "../middleware/auth.js";
 import { buildRuntimeManifest } from "../../runtime/manifest.js";
 import { insertAuditLog, insertDiagnosticEvent, listMessageLedgerEvents } from "../../db/index.js";
@@ -7,19 +9,28 @@ import { buildQueueBackpressureSnapshot } from "../../runs/queue-backpressure.js
 import { listRootRuns } from "../../runs/store.js";
 import { buildAdminToolRetrievalLab, runAdminWebRetrievalFixtureReplay } from "../../runs/admin-tool-lab.js";
 import { buildAdminRuntimeInspectors } from "../../runs/admin-runtime-inspectors.js";
+import { redactUiValue } from "../../ui/redaction.js";
 import { buildAdminPlatformInspectors, getAdminDiagnosticExportJob, listAdminDiagnosticExportJobs, startAdminDiagnosticExport, } from "../../runs/admin-platform-inspectors.js";
+import { executeArtifactCleanup, projectArtifactCleanupForUser, previewArtifactCleanup, } from "../../release/artifact-retention.js";
+import { getApiRuntimeConfig, getApiRuntimePaths } from "../runtime-context.js";
 const DANGEROUS_ADMIN_ACTIONS = [
     { id: "retry", label: "Retry", description: "Re-run a failed or interrupted unit of work." },
     { id: "purge", label: "Purge", description: "Delete historical or temporary runtime state." },
     { id: "replay", label: "Replay", description: "Replay a stored event or request path." },
     { id: "export", label: "Export", description: "Export diagnostic or runtime data." },
 ];
-const SENSITIVE_KEY_PATTERN = /api[_-]?key|token|secret|password|credential|authorization|cookie|session/i;
+const SECRET_KEY_PATTERN = /api[_-]?key|token|secret|password|credential|authorization|cookie/i;
+const SESSION_IDENTIFIER_KEY_PATTERN = /^(?:session|session[_-]?(?:id|key|token)|source[_-]?id|target[_-]?session[_-]?id|parent[_-]?session[_-]?id)$/i;
+const INTERNAL_PATH_REDACTION = "[internal-path-redacted]";
 const SECRET_VALUE_PATTERNS = [
     /sk-[A-Za-z0-9_-]{8,}/g,
     /xox[abprs]-[A-Za-z0-9-]{8,}/g,
     /\b\d{6,}:[A-Za-z0-9_-]{8,}\b/g,
     /Bearer\s+[A-Za-z0-9._~+/=-]+/gi,
+    /\/(?:private\/)?var\/folders\/[^\s"'`<>]+/gi,
+    /\/tmp\/[^\s"'`<>]+/gi,
+    /\/Users\/[^\s"'`<>]+/gi,
+    /[A-Z]:\\[^\s"'`<>]+/gi,
 ];
 const CONTROL_SEVERITIES = ["debug", "info", "warning", "error"];
 const LEDGER_STATUSES = ["received", "pending", "started", "generated", "sent", "delivered", "succeeded", "failed", "skipped", "suppressed", "degraded"];
@@ -41,9 +52,23 @@ function isDangerousAction(value) {
 }
 function sanitizeText(value) {
     let next = value;
-    for (const pattern of SECRET_VALUE_PATTERNS)
-        next = next.replace(pattern, "***");
-    return next;
+    for (const pattern of SECRET_VALUE_PATTERNS) {
+        const replacement = pattern.source.includes("\\/") || pattern.source.includes("\\\\") ? INTERNAL_PATH_REDACTION : "***";
+        next = next.replace(pattern, replacement);
+    }
+    return redactUiValue(next, { audience: "admin" }).value;
+}
+function buildDiagnosticExportBundleUrl(job) {
+    if (!job.bundlePath || !job.bundleFile || job.status !== "succeeded")
+        return null;
+    return `/api/admin/diagnostic-exports/${encodeURIComponent(job.id)}/bundle`;
+}
+function redactDiagnosticExportJobForAdmin(job) {
+    return {
+        ...job,
+        bundlePath: job.bundlePath ? INTERNAL_PATH_REDACTION : null,
+        bundleUrl: buildDiagnosticExportBundleUrl(job),
+    };
 }
 function sanitizeAdminAuditValue(value) {
     if (typeof value === "string")
@@ -52,15 +77,22 @@ function sanitizeAdminAuditValue(value) {
         return value.map(sanitizeAdminAuditValue);
     if (value && typeof value === "object") {
         return Object.fromEntries(Object.entries(value).map(([key, item]) => {
-            if (SENSITIVE_KEY_PATTERN.test(key))
+            if (SECRET_KEY_PATTERN.test(key) || SESSION_IDENTIFIER_KEY_PATTERN.test(key)) {
                 return [key, "***"];
+            }
             return [key, sanitizeAdminAuditValue(item)];
         }));
     }
     return value;
 }
+function sanitizeAdminGeneralValue(value) {
+    return redactUiValue(sanitizeAdminAuditValue(value), { audience: "admin" }).value;
+}
+function sanitizeAdminResponse(value) {
+    return sanitizeAdminGeneralValue(value);
+}
 function auditJson(value) {
-    return JSON.stringify(sanitizeAdminAuditValue(value));
+    return JSON.stringify(sanitizeAdminGeneralValue(value));
 }
 function parseLimit(value, fallback = 200, max = 1000) {
     const parsed = Number.parseInt(value ?? "", 10);
@@ -83,6 +115,60 @@ function parseJson(raw) {
     catch {
         return raw;
     }
+}
+function sanitizeJsonText(raw) {
+    if (!raw)
+        return null;
+    try {
+        return JSON.stringify(sanitizeAdminGeneralValue(JSON.parse(raw)));
+    }
+    catch {
+        return sanitizeText(raw);
+    }
+}
+function sanitizeTimeline(timeline) {
+    return {
+        ...timeline,
+        events: timeline.events.map((event) => ({
+            ...event,
+            summary: sanitizeText(event.summary),
+            detail: sanitizeAdminGeneralValue(event.detail),
+            ...(event.duplicate
+                ? {
+                    duplicate: {
+                        ...event.duplicate,
+                        key: sanitizeText(event.duplicate.key),
+                    },
+                }
+                : {}),
+        })),
+    };
+}
+function sanitizeRunForAdmin(run) {
+    return {
+        ...run,
+        title: sanitizeText(run.title),
+        prompt: sanitizeText(run.prompt),
+        summary: sanitizeText(run.summary),
+        steps: run.steps.map((step) => ({
+            ...step,
+            title: sanitizeText(step.title),
+            summary: sanitizeText(step.summary),
+        })),
+        recentEvents: run.recentEvents.map((event) => ({
+            ...event,
+            label: sanitizeText(event.label),
+        })),
+    };
+}
+function sanitizeLedgerEventForAdmin(event) {
+    return {
+        ...event,
+        delivery_key: event.delivery_key ? sanitizeText(event.delivery_key) : null,
+        idempotency_key: event.idempotency_key ? sanitizeText(event.idempotency_key) : null,
+        summary: sanitizeText(event.summary),
+        detail_json: sanitizeJsonText(event.detail_json),
+    };
 }
 function recomputeTimelineSummary(events) {
     const severityCounts = { debug: 0, info: 0, warning: 0, error: 0 };
@@ -386,8 +472,8 @@ function buildRunsInspector(runs, timeline, ledgerEvents) {
         };
     });
 }
-function buildStreamStatus() {
-    const manifest = buildRuntimeManifest({ includeEnvironment: false, includeReleasePackage: false });
+function buildStreamStatus(options, config, paths) {
+    const manifest = buildRuntimeManifest(buildAdminRuntimeManifestOptions(options, config, paths));
     const queues = buildQueueBackpressureSnapshot();
     const affected = queues.filter((queue) => queue.status !== "ok");
     const aggregateStatus = affected.some((queue) => queue.status === "recovering")
@@ -411,9 +497,9 @@ function buildStreamStatus() {
         },
     };
 }
-function buildAdminLive(query) {
+function buildAdminLive(query, options, config, paths) {
     const limit = parseLimit(query.limit);
-    const timeline = getFilteredTimeline(query, limit);
+    const timeline = sanitizeTimeline(getFilteredTimeline(query, limit));
     const runs = listRootRuns(limit).filter((run) => {
         if (query.runId && run.id !== query.runId)
             return false;
@@ -422,13 +508,13 @@ function buildAdminLive(query) {
         if (query.sessionKey && run.sessionId !== query.sessionKey)
             return false;
         return true;
-    });
+    }).map(sanitizeRunForAdmin);
     const ledgerBase = listMessageLedgerEvents({
         ...(query.runId ? { runId: query.runId } : {}),
         ...(query.requestGroupId ? { requestGroupId: query.requestGroupId } : {}),
         ...(query.sessionKey ? { sessionKey: query.sessionKey } : {}),
         limit,
-    });
+    }).map(sanitizeLedgerEventForAdmin);
     const ledgerEvents = filterLedgerEvents(ledgerBase, query);
     const duplicates = buildLedgerDuplicates(ledgerEvents);
     return {
@@ -447,7 +533,7 @@ function buildAdminLive(query) {
             idempotencyKey: query.idempotencyKey ?? null,
             limit,
         },
-        stream: buildStreamStatus(),
+        stream: buildStreamStatus(options, config, paths),
         timeline,
         runsInspector: { runs: buildRunsInspector(runs, timeline, ledgerBase) },
         messageLedger: {
@@ -473,9 +559,17 @@ function recordAdminAudit(input) {
         stop_reason: input.stopReason ?? null,
     });
 }
-function recordAdminGuardFailure(req) {
+function buildAdminRuntimeManifestOptions(options, config, paths) {
+    const base = { includeEnvironment: false, includeReleasePackage: false, config, paths };
+    const adminActivation = {
+        ...(options.uiModeRuntime?.adminActivation ?? {}),
+        configEnabled: options.uiModeRuntime?.adminActivation?.configEnabled ?? config.webui.admin?.enabled ?? false,
+    };
+    return { ...base, adminActivation };
+}
+function recordAdminGuardFailure(req, options) {
     try {
-        const activation = resolveAdminUiActivation();
+        const activation = resolveAdminUiActivation(options.uiModeRuntime?.adminActivation);
         const params = {
             method: req.method,
             url: req.url,
@@ -500,8 +594,8 @@ function recordAdminGuardFailure(req) {
         // Guard diagnostics must not turn a blocked admin request into a 500.
     }
 }
-function buildAdminShell() {
-    const manifest = buildRuntimeManifest({ includeEnvironment: false, includeReleasePackage: false });
+function buildAdminShell(options, config, paths) {
+    const manifest = buildRuntimeManifest(buildAdminRuntimeManifestOptions(options, config, paths));
     return {
         kind: "admin_shell",
         title: "Admin tools",
@@ -537,6 +631,11 @@ function normalizeDiagnosticExportBody(body) {
         return {};
     return body;
 }
+function normalizeArtifactCleanupBody(body) {
+    if (!body || typeof body !== "object")
+        return {};
+    return body;
+}
 function normalizeFixtureIds(value) {
     if (!Array.isArray(value))
         return [];
@@ -555,46 +654,58 @@ function optionalLimit(value, fallback = 500, max = 1000) {
         return parseLimit(value, fallback, max);
     return fallback;
 }
-async function adminGuard(req, reply) {
-    if (isAdminUiEnabled())
+async function adminGuard(req, reply, options) {
+    const config = getApiRuntimeConfig(req);
+    const adminActivation = {
+        ...(options.uiModeRuntime?.adminActivation ?? {}),
+        configEnabled: options.uiModeRuntime?.adminActivation?.configEnabled ?? config.webui.admin?.enabled ?? false,
+    };
+    if (isAdminUiEnabled(adminActivation))
         return;
-    recordAdminGuardFailure(req);
+    recordAdminGuardFailure(req, options);
     await reply.status(403).send({
         ok: false,
         error: "admin_ui_disabled",
         message: "Admin UI is disabled for this runtime.",
     });
 }
-export function registerAdminRoute(app) {
-    app.get("/api/admin/runtime", { preHandler: [authMiddleware, adminGuard] }, async () => {
-        return {
+export function registerAdminRoute(app, options = {}) {
+    const adminPreHandler = [authMiddleware, (req, reply) => adminGuard(req, reply, options)];
+    app.get("/api/admin/runtime", { preHandler: adminPreHandler }, async (req) => {
+        const config = getApiRuntimeConfig(req);
+        const paths = getApiRuntimePaths(req);
+        return sanitizeAdminResponse({
             ok: true,
-            mode: getUiModeState(),
-            manifest: buildRuntimeManifest({ includeEnvironment: false, includeReleasePackage: false }),
-        };
+            mode: getUiModeState({ ...(options.uiModeRuntime ?? {}), config }),
+            manifest: buildRuntimeManifest(buildAdminRuntimeManifestOptions(options, config, paths)),
+        });
     });
-    app.get("/api/admin/shell", { preHandler: [authMiddleware, adminGuard] }, async () => {
-        return {
+    app.get("/api/admin/shell", { preHandler: adminPreHandler }, async (req) => {
+        const config = getApiRuntimeConfig(req);
+        const paths = getApiRuntimePaths(req);
+        return sanitizeAdminResponse({
             ok: true,
-            shell: buildAdminShell(),
-            mode: getUiModeState(),
-            manifest: buildRuntimeManifest({ includeEnvironment: false, includeReleasePackage: false }),
-        };
+            shell: buildAdminShell(options, config, paths),
+            mode: getUiModeState({ ...(options.uiModeRuntime ?? {}), config }),
+            manifest: buildRuntimeManifest(buildAdminRuntimeManifestOptions(options, config, paths)),
+        });
     });
-    app.get("/api/admin/live", { preHandler: [authMiddleware, adminGuard] }, async (req) => {
-        return buildAdminLive(req.query);
+    app.get("/api/admin/live", { preHandler: adminPreHandler }, async (req) => {
+        const config = getApiRuntimeConfig(req);
+        const paths = getApiRuntimePaths(req);
+        return buildAdminLive(req.query, options, config, paths);
     });
-    app.get("/api/admin/tool-lab", { preHandler: [authMiddleware, adminGuard] }, async (req) => {
+    app.get("/api/admin/tool-lab", { preHandler: adminPreHandler }, async (req) => {
         const limit = parseLimit(req.query.limit, 120, 500);
-        const timeline = getFilteredTimeline(req.query, limit);
+        const timeline = sanitizeTimeline(getFilteredTimeline(req.query, limit));
         const ledgerBase = listMessageLedgerEvents({
             ...(req.query.runId ? { runId: req.query.runId } : {}),
             ...(req.query.requestGroupId ? { requestGroupId: req.query.requestGroupId } : {}),
             ...(req.query.sessionKey ? { sessionKey: req.query.sessionKey } : {}),
             limit,
-        });
+        }).map(sanitizeLedgerEventForAdmin);
         const ledgerEvents = filterLedgerEvents(ledgerBase, req.query);
-        return {
+        return sanitizeAdminResponse({
             ok: true,
             generatedAt: Date.now(),
             filters: {
@@ -605,19 +716,20 @@ export function registerAdminRoute(app) {
                 limit,
             },
             ...buildAdminToolRetrievalLab({ timeline, ledgerEvents, ...(req.query.query ? { query: req.query.query } : {}), limit }),
-        };
+        });
     });
-    app.get("/api/admin/runtime-inspectors", { preHandler: [authMiddleware, adminGuard] }, async (req) => {
+    app.get("/api/admin/runtime-inspectors", { preHandler: adminPreHandler }, async (req) => {
+        const config = getApiRuntimeConfig(req);
         const limit = parseLimit(req.query.limit, 120, 500);
-        const timeline = getFilteredTimeline(req.query, limit);
+        const timeline = sanitizeTimeline(getFilteredTimeline(req.query, limit));
         const ledgerBase = listMessageLedgerEvents({
             ...(req.query.runId ? { runId: req.query.runId } : {}),
             ...(req.query.requestGroupId ? { requestGroupId: req.query.requestGroupId } : {}),
             ...(req.query.sessionKey ? { sessionKey: req.query.sessionKey } : {}),
             limit,
-        });
+        }).map(sanitizeLedgerEventForAdmin);
         const ledgerEvents = filterLedgerEvents(ledgerBase, req.query);
-        return {
+        return sanitizeAdminResponse({
             ok: true,
             generatedAt: Date.now(),
             filters: {
@@ -628,6 +740,7 @@ export function registerAdminRoute(app) {
                 limit,
             },
             ...buildAdminRuntimeInspectors({
+                config,
                 timeline,
                 ledgerEvents,
                 limit,
@@ -638,19 +751,32 @@ export function registerAdminRoute(app) {
                     ...(req.query.channel ? { channel: req.query.channel } : {}),
                 },
             }),
-        };
+        });
     });
-    app.get("/api/admin/platform-inspectors", { preHandler: [authMiddleware, adminGuard] }, async (req) => {
+    app.get("/api/admin/platform-inspectors", { preHandler: adminPreHandler }, async (req) => {
+        const paths = getApiRuntimePaths(req);
         const limit = parseLimit(req.query.limit, 120, 500);
-        const timeline = getFilteredTimeline(req.query, limit);
+        const timeline = sanitizeTimeline(getFilteredTimeline(req.query, limit));
         const ledgerBase = listMessageLedgerEvents({
             ...(req.query.runId ? { runId: req.query.runId } : {}),
             ...(req.query.requestGroupId ? { requestGroupId: req.query.requestGroupId } : {}),
             ...(req.query.sessionKey ? { sessionKey: req.query.sessionKey } : {}),
             limit,
-        });
+        }).map(sanitizeLedgerEventForAdmin);
         const ledgerEvents = filterLedgerEvents(ledgerBase, req.query);
-        return {
+        const inspectors = buildAdminPlatformInspectors({
+            timeline,
+            ledgerEvents,
+            paths,
+            limit,
+            filters: {
+                ...(req.query.runId ? { runId: req.query.runId } : {}),
+                ...(req.query.requestGroupId ? { requestGroupId: req.query.requestGroupId } : {}),
+                ...(req.query.sessionKey ? { sessionKey: req.query.sessionKey } : {}),
+                ...(req.query.channel ? { channel: req.query.channel } : {}),
+            },
+        });
+        return sanitizeAdminResponse({
             ok: true,
             generatedAt: Date.now(),
             filters: {
@@ -660,20 +786,15 @@ export function registerAdminRoute(app) {
                 channel: req.query.channel ?? null,
                 limit,
             },
-            ...buildAdminPlatformInspectors({
-                timeline,
-                ledgerEvents,
-                limit,
-                filters: {
-                    ...(req.query.runId ? { runId: req.query.runId } : {}),
-                    ...(req.query.requestGroupId ? { requestGroupId: req.query.requestGroupId } : {}),
-                    ...(req.query.sessionKey ? { sessionKey: req.query.sessionKey } : {}),
-                    ...(req.query.channel ? { channel: req.query.channel } : {}),
-                },
-            }),
-        };
+            ...inspectors,
+            exports: {
+                ...inspectors.exports,
+                jobs: inspectors.exports.jobs.map(redactDiagnosticExportJobForAdmin),
+            },
+        });
     });
-    app.post("/api/admin/diagnostic-exports", { preHandler: [authMiddleware, adminGuard] }, async (req, reply) => {
+    app.post("/api/admin/diagnostic-exports", { preHandler: adminPreHandler }, async (req, reply) => {
+        const paths = getApiRuntimePaths(req);
         const body = normalizeDiagnosticExportBody(req.body);
         const runId = optionalString(body.runId);
         const requestGroupId = optionalString(body.requestGroupId);
@@ -687,27 +808,97 @@ export function registerAdminRoute(app) {
             includeTimeline: optionalBoolean(body.includeTimeline, true),
             includeReport: optionalBoolean(body.includeReport, true),
             limit: optionalLimit(body.limit),
-        });
-        return reply.status(202).send({ ok: true, job });
+        }, paths);
+        return reply.status(202).send({ ok: true, job: redactDiagnosticExportJobForAdmin(job) });
     });
-    app.get("/api/admin/diagnostic-exports", { preHandler: [authMiddleware, adminGuard] }, async () => {
+    app.get("/api/admin/diagnostic-exports", { preHandler: adminPreHandler }, async () => {
         return {
             ok: true,
             generatedAt: Date.now(),
-            jobs: listAdminDiagnosticExportJobs(),
+            jobs: listAdminDiagnosticExportJobs().map(redactDiagnosticExportJobForAdmin),
         };
     });
-    app.get("/api/admin/diagnostic-exports/:id", { preHandler: [authMiddleware, adminGuard] }, async (req, reply) => {
+    app.get("/api/admin/artifact-cleanup/preview", { preHandler: adminPreHandler }, async (req) => {
+        const paths = getApiRuntimePaths(req);
+        const maxAgeMs = optionalLimit(req.query.maxAgeMs, 24 * 60 * 60 * 1_000, Number.MAX_SAFE_INTEGER);
+        const releaseOutputDir = optionalString(req.query.releaseOutputDir);
+        const preview = previewArtifactCleanup({ paths, maxAgeMs, ...(releaseOutputDir ? { releaseOutputDir } : {}) });
+        return sanitizeAdminResponse({
+            ok: true,
+            preview,
+            display: projectArtifactCleanupForUser(preview),
+        });
+    });
+    app.post("/api/admin/artifact-cleanup", { preHandler: adminPreHandler }, async (req, reply) => {
+        const paths = getApiRuntimePaths(req);
+        const body = normalizeArtifactCleanupBody(req.body);
+        const confirmation = optionalString(body.confirmation) ?? "";
+        const maxAgeMs = optionalLimit(body.maxAgeMs, 24 * 60 * 60 * 1_000, Number.MAX_SAFE_INTEGER);
+        const releaseOutputDir = optionalString(body.releaseOutputDir);
+        const execution = executeArtifactCleanup({ paths, confirmation, maxAgeMs, ...(releaseOutputDir ? { releaseOutputDir } : {}) });
+        if (!execution.confirmed)
+            return reply.status(409).send(sanitizeAdminResponse({
+                ok: false,
+                error: "artifact_cleanup_confirmation_required",
+                execution,
+                display: projectArtifactCleanupForUser(execution),
+            }));
+        insertAuditLog({
+            timestamp: Date.now(),
+            session_id: null,
+            source: "webui.admin",
+            tool_name: "admin.artifact_cleanup",
+            params: JSON.stringify({ maxAgeMs, releaseOutputDir: releaseOutputDir ? "[explicit-release-output]" : null }),
+            output: JSON.stringify({
+                targets: execution.targets.map((target) => ({
+                    kind: target.kind,
+                    directoryName: target.directoryName,
+                    deletedFiles: target.deletedFiles,
+                    verifiedDeletedFiles: target.verifiedDeletedFiles,
+                    failedDeleteFiles: target.failedDeleteFiles,
+                    eligibleBytes: target.eligibleBytes,
+                })),
+            }),
+            result: "succeeded",
+            duration_ms: null,
+            approval_required: 1,
+            approved_by: "admin_confirmation",
+        });
+        return sanitizeAdminResponse({ ok: true, execution, display: projectArtifactCleanupForUser(execution) });
+    });
+    app.get("/api/admin/diagnostic-exports/:id/bundle", { preHandler: adminPreHandler }, async (req, reply) => {
         const job = getAdminDiagnosticExportJob(req.params.id);
         if (!job)
             return reply.status(404).send({ ok: false, error: "diagnostic_export_not_found" });
-        return { ok: true, job };
+        if (job.status !== "succeeded" || !job.bundlePath || !job.bundleFile) {
+            return reply.status(409).send({ ok: false, error: "diagnostic_export_not_ready" });
+        }
+        if (!existsSync(job.bundlePath))
+            return reply.status(404).send({ ok: false, error: "diagnostic_export_bundle_not_found" });
+        try {
+            const stat = statSync(job.bundlePath);
+            if (!stat.isFile() || basename(job.bundlePath) !== job.bundleFile)
+                return reply.status(404).send({ ok: false, error: "diagnostic_export_bundle_not_found" });
+        }
+        catch {
+            return reply.status(404).send({ ok: false, error: "diagnostic_export_bundle_not_found" });
+        }
+        reply.header("Cache-Control", "private, max-age=300");
+        reply.header("Content-Disposition", `attachment; filename="${basename(job.bundleFile).replace(/"/g, "")}"`);
+        reply.type("application/json");
+        return reply.send(createReadStream(job.bundlePath));
     });
-    app.post("/api/admin/web-retrieval-fixtures/replay", { preHandler: [authMiddleware, adminGuard] }, async (req) => {
+    app.get("/api/admin/diagnostic-exports/:id", { preHandler: adminPreHandler }, async (req, reply) => {
+        const job = getAdminDiagnosticExportJob(req.params.id);
+        if (!job)
+            return reply.status(404).send({ ok: false, error: "diagnostic_export_not_found" });
+        return { ok: true, job: redactDiagnosticExportJobForAdmin(job) };
+    });
+    app.post("/api/admin/web-retrieval-fixtures/replay", { preHandler: adminPreHandler }, async (req) => {
         const body = normalizeFixtureReplayBody(req.body);
         return runAdminWebRetrievalFixtureReplay({ fixtureIds: normalizeFixtureIds(body.fixtureIds) });
     });
-    app.post("/api/admin/actions", { preHandler: [authMiddleware, adminGuard] }, async (req, reply) => {
+    app.post("/api/admin/actions", { preHandler: adminPreHandler }, async (req, reply) => {
         const body = normalizeActionBody(req.body);
         if (!isDangerousAction(body.action)) {
             const output = { ok: false, error: "invalid_admin_action", allowedActions: DANGEROUS_ADMIN_ACTIONS.map((action) => action.id) };
@@ -778,7 +969,7 @@ export function registerAdminRoute(app) {
         });
         return reply.status(202).send(output);
     });
-    app.all("/api/admin/*", { preHandler: [authMiddleware, adminGuard] }, async (_req, reply) => {
+    app.all("/api/admin/*", { preHandler: adminPreHandler }, async (_req, reply) => {
         return reply.status(404).send({ ok: false, error: "admin_api_not_found" });
     });
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { reviewSubAgentResult } from "../packages/core/src/agent/sub-agent-result-review.ts"
 import { decideSubSessionCompletionIntegration } from "../packages/core/src/agent/sub-agent-result-review.ts"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.ts"
@@ -19,6 +19,12 @@ import {
   SubSessionRunner,
   createTextResultReport,
 } from "../packages/core/src/orchestration/sub-session-runner.ts"
+import { createTestDbRuntimeFixture, type TestDbRuntimeFixture } from "./fixtures/runtime-db.ts"
+import { createTestResultDiagnosisDependencies } from "./fixtures/agent-runtime.ts"
+
+let dbRuntime: TestDbRuntimeFixture
+beforeEach(() => { dbRuntime = createTestDbRuntimeFixture("knowbee-result-review-verdict-") })
+afterEach(() => { dbRuntime.dispose() })
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
@@ -156,7 +162,6 @@ function promptBundle(
     agentId: "agent:reviewer",
     agentType: "sub_agent",
     role: "review worker",
-    displayNameSnapshot: "Reviewer",
     personalitySnapshot: "Careful",
     teamContext: [],
     memoryPolicy,
@@ -215,6 +220,23 @@ describe("task016 result report review verdict", () => {
       parentIntegrationStatus: "blocked_insufficient_evidence",
     })
     expect(review.feedbackRequest?.missingItems).toEqual(["missing_evidence:answer:source"])
+  })
+
+  it("uses agent-name snapshots when building feedback requests", () => {
+    const review = reviewSubAgentResult({
+      resultReport: resultReport({
+        source: {
+          entityType: "sub_agent",
+          entityId: "agent:reviewer",
+          agentNameSnapshot: "검토자",
+        },
+        evidence: [],
+      }),
+      expectedOutputs: [evidenceOutput],
+    })
+
+    expect(review.feedbackRequest?.targetAgentNameSnapshot).toBe("검토자")
+    expect(review.feedbackRequest).not.toHaveProperty("targetAgentNicknameSnapshot")
   })
 
   it("requires artifact references for artifact-required outputs", () => {
@@ -341,6 +363,7 @@ describe("task016 result report review verdict", () => {
     const events: string[] = []
     const auditEvents: SubSessionReviewRuntimeEventInput[] = []
     const runner = new SubSessionRunner({
+      ...createTestResultDiagnosisDependencies(),
       now: () => now,
       idProvider: () => "runner-id",
       loadSubSessionByIdempotencyKey: () => undefined,

@@ -23,7 +23,12 @@ export interface EvaluateToolPolicyInput {
     toolName: string;
     riskLevel: RiskLevel;
     params: Record<string, unknown>;
+    authorizationParams?: Record<string, unknown>;
     ctx: ToolContext;
+    security: {
+        allowedCommands: string[];
+        allowedPaths: string[];
+    };
     approvalId?: string;
     approvalDecision?: "allow_once" | "allow_run";
 }

@@ -1,4 +1,9 @@
 import type { ParentAggregationNextAction } from "../agent/sub-agent-result-review.js";
+import { type LlmDiagnosisProvider } from "../contracts/llm-diagnosis-provider.js";
+import type { LlmDiagnosisSchemaRepairProvider } from "../contracts/llm-diagnosis-schema-repair-provider.js";
+import type { KnowbeeConfig } from "../config/types.js";
+import type { MemoryJournalRepository } from "../memory/journal.js";
+import { type AgentHierarchyStorage } from "../orchestration/hierarchy.js";
 import { type OrchestrationPlan, type OrchestrationTask } from "../contracts/sub-agent-orchestration.js";
 import { type AgentRegistryEntry } from "../orchestration/registry.js";
 import type { StartRootRunParams, StartedRootRun } from "./start.js";
@@ -18,7 +23,7 @@ export interface DelegatedTaskDispatchOutcome {
     taskId: string;
     subSessionId?: string;
     agentId?: string;
-    agentDisplayName?: string;
+    agentName?: string;
     agentSource?: AgentRegistryEntry["source"];
     topologyId?: string;
     topologyExecutorId?: string;
@@ -39,9 +44,21 @@ export interface DelegatedTaskDispatchResult {
     skipped: number;
     outcomes: DelegatedTaskDispatchOutcome[];
 }
+export type DelegatedTaskDispatchOrder = {
+    ok: true;
+    tasks: OrchestrationTask[];
+} | {
+    ok: false;
+    reasonCode: "dependency_missing" | "dependency_cycle";
+};
+export declare function orderDelegatedTasksForDispatch(plan: Pick<OrchestrationPlan, "directKnowbeeTasks" | "delegatedTasks" | "dependencyEdges">): DelegatedTaskDispatchOrder;
 export interface DelegatedTaskDispatchParams {
+    artifactStorage: StartRootRunParams["artifactStorage"];
+    memoryJournal: MemoryJournalRepository;
+    hierarchyStorage: AgentHierarchyStorage;
     plan: OrchestrationPlan;
     parentRunId: string;
+    parentAgentName: string;
     parentSessionId: string;
     parentRequestGroupId: string;
     source: StartRootRunParams["source"];
@@ -51,12 +68,20 @@ export interface DelegatedTaskDispatchParams {
     controller: AbortController;
 }
 export interface DelegatedTaskDispatchDependencies {
+    config: KnowbeeConfig;
     startSubAgentRun: (params: StartRootRunParams) => StartedRootRun;
     appendParentEvent?: (runId: string, label: string) => void;
     updateParentSummary?: (runId: string, summary: string) => RootRun | undefined;
     now?: () => number;
     idProvider?: () => string;
+    diagnosisProvider?: LlmDiagnosisProvider;
+    diagnosisRepairProvider?: LlmDiagnosisSchemaRepairProvider;
 }
+export declare function buildDelegatedTaskExecutionPrompt(input: {
+    renderedPrompt: string;
+    task: OrchestrationTask;
+    originalRequest: string;
+}): string;
 export type DispatchToChildExecutorValidation = {
     ok: true;
     reasonCodes: string[];

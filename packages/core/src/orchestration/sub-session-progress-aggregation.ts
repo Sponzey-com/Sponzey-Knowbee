@@ -4,8 +4,8 @@ export interface SubSessionProgressAggregationItem {
   parentRunId: string
   subSessionId: string
   agentId?: string
-  agentDisplayName?: string
-  agentNickname?: string
+  agentName?: string
+  agentNameSnapshot?: string
   status: SubSessionStatus
   summary: string
   at: number
@@ -45,7 +45,10 @@ export function buildSubSessionProgressSummary(items: SubSessionProgressAggregat
   if (ordered.length === 0) return "서브 에이전트 진행 요약: 변경 없음"
   const body = ordered
     .map((item) => {
-      const name = item.agentNickname?.trim() || item.agentDisplayName?.trim() || item.agentId?.trim() || item.subSessionId
+      const name =
+        item.agentName?.trim() ||
+        item.agentNameSnapshot?.trim() ||
+        "Unnamed sub-agent"
       return `${name} ${item.status}: ${item.summary.trim()}`
     })
     .join(" / ")

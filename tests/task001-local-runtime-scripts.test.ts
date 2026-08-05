@@ -33,6 +33,10 @@ describe("task001 local runtime scripts", () => {
     expect(text).toContain("runtime.pid")
     expect(text).toContain("paths.stateDir")
     expect(text).toContain("promptSources.checksum")
+    expect(text).toContain('is_redacted_internal_path "$state_dir"')
+    expect(text).toContain('cwd="$(pid_cwd "$pid")"')
+    expect(text).toContain("packages/core/dist/runtime/serve-bundle.js")
+    expect(text).toContain("pnpm run gateway:bundle")
   })
 
   it("status script reports runtime ownership and Yeonjang extension count without mutating state", () => {

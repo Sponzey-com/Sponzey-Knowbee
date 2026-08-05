@@ -194,9 +194,15 @@ describe("task014 Executor internal observability and rollback safety", () => {
     expect(simpleHtml).not.toContain("executor-run-evidence:topology-run:task014:node:intake")
     expect(simpleHtml).not.toContain("executor-inference:node:intake")
     expect(advancedHtml).toContain('data-testid="executor-result-observability-evidence"')
-    expect(advancedHtml).toContain("executor-run-evidence:topology-run:task014:node:intake")
-    expect(advancedHtml).toContain("executor-inference:node:intake")
-    expect(advancedHtml).toContain("executor-failure-evidence:failure:task014")
+    expect(advancedHtml).toContain('data-source="run"')
+    expect(advancedHtml).toContain('data-source="trace"')
+    expect(advancedHtml).toContain('data-source="failure"')
+    expect(advancedHtml).toContain("실행 근거")
+    expect(advancedHtml).toContain("근거 연결됨")
+    expect(advancedHtml).toContain("추론 근거 연결됨")
+    expect(advancedHtml).not.toContain("executor-run-evidence:topology-run:task014:node:intake")
+    expect(advancedHtml).not.toContain("executor-inference:node:intake")
+    expect(advancedHtml).not.toContain("executor-failure-evidence:failure:task014")
   })
 
   it("verifies rollback restores ExecutorGraph projection metadata with the EnterpriseTopology version", () => {
@@ -261,8 +267,8 @@ describe("task014 Executor internal observability and rollback safety", () => {
   it("documents evidence audit and rollback projection checks", () => {
     const runbook = readFileSync(new URL("../docs/release-runbook.md", import.meta.url), "utf-8")
 
-    expect(runbook).toContain("Executor observability gate")
-    expect(runbook).toContain("user description -> inference -> NodeContract -> WorkOrder -> FailureReport")
+    expect(runbook).toContain("Sub-agent observability gate")
+    expect(runbook).toContain("user description -> inference -> sub-agent definition -> work record -> failure report")
     expect(runbook).toContain("knowbee.executor_graph.rollback_projection")
     expect(runbook).toContain("Executor evidence audit checks")
     expect(runbook).toContain("sourceOfTruth=executor_topology_v2")

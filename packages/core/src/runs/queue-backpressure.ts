@@ -1,5 +1,6 @@
 import crypto from "node:crypto"
 import { insertQueueBackpressureEvent, type DbQueueBackpressureEventKind } from "../db/index.js"
+import { redactLogText } from "../logger/index.js"
 
 export const QUEUE_NAMES = [
   "fast_receipt",
@@ -106,6 +107,11 @@ function recoveryStateKey(queueName: QueueName, recoveryKey: string): string {
   return `${queueName}:${recoveryKey}`
 }
 
+function safeQueueErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
+
 function safeRecordQueueEvent(input: {
   queueName: QueueName
   eventKind: DbQueueBackpressureEventKind
@@ -207,7 +213,7 @@ async function runJob<T>(queueName: QueueName, budget: QueueBudget, job: QueueJo
       ...(job.requestGroupId ? { requestGroupId: job.requestGroupId } : {}),
       pendingCount: state.pending.length,
       ...(job.recoveryKey ? { recoveryKey: job.recoveryKey } : {}),
-      detail: { error: error instanceof Error ? error.message : String(error) },
+      detail: { error: safeQueueErrorMessage(error) },
     })
     job.reject(error)
   } finally {

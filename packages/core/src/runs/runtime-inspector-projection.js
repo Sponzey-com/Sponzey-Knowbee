@@ -2,6 +2,7 @@ import { listAgentDataExchangesForRecipient, listAgentDataExchangesForSource, li
 import { listTopologyRunsForRootRun, } from "../topology-runtime/trace.js";
 import { createLegacyTopologyRegistry, legacyTopologyEnvelopeToExecutorCompatibilityEnvelope, } from "../topology/legacy-enterprise-topology-adapter.js";
 import { redactUiValue } from "../ui/redaction.js";
+import { DEFAULT_MAIN_AGENT_NAME_KO } from "../agent/main-agent-identity.js";
 const ACTIVE_CONTROL_STATUSES = new Set([
     "created",
     "queued",
@@ -99,10 +100,20 @@ function approvalIdFromDetail(detail) {
 }
 function parseSubSessionContract(row) {
     const parsed = parseJsonRecord(row.contract_json);
-    return stringValue(parsed.subSessionId) ? parsed : undefined;
+    if (!stringValue(parsed.subSessionId))
+        return undefined;
+    const agentNameSnapshot = stringValue(parsed.agentNameSnapshot);
+    const parentAgentNameSnapshot = stringValue(parsed.parentAgentNameSnapshot);
+    Reflect.deleteProperty(parsed, "agentNickname");
+    Reflect.deleteProperty(parsed, "parentAgentNickname");
+    return sanitizeSubSessionContractNames({
+        ...parsed,
+        ...(parentAgentNameSnapshot ? { parentAgentNameSnapshot } : {}),
+        ...(agentNameSnapshot ? { agentNameSnapshot } : {}),
+    });
 }
 function fallbackSubSessionContract(row) {
-    return {
+    return sanitizeSubSessionContractNames({
         identity: {
             schemaVersion: 1,
             entityType: "sub_session",
@@ -120,14 +131,38 @@ function fallbackSubSessionContract(row) {
         parentSessionId: row.parent_session_id,
         parentRunId: row.parent_run_id,
         agentId: row.agent_id,
-        agentDisplayName: row.agent_display_name,
-        ...(row.agent_nickname ? { agentNickname: row.agent_nickname } : {}),
+        agentName: "Unnamed sub-agent",
         commandRequestId: row.command_request_id,
         status: row.status,
         promptBundleId: row.prompt_bundle_id,
         ...(row.started_at ? { startedAt: row.started_at } : {}),
         ...(row.finished_at ? { finishedAt: row.finished_at } : {}),
+    });
+}
+function sanitizeSubSessionContractNames(contract) {
+    const agentNameSnapshot = stringValue(contract.agentNameSnapshot);
+    const parentAgentNameSnapshot = stringValue(contract.parentAgentNameSnapshot);
+    const agentName = agentNameSnapshot ?? stringValue(contract.agentName) ?? "Unnamed sub-agent";
+    const sanitized = {
+        ...contract,
+        agentName,
     };
+    Reflect.deleteProperty(sanitized, "agentNickname");
+    Reflect.deleteProperty(sanitized, "parentAgentNickname");
+    if (agentNameSnapshot)
+        sanitized.agentNameSnapshot = agentNameSnapshot;
+    else
+        Reflect.deleteProperty(sanitized, "agentNameSnapshot");
+    if (parentAgentNameSnapshot) {
+        sanitized.parentAgentName = parentAgentNameSnapshot;
+        sanitized.parentAgentNameSnapshot = parentAgentNameSnapshot;
+    }
+    else {
+        Reflect.deleteProperty(sanitized, "parentAgentName");
+        Reflect.deleteProperty(sanitized, "parentAgentNameSnapshot");
+    }
+    Reflect.deleteProperty(sanitized, "parentAgentDisplayName");
+    return sanitized;
 }
 function contractFromRow(row) {
     return parseSubSessionContract(row) ?? fallbackSubSessionContract(row);
@@ -149,7 +184,7 @@ function expectedOutputsFor(contract) {
 }
 function commandSummaryFor(contract) {
     const taskScope = contract.promptBundleSnapshot?.taskScope;
-    return redactedText(taskScope?.goal, `${contract.agentNickname ?? contract.agentDisplayName} ${contract.commandRequestId}`);
+    return redactedText(taskScope?.goal, `${contract.agentNameSnapshot ?? contract.agentName} ${contract.commandRequestId}`);
 }
 function modelProjectionFrom(value) {
     const record = isRecord(value) ? value : undefined;
@@ -332,7 +367,7 @@ function feedbackFor(subSessionId, orchestrationEvents, runEvents) {
         const payload = redactedRecord(parseJsonRecord(event.payload_redacted_json));
         const feedbackRequestId = stringValue(payload.feedbackRequestId);
         const targetAgentId = stringValue(payload.targetAgentId);
-        const targetAgentNickname = stringValue(payload.targetAgentNicknameSnapshot);
+        const targetAgentNameSnapshot = stringValue(payload.targetAgentNameSnapshot);
         const reasonCode = stringValue(payload.reasonCode);
         const missingItemCount = safeCount(payload.missingItems);
         const requiredChangeCount = safeCount(payload.requiredChanges);
@@ -340,7 +375,9 @@ function feedbackFor(subSessionId, orchestrationEvents, runEvents) {
             status: event.event_kind === "redelegation_requested" ? "redelegation_requested" : "requested",
             ...(feedbackRequestId ? { feedbackRequestId: redactedText(feedbackRequestId) } : {}),
             ...(targetAgentId ? { targetAgentId: redactedText(targetAgentId) } : {}),
-            ...(targetAgentNickname ? { targetAgentNickname: redactedText(targetAgentNickname) } : {}),
+            ...(targetAgentNameSnapshot
+                ? { targetAgentNameSnapshot: redactedText(targetAgentNameSnapshot) }
+                : {}),
             ...(reasonCode ? { reasonCode: redactedText(reasonCode) } : {}),
             ...(missingItemCount !== undefined ? { missingItemCount } : {}),
             ...(requiredChangeCount !== undefined ? { requiredChangeCount } : {}),
@@ -454,12 +491,18 @@ function dataExchangeProjection(row) {
     return {
         exchangeId: redactedText(row.exchange_id),
         sourceOwnerId: redactedText(row.source_owner_id),
-        ...(row.source_nickname_snapshot
-            ? { sourceNickname: redactedText(row.source_nickname_snapshot) }
+        ...(row.source_agent_name_snapshot
+            ? {
+                sourceAgentName: redactedText(row.source_agent_name_snapshot),
+                sourceAgentNameSnapshot: redactedText(row.source_agent_name_snapshot),
+            }
             : {}),
         recipientOwnerId: redactedText(row.recipient_owner_id),
-        ...(row.recipient_nickname_snapshot
-            ? { recipientNickname: redactedText(row.recipient_nickname_snapshot) }
+        ...(row.recipient_agent_name_snapshot
+            ? {
+                recipientAgentName: redactedText(row.recipient_agent_name_snapshot),
+                recipientAgentNameSnapshot: redactedText(row.recipient_agent_name_snapshot),
+            }
             : {}),
         purpose: redactedText(row.purpose),
         allowedUse: row.allowed_use,
@@ -568,9 +611,10 @@ function topologyNodeNames(topologyById) {
     }
     return result;
 }
-function topologyExecutorNameRecord(topologyById) {
+function topologyExecutorNameRecord(topologyById, rootAgentNameSnapshot) {
+    const rootAgentName = rootAgentNameSnapshot?.trim() || DEFAULT_MAIN_AGENT_NAME_KO;
     const result = {
-        "agent:knowbee": "노비",
+        "agent:knowbee": redactedText(rootAgentName),
     };
     for (const [topologyId, topology] of topologyById) {
         for (const node of topology.nodes) {
@@ -594,7 +638,7 @@ function topologyNodeRoleName(node) {
 }
 function topologyExecutorRoleNameRecord(topologyById) {
     const result = {
-        "agent:knowbee": "마스터 실행자",
+        "agent:knowbee": "메인 에이전트",
     };
     for (const [topologyId, topology] of topologyById) {
         for (const node of topology.nodes) {
@@ -681,7 +725,7 @@ function topologyAgentAssignmentIdParts(agentId) {
         return undefined;
     return { topologyId, executorId };
 }
-function buildTopologyRoutingContext(run, plan) {
+function buildTopologyRoutingContext(run, plan, options = {}) {
     const snapshot = topologyRoutingSnapshotFrom(run);
     const executionDecision = agentExecutionDecisionSnapshotFrom(run);
     const executionDecisionTrace = agentExecutionDecisionTraceSnapshotFrom(run);
@@ -695,7 +739,7 @@ function buildTopologyRoutingContext(run, plan) {
     const topologyForRoute = topologyId ? topologyById.get(topologyId) : undefined;
     const topologyV2MarkerCandidate = topologyForRoute?.metadata?.executorTopologyV2;
     const topologyV2Marker = isRecord(topologyV2MarkerCandidate) ? topologyV2MarkerCandidate : {};
-    const executionDecisionExecutorNameById = topologyExecutorNameRecord(topologyById);
+    const executionDecisionExecutorNameById = topologyExecutorNameRecord(topologyById, options.rootAgentNameSnapshot);
     const executionDecisionExecutorRoleNameById = topologyExecutorRoleNameRecord(topologyById);
     const entryNodeName = topologyId && entryNodeId
         ? topologyNodeNameByKey.get(`${topologyId}:${entryNodeId}`)
@@ -883,7 +927,7 @@ function planProjection(plan, topologyContext) {
             taskId: redactedText(`${plan?.planId ?? "execution-decision"}:trace:0`),
             executionKind: "delegated_sub_agent",
             goal: redactedText(directTasks[0]?.scope.goal ??
-                "실행 판단 trace에 따라 하위 실행자에게 위임했습니다."),
+                "실행 판단 trace에 따라 하위 서브 에이전트에게 위임했습니다."),
             assignedAgentId: redactedText(selectedExecutorId),
             assignmentSource: topologyAssignment ? "topology" : "agent",
             ...(topologyAssignment
@@ -1118,8 +1162,8 @@ function collectSubSessions(run, contracts, ledgerEvents, orchestrationEvents, a
                 }
                 : {}),
             agentId: redactedText(contract.agentId),
-            agentDisplayName: redactedText(contract.agentDisplayName),
-            ...(contract.agentNickname ? { agentNickname: redactedText(contract.agentNickname) } : {}),
+            agentName: redactedText(contract.agentNameSnapshot ?? contract.agentName),
+            ...(contract.agentNameSnapshot ? { agentNameSnapshot: redactedText(contract.agentNameSnapshot) } : {}),
             status: contract.status,
             commandSummary: commandSummaryFor(contract),
             expectedOutputs: expectedOutputsFor(contract),
@@ -1229,7 +1273,9 @@ export function buildRunRuntimeInspectorProjection(run, options = {}) {
     const ledgerEvents = collectLedgerEvents(run, Math.max(limit, 500));
     const approvals = collectApprovals(orchestrationEvents, ledgerEvents);
     const subSessionContracts = subSessionContractsFor(run);
-    const topologyContext = buildTopologyRoutingContext(run, run.orchestrationPlanSnapshot);
+    const topologyContext = buildTopologyRoutingContext(run, run.orchestrationPlanSnapshot, {
+        ...(options.rootAgentNameSnapshot ? { rootAgentNameSnapshot: options.rootAgentNameSnapshot } : {}),
+    });
     const subSessions = collectSubSessions(run, subSessionContracts, ledgerEvents, orchestrationEvents, approvals);
     return {
         schemaVersion: 1,
@@ -1246,6 +1292,16 @@ export function buildRunRuntimeInspectorProjection(run, options = {}) {
         timeline: collectTimeline(run, orchestrationEvents, ledgerEvents, limit),
         topologyRuns: collectTopologyRuns(run, limit),
         finalizer: finalizerFromLedger(ledgerEvents),
+        typedTrace: options.typedTrace ?? {
+            status: "not_recorded",
+            currentStage: "not_started",
+            eventCount: 0,
+            terminal: false,
+            issueCount: 0,
+            verification: "not_started",
+            recoveryCount: 0,
+            blocker: "none",
+        },
         redaction: {
             payloadsRedacted: true,
             rawPayloadVisible: false,

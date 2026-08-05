@@ -24,6 +24,13 @@ const topology = buildTopologyWorkspaceStarterDraft("customer-request-flow", {
   now,
 })
 
+function visibleText(markup: string): string {
+  return markup
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
 const observedEdge: EnterpriseTopologyObservedEdgeRecord = {
   edgeId: "observed:review-intake",
   topologyId: topology.id,
@@ -122,15 +129,19 @@ describe("task011 simple improve panel", () => {
         observedEdges: [observedEdge],
       }),
     )
+    const visible = visibleText(html)
 
     expect(html).toContain('data-testid="topology-improve-panel"')
-    expect(html).toContain("고칠 점")
-    expect(html).toContain("실제 실행과 다른 점")
-    expect(html).toContain("필요한 권한")
-    expect(html).not.toContain("Declared")
-    expect(html).not.toContain("Observed")
-    expect(html).not.toContain("observed_only_relation")
-    expect(html).not.toContain("observed_relation_not_declared")
+    expect(visible).toContain("고칠 점")
+    expect(visible).toContain("실제 실행과 다른 점")
+    expect(visible).toContain("필요한 권한")
+    expect(visible).not.toContain("Declared")
+    expect(visible).not.toContain("Observed")
+    expect(visible).not.toContain("observed_only_relation")
+    expect(visible).not.toContain("observed_relation_not_declared")
+    expect(visible).not.toContain("node 생성")
+    expect(visible).not.toContain("backup node")
+    expect(visible).not.toContain("fallback node")
   })
 
   it("normalizes findings into user-facing categories and action cards", () => {
@@ -224,7 +235,7 @@ describe("task011 simple improve panel", () => {
     expect(apply.operations).toHaveLength(1)
   })
 
-  it("keeps raw gap and observed edge debug details inside advanced information", () => {
+  it("shows advanced information without exposing raw gap ids or observed edge ids", () => {
     const html = renderToStaticMarkup(
       createElement(TopologyImprovePanel, {
         topology,
@@ -234,10 +245,14 @@ describe("task011 simple improve panel", () => {
         advancedOpen: true,
       }),
     )
+    const visible = visibleText(html)
 
     expect(html).toContain('data-testid="topology-improve-advanced-debug"')
-    expect(html).toContain("observed_only_relation")
-    expect(html).toContain("observed:review-intake")
+    expect(visible).toContain("실제 연결")
+    expect(visible).toContain("종류: 위임 흐름")
+    expect(visible).not.toContain("observed_only_relation")
+    expect(visible).not.toContain("observed:review-intake")
+    expect(visible).not.toContain("node:customer-request")
     expect(html).toContain('data-testid="topology-improve-raw-observed-edge"')
   })
 

@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "knowbee": "./dist/index.js",
-    "wizby": "./dist/index.js",
-    "howie": "./dist/index.js"
+    "knowbee": "./dist/launcher.js",
+    "wizby": "./dist/launcher.js",
+    "howie": "./dist/launcher.js"
   },
-  "main": "./dist/index.js",
+  "main": "./dist/launcher.js",
   "files": [
     "dist"
   ],

@@ -8,7 +8,6 @@ export type WebUiMessageKey =
   | "advanced.notice.backToChat"
   | "admin.placeholder.eyebrow"
   | "admin.placeholder.title"
-  | "admin.placeholder.description"
   | "admin.shell.warning"
   | "admin.shell.badge.enabled"
   | "admin.shell.badge.audit"
@@ -91,6 +90,7 @@ export type WebUiMessageKey =
   | "admin.platform.fingerprint"
   | "admin.platform.protocol"
   | "admin.platform.noJobs"
+  | "admin.platform.downloadExport"
   | "beginner.tasks.title"
   | "beginner.tasks.description"
   | "beginner.tasks.active"
@@ -228,7 +228,6 @@ export const WEB_UI_MESSAGE_CATALOG: Record<WebUiMessageKey, { ko: string; en: s
   "advanced.notice.backToChat": { ko: "채팅으로 돌아가기", en: "Back to chat" },
   "admin.placeholder.eyebrow": { ko: "어드민", en: "Admin" },
   "admin.placeholder.title": { ko: "어드민 도구", en: "Admin tools" },
-  "admin.placeholder.description": { ko: "실시간 진단 화면은 다음 작업에서 세부 구현됩니다.", en: "Realtime diagnostic screens will be implemented in later work." },
   "admin.shell.warning": { ko: "개발자용 진단 화면입니다. 위험 조작은 명시 확인과 감사 기록 없이 실행되지 않습니다.", en: "This is a developer diagnostics screen. Risky operations do not run without explicit confirmation and audit logging." },
   "admin.shell.badge.enabled": { ko: "ADMIN 활성", en: "ADMIN enabled" },
   "admin.shell.badge.audit": { ko: "감사 기록 필수", en: "Audit required" },
@@ -297,7 +296,7 @@ export const WEB_UI_MESSAGE_CATALOG: Record<WebUiMessageKey, { ko: string; en: s
   "admin.platform.dbTitle": { ko: "DB와 마이그레이션", en: "DB and migrations" },
   "admin.platform.exportTitle": { ko: "진단 내보내기", en: "Diagnostic export" },
   "admin.platform.broker": { ko: "브로커 {status}", en: "Broker {status}" },
-  "admin.platform.nodes": { ko: "노드 {count}", en: "Nodes {count}" },
+  "admin.platform.nodes": { ko: "인스턴스 {count}", en: "Instances {count}" },
   "admin.platform.heartbeat": { ko: "하트비트 {count}", en: "Heartbeats {count}" },
   "admin.platform.reconnects": { ko: "재연결 {count}", en: "Reconnects {count}" },
   "admin.platform.dbStructure": { ko: "DB {current}/{latest}", en: "DB {current}/{latest}" },
@@ -311,6 +310,7 @@ export const WEB_UI_MESSAGE_CATALOG: Record<WebUiMessageKey, { ko: string; en: s
   "admin.platform.fingerprint": { ko: "기능 지문 {value}", en: "Capability fingerprint {value}" },
   "admin.platform.protocol": { ko: "프로토콜 {value}", en: "Protocol {value}" },
   "admin.platform.noJobs": { ko: "생성된 내보내기가 없습니다.", en: "No exports have been created." },
+  "admin.platform.downloadExport": { ko: "다운로드", en: "Download" },
   "beginner.tasks.title": { ko: "작업 확인", en: "Work review" },
   "beginner.tasks.description": { ko: "현재 진행 중이거나 확인이 필요한 일만 간단히 보여줍니다.", en: "Only active or attention-needed work is summarized here." },
   "beginner.tasks.active": { ko: "진행 중인 일", en: "Active work" },
@@ -331,7 +331,7 @@ export const WEB_UI_MESSAGE_CATALOG: Record<WebUiMessageKey, { ko: string; en: s
   "beginner.setup.description": { ko: "AI만 먼저 연결하면 바로 시작할 수 있습니다. 채널과 내 컴퓨터 연결은 필요할 때 켜면 됩니다.", en: "Connect AI first to start. Channels and computer connection can be enabled when needed." },
   "beginner.setup.status.ready": { ko: "사용 가능", en: "Ready" },
   "beginner.setup.status.needsAttention": { ko: "확인 필요", en: "Needs attention" },
-  "beginner.setup.status.skipped": { ko: "나중에", en: "Later" },
+  "beginner.setup.status.skipped": { ko: "선택 안 함", en: "Optional" },
   "beginner.setup.step.ai": { ko: "AI 연결", en: "AI connection" },
   "beginner.setup.step.aiDesc": { ko: "응답에 사용할 AI 하나를 연결합니다.", en: "Connect one AI for responses." },
   "beginner.setup.step.channels": { ko: "대화 채널", en: "Conversation channels" },
@@ -477,22 +477,22 @@ export function formatWebUiErrorMessage(raw: string, language: UiLanguage = "ko"
   const text = raw.trim()
   const lower = text.toLowerCase()
   if (repeatCount >= 2) return { message: uiCatalogText(language, "error.repeated"), diagnosticCode: "ERR_REPEATED_FAILURE", repeated: true }
-  if (lower.includes("no available openai api keys") || lower.includes("no available anthropic api keys") || lower.includes("api key authentication failed") || lower.includes("invalid api key") || lower.includes("authentication failed")) {
+  if (lower === "auth" || lower.includes("no available openai api keys") || lower.includes("no available anthropic api keys") || lower.includes("api key authentication failed") || lower.includes("invalid api key") || lower.includes("authentication failed")) {
     return { message: uiCatalogText(language, "error.beginner.auth"), diagnosticCode: "ERR_AUTH", repeated: false }
   }
   if (lower.includes("unsupported ai backend") || lower.includes("no model") || lower.includes("model is required") || lower.includes("no backend") || lower.includes("provider unavailable")) {
     return { message: uiCatalogText(language, "error.beginner.noAi"), diagnosticCode: "ERR_NO_AI", repeated: false }
   }
-  if (lower.includes("fetch failed") || lower.includes("econnrefused") || lower.includes("enotfound") || lower.includes("timeout") || lower.includes("timed out") || lower.includes("socket hang up") || lower.includes("network")) {
+  if (lower === "network" || lower === "network_unavailable" || lower === "timeout" || lower.includes("fetch failed") || lower.includes("econnrefused") || lower.includes("enotfound") || lower.includes("timeout") || lower.includes("timed out") || lower.includes("socket hang up") || lower.includes("network")) {
     return { message: uiCatalogText(language, "error.beginner.network"), diagnosticCode: "ERR_NETWORK", repeated: false }
   }
-  if (lower.includes("401") || lower.includes("403") || lower.includes("unauthorized") || lower.includes("forbidden") || /<html|<!doctype/i.test(text)) {
+  if (lower === "access_blocked" || lower.includes("401") || lower.includes("403") || lower.includes("unauthorized") || lower.includes("forbidden") || /<html|<!doctype/i.test(text)) {
     return { message: uiCatalogText(language, "error.beginner.access"), diagnosticCode: "ERR_ACCESS_BLOCKED", repeated: false }
   }
-  if (lower.includes("429") || lower.includes("rate limit") || lower.includes("too many requests")) {
+  if (lower === "rate_limit" || lower.includes("429") || lower.includes("rate limit") || lower.includes("too many requests")) {
     return { message: uiCatalogText(language, "error.beginner.rateLimit"), diagnosticCode: "ERR_RATE_LIMIT", repeated: false }
   }
-  if (lower.includes("model not found") || lower.includes("does not exist") || lower.includes("unknown model") || lower.includes("context length") || lower.includes("maximum context length")) {
+  if (lower === "not_found" || lower === "context_limit" || lower.includes("model not found") || lower.includes("does not exist") || lower.includes("unknown model") || lower.includes("context length") || lower.includes("maximum context length")) {
     return { message: uiCatalogText(language, "error.beginner.model"), diagnosticCode: "ERR_MODEL", repeated: false }
   }
   if (lower.includes("500 internal server error")) {

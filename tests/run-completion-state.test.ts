@@ -13,6 +13,24 @@ const baseExecutionSemantics = {
 } as const
 
 describe("completion state", () => {
+  it("does not treat a successful tool receipt as completion evidence by itself", () => {
+    const result = deriveCompletionEvidenceState({
+      executionSemantics: baseExecutionSemantics,
+      preview: "",
+      deliverySatisfied: false,
+      successfulTools: [{ toolName: "stock_lookup", output: "request accepted" }],
+      sawRealFilesystemMutation: false,
+    })
+
+    expect(result).toEqual({
+      executionSatisfied: false,
+      deliveryRequired: false,
+      deliverySatisfied: true,
+      completionSatisfied: false,
+      conflictReason: "명확한 실행 근거가 확인되지 않았습니다.",
+    })
+  })
+
   it("treats text-only replies as completed execution when no direct delivery is required", () => {
     const result = deriveCompletionEvidenceState({
       executionSemantics: baseExecutionSemantics,
@@ -30,7 +48,43 @@ describe("completion state", () => {
     })
   })
 
-  it("requires direct artifact delivery even when execution evidence exists", () => {
+  it("treats LLM goal-validated Yeonjang evidence as execution evidence", () => {
+    const result = deriveCompletionStageState({
+      review: {
+        status: "complete",
+        summary: "목표 달성",
+        reason: "LLM result diagnosis가 목표 달성을 검증했습니다.",
+        remainingItems: [],
+      },
+      executionSemantics: baseExecutionSemantics,
+      preview: "",
+      deliverySatisfied: false,
+      successfulTools: [{
+        toolName: "mouse_click",
+        output: "목표 검증 완료",
+        details: {
+          via: "yeonjang",
+          evidence: {
+            schemaVersion: "yeonjang-evidence-v1",
+            postCheck: {
+              kind: "goal_validated",
+              diagnosisReceiptId: "diagnosis:work:root:run-074:executing:result",
+            },
+          },
+        },
+      }],
+      sawRealFilesystemMutation: false,
+      requiresFilesystemMutation: false,
+      truncatedOutputRecoveryAttempted: false,
+    })
+
+    expect(result.executionStatus).toBe("satisfied")
+    expect(result.interpretationStatus).toBe("satisfied")
+    expect(result.recoveryStatus).toBe("settled")
+    expect(result.completionSatisfied).toBe(true)
+  })
+
+  it("requires direct artifact delivery without treating the tool receipt as execution evidence", () => {
     const result = deriveCompletionEvidenceState({
       executionSemantics: {
         ...baseExecutionSemantics,
@@ -43,11 +97,11 @@ describe("completion state", () => {
     })
 
     expect(result).toEqual({
-      executionSatisfied: true,
+      executionSatisfied: false,
       deliveryRequired: true,
       deliverySatisfied: false,
       completionSatisfied: false,
-      conflictReason: "요청된 직접 결과 전달이 아직 완료되지 않았습니다.",
+      conflictReason: "명확한 실행 근거가 확인되지 않았습니다.",
     })
   })
 
@@ -93,28 +147,29 @@ describe("completion state", () => {
     })
 
     expect(result).toEqual({
-      executionSatisfied: true,
+      executionSatisfied: false,
       deliveryRequired: true,
       deliverySatisfied: false,
       completionSatisfied: false,
       conflictReason: "completion review가 추가 follow-up 작업을 요구합니다.",
       interpretationStatus: "followup_required",
-      executionStatus: "satisfied",
+      executionStatus: "missing",
       deliveryStatus: "missing",
       recoveryStatus: "required",
       checklist: {
         items: [
           { key: "request", status: "completed" },
-          { key: "execution", status: "completed" },
+          { key: "execution", status: "pending", reason: "명확한 실행 근거가 확인되지 않았습니다." },
           { key: "delivery", status: "pending", reason: "요청된 직접 결과 전달이 아직 완료되지 않았습니다." },
           { key: "completion", status: "pending", reason: "completion review가 추가 follow-up 작업을 요구합니다." },
         ],
-        completedCount: 2,
+        completedCount: 1,
         actionableCount: 4,
-        pendingCount: 2,
+        pendingCount: 3,
       },
       blockingReasons: [
         "completion review가 추가 follow-up 작업을 요구합니다.",
+        "명확한 실행 근거가 확인되지 않았습니다.",
         "요청된 직접 결과 전달이 아직 완료되지 않았습니다.",
       ],
     })

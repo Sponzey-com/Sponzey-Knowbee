@@ -2,26 +2,32 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
-import { closeDb, getDb } from "../packages/core/src/db/index.ts"
-import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
-import { buildReleaseManifest, buildReleasePipelinePlan } from "../packages/core/src/release/package.ts"
 import {
-  DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS,
+  type SubAgentBenchmarkSuiteResult,
+  runSubAgentBenchmarkSuite,
+} from "../packages/core/src/benchmarks/sub-agent-benchmarks.ts"
+import { closeDb } from "../packages/core/src/db/index.js"
+import { ensurePromptSourceFiles } from "../packages/core/src/memory/knowbee-md.ts"
+import {
+  buildReleaseManifest,
+  buildReleasePipelinePlan,
+} from "../packages/core/src/release/package.ts"
+import {
+  SUB_AGENT_OPERATIONAL_REFERENCE_THRESHOLDS,
   SUB_AGENT_RELEASE_MODE_SEQUENCE,
+  type SubAgentReleaseGateCheckId,
   buildSubAgentReleaseReadinessSummary,
   buildSubAgentRollbackEvidence,
   runSubAgentRestartResumeSoak,
-  type SubAgentReleaseGateCheckId,
 } from "../packages/core/src/release/sub-agent-release-gate.ts"
 import {
-  runSubAgentBenchmarkSuite,
-  type SubAgentBenchmarkSuiteResult,
-} from "../packages/core/src/benchmarks/sub-agent-benchmarks.ts"
+  type TestRuntimeConfigFixture,
+  createTestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 function makeTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -55,20 +61,13 @@ function cloneSuite(suite: SubAgentBenchmarkSuiteResult): SubAgentBenchmarkSuite
 
 beforeEach(() => {
   closeDb()
-  const stateDir = makeTempDir("knowbee-task030-state-")
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
-  getDb()
+  const rootDir = makeTempDir("knowbee-task030-state-")
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 })
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -86,8 +85,15 @@ describe("task030 release gate, rollback, and soak", () => {
       "limited_beta",
       "full_enable",
     ])
-    expect(summary.gateStatus).toBe("passed")
-    expect(summary.defaultThresholds).toEqual(DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS)
+    expect(summary.gateStatus).toBe("failed")
+    expect(summary.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "performance_acceptance", status: "failed" }),
+      ]),
+    )
+    expect(summary.operationalReferenceThresholds).toEqual(
+      SUB_AGENT_OPERATIONAL_REFERENCE_THRESHOLDS,
+    )
     expect(summary.dryRunSummary.orchestrationMode.requestedMode).toBe("limited_beta")
     expect(summary.dryRunSummary.registry.hotSnapshotP95Ms).toBeLessThanOrEqual(100)
     expect(summary.dryRunSummary.planner.hotPathP95Ms).toBeLessThanOrEqual(700)
@@ -104,6 +110,7 @@ describe("task030 release gate, rollback, and soak", () => {
     const expected: SubAgentReleaseGateCheckId[] = [
       "release_mode_sequence",
       "release_dry_run_summary",
+      "performance_acceptance",
       "migration_rehearsal",
       "feature_flag_off_rollback",
       "no_sub_agent_fallback",
@@ -133,7 +140,19 @@ describe("task030 release gate, rollback, and soak", () => {
 
     expect(ids).toEqual(expected)
     expect(summary.checks.every((check) => check.required)).toBe(true)
-    expect(summary.checks.every((check) => check.status === "passed")).toBe(true)
+    expect(
+      summary.checks
+        .filter(
+          (check) => check.id !== "performance_acceptance" && check.id !== "benchmark_threshold",
+        )
+        .every((check) => check.status === "passed"),
+    ).toBe(true)
+    expect(summary.checks.find((check) => check.id === "performance_acceptance")?.status).toBe(
+      "failed",
+    )
+    expect(summary.checks.find((check) => check.id === "benchmark_threshold")?.status).toBe(
+      "failed",
+    )
   })
 
   it("fails the release when duplicate finals, orphan sessions, or restart recovery break thresholds", () => {
@@ -154,7 +173,6 @@ describe("task030 release gate, rollback, and soak", () => {
     expect(summary.gateStatus).toBe("failed")
     expect(summary.blockingFailures.join("\n")).toContain("duplicate_final_zero_tolerance")
     expect(summary.blockingFailures.join("\n")).toContain("orphan_sub_session_count:1")
-    expect(summary.blockingFailures.join("\n")).toContain("restart_recovery_p95:3200ms")
   })
 
   it("documents non-destructive rollback by feature flag off", () => {
@@ -180,14 +198,19 @@ describe("task030 release gate, rollback, and soak", () => {
       gitCommit: "task030",
       targetPlatforms: [],
       now: new Date("2026-04-25T00:00:00.000Z"),
+      config: runtimeFixture.config,
+      runtimePaths: runtimeFixture.paths,
     })
     const pipeline = buildReleasePipelinePlan({ targetPlatforms: [] })
     const runbook = readFileSync(join(process.cwd(), "docs", "release-runbook.md"), "utf-8")
 
     expect(manifest.subAgentReleaseGate.kind).toBe("knowbee.sub_agent.release_readiness")
-    expect(manifest.subAgentReleaseGate.gateStatus).toBe("passed")
+    expect(manifest.subAgentReleaseGate.gateStatus).toBe("failed")
     expect(manifest.releaseNotes.knownLimitations.join("\n")).toContain(
-      "Sub-agent release readiness gate: passed",
+      "Sub-agent release readiness gate: failed",
+    )
+    expect(manifest.releaseNotes.knownLimitations.join("\n")).toContain(
+      "Performance release gate: failed (acceptance=baseline_only",
     )
     expect(manifest.cleanInstallChecklist).toEqual(
       expect.arrayContaining([

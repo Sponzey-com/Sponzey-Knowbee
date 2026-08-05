@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "weather-dongcheon-partial",
   "title": "Dongcheon current weather partial but answerable",
   "freshnessPolicy": "latest_approximate",
@@ -28,9 +28,12 @@
     }
   ],
   "expected": {
-    "canAnswer": true,
-    "acceptedValue": "18",
-    "evidenceSufficiency": "sufficient_approximate",
-    "minAttempts": 1
+    "minimumAttempts": 1,
+    "llmDiagnosisExpectation": {
+      "status": "complete",
+      "requiredEvidenceSourceIds": ["dongcheon-weather-text"],
+      "requiredConditionVerdicts": ["existence:satisfied", "freshness:satisfied", "target_match:satisfied"],
+      "changedStrategyRequired": false
+    }
   }
 }

@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::{
     Arc,
-    mpsc::{self, Receiver, Sender},
+    mpsc::{self, Receiver, SyncSender},
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -13,19 +13,51 @@ use iced::{
     Alignment, Background, Border, Color, Element, Length, Padding, Shadow, Size, Subscription,
     Task, Vector, time, window,
 };
+use tokio::runtime::Handle;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{
     Icon as TrayIconImage, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
     TrayIconId,
 };
 
+use crate::credential_store::{
+    StartupCredentialError, load_system_settings_with_credentials,
+    load_system_settings_with_interactive_credential_repair,
+    resolve_system_settings_with_credentials, save_system_settings_with_credentials,
+};
+use crate::instance_process_lease::RuntimeLeaseGuard;
+use crate::legacy_capture_platform::LegacyScreenPermissionProbe;
 use crate::lifecycle::{
     LifecycleCommand, LifecycleMachine, SharedLifecycleState, WindowModeState,
     current_policy_from_settings, new_shared_lifecycle_state, sync_launch_on_startup,
     write_shared_lifecycle_state,
 };
-use crate::mqtt::{MqttRuntimeHandle, RuntimeEvent, probe_connection, start_runtime};
-use crate::settings::{UiLanguage, YeonjangSettings, load_settings, save_settings};
+use crate::local_policy_setup::{
+    CapturePolicyCommitResult, capture_policy_matches_settings, commit_capture_policy_settings,
+    project_capture_policy_to_settings,
+};
+use crate::mqtt::probe_connection;
+use crate::mqtt_transport::MqttTransportSecurity;
+use crate::mqtt_v2_production_bootstrap::{
+    MqttV2Enrollment, MqttV2ProductionConfig, MqttV2ProductionDependencies,
+    MqttV2ProductionRuntime, SystemMqttV2BootstrapClock, configured_mqtt_v2_state_root,
+    start_production_mqtt_v2,
+};
+use crate::mqtt_v2_runtime_composition::{
+    MqttV2RuntimeConnectionState, MqttV2RuntimeShutdownError,
+};
+use crate::mqtt_v2_topics::validate_identifier as validate_mqtt_v2_identifier;
+use crate::permission_policy::PermissionPolicySnapshot;
+use crate::permission_policy_bootstrap::{
+    PermissionPolicyBootstrapError, configured_permission_policy_repository,
+};
+use crate::platform_operation::{PreflightPermissionState, TargetPlatform};
+use crate::policy_repository::DurablePermissionPolicyRepository;
+use crate::settings::{PermissionSettings, UiLanguage, YeonjangSettings, load_settings};
+use crate::system_automation_backend;
+use crate::system_screen_permission::{
+    ScreenPermissionRequestResult, SystemScreenPermissionProbe, request_screen_capture_access,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActiveTab {
@@ -42,17 +74,106 @@ enum ConnectionState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CredentialAccessState {
+    Ready,
+    Unavailable(StartupCredentialError),
+    Repairing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CredentialAccessEvent {
+    Requested,
+    Succeeded,
+    Failed(StartupCredentialError),
+}
+
+impl CredentialAccessState {
+    fn transition(
+        self,
+        event: CredentialAccessEvent,
+    ) -> std::result::Result<Self, CredentialAccessState> {
+        match (self, event) {
+            (Self::Unavailable(_), CredentialAccessEvent::Requested) => Ok(Self::Repairing),
+            (Self::Repairing, CredentialAccessEvent::Succeeded) => Ok(Self::Ready),
+            (Self::Repairing, CredentialAccessEvent::Failed(error)) => Ok(Self::Unavailable(error)),
+            _ => Err(self),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TrayAction {
     ShowWindow,
     HideWindow,
     QuitApp,
 }
 
+const TRAY_ACTION_CAPACITY: usize = 32;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StopAfter {
+    None,
+    Quit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GuiRuntimePhase {
+    Idle,
+    Running,
+    Stopping(StopAfter),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SavedSettingsRuntimeAction {
+    None,
+    Restart,
+    ReplacePendingRestart,
+}
+
+fn saved_settings_runtime_action(phase: GuiRuntimePhase) -> SavedSettingsRuntimeAction {
+    match phase {
+        GuiRuntimePhase::Running => SavedSettingsRuntimeAction::Restart,
+        GuiRuntimePhase::Stopping(StopAfter::None) => {
+            SavedSettingsRuntimeAction::ReplacePendingRestart
+        }
+        GuiRuntimePhase::Idle | GuiRuntimePhase::Stopping(StopAfter::Quit) => {
+            SavedSettingsRuntimeAction::None
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GuiRuntimeEvent {
+    StartSucceeded,
+    StartFailed,
+    StopRequested(StopAfter),
+    StopCompleted,
+    QuitRequested,
+}
+
+impl GuiRuntimePhase {
+    fn transition(self, event: GuiRuntimeEvent) -> std::result::Result<Self, ()> {
+        match (self, event) {
+            (Self::Idle, GuiRuntimeEvent::StartSucceeded) => Ok(Self::Running),
+            (Self::Idle, GuiRuntimeEvent::StartFailed) => Ok(Self::Idle),
+            (Self::Running, GuiRuntimeEvent::StopRequested(after)) => Ok(Self::Stopping(after)),
+            (Self::Stopping(_), GuiRuntimeEvent::StopCompleted) => Ok(Self::Idle),
+            (Self::Stopping(StopAfter::None), GuiRuntimeEvent::QuitRequested)
+            | (Self::Stopping(StopAfter::Quit), GuiRuntimeEvent::QuitRequested) => {
+                Ok(Self::Stopping(StopAfter::Quit))
+            }
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PermissionField {
+    BrowserControl,
     SystemControl,
     ShellExec,
     ApplicationLaunch,
+    CameraAccess,
     ScreenCapture,
     KeyboardControl,
     MouseControl,
@@ -68,13 +189,21 @@ enum Message {
     PortChanged(String),
     UsernameChanged(String),
     PasswordChanged(String),
+    MqttV2SessionChanged(String),
+    MqttV2RequesterChanged(String),
+    PairingSecretChanged(String),
     DisplayNameChanged(String),
     ToggleAutoConnect(bool),
     ToggleLaunchOnStartup(bool),
     TogglePermission(PermissionField, bool),
+    RequestScreenCapturePermission,
     CheckConnection,
     Connect,
     Disconnect,
+    RuntimeHandleReady(Handle),
+    RuntimeStopped(std::result::Result<(), MqttV2RuntimeShutdownError>),
+    AuthorizeCredentials,
+    CredentialsAuthorized(Box<std::result::Result<YeonjangSettings, StartupCredentialError>>),
     Save,
     Reload,
     CancelChanges,
@@ -138,7 +267,7 @@ impl SystemTrayController {
         let settings_id = settings_item.id().clone();
         let hide_id = hide_item.id().clone();
         let quit_id = quit_item.id().clone();
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::sync_channel(TRAY_ACTION_CAPACITY);
         install_tray_menu_handler(sender.clone(), settings_id, hide_id, quit_id);
         install_tray_icon_handler(sender, tray_icon_id.clone());
 
@@ -204,7 +333,7 @@ impl SystemTrayController {
 }
 
 fn install_tray_menu_handler(
-    sender: Sender<TrayAction>,
+    sender: SyncSender<TrayAction>,
     settings_id: tray_icon::menu::MenuId,
     hide_id: tray_icon::menu::MenuId,
     quit_id: tray_icon::menu::MenuId,
@@ -221,12 +350,12 @@ fn install_tray_menu_handler(
         };
 
         if let Some(action) = action {
-            let _ = sender.send(action);
+            emit_tray_action(&sender, action);
         }
     }));
 }
 
-fn install_tray_icon_handler(sender: Sender<TrayAction>, tray_icon_id: TrayIconId) {
+fn install_tray_icon_handler(sender: SyncSender<TrayAction>, tray_icon_id: TrayIconId) {
     TrayIconEvent::set_event_handler(Some(move |event| {
         let show = match event {
             TrayIconEvent::DoubleClick { id, button, .. } => {
@@ -247,9 +376,13 @@ fn install_tray_icon_handler(sender: Sender<TrayAction>, tray_icon_id: TrayIconI
         };
 
         if show {
-            let _ = sender.send(TrayAction::ShowWindow);
+            emit_tray_action(&sender, TrayAction::ShowWindow);
         }
     }));
+}
+
+fn emit_tray_action(sender: &SyncSender<TrayAction>, action: TrayAction) -> bool {
+    sender.try_send(action).is_ok()
 }
 
 fn t(lang: UiLanguage, ko: &'static str, en: &'static str) -> &'static str {
@@ -259,29 +392,77 @@ fn t(lang: UiLanguage, ko: &'static str, en: &'static str) -> &'static str {
     }
 }
 
-pub fn run_gui() -> Result<()> {
-    let initial_window_visible = load_settings()
-        .map(|settings| {
-            current_policy_from_settings(&settings).initial_window_mode == WindowModeState::Visible
-        })
-        .unwrap_or(true);
-    let mut app = iced::application(
-        YeonjangGuiApp::new,
-        YeonjangGuiApp::update,
-        YeonjangGuiApp::view,
-    )
-    .title(YeonjangGuiApp::title)
-    .subscription(YeonjangGuiApp::subscription)
-    .window(window::Settings {
-        size: Size::new(680.0, 760.0),
-        min_size: Some(Size::new(680.0, 760.0)),
-        max_size: Some(Size::new(680.0, 760.0)),
-        resizable: false,
-        exit_on_close_request: false,
-        visible: initial_window_visible,
-        icon: build_window_icon().ok(),
-        ..window::Settings::default()
-    });
+fn compiled_gui_target_platform() -> TargetPlatform {
+    #[cfg(target_os = "macos")]
+    {
+        TargetPlatform::Macos
+    }
+    #[cfg(target_os = "windows")]
+    {
+        TargetPlatform::Windows
+    }
+    #[cfg(target_os = "linux")]
+    {
+        TargetPlatform::Linux
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        TargetPlatform::Unknown
+    }
+}
+
+#[derive(Clone)]
+enum GuiBootstrapSettings {
+    Ready(YeonjangSettings),
+    CredentialUnavailable(YeonjangSettings, StartupCredentialError),
+    SettingsUnavailable,
+}
+
+impl GuiBootstrapSettings {
+    fn initial_window_visible(&self) -> bool {
+        match self {
+            Self::Ready(settings) => {
+                current_policy_from_settings(settings).initial_window_mode
+                    == WindowModeState::Visible
+            }
+            Self::CredentialUnavailable(_, _) | Self::SettingsUnavailable => true,
+        }
+    }
+}
+
+fn select_gui_bootstrap_settings(
+    persisted: YeonjangSettings,
+    resolved: std::result::Result<YeonjangSettings, StartupCredentialError>,
+) -> GuiBootstrapSettings {
+    match resolved {
+        Ok(settings) => GuiBootstrapSettings::Ready(settings),
+        Err(error) => GuiBootstrapSettings::CredentialUnavailable(persisted, error),
+    }
+}
+
+pub fn run_gui(runtime_lease: RuntimeLeaseGuard) -> Result<()> {
+    let bootstrap_settings = match load_settings() {
+        Ok(persisted) => {
+            let resolved = resolve_system_settings_with_credentials(persisted.clone());
+            select_gui_bootstrap_settings(persisted, resolved)
+        }
+        Err(_) => GuiBootstrapSettings::SettingsUnavailable,
+    };
+    let initial_window_visible = bootstrap_settings.initial_window_visible();
+    let boot = move || YeonjangGuiApp::new(bootstrap_settings.clone(), runtime_lease.clone());
+    let mut app = iced::application(boot, YeonjangGuiApp::update, YeonjangGuiApp::view)
+        .title(YeonjangGuiApp::title)
+        .subscription(YeonjangGuiApp::subscription)
+        .window(window::Settings {
+            size: Size::new(680.0, 760.0),
+            min_size: Some(Size::new(680.0, 760.0)),
+            max_size: Some(Size::new(680.0, 760.0)),
+            resizable: false,
+            exit_on_close_request: false,
+            visible: initial_window_visible,
+            icon: build_window_icon().ok(),
+            ..window::Settings::default()
+        });
 
     if let Some((_, bytes)) = load_ui_font() {
         app = app.font(bytes);
@@ -294,33 +475,46 @@ pub fn run_gui() -> Result<()> {
 struct YeonjangGuiApp {
     settings: YeonjangSettings,
     saved_settings: YeonjangSettings,
+    policy_repository:
+        std::result::Result<Arc<DurablePermissionPolicyRepository>, PermissionPolicyBootstrapError>,
+    policy_snapshot: Option<PermissionPolicySnapshot>,
     port_input: String,
     status_message: String,
+    screen_permission_observation: Option<PreflightPermissionState>,
     active_tab: ActiveTab,
     connection_state: ConnectionState,
     connection_attempted: bool,
     last_error: String,
-    mqtt_runtime: Option<MqttRuntimeHandle>,
-    mqtt_runtime_events: Option<Receiver<RuntimeEvent>>,
+    mqtt_runtime: Option<MqttV2ProductionRuntime>,
+    runtime_phase: GuiRuntimePhase,
+    pending_connection_settings: Option<YeonjangSettings>,
+    runtime_handle: Option<Handle>,
+    credential_access: CredentialAccessState,
     tray_controller: Option<SystemTrayController>,
     lifecycle: LifecycleMachine,
     lifecycle_state: SharedLifecycleState,
     pending_lifecycle_command: Option<LifecycleCommand>,
+    initial_screen_capture_permission_request_pending: bool,
     quit_in_progress: bool,
+    #[allow(dead_code)]
+    runtime_lease: RuntimeLeaseGuard,
 }
 
 impl YeonjangGuiApp {
-    fn new() -> Self {
-        let (settings, status_message) = match load_settings() {
-            Ok(settings) => {
+    fn new(
+        bootstrap_settings: GuiBootstrapSettings,
+        runtime_lease: RuntimeLeaseGuard,
+    ) -> (Self, Task<Message>) {
+        let (mut settings, mut status_message, credential_access) = match bootstrap_settings {
+            GuiBootstrapSettings::Ready(settings) => {
                 let lang = settings.ui_language;
                 (
                     settings,
                     t(lang, "설정을 불러왔습니다.", "Settings loaded.").to_string(),
+                    CredentialAccessState::Ready,
                 )
             }
-            Err(error) => {
-                let settings = YeonjangSettings::default();
+            GuiBootstrapSettings::CredentialUnavailable(settings, error) => {
                 let lang = settings.ui_language;
                 (
                     settings,
@@ -328,24 +522,67 @@ impl YeonjangGuiApp {
                         "{}: {error}",
                         t(
                             lang,
-                            "설정을 읽지 못해 기본값으로 시작했습니다",
-                            "Failed to read settings. Started with defaults"
+                            "저장된 설정은 불러왔지만 자격 증명을 사용할 수 없습니다",
+                            "Loaded saved settings, but credentials are unavailable"
                         )
                     ),
+                    CredentialAccessState::Unavailable(error),
+                )
+            }
+            GuiBootstrapSettings::SettingsUnavailable => {
+                let settings = YeonjangSettings::default();
+                let lang = settings.ui_language;
+                (
+                    settings,
+                    t(
+                        lang,
+                        "설정을 읽지 못해 기본값으로 시작했습니다.",
+                        "Failed to read settings. Started with defaults.",
+                    )
+                    .to_string(),
+                    CredentialAccessState::Unavailable(StartupCredentialError::SettingsUnavailable),
                 )
             }
         };
+        if settings.permission_review_required {
+            status_message = t(
+                settings.ui_language,
+                "기존 장치 제어 권한을 검토하고 저장해야 활성화됩니다.",
+                "Review and save legacy device-control permissions before they can be activated.",
+            )
+            .to_string();
+        }
+        let policy_repository = configured_permission_policy_repository(&settings);
+        let policy_snapshot =
+            match project_repository_capture_settings(&policy_repository, &mut settings) {
+                Ok(snapshot) => Some(snapshot),
+                Err(error) => {
+                    status_message = format!(
+                        "{}: {error}",
+                        t(
+                            settings.ui_language,
+                            "로컬 캡처 정책을 불러오지 못해 실행을 시작하지 않습니다",
+                            "Local capture policy is unavailable; runtime will not start"
+                        )
+                    );
+                    None
+                }
+            };
         let ui_language = settings.ui_language;
         let policy = current_policy_from_settings(&settings);
+        let screen_permission_observation = SystemScreenPermissionProbe.permission().ok();
         let mut lifecycle = LifecycleMachine::new(policy, false);
         let mut tray_controller = None;
         let mut pending_lifecycle_command = None;
 
         let mut app = Self {
             saved_settings: settings.clone(),
+            policy_repository,
+            policy_snapshot,
             port_input: settings.connection.port.to_string(),
             settings,
             status_message,
+            screen_permission_observation,
             active_tab: ActiveTab::Connection,
             connection_state: ConnectionState::Disconnected,
             connection_attempted: false,
@@ -356,12 +593,17 @@ impl YeonjangGuiApp {
             )
             .to_string(),
             mqtt_runtime: None,
-            mqtt_runtime_events: None,
+            runtime_phase: GuiRuntimePhase::Idle,
+            pending_connection_settings: None,
+            runtime_handle: None,
+            credential_access,
             tray_controller: None,
             lifecycle_state: new_shared_lifecycle_state(lifecycle.state()),
             lifecycle: lifecycle.clone(),
             pending_lifecycle_command: None,
+            initial_screen_capture_permission_request_pending: false,
             quit_in_progress: false,
+            runtime_lease,
         };
 
         match SystemTrayController::new(ui_language) {
@@ -383,6 +625,9 @@ impl YeonjangGuiApp {
                 }
             }
         }
+        if credential_access != CredentialAccessState::Ready {
+            pending_lifecycle_command = Some(lifecycle.show_window());
+        }
 
         app.lifecycle = lifecycle;
         app.tray_controller = tray_controller;
@@ -390,11 +635,47 @@ impl YeonjangGuiApp {
         app.sync_lifecycle_registration();
         app.sync_tray_menu();
 
-        if app.settings.connection.auto_connect {
-            app.connect_now();
+        if app
+            .settings
+            .needs_initial_screen_capture_permission_request()
+        {
+            // Persist the one-time marker before requesting macOS consent. A
+            // restart can therefore never create a second prompt merely
+            // because the process ended while the system sheet was visible.
+            let mut marked_settings = app.settings.clone();
+            marked_settings.mark_screen_capture_permission_requested();
+            match save_system_settings_with_credentials(&marked_settings) {
+                Ok(saved_settings) => {
+                    app.settings = saved_settings;
+                    app.saved_settings = app.settings.clone();
+                    app.pending_lifecycle_command = Some(app.lifecycle.show_window());
+                    app.initial_screen_capture_permission_request_pending = true;
+                    app.set_status(t(
+                        app.lang(),
+                        "macOS 화면 캡처 권한 요청을 준비합니다.",
+                        "Preparing the one-time macOS screen-capture permission request.",
+                    ));
+                }
+                Err(_) => {
+                    app.set_status(t(
+                        app.lang(),
+                        "화면 캡처 권한 요청 상태를 저장하지 못해 macOS 권한 요청을 시작하지 않았습니다.",
+                        "Yeonjang did not request macOS screen-capture permission because it could not save the one-time request state.",
+                    ));
+                }
+            }
         }
 
-        app
+        let connection_task = if credential_access == CredentialAccessState::Ready
+            && app.policy_repository.is_ok()
+            && app.settings.connection.auto_connect
+        {
+            app.connect_now()
+        } else {
+            Task::none()
+        };
+
+        (app, connection_task)
     }
 
     fn lang(&self) -> UiLanguage {
@@ -415,12 +696,23 @@ impl YeonjangGuiApp {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Tick => {
-                self.process_runtime_events();
-                let mut tasks = Vec::new();
+                let mut tasks = vec![self.process_runtime_events()];
                 self.sync_tray_menu();
 
+                let mut showed_pending_window = false;
                 if let Some(command) = self.pending_lifecycle_command.take() {
+                    showed_pending_window = command == LifecycleCommand::ShowWindow;
                     tasks.push(self.apply_lifecycle_command(command, "startup-ready"));
+                }
+
+                // The first Tick submits the show/focus command. The next
+                // Tick is intentionally the earliest point that can request
+                // macOS consent, ensuring the owning app is visible rather
+                // than tray-hidden when the system sheet is created.
+                if self.initial_screen_capture_permission_request_pending && !showed_pending_window
+                {
+                    self.initial_screen_capture_permission_request_pending = false;
+                    tasks.push(Task::done(Message::RequestScreenCapturePermission));
                 }
 
                 for action in self.drain_tray_actions() {
@@ -495,6 +787,18 @@ impl YeonjangGuiApp {
                 self.settings.connection.password = value;
                 Task::none()
             }
+            Message::MqttV2SessionChanged(value) => {
+                self.settings.mqtt_v2.session_id = value;
+                Task::none()
+            }
+            Message::MqttV2RequesterChanged(value) => {
+                self.settings.mqtt_v2.requester_id = value;
+                Task::none()
+            }
+            Message::PairingSecretChanged(value) => {
+                self.settings.pairing_secret = value;
+                Task::none()
+            }
             Message::DisplayNameChanged(value) => {
                 self.settings.display_name = value;
                 Task::none()
@@ -508,44 +812,155 @@ impl YeonjangGuiApp {
                 Task::none()
             }
             Message::TogglePermission(field, value) => {
-                match field {
-                    PermissionField::SystemControl => {
-                        self.settings.permissions.allow_system_control = value;
-                    }
-                    PermissionField::ShellExec => {
-                        self.settings.permissions.allow_shell_exec = value;
-                    }
-                    PermissionField::ApplicationLaunch => {
-                        self.settings.permissions.allow_application_launch = value;
-                    }
-                    PermissionField::ScreenCapture => {
-                        self.settings.permissions.allow_screen_capture = value;
-                    }
-                    PermissionField::KeyboardControl => {
-                        self.settings.permissions.allow_keyboard_control = value;
-                    }
-                    PermissionField::MouseControl => {
-                        self.settings.permissions.allow_mouse_control = value;
-                    }
-                }
+                apply_permission_change(&mut self.settings, field, value);
+                Task::none()
+            }
+            Message::RequestScreenCapturePermission => {
+                let status = match request_screen_capture_access() {
+                    Ok(ScreenPermissionRequestResult::Granted) => t(
+                        self.lang(),
+                        "Yeonjang의 화면 캡처 권한이 이미 허용되어 있습니다.",
+                        "Yeonjang already has screen-capture permission.",
+                    ),
+                    Ok(ScreenPermissionRequestResult::Requested) => t(
+                        self.lang(),
+                        "macOS에 Yeonjang 화면 캡처 권한을 요청했습니다. 표시되는 시스템 창에서 허용한 뒤 다시 요청해 주세요.",
+                        "macOS has been asked for Yeonjang screen-capture permission. Allow it in the system prompt, then retry your request.",
+                    ),
+                    Ok(ScreenPermissionRequestResult::Unsupported) => t(
+                        self.lang(),
+                        "이 운영체제에서는 Yeonjang이 화면 캡처 권한 창을 직접 요청할 수 없습니다.",
+                        "Yeonjang cannot directly request a screen-capture permission prompt on this operating system.",
+                    ),
+                    Err(_) => t(
+                        self.lang(),
+                        "macOS 화면 캡처 권한 요청 상태를 확인하지 못했습니다.",
+                        "Yeonjang could not check the macOS screen-capture permission request state.",
+                    ),
+                };
+                self.screen_permission_observation = SystemScreenPermissionProbe.permission().ok();
+                self.set_status(status);
                 Task::none()
             }
             Message::CheckConnection => {
                 self.check_connection();
                 Task::none()
             }
-            Message::Connect => {
-                self.connect_now();
-                Task::none()
+            Message::Connect => self.connect_now(),
+            Message::Disconnect => self.disconnect(),
+            Message::RuntimeHandleReady(handle) => {
+                self.runtime_handle = Some(handle);
+                self.start_pending_runtime()
             }
-            Message::Disconnect => {
-                self.disconnect();
-                Task::none()
+            Message::RuntimeStopped(result) => {
+                let after = match self.runtime_phase {
+                    GuiRuntimePhase::Stopping(after) => after,
+                    GuiRuntimePhase::Idle | GuiRuntimePhase::Running => return Task::none(),
+                };
+                self.runtime_phase = self
+                    .runtime_phase
+                    .transition(GuiRuntimeEvent::StopCompleted)
+                    .expect("stopping runtime accepts its completion");
+                let stopped = result.is_ok();
+                if result.is_err() {
+                    self.last_error = t(
+                        self.lang(),
+                        "관리형 연결을 완전히 종료하지 못했습니다.",
+                        "The managed connection did not shut down cleanly.",
+                    )
+                    .to_string();
+                }
+                match after {
+                    StopAfter::None if stopped => self.start_pending_runtime(),
+                    StopAfter::None => {
+                        self.pending_connection_settings = None;
+                        Task::none()
+                    }
+                    StopAfter::Quit => window_command(WindowCommand::Quit),
+                }
             }
-            Message::Save => {
-                self.save();
-                Task::none()
+            Message::AuthorizeCredentials => {
+                if !matches!(
+                    self.credential_access,
+                    CredentialAccessState::Unavailable(_)
+                ) {
+                    return Task::none();
+                }
+                self.credential_access = self
+                    .credential_access
+                    .transition(CredentialAccessEvent::Requested)
+                    .expect("unavailable credential access accepts repair request");
+                self.set_status(t(
+                    self.lang(),
+                    "macOS 자격 증명 접근 확인을 기다리는 중입니다.",
+                    "Waiting for macOS credential access confirmation.",
+                ));
+                Task::perform(
+                    async {
+                        tokio::task::spawn_blocking(
+                            load_system_settings_with_interactive_credential_repair,
+                        )
+                        .await
+                        .unwrap_or(Err(
+                            StartupCredentialError::CredentialStore(
+                                crate::credential_store::CredentialStoreError::Unavailable,
+                            ),
+                        ))
+                    },
+                    |result| Message::CredentialsAuthorized(Box::new(result)),
+                )
             }
+            Message::CredentialsAuthorized(result) => match *result {
+                Ok(mut settings) => {
+                    self.credential_access = self
+                        .credential_access
+                        .transition(CredentialAccessEvent::Succeeded)
+                        .expect("repairing credential access accepts success");
+                    if let Err(reason) =
+                        project_repository_capture_settings(&self.policy_repository, &mut settings)
+                            .map(|snapshot| self.policy_snapshot = Some(snapshot))
+                    {
+                        self.set_status(format!(
+                            "{}: {reason}",
+                            t(
+                                settings.ui_language,
+                                "자격 증명은 확인했지만 로컬 캡처 정책을 적용하지 못했습니다",
+                                "Credentials were confirmed, but local capture policy could not be applied"
+                            )
+                        ));
+                        return Task::none();
+                    }
+                    self.settings = settings.clone();
+                    self.saved_settings = settings;
+                    self.port_input = self.settings.connection.port.to_string();
+                    self.set_status(t(
+                        self.lang(),
+                        "자격 증명 접근이 확인되었습니다.",
+                        "Credential access was confirmed.",
+                    ));
+                    if self.settings.connection.auto_connect {
+                        self.connect_now()
+                    } else {
+                        Task::none()
+                    }
+                }
+                Err(error) => {
+                    self.credential_access = self
+                        .credential_access
+                        .transition(CredentialAccessEvent::Failed(error))
+                        .expect("repairing credential access accepts failure");
+                    self.set_status(format!(
+                        "{}: {error}",
+                        t(
+                            self.lang(),
+                            "자격 증명 접근 확인 실패",
+                            "Credential access confirmation failed"
+                        )
+                    ));
+                    Task::none()
+                }
+            },
+            Message::Save => self.save(),
             Message::Reload => {
                 self.reload();
                 Task::none()
@@ -669,12 +1084,27 @@ impl YeonjangGuiApp {
             ActiveTab::Permissions => self.permissions_tab(),
         };
 
+        let credential_action = match self.credential_access {
+            CredentialAccessState::Ready => None,
+            CredentialAccessState::Unavailable(_) => Some(Message::AuthorizeCredentials),
+            CredentialAccessState::Repairing => None,
+        };
         let footer = container(
             row![
                 text(self.footer_text())
                     .size(13)
                     .color(color_muted())
                     .width(Length::Fill),
+                styled_button(
+                    match self.credential_access {
+                        CredentialAccessState::Repairing => {
+                            t(lang, "확인 중", "Authorizing")
+                        }
+                        _ => t(lang, "자격 증명 허용", "Authorize credentials"),
+                    },
+                    ButtonKind::Default,
+                    credential_action,
+                ),
                 styled_button(
                     t(lang, "다시 불러오기", "Reload"),
                     ButtonKind::Default,
@@ -776,6 +1206,31 @@ impl YeonjangGuiApp {
                         ),
                     ]
                     .spacing(12),
+                    row![
+                        form_field(
+                            t(lang, "v2 세션 ID *", "V2 session ID *"),
+                            text_input("session-main", &self.settings.mqtt_v2.session_id)
+                                .on_input(Message::MqttV2SessionChanged)
+                                .padding(12)
+                                .style(input_style),
+                        ),
+                        form_field(
+                            t(lang, "v2 요청자 ID *", "V2 requester ID *"),
+                            text_input("requester-main", &self.settings.mqtt_v2.requester_id)
+                                .on_input(Message::MqttV2RequesterChanged)
+                                .padding(12)
+                                .style(input_style),
+                        ),
+                    ]
+                    .spacing(12),
+                    form_field(
+                        t(lang, "연결 승인 코드", "Connection approval code"),
+                        text_input("", &self.settings.pairing_secret)
+                            .secure(true)
+                            .on_input(Message::PairingSecretChanged)
+                            .padding(12)
+                            .style(input_style),
+                    ),
                     row![
                         form_field(
                             t(lang, "아이디 (ID)", "ID"),
@@ -937,8 +1392,12 @@ impl YeonjangGuiApp {
                     ),
                     (t(lang, "꺼짐", "Off").to_string(), disabled.to_string()),
                     (
-                        t(lang, "OS 승인 필요", "OS Approval").to_string(),
+                        t(lang, "OS 상태 확인 필요", "OS Status Check").to_string(),
                         os_required.to_string(),
+                    ),
+                    (
+                        t(lang, "macOS 화면 캡처", "macOS Screen Capture").to_string(),
+                        self.screen_capture_permission_status_label().to_string(),
                     ),
                 ],
             ),
@@ -968,6 +1427,24 @@ impl YeonjangGuiApp {
                 "Application Launch",
                 "앱 열기와 전달 인수 실행",
                 "Open applications and pass launch arguments",
+            ),
+            permission_checkbox(
+                lang,
+                self.settings.permissions.allow_browser_control,
+                PermissionField::BrowserControl,
+                "브라우저 제어",
+                "Browser Control",
+                "브라우저 열기와 포커스 변경",
+                "Open a browser and change browser focus",
+            ),
+            permission_checkbox(
+                lang,
+                self.settings.permissions.allow_camera_access,
+                PermissionField::CameraAccess,
+                "카메라 촬영",
+                "Camera Capture",
+                "카메라로 촬영해 전달",
+                "Capture and send a camera image",
             ),
             permission_checkbox(
                 lang,
@@ -1024,44 +1501,82 @@ impl YeonjangGuiApp {
         self.status_message = message.into();
     }
 
-    fn save(&mut self) {
+    fn save(&mut self) -> Task<Message> {
         match parse_port_input(&self.port_input, self.lang()) {
             Ok(port) => {
                 self.settings.connection.port = port;
             }
             Err(message) => {
                 self.set_status(message);
-                return;
+                return Task::none();
             }
         }
 
-        match save_settings(&self.settings) {
-            Ok(_) => {
+        let mut confirmed_settings = self.settings.clone();
+        confirmed_settings.confirm_permission_review();
+        let (policy_result, policy_repository) =
+            match (&self.policy_repository, &self.policy_snapshot) {
+                (Ok(repository), Some(snapshot)) => (
+                    commit_capture_policy_settings(
+                        repository.clone(),
+                        snapshot,
+                        &confirmed_settings.permissions,
+                        &next_capture_policy_change_id(snapshot.revision()),
+                    ),
+                    Some(repository.clone()),
+                ),
+                _ => (CapturePolicyCommitResult::Unavailable, None),
+            };
+        let Some(policy_revision) = policy_result.committed_revision() else {
+            self.set_status(format!(
+                "{}: {policy_result}",
+                t(
+                    self.lang(),
+                    "로컬 캡처 정책을 저장하지 못해 설정과 실행 상태를 변경하지 않았습니다",
+                    "Local capture policy was not saved; settings and runtime were not changed"
+                )
+            ));
+            return Task::none();
+        };
+        let Some(policy_snapshot) = policy_repository.and_then(|repository| repository.snapshot())
+        else {
+            self.set_status(format!(
+                "{}: permission_policy_post_check_unavailable",
+                t(
+                    self.lang(),
+                    "로컬 캡처 정책 저장 결과를 확인하지 못해 설정과 실행 상태를 변경하지 않았습니다",
+                    "Local capture policy could not be verified; settings and runtime were not changed"
+                )
+            ));
+            return Task::none();
+        };
+        if policy_snapshot.revision() != policy_revision
+            || policy_snapshot.target_instance_id() != confirmed_settings.instance_id
+            || !capture_policy_matches_settings(&policy_snapshot, &confirmed_settings.permissions)
+        {
+            self.set_status(format!(
+                "{}: permission_policy_post_check_mismatch",
+                t(
+                    self.lang(),
+                    "로컬 캡처 정책 저장 결과가 요청과 일치하지 않아 설정과 실행 상태를 변경하지 않았습니다",
+                    "Local capture policy verification did not match the request; settings and runtime were not changed"
+                )
+            ));
+            return Task::none();
+        }
+        self.policy_snapshot = Some(policy_snapshot);
+        match save_system_settings_with_credentials(&confirmed_settings) {
+            Ok(settings) => {
+                self.settings = settings;
                 self.saved_settings = self.settings.clone();
                 self.port_input = self.settings.connection.port.to_string();
                 match sync_launch_on_startup(&self.settings) {
                     Ok(result) => {
-                        self.set_status(if result.enabled {
-                            format!(
-                                "{}: {}",
-                                t(
-                                    self.lang(),
-                                    "현재 설정을 저장했고 자동 시작을 동기화했습니다",
-                                    "Settings saved and launch on startup was synced",
-                                ),
-                                result.entry_path.display()
-                            )
-                        } else {
-                            format!(
-                                "{}: {}",
-                                t(
-                                    self.lang(),
-                                    "현재 설정을 저장했고 자동 시작 항목을 정리했습니다",
-                                    "Settings saved and launch on startup entry was removed",
-                                ),
-                                result.entry_path.display()
-                            )
-                        });
+                        self.set_status(format!(
+                            "{}: {}",
+                            t(self.lang(), "설정을 저장했습니다", "Settings saved",),
+                            result.entry_path.display()
+                        ));
                     }
                     Err(error) => {
                         self.set_status(format!(
@@ -1074,20 +1589,57 @@ impl YeonjangGuiApp {
                         ));
                     }
                 }
-                self.publish_runtime_presence("settings-saved");
+                return self.apply_saved_settings_to_runtime();
             }
             Err(error) => {
                 self.set_status(format!(
                     "{}: {error}",
-                    t(self.lang(), "설정 저장 실패", "Failed to save settings")
+                    t(
+                        self.lang(),
+                        "로컬 캡처 정책은 저장했지만 나머지 설정 저장에 실패했습니다",
+                        "Local capture policy was saved, but the remaining settings could not be saved"
+                    )
                 ));
+            }
+        }
+        Task::none()
+    }
+
+    fn apply_saved_settings_to_runtime(&mut self) -> Task<Message> {
+        match saved_settings_runtime_action(self.runtime_phase) {
+            SavedSettingsRuntimeAction::None => Task::none(),
+            SavedSettingsRuntimeAction::Restart => {
+                self.pending_connection_settings = Some(self.settings.clone());
+                self.stop_runtime(StopAfter::None)
+            }
+            SavedSettingsRuntimeAction::ReplacePendingRestart => {
+                self.pending_connection_settings = Some(self.settings.clone());
+                Task::none()
             }
         }
     }
 
     fn reload(&mut self) {
-        match load_settings() {
-            Ok(settings) => {
+        match load_system_settings_with_credentials() {
+            Ok(mut settings) => {
+                let snapshot = match project_repository_capture_settings(
+                    &self.policy_repository,
+                    &mut settings,
+                ) {
+                    Ok(revision) => revision,
+                    Err(reason) => {
+                        self.set_status(format!(
+                            "{}: {reason}",
+                            t(
+                                self.lang(),
+                                "설정을 다시 불러왔지만 로컬 캡처 정책을 적용하지 못했습니다",
+                                "Settings were reloaded, but local capture policy could not be applied"
+                            )
+                        ));
+                        return;
+                    }
+                };
+                self.policy_snapshot = Some(snapshot);
                 self.saved_settings = settings.clone();
                 self.port_input = settings.connection.port.to_string();
                 self.settings = settings;
@@ -1121,7 +1673,17 @@ impl YeonjangGuiApp {
     }
 
     fn restore_defaults(&mut self) {
-        self.settings = YeonjangSettings::default();
+        let mut defaults = YeonjangSettings::default();
+        // The canonical policy store is target-bound. Restoring editable
+        // defaults must not silently create a different execution identity.
+        defaults.instance_id.clone_from(&self.settings.instance_id);
+        defaults
+            .install_fingerprint
+            .clone_from(&self.settings.install_fingerprint);
+        defaults
+            .host_fingerprint
+            .clone_from(&self.settings.host_fingerprint);
+        self.settings = defaults;
         self.port_input = self.settings.connection.port.to_string();
         self.set_status(t(
             self.lang(),
@@ -1162,7 +1724,18 @@ impl YeonjangGuiApp {
         }
     }
 
-    fn connect_now(&mut self) {
+    fn connect_now(&mut self) -> Task<Message> {
+        if let Err(error) = &self.policy_repository {
+            self.set_status(format!(
+                "{}: {error}",
+                t(
+                    self.lang(),
+                    "로컬 캡처 정책을 사용할 수 없어 연결을 시작하지 않았습니다",
+                    "Connection was not started because local capture policy is unavailable"
+                )
+            ));
+            return Task::none();
+        }
         self.connection_attempted = true;
         match self.validate_connection_inputs(true) {
             Ok(()) => {}
@@ -1170,39 +1743,120 @@ impl YeonjangGuiApp {
                 self.connection_state = ConnectionState::AuthFailed;
                 self.last_error = message.clone();
                 self.set_status(message);
-                return;
+                return Task::none();
             }
         }
 
-        self.stop_runtime();
-        match start_runtime(self.settings.clone(), Arc::clone(&self.lifecycle_state)) {
-            Ok((runtime, events)) => {
+        self.pending_connection_settings = Some(self.settings.clone());
+        match self.runtime_phase {
+            GuiRuntimePhase::Idle => self.start_pending_runtime(),
+            GuiRuntimePhase::Running => self.stop_runtime(StopAfter::None),
+            GuiRuntimePhase::Stopping(_) => Task::none(),
+        }
+    }
+
+    fn start_pending_runtime(&mut self) -> Task<Message> {
+        let Some(handle) = self.runtime_handle.clone() else {
+            return Task::perform(async { Handle::current() }, Message::RuntimeHandleReady);
+        };
+        let Some(settings) = self.pending_connection_settings.take() else {
+            return Task::none();
+        };
+        let policy = match &self.policy_repository {
+            Ok(policy) => Arc::clone(policy),
+            Err(_) => {
+                self.runtime_phase = self
+                    .runtime_phase
+                    .transition(GuiRuntimeEvent::StartFailed)
+                    .expect("idle runtime accepts start failure");
+                return Task::none();
+            }
+        };
+        let enrollment = MqttV2Enrollment::from_settings(&settings);
+        let state_root = match configured_mqtt_v2_state_root() {
+            Ok(root) => root,
+            Err(_) => {
+                self.runtime_phase = self
+                    .runtime_phase
+                    .transition(GuiRuntimeEvent::StartFailed)
+                    .expect("idle runtime accepts start failure");
+                self.connection_state = ConnectionState::Disconnected;
+                self.set_status(t(
+                    self.lang(),
+                    "v2 상태 저장소를 준비하지 못했습니다.",
+                    "Failed to prepare the v2 state store.",
+                ));
+                return Task::none();
+            }
+        };
+        let config = MqttV2ProductionConfig::from_resolved_settings(
+            settings.runtime_snapshot(),
+            enrollment,
+            MqttTransportSecurity::LoopbackPlaintext,
+            state_root,
+            compiled_gui_target_platform(),
+        );
+        let config = match config {
+            Ok(config) => config,
+            Err(_) => {
+                self.runtime_phase = self
+                    .runtime_phase
+                    .transition(GuiRuntimeEvent::StartFailed)
+                    .expect("idle runtime accepts start failure");
+                let message = t(
+                    self.lang(),
+                    "직접 MQTT v2 연결 설정이 올바르지 않습니다.",
+                    "The direct MQTT v2 connection configuration is invalid.",
+                )
+                .to_string();
+                self.connection_state = ConnectionState::AuthFailed;
+                self.last_error = message.clone();
+                self.set_status(message);
+                return Task::none();
+            }
+        };
+        let dependencies = MqttV2ProductionDependencies {
+            backend: system_automation_backend(),
+            policy,
+            screen_permission: Arc::new(SystemScreenPermissionProbe),
+            clock: Arc::new(SystemMqttV2BootstrapClock),
+        };
+        match start_production_mqtt_v2(config, dependencies, self.runtime_lease.clone(), handle) {
+            Ok(runtime) => {
+                self.runtime_phase = self
+                    .runtime_phase
+                    .transition(GuiRuntimeEvent::StartSucceeded)
+                    .expect("idle runtime accepts successful start");
                 self.mqtt_runtime = Some(runtime);
-                self.mqtt_runtime_events = Some(events);
                 self.connection_state = ConnectionState::Disconnected;
                 self.set_status(t(
                     self.lang(),
                     "Knowbee 브로커에 연결하는 중입니다.",
                     "Connecting to the Knowbee broker.",
                 ));
+                Task::none()
             }
-            Err(error) => {
+            Err(_) => {
+                self.runtime_phase = self
+                    .runtime_phase
+                    .transition(GuiRuntimeEvent::StartFailed)
+                    .expect("idle runtime accepts start failure");
+                let message = t(
+                    self.lang(),
+                    "직접 MQTT v2 연결을 시작하지 못했습니다.",
+                    "Failed to start the direct MQTT v2 connection.",
+                )
+                .to_string();
                 self.connection_state = ConnectionState::Disconnected;
-                self.last_error = error.to_string();
-                self.set_status(format!(
-                    "{}: {error}",
-                    t(
-                        self.lang(),
-                        "연결 시작 실패",
-                        "Failed to start the connection"
-                    )
-                ));
+                self.last_error = message.clone();
+                self.set_status(message);
+                Task::none()
             }
         }
     }
 
-    fn disconnect(&mut self) {
-        self.stop_runtime();
+    fn disconnect(&mut self) -> Task<Message> {
+        self.pending_connection_settings = None;
         self.connection_state = ConnectionState::Disconnected;
         self.last_error = t(self.lang(), "연결이 끊어졌습니다.", "Disconnected.").to_string();
         self.set_status(t(
@@ -1210,92 +1864,71 @@ impl YeonjangGuiApp {
             "브로커 연결을 종료했습니다.",
             "Broker connection closed.",
         ));
+        self.stop_runtime(StopAfter::None)
     }
 
-    fn stop_runtime(&mut self) {
-        self.mqtt_runtime_events = None;
+    fn stop_runtime(&mut self, after: StopAfter) -> Task<Message> {
+        match self.runtime_phase {
+            GuiRuntimePhase::Idle => {
+                return match after {
+                    StopAfter::None => self.start_pending_runtime(),
+                    StopAfter::Quit => window_command(WindowCommand::Quit),
+                };
+            }
+            GuiRuntimePhase::Stopping(_) => {
+                if after == StopAfter::Quit {
+                    self.runtime_phase = self
+                        .runtime_phase
+                        .transition(GuiRuntimeEvent::QuitRequested)
+                        .expect("stopping runtime accepts quit promotion");
+                }
+                return Task::none();
+            }
+            GuiRuntimePhase::Running => {
+                self.runtime_phase = self
+                    .runtime_phase
+                    .transition(GuiRuntimeEvent::StopRequested(after))
+                    .expect("running runtime accepts stop request");
+            }
+        }
         if let Some(runtime) = self.mqtt_runtime.take() {
-            let _ = runtime.stop();
+            return Task::perform(
+                async move { runtime.shutdown().await.map(|_| ()) },
+                Message::RuntimeStopped,
+            );
         }
+        self.runtime_phase = GuiRuntimePhase::Idle;
+        self.pending_connection_settings = None;
+        Task::none()
     }
 
-    fn process_runtime_events(&mut self) {
-        let mut pending = Vec::new();
-        if let Some(receiver) = &self.mqtt_runtime_events {
-            while let Ok(event) = receiver.try_recv() {
-                pending.push(event);
-            }
+    fn process_runtime_events(&mut self) -> Task<Message> {
+        let Some(runtime) = &self.mqtt_runtime else {
+            return Task::none();
+        };
+        if runtime.is_finished() {
+            self.connection_state = ConnectionState::Disconnected;
+            self.last_error = t(
+                self.lang(),
+                "직접 MQTT v2 연결이 종료되었습니다.",
+                "The direct MQTT v2 connection stopped.",
+            )
+            .to_string();
+            return self.stop_runtime(StopAfter::None);
         }
-
-        for event in pending {
-            match event {
-                RuntimeEvent::Connected => {
-                    self.connection_attempted = true;
-                    self.connection_state = ConnectionState::Connected;
-                    self.last_error = t(self.lang(), "없음", "None").to_string();
-                    self.set_status(t(
-                        self.lang(),
-                        "Knowbee 브로커에 연결되었습니다.",
-                        "Connected to the Knowbee broker.",
-                    ));
-                }
-                RuntimeEvent::Reconnecting(message) => {
-                    self.connection_attempted = true;
-                    self.connection_state = ConnectionState::Disconnected;
-                    self.last_error = message.clone();
-                    self.set_status(format!(
-                        "{}: {message}",
-                        t(
-                            self.lang(),
-                            "브로커 연결이 끊겨 다시 연결하는 중입니다",
-                            "Broker connection lost. Reconnecting"
-                        )
-                    ));
-                }
-                RuntimeEvent::Disconnected(message) => {
-                    self.stop_runtime();
-                    self.connection_state = ConnectionState::Disconnected;
-                    self.last_error = message.clone();
-                    self.set_status(format!(
-                        "{}: {message}",
-                        t(
-                            self.lang(),
-                            "브로커 연결이 종료되었습니다",
-                            "Broker connection closed"
-                        )
-                    ));
-                }
-                RuntimeEvent::AuthFailed(message) => {
-                    self.stop_runtime();
-                    self.connection_state = ConnectionState::AuthFailed;
-                    self.last_error = message.clone();
-                    self.set_status(format!(
-                        "{}: {message}",
-                        t(self.lang(), "인증 실패", "Authentication failed")
-                    ));
-                }
-                RuntimeEvent::ResponsePublishFailed { method, message } => {
-                    self.last_error = message.clone();
-                    self.set_status(format!(
-                        "{}: {method} ({message})",
-                        t(self.lang(), "응답 전송 실패", "Response publish failed")
-                    ));
-                }
-                RuntimeEvent::RequestHandled { method, ok } => {
-                    self.set_status(if ok {
-                        format!(
-                            "{}: {method}",
-                            t(self.lang(), "명령 처리 완료", "Command handled")
-                        )
-                    } else {
-                        format!(
-                            "{}: {method}",
-                            t(self.lang(), "명령 처리 실패", "Command failed")
-                        )
-                    });
-                }
-            }
+        if runtime.connection_state() == MqttV2RuntimeConnectionState::Connected
+            && self.connection_state != ConnectionState::Connected
+        {
+            self.connection_attempted = true;
+            self.connection_state = ConnectionState::Connected;
+            self.last_error = t(self.lang(), "없음", "None").to_string();
+            self.set_status(t(
+                self.lang(),
+                "Knowbee 브로커에 직접 MQTT v2로 연결되었습니다.",
+                "Connected to the Knowbee broker using direct MQTT v2.",
+            ));
         }
+        Task::none()
     }
 
     fn validate_connection_inputs(
@@ -1318,17 +1951,27 @@ impl YeonjangGuiApp {
             .to_string());
         }
 
-        if require_auth {
-            if self.settings.connection.username.trim().is_empty()
-                || self.settings.connection.password.trim().is_empty()
-            {
-                return Err(t(
-                    self.lang(),
-                    "아이디와 비밀번호를 모두 입력해야 합니다.",
-                    "Both username and password are required.",
-                )
-                .to_string());
-            }
+        if require_auth
+            && (self.settings.connection.username.trim().is_empty()
+                || self.settings.connection.password.trim().is_empty())
+        {
+            return Err(t(
+                self.lang(),
+                "아이디와 비밀번호를 모두 입력해야 합니다.",
+                "Both username and password are required.",
+            )
+            .to_string());
+        }
+        if require_auth
+            && (validate_mqtt_v2_identifier(&self.settings.mqtt_v2.session_id).is_err()
+                || validate_mqtt_v2_identifier(&self.settings.mqtt_v2.requester_id).is_err())
+        {
+            return Err(t(
+                self.lang(),
+                "v2 세션 ID와 요청자 ID는 소문자 영문·숫자·하이픈·밑줄만 사용할 수 있습니다.",
+                "V2 session and requester IDs must use lowercase letters, digits, hyphens, or underscores.",
+            )
+            .to_string());
         }
 
         Ok(())
@@ -1430,19 +2073,39 @@ impl YeonjangGuiApp {
     }
 
     fn permission_counts(&self) -> (usize, usize, usize) {
-        let items = [
-            self.settings.permissions.allow_system_control,
-            self.settings.permissions.allow_shell_exec,
-            self.settings.permissions.allow_application_launch,
-            self.settings.permissions.allow_screen_capture,
-            self.settings.permissions.allow_keyboard_control,
-            self.settings.permissions.allow_mouse_control,
-        ];
-        let enabled = items.into_iter().filter(|value| *value).count();
-        let disabled = items.len() - enabled;
-        let os_required = usize::from(self.settings.permissions.allow_screen_capture)
-            + usize::from(self.settings.permissions.allow_keyboard_control);
-        (enabled, disabled, os_required)
+        permission_counts_from_settings(&self.settings.permissions)
+    }
+
+    /// Projects only the observed OS state and the durable one-time request
+    /// marker. `Not granted after request` intentionally covers both a denied
+    /// choice and an unresolved system sheet because CoreGraphics does not
+    /// expose a safe distinction between those two states.
+    fn screen_capture_permission_status_label(&self) -> &'static str {
+        if !self.settings.permissions.allow_screen_capture {
+            return t(self.lang(), "로컬 기능 꺼짐", "Local feature off");
+        }
+        match self.screen_permission_observation {
+            Some(PreflightPermissionState::Granted) => t(self.lang(), "허용됨", "Granted"),
+            Some(PreflightPermissionState::NotRequired) => {
+                t(self.lang(), "별도 권한 없음", "No separate permission")
+            }
+            Some(
+                PreflightPermissionState::Denied
+                | PreflightPermissionState::Restricted
+                | PreflightPermissionState::NotDetermined,
+            ) if self
+                .settings
+                .needs_initial_screen_capture_permission_request() =>
+            {
+                t(self.lang(), "아직 요청 안 됨", "Not requested yet")
+            }
+            Some(
+                PreflightPermissionState::Denied
+                | PreflightPermissionState::Restricted
+                | PreflightPermissionState::NotDetermined,
+            ) => t(self.lang(), "요청 후 미허용", "Not granted after request"),
+            None => t(self.lang(), "확인 불가", "Unavailable"),
+        }
     }
 
     fn drain_tray_actions(&self) -> Vec<TrayAction> {
@@ -1471,22 +2134,13 @@ impl YeonjangGuiApp {
         }
     }
 
-    fn publish_runtime_presence(&mut self, message: &str) {
-        if let Some(runtime) = &self.mqtt_runtime {
-            if let Err(error) = runtime.refresh_presence(message) {
-                self.last_error = error.to_string();
-            }
-        }
-    }
-
     fn apply_lifecycle_command(
         &mut self,
         command: LifecycleCommand,
-        runtime_message: &str,
+        _runtime_message: &str,
     ) -> Task<Message> {
         self.sync_lifecycle_registration();
         self.sync_tray_menu();
-        self.publish_runtime_presence(runtime_message);
         match command {
             LifecycleCommand::None => Task::none(),
             LifecycleCommand::ShowWindow => {
@@ -1499,7 +2153,8 @@ impl YeonjangGuiApp {
             }
             LifecycleCommand::QuitApp => {
                 self.quit_in_progress = true;
-                window_command(WindowCommand::Quit)
+                self.pending_connection_settings = None;
+                self.stop_runtime(StopAfter::Quit)
             }
         }
     }
@@ -1507,7 +2162,9 @@ impl YeonjangGuiApp {
 
 impl Drop for YeonjangGuiApp {
     fn drop(&mut self) {
-        self.stop_runtime();
+        if let Some(runtime) = &self.mqtt_runtime {
+            runtime.request_shutdown();
+        }
     }
 }
 
@@ -1681,6 +2338,87 @@ fn info_block<'a>(title: &'a str, rows: Vec<(String, String)>) -> Element<'a, Me
         .width(Length::Fill)
         .style(card_style)
         .into()
+}
+
+fn apply_permission_change(settings: &mut YeonjangSettings, field: PermissionField, value: bool) {
+    match field {
+        PermissionField::BrowserControl => {
+            settings.permissions.allow_browser_control = value;
+        }
+        PermissionField::SystemControl => {
+            settings.permissions.allow_system_control = value;
+        }
+        PermissionField::ShellExec => {
+            settings.permissions.allow_shell_exec = value;
+        }
+        PermissionField::ApplicationLaunch => {
+            settings.permissions.allow_application_launch = value;
+        }
+        PermissionField::CameraAccess => {
+            settings.permissions.allow_camera_access = value;
+        }
+        PermissionField::ScreenCapture => {
+            settings.permissions.allow_screen_capture = value;
+        }
+        PermissionField::KeyboardControl => {
+            settings.permissions.allow_keyboard_control = value;
+        }
+        PermissionField::MouseControl => {
+            settings.permissions.allow_mouse_control = value;
+        }
+    }
+}
+
+fn project_repository_capture_settings(
+    repository: &std::result::Result<
+        Arc<DurablePermissionPolicyRepository>,
+        PermissionPolicyBootstrapError,
+    >,
+    settings: &mut YeonjangSettings,
+) -> std::result::Result<PermissionPolicySnapshot, String> {
+    let repository = repository
+        .as_ref()
+        .map_err(std::string::ToString::to_string)?;
+    let snapshot = repository
+        .snapshot()
+        .ok_or_else(|| "permission_policy_snapshot_unavailable".to_string())?;
+    if snapshot.target_instance_id() != settings.instance_id {
+        return Err("permission_policy_target_mismatch".to_string());
+    }
+    project_capture_policy_to_settings(&snapshot, &mut settings.permissions);
+    Ok(snapshot)
+}
+
+fn next_capture_policy_change_id(observed_revision: u64) -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!(
+        "gui-save-{}-{observed_revision}-{timestamp}",
+        std::process::id()
+    )
+}
+
+/// Summarizes the exact visible local-policy toggles. The third value means an
+/// enabled capture policy still needs a non-prompting OS observation; it does
+/// not claim that an OS approval decision is missing.
+fn permission_counts_from_settings(permissions: &PermissionSettings) -> (usize, usize, usize) {
+    let items = [
+        permissions.allow_system_control,
+        permissions.allow_shell_exec,
+        permissions.allow_application_launch,
+        permissions.allow_browser_control,
+        permissions.allow_camera_access,
+        permissions.allow_screen_capture,
+        permissions.allow_keyboard_control,
+        permissions.allow_mouse_control,
+    ];
+    let enabled = items.into_iter().filter(|value| *value).count();
+    let disabled = items.len() - enabled;
+    let os_observation_required = usize::from(permissions.allow_camera_access)
+        + usize::from(permissions.allow_screen_capture);
+    (enabled, disabled, os_observation_required)
 }
 
 fn permission_checkbox(
@@ -2187,19 +2925,226 @@ fn load_ui_font() -> Option<(String, Vec<u8>)> {
 
     for path in candidates {
         let path_ref = Path::new(path);
-        if path_ref.exists() {
-            if let Ok(bytes) = fs::read(path_ref) {
-                return Some((
-                    path_ref
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .unwrap_or("yeonjang-ui-font")
-                        .to_string(),
-                    bytes,
-                ));
-            }
+        if path_ref.exists()
+            && let Ok(bytes) = fs::read(path_ref)
+        {
+            return Some((
+                path_ref
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("yeonjang-ui-font")
+                    .to_string(),
+                bytes,
+            ));
         }
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credential_store::CredentialStoreError;
+
+    #[test]
+    fn tray_actions_are_bounded_and_never_block_native_event_handlers() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+
+        assert!(emit_tray_action(&sender, TrayAction::ShowWindow));
+        assert!(!emit_tray_action(&sender, TrayAction::QuitApp));
+        assert!(matches!(receiver.try_recv(), Ok(TrayAction::ShowWindow)));
+    }
+
+    #[test]
+    fn gui_runtime_phase_accepts_only_the_canonical_lifecycle_transitions() {
+        let states = [
+            GuiRuntimePhase::Idle,
+            GuiRuntimePhase::Running,
+            GuiRuntimePhase::Stopping(StopAfter::None),
+            GuiRuntimePhase::Stopping(StopAfter::Quit),
+        ];
+        let events = [
+            GuiRuntimeEvent::StartSucceeded,
+            GuiRuntimeEvent::StartFailed,
+            GuiRuntimeEvent::StopRequested(StopAfter::None),
+            GuiRuntimeEvent::StopRequested(StopAfter::Quit),
+            GuiRuntimeEvent::StopCompleted,
+            GuiRuntimeEvent::QuitRequested,
+        ];
+        let allowed = [
+            (
+                GuiRuntimePhase::Idle,
+                GuiRuntimeEvent::StartSucceeded,
+                GuiRuntimePhase::Running,
+            ),
+            (
+                GuiRuntimePhase::Idle,
+                GuiRuntimeEvent::StartFailed,
+                GuiRuntimePhase::Idle,
+            ),
+            (
+                GuiRuntimePhase::Running,
+                GuiRuntimeEvent::StopRequested(StopAfter::None),
+                GuiRuntimePhase::Stopping(StopAfter::None),
+            ),
+            (
+                GuiRuntimePhase::Running,
+                GuiRuntimeEvent::StopRequested(StopAfter::Quit),
+                GuiRuntimePhase::Stopping(StopAfter::Quit),
+            ),
+            (
+                GuiRuntimePhase::Stopping(StopAfter::None),
+                GuiRuntimeEvent::StopCompleted,
+                GuiRuntimePhase::Idle,
+            ),
+            (
+                GuiRuntimePhase::Stopping(StopAfter::Quit),
+                GuiRuntimeEvent::StopCompleted,
+                GuiRuntimePhase::Idle,
+            ),
+            (
+                GuiRuntimePhase::Stopping(StopAfter::None),
+                GuiRuntimeEvent::QuitRequested,
+                GuiRuntimePhase::Stopping(StopAfter::Quit),
+            ),
+            (
+                GuiRuntimePhase::Stopping(StopAfter::Quit),
+                GuiRuntimeEvent::QuitRequested,
+                GuiRuntimePhase::Stopping(StopAfter::Quit),
+            ),
+        ];
+
+        for state in states {
+            for event in events {
+                let expected = allowed
+                    .iter()
+                    .find(|(from, input, _)| *from == state && *input == event)
+                    .map(|(_, _, next)| *next)
+                    .ok_or(());
+                assert_eq!(state.transition(event), expected, "{state:?} + {event:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn saved_settings_replace_the_snapshot_of_a_running_or_restarting_runtime() {
+        assert_eq!(
+            saved_settings_runtime_action(GuiRuntimePhase::Idle),
+            SavedSettingsRuntimeAction::None
+        );
+        assert_eq!(
+            saved_settings_runtime_action(GuiRuntimePhase::Running),
+            SavedSettingsRuntimeAction::Restart
+        );
+        assert_eq!(
+            saved_settings_runtime_action(GuiRuntimePhase::Stopping(StopAfter::None)),
+            SavedSettingsRuntimeAction::ReplacePendingRestart
+        );
+        assert_eq!(
+            saved_settings_runtime_action(GuiRuntimePhase::Stopping(StopAfter::Quit)),
+            SavedSettingsRuntimeAction::None
+        );
+    }
+
+    #[test]
+    fn browser_control_toggle_changes_only_browser_control_permission() {
+        let mut settings = YeonjangSettings::default();
+        let shell_exec = settings.permissions.allow_shell_exec;
+        let screen_capture = settings.permissions.allow_screen_capture;
+
+        apply_permission_change(&mut settings, PermissionField::BrowserControl, true);
+
+        assert!(settings.permissions.allow_browser_control);
+        assert_eq!(settings.permissions.allow_shell_exec, shell_exec);
+        assert_eq!(settings.permissions.allow_screen_capture, screen_capture);
+    }
+
+    #[test]
+    fn camera_access_toggle_changes_only_camera_access_permission() {
+        let mut settings = YeonjangSettings::default();
+        let screen_capture = settings.permissions.allow_screen_capture;
+        let browser_control = settings.permissions.allow_browser_control;
+
+        apply_permission_change(&mut settings, PermissionField::CameraAccess, true);
+
+        assert!(settings.permissions.allow_camera_access);
+        assert_eq!(settings.permissions.allow_screen_capture, screen_capture);
+        assert_eq!(settings.permissions.allow_browser_control, browser_control);
+    }
+
+    #[test]
+    fn permission_summary_includes_every_visible_toggle_and_marks_os_observation() {
+        let permissions = PermissionSettings {
+            allow_camera_access: true,
+            allow_screen_capture: true,
+            ..PermissionSettings::default()
+        };
+
+        assert_eq!(permission_counts_from_settings(&permissions), (2, 6, 2));
+    }
+
+    #[test]
+    fn credential_failure_preserves_the_valid_persisted_non_secret_settings() {
+        let mut persisted = YeonjangSettings::default();
+        persisted.connection.username = "configured-user".to_string();
+        persisted.display_name = "Configured Yeonjang".to_string();
+
+        let selected = select_gui_bootstrap_settings(
+            persisted.clone(),
+            Err(StartupCredentialError::CredentialStore(
+                CredentialStoreError::InteractionRequired,
+            )),
+        );
+
+        match selected {
+            GuiBootstrapSettings::CredentialUnavailable(settings, error) => {
+                assert_eq!(settings.connection.username, "configured-user");
+                assert_eq!(settings.display_name, "Configured Yeonjang");
+                assert_eq!(error.to_string(), "credential_interaction_required");
+                assert!(
+                    GuiBootstrapSettings::CredentialUnavailable(settings, error)
+                        .initial_window_visible()
+                );
+            }
+            _ => panic!("credential failure must remain distinguishable from settings failure"),
+        }
+    }
+
+    #[test]
+    fn credential_repair_lifecycle_accepts_only_canonical_transitions() {
+        let unavailable = CredentialAccessState::Unavailable(
+            StartupCredentialError::CredentialStore(CredentialStoreError::InteractionRequired),
+        );
+        let failed = CredentialAccessEvent::Failed(StartupCredentialError::CredentialStore(
+            CredentialStoreError::Unavailable,
+        ));
+
+        assert_eq!(
+            unavailable.transition(CredentialAccessEvent::Requested),
+            Ok(CredentialAccessState::Repairing)
+        );
+        assert_eq!(
+            CredentialAccessState::Repairing.transition(CredentialAccessEvent::Succeeded),
+            Ok(CredentialAccessState::Ready)
+        );
+        assert_eq!(
+            CredentialAccessState::Repairing.transition(failed),
+            Ok(CredentialAccessState::Unavailable(
+                StartupCredentialError::CredentialStore(CredentialStoreError::Unavailable)
+            ))
+        );
+        assert_eq!(
+            CredentialAccessState::Ready.transition(CredentialAccessEvent::Requested),
+            Err(CredentialAccessState::Ready)
+        );
+        assert_eq!(
+            unavailable.transition(CredentialAccessEvent::Succeeded),
+            Err(unavailable)
+        );
+        assert_eq!(
+            CredentialAccessState::Repairing.transition(CredentialAccessEvent::Requested),
+            Err(CredentialAccessState::Repairing)
+        );
+    }
 }

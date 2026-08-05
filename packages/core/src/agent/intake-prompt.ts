@@ -1,11 +1,6 @@
+import { createHash } from "node:crypto"
 import { loadPromptTemplate } from "../memory/knowbee-md.js"
-
-export type TaskIntakeIntentCategory =
-  | "direct_answer"
-  | "task_intake"
-  | "schedule_request"
-  | "clarification"
-  | "reject"
+export type { TaskIntakeIntentCategory } from "./intake-category.js"
 
 export type TaskIntakeMessageMode =
   | "direct_answer"
@@ -50,6 +45,23 @@ export interface TaskIntakePromptOptions {
   locale?: "ko" | "en"
 }
 
+export interface TaskIntakeFirstResponsePromptOptions extends TaskIntakePromptOptions {
+  mainAgentName: string
+  productName: string
+  productNameKo: string
+  identityContext?: string
+}
+
+export interface TaskIntakeFirstResponsePromptAssembly {
+  systemPrompt: string
+  taskIntakePromptSha256: string
+  finalResponsePromptSha256: string
+}
+
+function promptSha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex")
+}
+
 export function buildTaskIntakeSystemPrompt(options: TaskIntakePromptOptions = {}): string {
   const maxDelegationTurns = options.maxDelegationTurns ?? 0
   return loadPromptTemplate({
@@ -58,4 +70,44 @@ export function buildTaskIntakeSystemPrompt(options: TaskIntakePromptOptions = {
     locale: options.locale ?? "en",
     variables: { maxDelegationTurns },
   })
+}
+
+export function buildTaskIntakeFirstResponseSystemPrompt(
+  options: TaskIntakeFirstResponsePromptOptions,
+): string {
+  return buildTaskIntakeFirstResponsePromptAssembly(options).systemPrompt
+}
+
+export function buildTaskIntakeFirstResponsePromptAssembly(
+  options: TaskIntakeFirstResponsePromptOptions,
+): TaskIntakeFirstResponsePromptAssembly {
+  const variables = {
+    maxDelegationTurns: options.maxDelegationTurns ?? 0,
+    mainAgentName: options.mainAgentName,
+    productName: options.productName,
+    productNameKo: options.productNameKo,
+  }
+  const load = (sourceId: string) =>
+    loadPromptTemplate({
+      sourceId,
+      workDir: options.workDir,
+      locale: options.locale ?? "en",
+      variables,
+    })
+  const taskIntakePrompt = load("task_intake")
+  const finalResponsePrompt = load("final_response")
+  const systemPrompt = [
+    load("system"),
+    load("identity"),
+    options.identityContext?.trim(),
+    taskIntakePrompt,
+    finalResponsePrompt,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join("\n\n---\n\n")
+  return {
+    systemPrompt,
+    taskIntakePromptSha256: promptSha256(taskIntakePrompt),
+    finalResponsePromptSha256: promptSha256(finalResponsePrompt),
+  }
 }

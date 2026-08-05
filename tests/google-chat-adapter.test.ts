@@ -218,4 +218,33 @@ describe("Google Chat adapter facade policies", () => {
       idempotencyKey: "google_chat:thread-policy",
     })
   })
+
+  it("redacts Google Chat delivery receipt errors", async () => {
+    const secret = "sk-task0620-google-chat-secret-value"
+    const localPath = "/Users/dongwooshin/.knowbee/google-chat/raw.json"
+    const adapter = createGoogleChatChannelAdapter({
+      config: googleChatConfig,
+      now: () => GOOGLE_CHAT_NOW,
+      transport: {
+        async start() {},
+        async stop() {},
+        async healthCheck() {
+          return { status: "healthy", checkedAt: GOOGLE_CHAT_NOW, message: "fixture transport is healthy." }
+        },
+        async sendMessage() {
+          throw new Error(`google chat failed token=${secret} path=${localPath}`)
+        },
+      },
+    })
+
+    const receipt = await adapter.sendMessage({
+      ...buildGoogleChatOutboundMessage(),
+      idempotencyKey: "google_chat:redacted-error",
+    })
+    expect(receipt.status).toBe("failed")
+    expect(receipt.errorMessage).toContain("***")
+    expect(receipt.errorMessage).toContain("[internal-path-redacted]")
+    expect(receipt.errorMessage).not.toContain(secret)
+    expect(receipt.errorMessage).not.toContain(localPath)
+  })
 })

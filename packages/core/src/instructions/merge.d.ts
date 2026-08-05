@@ -4,7 +4,11 @@ export interface MergedInstructionBundle {
     mergedText: string;
 }
 export interface MergedInstructionOptions {
+    globalStateDir: string;
+    fallbackBoundaryDir: string;
     agentSources?: AgentInstructionSourceInput[];
 }
-export declare function loadMergedInstructions(workDir?: string, options?: MergedInstructionOptions): MergedInstructionBundle;
+export type InstructionRuntimeContext = Pick<MergedInstructionOptions, "globalStateDir" | "fallbackBoundaryDir">;
+export declare function createInstructionRuntimeContext(stateDir: string): InstructionRuntimeContext;
+export declare function loadMergedInstructions(workDir: string, options: MergedInstructionOptions): MergedInstructionBundle;
 //# sourceMappingURL=merge.d.ts.map

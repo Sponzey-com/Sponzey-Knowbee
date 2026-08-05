@@ -22,7 +22,7 @@ const TOPOLOGY_WORKSPACE_KIND_LABELS: Record<EnterpriseTopologyCanvasNodeData["k
   person: { ko: "담당자", en: "Person" },
   process: { ko: "프로세스", en: "Process" },
   system: { ko: "시스템", en: "System" },
-  tool: { ko: "도구", en: "Tool" },
+  tool: { ko: "외부 도구", en: "External tool" },
   authority: { ko: "승인 규칙", en: "Authority rule" },
   responsibility: { ko: "책임", en: "Responsibility" },
 }
@@ -67,8 +67,8 @@ export const TOPOLOGY_WORKSPACE_EXECUTOR_OPTIONS: TopologyWorkspaceExecutorOptio
     kind: "knowbee",
     labelKo: "자동 처리",
     labelEn: "Auto processing",
-    descriptionKo: "노비가 기본 서브 에이전트로 업무를 처리합니다.",
-    descriptionEn: "Knowbee handles this step with the default sub-agent.",
+    descriptionKo: "메인 에이전트가 기본 서브 에이전트로 업무를 처리합니다.",
+    descriptionEn: "The main agent handles this step with the default sub-agent.",
     defaultExecutorId: "knowbee:default",
   },
   {
@@ -89,10 +89,10 @@ export const TOPOLOGY_WORKSPACE_EXECUTOR_OPTIONS: TopologyWorkspaceExecutorOptio
   },
   {
     kind: "tool",
-    labelKo: "도구 실행",
-    labelEn: "Tool execution",
-    descriptionKo: "도구 실행으로 처리되는 자동화 단계입니다.",
-    descriptionEn: "This step is executed through a tool.",
+    labelKo: "외부 도구 실행",
+    labelEn: "External tool execution",
+    descriptionKo: "외부 도구로 처리되는 자동화 단계입니다.",
+    descriptionEn: "This step is executed through an external tool.",
     defaultExecutorId: "tool:select-existing",
   },
   {
@@ -111,6 +111,41 @@ function runtimeExecutorKindForResource(node: AgentTopologyNode): TopologyWorksp
   return null
 }
 
+function runtimeStatusDisplayLabel(status?: string | null): string {
+  if (!status) return "상태 확인 필요"
+  const normalized = status.trim().toLowerCase()
+  if (normalized === "active" || normalized === "available" || normalized === "ready" || normalized === "healthy") return "사용 가능"
+  if (normalized === "running" || normalized === "in_progress") return "실행 중"
+  if (normalized === "completed" || normalized === "done") return "완료"
+  if (normalized === "inactive" || normalized === "disabled") return "사용 안 함"
+  if (normalized === "archived") return "보관됨"
+  if (normalized === "warning" || normalized === "degraded") return "주의 필요"
+  if (normalized === "error" || normalized === "failed") return "오류"
+  if (normalized === "draft") return "초안"
+  if (normalized === "unknown") return "상태 확인 필요"
+  return status
+}
+
+function capabilityAvailabilityDisplayLabel(availability?: string | null): string {
+  if (!availability) return "기능 확인 필요"
+  const normalized = availability.trim().toLowerCase()
+  if (normalized === "available" || normalized === "ready" || normalized === "enabled") return "사용 가능"
+  if (normalized === "limited" || normalized === "partial") return "일부 제한"
+  if (normalized === "unavailable" || normalized === "disabled") return "사용 불가"
+  if (normalized === "unknown") return "기능 확인 필요"
+  return availability
+}
+
+function modelAvailabilityDisplayLabel(availability?: string | null): string {
+  if (!availability) return "모델 확인 필요"
+  const normalized = availability.trim().toLowerCase()
+  if (normalized === "available" || normalized === "ready" || normalized === "enabled") return "사용 가능"
+  if (normalized === "limited" || normalized === "partial") return "일부 제한"
+  if (normalized === "unavailable" || normalized === "disabled") return "사용 불가"
+  if (normalized === "unknown") return "모델 확인 필요"
+  return availability
+}
+
 function summarizeRuntimeExecutorModel(
   projection: AgentTopologyProjection,
   node: AgentTopologyNode,
@@ -118,13 +153,13 @@ function summarizeRuntimeExecutorModel(
   const agent = projection.inspectors.agents[node.entityId]
   if (agent) {
     const model = [agent.model.providerId, agent.model.modelId].filter(Boolean).join("/")
-    return model || agent.model.availability || "model unknown"
+    return model || modelAvailabilityDisplayLabel(agent.model.availability)
   }
   const team = projection.inspectors.teams[node.entityId]
   if (team) {
-    return `${team.health.activeMemberCount}/${team.health.referenceMemberCount} active members`
+    return `사용 가능 인원 ${team.health.activeMemberCount}/${team.health.referenceMemberCount}`
   }
-  return "model unknown"
+  return "모델 확인 필요"
 }
 
 function summarizeRuntimeExecutorDescription(
@@ -133,14 +168,14 @@ function summarizeRuntimeExecutorDescription(
 ): string {
   const agent = projection.inspectors.agents[node.entityId]
   if (agent) {
-    const capability = agent.capability.availability ?? "unknown"
-    return `${agent.status} · capability ${capability} · tools ${agent.tools.enabledCount}`
+    const capability = capabilityAvailabilityDisplayLabel(agent.capability.availability)
+    return `${runtimeStatusDisplayLabel(agent.status)} · 기능 ${capability} · 외부 도구 ${agent.tools.enabledCount}`
   }
   const team = projection.inspectors.teams[node.entityId]
   if (team) {
-    return `${team.health.status} · ${team.health.activeMemberCount}/${team.health.referenceMemberCount} active`
+    return `${runtimeStatusDisplayLabel(team.health.status)} · 사용 가능 ${team.health.activeMemberCount}/${team.health.referenceMemberCount}`
   }
-  return `${node.kind} · ${node.status ?? "unknown"}`
+  return `${node.kind} · ${runtimeStatusDisplayLabel(node.status)}`
 }
 
 export function buildTopologyWorkspaceRuntimeExecutorResourceOptions(
@@ -156,7 +191,7 @@ export function buildTopologyWorkspaceRuntimeExecutorResourceOptions(
         executorId: node.entityId,
         label: node.label,
         description: summarizeRuntimeExecutorDescription(runtimeResources, node),
-        status: node.status ?? "unknown",
+        status: runtimeStatusDisplayLabel(node.status),
         modelSummary: summarizeRuntimeExecutorModel(runtimeResources, node),
       } satisfies TopologyWorkspaceRuntimeExecutorResourceOption
     })
@@ -445,12 +480,12 @@ export function TopologyWorkspaceExecutorPicker({
       <div className="rounded-md border border-stone-200 bg-stone-50 px-2.5 py-2 text-xs leading-5 text-stone-600">
         {canPersist
           ? text(
-            "선택은 NodeContract의 runtime profile reference로만 저장됩니다. AgentConfig나 Team은 원본으로 생성하지 않습니다.",
-            "The choice is stored only as a NodeContract runtime profile reference. AgentConfig or Team is not created as source of truth.",
+            "선택한 실행 방식은 이 서브 에이전트의 실행 연결 정보로 저장됩니다. 서브 에이전트 구성 자체는 여기서 새로 만들지 않습니다.",
+            "The selected runtime is saved as this sub-agent's execution link. This panel does not create a new sub-agent configuration.",
           )
           : text(
-            "Tool/Data/Group은 서브 에이전트가 아니라 업무에서 참조하는 리소스입니다.",
-            "Tool/Data/Group is a referenced resource, not a sub-agent source.",
+            "도구, 데이터, 그룹은 서브 에이전트가 아니라 업무에서 참조하는 리소스입니다.",
+            "Tools, data, and groups are referenced resources for work, not sub-agents.",
           )}
       </div>
     </SectionShell>
@@ -467,16 +502,16 @@ function TaskSettings({ templateCatalog }: { templateCatalog?: TopologyTemplateC
   ]
 
   return (
-    <SectionShell title={text("Task 설정", "Task settings")} testId="topology-workspace-task-settings">
+    <SectionShell title={text("업무 설정", "Work settings")} testId="topology-workspace-task-settings">
       <ButtonChoiceRow
-        label={text("Template picker", "Template picker")}
+        label={text("업무 유형 선택", "Work type selection")}
         choices={nodePresets.length > 0
           ? nodePresets.map((preset) => text(preset.labelKo, preset.labelEn))
           : [text("일반 업무", "General work"), text("조사 업무", "Research work"), text("응답 정리", "Response summary")]}
         selected={nodePresets[0] ? text(nodePresets[0].labelKo, nodePresets[0].labelEn) : text("일반 업무", "General work")}
       />
       <ButtonChoiceRow
-        label={text("Output preset", "Output preset")}
+        label={text("결과 형식", "Result format")}
         choices={[
           text("짧은 결과 요약", "Concise result summary"),
           text("체크리스트 결과", "Checklist result"),
@@ -489,7 +524,7 @@ function TaskSettings({ templateCatalog }: { templateCatalog?: TopologyTemplateC
         choices={criteria}
       />
       <CheckboxChoiceRow
-        label={text("허용 도구/데이터", "Allowed tools and data")}
+        label={text("허용 외부 도구/데이터", "Allowed external tools and data")}
         choices={[
           "CRM Search",
           text("고객 데이터", "Customer data"),
@@ -503,9 +538,9 @@ function TaskSettings({ templateCatalog }: { templateCatalog?: TopologyTemplateC
 function DecisionSettings() {
   const { text } = useUiI18n()
   return (
-    <SectionShell title={text("Decision 설정", "Decision settings")} testId="topology-workspace-decision-settings">
+    <SectionShell title={text("판단 설정", "Decision settings")} testId="topology-workspace-decision-settings">
       <ButtonChoiceRow
-        label={text("Condition preset", "Condition preset")}
+        label={text("판단 조건", "Decision condition")}
         choices={[
           text("정보 충분", "Information enough"),
           text("검토 필요", "Review needed"),
@@ -514,7 +549,7 @@ function DecisionSettings() {
         selected={text("정보 충분", "Information enough")}
       />
       <ButtonChoiceRow
-        label={text("Branch label preset", "Branch label preset")}
+        label={text("분기 결과", "Branch result")}
         choices={[
           text("통과 / 보류", "Pass / Hold"),
           text("승인 / 반려", "Approve / Reject"),
@@ -529,9 +564,9 @@ function DecisionSettings() {
 function ApprovalSettings() {
   const { text } = useUiI18n()
   return (
-    <SectionShell title={text("Approval 설정", "Approval settings")} testId="topology-workspace-approval-settings">
+    <SectionShell title={text("승인 설정", "Approval settings")} testId="topology-workspace-approval-settings">
       <ButtonChoiceRow
-        label={text("Approver position picker", "Approver position picker")}
+        label={text("승인 담당자 선택", "Approver selection")}
         choices={[
           text("담당 리드", "Responsible lead"),
           text("조직 관리자", "Org manager"),
@@ -540,7 +575,7 @@ function ApprovalSettings() {
         selected={text("담당 리드", "Responsible lead")}
       />
       <ButtonChoiceRow
-        label={text("Threshold preset", "Threshold preset")}
+        label={text("승인 기준", "Approval threshold")}
         choices={[
           text("1명 승인", "One approval"),
           text("2명 중 1명", "One of two"),
@@ -556,16 +591,16 @@ function ToolDataSettings({ kind }: { kind: "data" | "system" | "tool" }) {
   const { text } = useUiI18n()
   const isTool = kind === "tool"
   return (
-    <SectionShell title={isTool ? text("Tool 설정", "Tool settings") : text("Data 설정", "Data settings")} testId="topology-workspace-tool-settings">
+    <SectionShell title={isTool ? text("외부 도구 설정", "External tool settings") : text("데이터 설정", "Data settings")} testId="topology-workspace-tool-settings">
       <ButtonChoiceRow
-        label={isTool ? text("Tool picker", "Tool picker") : text("System picker", "System picker")}
+        label={isTool ? text("외부 도구 선택", "External tool selection") : text("데이터 선택", "Data selection")}
         choices={isTool
           ? ["CRM Search", text("메일 발송", "Send mail"), text("문서 검색", "Document search")]
           : [text("고객 데이터", "Customer data"), text("문서 저장소", "Document store"), text("운영 DB", "Operations DB")]}
         selected={isTool ? "CRM Search" : text("고객 데이터", "Customer data")}
       />
       <ButtonChoiceRow
-        label={text("Permission mode", "Permission mode")}
+        label={text("권한 방식", "Permission mode")}
         choices={[
           text("조회 전용", "Read-only"),
           text("승인 후 쓰기", "Write after approval"),
@@ -575,12 +610,12 @@ function ToolDataSettings({ kind }: { kind: "data" | "system" | "tool" }) {
       />
       <div className="grid gap-2 sm:grid-cols-2">
         <ButtonChoiceRow
-          label={text("Retry preset", "Retry preset")}
+          label={text("재시도 설정", "Retry preset")}
           choices={[text("없음", "None"), text("1회", "Once"), text("3회", "Three times")]}
           selected={text("1회", "Once")}
         />
         <ButtonChoiceRow
-          label={text("Timeout preset", "Timeout preset")}
+          label={text("제한 시간 설정", "Timeout preset")}
           choices={["15s", "60s", "5m"]}
           selected="60s"
         />
@@ -592,14 +627,14 @@ function ToolDataSettings({ kind }: { kind: "data" | "system" | "tool" }) {
 function GroupSettings({ officialOrg = false }: { officialOrg?: boolean }) {
   const { text } = useUiI18n()
   return (
-    <SectionShell title={officialOrg ? text("조직 필드", "Organization fields") : text("팀 필드", "Team fields")} testId="topology-workspace-group-settings">
+    <SectionShell title={officialOrg ? text("조직 설정", "Organization settings") : text("팀 설정", "Team settings")} testId="topology-workspace-group-settings">
       <ButtonChoiceRow
-        label={text("Group kind", "Group kind")}
-        choices={[text("Team", "Team"), text("Org", "Org")]}
-        selected={officialOrg ? text("Org", "Org") : text("Team", "Team")}
+        label={text("그룹 종류", "Group type")}
+        choices={[text("팀", "Team"), text("조직", "Organization")]}
+        selected={officialOrg ? text("조직", "Organization") : text("팀", "Team")}
       />
       <CheckboxChoiceRow
-        label={text("Member picker", "Member picker")}
+        label={text("구성원 선택", "Member selection")}
         choices={[
           text("담당자", "Owner"),
           text("검토자", "Reviewer"),
@@ -607,7 +642,7 @@ function GroupSettings({ officialOrg = false }: { officialOrg?: boolean }) {
         ]}
       />
       <CheckboxChoiceRow
-        label={officialOrg ? text("책임 영역", "Responsibility area") : text("Responsibility tags", "Responsibility tags")}
+        label={officialOrg ? text("책임 영역", "Responsibility area") : text("책임 태그", "Responsibility tags")}
         choices={[
           text("책임 영역", "Responsibility area"),
           text("상위 조직", "Parent org unit"),
@@ -616,8 +651,8 @@ function GroupSettings({ officialOrg = false }: { officialOrg?: boolean }) {
       />
       <div className="rounded-md border border-stone-200 bg-stone-50 px-2.5 py-2 text-xs leading-5 text-stone-600">
         {officialOrg
-          ? text("OrgUnit은 공식 조직 구조와 책임 영역을 표현합니다.", "OrgUnit represents formal structure and responsibility areas.")
-          : text("Team은 논리 그룹입니다. 공식 조직 구조는 OrgUnit에서 관리합니다.", "Teams are logical groups. Formal organization structure belongs to OrgUnit.")}
+          ? text("조직은 공식 조직 구조와 책임 영역을 표현합니다.", "Organizations represent formal structure and responsibility areas.")
+          : text("팀은 논리 그룹입니다. 공식 조직 구조는 조직 설정에서 관리합니다.", "Teams are logical groups. Formal organization structure belongs to organization settings.")}
       </div>
     </SectionShell>
   )
@@ -627,7 +662,7 @@ function GenericSettings() {
   const { text } = useUiI18n()
   return (
     <div className="rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-xs leading-5 text-stone-600">
-      {text("고급 엔티티는 관계 모드와 validator 연결 후 상세 편집합니다.", "Advanced entities are edited after relation mode and validator wiring.")}
+      {text("고급 항목은 관계 모드와 검증 연결 후 상세 편집합니다.", "Advanced items are edited after relation mode and validation wiring.")}
     </div>
   )
 }
@@ -664,7 +699,7 @@ function AdvancedDetails() {
       </summary>
       <div className="mt-3 grid gap-2">
         <label className="grid gap-1.5 text-xs font-semibold text-stone-500">
-          <span>{text("긴 instruction", "Long instruction")}</span>
+          <span>{text("상세 지시", "Detailed instruction")}</span>
           <textarea
             rows={3}
             className="resize-none rounded-md border border-stone-200 px-2.5 py-2 text-sm text-stone-800"
@@ -672,7 +707,7 @@ function AdvancedDetails() {
           />
         </label>
         <div className="rounded-md border border-dashed border-stone-200 bg-stone-50 px-2.5 py-2 text-xs leading-5 text-stone-500">
-          {text("Raw contract, JSON, YAML 편집은 이 고급 영역에서만 다룹니다.", "Raw contract, JSON, and YAML editing belongs only in this advanced area.")}
+          {text("내부 계약, JSON, YAML 편집은 이 고급 영역에서만 다룹니다.", "Internal contract, JSON, and YAML editing belongs only in this advanced area.")}
         </div>
       </div>
     </details>
@@ -704,11 +739,11 @@ export function TopologyWorkspaceInspector({
     >
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm font-semibold text-stone-950">
-          {text("선택 Inspector", "Selection Inspector")}
+          {text("선택 항목", "Selected item")}
         </div>
         {selectedData ? (
           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusToneClassName(selectedData.status)}`}>
-            {selectedData.status}
+            {runtimeStatusDisplayLabel(selectedData.status)}
           </span>
         ) : null}
       </div>

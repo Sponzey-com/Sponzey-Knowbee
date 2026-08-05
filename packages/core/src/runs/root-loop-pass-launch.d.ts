@@ -1,7 +1,8 @@
-import { runExecutionCyclePass, type ExecutionCycleState } from "./execution-cycle-pass.js";
+import type { ExecutionCycleState, runExecutionCyclePass } from "./execution-cycle-pass.js";
 import type { LoopDirective } from "./loop-directive.js";
-import { runLoopEntryPass } from "./loop-entry-pass.js";
+import type { runLoopEntryPass } from "./loop-entry-pass.js";
 import type { RootLoopDependencies, RootLoopParams } from "./root-loop.js";
+import type { FinalResponseIdentityContext } from "./final-response-renderer.js";
 export interface RootLoopEntryPassLaunch {
     params: Parameters<typeof runLoopEntryPass>[0];
     dependencies: Parameters<typeof runLoopEntryPass>[1];
@@ -21,6 +22,8 @@ export declare function prepareRootLoopEntryPassLaunch(params: {
     recoveryBudgetUsage: RootLoopParams["recoveryBudgetUsage"];
 }, dependencies: RootLoopDependencies): RootLoopEntryPassLaunch;
 export declare function prepareRootExecutionCyclePassLaunch(params: {
+    artifactStorage: RootLoopParams["artifactStorage"];
+    memoryJournal: RootLoopParams["memoryJournal"];
     runId: string;
     sessionId: string;
     requestGroupId: string;
@@ -34,11 +37,16 @@ export declare function prepareRootExecutionCyclePassLaunch(params: {
     structuredRequest?: RootLoopParams["structuredRequest"];
     requestMessage: string;
     workDir: string;
+    config: RootLoopParams["config"];
+    finalResponseIdentityContext?: FinalResponseIdentityContext | undefined;
     toolsEnabled?: boolean;
     workerSessionId?: string;
     isRootRequest: boolean;
     contextMode: RootLoopParams["contextMode"];
     taskProfile: RootLoopParams["taskProfile"];
+    scheduleId?: string;
+    includeScheduleMemory?: boolean;
+    memorySearchQuery?: string;
     wantsDirectArtifactDelivery: boolean;
     requiresFilesystemMutation: boolean;
     requiresPrivilegedToolExecution: boolean;

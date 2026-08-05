@@ -5,39 +5,50 @@
 import { resolve } from "node:path"
 import { existsSync } from "node:fs"
 import { getDb } from "../db/index.js"
-import { toolDispatcher } from "../tools/dispatcher.js"
-import { createLogger } from "../logger/index.js"
-import { getConfig } from "../config/index.js"
+import { toolDispatcher } from "../tools/runtime-dispatcher.js"
+import { createLogger, redactLogText } from "../logger/index.js"
+import type { KnowbeeConfig } from "../config/types.js"
 import type { KnowbeePlugin, PluginContext, PluginMeta } from "./types.js"
 import type { AnyTool } from "../tools/types.js"
 
 const log = createLogger("plugins")
 
+interface PluginLoaderRuntimeOptions {
+  config: KnowbeeConfig
+}
+
+function pluginLoaderErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
+
 export class PluginLoader {
   private loaded = new Map<string, { plugin: KnowbeePlugin; meta: PluginMeta }>()
 
   /** Load all enabled plugins from the DB */
-  async loadAll(): Promise<void> {
+  async loadAll(options: PluginLoaderRuntimeOptions): Promise<void> {
+    const config = options.config
     const db = getDb()
     const rows = db
       .prepare<[], PluginMeta>("SELECT * FROM plugins WHERE enabled = 1")
       .all()
 
     for (const meta of rows) {
-      await this.load(meta).catch((err: unknown) => {
-        log.error(`Failed to load plugin "${meta.name}": ${err instanceof Error ? err.message : String(err)}`)
+      await this.load(meta, { config }).catch((err: unknown) => {
+        log.error(`Failed to load plugin "${meta.name}": ${pluginLoaderErrorMessage(err)}`)
       })
     }
     log.info(`Loaded ${this.loaded.size} plugin(s)`)
   }
 
   /** Load a single plugin by meta */
-  async load(meta: PluginMeta): Promise<void> {
+  async load(meta: PluginMeta, options: PluginLoaderRuntimeOptions): Promise<void> {
     if (this.loaded.has(meta.name)) return
+    const config = options.config
 
     const entryPath = resolve(meta.entry_path)
     if (!existsSync(entryPath)) {
-      throw new Error(`Plugin entry not found: ${entryPath}`)
+      throw new Error("Plugin entry not found.")
     }
 
     const mod = await import(entryPath) as { default?: KnowbeePlugin }
@@ -46,7 +57,7 @@ export class PluginLoader {
       throw new Error(`Plugin "${meta.name}" does not export a valid KnowbeePlugin as default`)
     }
 
-    const ctx = this.buildContext(meta)
+    const ctx = this.buildContext(meta, config)
     await plugin.initialize(ctx)
     this.loaded.set(meta.name, { plugin, meta })
     log.info(`Plugin "${meta.name}" v${meta.version} loaded`)
@@ -63,11 +74,11 @@ export class PluginLoader {
   }
 
   /** Enable a plugin in DB and load it */
-  async enable(name: string): Promise<void> {
+  async enable(name: string, options: PluginLoaderRuntimeOptions): Promise<void> {
     const db = getDb()
     db.prepare("UPDATE plugins SET enabled = 1, updated_at = ? WHERE name = ?").run(Date.now(), name)
     const meta = db.prepare<[string], PluginMeta>("SELECT * FROM plugins WHERE name = ?").get(name)
-    if (meta) await this.load(meta)
+    if (meta) await this.load(meta, options)
   }
 
   /** Disable a plugin in DB and unload it */
@@ -122,13 +133,13 @@ export class PluginLoader {
     return Array.from(this.loaded.keys())
   }
 
-  private buildContext(meta: PluginMeta): PluginContext {
+  private buildContext(meta: PluginMeta, config: KnowbeeConfig): PluginContext {
     return {
       registerTools(tools: AnyTool[]) {
         toolDispatcher.registerAll(tools)
       },
       getConfig<T>(keyPath: string): T | undefined {
-        const cfg = getConfig() as unknown as Record<string, unknown>
+        const cfg = config as unknown as Record<string, unknown>
         const parts = keyPath.split(".")
         let cur: unknown = cfg
         for (const part of parts) {

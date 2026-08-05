@@ -1,7 +1,43 @@
 import { AGENT_EXECUTION_BEHAVIOR_PATTERNS, AGENT_EXECUTION_DECISION_CONTRACT_VERSION, AGENT_EXECUTION_DECISION_V2_ACTIONS, AGENT_EXECUTION_DECISION_V2_CONTRACT_VERSION, AGENT_EXECUTION_ROUTES, AgentExecutionFallbackReason, convertAgentExecutionDecisionV2ToV1, isAgentExecutionDecisionV2, normalizeAgentExecutionConfidence, validateAgentExecutionDecisionShape, validateAgentExecutionDecisionV2AgainstContext, } from "./execution-decision-contract.js";
 import { loadPromptTemplate } from "../memory/knowbee-md.js";
+import { loadPromptValue } from "../memory/prompt-fragments.js";
+import { redactLogText } from "../logger/index.js";
 import { EXECUTION_HARNESS_POLICY_SOURCE_IDS, loadRuntimePromptPolicySources, renderPromptPolicySourceBlock, } from "./prompt-policy-adapter.js";
+import { productParameterRuntimeChildSubAgentCreationAllowed } from "./product-parameter-policy.js";
+const EXECUTION_HARNESS_FALLBACK_TEXT_SOURCE_ID = "execution_harness_fallback_text_user";
+const EXECUTION_HARNESS_POLICY_CONTEXT_LABELS_SOURCE_ID = "execution_harness_policy_context_labels_user";
+function executionHarnessFallbackText(key) {
+    const entries = loadPromptValue(EXECUTION_HARNESS_FALLBACK_TEXT_SOURCE_ID, {}, { required: true })
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map((line) => {
+        const separator = line.indexOf("=");
+        if (separator < 0)
+            return [line, ""];
+        return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()];
+    });
+    const value = new Map(entries).get(key);
+    if (!value)
+        throw new Error(`execution harness fallback text missing: ${key}`);
+    return value;
+}
+export function executionHarnessPolicyContextLabel(key) {
+    const value = loadPromptValue(EXECUTION_HARNESS_POLICY_CONTEXT_LABELS_SOURCE_ID, {}, { required: true })
+        .split(/\r?\n/u)
+        .find((line) => line.startsWith(`${key}=`))
+        ?.slice(key.length + 1)
+        .trim();
+    if (!value) {
+        throw new Error(`execution harness policy context label missing: ${key}`);
+    }
+    return value;
+}
 const DEFAULT_EXECUTION_HARNESS_TIMEOUT_MS = 30_000;
+function executionHarnessErrorDetail(error, fallback) {
+    const raw = error instanceof Error ? error.message : fallback;
+    return redactLogText(raw);
+}
 export async function createAgentExecutionDecision(input) {
     const result = await runAgentExecutionHarness(input);
     return result.decision;
@@ -43,7 +79,7 @@ export async function runAgentExecutionHarness(input) {
                     phase: "model_call",
                     status: "failed",
                     reasonCode: isTimeout ? "model_timeout" : "model_call_failed",
-                    detail: error instanceof Error ? error.message : "Model call failed.",
+                    detail: executionHarnessErrorDetail(error, "Model call failed."),
                 },
             ],
             reasonCode: isTimeout ? "model_timeout" : "model_call_failed",
@@ -164,7 +200,7 @@ export function buildAgentExecutionDecisionPrompt(context, options = {}) {
         sources: promptSources,
         locale: options.locale ?? "en",
         sourceIds: EXECUTION_HARNESS_POLICY_SOURCE_IDS,
-        title: "[Execution Harness Runtime Policy Sources]",
+        title: executionHarnessPolicyContextLabel("policy_sources_title"),
     });
     const contextJson = JSON.stringify({
         contract_version: AGENT_EXECUTION_DECISION_V2_CONTRACT_VERSION,
@@ -422,11 +458,11 @@ function coerceTaskProfile(context, value) {
     if (isPlainRecord(value))
         return value;
     return {
-        title: context.request.structured_goal ?? "Execution decision",
-        summary: context.request.latest_user_message ?? context.request.structured_goal ?? "Route the current request.",
-        goals: [context.request.structured_goal ?? "Select a viable executor path."],
+        title: context.request.structured_goal ?? executionHarnessFallbackText("task_profile.title"),
+        summary: context.request.latest_user_message ?? context.request.structured_goal ?? executionHarnessFallbackText("task_profile.summary"),
+        goals: [context.request.structured_goal ?? executionHarnessFallbackText("task_profile.goal")],
         task_units: [],
-        success_criteria: ["The selected route is valid for the current executor graph."],
+        success_criteria: [executionHarnessFallbackText("task_profile.success")],
     };
 }
 function coerceRiskBoundary(value) {
@@ -470,7 +506,7 @@ function executorReferenceText(value) {
         return value.trim();
     if (!isPlainRecord(value))
         return undefined;
-    for (const key of ["executor_id", "id", "selected_executor_id", "display_name", "name", "role_name"]) {
+    for (const key of ["executor_id", "id", "selected_executor_id", "agent_name", "name", "role_name"]) {
         const raw = value[key];
         if (hasText(raw))
             return raw.trim();
@@ -485,7 +521,7 @@ function resolveDirectExecutorReference(context, reference) {
     if (directChildren.some((executor) => executor.executor_id === normalized))
         return normalized;
     const exactMatches = directChildren.filter((executor) => {
-        return executor.display_name?.trim() === normalized ||
+        return executor.agent_name?.trim() === normalized ||
             executor.role_name?.trim() === normalized;
     });
     const exactMatch = exactMatches.length === 1 ? exactMatches[0] : undefined;
@@ -496,9 +532,9 @@ function normalizeTaskSplit(context, value) {
         return [];
     const fallbackObjective = context.request.structured_goal ??
         context.request.latest_user_message ??
-        "Handle the delegated work.";
+        executionHarnessFallbackText("task_split.objective");
     const fallbackExpectedReturn = context.request.required_outputs?.[0]?.label ??
-        "Return the result needed by the parent executor.";
+        executionHarnessFallbackText("task_split.expected_return");
     return value.flatMap((unit) => {
         if (!isPlainRecord(unit))
             return [];
@@ -548,7 +584,7 @@ export function parseAgentExecutionDecisionModelOutput(output) {
     catch (error) {
         return {
             ok: false,
-            issue: error instanceof Error ? error.message : "Model output is not valid JSON.",
+            issue: executionHarnessErrorDetail(error, "Model output is not valid JSON."),
         };
     }
 }
@@ -627,6 +663,13 @@ export function validateAgentExecutionDecisionAgainstContext(input) {
                 message: "Selected executor does not exist in the execution graph snapshot.",
                 executor_id: selectedId,
             });
+            if (isSubAgentDelegationRoute(route) && !productParameterRuntimeChildSubAgentCreationAllowed()) {
+                issues.push({
+                    code: "permission_denied",
+                    message: "Runtime child sub-agent creation is disabled; delegation must use a preconfigured direct child.",
+                    executor_id: selectedId,
+                });
+            }
         }
         else if (!graphContext && !selectedProfile && !selectedIsStructuralEscape) {
             issues.push({
@@ -965,11 +1008,11 @@ function buildFallbackDecision(input) {
         ...(selected ? { selected_executor_id: selected } : {}),
         selected_connection_path: selectedPathForFallback(input.context, selected),
         task_profile: {
-            title: "Fallback execution decision",
+            title: executionHarnessFallbackText("fallback_decision.title"),
             summary: input.detail ?? input.reasonCode,
-            goals: ["Recover from an unavailable or structurally invalid execution decision"],
+            goals: [executionHarnessFallbackText("fallback_decision.goal")],
             task_units: [],
-            success_criteria: ["A safe next action is selected"],
+            success_criteria: [executionHarnessFallbackText("fallback_decision.success")],
         },
         required_outputs: fallbackRequiredOutputs(input.context),
         risk_boundary: {
@@ -1072,8 +1115,8 @@ function fallbackRequiredOutputs(context) {
         : [
             {
                 id: "fallback:next-action",
-                label: "Safe next action",
-                acceptance_criteria: ["Fallback reason and next executor are explicit"],
+                label: executionHarnessFallbackText("fallback_output.label"),
+                acceptance_criteria: [executionHarnessFallbackText("fallback_output.acceptance")],
             },
         ];
 }
@@ -1092,6 +1135,9 @@ function requiresSelectedExecutor(route) {
 function requiresSelectedPath(route) {
     return route === "delegate_to_child" || route === "sub_agent";
 }
+function isSubAgentDelegationRoute(route) {
+    return route === "delegate_to_child" || route === "sub_agent";
+}
 function fallbackRouteIssues(context, decision) {
     const issues = [];
     const routes = [
@@ -1102,7 +1148,7 @@ function fallbackRouteIssues(context, decision) {
         if ((route === "root_knowbee_direct" || route === "knowbee_direct") && !isRootCurrentExecutor(context)) {
             issues.push({
                 code: "fallback_not_allowed",
-                message: "Root Knowbee direct fallback is only valid when the current executor is root Knowbee.",
+                message: "Root main-agent direct fallback is only valid when the current executor is the root main agent.",
                 executor_id: context.current_executor.executor_id,
             });
         }

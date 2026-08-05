@@ -1,15 +1,26 @@
-import { bootstrapRuntime, startIngressRun } from "@knowbee/core"
+import {
+  bootstrapRuntime,
+  buildFinalResponseIdentityContext,
+  captureRuntimePaths,
+  createArtifactStorageContext,
+  createAgentHierarchyStorage,
+  createMemoryJournalRepository,
+  renderIntakeAcknowledgementControl,
+  startIngressRun,
+} from "@knowbee/core"
 import type { AgentChunk } from "@knowbee/core"
 import { createCliChunkDeliveryHandler } from "../chunk-delivery.js"
+import { isCliNoColorDisabled } from "../runtime-env.js"
 
 const RESET = "\x1b[0m"
 const CYAN = "\x1b[36m"
 const YELLOW = "\x1b[33m"
 const DIM = "\x1b[2m"
 const BOLD = "\x1b[1m"
+const CLI_NO_COLOR_DISABLED = isCliNoColorDisabled()
 
 function useColor(): boolean {
-  return process.env["KNOWBEE_NO_COLOR"] == null && process.stdout.isTTY === true
+  return !CLI_NO_COLOR_DISABLED && process.stdout.isTTY === true
 }
 
 function c(color: string, text: string): string {
@@ -22,7 +33,17 @@ export async function runCommand(message: string, options: {
   workDir?: string
   yes?: boolean
 }) {
-  await bootstrapRuntime()
+  const runtimeConfig = await bootstrapRuntime()
+  const runtimePaths = captureRuntimePaths()
+  const artifactStorage = createArtifactStorageContext(runtimePaths)
+  const memoryJournal = createMemoryJournalRepository(runtimePaths)
+  const hierarchyStorage = createAgentHierarchyStorage(runtimePaths)
+  const effectiveWorkDir = options.workDir ?? runtimeConfig.profile.workspace
+  const finalResponseIdentityContext = buildFinalResponseIdentityContext({
+    config: runtimeConfig,
+    originalRequest: message,
+    workDir: effectiveWorkDir,
+  })
 
   const abortController = new AbortController()
   process.on("SIGINT", () => {
@@ -66,24 +87,36 @@ export async function runCommand(message: string, options: {
   const handleChunk = createCliChunkDeliveryHandler({
     stdout: process.stdout,
     stderr: process.stderr,
+    originalRequest: message,
+    noticeRendering: {
+      config: runtimeConfig,
+      workDir: effectiveWorkDir,
+      identityContext: finalResponseIdentityContext,
+    },
   })
-  const { started, receipt } = startIngressRun({
+  const { started, acknowledgement } = startIngressRun({
+    artifactStorage,
+    memoryJournal,
+    hierarchyStorage,
+    config: runtimeConfig,
     message,
     sessionId: options.session,
     model: options.model,
-    workDir: options.workDir,
+    workDir: effectiveWorkDir,
     source: "cli",
     onChunk: async (chunk: AgentChunk) => {
-      handleChunk(chunk)
+      await handleChunk(chunk)
       return undefined
     },
   })
-  if (receipt.text.trim()) {
-    process.stderr.write(c(DIM, `${receipt.text}\n\n`))
-  }
+  process.stderr.write(c(DIM, `${renderIntakeAcknowledgementControl(acknowledgement)}\n\n`))
 
   const startMs = Date.now()
-  await started.finished
+  try {
+    await started.finished
+  } finally {
+    memoryJournal.close()
+  }
 
   const durationSec = ((Date.now() - startMs) / 1000).toFixed(1)
   process.stdout.write("\n" + c(DIM, `\n⏱  Done in ${durationSec}s\n`))

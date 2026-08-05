@@ -37,6 +37,8 @@ describe("legacy routing static audit", () => {
       "packages/core/src/runs/routing.d.ts:",
       "packages/core/src/runs/intake-bridge-pass.ts:",
       "packages/core/src/runs/intake-bridge-pass.js:",
+      "packages/core/src/runs/start-driver-dependencies.ts:",
+      "packages/core/src/runs/start-driver-dependencies.js:",
     ]
     expect(
       matches.filter((line) => !allowedPrefixes.some((prefix) => line.startsWith(prefix))),
@@ -49,9 +51,7 @@ describe("legacy routing static audit", () => {
     )
     const graphSelectionStart = decisionRouteSource.indexOf("const buildGraph =")
     const runBridgeStart = intakeBridgePass.indexOf("export async function runIntakeBridgePass")
-    const decisionRouteStart = intakeBridgePass.indexOf(
-      "const decisionRoute = await decideExecutionRoute({",
-    )
+    const decisionRouteStart = intakeBridgePass.indexOf("const decisionRoute = await (")
     expect(explicitProviderStart).toBeGreaterThanOrEqual(0)
     expect(graphSelectionStart).toBeGreaterThan(explicitProviderStart)
     expect(runBridgeStart).toBeGreaterThanOrEqual(0)
@@ -65,11 +65,19 @@ describe("legacy routing static audit", () => {
 
     expect(explicitProviderSection).toContain("input.resolveExplicitProviderTarget?.")
     expect(explicitProviderSection).toContain('kind: "explicit_provider_target"')
-    expect(runBridgeSection).toContain("decideExecutionRoute({")
+    expect(runBridgeSection).toContain(
+      "moduleDependencies.decideExecutionRoute ?? decideExecutionRoute",
+    )
     expect(runBridgeSection).toContain("resolveExplicitProviderTarget: (routeInput) =>")
-    expect(runBridgeSection).toContain("moduleDependencies.resolveRunRoute({")
+    expect(runBridgeSection).toContain("moduleDependencies.resolveRunRoute(")
     expect(runBridgeSection).not.toContain("resolveExplicitProviderRoute")
     expect(runBridgeSection).not.toContain("resolveDelegatedDecisionRoute")
+
+    const startDriverDependencies = source("packages/core/src/runs/start-driver-dependencies.ts")
+    expect(startDriverDependencies).toContain("scheduleDelayedRootRun(delayedParams, {")
+    expect(startDriverDependencies).toContain(
+      "resolveRoute: (input) => resolveRunRoute(input, params.config)",
+    )
   })
 
   it("does not keep removed phase022 topology route helpers", () => {

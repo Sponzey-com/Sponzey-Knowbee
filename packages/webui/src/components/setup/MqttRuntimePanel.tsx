@@ -6,14 +6,6 @@ function formatTimestamp(value: number) {
   return new Date(value).toLocaleString()
 }
 
-function formatPayload(payload: unknown) {
-  try {
-    return JSON.stringify(payload, null, 2)
-  } catch {
-    return String(payload)
-  }
-}
-
 function toneClassForState(state: string | null) {
   const normalized = (state ?? "").toLowerCase()
   if (normalized === "ready" || normalized === "online" || normalized === "connected") {
@@ -23,6 +15,14 @@ function toneClassForState(state: string | null) {
     return "border-red-200 bg-red-50 text-red-700"
   }
   return "border-stone-200 bg-stone-100 text-stone-600"
+}
+
+function stateLabel(state: string | null, text: (ko: string, en: string) => string): string {
+  const normalized = (state ?? "").toLowerCase()
+  if (normalized === "ready" || normalized === "online" || normalized === "connected") return text("연결됨", "Connected")
+  if (normalized === "error" || normalized === "auth_failed") return text("확인 필요", "Needs check")
+  if (normalized === "disconnected") return text("연결 끊김", "Disconnected")
+  return text("상태 확인 필요", "Status needs check")
 }
 
 function countSupportedCapabilities(matrix: Record<string, unknown> | undefined): { supported: number; total: number } | null {
@@ -36,6 +36,15 @@ function countSupportedCapabilities(matrix: Record<string, unknown> | undefined)
     }).length,
     total: entries.length,
   }
+}
+
+function summarizePayload(payload: unknown, text: (ko: string, en: string) => string): string {
+  if (!payload || typeof payload !== "object") return text("데이터 기록됨", "Data recorded")
+  if (Array.isArray(payload)) return text(`데이터 ${payload.length}개 기록됨`, `${payload.length} data items recorded`)
+  const fieldCount = Object.keys(payload as Record<string, unknown>).length
+  return fieldCount > 0
+    ? text(`데이터 필드 ${fieldCount}개 기록됨`, `${fieldCount} data fields recorded`)
+    : text("빈 데이터 기록됨", "Empty data recorded")
 }
 
 export function MqttRuntimePanel({
@@ -108,29 +117,21 @@ export function MqttRuntimePanel({
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <div className="text-sm font-semibold text-stone-900">
-                          {extension.displayName?.trim() || extension.extensionId}
+                          {extension.displayName?.trim() || text("이름 없는 연장", "Unnamed extension")}
                         </div>
                         <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${toneClassForState(extension.state)}`}>
-                          {extension.state ?? text("알 수 없음", "Unknown")}
+                          {stateLabel(extension.state, text)}
                         </span>
                       </div>
                       <div className="mt-1 text-xs text-stone-500">
-                        ID: <span className="font-mono">{extension.extensionId}</span>
+                        {extension.clientId ? text("연동 기준 확인됨", "Connection baseline verified") : text("연동 기준 확인 필요", "Connection baseline needs check")}
+                        {extension.version ? ` · ${text("앱 버전 기록됨", "App version recorded")}` : ""}
                       </div>
-                      {extension.clientId ? (
-                        <div className="mt-1 text-xs text-stone-500">
-                          Client: <span className="font-mono">{extension.clientId}</span>
-                        </div>
-                      ) : null}
-                      {extension.version ? (
-                        <div className="mt-1 text-xs text-stone-500">
-                          Version: <span className="font-mono">{extension.version}</span>
-                        </div>
-                      ) : null}
                       <div className="mt-1 text-xs text-stone-500">
-                        {extension.protocolVersion ? <span>Protocol: <span className="font-mono">{extension.protocolVersion}</span></span> : null}
-                        {extension.platform || extension.os || extension.arch ? <span>OS: <span className="font-mono">{[extension.platform, extension.os, extension.arch].filter(Boolean).join("/")}</span></span> : null}
-                        {extension.capabilityHash ? <span>Capability: <span className="font-mono">{extension.capabilityHash.slice(0, 12)}</span></span> : null}
+                        {extension.platform || extension.os || extension.arch
+                          ? `${text("운영체제", "Operating system")}: ${displayText([extension.platform, extension.os].filter(Boolean).join("/") || extension.arch || "")}`
+                          : text("운영체제 정보 없음", "No operating system info")}
+                        {extension.capabilityHash ? ` · ${text("기능 기준 연결됨", "Capability baseline linked")}` : ""}
                       </div>
                       {extension.message ? (
                         <div className="mt-2 text-sm text-stone-700">{displayText(extension.message)}</div>
@@ -149,16 +150,14 @@ export function MqttRuntimePanel({
                       })()}
                       {methodCount > 0 ? (
                         <div className="mt-2 text-xs text-stone-500">
-                          {text("메서드 수", "Method count")}: {methodCount}
+                          {text("실행 기능", "Runnable features")}: {methodCount}
                         </div>
                       ) : null}
                       {methods.length > 0 ? (
                         <div className="mt-2 flex flex-wrap gap-2">
-                          {methods.slice(0, 8).map((method) => (
-                            <span key={method} className="rounded-full bg-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700">
-                              {method}
-                            </span>
-                          ))}
+                          <span className="rounded-full bg-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700">
+                            {text("기능 목록 기록됨", "Feature list recorded")}
+                          </span>
                         </div>
                       ) : null}
                     </div>
@@ -181,15 +180,15 @@ export function MqttRuntimePanel({
 
       <section className="rounded-xl border border-stone-200 bg-white p-4">
         <div>
-          <h3 className="text-sm font-semibold text-stone-900">{text("주고받은 JSON 로그", "JSON Exchange Log")}</h3>
+          <h3 className="text-sm font-semibold text-stone-900">{text("연장 연동 기록", "Extension exchange history")}</h3>
           <p className="mt-1 text-xs leading-5 text-stone-500">
-            {text("브로커를 통해 오간 최근 요청과 응답 JSON을 로그 형태로 보여줍니다.", "Shows recent request and response JSON exchanged through the broker.")}
+            {text("브로커를 통해 오간 최근 요청과 응답을 요약해서 보여줍니다.", "Shows a summary of recent requests and responses exchanged through the broker.")}
           </p>
         </div>
 
         {logs.length === 0 ? (
           <div className="mt-4 rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-4 text-sm text-stone-500">
-            {text("아직 기록된 MQTT JSON 로그가 없습니다.", "There are no recorded MQTT JSON logs yet.")}
+            {text("아직 기록된 연장 연동 기록이 없습니다.", "There is no recorded extension exchange history yet.")}
           </div>
         ) : (
           <div className="mt-4 max-h-[30rem] space-y-3 overflow-y-auto pr-1">
@@ -203,13 +202,13 @@ export function MqttRuntimePanel({
                         : text("연장 → Knowbee", "Extension → Knowbee")}
                     </span>
                     <span>{formatTimestamp(entry.timestamp)}</span>
-                    <span className="font-mono">{entry.topic}</span>
+                    <span>{entry.topic ? text("전송 경로 기록됨", "Route recorded") : text("전송 경로 없음", "No route recorded")}</span>
                   </div>
-                  {entry.extensionId ? <span className="font-mono">{entry.extensionId}</span> : null}
+                  {entry.extensionId ? <span>{text("연장 기준 연결됨", "Extension baseline linked")}</span> : null}
                 </div>
-                <pre className="mt-3 overflow-x-auto rounded-xl bg-stone-950/95 p-3 text-[11px] leading-5 text-stone-100">
-                  {formatPayload(entry.payload)}
-                </pre>
+                <div className="mt-3 rounded-xl bg-white px-3 py-2 text-xs leading-5 text-stone-600">
+                  {summarizePayload(entry.payload, text)}
+                </div>
               </div>
             ))}
           </div>

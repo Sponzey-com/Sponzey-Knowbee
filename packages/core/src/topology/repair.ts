@@ -302,7 +302,7 @@ function executorProfileMetadataValue(node: NodeContract): unknown {
 function profileWithRequiredMinimums(node: NodeContract): ExecutorProfile {
   const profile = buildExecutorProfileFromNode(node)
   const defaultBoundary = "사용자가 명시적으로 허용하지 않은 민감 정보, 외부 전송, 결제, 삭제, 시스템 제어는 실행하지 않습니다."
-  const defaultDecline = "노드 정의, 허용 도구, 위임 범위를 벗어난 요청은 직접 처리하지 않고 상위 실행자에게 되돌립니다."
+  const defaultDecline = "서브 에이전트 정의, 허용 도구, 위임 범위를 벗어난 요청은 직접 처리하지 않고 상위 에이전트에게 되돌립니다."
   return {
     ...profile,
     does: profile.does.length > 0 ? profile.does : [profile.definition],

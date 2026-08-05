@@ -7,6 +7,10 @@ import type {
   SkillMcpAllowlist,
   SubAgentConfig,
 } from "../contracts/sub-agent-orchestration.js"
+import {
+  DEFAULT_KNOWBEE_AGENT_NAME,
+  resolveAgentConfigAgentName,
+} from "../contracts/sub-agent-orchestration.js"
 
 export type SubAgentSettingsSource = "beginner" | "advanced" | "system"
 export type SubAgentLifecycleState =
@@ -36,8 +40,7 @@ export type SubAgentStateLabel =
 
 export interface SubAgentRootRef {
   agentId: string
-  displayName: string
-  nickname?: string | undefined
+  agentName?: string | undefined
 }
 
 export interface SubAgentRuntimeProjectionInput {
@@ -81,8 +84,7 @@ export interface SubAgentReadinessView {
 
 export interface SubAgentSummaryView {
   id: string
-  displayName: string
-  nickname?: string | undefined
+  agentName: string
   displayLabel: string
   attributionLabel: string
   role: string
@@ -104,7 +106,7 @@ export interface BeginnerSubAgentCardView extends SubAgentSummaryView {
 }
 
 export interface BeginnerSubAgentSetupView {
-  orchestrationMode: "single_knowbee" | "orchestration"
+  orchestrationMode: "direct_main_agent" | "orchestration"
   summary: {
     rootDisplayName: string
     topLevelAgentCount: number
@@ -127,8 +129,7 @@ export interface AdvancedSubAgentDetailView {
   summary: SubAgentSummaryView
   identity: {
     agentId: string
-    displayName: string
-    nickname?: string | undefined
+    agentName: string
     displayLabel: string
     attributionLabel: string
     role: string
@@ -234,8 +235,7 @@ export interface CreateSubAgentBasicCommand {
   kind: "create_basic"
   source: Extract<SubAgentSettingsSource, "beginner" | "advanced">
   parentAgentId: string
-  displayName: string
-  nickname?: string | undefined
+  agentName: string
   role: string
   description: string
   initialLifecycleState: "draft" | "saved"
@@ -246,8 +246,7 @@ export interface UpdateSubAgentIdentityCommand {
   kind: "update_identity"
   source: SubAgentSettingsSource
   agentId: string
-  displayName: string
-  nickname?: string | undefined
+  agentName: string
   role: string
   description: string
   attributionLabel?: string | undefined
@@ -338,9 +337,9 @@ export type SubAgentSettingsCommand =
 export type SubAgentSettingsValidationCode =
   | "agent_missing"
   | "parent_missing"
-  | "display_name_required"
+  | "agent_name_required"
   | "attribution_label_required"
-  | "nickname_duplicate"
+  | "agent_name_duplicate"
   | "reserved_knowbee_name"
   | "catalog_id_missing"
   | "catalog_item_unavailable"
@@ -379,8 +378,12 @@ function normalizeName(value: string | undefined): string {
   return cleanText(value).toLocaleLowerCase("ko-KR")
 }
 
-function preferredDisplayLabel(agent: Pick<SubAgentConfig, "agentId" | "displayName" | "nickname">): string {
-  return cleanText(agent.nickname) || cleanText(agent.displayName) || agent.agentId
+function preferredDisplayLabel(agent: Pick<SubAgentConfig, "agentType" | "agentName">): string {
+  return resolveAgentConfigAgentName(agent)
+}
+
+function rootAgentName(rootAgent: SubAgentRootRef): string {
+  return cleanText(rootAgent.agentName) || DEFAULT_KNOWBEE_AGENT_NAME
 }
 
 function isReservedRootName(value: string | undefined): boolean {
@@ -392,7 +395,7 @@ function conflictsWithRootName(value: string | undefined, rootAgent: SubAgentRoo
   if (!normalized) {
     return false
   }
-  return normalized === normalizeName(rootAgent.displayName) || normalized === normalizeName(rootAgent.nickname)
+  return normalized === normalizeName(rootAgent.agentName)
 }
 
 function activeParentChildRelationships(relationships: AgentRelationship[]): AgentRelationship[] {
@@ -413,15 +416,15 @@ function parentIdFor(agentId: string, relationships: AgentRelationship[]): strin
     ?.parentAgentId
 }
 
-function displayNameForAgent(agentId: string | undefined, rootAgent: SubAgentRootRef, agents: SubAgentConfig[]): string | undefined {
+function agentNameForAgent(agentId: string | undefined, rootAgent: SubAgentRootRef, agents: SubAgentConfig[]): string | undefined {
   if (!agentId) {
     return undefined
   }
   if (agentId === rootAgent.agentId) {
-    return cleanText(rootAgent.nickname) || cleanText(rootAgent.displayName) || rootAgent.agentId
+    return rootAgentName(rootAgent)
   }
   const agent = agents.find((candidate) => candidate.agentId === agentId)
-  return agent ? preferredDisplayLabel(agent) : agentId
+  return agent ? preferredDisplayLabel(agent) : undefined
 }
 
 function isTopLevelAgent(agentId: string, rootAgent: SubAgentRootRef, relationships: AgentRelationship[]): boolean {
@@ -487,21 +490,23 @@ function buildReadiness(
     agent.modelProfile && input.catalogs?.modelIds
       ? !input.catalogs.modelIds.includes(modelCatalogId(agent.modelProfile))
       : false
-  const duplicateNickname = hasDuplicateNickname(agent, input.agents)
+  const agentName = preferredDisplayLabel(agent)
+  const duplicateAgentName = hasDuplicateAgentName(agent, input.agents)
+  const reservedAgentName = isReservedRootName(agentName) || conflictsWithRootName(agentName, input.rootAgent)
   const memoryScopedToAgent = isMemoryScopedToAgent(agent.agentId, agent.memoryPolicy)
   const active = input.runtime?.activeAgentIds?.includes(agent.agentId) ?? false
 
   const items: SubAgentReadinessItem[] = [
     buildReadinessItem(
       "identity",
-      cleanText(agent.displayName) && !duplicateNickname && !isReservedRootName(agent.displayName) && !isReservedRootName(agent.nickname)
+      cleanText(agentName) && !duplicateAgentName && !reservedAgentName
         ? "ready"
         : "blocked",
       "Identity",
       [
-        ...(cleanText(agent.displayName) ? [] : ["display_name_required"]),
-        ...(duplicateNickname ? ["nickname_duplicate"] : []),
-        ...(isReservedRootName(agent.displayName) || isReservedRootName(agent.nickname) ? ["reserved_knowbee_name"] : []),
+        ...(cleanText(agentName) ? [] : ["agent_name_required"]),
+        ...(duplicateAgentName ? ["agent_name_duplicate"] : []),
+        ...(reservedAgentName ? ["reserved_knowbee_name"] : []),
       ],
     ),
     buildReadinessItem(
@@ -513,7 +518,7 @@ function buildReadiness(
     buildReadinessItem(
       "skill_mcp",
       missingSkillIds.length > 0 || missingMcpServerIds.length > 0 ? "blocked" : "ready",
-      "Skill and MCP",
+      "작업 능력/외부 기능",
       [
         ...missingSkillIds.map((id) => `missing_skill:${id}`),
         ...missingMcpServerIds.map((id) => `missing_mcp:${id}`),
@@ -561,8 +566,8 @@ function buildReadiness(
   }
 }
 
-function hasDuplicateNickname(agent: SubAgentConfig, agents: SubAgentConfig[]): boolean {
-  const normalized = normalizeName(agent.nickname)
+function hasDuplicateAgentName(agent: SubAgentConfig, agents: SubAgentConfig[]): boolean {
+  const normalized = normalizeName(preferredDisplayLabel(agent))
   if (!normalized) {
     return false
   }
@@ -570,7 +575,7 @@ function hasDuplicateNickname(agent: SubAgentConfig, agents: SubAgentConfig[]): 
     (candidate) =>
       candidate.agentId !== agent.agentId &&
       candidate.status !== "archived" &&
-      normalizeName(candidate.nickname) === normalized,
+      normalizeName(preferredDisplayLabel(candidate)) === normalized,
   )
 }
 
@@ -608,8 +613,7 @@ function driftFromSaved(saved: SubAgentConfig | undefined, runtimeAgent: SubAgen
   }
   return (
     saved.profileVersion !== runtimeAgent.profileVersion ||
-    saved.displayName !== runtimeAgent.displayName ||
-    saved.nickname !== runtimeAgent.nickname
+    preferredDisplayLabel(saved) !== preferredDisplayLabel(runtimeAgent)
   )
 }
 
@@ -627,15 +631,15 @@ function buildSummaryView(
   const parentAgentId = parentIdFor(agent.agentId, input.relationships)
   const readiness = buildReadiness(agent, input)
   const lifecycleState = input.lifecycleState ?? lifecycleForAgent(agent, input.runtime)
+  const agentName = resolveAgentConfigAgentName(agent)
   return {
     id: agent.agentId,
-    displayName: agent.displayName,
-    nickname: agent.nickname,
-    displayLabel: preferredDisplayLabel(agent),
-    attributionLabel: preferredDisplayLabel(agent),
+    agentName,
+    displayLabel: agentName,
+    attributionLabel: agentName,
     role: agent.role,
-    description: agent.personality,
-    parentDisplayName: displayNameForAgent(parentAgentId, input.rootAgent, input.agents),
+    description: agent.role,
+    parentDisplayName: agentNameForAgent(parentAgentId, input.rootAgent, input.agents),
     childCount: directChildIds(agent.agentId, input.relationships).length,
     isTopLevel: isTopLevelAgent(agent.agentId, input.rootAgent, input.relationships),
     lifecycleState,
@@ -659,7 +663,7 @@ function toBeginnerCard(summary: SubAgentSummaryView, agent: SubAgentConfig): Be
   return {
     ...summary,
     safePermissionState,
-    skillMcpSummary: `${skillCount} skills, ${mcpCount} MCP servers`,
+    skillMcpSummary: `작업 능력 ${skillCount}개, 외부 기능 ${mcpCount}개`,
     lastStateLabel: stateLabelForSummary(summary),
   }
 }
@@ -682,7 +686,7 @@ function buildSummaryCounts(
   agents: SubAgentSummaryView[],
 ): BeginnerSubAgentSetupView["summary"] {
   return {
-    rootDisplayName: cleanText(rootAgent.nickname) || cleanText(rootAgent.displayName) || rootAgent.agentId,
+    rootDisplayName: rootAgentName(rootAgent),
     topLevelAgentCount: agents.filter((agent) => agent.isTopLevel).length,
     totalAgentCount: agents.length,
     readyAgentCount: agents.filter((agent) => agent.readinessState === "ready").length,
@@ -703,7 +707,8 @@ function sortAgentsByTopology(
     if (leftTop !== rightTop) {
       return leftTop ? -1 : 1
     }
-    return left.displayName.localeCompare(right.displayName) || left.agentId.localeCompare(right.agentId)
+    return preferredDisplayLabel(left).localeCompare(preferredDisplayLabel(right)) ||
+      left.agentId.localeCompare(right.agentId)
   })
 }
 
@@ -732,7 +737,7 @@ export function buildBeginnerSubAgentSetupView(input: BuildSubAgentSettingsViewI
           ? "needs_attention"
           : "ready"
   return {
-    orchestrationMode: savedAgents.length > 0 ? "orchestration" : "single_knowbee",
+    orchestrationMode: savedAgents.length > 0 ? "orchestration" : "direct_main_agent",
     summary,
     cards: summaries.map((summaryView) => {
       const agent = savedAgents.find((candidate) => candidate.agentId === summaryView.id)
@@ -762,12 +767,11 @@ function buildAdvancedDetail(
     summary,
     identity: {
       agentId: agent.agentId,
-      displayName: agent.displayName,
-      nickname: agent.nickname,
+      agentName: summary.agentName,
       displayLabel: summary.displayLabel,
       attributionLabel: summary.attributionLabel,
       role: agent.role,
-      description: agent.personality,
+      description: agent.role,
       specialtyTags: agent.specialtyTags,
       avoidTasks: agent.avoidTasks,
     },
@@ -914,8 +918,7 @@ export function buildSubAgentStateProjection(input: SubAgentStateProjectionInput
 
 function sameSavedShape(left: SubAgentSummaryView, right: SubAgentSummaryView): boolean {
   return (
-    left.displayName === right.displayName &&
-    left.nickname === right.nickname &&
+    left.agentName === right.agentName &&
     left.role === right.role &&
     left.description === right.description
   )
@@ -940,47 +943,42 @@ function validateIdentityNameSet(
 ): void {
   for (const value of values) {
     if (isReservedRootName(value.value) || conflictsWithRootName(value.value, rootAgent)) {
-      pushIssue(issues, value.path, "reserved_knowbee_name", "Only the root agent may use the Knowbee name.")
+      pushIssue(issues, value.path, "reserved_knowbee_name", "Reserved main-agent names cannot be used by sub-agents.")
     }
   }
 }
 
-function validateNicknameUnique(
+function validateAgentNamePresent(
+  path: string,
+  agentName: string | undefined,
+  issues: SubAgentSettingsValidationIssue[],
+): void {
+  if (!cleanText(agentName)) {
+    pushIssue(issues, path, "agent_name_required", "A user-facing agent name is required.")
+  }
+}
+
+function validateAgentNameUnique(
   agentId: string | undefined,
-  nickname: string | undefined,
+  path: string,
+  agentName: string | undefined,
   context: SubAgentSettingsValidationContext,
   issues: SubAgentSettingsValidationIssue[],
 ): void {
-  const normalized = normalizeName(nickname)
+  const normalized = normalizeName(agentName)
   if (!normalized) {
     return
   }
   const duplicate = context.agents.find(
-    (agent) => agent.agentId !== agentId && agent.status !== "archived" && normalizeName(agent.nickname) === normalized,
+    (agent) => agent.agentId !== agentId && agent.status !== "archived" && normalizeName(preferredDisplayLabel(agent)) === normalized,
   )
   if (duplicate) {
-    pushIssue(issues, "nickname", "nickname_duplicate", "Sub-agent nicknames must be unique.")
+    pushIssue(issues, path, "agent_name_duplicate", "User-facing agent names must be unique.")
   }
 }
 
-function validateAttributionLabelUnique(
-  agentId: string | undefined,
-  attributionLabel: string | undefined,
-  context: SubAgentSettingsValidationContext,
-  issues: SubAgentSettingsValidationIssue[],
-): void {
-  const normalized = normalizeName(attributionLabel)
-  if (!normalized) {
-    pushIssue(issues, "attributionLabel", "attribution_label_required", "A user-facing attribution label is required.")
-    return
-  }
-  const duplicate = context.agents.find((agent) => {
-    if (agent.agentId === agentId || agent.status === "archived") return false
-    return normalizeName(preferredDisplayLabel(agent)) === normalized
-  })
-  if (duplicate) {
-    pushIssue(issues, "attributionLabel", "nickname_duplicate", "User-facing agent labels must be unique.")
-  }
+function commandAgentNameForValidation(command: CreateSubAgentBasicCommand | UpdateSubAgentIdentityCommand): string {
+  return cleanText(command.agentName)
 }
 
 function validateCatalogIds(
@@ -1176,36 +1174,26 @@ export function validateSubAgentSettingsCommand(
       if (!context.agents.some((agent) => agent.agentId === command.parentAgentId) && command.parentAgentId !== context.rootAgent.agentId) {
         pushIssue(issues, "parentAgentId", "parent_missing", "The parent agent does not exist.")
       }
-      if (!cleanText(command.displayName)) {
-        pushIssue(issues, "displayName", "display_name_required", "A display name is required.")
-      }
+      const agentName = commandAgentNameForValidation(command)
+      validateAgentNamePresent("agentName", agentName, issues)
       validateIdentityNameSet(
-        [
-          { path: "displayName", value: command.displayName },
-          { path: "nickname", value: command.nickname },
-        ],
+        [{ path: "agentName", value: agentName }],
         context.rootAgent,
         issues,
       )
-      validateNicknameUnique(undefined, command.nickname, context, issues)
+      validateAgentNameUnique(undefined, "agentName", agentName, context, issues)
       break
     }
     case "update_identity": {
       validateAgentExists(command, context, issues)
-      if (!cleanText(command.displayName)) {
-        pushIssue(issues, "displayName", "display_name_required", "A display name is required.")
-      }
+      const agentName = commandAgentNameForValidation(command)
+      validateAgentNamePresent("agentName", agentName, issues)
       validateIdentityNameSet(
-        [
-          { path: "displayName", value: command.displayName },
-          { path: "nickname", value: command.nickname },
-          { path: "attributionLabel", value: command.attributionLabel },
-        ],
+        [{ path: "agentName", value: agentName }],
         context.rootAgent,
         issues,
       )
-      validateNicknameUnique(command.agentId, command.nickname, context, issues)
-      validateAttributionLabelUnique(command.agentId, command.attributionLabel, context, issues)
+      validateAgentNameUnique(command.agentId, "agentName", agentName, context, issues)
       break
     }
     case "update_model_policy":

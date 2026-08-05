@@ -13,10 +13,20 @@ import {
   type JsonValue,
   type OutboundMessage,
 } from "../contracts.js"
+import { redactLogText } from "../../logger/index.js"
 
 export type LocalBridgeProvider = "imessage" | "kakaotalk"
 export type LocalBridgeMode = "outgoing_only" | "manual_confirm" | "official" | "local_bridge"
 export type LocalBridgeDoctorSeverity = "error" | "warning"
+
+function redactLocalBridgeReceiptMessage(message: string): string {
+  return redactLogText(message)
+}
+
+function localBridgeErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLocalBridgeReceiptMessage(raw)
+}
 
 export interface LocalBridgeDoctorIssue {
   code: string
@@ -274,6 +284,7 @@ export class LocalBridgeChannelAdapter implements ChannelAdapter {
         capability: unsupportedCapability,
         idempotencyKey: message.idempotencyKey,
         timestamp: this.now(),
+        userFacingLanguage: message.userFacingLanguage,
       })
     }
 
@@ -329,7 +340,7 @@ export class LocalBridgeChannelAdapter implements ChannelAdapter {
           : {}),
       }
     } catch (error) {
-      return this.failed(message, "local_bridge_delivery_failed", error instanceof Error ? error.message : String(error))
+      return this.failed(message, "local_bridge_delivery_failed", localBridgeErrorMessage(error))
     }
   }
 
@@ -360,7 +371,7 @@ export class LocalBridgeChannelAdapter implements ChannelAdapter {
       timestamp: this.now(),
       idempotencyKey: message.idempotencyKey,
       errorCode,
-      errorMessage,
+      errorMessage: redactLocalBridgeReceiptMessage(errorMessage),
     }
   }
 
@@ -374,7 +385,7 @@ export class LocalBridgeChannelAdapter implements ChannelAdapter {
       timestamp: this.now(),
       idempotencyKey: message.idempotencyKey,
       errorCode,
-      errorMessage,
+      errorMessage: redactLocalBridgeReceiptMessage(errorMessage),
     }
   }
 }

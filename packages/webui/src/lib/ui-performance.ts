@@ -28,11 +28,64 @@ export interface UiAccessibilityPolicy {
   statusRequiresTextLabel: boolean
 }
 
+export const CANONICAL_UI_PERFORMANCE_ROUTES = canonicalRoutes as readonly [
+  "/chat",
+  "/work/runs",
+  "/agents",
+  "/capabilities/skills",
+  "/settings/basics",
+]
+
+export type CanonicalUiPerformanceRoute = (typeof CANONICAL_UI_PERFORMANCE_ROUTES)[number]
+
+export interface CanonicalUiRouteBudget {
+  route: CanonicalUiPerformanceRoute
+  criticalApiAllowlist: readonly string[]
+  forbiddenOwnerPatterns: readonly string[]
+  maxCriticalRequests: number
+  lazyOwners: readonly string[]
+}
+
+export type CanonicalUiRouteBudgetIssueCode =
+  | "route_missing"
+  | "route_unknown"
+  | "route_duplicate"
+  | "request_budget_exceeded"
+  | "request_budget_invalid"
+  | "allowlist_forbidden_conflict"
+
+export interface CanonicalUiRouteBudgetIssue {
+  code: CanonicalUiRouteBudgetIssueCode
+  subject: string
+}
+
+export const CANONICAL_UI_ROUTE_BUDGETS = canonicalBudgets as readonly CanonicalUiRouteBudget[]
+
+export function resolveCanonicalUiRouteBudget(route: string): CanonicalUiRouteBudget | null {
+  return resolveCanonicalBudget(route) as CanonicalUiRouteBudget | null
+}
+
+export function validateCanonicalUiRouteBudgets(
+  budgets: readonly ({ route: string } & Omit<CanonicalUiRouteBudget, "route">)[],
+): { ok: boolean; issues: CanonicalUiRouteBudgetIssue[] } {
+  return validateCanonicalBudgets(budgets) as {
+    ok: boolean
+    issues: CanonicalUiRouteBudgetIssue[]
+  }
+}
+
 const BEGINNER_HOME_BUDGET: UiApiBudget = {
   mode: "beginner",
   route: "/chat",
   criticalApiAllowlist: ["/api/ui/shell", "/api/runs", "/api/chat", "/api/status"],
-  forbiddenApiPatterns: ["/api/admin", "/api/audit", "/api/doctor?full", "/api/gateway/logs", "/api/raw", "raw"],
+  forbiddenApiPatterns: [
+    "/api/admin",
+    "/api/audit",
+    "/api/doctor?full",
+    "/api/gateway/logs",
+    "/api/raw",
+    "raw",
+  ],
   maxInitialRequests: 4,
   lazyAfterFirstPaint: true,
 }
@@ -49,7 +102,13 @@ const ADVANCED_DASHBOARD_BUDGET: UiApiBudget = {
 const ADMIN_BUDGET: UiApiBudget = {
   mode: "admin",
   route: "/admin",
-  criticalApiAllowlist: ["/api/admin/shell", "/api/admin/live", "/api/admin/tool-lab", "/api/admin/runtime-inspectors", "/api/admin/platform-inspectors"],
+  criticalApiAllowlist: [
+    "/api/admin/shell",
+    "/api/admin/live",
+    "/api/admin/tool-lab",
+    "/api/admin/runtime-inspectors",
+    "/api/admin/platform-inspectors",
+  ],
   forbiddenApiPatterns: ["/api/raw"],
   maxInitialRequests: 5,
   lazyAfterFirstPaint: true,
@@ -62,23 +121,55 @@ export const UI_API_BUDGETS: UiApiBudget[] = [
 ]
 
 export const UI_LIST_WINDOW_POLICIES: UiListWindowPolicy[] = [
-  { mode: "advanced", route: "/advanced/runs", defaultLimit: 50, hardLimit: 200, virtualizeAbove: 100, serverSideFilterRequiredAbove: 200 },
-  { mode: "advanced", route: "/advanced/audit", defaultLimit: 50, hardLimit: 200, virtualizeAbove: 100, serverSideFilterRequiredAbove: 200 },
-  { mode: "admin", route: "/admin", defaultLimit: 120, hardLimit: 500, virtualizeAbove: 200, serverSideFilterRequiredAbove: 500 },
+  {
+    mode: "advanced",
+    route: "/work/runs",
+    defaultLimit: 50,
+    hardLimit: 200,
+    virtualizeAbove: 100,
+    serverSideFilterRequiredAbove: 200,
+  },
+  {
+    mode: "advanced",
+    route: "/advanced/audit",
+    defaultLimit: 50,
+    hardLimit: 200,
+    virtualizeAbove: 100,
+    serverSideFilterRequiredAbove: 200,
+  },
+  {
+    mode: "admin",
+    route: "/admin",
+    defaultLimit: 120,
+    hardLimit: 500,
+    virtualizeAbove: 200,
+    serverSideFilterRequiredAbove: 500,
+  },
 ]
 
 export function getUiApiBudget(mode: UiPerformanceMode, route: string): UiApiBudget {
-  return UI_API_BUDGETS.find((budget) => budget.mode === mode && route.startsWith(budget.route)) ?? BEGINNER_HOME_BUDGET
+  return (
+    UI_API_BUDGETS.find((budget) => budget.mode === mode && route.startsWith(budget.route)) ??
+    BEGINNER_HOME_BUDGET
+  )
 }
 
 export function isApiAllowedForBudget(apiPath: string, budget: UiApiBudget): boolean {
   const normalized = apiPath.trim()
   if (!normalized) return false
   if (budget.forbiddenApiPatterns.some((pattern) => normalized.includes(pattern))) return false
-  return budget.criticalApiAllowlist.some((allowed) => normalized === allowed || normalized.startsWith(`${allowed}?`) || normalized.startsWith(`${allowed}/`))
+  return budget.criticalApiAllowlist.some(
+    (allowed) =>
+      normalized === allowed ||
+      normalized.startsWith(`${allowed}?`) ||
+      normalized.startsWith(`${allowed}/`),
+  )
 }
 
-export function validateApiCallsForBudget(apiPaths: string[], budget: UiApiBudget): {
+export function validateApiCallsForBudget(
+  apiPaths: string[],
+  budget: UiApiBudget,
+): {
   ok: boolean
   allowed: string[]
   blocked: string[]
@@ -99,11 +190,24 @@ export function validateApiCallsForBudget(apiPaths: string[], budget: UiApiBudge
 }
 
 export function getUiListWindowPolicy(mode: UiPerformanceMode, route: string): UiListWindowPolicy {
-  return UI_LIST_WINDOW_POLICIES.find((policy) => policy.mode === mode && route.startsWith(policy.route))
-    ?? { mode, route, defaultLimit: 50, hardLimit: 200, virtualizeAbove: 100, serverSideFilterRequiredAbove: 200 }
+  return (
+    UI_LIST_WINDOW_POLICIES.find(
+      (policy) => policy.mode === mode && route.startsWith(policy.route),
+    ) ?? {
+      mode,
+      route,
+      defaultLimit: 50,
+      hardLimit: 200,
+      virtualizeAbove: 100,
+      serverSideFilterRequiredAbove: 200,
+    }
+  )
 }
 
-export function clampUiListLimit(requested: number | undefined, policy: UiListWindowPolicy): number {
+export function clampUiListLimit(
+  requested: number | undefined,
+  policy: UiListWindowPolicy,
+): number {
   if (requested == null || !Number.isFinite(requested)) return policy.defaultLimit
   return Math.max(1, Math.min(policy.hardLimit, Math.floor(requested)))
 }
@@ -122,3 +226,9 @@ export function getUiAccessibilityPolicy(viewport: UiViewportClass): UiAccessibi
     statusRequiresTextLabel: true,
   }
 }
+import {
+  CANONICAL_UI_ROUTE_BUDGETS as canonicalBudgets,
+  CANONICAL_UI_PERFORMANCE_ROUTES as canonicalRoutes,
+  resolveCanonicalUiRouteBudget as resolveCanonicalBudget,
+  validateCanonicalUiRouteBudgets as validateCanonicalBudgets,
+} from "./canonical-ui-performance.js"

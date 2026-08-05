@@ -1,4 +1,7 @@
 use std::collections::BTreeMap;
+use std::error::Error;
+use std::fmt;
+use std::sync::{Arc, atomic::AtomicBool};
 
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
@@ -65,6 +68,12 @@ pub struct CommandExecutionRequest {
     pub env: BTreeMap<String, String>,
     #[serde(default, alias = "timeoutSec")]
     pub timeout_sec: Option<u64>,
+    #[serde(skip, default = "default_command_cancellation")]
+    pub cancellation: Arc<AtomicBool>,
+}
+
+fn default_command_cancellation() -> Arc<AtomicBool> {
+    Arc::new(AtomicBool::new(false))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,7 +82,36 @@ pub struct CommandExecutionResult {
     pub exit_code: Option<i32>,
     pub stdout: String,
     pub stderr: String,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandExecutionProcessError {
+    Cancelled,
+}
+
+impl CommandExecutionProcessError {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Cancelled => "command_cancelled",
+        }
+    }
+
+    pub fn public_message(self) -> &'static str {
+        match self {
+            Self::Cancelled => "Command execution was cancelled.",
+        }
+    }
+}
+
+impl fmt::Display for CommandExecutionProcessError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.code())
+    }
+}
+
+impl Error for CommandExecutionProcessError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplicationLaunchRequest {
@@ -103,6 +141,38 @@ pub struct CameraDevice {
     pub available: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CameraPermissionState {
+    Authorized,
+    NotDetermined,
+    Denied,
+    Restricted,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CameraPermissionStatus {
+    pub status: CameraPermissionState,
+    pub reason: String,
+    pub platform: PlatformKind,
+    pub can_attempt_capture: bool,
+    pub requires_user_action: bool,
+}
+
+impl CameraPermissionStatus {
+    pub fn unavailable(platform: PlatformKind) -> Self {
+        Self {
+            status: CameraPermissionState::Unavailable,
+            reason: "camera_permission_status_unavailable".to_string(),
+            platform,
+            can_attempt_capture: true,
+            requires_user_action: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CameraCaptureRequest {
     #[serde(default)]
@@ -111,12 +181,22 @@ pub struct CameraCaptureRequest {
     pub output_path: Option<String>,
     #[serde(default)]
     pub inline_base64: bool,
+    #[serde(default)]
+    pub capture_timeout_ms: Option<u64>,
+    #[serde(skip, default = "default_camera_cancellation")]
+    pub cancellation: Arc<AtomicBool>,
+}
+
+fn default_camera_cancellation() -> Arc<AtomicBool> {
+    Arc::new(AtomicBool::new(false))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CameraCaptureResult {
     #[serde(default)]
     pub device_id: Option<String>,
+    #[serde(default)]
+    pub artifact_ref: Option<String>,
     #[serde(default)]
     pub output_path: Option<String>,
     #[serde(default)]
@@ -133,6 +213,117 @@ pub struct CameraCaptureResult {
     pub base64_data: Option<String>,
     pub message: String,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CameraCaptureFailure {
+    HelperTimeout,
+    HelperSpawnFailed,
+    HelperExited,
+    HelperProtocolInvalid,
+    OutputPathUnsupported,
+    PermissionDenied,
+    PermissionRestricted,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CameraCaptureProcessError {
+    failure: CameraCaptureFailure,
+}
+
+impl CameraCaptureProcessError {
+    pub fn timed_out() -> Self {
+        Self {
+            failure: CameraCaptureFailure::HelperTimeout,
+        }
+    }
+
+    pub fn helper_spawn_failed() -> Self {
+        Self {
+            failure: CameraCaptureFailure::HelperSpawnFailed,
+        }
+    }
+
+    pub fn helper_exited() -> Self {
+        Self {
+            failure: CameraCaptureFailure::HelperExited,
+        }
+    }
+
+    pub fn helper_protocol_invalid() -> Self {
+        Self {
+            failure: CameraCaptureFailure::HelperProtocolInvalid,
+        }
+    }
+
+    pub fn output_path_unsupported() -> Self {
+        Self {
+            failure: CameraCaptureFailure::OutputPathUnsupported,
+        }
+    }
+
+    pub fn permission_denied() -> Self {
+        Self {
+            failure: CameraCaptureFailure::PermissionDenied,
+        }
+    }
+
+    pub fn permission_restricted() -> Self {
+        Self {
+            failure: CameraCaptureFailure::PermissionRestricted,
+        }
+    }
+
+    pub fn cancelled() -> Self {
+        Self {
+            failure: CameraCaptureFailure::Cancelled,
+        }
+    }
+
+    pub fn failure(&self) -> CameraCaptureFailure {
+        self.failure
+    }
+
+    pub fn code(&self) -> &'static str {
+        match self.failure {
+            CameraCaptureFailure::HelperTimeout => "camera_helper_timeout",
+            CameraCaptureFailure::HelperSpawnFailed => "camera_helper_spawn_failed",
+            CameraCaptureFailure::HelperExited => "camera_helper_exited",
+            CameraCaptureFailure::HelperProtocolInvalid => "camera_helper_protocol_invalid",
+            CameraCaptureFailure::OutputPathUnsupported => "camera_output_path_unsupported",
+            CameraCaptureFailure::PermissionDenied => "camera_permission_denied",
+            CameraCaptureFailure::PermissionRestricted => "camera_permission_restricted",
+            CameraCaptureFailure::Cancelled => "camera_capture_cancelled",
+        }
+    }
+
+    pub fn public_message(&self) -> &'static str {
+        match self.failure {
+            CameraCaptureFailure::HelperTimeout => "Camera capture timed out before completion.",
+            CameraCaptureFailure::HelperSpawnFailed => {
+                "Camera capture helper could not be started."
+            }
+            CameraCaptureFailure::HelperExited => "Camera capture helper did not complete.",
+            CameraCaptureFailure::HelperProtocolInvalid => {
+                "Camera capture helper returned an invalid response."
+            }
+            CameraCaptureFailure::OutputPathUnsupported => {
+                "Camera capture output storage is unsupported."
+            }
+            CameraCaptureFailure::PermissionDenied => "Camera permission is denied.",
+            CameraCaptureFailure::PermissionRestricted => "Camera permission is restricted.",
+            CameraCaptureFailure::Cancelled => "Camera capture was cancelled.",
+        }
+    }
+}
+
+impl fmt::Display for CameraCaptureProcessError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.public_message())
+    }
+}
+
+impl Error for CameraCaptureProcessError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScreenCaptureRequest {
@@ -149,6 +340,8 @@ pub struct ScreenCaptureResult {
     #[serde(default)]
     pub display: Option<u32>,
     #[serde(default)]
+    pub artifact_ref: Option<String>,
+    #[serde(default)]
     pub output_path: Option<String>,
     #[serde(default)]
     pub file_name: Option<String>,
@@ -165,6 +358,107 @@ pub struct ScreenCaptureResult {
     pub message: String,
 }
 
+/// Typed failures emitted by a screen capture platform adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenCaptureFailure {
+    DisplaySelectionUnsupported,
+    OutputPathUnsupported,
+    PermissionNotGranted,
+    HelperSpawnFailed,
+    HelperExited,
+    HelperProtocolInvalid,
+}
+
+/// Bounded screen failure that never carries helper output or a local path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScreenCaptureProcessError {
+    failure: ScreenCaptureFailure,
+}
+
+impl ScreenCaptureProcessError {
+    pub fn display_selection_unsupported() -> Self {
+        Self {
+            failure: ScreenCaptureFailure::DisplaySelectionUnsupported,
+        }
+    }
+
+    pub fn output_path_unsupported() -> Self {
+        Self {
+            failure: ScreenCaptureFailure::OutputPathUnsupported,
+        }
+    }
+
+    pub fn permission_not_granted() -> Self {
+        Self {
+            failure: ScreenCaptureFailure::PermissionNotGranted,
+        }
+    }
+
+    pub fn helper_spawn_failed() -> Self {
+        Self {
+            failure: ScreenCaptureFailure::HelperSpawnFailed,
+        }
+    }
+
+    pub fn helper_exited() -> Self {
+        Self {
+            failure: ScreenCaptureFailure::HelperExited,
+        }
+    }
+
+    pub fn helper_protocol_invalid() -> Self {
+        Self {
+            failure: ScreenCaptureFailure::HelperProtocolInvalid,
+        }
+    }
+
+    pub fn failure(&self) -> ScreenCaptureFailure {
+        self.failure
+    }
+
+    pub fn code(&self) -> &'static str {
+        match self.failure {
+            ScreenCaptureFailure::DisplaySelectionUnsupported => {
+                "screen_display_selection_unsupported"
+            }
+            ScreenCaptureFailure::OutputPathUnsupported => "screen_output_path_unsupported",
+            ScreenCaptureFailure::PermissionNotGranted => "screen_permission_not_granted",
+            ScreenCaptureFailure::HelperSpawnFailed => "screen_helper_spawn_failed",
+            ScreenCaptureFailure::HelperExited => "screen_helper_exited",
+            ScreenCaptureFailure::HelperProtocolInvalid => "screen_helper_protocol_invalid",
+        }
+    }
+
+    pub fn public_message(&self) -> &'static str {
+        match self.failure {
+            ScreenCaptureFailure::DisplaySelectionUnsupported => {
+                "Screen display selection is not supported by this platform adapter."
+            }
+            ScreenCaptureFailure::OutputPathUnsupported => {
+                "Screen capture output storage is unsupported."
+            }
+            ScreenCaptureFailure::PermissionNotGranted => {
+                "Screen recording permission is not granted."
+            }
+            ScreenCaptureFailure::HelperSpawnFailed => {
+                "Screen capture helper could not be started."
+            }
+            ScreenCaptureFailure::HelperExited => "Screen capture helper did not complete.",
+            ScreenCaptureFailure::HelperProtocolInvalid => {
+                "Screen capture helper returned an invalid response."
+            }
+        }
+    }
+}
+
+impl fmt::Display for ScreenCaptureProcessError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.public_message())
+    }
+}
+
+impl Error for ScreenCaptureProcessError {}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseMoveRequest {
     pub x: i32,
@@ -174,6 +468,13 @@ pub struct MouseMoveRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseMoveResult {
     pub moved: bool,
+    pub x: i32,
+    pub y: i32,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MousePositionResult {
     pub x: i32,
     pub y: i32,
     pub message: String,
@@ -317,7 +618,26 @@ pub struct KeyboardActionResult {
     pub message: String,
 }
 
-pub trait AutomationBackend {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FocusedTargetResult {
+    pub available: bool,
+    #[serde(default)]
+    pub app_name: Option<String>,
+    #[serde(default)]
+    pub process_id: Option<u32>,
+    #[serde(default)]
+    pub title_hash: Option<String>,
+    pub title_length: usize,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserFocusExecutionResult {
+    pub command_accepted: bool,
+    pub reason_code: &'static str,
+}
+
+pub trait AutomationBackend: Send + Sync {
     fn platform_kind(&self) -> PlatformKind;
     fn capabilities(&self) -> AutomationCapabilities;
     fn system_info(&self) -> anyhow::Result<SystemSnapshot>;
@@ -331,8 +651,12 @@ pub trait AutomationBackend {
         request: ApplicationLaunchRequest,
     ) -> anyhow::Result<ApplicationLaunchResult>;
     fn list_cameras(&self) -> anyhow::Result<Vec<CameraDevice>>;
+    fn camera_permission_status(&self) -> anyhow::Result<CameraPermissionStatus> {
+        Ok(CameraPermissionStatus::unavailable(self.platform_kind()))
+    }
     fn capture_camera(&self, request: CameraCaptureRequest) -> anyhow::Result<CameraCaptureResult>;
     fn capture_screen(&self, request: ScreenCaptureRequest) -> anyhow::Result<ScreenCaptureResult>;
+    fn mouse_position(&self) -> anyhow::Result<MousePositionResult>;
     fn move_mouse(&self, request: MouseMoveRequest) -> anyhow::Result<MouseMoveResult>;
     fn click_mouse(&self, request: MouseClickRequest) -> anyhow::Result<MouseClickResult>;
     fn perform_mouse_action(
@@ -389,6 +713,18 @@ pub trait AutomationBackend {
         }
     }
     fn type_text(&self, request: KeyboardTypeRequest) -> anyhow::Result<KeyboardTypeResult>;
+    fn focused_target(&self) -> anyhow::Result<FocusedTargetResult>;
+    fn focus_browser(
+        &self,
+        process_name: &str,
+        interactive_desktop_session: bool,
+    ) -> BrowserFocusExecutionResult {
+        let _ = (process_name, interactive_desktop_session);
+        BrowserFocusExecutionResult {
+            command_accepted: false,
+            reason_code: "browser_focus_platform_unsupported",
+        }
+    }
     fn perform_keyboard_action(
         &self,
         request: KeyboardActionRequest,

@@ -12,6 +12,7 @@ export declare function shouldRetryCodexOAuthWithSimplePayload(input: {
     status: number;
     detail: string;
     hasTools: boolean;
+    requiredToolChoice: boolean;
     hasMaxOutputTokens: boolean;
     messageCount: number;
     hasStructuredConversation: boolean;
@@ -22,6 +23,7 @@ export declare class OpenAIProvider implements AIProvider {
     private oauthConfig?;
     readonly id = "openai";
     readonly supportedModels: string[];
+    private codexOAuthPayloadMode;
     constructor(profile: AuthProfile, baseUrl?: string | undefined, oauthConfig?: OpenAICodexOAuthConfig | undefined);
     maxContextTokens(model: string): number;
     private chatWithCodexOAuth;

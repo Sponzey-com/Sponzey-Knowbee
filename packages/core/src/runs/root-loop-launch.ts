@@ -10,9 +10,16 @@ import type { ReconnectRequestGroupSelection } from "./store.js"
 import type { TaskProfile } from "./types.js"
 import type { WorkerRuntimeTarget } from "./worker-runtime.js"
 import type { RunChunkDeliveryHandler } from "./delivery.js"
+import type { FinalResponseIdentityContext } from "./final-response-renderer.js"
+import type { KnowbeeConfig } from "../config/types.js"
+import type { ArtifactStorageContext } from "../artifacts/lifecycle.js"
+import type { MemoryJournalRepository } from "../memory/journal.js"
+import type { RecoveredExecutionAttempt } from "./execution-cycle-pass.js"
 
 export function prepareRootLoopLaunch(
   params: {
+    artifactStorage: ArtifactStorageContext
+    memoryJournal: MemoryJournalRepository
     runId: string
     sessionId: string
     requestGroupId: string
@@ -26,6 +33,8 @@ export function prepareRootLoopLaunch(
     currentTargetId: string | undefined
     currentTargetLabel: string | undefined
     workDir: string
+    config: KnowbeeConfig
+    finalResponseIdentityContext?: FinalResponseIdentityContext | undefined
     skipIntake?: boolean
     immediateCompletionText?: string
     reconnectNeedsClarification: boolean
@@ -38,8 +47,12 @@ export function prepareRootLoopLaunch(
     isRootRequest: boolean
     contextMode: AgentContextMode
     taskProfile: TaskProfile
+    scheduleId?: string
+    includeScheduleMemory?: boolean
+    memorySearchQuery?: string
     syntheticApprovalRuntimeDependencies: SyntheticApprovalRuntimeDependencies
     defaultMaxDelegationTurns: number
+    recoveredAttempt?: RecoveredExecutionAttempt
   },
   dependencies: RootRunDriverDependencies,
   executionLoopRuntime: ExecutionLoopRuntimeState,
@@ -51,6 +64,8 @@ export function prepareRootLoopLaunch(
   const originalUserRequest = executionLoopRuntime.originalUserRequest
 
   const rootLoopParams: RootLoopParams = {
+    artifactStorage: params.artifactStorage,
+    memoryJournal: params.memoryJournal,
     runId: params.runId,
     sessionId: params.sessionId,
     requestGroupId: params.requestGroupId,
@@ -58,12 +73,15 @@ export function prepareRootLoopLaunch(
     onChunk: params.onChunk,
     controller: params.controller,
     ...(params.skipIntake ? { skipIntake: params.skipIntake } : {}),
-    ...(params.immediateCompletionText ? { immediateCompletionText: params.immediateCompletionText } : {}),
+    ...(params.immediateCompletionText
+      ? { immediateCompletionText: params.immediateCompletionText }
+      : {}),
     reconnectNeedsClarification: params.reconnectNeedsClarification,
     ...(params.reconnectTargetTitle ? { reconnectTargetTitle: params.reconnectTargetTitle } : {}),
     ...(params.reconnectSelection ? { reconnectSelection: params.reconnectSelection } : {}),
     queuedBehindRequestGroupRun: params.queuedBehindRequestGroupRun,
     currentMessage: params.message,
+    requiredToolNames: executionProfile.requiredToolNames,
     currentModel: params.currentModel,
     currentProviderId: params.currentProviderId,
     currentProvider: params.currentProvider,
@@ -76,10 +94,17 @@ export function prepareRootLoopLaunch(
     structuredRequest: executionProfile.structuredRequest,
     executionSemantics: executionProfile.executionSemantics,
     workDir: params.workDir,
+    config: params.config,
+    ...(params.finalResponseIdentityContext
+      ? { finalResponseIdentityContext: params.finalResponseIdentityContext }
+      : {}),
     ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
     isRootRequest: params.isRootRequest,
     contextMode: params.contextMode,
     taskProfile: params.taskProfile,
+    ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
+    ...(params.includeScheduleMemory ? { includeScheduleMemory: true } : {}),
+    ...(params.memorySearchQuery ? { memorySearchQuery: params.memorySearchQuery } : {}),
     wantsDirectArtifactDelivery: executionProfile.wantsDirectArtifactDelivery,
     requiresFilesystemMutation: executionLoopRuntime.requiresFilesystemMutation,
     requiresPrivilegedToolExecution: executionLoopRuntime.requiresPrivilegedToolExecution,
@@ -94,9 +119,18 @@ export function prepareRootLoopLaunch(
     priorAssistantMessages: executionLoopRuntime.priorAssistantMessages,
     syntheticApprovalRuntimeDependencies: params.syntheticApprovalRuntimeDependencies,
     defaultMaxDelegationTurns: params.defaultMaxDelegationTurns,
+    ...(params.recoveredAttempt
+      ? { recoveredAttempt: params.recoveredAttempt }
+      : {}),
   }
 
   const rootLoopDependencies: RootLoopDependencies = {
+    ...(dependencies.getAdmittedCapabilityExecutionScope
+      ? {
+          getAdmittedCapabilityExecutionScope:
+            dependencies.getAdmittedCapabilityExecutionScope,
+        }
+      : {}),
     appendRunEvent: dependencies.appendRunEvent,
     updateRunSummary: dependencies.updateRunSummary,
     setRunStepStatus: dependencies.setRunStepStatus,
@@ -119,6 +153,12 @@ export function prepareRootLoopLaunch(
     grantRunApprovalScope: dependencies.grantRunApprovalScope,
     grantRunSingleApproval: dependencies.grantRunSingleApproval,
     ...(dependencies.onReviewError ? { onReviewError: dependencies.onReviewError } : {}),
+    recordCanonicalAttempt: dependencies.recordCanonicalAttempt,
+    recordCanonicalRecoveryReentry: dependencies.recordCanonicalRecoveryReentry,
+    recordCanonicalCompletionOutcome: dependencies.recordCanonicalCompletionOutcome,
+    recordCanonicalDelivery: dependencies.recordCanonicalDelivery,
+    stageCanonicalPendingResponse: dependencies.stageCanonicalPendingResponse,
+    consumeCanonicalPendingResponse: dependencies.consumeCanonicalPendingResponse,
     ...(dependencies.onDeliveryError ? { onDeliveryError: dependencies.onDeliveryError } : {}),
     executeLoopDirective: dependencies.executeLoopDirective,
     tryHandleActiveQueueCancellation: dependencies.tryHandleActiveQueueCancellation,

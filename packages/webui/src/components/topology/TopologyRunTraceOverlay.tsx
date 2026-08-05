@@ -1,5 +1,6 @@
 import * as React from "react"
 import type {
+  EnterpriseTopology,
   EnterpriseTopologyFailureReportRecord,
   EnterpriseTopologyObservedEdgeRecord,
   EnterpriseTopologyRunRecord,
@@ -132,14 +133,40 @@ export function buildTopologyRunOverlayState(
   }
 }
 
+function runtimeNodeIdCandidates(nodeId: string): string[] {
+  const values = [nodeId]
+  if (nodeId.startsWith("node:node:")) values.push(nodeId.slice("node:".length))
+  if (!nodeId.startsWith("node:")) values.push(`node:${nodeId}`)
+  return values
+}
+
+function topologyNodeDisplayLabel(topology: EnterpriseTopology | null | undefined, nodeId: string | null | undefined): string | null {
+  if (!nodeId) return null
+  for (const candidate of runtimeNodeIdCandidates(nodeId)) {
+    const node = topology?.nodes.find((item) => item.id === candidate)
+    const displayName = node?.displayName?.trim()
+    if (displayName) return displayName
+    const name = node?.name?.trim()
+    if (name) return name
+  }
+  return null
+}
+
 export function TopologyRunTraceOverlay({
   overlay,
+  topology,
 }: {
   overlay?: TopologyRunTraceOverlayInput | null
+  topology?: EnterpriseTopology | null
 }) {
   const { text } = useUiI18n()
   const state = React.useMemo(() => buildTopologyRunOverlayState(overlay), [overlay])
   const latestPath = state.delegationPaths[state.delegationPaths.length - 1] ?? []
+  const fallbackNodeLabel = text("서브 에이전트", "Sub-agent")
+  const latestPathLabel = latestPath
+    .map((nodeId) => topologyNodeDisplayLabel(topology, nodeId) ?? fallbackNodeLabel)
+    .join(" -> ")
+  const entryNodeLabel = topologyNodeDisplayLabel(topology, overlay?.run?.entryNodeId) ?? (overlay?.run?.entryNodeId ? fallbackNodeLabel : "-")
 
   return (
     <section
@@ -149,12 +176,12 @@ export function TopologyRunTraceOverlay({
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-stone-950">
-            {text("Run Trace", "Run Trace")}
+            {text("실행 기록", "Run trace")}
           </div>
           <div className="mt-1 text-xs text-stone-500">
             {overlay?.run
-              ? text("실행 경로와 실패 위치를 canvas에 표시합니다.", "Shows execution path and failure location on the canvas.")
-              : text("수동 실행 후 trace가 표시됩니다.", "Trace appears after a manual run.")}
+              ? text("실행 경로와 실패 위치를 작업 화면에 표시합니다.", "Shows execution path and failure location on the workspace.")
+              : text("수동 실행 후 실행 기록이 표시됩니다.", "Trace appears after a manual run.")}
           </div>
         </div>
         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
@@ -174,9 +201,9 @@ export function TopologyRunTraceOverlay({
             className="rounded-lg border border-sky-100 bg-sky-50 p-3 text-sky-900"
             data-testid="topology-trace-delegation-path"
           >
-            <div className="font-semibold">{text("Delegation path", "Delegation path")}</div>
+            <div className="font-semibold">{text("위임 경로", "Delegation path")}</div>
             <div className="mt-1 break-words text-[11px]">
-              {latestPath.join(" -> ") || overlay.run.entryNodeId || "-"}
+              {latestPathLabel || entryNodeLabel}
             </div>
           </div>
 
@@ -202,8 +229,10 @@ export function TopologyRunTraceOverlay({
               className="rounded-lg border border-orange-100 bg-orange-50 p-3 text-orange-900"
               data-testid="topology-trace-failed-candidate"
             >
-              <div className="font-semibold">{text("Failed candidate", "Failed candidate")}</div>
-              <div className="mt-1 text-[11px]">{state.failedCandidateNodeIds.join(", ")}</div>
+              <div className="font-semibold">{text("실패한 후보", "Failed candidate")}</div>
+              <div className="mt-1 text-[11px]">
+                {state.failedCandidateNodeIds.map((nodeId) => topologyNodeDisplayLabel(topology, nodeId) ?? fallbackNodeLabel).join(", ")}
+              </div>
             </div>
           ) : null}
 
@@ -215,7 +244,7 @@ export function TopologyRunTraceOverlay({
                   className="rounded-lg border border-red-100 bg-red-50 p-3 text-red-900"
                   data-testid="topology-trace-failure-report"
                 >
-                  <div className="font-semibold">{failure.nodeId}</div>
+                  <div className="font-semibold">{topologyNodeDisplayLabel(topology, failure.nodeId) ?? fallbackNodeLabel}</div>
                   <div className="mt-1 text-[11px]">
                     {failure.failurePhase} / {failure.report.recommendedAction}
                   </div>
@@ -236,7 +265,7 @@ export function TopologyRunTraceOverlay({
               className="rounded-lg border border-violet-100 bg-violet-50 p-3 text-violet-900"
               data-testid="topology-trace-observed-summary"
             >
-              <div className="font-semibold">{text("Observed edges", "Observed edges")}</div>
+              <div className="font-semibold">{text("확인된 연결", "Observed connections")}</div>
               <div className="mt-1 text-[11px]">
                 {overlay.observedEdges.length} {text("실제 실행 연결", "runtime connections")} / {(overlay.gapFindings ?? []).length} {text("개선 후보", "improvement candidates")}
               </div>

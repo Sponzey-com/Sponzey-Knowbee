@@ -7,7 +7,7 @@ import type {
   OwnerScope,
   RuntimeIdentity,
 } from "../contracts/sub-agent-orchestration.js"
-import { normalizeNicknameSnapshot } from "../contracts/sub-agent-orchestration.js"
+import { normalizeAgentNameSnapshot } from "../contracts/sub-agent-orchestration.js"
 import { recordControlEvent } from "../control-plane/timeline.js"
 import {
   type DbAgentDataExchange,
@@ -30,6 +30,22 @@ import {
   type PreparedMemoryWritebackCandidate,
   prepareMemoryWritebackQueueInput,
 } from "./writeback.js"
+import {
+  type LongTermMemoryWriteGateInput,
+  validateLongTermMemoryWriteGate,
+} from "./long-term-write-gate.js"
+
+export {
+  LONG_TERM_MEMORY_CATEGORIES,
+  validateLongTermMemoryWriteGate,
+  type LongTermMemoryCategory,
+  type LongTermMemorySensitivity,
+  type LongTermMemoryStorageNeed,
+  type LongTermMemoryUserIntent,
+  type LongTermMemoryWriteGateDecision,
+  type LongTermMemoryWriteGateInput,
+  type LongTermMemoryWriteGateIssueCode,
+} from "./long-term-write-gate.js"
 
 export type MemoryVisibility = MemoryPolicy["visibility"]
 export type MemoryAccessMode = "owner_direct" | "recipient_via_exchange"
@@ -56,8 +72,10 @@ export interface MemoryOwnerScopePolicy {
 export type DataExchangeValidationIssueCode =
   | "source_owner_missing"
   | "recipient_owner_missing"
-  | "source_nickname_missing"
-  | "recipient_nickname_missing"
+  | "source_agent_name_missing"
+  | "source_agent_name_mismatch"
+  | "recipient_agent_name_missing"
+  | "recipient_agent_name_mismatch"
   | "purpose_missing"
   | "allowed_use_missing"
   | "retention_policy_missing"
@@ -109,8 +127,10 @@ export interface DataExchangeSanitizedView {
   exchangeId: string
   sourceOwner: OwnerScope
   recipientOwner: OwnerScope
-  sourceNicknameSnapshot: string
-  recipientNicknameSnapshot: string
+  sourceAgentName: string
+  sourceAgentNameSnapshot: string
+  recipientAgentName: string
+  recipientAgentNameSnapshot: string
   purpose: string
   allowedUse: DataExchangePackage["allowedUse"]
   retentionPolicy: DataExchangeRetentionPolicy
@@ -137,6 +157,7 @@ export interface StoreOwnerScopedMemoryParams
   owner: OwnerScope
   visibility: MemoryVisibility
   retentionPolicy: MemoryPolicy["retentionPolicy"]
+  longTermWriteGate?: LongTermMemoryWriteGateInput
   historyVersion?: number
   scope?: MemoryScope
   metadata?: Record<string, unknown>
@@ -145,8 +166,10 @@ export interface StoreOwnerScopedMemoryParams
 export interface CreateDataExchangePackageInput {
   sourceOwner: OwnerScope
   recipientOwner: OwnerScope
-  sourceNicknameSnapshot?: string
-  recipientNicknameSnapshot?: string
+  sourceAgentName?: string
+  sourceAgentNameSnapshot?: string
+  recipientAgentName?: string
+  recipientAgentNameSnapshot?: string
   purpose: string
   allowedUse: DataExchangePackage["allowedUse"]
   retentionPolicy: DataExchangeRetentionPolicy
@@ -658,8 +681,24 @@ function buildIdentity(
   }
 }
 
-function fallbackNicknameSnapshot(owner: OwnerScope): string {
-  return normalizeNicknameSnapshot(owner.ownerId)
+function fallbackAgentNameSnapshot(owner: OwnerScope): string {
+  return normalizeAgentNameSnapshot(owner.ownerId)
+}
+
+function normalizeDataExchangeAgentNameSnapshot(value: string | undefined): string {
+  return value ? normalizeAgentNameSnapshot(value) : ""
+}
+
+function resolveDataExchangeAgentNameSnapshot(
+  agentName: string | undefined,
+  agentNameSnapshot: string | undefined,
+  owner: OwnerScope,
+): string {
+  return (
+    normalizeDataExchangeAgentNameSnapshot(agentName) ||
+    normalizeDataExchangeAgentNameSnapshot(agentNameSnapshot) ||
+    fallbackAgentNameSnapshot(owner)
+  )
 }
 
 function classifyDataExchangeProvenanceRef(ref: string): DataExchangeProvenanceKind {
@@ -720,18 +759,36 @@ export function validateDataExchangePackage(
     add("source_owner_missing", "sourceOwner", "Data exchange source owner is required.")
   if (ownerMissing(input.recipientOwner))
     add("recipient_owner_missing", "recipientOwner", "Data exchange recipient owner is required.")
-  if (!input.sourceNicknameSnapshot?.trim()) {
+  const sourceAgentName = normalizeDataExchangeAgentNameSnapshot(input.sourceAgentName)
+  const sourceAgentNameSnapshot = normalizeDataExchangeAgentNameSnapshot(input.sourceAgentNameSnapshot)
+  const recipientAgentName = normalizeDataExchangeAgentNameSnapshot(input.recipientAgentName)
+  const recipientAgentNameSnapshot = normalizeDataExchangeAgentNameSnapshot(input.recipientAgentNameSnapshot)
+  if (!sourceAgentName && !sourceAgentNameSnapshot) {
     add(
-      "source_nickname_missing",
-      "sourceNicknameSnapshot",
-      "Data exchange source nickname snapshot is required.",
+      "source_agent_name_missing",
+      "sourceAgentName",
+      "Data exchange source agent name is required.",
     )
   }
-  if (!input.recipientNicknameSnapshot?.trim()) {
+  if (sourceAgentName && sourceAgentNameSnapshot && sourceAgentName !== sourceAgentNameSnapshot) {
     add(
-      "recipient_nickname_missing",
-      "recipientNicknameSnapshot",
-      "Data exchange recipient nickname snapshot is required.",
+      "source_agent_name_mismatch",
+      "sourceAgentName",
+      "Data exchange source agentName must match sourceAgentNameSnapshot.",
+    )
+  }
+  if (!recipientAgentName && !recipientAgentNameSnapshot) {
+    add(
+      "recipient_agent_name_missing",
+      "recipientAgentName",
+      "Data exchange recipient agent name is required.",
+    )
+  }
+  if (recipientAgentName && recipientAgentNameSnapshot && recipientAgentName !== recipientAgentNameSnapshot) {
+    add(
+      "recipient_agent_name_mismatch",
+      "recipientAgentName",
+      "Data exchange recipient agentName must match recipientAgentNameSnapshot.",
     )
   }
   if (!input.purpose?.trim())
@@ -793,8 +850,22 @@ function sanitizeDataExchangePackage(input: DataExchangePackage): DataExchangePa
     redacted.redacted && input.redactionState === "not_sensitive"
       ? "redacted"
       : input.redactionState
+  const sourceAgentNameSnapshot = resolveDataExchangeAgentNameSnapshot(
+    input.sourceAgentName,
+    input.sourceAgentNameSnapshot,
+    input.sourceOwner,
+  )
+  const recipientAgentNameSnapshot = resolveDataExchangeAgentNameSnapshot(
+    input.recipientAgentName,
+    input.recipientAgentNameSnapshot,
+    input.recipientOwner,
+  )
   return {
     ...input,
+    sourceAgentName: sourceAgentNameSnapshot,
+    sourceAgentNameSnapshot,
+    recipientAgentName: recipientAgentNameSnapshot,
+    recipientAgentNameSnapshot,
     redactionState,
     payload: redacted.payload,
   }
@@ -810,19 +881,25 @@ export function createDataExchangePackage(
     redacted.redacted && input.redactionState === "not_sensitive"
       ? "redacted"
       : input.redactionState
-  const sourceNicknameSnapshot = input.sourceNicknameSnapshot
-    ? normalizeNicknameSnapshot(input.sourceNicknameSnapshot)
-    : fallbackNicknameSnapshot(input.sourceOwner)
-  const recipientNicknameSnapshot = input.recipientNicknameSnapshot
-    ? normalizeNicknameSnapshot(input.recipientNicknameSnapshot)
-    : fallbackNicknameSnapshot(input.recipientOwner)
+  const sourceAgentNameSnapshot = resolveDataExchangeAgentNameSnapshot(
+    input.sourceAgentName,
+    input.sourceAgentNameSnapshot,
+    input.sourceOwner,
+  )
+  const recipientAgentNameSnapshot = resolveDataExchangeAgentNameSnapshot(
+    input.recipientAgentName,
+    input.recipientAgentNameSnapshot,
+    input.recipientOwner,
+  )
   return {
     identity: buildIdentity(input, exchangeId, createdAt),
     exchangeId,
     sourceOwner: input.sourceOwner,
     recipientOwner: input.recipientOwner,
-    sourceNicknameSnapshot,
-    recipientNicknameSnapshot,
+    sourceAgentName: sourceAgentNameSnapshot,
+    sourceAgentNameSnapshot,
+    recipientAgentName: recipientAgentNameSnapshot,
+    recipientAgentNameSnapshot,
     purpose: input.purpose.trim(),
     allowedUse: input.allowedUse,
     retentionPolicy: input.retentionPolicy,
@@ -879,8 +956,10 @@ export function dbAgentDataExchangeToPackage(row: DbAgentDataExchange): DataExch
     exchangeId: row.exchange_id,
     sourceOwner,
     recipientOwner,
-    sourceNicknameSnapshot: row.source_nickname_snapshot ?? "",
-    recipientNicknameSnapshot: row.recipient_nickname_snapshot ?? "",
+    sourceAgentName: row.source_agent_name ?? "",
+    sourceAgentNameSnapshot: row.source_agent_name_snapshot ?? "",
+    recipientAgentName: row.recipient_agent_name ?? "",
+    recipientAgentNameSnapshot: row.recipient_agent_name_snapshot ?? "",
     purpose: row.purpose,
     allowedUse: row.allowed_use,
     retentionPolicy: row.retention_policy,
@@ -903,8 +982,10 @@ export function buildDataExchangeSanitizedView(
     exchangeId: storable.exchangeId,
     sourceOwner: storable.sourceOwner,
     recipientOwner: storable.recipientOwner,
-    sourceNicknameSnapshot: storable.sourceNicknameSnapshot ?? "",
-    recipientNicknameSnapshot: storable.recipientNicknameSnapshot ?? "",
+    sourceAgentName: storable.sourceAgentName ?? storable.sourceAgentNameSnapshot ?? "",
+    sourceAgentNameSnapshot: storable.sourceAgentNameSnapshot ?? "",
+    recipientAgentName: storable.recipientAgentName ?? storable.recipientAgentNameSnapshot ?? "",
+    recipientAgentNameSnapshot: storable.recipientAgentNameSnapshot ?? "",
     purpose: storable.purpose,
     allowedUse: storable.allowedUse,
     retentionPolicy: storable.retentionPolicy,
@@ -1023,7 +1104,32 @@ export function getDataExchangePackage(
 
 export function storeOwnerScopedMemory(params: StoreOwnerScopedMemoryParams) {
   const ownerPolicy = assertWritableMemoryOwner(params.owner)
-  const scope = params.scope ?? retentionToScope(params.retentionPolicy)
+  const expectedScope = retentionToScope(params.retentionPolicy)
+  const scope = params.scope ?? expectedScope
+  if (scope !== expectedScope) {
+    throw new MemoryIsolationError(
+      "memory_retention_scope_mismatch",
+      "Memory retention policy must match the storage scope.",
+    )
+  }
+  const isLongTerm = params.retentionPolicy === "long_term" || scope === "long-term"
+  const longTermWriteGate = isLongTerm
+      ? validateLongTermMemoryWriteGate(params.longTermWriteGate ?? {
+        targetOwner: params.owner,
+        category: undefined as never,
+        storageNeed: undefined as never,
+        sensitivity: undefined as never,
+        userIntent: undefined as never,
+        sourceEvidenceRefs: [],
+        retentionPurpose: "",
+      }, { expectedOwner: params.owner })
+    : undefined
+  if (longTermWriteGate && !longTermWriteGate.ok) {
+    throw new MemoryIsolationError(
+      "long_term_memory_write_gate_failed",
+      `Long-term memory write gate failed: ${longTermWriteGate.issueCodes.join(", ")}`,
+    )
+  }
   return storeMemoryDocument({
     rawText: params.rawText,
     scope,
@@ -1031,6 +1137,9 @@ export function storeOwnerScopedMemory(params: StoreOwnerScopedMemoryParams) {
     sourceType: params.sourceType,
     ...(params.sourceRef ? { sourceRef: params.sourceRef } : {}),
     ...(params.title ? { title: params.title } : {}),
+    ...(isLongTerm && params.longTermWriteGate
+      ? { longTermWriteGate: params.longTermWriteGate }
+      : {}),
     metadata: {
       ...(params.metadata ?? {}),
       ownerType: params.owner.ownerType,
@@ -1039,6 +1148,17 @@ export function storeOwnerScopedMemory(params: StoreOwnerScopedMemoryParams) {
       ownerScopeKind: ownerPolicy.kind,
       visibility: params.visibility,
       retentionPolicy: params.retentionPolicy,
+      ...(longTermWriteGate
+        ? {
+            longTermWriteGate: "approved",
+            longTermWriteGateCategory: longTermWriteGate.category,
+            longTermWriteGateStorageNeed: longTermWriteGate.storageNeed,
+            longTermWriteGateSensitivity: longTermWriteGate.sensitivity,
+            longTermWriteGateUserIntent: longTermWriteGate.userIntent,
+            longTermWriteGateSourceEvidenceRefs: longTermWriteGate.sourceEvidenceRefs,
+            longTermWriteGateRetentionPurpose: longTermWriteGate.retentionPurpose,
+          }
+        : {}),
       historyVersion: params.historyVersion ?? 1,
       historyOwnerId: params.owner.ownerId,
       memoryIsolation: "owner_scoped",

@@ -10,6 +10,14 @@ export interface ActiveInstructionSource {
 export interface ActiveInstructionsResponse {
   workDir: string
   gitRoot?: string
+  disclosure: {
+    purpose: "prompt_review" | "prompt_improvement" | "administration" | "security_review" | "debugging" | "audit"
+    actor: string
+    target: string
+    audience: string
+    redactionMode: "redacted" | "raw_authorized"
+    state: "redacted" | "raw_authorized"
+  }
   mergedText: string
   sources: ActiveInstructionSource[]
 }

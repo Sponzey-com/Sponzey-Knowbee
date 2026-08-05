@@ -1,38 +1,107 @@
 import { homedir } from "node:os"
-import { eventBus } from "../events/index.js"
+import { dirname } from "node:path"
+import {
+  type AIProvider,
+  detectAvailableProvider,
+  getDefaultModel,
+  getProvider,
+  shouldForceReasoningMode,
+} from "../ai/index.js"
+import type { AIChunk, Message, ToolDefinition } from "../ai/types.js"
+import {
+  isAIProviderInvocationError,
+  type AIProviderFailureReasonCode,
+} from "../ai/provider-failure.js"
+import type { ArtifactStorageContext } from "../artifacts/lifecycle.js"
 import type { ChannelSource } from "../channels/contracts.js"
-import { detectAvailableProvider, getProvider, getDefaultModel, shouldForceReasoningMode, type AIProvider } from "../ai/index.js"
-import type { Message, ToolDefinition, AIChunk } from "../ai/types.js"
-import { toolDispatcher } from "../tools/dispatcher.js"
-import type { ToolContext, ToolResult } from "../tools/types.js"
-import { createLogger } from "../logger/index.js"
-import { getDb, insertSession, getSession, insertMessage, getMessages, getMessagesForRequestGroup, getMessagesForRequestGroupWithRunMeta, getMessagesForRun, insertDiagnosticEvent, updateRunPromptSourceSnapshot, upsertPromptSources, getPromptSourceStates } from "../db/index.js"
-import { loadKnowbeeMd, loadPromptSourceRegistry, loadPromptTemplate, loadSystemPromptSourceAssembly } from "../memory/knowbee-md.js"
-import { getConfig } from "../config/index.js"
-import { buildMemoryContext } from "../memory/store.js"
+import type { KnowbeeConfig } from "../config/types.js"
+import { admitCanonicalExecutionNextAction } from "../contracts/canonical-next-action.js"
+import type { AgentEntityType, OwnerScope } from "../contracts/sub-agent-orchestration.js"
+import {
+  admitInitialWebResearchMethod,
+  readUserWebUrlCandidates,
+} from "../contracts/web-initial-method-admission.js"
+import type { WebResearchLinkCandidate } from "../contracts/web-research-link-candidate.js"
+import type { WebExecutionState } from "../contracts/web-execution-state.js"
+import {
+  getDb,
+  getMessages,
+  getMessagesForRequestGroup,
+  getMessagesForRequestGroupWithRunMeta,
+  getMessagesForRun,
+  getPromptSourceStates,
+  getSession,
+  insertAuditLog,
+  insertDiagnosticEvent,
+  insertMessage,
+  insertSession,
+  updateRunPromptSourceSnapshot,
+  upsertPromptSources,
+} from "../db/index.js"
+import { eventBus } from "../events/index.js"
+import { createInstructionRuntimeContext, loadMergedInstructions } from "../instructions/merge.js"
+import { createLogger, redactLogText } from "../logger/index.js"
 import { buildFlashFeedbackContext } from "../memory/flash-feedback.js"
-import { buildScheduleMemoryContext } from "../schedules/context.js"
-import { loadMergedInstructions } from "../instructions/merge.js"
-import { selectRequestGroupContextMessages } from "./request-group-context.js"
-import { buildUserProfilePromptContext } from "./profile-context.js"
-import { shouldTerminateRunAfterSuccessfulTool } from "../runs/isolated-tool-response.js"
-import { sanitizeUserFacingError } from "../runs/error-sanitizer.js"
-import { appendRunEvent } from "../runs/store.js"
-import { createContextBlock, renderContextBlockForPrompt, type TrustTag } from "../security/trust-boundary.js"
+import type { MemoryJournalRepository } from "../memory/journal.js"
+import {
+  type PromptTemplateVariables,
+  loadKnowbeeMd,
+  loadPromptSourceRegistry,
+  loadPromptTemplate,
+  loadSystemPromptSourceAssembly,
+} from "../memory/knowbee-md.js"
+import { loadPromptValue } from "../memory/prompt-fragments.js"
+import { buildMemoryContext } from "../memory/store.js"
+import { recordLatencyMetric } from "../observability/latency.js"
 import { chatWithContextPreflight } from "../runs/context-preflight.js"
-import { answerMainAgentSelfNameQuestion, buildMainAgentIdentityPromptContext, buildMainAgentPromptVariables, resolvePromptLocaleForRequest } from "./main-agent-identity.js"
+import { sanitizeUserFacingError } from "../runs/error-sanitizer.js"
+import { shouldTerminateRunAfterSuccessfulTool } from "../runs/isolated-tool-response.js"
+import type { UserFacingTextSource } from "../runs/loop-directive.js"
+import { buildYeonjangFailureEvidenceRecoveryPayload } from "../runs/recovery.js"
+import { appendRunEvent } from "../runs/store.js"
+import {
+  type AdmittedCapabilityExecutionScope,
+  dispatchRunScopedTool,
+  isRunScopedPreDispatchFailureDetails,
+  projectRunScopedInstruction,
+  projectRunScopedToolNames,
+} from "../runs/run-scoped-tool-admission.js"
+import { projectValidatedWebToolResultForAgent } from "../runs/web-evidence-agent-bridge.js"
+import {
+  createWebResearchRunRecorder,
+  projectWebResearchRecordedEvidence,
+} from "../runs/web-research-run-recorder.js"
+import { buildScheduleMemoryContext } from "../schedules/context.js"
+import {
+  type TrustTag,
+  type UntrustedEvidenceOwnerScope,
+  createContextBlock,
+  createUntrustedEvidenceEnvelope,
+  renderContextBlockForPrompt,
+  renderUntrustedEvidenceForPrompt,
+} from "../security/trust-boundary.js"
+import { toolDispatcher } from "../tools/runtime-dispatcher.js"
+import type { ToolContext, ToolEvidenceSourceReceipt, ToolResult } from "../tools/types.js"
+import {
+  buildMainAgentIdentityPromptContext,
+  buildMainAgentPromptVariables,
+  resolveMainAgentSelfName,
+  resolvePromptLocaleForRequest,
+} from "./main-agent-identity.js"
+import { buildUserProfilePromptContext } from "./profile-context.js"
+import { selectRequestGroupContextMessages } from "./request-group-context.js"
+import {
+  type AgentTerminalFailureNotice,
+  buildAgentTerminalFailureNotice,
+} from "./terminal-failure-notice.js"
+import { buildWebAccessRuntimePrompt } from "./web-access-runtime-prompt.js"
 
 const log = createLogger("agent")
+const MAIN_AGENT_MEMORY_OWNER_SCOPE: OwnerScope = { ownerType: "knowbee", ownerId: "agent:knowbee" }
+const AGENT_RUNTIME_PROMPT_CONTEXT_LABELS_SOURCE_ID = "agent_runtime_prompt_context_labels_user"
 
 const MAX_TOOL_ROUNDS = 20 // prevent infinite loops
 const MAX_CONTEXT_TOKENS = 150_000
-const WEB_POLICY_PATTERN = [
-  /https?:\/\//i,
-  /\b(web|internet|browse|browser|search|google|docs?|documentation|readme|website|site|url|link)\b/i,
-  /\b(latest|recent|current|today|news|official|release(?:s| notes?)?|update(?:d|s)?)\b/i,
-  /웹|인터넷|검색|브라우저|최신|최근|현재|오늘|뉴스|공식\s*문서|문서|사이트|웹사이트|링크|주소|릴리즈\s*노트|업데이트/u,
-]
-const DIAGNOSTIC_MEMORY_PATTERN = /(diagnostic|diagnostics|debug|error|failure|failed|stack trace|로그|진단|디버그|오류|에러|실패|복구|원인|왜\s*안|안\s*돼|안돼)/i
 const EXECUTION_RECOVERY_TOOL_NAMES = new Set([
   "shell_exec",
   "app_launch",
@@ -45,30 +114,163 @@ const EXECUTION_RECOVERY_TOOL_NAMES = new Set([
   "yeonjang_camera_capture",
 ])
 
-function renderPromptContext(params: { id: string; tag: TrustTag; title: string; content: string }): string {
+function canonicalUrlKey(value: string): string | null {
+  try {
+    return new URL(value).toString()
+  } catch {
+    return null
+  }
+}
+
+function remainingObservedFetchUrls(input: Readonly<{
+  observedSearchResults: ReadonlyMap<string, Readonly<{ sourceUrl: string }>>
+  observedFetchCandidates: ReadonlyMap<string, Readonly<{ sourceUrl: string }>>
+  userFetchUrls: readonly string[]
+  attemptedFetchUrls: ReadonlySet<string>
+}>): string[] {
+  const remaining: string[] = []
+  const seen = new Set<string>()
+  const candidates = [
+    ...input.observedSearchResults.values(),
+    ...input.observedFetchCandidates.values(),
+    ...input.userFetchUrls.map((sourceUrl) => ({ sourceUrl })),
+  ]
+  for (const candidate of candidates) {
+    const key = canonicalUrlKey(candidate.sourceUrl)
+    if (!key || seen.has(key) || input.attemptedFetchUrls.has(key)) continue
+    seen.add(key)
+    remaining.push(candidate.sourceUrl)
+  }
+  return remaining
+}
+
+function constrainWebFetchTool(
+  tool: ToolDefinition,
+  candidateUrls: readonly string[],
+): ToolDefinition {
+  const currentUrlSchema = tool.input_schema.properties["url"]
+  const urlSchema =
+    currentUrlSchema &&
+    typeof currentUrlSchema === "object" &&
+    !Array.isArray(currentUrlSchema)
+      ? currentUrlSchema as Record<string, unknown>
+      : { type: "string" }
+  return {
+    ...tool,
+    input_schema: {
+      ...tool.input_schema,
+      properties: {
+        ...tool.input_schema.properties,
+        url: {
+          ...urlSchema,
+          enum: [...candidateUrls],
+        },
+      },
+    },
+  }
+}
+
+function agentRuntimePromptContextLabel(
+  key: string,
+  variables: PromptTemplateVariables = {},
+): string {
+  const entries = loadPromptValue(AGENT_RUNTIME_PROMPT_CONTEXT_LABELS_SOURCE_ID, variables, {
+    required: true,
+  })
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line): [string, string] => {
+      const separator = line.indexOf("=")
+      if (separator < 0) return [line, ""]
+      return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()]
+    })
+  const value = new Map(entries).get(key)
+  if (!value) throw new Error(`agent runtime prompt context label missing: ${key}`)
+  return value
+}
+
+function agentRuntimeErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
+
+function renderPromptContext(params: {
+  id: string
+  tag: TrustTag
+  title: string
+  content: string
+}): string {
   const content = params.content.trim()
   if (!content) return ""
-  return `\n${renderContextBlockForPrompt(createContextBlock({
-    id: params.id,
-    tag: params.tag,
-    title: params.title,
-    content,
-  }))}`
+  return `\n${renderContextBlockForPrompt(
+    createContextBlock({
+      id: params.id,
+      tag: params.tag,
+      title: params.title,
+      content,
+    }),
+  )}`
+}
+
+function resolveRunAgentMemoryOwnerScope(params: {
+  agentId?: string | undefined
+  agentType?: AgentEntityType | undefined
+}): OwnerScope {
+  const agentId = params.agentId?.trim()
+  if (agentId && params.agentType === "sub_agent") {
+    return { ownerType: "sub_agent", ownerId: agentId }
+  }
+  if (agentId && params.agentType === "knowbee") {
+    return { ownerType: "knowbee", ownerId: agentId }
+  }
+  return MAIN_AGENT_MEMORY_OWNER_SCOPE
 }
 
 export type AgentChunk =
-  | { type: "text"; delta: string }
+  | {
+      type: "text"
+      delta: string
+      textSource?: UserFacingTextSource
+      notice?: AgentTerminalFailureNotice
+    }
   | { type: "tool_start"; toolName: string; params: unknown }
-  | { type: "tool_end"; toolName: string; success: boolean; output: string; details?: unknown }
-  | { type: "execution_recovery"; toolNames: string[]; summary: string; reason: string }
-  | { type: "ai_recovery"; summary: string; reason: string; message: string }
+  | {
+      type: "tool_end"
+      toolName: string
+      success: boolean
+      output: string
+      details?: unknown
+      evidenceSource?: Readonly<ToolEvidenceSourceReceipt>
+    }
+  | {
+      type: "execution_recovery"
+      toolNames: string[]
+      summary: string
+      reason: string
+      reasonCode?: string
+      evidenceRefs?: string[]
+    }
+  | {
+      type: "ai_recovery"
+      summary: string
+      reason: string
+      message: string
+      providerFailureReasonCode?: AIProviderFailureReasonCode
+    }
   | { type: "done"; totalTokens: number }
   | { type: "error"; message: string }
 
 export type AgentContextMode = "full" | "isolated" | "request_group" | "handoff"
 
 export interface RunAgentParams {
+  artifactStorage: ArtifactStorageContext
+  memoryJournal: MemoryJournalRepository
   userMessage: string
+  requiredToolNames?: string[] | undefined
+  completionConditions?: readonly string[] | undefined
+  admittedCapabilityExecutionScope?: AdmittedCapabilityExecutionScope | undefined
+  webExecutionState?: WebExecutionState | undefined
   memorySearchQuery?: string | undefined
   sessionId?: string | undefined
   requestGroupId?: string | undefined
@@ -78,9 +280,11 @@ export interface RunAgentParams {
   model?: string | undefined
   providerId?: string | undefined
   provider?: AIProvider | undefined
-  systemPrompt?: string | undefined
+  config: KnowbeeConfig
   workDir?: string | undefined
   source?: ChannelSource | undefined
+  agentId?: string | undefined
+  agentType?: AgentEntityType | undefined
   signal?: AbortSignal | undefined
   toolsEnabled?: boolean | undefined
   contextMode?: AgentContextMode | undefined
@@ -90,6 +294,10 @@ interface ExecutionRecoveryFailure {
   toolName: string
   output: string
   error?: string
+  summary?: string
+  reason?: string
+  reasonCode?: string
+  evidenceRefs?: string[]
 }
 
 interface ExecutedToolResult {
@@ -99,12 +307,23 @@ interface ExecutedToolResult {
 
 interface StopAfterFailureDetails {
   stopAfterFailure?: boolean
+  via?: string
+  failureKind?: string
+  failure?: {
+    reasonCode?: unknown
+    terminalStage?: unknown
+    retrySafety?: unknown
+  }
 }
+
+const TRUSTED_SCREEN_PERMISSION_DENIED_OUTPUT =
+  "Yeonjang 화면 캡처는 운영 체제의 화면 캡처 권한이 거부되어 시작되지 않았습니다. 시스템 설정에서 Yeonjang의 화면 캡처 권한을 허용한 뒤 다시 요청해 주세요."
 
 export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChunk> {
   const runId = params.runId ?? crypto.randomUUID()
   const sessionId = params.sessionId ?? crypto.randomUUID()
-  const model = params.model ?? getDefaultModel()
+  const config = params.config
+  const model = params.model ?? getDefaultModel(config)
   const workDir = params.workDir ?? homedir()
   const signal = params.signal ?? new AbortController().signal
   const toolsEnabled = params.toolsEnabled ?? true
@@ -131,15 +350,20 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   log.info(`Agent run ${runId} started (session=${sessionId}, model=${model})`)
 
   // Load prior messages from DB
-  const priorDbMessages = contextMode === "isolated"
-    ? []
-    : contextMode === "handoff"
-      ? getMessagesForRun(sessionId, runId)
-    : contextMode === "request_group"
-      ? (params.requestGroupId ? selectRequestGroupContextMessages(getMessagesForRequestGroupWithRunMeta(sessionId, params.requestGroupId)) : [])
-      : params.requestGroupId
-        ? getMessagesForRequestGroup(sessionId, params.requestGroupId)
-        : getMessages(sessionId)
+  const priorDbMessages =
+    contextMode === "isolated"
+      ? []
+      : contextMode === "handoff"
+        ? getMessagesForRun(sessionId, runId)
+        : contextMode === "request_group"
+          ? params.requestGroupId
+            ? selectRequestGroupContextMessages(
+                getMessagesForRequestGroupWithRunMeta(sessionId, params.requestGroupId),
+              )
+            : []
+          : params.requestGroupId
+            ? getMessagesForRequestGroup(sessionId, params.requestGroupId)
+            : getMessages(sessionId)
   const rawMessages: Message[] = priorDbMessages.map((m) => ({
     role: m.role as "user" | "assistant",
     content: m.tool_calls ? JSON.parse(m.tool_calls) : m.content,
@@ -187,66 +411,102 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   })
 
   // Build tool definitions
-  const allowWebAccess = shouldAllowWebAccess(params.userMessage)
-  const tools = toolsEnabled
-    ? toolDispatcher.getAll().filter((tool) =>
-        toolDispatcher.isToolAvailableForSource(tool, params.source ?? "cli")
-        && (allowWebAccess || (tool.name !== "web_search" && tool.name !== "web_fetch")),
-      )
+  const requiredToolNames = new Set(params.requiredToolNames ?? [])
+  const executionOwnerAgentId =
+    params.agentId?.trim() ||
+    params.admittedCapabilityExecutionScope?.ownerAgentId ||
+    "agent:knowbee"
+  const allowWebAccess =
+    params.admittedCapabilityExecutionScope?.toolNames.includes("web_search") === true ||
+    params.admittedCapabilityExecutionScope?.toolNames.includes("web_fetch") === true
+  const sourceAvailableTools = toolsEnabled
+    ? toolDispatcher
+        .getAll()
+        .filter(
+          (tool) =>
+            toolDispatcher.isToolAvailableForSource(tool, params.source ?? "cli") &&
+            (allowWebAccess ||
+              (tool.name !== "web_search" && tool.name !== "web_fetch")),
+        )
     : []
-  const toolDefs: ToolDefinition[] = tools.map((t) => ({
+  const admittedToolNames = params.admittedCapabilityExecutionScope
+    ? new Set(
+        projectRunScopedToolNames({
+          scope: params.admittedCapabilityExecutionScope,
+          runId,
+          ownerAgentId: executionOwnerAgentId,
+          availableToolNames: sourceAvailableTools.map((tool) => tool.name),
+        }),
+      )
+    : undefined
+  const tools = admittedToolNames
+    ? sourceAvailableTools.filter((tool) => admittedToolNames.has(tool.name))
+    : sourceAvailableTools
+  const canonicalWebEvidenceEnabled = allowWebAccess
+  const modelVisibleTools = canonicalWebEvidenceEnabled
+    ? tools.filter((tool) => tool.name === "web_search" || tool.name === "web_fetch")
+    : tools
+  const toolDefs: ToolDefinition[] = modelVisibleTools.map((t) => ({
     name: t.name,
     description: t.description,
     input_schema: t.parameters,
   }))
+  const modelVisibleToolNames = new Set(modelVisibleTools.map((tool) => tool.name))
+  const effectiveRequiredToolNames = new Set(
+    [...requiredToolNames].filter((toolName) => modelVisibleToolNames.has(toolName)),
+  )
+  const selectedInstructionSkill = params.admittedCapabilityExecutionScope
+    ? projectRunScopedInstruction({
+        scope: params.admittedCapabilityExecutionScope,
+        runId,
+        ownerAgentId: executionOwnerAgentId,
+      })
+    : null
 
-  const resolvedProviderId = params.providerId ?? detectAvailableProvider()
-  const provider = params.provider ?? getProvider(resolvedProviderId)
-  const forceReasoningMode = shouldForceReasoningMode(resolvedProviderId, model)
+  const resolvedProviderId = params.providerId ?? detectAvailableProvider(config)
+  const provider = params.provider ?? getProvider(resolvedProviderId, config)
+  const forceReasoningMode = shouldForceReasoningMode(resolvedProviderId, model, config)
 
   // ── Build system prompt with KNOWBEE.md + memory context ────────────────
   const promptStartedAt = Date.now()
-  const config = getConfig()
-  const directSelfNameAnswer = answerMainAgentSelfNameQuestion(config, params.userMessage)
-  if (directSelfNameAnswer) {
-    yield { type: "text", delta: directSelfNameAnswer }
-    eventBus.emit("agent.stream", { sessionId, runId, delta: directSelfNameAnswer })
-    insertMessage({
-      id: crypto.randomUUID(),
-      session_id: sessionId,
-      root_run_id: runId,
-      role: "assistant",
-      content: directSelfNameAnswer,
-      tool_calls: null,
-      tool_call_id: null,
-      created_at: Date.now(),
-    })
-    appendAgentLatencyEvent(runId, "prompt_ms", Date.now() - promptStartedAt)
-    yield { type: "done", totalTokens: 0 }
-    log.info(`Agent run ${runId} done in ${Date.now() - now}ms (direct_self_name)`)
-    return
-  }
   const promptLocale = resolvePromptLocaleForRequest(config.profile.language, params.userMessage)
+  const mainAgentSelfName = resolveMainAgentSelfName(config, promptLocale)
   const promptVariables = buildMainAgentPromptVariables(config, promptLocale)
   const promptSourceRegistry = loadPromptSourceRegistry(workDir)
   upsertPromptSources(promptSourceRegistry.map(({ content: _content, ...metadata }) => metadata))
-  const promptAssembly = loadSystemPromptSourceAssembly(workDir, promptLocale, getPromptSourceStates(), promptVariables)
+  const promptAssembly = loadSystemPromptSourceAssembly(
+    workDir,
+    promptLocale,
+    getPromptSourceStates(),
+    promptVariables,
+    "execution",
+  )
   if (promptAssembly) updateRunPromptSourceSnapshot(runId, promptAssembly.snapshot)
   const baseSystemPrompt =
-    params.systemPrompt
-    ?? promptAssembly?.text
-    ?? loadPromptTemplate({ sourceId: "system", workDir, locale: promptLocale, variables: promptVariables })
+    promptAssembly?.text ??
+    loadPromptTemplate({
+      sourceId: "system",
+      workDir,
+      locale: promptLocale,
+      variables: promptVariables,
+    })
 
-  const runtimeDirective = `[Runtime]\nToday is ${new Date().toLocaleDateString()}.`
+  const runtimeDirective = [
+    agentRuntimePromptContextLabel("runtime_header"),
+    agentRuntimePromptContextLabel("today_line", { today: new Date().toLocaleDateString() }),
+  ].join("\n")
 
   const reasoningDirective = forceReasoningMode
-    ? `\n[추론 정책]\n현재 실행 대상은 llama/ollama 계열로 간주합니다. 항상 사유 모드를 켜고 더 신중하게 검토한 뒤 답하세요. 즉시 반응하지 말고, 작업 계획과 가능한 해결 경로를 먼저 내부적으로 점검한 뒤 진행하세요. 내부적으로 충분히 숙고하되, 중간 추론을 길게 노출하지 말고 최종 답변만 간결하게 제시하세요.`
+    ? `\n${loadPromptTemplate({ sourceId: "reasoning_policy_runtime", workDir })}`
     : ""
 
-  const webPolicyDirective = `\n[웹 접근 정책]\nweb_search와 web_fetch는 사용자가 명시적으로 웹 검색, 최신 정보, 공식 문서, 특정 사이트 확인을 요청했거나, 답변에 외부 최신 정보 검증이 꼭 필요한 경우에만 사용하세요. 그 외에는 로컬 파일, 메모리, 기존 대화와 내장 지식으로 먼저 답하세요. 같은 요청 안에서 동일한 검색어, URL, 출처를 반복 호출하지 마세요. 웹 도구가 중복 호출을 skipped로 반환하면 그 결과를 실패가 아니라 이미 확보한 근거로 간주하세요. web_search는 검색 발견 단계이며 사용자 문장 분류나 별도 게이트 판단으로 완료를 막지 않습니다. 도구 결과의 freshnessPolicy와 sourceGuard.status를 우선 따르세요. freshnessPolicy=latest_approximate 또는 sourceGuard.status=approximate_latest이면 source와 fetchTimestamp를 함께 밝히고 "수집 시각 기준 근사값"으로 답할 수 있습니다. 단, 근사값 허용은 추정 허용이 아닙니다. 요청 대상과 같은 출처 항목, 심볼, 이름, 검색 결과 항목에 직접 붙어 있는 수치 후보만 사용하세요. 주변 지수, 다른 티커, 다른 표 행, 기사 숫자, 과거 값, 모델 기억값으로 범위나 숫자를 만들지 마세요. web_search만 성공한 상태에서 값이 없다고 최종 답변하지 마세요. 값 미추출은 완료 조건이 아니라 보강 조건입니다. 같은 요청 안에서 요청된 값 중 하나라도 미확인 상태라면 다른 출처, 직접 시세 URL, 브라우저 근거, 어댑터/API 등 안전한 대안이 남아 있는지 확인하고 계속 진행하세요. freshnessPolicy=strict_timestamp이면 sourceTimestamp 또는 신뢰 가능한 기준 시각이 없을 때 수치를 확정하지 마세요. web_fetch나 브라우저 페이지에서 숫자가 잘 추출되지 않아도 이미 확보한 web_search 스니펫에 요청 대상과 직접 연결된 수치 후보가 있고 도구 정책이 근사값을 허용하면 그 근사값으로 답하세요. 웹 페이지 값 추출을 위해 로컬 workspace file_search를 사용하지 마세요. file_search는 로컬 파일 검색 전용이며 웹 검색 결과나 브라우저 HTML의 숫자 추출 fallback이 아닙니다. 브라우저 검색은 느린 보조 근거입니다. 직접 fetch나 공식 API가 이미 충분하면 브라우저 timeout을 전체 실패로 뒤집지 마세요. 모든 안전한 대안이 소진된 경우에만 시도한 출처와 미확인 항목을 명시해 제한적으로 종료하세요.`
+  const webPolicyDirective = `\n${buildWebAccessRuntimePrompt(workDir)}`
 
-  const instructions = loadMergedInstructions(workDir)
-  const profileContext = buildUserProfilePromptContext()
+  const instructions = loadMergedInstructions(
+    workDir,
+    createInstructionRuntimeContext(dirname(params.memoryJournal.memoryDbFile)),
+  )
+  const profileContext = buildUserProfilePromptContext(config.profile)
   const knowbeeMd = loadKnowbeeMd(workDir)
   if (knowbeeMd) {
     appendRunEvent(runId, "prompt_legacy_project_memory_loaded")
@@ -257,7 +517,8 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       sessionId,
       ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
       detail: {
-        priority: "prompts/ registry first, legacy KNOWBEE.md/WIZBY.md/HOWIE.md appended as project memory context",
+        priority:
+          "prompts/ registry first, legacy KNOWBEE.md/WIZBY.md/HOWIE.md appended as project memory context",
         workDir,
       },
     })
@@ -270,17 +531,23 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
     limit: 4,
     maxChars: contextMode === "isolated" ? 500 : 800,
   })
-  const scheduleMemoryContext = params.includeScheduleMemory && params.scheduleId
-    ? buildScheduleMemoryContext({ scheduleId: params.scheduleId, maxRuns: 3 })
-    : ""
+  const scheduleMemoryContext =
+    params.includeScheduleMemory && params.scheduleId
+      ? buildScheduleMemoryContext({ scheduleId: params.scheduleId, maxRuns: 3 })
+      : ""
+  const memoryOwnerScope = resolveRunAgentMemoryOwnerScope(params)
   const memoryContext = await buildMemoryContext({
+    journalRepository: params.memoryJournal,
     query: params.memorySearchQuery ?? params.userMessage,
     sessionId,
     runId,
+    ownerScope: memoryOwnerScope,
+    recipientScope: memoryOwnerScope,
     ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
     ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
     ...(params.includeScheduleMemory ? { includeSchedule: true } : {}),
-    ...(shouldIncludeDiagnosticMemory(params.userMessage) ? { includeDiagnostic: true } : {}),
+    searchMode: config.memory.searchMode ?? "fts",
+    memoryConfig: config.memory,
     budget: {
       maxChunks: contextMode === "handoff" ? 3 : 4,
       maxChars: contextMode === "isolated" ? 1400 : 2200,
@@ -289,19 +556,63 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   })
   appendAgentLatencyEvent(runId, "memory_total_ms", Date.now() - memoryStartedAt)
 
+  const externalDataContext = [
+    knowbeeMd
+      ? renderPromptContext({
+          id: "project-memory",
+          tag: "file_content",
+          title: "Project Memory",
+          content: knowbeeMd,
+        })
+      : "",
+    flashFeedbackContext
+      ? renderPromptContext({
+          id: "flash-feedback-context",
+          tag: "user_input",
+          title: "Flash Feedback Context",
+          content: flashFeedbackContext,
+        })
+      : "",
+    scheduleMemoryContext
+      ? renderPromptContext({
+          id: "schedule-memory-context",
+          tag: "user_input",
+          title: "Schedule Memory Context",
+          content: scheduleMemoryContext,
+        })
+      : "",
+    memoryContext
+      ? renderPromptContext({
+          id: "memory-context",
+          tag: "tool_result",
+          title: "Memory Context",
+          content: memoryContext,
+        })
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n")
+  if (externalDataContext) {
+    messages.splice(Math.max(0, messages.length - 1), 0, {
+      role: "user",
+      content: externalDataContext,
+    })
+  }
+
   const systemPrompt = [
-    buildMainAgentIdentityPromptContext(config, promptLocale),
+    buildMainAgentIdentityPromptContext(config, promptLocale, workDir),
     "\n",
     baseSystemPrompt,
     `\n${runtimeDirective}`,
     reasoningDirective,
     webPolicyDirective,
-    instructions.mergedText ? `\n[Instruction Chain]\n${instructions.mergedText}` : "",
+    instructions.mergedText
+      ? `\n${agentRuntimePromptContextLabel("instruction_chain_header")}\n${instructions.mergedText}`
+      : "",
+    selectedInstructionSkill
+      ? `\n${agentRuntimePromptContextLabel("selected_instruction_skill_header")}\n${selectedInstructionSkill.content}`
+      : "",
     profileContext ? `\n${profileContext}` : "",
-    knowbeeMd ? renderPromptContext({ id: "project-memory", tag: "file_content", title: "프로젝트 메모리", content: knowbeeMd }) : "",
-    flashFeedbackContext ? renderPromptContext({ id: "flash-feedback-context", tag: "user_input", title: "Flash Feedback Context", content: flashFeedbackContext }) : "",
-    scheduleMemoryContext ? renderPromptContext({ id: "schedule-memory-context", tag: "user_input", title: "Schedule Memory Context", content: scheduleMemoryContext }) : "",
-    memoryContext ? renderPromptContext({ id: "memory-context", tag: "tool_result", title: "Memory Context", content: memoryContext }) : "",
   ].join("")
 
   let totalTokens = 0
@@ -310,18 +621,55 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
   let firstChunkRecorded = false
 
   const ctx: ToolContext = {
+    artifactStorage: params.artifactStorage,
     sessionId,
     runId,
     ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
     workDir,
     userMessage: params.userMessage,
     source: params.source ?? "cli",
+    ...(params.agentId ? { agentId: params.agentId } : {}),
+    ...(params.agentType ? { agentType: params.agentType } : {}),
     allowWebAccess,
     signal,
+    mqttConfig: config.mqtt,
+    securityConfig: config.security,
+    searchConfig: config.search,
+    memoryConfig: config.memory,
     onProgress: (msg) => {
       if (msg.trim()) log.debug(`[tool progress] ${msg.trim()}`)
     },
   }
+  const webResearchRunRecorder = canonicalWebEvidenceEnabled
+    ? createWebResearchRunRecorder({ runId })
+    : null
+  const requiredChangedWebFetch =
+    effectiveRequiredToolNames.has("web_fetch")
+  let canonicalWebEvidenceCompleted =
+    params.webExecutionState?.validatedEvidence.status === "available"
+    && !requiredChangedWebFetch
+  let canonicalWebSearchAttempted =
+    params.webExecutionState?.discovery.status === "attempted"
+  const attemptedWebMethodFingerprints = new Set<string>()
+  const observedWebFetchCandidates = new Map(
+    (params.webExecutionState?.observedFetchCandidates ?? []).map(
+      (candidate) => [candidate.sourceUrl, candidate] as const,
+    ),
+  )
+  const observedSearchResults = new Map(
+    (params.webExecutionState?.observedSearchResults ?? []).map(
+      (candidate) => [candidate.sourceUrl, candidate] as const,
+    ),
+  )
+  const userFetchUrls = readUserWebUrlCandidates(
+    params.memorySearchQuery ?? params.userMessage,
+  )
+  const attemptedFetchUrls = new Set(
+    (params.webExecutionState?.attemptedFetchUrls ?? [])
+      .map(canonicalUrlKey)
+      .filter((url): url is string => url !== null),
+  )
+  let lastCanonicalWebFailureReason: string | null = null
 
   // Tool-call loop
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -331,6 +679,42 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
     }
 
     const pendingToolUses: Array<{ id: string; name: string; input: unknown }> = []
+    const mustUseRequiredTool = round === 0 && effectiveRequiredToolNames.size > 0
+    const admittedRoundToolDefs = mustUseRequiredTool
+      ? toolDefs.filter((tool) => effectiveRequiredToolNames.has(tool.name))
+      : toolDefs
+    const candidateFetchUrls = canonicalWebSearchAttempted
+      ? remainingObservedFetchUrls({
+          observedSearchResults,
+          observedFetchCandidates: observedWebFetchCandidates,
+          userFetchUrls,
+          attemptedFetchUrls,
+        })
+      : []
+    const roundToolDefs: ToolDefinition[] =
+      canonicalWebEvidenceCompleted && !mustUseRequiredTool
+      ? []
+      : admittedRoundToolDefs.flatMap((tool) => {
+          if (tool.name === "web_search" && canonicalWebSearchAttempted) return []
+          if (tool.name !== "web_fetch" || !canonicalWebSearchAttempted) return [tool]
+          return candidateFetchUrls.length > 0
+            ? [constrainWebFetchTool(tool, candidateFetchUrls)]
+            : []
+        })
+    if (canonicalWebEvidenceEnabled && canonicalWebSearchAttempted) {
+      appendRunEvent(
+        runId,
+        [
+          `canonical_web_round=${round + 1}`,
+          `search_candidates=${observedSearchResults.size}`,
+          `fetch_candidates=${observedWebFetchCandidates.size}`,
+          `evidence_completed=${canonicalWebEvidenceCompleted ? "yes" : "no"}`,
+          `fetch_admitted=${roundToolDefs.some((tool) => tool.name === "web_fetch") ? "yes" : "no"}`,
+          `signal_aborted=${signal.aborted ? "yes" : "no"}`,
+        ].join(";"),
+      )
+    }
+    const toolChoiceRequired = mustUseRequiredTool
 
     try {
       for await (const chunk of chatWithContextPreflight({
@@ -338,13 +722,19 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
         model,
         messages,
         system: systemPrompt,
-        tools: toolDefs,
+        tools: roundToolDefs,
+        ...(toolChoiceRequired && roundToolDefs.length > 0
+          ? { toolChoice: "required" as const }
+          : {}),
         signal,
+        memoryConfig: config.memory,
         metadata: {
           runId,
           sessionId,
+          mainAgentNameSnapshot: mainAgentSelfName,
           ...(params.requestGroupId ? { requestGroupId: params.requestGroupId } : {}),
-          operation: `agent.round.${round}`,
+          operation: "agent_round",
+          llmStage: "execution",
         },
       })) {
         if (signal.aborted) break
@@ -368,13 +758,18 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       }
       const msg = err instanceof Error ? err.message : String(err)
       const sanitized = sanitizeUserFacingError(msg)
-      log.error(`AI error: ${msg}`)
+      log.error(`AI error: ${agentRuntimeErrorMessage(err)}`)
       textBuffer = ""
+      appendRunEvent(runId, "internal_recovery_ai_payload_source:runtime_deterministic")
+      appendRunEvent(runId, "internal_recovery_ai_payload_delivery:control_flow_only")
       yield {
         type: "ai_recovery",
         summary: "AI 응답 생성 중 오류가 발생해 다른 방법을 다시 시도합니다.",
         reason: sanitized.reason,
         message: sanitized.userMessage,
+        ...(isAIProviderInvocationError(err)
+          ? { providerFailureReasonCode: err.reasonCode }
+          : {}),
       }
       return
     }
@@ -383,18 +778,7 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
     if (pendingToolUses.length === 0) {
       if (textBuffer) {
         const deliveredText = textBuffer
-        yield { type: "text", delta: deliveredText }
-        eventBus.emit("agent.stream", { sessionId, runId, delta: deliveredText })
-        insertMessage({
-          id: crypto.randomUUID(),
-          session_id: sessionId,
-          root_run_id: runId,
-          role: "assistant",
-          content: deliveredText,
-          tool_calls: null,
-          tool_call_id: null,
-          created_at: Date.now(),
-        })
+        yield { type: "text", delta: deliveredText, textSource: "llm_generated" }
         textBuffer = ""
       }
       break
@@ -423,49 +807,387 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
     })
     textBuffer = ""
 
-    // Execute tools
+    const nextActionAdmission = admitCanonicalExecutionNextAction(pendingToolUses)
+    if (!nextActionAdmission.ok) {
+      const repairResults = pendingToolUses.map((toolUse) => ({
+        type: "tool_result" as const,
+        tool_use_id: toolUse.id,
+        content: JSON.stringify({
+          status: "repair_required",
+          reasonCode: nextActionAdmission.reasonCode,
+        }),
+        is_error: true,
+      }))
+      messages.push({ role: "user", content: repairResults })
+      insertMessage({
+        id: crypto.randomUUID(),
+        session_id: sessionId,
+        root_run_id: runId,
+        role: "user",
+        content: "",
+        tool_calls: JSON.stringify(repairResults),
+        tool_call_id: null,
+        created_at: Date.now(),
+      })
+      appendRunEvent(
+        runId,
+        `canonical_next_action_repair:${nextActionAdmission.reasonCode}`,
+      )
+      continue
+    }
+    if (nextActionAdmission.action.kind !== "execute_tool") {
+      appendRunEvent(runId, "canonical_next_action_repair:unexpected_response_only")
+      continue
+    }
+
+    // Execute the one admitted canonical tool action.
     const toolResultContents: Array<{
       type: "tool_result"
       tool_use_id: string
       content: string
       is_error?: boolean
     }> = []
+    const persistedToolResultContents: typeof toolResultContents = []
     const executionRecoveryFailures: ExecutionRecoveryFailure[] = []
     const executedToolResults: ExecutedToolResult[] = []
-
-    for (const tu of pendingToolUses) {
-      yield { type: "tool_start", toolName: tu.name, params: tu.input }
-      log.info(`Executing tool: ${tu.name}`)
-
-      const result = await toolDispatcher.dispatch(
-        tu.name,
-        tu.input as Record<string, unknown>,
-        ctx,
+    const tu = {
+      id: nextActionAdmission.action.toolUseId,
+      name: nextActionAdmission.action.toolName,
+      input: nextActionAdmission.action.input,
+    }
+    {
+      const canonicalWebTool =
+        canonicalWebEvidenceEnabled &&
+        (tu.name === "web_search" || tu.name === "web_fetch")
+      const duplicateCanonicalWebAction: boolean = Boolean(
+        canonicalWebTool &&
+        (canonicalWebEvidenceCompleted &&
+          !(mustUseRequiredTool && tu.name === "web_fetch") &&
+          (tu.name === "web_search" || tu.name === "web_fetch") ||
+          canonicalWebSearchAttempted && tu.name === "web_search"),
       )
+      const webMethodAdmission =
+        canonicalWebTool &&
+        !duplicateCanonicalWebAction &&
+        (tu.name === "web_search" || tu.name === "web_fetch") &&
+        params.admittedCapabilityExecutionScope
+          ? admitInitialWebResearchMethod({
+              runId,
+              ownerAgentId: executionOwnerAgentId,
+              scope: params.admittedCapabilityExecutionScope,
+              userRequest: params.memorySearchQuery ?? params.userMessage,
+              observedFetchCandidates: [...observedWebFetchCandidates.values()],
+              observedSearchResults: [...observedSearchResults.values()],
+              toolName: tu.name,
+              params: tu.input as Record<string, unknown>,
+            })
+          : null
+      const repeatedWebMethod =
+        webMethodAdmission?.ok === true &&
+        attemptedWebMethodFingerprints.has(
+          webMethodAdmission.receipt.proposalFingerprint,
+        )
+      if (
+        webMethodAdmission?.ok === true &&
+        webMethodAdmission.action.kind === "execute_fetch" &&
+        !duplicateCanonicalWebAction &&
+        !repeatedWebMethod
+      ) {
+        attemptedFetchUrls.add(webMethodAdmission.action.sourceUrl)
+        if (params.webExecutionState) {
+          params.webExecutionState.attemptedFetchUrls = [...attemptedFetchUrls]
+        }
+      }
+      const toolRequestAdmitted =
+        modelVisibleToolNames.has(tu.name) &&
+        (!admittedToolNames || admittedToolNames.has(tu.name))
+      const rootWebMethod =
+        webMethodAdmission?.ok && !repeatedWebMethod && webResearchRunRecorder
+          ? {
+              actionReceiptId: webMethodAdmission.receipt.receiptId,
+              method: webMethodAdmission.action.kind === "execute_search"
+                ? "fast_text_search" as const
+                : "direct_fetch" as const,
+              strategyFingerprint: webMethodAdmission.receipt.proposalFingerprint,
+            }
+          : null
+      const rootWebTraceAdmission = rootWebMethod && webResearchRunRecorder
+        ? webResearchRunRecorder.startAction(rootWebMethod)
+        : null
+      if (toolRequestAdmitted) {
+        yield {
+          type: "tool_start",
+          toolName: tu.name,
+          params: canonicalWebTool &&
+              (tu.name === "web_search" || tu.name === "web_fetch")
+            ? { method: tu.name === "web_search" ? "search" : "fetch" }
+            : tu.input,
+        }
+        if (
+          !duplicateCanonicalWebAction &&
+          !repeatedWebMethod &&
+          (!webMethodAdmission || webMethodAdmission.ok)
+        ) {
+          log.info(`Executing tool: ${tu.name}`)
+        }
+      }
+      if (
+        toolRequestAdmitted &&
+        webMethodAdmission?.ok === true &&
+        !duplicateCanonicalWebAction &&
+        tu.name === "web_search"
+      ) {
+        canonicalWebSearchAttempted = true
+        if (params.webExecutionState) {
+          params.webExecutionState.discovery = { status: "attempted" }
+        }
+      }
+
+      const toolTransportStartedAt = Date.now()
+      const toolWasDispatched =
+        toolRequestAdmitted
+        && !(rootWebTraceAdmission && !rootWebTraceAdmission.ok)
+        && !duplicateCanonicalWebAction
+        && !repeatedWebMethod
+        && !(webMethodAdmission && !webMethodAdmission.ok)
+      const dispatchedResult: ToolResult = !toolRequestAdmitted
+        ? {
+            success: false,
+            output: "",
+            error: "tool_not_admitted",
+            details: {
+              kind: "tool_admission_failure",
+              reasonCode: "tool_not_admitted",
+            },
+          }
+        : rootWebTraceAdmission && !rootWebTraceAdmission.ok
+        ? {
+            success: false,
+            output: "",
+            error: rootWebTraceAdmission.reasonCode,
+            details: {
+              kind: "web_research_run_trace_failure",
+              reasonCode: rootWebTraceAdmission.reasonCode,
+            },
+          }
+        : duplicateCanonicalWebAction
+        ? {
+            success: false,
+            output: "",
+            error: canonicalWebEvidenceCompleted
+              ? "web_evidence_already_completed"
+              : "web_evidence_search_already_executed",
+            details: {
+              kind: "web_evidence_pipeline_failure",
+              reasonCode: canonicalWebEvidenceCompleted
+                ? "web_evidence_already_completed"
+                : "web_evidence_search_already_executed",
+            },
+          }
+        : repeatedWebMethod
+          ? {
+              success: false,
+              output: "",
+              error: "web_research_strategy_unchanged",
+              details: {
+                kind: "web_initial_method_admission_failure",
+                reasonCode: "web_research_strategy_unchanged",
+              },
+            }
+        : webMethodAdmission && !webMethodAdmission.ok
+          ? {
+              success: false,
+              output: "",
+              error: webMethodAdmission.reasonCode,
+              details: {
+                kind: "web_initial_method_admission_failure",
+                reasonCode: webMethodAdmission.reasonCode,
+              },
+            }
+        : params.admittedCapabilityExecutionScope
+        ? await dispatchRunScopedTool({
+            scope: params.admittedCapabilityExecutionScope,
+            runId,
+            ownerAgentId: executionOwnerAgentId,
+            toolName: tu.name,
+            params: webMethodAdmission?.ok
+              ? webMethodAdmission.action.kind === "execute_search"
+                ? {
+                    query: webMethodAdmission.action.query,
+                    freshnessPolicy: webMethodAdmission.action.freshnessPolicy,
+                  }
+                : {
+                    url: webMethodAdmission.action.sourceUrl,
+                    freshnessPolicy: webMethodAdmission.action.freshnessPolicy,
+                  }
+              : tu.input as Record<string, unknown>,
+            context: ctx,
+            dispatcher: toolDispatcher,
+          })
+          : await toolDispatcher.dispatch(
+            tu.name,
+            tu.input as Record<string, unknown>,
+            ctx,
+          )
+      if (toolWasDispatched) {
+        recordLatencyMetric({
+          name: "execution_latency_ms",
+          durationMs: Date.now() - toolTransportStartedAt,
+          runId,
+          requestGroupId: params.requestGroupId ?? runId,
+          source: "canonical_response",
+          detail: {
+            stageCode: "tool_transport",
+            reasonCode: "tool_dispatch",
+          },
+        })
+      }
+      if (rootWebMethod && rootWebTraceAdmission?.ok && webResearchRunRecorder) {
+        const parentEvidenceRefs =
+          webMethodAdmission?.ok &&
+          webMethodAdmission.action.kind === "execute_fetch" &&
+          webMethodAdmission.action.parentEvidenceRef
+            ? [webMethodAdmission.action.parentEvidenceRef]
+            : []
+        const evidence = projectWebResearchRecordedEvidence({
+          toolName: tu.name as "web_search" | "web_fetch",
+          result: dispatchedResult,
+          parentEvidenceRefs,
+        })
+        const rootFailureReason =
+          dispatchedResult.error ??
+          (evidence.length === 0 ? "web_evidence_projection_missing" : undefined)
+        webResearchRunRecorder.finishAction({
+          ...rootWebMethod,
+          outcome: dispatchedResult.success && evidence.length > 0
+            ? "succeeded"
+            : signal.aborted ? "cancelled" : "failed",
+          ...(rootFailureReason ? { reasonCode: rootFailureReason } : {}),
+          evidence,
+        })
+      }
+      if (webMethodAdmission?.ok && !repeatedWebMethod) {
+        attemptedWebMethodFingerprints.add(
+          webMethodAdmission.receipt.proposalFingerprint,
+        )
+      }
+      const result: ToolResult =
+        canonicalWebTool && !duplicateCanonicalWebAction
+          ? projectValidatedWebToolResultForAgent(
+              tu.name as "web_search" | "web_fetch",
+              dispatchedResult,
+            )
+          : dispatchedResult
+      if (
+        canonicalWebTool &&
+        (tu.name === "web_search" || tu.name === "web_fetch")
+      ) {
+        for (const candidate of readInternalObservedFetchCandidates(result.details)) {
+          if (observedWebFetchCandidates.size >= 16) break
+          observedWebFetchCandidates.set(candidate.sourceUrl, candidate)
+        }
+        if (params.webExecutionState) {
+          params.webExecutionState.observedFetchCandidates = [
+            ...observedWebFetchCandidates.values(),
+          ]
+        }
+        if (!duplicateCanonicalWebAction) {
+          for (const candidate of readValidatedSearchResults(result.details)) {
+            if (observedSearchResults.size >= 16) break
+            observedSearchResults.set(candidate.sourceUrl, candidate)
+          }
+          if (params.webExecutionState) {
+            params.webExecutionState.observedSearchResults = [
+              ...observedSearchResults.values(),
+            ]
+          }
+          if (tu.name === "web_search") {
+            appendRunEvent(
+              runId,
+              [
+                `canonical_web_search_candidates=${observedSearchResults.size}`,
+                `signal_aborted=${signal.aborted ? "yes" : "no"}`,
+              ].join(";"),
+            )
+          }
+          canonicalWebEvidenceCompleted =
+            (tu.name === "web_fetch" && result.success) || signal.aborted
+          if (
+            params.webExecutionState &&
+            tu.name === "web_fetch" &&
+            result.success
+          ) {
+            params.webExecutionState.validatedEvidence = { status: "available" }
+          }
+          lastCanonicalWebFailureReason = result.success
+            ? null
+            : result.error?.trim() || "web_evidence_verification_incomplete"
+        }
+      }
 
       yield {
         type: "tool_end",
         toolName: tu.name,
         success: result.success,
         output: result.output,
-        ...(result.details !== undefined ? { details: result.details } : {}),
+        ...buildPublicToolEndProjection(tu.name, result),
       }
       executedToolResults.push({ toolName: tu.name, result })
 
       if (shouldSignalExecutionRecovery(tu.name, result)) {
-        executionRecoveryFailures.push({
-          toolName: tu.name,
-          output: result.output,
-          ...(result.error ? { error: result.error } : {}),
-        })
+        const preDispatchFailure =
+          isRunScopedPreDispatchFailureDetails(result.details)
+            ? result.details
+            : null
+        const yeonjangRecovery = preDispatchFailure
+          ? null
+          : buildYeonjangFailureEvidenceRecoveryPayload({
+              toolName: tu.name,
+              output: result.output,
+              details: result.details,
+              ...(result.evidenceSource ? { evidenceSource: result.evidenceSource } : {}),
+            })
+        executionRecoveryFailures.push(preDispatchFailure
+          ? {
+              toolName: tu.name,
+              output: "",
+              summary: "실행 범위 계약을 다시 계획해야 합니다.",
+              reason:
+                "External effect did not start because execution scope validation failed.",
+              reasonCode: preDispatchFailure.reasonCode,
+              evidenceRefs: [
+                `run-scoped-pre-dispatch:${preDispatchFailure.failureFingerprint}`,
+              ],
+            }
+          : yeonjangRecovery
+            ? {
+                toolName: tu.name,
+                output: "",
+                summary: yeonjangRecovery.summary,
+                reason: yeonjangRecovery.reason,
+              }
+          : {
+              toolName: tu.name,
+              output: result.output,
+              ...(result.error ? { error: result.error } : {}),
+            })
       }
 
       toolResultContents.push({
         type: "tool_result",
         tool_use_id: tu.id,
-        content: buildToolResultContent(tu.name, result),
+        content: buildToolResultContent(tu.name, result, {
+          sourceRef: `tool:${tu.name}:${tu.id}`,
+          ownerScope: memoryOwnerScope,
+        }),
         is_error: !result.success,
       })
+      persistedToolResultContents.push(buildPersistedToolResultBlock({
+        toolName: tu.name,
+        toolUseId: tu.id,
+        result,
+        ownerScope: memoryOwnerScope,
+      }))
     }
 
     messages.push({ role: "user", content: toolResultContents })
@@ -475,48 +1197,119 @@ export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChu
       root_run_id: runId,
       role: "user",
       content: "",
-      tool_calls: JSON.stringify(toolResultContents),
+      tool_calls: JSON.stringify(persistedToolResultContents),
       tool_call_id: null,
       created_at: Date.now(),
     })
 
-    const terminalFailureText = getTerminalFailureText(executedToolResults)
-    if (terminalFailureText) {
-      yield { type: "text", delta: terminalFailureText }
-      eventBus.emit("agent.stream", { sessionId, runId, delta: terminalFailureText })
-      insertMessage({
-        id: crypto.randomUUID(),
-        session_id: sessionId,
-        root_run_id: runId,
-        role: "assistant",
-        content: terminalFailureText,
-        tool_calls: null,
-        tool_call_id: null,
-        created_at: Date.now(),
-      })
+    const terminalFailure = getTerminalFailureNotice(executedToolResults)
+    if (terminalFailure) {
+      yield {
+        type: "text",
+        delta: terminalFailure.text,
+        textSource: "runtime_deterministic",
+        notice: terminalFailure.notice,
+      }
       break
     }
 
-    if (shouldStopAfterToolRound({
-      source: ctx.source,
-      toolResults: executedToolResults,
-    })) {
+    const runScopedPreDispatchFailureSeen = executedToolResults.some(
+      ({ result }) =>
+        isRunScopedPreDispatchFailureDetails(result.details),
+    )
+    if (
+      !runScopedPreDispatchFailureSeen &&
+      shouldStopAfterToolRound({
+        source: ctx.source,
+        toolResults: executedToolResults,
+      })
+    ) {
       break
     }
 
     if (executionRecoveryFailures.length > 0) {
+      const latestRecoveryFailure =
+        executionRecoveryFailures[executionRecoveryFailures.length - 1]
       yield {
         type: "execution_recovery",
         toolNames: [...new Set(executionRecoveryFailures.map((failure) => failure.toolName))],
         summary: buildExecutionRecoverySummary(executionRecoveryFailures),
         reason: buildExecutionRecoveryReason(executionRecoveryFailures),
+        ...(latestRecoveryFailure?.reasonCode
+          ? { reasonCode: latestRecoveryFailure.reasonCode }
+          : {}),
+        ...(latestRecoveryFailure?.evidenceRefs &&
+        latestRecoveryFailure.evidenceRefs.length > 0
+          ? { evidenceRefs: [...latestRecoveryFailure.evidenceRefs] }
+          : {}),
       }
+    }
+    if (runScopedPreDispatchFailureSeen) {
+      break
     }
 
     // Guard against runaway context
     if (totalTokens > MAX_CONTEXT_TOKENS) {
       log.warn("Context token limit approached — stopping tool loop")
       break
+    }
+  }
+
+  if (
+    canonicalWebEvidenceEnabled &&
+    !canonicalWebEvidenceCompleted &&
+    attemptedWebMethodFingerprints.size > 0 &&
+    lastCanonicalWebFailureReason
+  ) {
+    yield {
+      type: "execution_recovery",
+      toolNames: ["web_search", "web_fetch"],
+      summary: "웹 근거가 완료 조건을 충족하지 못해 변경된 방법 검토가 필요합니다.",
+      reason: lastCanonicalWebFailureReason,
+    }
+  }
+
+  if (webResearchRunRecorder && webResearchRunRecorder.snapshot().executionLedger.events.length > 0) {
+    const webResearchState = webResearchRunRecorder.snapshot().machine.state
+    if (webResearchState === "CANDIDATES_READY" || webResearchState === "EVIDENCE_READY") {
+      const verificationStarted = webResearchRunRecorder.startVerification()
+      if (verificationStarted.ok) {
+        webResearchRunRecorder.finishVerification({ outcome: "succeeded" })
+      }
+    }
+    const trace = webResearchRunRecorder.snapshot()
+    try {
+      insertAuditLog({
+        timestamp: Date.now(),
+        session_id: sessionId,
+        run_id: runId,
+        request_group_id: params.requestGroupId ?? runId,
+        channel: params.source ?? "cli",
+        source: "agent",
+        tool_name: "web_research_run_trace",
+        params: JSON.stringify({
+          schemaVersion: trace.schemaVersion,
+          policyVersion: trace.policyVersion,
+          machineState: trace.machine.state,
+          attemptedMethods: trace.attemptedMethods,
+        }),
+        output: JSON.stringify({
+          executionLedger: trace.executionLedger,
+          evidenceLedger: trace.evidenceLedger,
+        }),
+        result: trace.machine.state === "COMPLETED" ? "success" : "failed",
+        duration_ms: Date.now() - now,
+        approval_required: 0,
+        approved_by: null,
+        error_code:
+          trace.machine.state === "COMPLETED"
+            ? null
+            : trace.machine.lastFailureReasonCode,
+        retry_count: Math.max(0, trace.attemptedMethods.length - 1),
+        stop_reason: null,
+      })
+    } catch {
+      log.fieldDebug("web_research_run_trace_audit_failed", { runId })
     }
   }
 
@@ -532,13 +1325,15 @@ function shouldStopAfterToolRound(params: {
   toolResults: ExecutedToolResult[]
 }): boolean {
   for (const toolResult of params.toolResults) {
-    if (shouldTerminateRunAfterSuccessfulTool({
-      type: "tool_end",
-      toolName: toolResult.toolName,
-      success: toolResult.result.success,
-      output: toolResult.result.output,
-      ...(toolResult.result.details !== undefined ? { details: toolResult.result.details } : {}),
-    })) {
+    if (
+      shouldTerminateRunAfterSuccessfulTool({
+        type: "tool_end",
+        toolName: toolResult.toolName,
+        success: toolResult.result.success,
+        output: toolResult.result.output,
+        ...(toolResult.result.details !== undefined ? { details: toolResult.result.details } : {}),
+      })
+    ) {
       return true
     }
   }
@@ -547,8 +1342,8 @@ function shouldStopAfterToolRound(params: {
     return false
   }
 
-  return params.toolResults.some(({ toolName, result }) =>
-    toolName === "telegram_send_file" && !result.success,
+  return params.toolResults.some(
+    ({ toolName, result }) => toolName === "telegram_send_file" && !result.success,
   )
 }
 
@@ -560,39 +1355,320 @@ function appendAgentLatencyEvent(runId: string, name: string, durationMs: number
   }
 }
 
-function shouldIncludeDiagnosticMemory(userMessage: string): boolean {
-  return DIAGNOSTIC_MEMORY_PATTERN.test(userMessage.trim())
-}
-
-function shouldAllowWebAccess(userMessage: string): boolean {
-  const normalized = userMessage.trim()
-  if (!normalized) return false
-  return WEB_POLICY_PATTERN.some((pattern) => pattern.test(normalized))
-}
-
 function shouldSignalExecutionRecovery(toolName: string, result: ToolResult): boolean {
-  return !result.success
-    && EXECUTION_RECOVERY_TOOL_NAMES.has(toolName)
-    && !isNonRecoverableExecutionToolFailure(result)
+  if (isRunScopedPreDispatchFailureDetails(result.details)) return true
+  return (
+    !result.success &&
+    EXECUTION_RECOVERY_TOOL_NAMES.has(toolName) &&
+    !isNonRecoverableExecutionToolFailure(result)
+  )
+}
+
+function buildPublicToolEndProjection(toolName: string, result: ToolResult): {
+  output?: string
+  details?: unknown
+  evidenceSource?: Readonly<ToolEvidenceSourceReceipt>
+} {
+  const projectedResult = projectToolResultForExternalBoundary(toolName, result)
+  if (toolName.startsWith("yeonjang_")) {
+    const details = redactYeonjangPublicDetails(projectedResult.details)
+    return {
+      ...(projectedResult !== result ? { output: projectedResult.output } : {}),
+      ...(details !== undefined ? { details } : {}),
+    }
+  }
+  if (toolName === "web_search" || toolName === "web_fetch") {
+    const details = projectedResult.details && typeof projectedResult.details === "object" &&
+        !Array.isArray(projectedResult.details)
+      ? { ...(projectedResult.details as Record<string, unknown>) }
+      : undefined
+    if (details) delete details.internalObservedFetchCandidates
+    return {
+      ...(details && Object.keys(details).length > 0 ? { details } : {}),
+      ...(projectedResult.evidenceSource
+        ? { evidenceSource: projectedResult.evidenceSource }
+        : {}),
+    }
+  }
+
+  return {
+    ...(projectedResult.details !== undefined ? { details: projectedResult.details } : {}),
+    ...(projectedResult.evidenceSource
+      ? { evidenceSource: projectedResult.evidenceSource }
+      : {}),
+  }
+}
+
+function buildPersistedToolResultProjection(
+  toolName: string,
+  result: ToolResult,
+): ToolResult {
+  const projectedResult = projectToolResultForExternalBoundary(toolName, result)
+  if (toolName !== "web_search" && toolName !== "web_fetch") return projectedResult
+  const details = projectedResult.details && typeof projectedResult.details === "object" &&
+      !Array.isArray(projectedResult.details)
+    ? { ...(projectedResult.details as Record<string, unknown>) }
+    : undefined
+  if (!details || !Object.hasOwn(details, "internalObservedFetchCandidates")) {
+    return projectedResult
+  }
+  delete details.internalObservedFetchCandidates
+  return {
+    ...projectedResult,
+    details: Object.keys(details).length > 0 ? details : undefined,
+  }
+}
+
+export interface PersistedToolResultBlock {
+  readonly type: "tool_result"
+  readonly tool_use_id: string
+  readonly content: string
+  readonly is_error?: boolean
+}
+
+export function buildPersistedToolResultBlock(input: {
+  toolName: string
+  toolUseId: string
+  result: ToolResult
+  ownerScope?: UntrustedEvidenceOwnerScope
+}): PersistedToolResultBlock {
+  const projectedResult = buildPersistedToolResultProjection(
+    input.toolName,
+    input.result,
+  )
+  return {
+    type: "tool_result",
+    tool_use_id: input.toolUseId,
+    content: buildToolResultContent(input.toolName, projectedResult, {
+      sourceRef: `tool:${input.toolName}:${input.toolUseId}`,
+      ownerScope: input.ownerScope ?? MAIN_AGENT_MEMORY_OWNER_SCOPE,
+    }),
+    ...(!projectedResult.success ? { is_error: true } : {}),
+  }
+}
+
+const CAMERA_PUBLIC_ARTIFACT_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+])
+
+function projectToolResultForExternalBoundary(
+  toolName: string,
+  result: ToolResult,
+): ToolResult {
+  if (toolName !== "yeonjang_camera_capture" || !result.success) return result
+  const details = result.details && typeof result.details === "object" &&
+      !Array.isArray(result.details)
+    ? result.details as Record<string, unknown>
+    : {}
+  const verification =
+    details.kind === "camera_artifact" || details.kind === "artifact_delivery"
+      ? details
+      : details.artifactVerification &&
+          typeof details.artifactVerification === "object" &&
+          !Array.isArray(details.artifactVerification)
+        ? details.artifactVerification as Record<string, unknown>
+        : {}
+  const artifactRef =
+    (verification.status === "verified"
+      || details.kind === "camera_artifact"
+      || details.kind === "artifact_delivery") &&
+    typeof verification.artifactRef === "string" &&
+    verification.artifactRef.startsWith("artifact:")
+      ? verification.artifactRef
+      : undefined
+  const mimeType =
+    typeof verification.mimeType === "string" &&
+    CAMERA_PUBLIC_ARTIFACT_MIME_TYPES.has(verification.mimeType)
+      ? verification.mimeType
+      : undefined
+  const sizeBytes =
+    typeof (verification.sizeBytes ?? verification.size) === "number" &&
+    Number.isSafeInteger(verification.sizeBytes ?? verification.size) &&
+    Number(verification.sizeBytes ?? verification.size) > 0
+      ? Number(verification.sizeBytes ?? verification.size)
+      : undefined
+  const artifact =
+    artifactRef && mimeType && sizeBytes !== undefined
+      ? { artifactRef, mimeType, sizeBytes }
+      : undefined
+  const artifactDetails =
+    artifact && details.kind === "artifact_delivery"
+      ? {
+          kind: "artifact_delivery",
+          channel: details.channel,
+          source: details.source,
+          artifactRef: artifact.artifactRef,
+          mimeType: artifact.mimeType,
+          size: artifact.sizeBytes,
+        }
+      : artifact
+        ? {
+            kind: "camera_artifact",
+            ...artifact,
+          }
+        : undefined
+  return {
+    ...result,
+    output: artifact
+      ? "카메라 촬영 결과가 검증된 artifact로 저장되었습니다."
+      : "카메라 촬영 작업이 검증되었습니다.",
+    details: artifactDetails,
+  }
+}
+
+function readInternalObservedFetchCandidates(value: unknown): WebResearchLinkCandidate[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return []
+  const candidates = (value as Record<string, unknown>).internalObservedFetchCandidates
+  if (!Array.isArray(candidates)) return []
+  return candidates.filter((candidate): candidate is WebResearchLinkCandidate => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false
+    const value = candidate as Partial<WebResearchLinkCandidate>
+    return (
+      value.kind === "fetch" &&
+      typeof value.candidateId === "string" &&
+      typeof value.sourceUrl === "string" &&
+      typeof value.evidenceRef === "string" &&
+      typeof value.strategyFingerprint === "string" &&
+      value.discovery?.origin === "fetched_document_link" &&
+      typeof value.discovery.discoveryFingerprint === "string"
+    )
+  })
+}
+
+function readValidatedSearchResults(
+  value: unknown,
+): Array<{ sourceUrl: string; evidenceRef: string }> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return []
+  const details = value as Record<string, unknown>
+  if (details.kind !== "web_search_evidence" || !Array.isArray(details.results)) return []
+  return details.results.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return []
+    const result = item as Record<string, unknown>
+    const sourceUrl = typeof result.url === "string" ? result.url.trim() : ""
+    const evidenceRef =
+      typeof result.evidenceRef === "string" ? result.evidenceRef.trim() : ""
+    return sourceUrl && evidenceRef ? [{ sourceUrl, evidenceRef }] : []
+  })
+}
+
+const YEONJANG_PUBLIC_REDACTED_DETAIL_KEYS = new Set([
+  "accesstoken",
+  "apikey",
+  "authorization",
+  "base64",
+  "base64data",
+  "base64_data",
+  "evidence",
+  "expectedtext",
+  "expected_text",
+  "localsavedpath",
+  "local_saved_path",
+  "password",
+  "raw",
+  "rawpayload",
+  "raw_payload",
+  "replacementtext",
+  "replacement_text",
+  "secret",
+  "token",
+])
+
+function redactYeonjangPublicDetails(value: unknown): unknown {
+  if (value === undefined) return undefined
+  if (value === null) return null
+  if (Array.isArray(value)) return value.map((item) => redactYeonjangPublicDetails(item))
+  if (typeof value !== "object") return value
+
+  const projected: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (isYeonjangPublicRedactedDetailKey(key)) continue
+    const redacted = redactYeonjangPublicDetails(item)
+    if (redacted !== undefined) projected[key] = redacted
+  }
+  return projected
+}
+
+function isYeonjangPublicRedactedDetailKey(key: string): boolean {
+  const normalized = key.replace(/[^a-zA-Z0-9_]/g, "").toLowerCase()
+  if (YEONJANG_PUBLIC_REDACTED_DETAIL_KEYS.has(normalized)) return true
+  return (
+    normalized.includes("token") ||
+    normalized.includes("secret") ||
+    normalized.includes("password") ||
+    normalized.includes("base64") ||
+    normalized.includes("rawpayload")
+  )
 }
 
 function isNonRecoverableExecutionToolFailure(result: ToolResult): boolean {
   return result.error === "CAMERA_FACING_SELECTION_UNSUPPORTED"
 }
 
-function getTerminalFailureText(toolResults: ExecutedToolResult[]): string | null {
-  for (const { result } of toolResults) {
+function getTerminalFailureNotice(toolResults: ExecutedToolResult[]): {
+  text: string
+  notice: AgentTerminalFailureNotice
+} | null {
+  for (const { toolName, result } of toolResults) {
     if (!result.success && shouldStopAfterFailure(result.details)) {
-      const text = result.output.trim()
-      if (text) return text
+      const terminalFailure = buildTerminalFailureNotice(toolName, result)
+      if (terminalFailure?.text) return terminalFailure
     }
   }
   return null
 }
 
+function buildTerminalFailureNotice(
+  toolName: string,
+  result: ToolResult,
+): {
+  text: string
+  notice: AgentTerminalFailureNotice
+} | null {
+  const output = result.output.trim()
+  if (!output) return null
+  const trusted = isTrustedDeterministicTerminalFailure(result)
+  const text = trusted ? output : sanitizeUserFacingError(output).userMessage
+  if (!text.trim()) return null
+  return {
+    text,
+    notice: buildAgentTerminalFailureNotice({
+      toolName,
+      failureTrust: trusted ? "trusted_deterministic" : "sanitized_tool_failure",
+      reason: terminalFailureReason(result, text, trusted),
+    }),
+  }
+}
+
+function terminalFailureReason(result: ToolResult, text: string, trusted: boolean): string {
+  if (trusted && result.details && typeof result.details === "object") {
+    const failureKind = (result.details as StopAfterFailureDetails).failureKind?.trim()
+    if (failureKind) return failureKind
+  }
+  const error = result.error?.trim()
+  if (error) return sanitizeUserFacingError(error).reason
+  return text
+}
+
 function shouldStopAfterFailure(details: unknown): boolean {
   if (!details || typeof details !== "object") return false
   return Boolean((details as StopAfterFailureDetails).stopAfterFailure)
+}
+
+function isTrustedDeterministicTerminalFailure(result: ToolResult): boolean {
+  if (!result.details || typeof result.details !== "object") return false
+  const typed = result.details as StopAfterFailureDetails
+  if (typed.via !== "yeonjang") return false
+  if (typed.failureKind === "path_bug" || typed.failureKind === "timeout") return true
+  const failure = typed.failure
+  return (
+    typed.failureKind === "remote_rejected"
+    && result.output.trim() === TRUSTED_SCREEN_PERMISSION_DENIED_OUTPUT
+    && failure?.reasonCode === "screen_permission_denied"
+    && failure.terminalStage === "rejected"
+    && failure.retrySafety === "change_strategy"
+  )
 }
 
 function buildExecutionRecoverySummary(failures: ExecutionRecoveryFailure[]): string {
@@ -601,6 +1677,8 @@ function buildExecutionRecoverySummary(failures: ExecutionRecoveryFailure[]): st
     return "실행 실패 원인을 분석하고 다른 방법을 다시 시도합니다."
   }
   if (toolNames.length === 1) {
+    const summary = failures[failures.length - 1]?.summary?.trim()
+    if (summary) return summary
     return `${toolNames[0]} 실패 원인을 분석하고 다른 방법을 다시 시도합니다.`
   }
   return `${toolNames.join(", ")} 실패 원인을 분석하고 대안을 다시 시도합니다.`
@@ -608,11 +1686,15 @@ function buildExecutionRecoverySummary(failures: ExecutionRecoveryFailure[]): st
 
 function buildExecutionRecoveryReason(failures: ExecutionRecoveryFailure[]): string {
   const latest = failures[failures.length - 1]
+  const projectedReason = latest?.reason?.trim()
+  if (projectedReason) return projectedReason
   const latestOutput = latest?.output ?? ""
   if (/(not found|command not found|enoent|is not recognized)/i.test(latestOutput)) {
     return "실행 대상 명령이나 프로그램을 찾지 못했습니다."
   }
-  if (/(permission denied|operation not permitted|eacces|not authorized|권한)/i.test(latestOutput)) {
+  if (
+    /(permission denied|operation not permitted|eacces|not authorized|권한)/i.test(latestOutput)
+  ) {
     return "권한 또는 접근 제한으로 작업 실행이 실패했습니다."
   }
   if (/(no such file|cannot find|not a directory|경로|파일을 찾을 수 없음)/i.test(latestOutput)) {
@@ -621,34 +1703,56 @@ function buildExecutionRecoveryReason(failures: ExecutionRecoveryFailure[]): str
   if (/(timeout|timed out|시간 초과)/i.test(latestOutput)) {
     return "시간 초과로 작업 실행이 실패했습니다."
   }
-  return latest?.error?.trim() || "작업 실행이 실패해 다른 방법 검토가 필요합니다."
+  const latestError = latest?.error?.trim()
+  if (!latestError) return "작업 실행이 실패해 다른 방법 검토가 필요합니다."
+  const sanitized = sanitizeUserFacingError(latestError)
+  return sanitized.kind === "unknown"
+    ? "작업 실행이 실패해 다른 방법 검토가 필요합니다."
+    : sanitized.userMessage
 }
 
 function describeAiErrorReason(message: string): string {
   return sanitizeUserFacingError(message).reason
 }
 
-function buildToolResultContent(toolName: string, result: ToolResult): string {
+function buildToolResultContent(
+  toolName: string,
+  result: ToolResult,
+  provenance: { sourceRef: string; ownerScope: UntrustedEvidenceOwnerScope },
+): string {
+  const projectedResult = projectToolResultForExternalBoundary(toolName, result)
   const sections: string[] = []
-  const output = result.output.trim()
-  sections.push(output || "(no output)")
+  const output = projectedResult.output.trim()
+  sections.push(output || agentRuntimePromptContextLabel("no_output"))
 
-  if (!result.success) {
+  if (!projectedResult.success) {
     sections.push(
       [
-        "[tool_failure]",
-        `tool: ${toolName}`,
-        `error: ${(result.error ?? "unknown").trim() || "unknown"}`,
+        agentRuntimePromptContextLabel("tool_failure_header"),
+        `${agentRuntimePromptContextLabel("tool_label")} ${toolName}`,
+        `${agentRuntimePromptContextLabel("error_label")} ${(projectedResult.error ?? "unknown").trim() || "unknown"}`,
       ].join("\n"),
     )
   }
 
-  const details = stringifyToolDetails(result.details)
+  const promptDetails = toolName.startsWith("yeonjang_")
+    ? redactYeonjangPublicDetails(projectedResult.details)
+    : projectedResult.details
+  const details = stringifyToolDetails(promptDetails)
   if (details) {
-    sections.push(`[details]\n${details}`)
+    sections.push(`${agentRuntimePromptContextLabel("details_header")}\n${details}`)
   }
 
-  return sections.join("\n\n")
+  return renderUntrustedEvidenceForPrompt(
+    createUntrustedEvidenceEnvelope({
+      sourceKind: projectedResult.evidenceSource?.sourceKind ?? "tool",
+      sourceRef: projectedResult.evidenceSource?.sourceRef ?? provenance.sourceRef,
+      contentLabel: `Tool result: ${toolName}`,
+      ownerScope: provenance.ownerScope,
+      content: sections.join("\n\n"),
+      redactionState: "not_required",
+    }),
+  )
 }
 
 function stringifyToolDetails(details: unknown): string | null {

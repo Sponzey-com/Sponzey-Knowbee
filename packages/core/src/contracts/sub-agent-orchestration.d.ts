@@ -1,9 +1,10 @@
-import { type ContractSchemaVersion, type ContractValidationResult, type JsonObject, type JsonValue } from "./index.js";
+import type { ContractSchemaVersion, ContractValidationResult, JsonObject, JsonValue } from "./index.js";
 import type { ChannelSource } from "../channels/contracts.js";
 export declare const SUB_AGENT_CONTRACT_SCHEMA_VERSION: 1;
 export type AgentEntityType = "knowbee" | "sub_agent";
 export type RelationshipEntityType = AgentEntityType | "team" | "session" | "sub_session" | "capability" | "data_exchange";
 export type AgentStatus = "enabled" | "disabled" | "archived" | "degraded";
+export declare const AGENT_STATUSES: readonly AgentStatus[];
 export type OrchestrationMode = "single_knowbee" | "orchestration";
 export type OrchestrationFallbackStrategyMode = "self_solve" | "direct_current_agent" | "return_to_parent" | "ask_parent" | "ask_user" | "fail_with_reason" | "root_knowbee_direct" | "explicit_provider" | "single_knowbee";
 export type OrchestrationSelectedExecutorSource = "execution_decision";
@@ -16,7 +17,7 @@ export type DepthScopedToolKind = "session_control" | "system" | "mcp" | "shell"
 export type DataExchangeRetentionPolicy = "session_only" | "short_term" | "long_term_candidate" | "discard_after_review";
 export type LearningApprovalState = "auto_applied" | "pending_review" | "rejected" | "applied_by_user";
 export type RelationshipEdgeType = "parent_child" | "delegation" | "data_exchange" | "permission" | "capability_delegation" | "team_membership";
-export type NicknameEntityType = AgentEntityType | "team";
+export type AgentNameEntityType = AgentEntityType | "team";
 export type NamedDeliveryKind = "data_exchange" | "result_report" | "handoff_context";
 export type TeamResultPolicyMode = "lead_synthesis" | "owner_synthesis" | "reviewer_required" | "verifier_required" | "quorum_required";
 export type TeamConflictPolicyMode = "lead_decides" | "owner_decides" | "reviewer_decides" | "report_conflict";
@@ -67,18 +68,20 @@ export interface DelegationPolicy {
     redelegationAllowed?: boolean;
     escalationPolicy?: "return_to_parent" | "ask_user" | "stop_with_report";
 }
-export interface NicknameSnapshot {
-    entityType: NicknameEntityType;
+export interface AgentNameSnapshot {
+    entityType: AgentNameEntityType;
     entityId: string;
-    nicknameSnapshot: string;
+    agentName?: string;
+    agentNameSnapshot: string;
 }
-export interface NicknameNamespaceEntry extends NicknameSnapshot {
+export type AgentAttributionSnapshot = AgentNameSnapshot;
+export interface AgentNameNamespaceEntry extends AgentNameSnapshot {
     sourcePath?: string;
 }
-export interface NicknameNamespaceConflict {
-    normalizedNickname: string;
-    existing: NicknameNamespaceEntry;
-    attempted: NicknameNamespaceEntry;
+export interface AgentNameNamespaceConflict {
+    normalizedAgentName: string;
+    existing: AgentNameNamespaceEntry;
+    attempted: AgentNameNamespaceEntry;
 }
 export interface OwnerScope {
     ownerType: "knowbee" | "sub_agent" | "team" | "system";
@@ -147,9 +150,8 @@ export interface BaseAgentConfig {
     schemaVersion: ContractSchemaVersion;
     agentType: AgentEntityType;
     agentId: string;
-    displayName: string;
-    nickname?: string;
-    normalizedNickname?: string;
+    agentName: string;
+    normalizedAgentName?: string;
     status: AgentStatus;
     role: string;
     personality: string;
@@ -177,6 +179,10 @@ export interface SubAgentConfig extends BaseAgentConfig {
     delegation: DelegationPolicy;
 }
 export type AgentConfig = KnowbeeConfig | SubAgentConfig;
+export interface AgentConfigNameInput {
+    agentType: AgentEntityType;
+    agentName?: string;
+}
 export interface TeamMembership {
     membershipId: string;
     teamId: string;
@@ -203,8 +209,6 @@ export interface TeamConfig {
     schemaVersion: ContractSchemaVersion;
     teamId: string;
     displayName: string;
-    nickname?: string;
-    normalizedNickname?: string;
     status: Exclude<AgentStatus, "degraded">;
     purpose: string;
     ownerAgentId?: string;
@@ -263,7 +267,7 @@ export interface TeamExecutionPlan {
     teamExecutionPlanId: string;
     parentRunId: string;
     teamId: string;
-    teamNicknameSnapshot?: string;
+    teamNameSnapshot?: string;
     ownerAgentId: string;
     leadAgentId: string;
     memberTaskAssignments: TeamExecutionPlanAssignment[];
@@ -303,8 +307,7 @@ export interface SessionContract {
     owner: OwnerScope;
     parentRequestId: string;
     status: SubSessionStatus;
-    agentDisplayName?: string;
-    agentNickname?: string;
+    agentNameSnapshot?: string;
     orchestrationPlanId?: string;
     startedAt?: number;
     finishedAt?: number;
@@ -315,15 +318,16 @@ export interface SubSessionContract {
     parentSessionId: string;
     parentRunId: string;
     parentAgentId?: string;
-    parentAgentDisplayName?: string;
-    parentAgentNickname?: string;
+    parentAgentName?: string;
+    parentAgentNameSnapshot?: string;
     agentId: string;
-    agentDisplayName: string;
-    agentNickname?: string;
+    agentName: string;
+    agentNameSnapshot?: string;
     commandRequestId: string;
     status: SubSessionStatus;
     promptBundleId: string;
     promptBundleSnapshot?: AgentPromptBundle;
+    delegatedExecutionSnapshotFingerprint?: string;
     memoryBootstrap?: SubSessionMemoryBootstrap;
     modelExecutionSnapshot?: ModelExecutionSnapshot;
     startedAt?: number;
@@ -372,7 +376,7 @@ export interface SubSessionFeedbackCapsulePayload {
 }
 export interface SubSessionMemoryBootstrap {
     ownerScope: SubSessionMemoryOwnerScope;
-    nicknameSnapshot?: string;
+    agentNameSnapshot?: string;
     seedMode: "child_own_state";
     rawTranscriptIncluded: false;
     latestCapsuleId?: string;
@@ -501,9 +505,10 @@ export interface AgentPromptBundle {
     agentId: string;
     agentType: AgentEntityType;
     role: string;
-    displayNameSnapshot: string;
-    nicknameSnapshot?: string;
-    personalitySnapshot: string;
+    agentName?: string;
+    agentNameSnapshot: string;
+    personalitySnapshot?: string;
+    promptLayerStack?: import("./sub-agent-prompt-layer.js").SubAgentPromptLayer[];
     teamContext: Array<{
         teamId: string;
         displayName: string;
@@ -528,7 +533,7 @@ export interface AgentPromptBundle {
     completionCriteria?: ExpectedOutputContract[];
     createdAt: number;
 }
-export type AgentPromptFragmentKind = "identity" | "role" | "personality" | "specialty" | "avoid_tasks" | "team_context" | "memory_policy" | "capability_policy" | "permission_profile" | "model_profile" | "completion_criteria" | "prompt_source" | "imported_profile" | "safety_rule" | "self_nickname_rule" | "nickname_attribution_rule" | "capability_catalog" | "capability_binding" | "executor_profile_projection";
+export type AgentPromptFragmentKind = "identity" | "role" | "personality" | "specialty" | "avoid_tasks" | "team_context" | "memory_policy" | "capability_policy" | "permission_profile" | "model_profile" | "completion_criteria" | "prompt_source" | "imported_profile" | "safety_rule" | "self_agent_name_rule" | "agent_name_attribution_rule" | "capability_catalog" | "capability_binding" | "executor_profile_projection";
 export type AgentPromptFragmentStatus = "active" | "inactive" | "review" | "blocked";
 export interface AgentPromptFragment {
     fragmentId: string;
@@ -553,7 +558,8 @@ export interface CommandRequest {
     parentRunId: string;
     subSessionId: string;
     targetAgentId: string;
-    targetNicknameSnapshot?: string;
+    targetAgentName?: string;
+    targetAgentNameSnapshot?: string;
     topologyExecutor?: {
         graphExecutionPlanId: string;
         executorId?: string;
@@ -569,7 +575,7 @@ export interface ProgressEvent {
     eventId: string;
     parentRunId: string;
     subSessionId: string;
-    speaker?: NicknameSnapshot;
+    speaker?: AgentAttributionSnapshot;
     status: SubSessionStatus;
     summary: string;
     at: number;
@@ -585,7 +591,7 @@ export interface ResultReport {
     resultReportId: string;
     parentRunId: string;
     subSessionId: string;
-    source?: NicknameSnapshot;
+    source?: AgentAttributionSnapshot;
     status: "completed" | "needs_revision" | "failed";
     outputs: Array<{
         outputId: string;
@@ -615,8 +621,10 @@ export interface FeedbackRequest {
     previousSubSessionIds: string[];
     targetAgentPolicy: FeedbackTargetAgentPolicy;
     targetAgentId?: string;
-    targetAgentNicknameSnapshot?: string;
-    requestingAgentNicknameSnapshot?: string;
+    targetAgentName?: string;
+    targetAgentNameSnapshot?: string;
+    requestingAgentName?: string;
+    requestingAgentNameSnapshot?: string;
     synthesizedContextExchangeId?: string;
     carryForwardOutputs: Array<{
         outputId: string;
@@ -646,8 +654,10 @@ export interface DataExchangePackage {
     exchangeId: string;
     sourceOwner: OwnerScope;
     recipientOwner: OwnerScope;
-    sourceNicknameSnapshot?: string;
-    recipientNicknameSnapshot?: string;
+    sourceAgentName?: string;
+    sourceAgentNameSnapshot?: string;
+    recipientAgentName?: string;
+    recipientAgentNameSnapshot?: string;
     purpose: string;
     allowedUse: "temporary_context" | "memory_candidate" | "verification_only";
     retentionPolicy: DataExchangeRetentionPolicy;
@@ -661,7 +671,7 @@ export interface UserVisibleAgentMessage {
     identity: RuntimeIdentity;
     messageId: string;
     parentRunId: string;
-    speaker: NicknameSnapshot;
+    speaker: AgentAttributionSnapshot;
     text: string;
     createdAt: number;
 }
@@ -669,8 +679,8 @@ export interface NamedHandoffEvent {
     identity: RuntimeIdentity;
     handoffId: string;
     parentRunId: string;
-    sender: NicknameSnapshot;
-    recipient: NicknameSnapshot;
+    sender: AgentAttributionSnapshot;
+    recipient: AgentAttributionSnapshot;
     purpose: string;
     createdAt: number;
 }
@@ -679,8 +689,8 @@ export interface NamedDeliveryEvent {
     deliveryId: string;
     parentRunId: string;
     deliveryKind: NamedDeliveryKind;
-    sender: NicknameSnapshot;
-    recipient: NicknameSnapshot;
+    sender: AgentAttributionSnapshot;
+    recipient: AgentAttributionSnapshot;
     summary: string;
     exchangeId?: string;
     resultReportId?: string;
@@ -753,9 +763,12 @@ export interface RelationshipGraphEdge {
     label?: string;
     metadata?: JsonObject;
 }
-export declare function normalizeNicknameSnapshot(value: string): string;
-export declare function normalizeNickname(value: string): string;
-export declare function findNicknameNamespaceConflict(entries: NicknameNamespaceEntry[]): NicknameNamespaceConflict | undefined;
+export declare function normalizeAgentNameSnapshot(value: string): string;
+export declare function normalizeAgentName(value: string): string;
+export declare const DEFAULT_KNOWBEE_AGENT_NAME = "Knowbee";
+export declare function findAgentNameNamespaceConflict(entries: AgentNameNamespaceEntry[]): AgentNameNamespaceConflict | undefined;
+export declare function resolveAgentConfigAgentName(config: AgentConfigNameInput): string;
+export declare function buildAgentNameSnapshotFromAgentConfig(config: Pick<BaseAgentConfig, "agentType" | "agentId" | "agentName">): AgentNameSnapshot;
 export declare function validateTeamMembership(value: unknown): ContractValidationResult<TeamMembership>;
 export declare function validateAgentRelationship(value: unknown): ContractValidationResult<AgentRelationship>;
 export declare function validateAgentConfig(value: unknown): ContractValidationResult<AgentConfig>;

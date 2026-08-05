@@ -6,7 +6,10 @@ import type {
   ExecutorGraphWorkspace,
   ExecutorRuntimeMode,
 } from "../../lib/executor-graph"
-import { buildExecutorGraphRelationInfoMap } from "../../lib/executor-graph-relations"
+import {
+  buildExecutorGraphRelationInfoMap,
+  normalizeLegacyExecutorDefaultText,
+} from "../../lib/executor-graph-relations"
 import {
   type ExecutorInferenceResult,
   confirmExecutorUnderstanding,
@@ -21,18 +24,20 @@ import {
   nodeDefinitionDraftFromExecutor,
 } from "../../lib/node-definition-suggestion"
 import type { TopologySubAgentSummary } from "../../lib/topology-sub-agent-sync"
+import { mainAgentLabelEn, mainAgentLabelKo } from "../../lib/main-agent-copy"
 import { useUiI18n } from "../../lib/ui-i18n"
 import { ExecutorUnderstandingPanel } from "./ExecutorUnderstandingPanel"
 import { NodeDefinitionAiButton } from "./NodeDefinitionAiButton"
 import { NodeDefinitionAiDialog } from "./NodeDefinitionAiDialog"
 
-export type ExecutorFriendlyRuntimeLabel = "자동 처리" | "최종 검토" | "도구 실행" | "외부 처리"
+export type ExecutorFriendlyRuntimeLabel = "자동 처리" | "최종 검토" | "외부 도구 실행" | "외부 처리"
 
 export interface ExecutorInspectorProps {
   executor?: ExecutorDraft | null
   graph?: ExecutorGraphWorkspace | null
   workspaceId?: string
   topologyId?: string
+  rootAgentLabel?: string
   subAgentSummary?: TopologySubAgentSummary
   readOnly?: boolean
   onExecutorChange?: (executor: ExecutorDraft) => void
@@ -42,7 +47,7 @@ export interface ExecutorInspectorProps {
 export function executorFriendlyRuntimeLabel(
   mode: ExecutorRuntimeMode,
 ): ExecutorFriendlyRuntimeLabel {
-  if (mode === "tool_execution") return "도구 실행"
+  if (mode === "tool_execution") return "외부 도구 실행"
   if (mode === "external") return "외부 처리"
   if (mode === "approval" || mode === "human_check" || mode === "unknown") return "최종 검토"
   return "자동 처리"
@@ -152,6 +157,7 @@ export function ExecutorInspector({
   graph,
   workspaceId = "workspace:draft",
   topologyId = "workspace:draft",
+  rootAgentLabel,
   subAgentSummary,
   readOnly = false,
   onExecutorChange,
@@ -168,9 +174,11 @@ export function ExecutorInspector({
     [executor, graph],
   )
   const relationInfo = React.useMemo(
-    () => (executor ? buildExecutorGraphRelationInfoMap(graph).get(executor.id) : undefined),
-    [executor, graph],
+    () => (executor ? buildExecutorGraphRelationInfoMap(graph, { rootAgentLabel }).get(executor.id) : undefined),
+    [executor, graph, rootAgentLabel],
   )
+  const setupInspectorCopy = rootAgentLabel !== undefined
+  const mainAgentLabel = displayMainAgentLabel(rootAgentLabel, text)
 
   if (!executor || !inference) {
     return (
@@ -184,8 +192,10 @@ export function ExecutorInspector({
         </div>
         <div className="mt-3 rounded-lg border border-dashed border-stone-200 p-4 text-sm text-stone-500">
           {text(
-            "서브 에이전트를 선택하면 여기에서 노비가 이해한 내용을 확인합니다.",
-            "Select a sub-agent to review what Knowbee understood.",
+            setupInspectorCopy
+              ? "서브 에이전트를 선택하면 여기에서 정의 요약을 확인합니다."
+              : "서브 에이전트를 선택하면 여기에서 메인 에이전트가 이해한 내용을 확인합니다.",
+            "Select a sub-agent to review what the main agent understood.",
           )}
         </div>
       </section>
@@ -224,20 +234,32 @@ export function ExecutorInspector({
           </div>
           <div className="mt-1 break-words text-xs text-stone-500 [overflow-wrap:anywhere]">
             {subAgentSummary?.kind === "root"
-              ? text(
-                  "노비는 직접 하위 서브 에이전트에게만 일을 위임합니다.",
-                  "Knowbee delegates only to direct child sub-agents.",
-                )
-              : text(
-                  "이름과 성격을 정하면 노비가 실행 구조를 안에서 정리합니다.",
-                  "Define the name and character; Knowbee prepares the run structure internally.",
-                )}
+              ? setupInspectorCopy
+                ? text(
+                    `${mainAgentLabel} 기준으로 직속 서브 에이전트에게만 일을 위임합니다.`,
+                    `${mainAgentLabel} delegates only to immediate sub-agents.`,
+                  )
+                : text(
+                    "메인 에이전트는 직속 서브 에이전트에게만 일을 위임합니다.",
+                    "The main agent delegates only to immediate sub-agents.",
+                  )
+              : setupInspectorCopy
+                ? text(
+                    `이름과 성격을 정하면 ${mainAgentLabel} 기준의 실행 구조가 정리됩니다.`,
+                    `Define the name and character; ${mainAgentLabel} prepares the run structure internally.`,
+                  )
+                : text(
+                    "이름과 성격을 정하면 메인 에이전트가 실행 구조를 안에서 정리합니다.",
+                    "Define the name and character; the main agent prepares the run structure internally.",
+                  )}
           </div>
         </div>
         <span
           className="max-w-full shrink-0 break-words rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-semibold leading-4 text-stone-700 [overflow-wrap:anywhere]"
           title={text(
-            "아래 노비가 이해한 내용에서 저장을 누르면 이 정의가 저장됩니다.",
+            setupInspectorCopy
+              ? "아래 정의 요약에서 저장을 누르면 이 정의가 저장됩니다."
+              : "아래 이해한 내용에서 저장을 누르면 이 정의가 저장됩니다.",
             "Press Save in the understanding panel below to save this definition.",
           )}
         >
@@ -262,8 +284,11 @@ export function ExecutorInspector({
                 <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-800">
                   {relationInfo.roleLabel}
                 </span>
-                <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-stone-600">
-                  {relationInfo.shortId}
+                <span
+                  className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-stone-600"
+                  data-testid="executor-inspector-relation-duplicate-name"
+                >
+                  {text("이름 중복", "Duplicate name")}
                 </span>
               </>
             ) : null}
@@ -311,7 +336,7 @@ export function ExecutorInspector({
         <label className="grid min-w-0 gap-1 text-xs font-semibold text-stone-500">
           <span>{text("역할명", "Role name")}</span>
           <input
-            value={executor.executorProfile?.roleName ?? ""}
+            value={normalizeLegacyExecutorDefaultText(executor.executorProfile?.roleName ?? "")}
             disabled={readOnly}
             onChange={(event) => {
               if (readOnly) return
@@ -394,6 +419,10 @@ export function ExecutorInspector({
         name={executor.name}
         description={executor.description}
         inference={friendlyInference}
+        titleKo={setupInspectorCopy ? "서브 에이전트 정의 요약" : undefined}
+        titleEn={setupInspectorCopy ? "Sub-agent definition summary" : undefined}
+        lowConfidenceMessageKo={setupInspectorCopy ? "설명이 짧아 요청 처리 중 필요한 내용을 더 물어볼 수 있습니다." : undefined}
+        lowConfidenceMessageEn={setupInspectorCopy ? "The description is short, so missing details may be requested while handling a request." : undefined}
         confirmDisabled={readOnly || executor.userConfirmed === true}
         onConfirm={() => onConfirmUnderstanding?.(confirmExecutorUnderstanding(executor))}
       />
@@ -410,6 +439,13 @@ export function ExecutorInspector({
       />
     </section>
   )
+}
+
+function displayMainAgentLabel(
+  value: string | undefined,
+  text: ReturnType<typeof useUiI18n>["text"],
+): string {
+  return text(mainAgentLabelKo(value), mainAgentLabelEn(value))
 }
 
 function TopologySubAgentInspectorSummaryView({
@@ -434,8 +470,7 @@ function TopologySubAgentInspectorSummaryView({
               ? text("메인 에이전트", "Main agent")
               : text("서브 에이전트", "Sub-agent")}
           </div>
-          <div className="mt-0.5 text-sm font-semibold text-stone-950">{summary.displayName}</div>
-          <div className="mt-0.5 text-[11px] font-semibold text-stone-600">{summary.nickname}</div>
+          <div className="mt-0.5 text-sm font-semibold text-stone-950">{summary.agentName}</div>
         </div>
         <div className="flex flex-wrap justify-end gap-1.5">
           <span
@@ -453,10 +488,10 @@ function TopologySubAgentInspectorSummaryView({
       </p>
       <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px] font-semibold text-stone-700">
         <div className="rounded bg-white px-2 py-1">
-          {text("부모", "Parent")}: {summary.parentDisplayName || "-"}
+          {text("상위 에이전트", "Parent agent")}: {summary.parentDisplayName || "-"}
         </div>
         <div className="rounded bg-white px-2 py-1">
-          {text("직접 하위", "Direct children")}: {summary.childCount}
+          {text("하위 서브 에이전트", "Child sub-agents")}: {summary.childCount}
         </div>
         <div className="rounded bg-white px-2 py-1">
           {text("저장", "Saved")}: {summary.savedLabel}
@@ -468,7 +503,7 @@ function TopologySubAgentInspectorSummaryView({
       <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-semibold text-stone-600">
         <span className="rounded-full bg-white px-2 py-0.5">{summary.modelLabel}</span>
         <span className="rounded-full bg-white px-2 py-0.5">
-          Skill/MCP: {summary.skillMcpLabel}
+          {text("작업 능력/외부 기능", "Work abilities/external features")}: {summary.skillMcpLabel}
         </span>
         <span className="rounded-full bg-white px-2 py-0.5">{summary.memoryLabel}</span>
         <span className="rounded-full bg-white px-2 py-0.5">{summary.permissionLabel}</span>

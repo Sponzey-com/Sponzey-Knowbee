@@ -21,6 +21,10 @@ export interface ApprovalRegistryRow {
     decision_source: string | null;
     superseded_by: string | null;
     metadata_json: string | null;
+    operation_id: string | null;
+    operation_binding_hash: string | null;
+    continuation_schema_version: number | null;
+    decision_actor_fingerprint: string | null;
     created_at: number;
     updated_at: number;
 }
@@ -33,21 +37,51 @@ export interface CreateApprovalRegistryRequestInput {
     riskLevel: RiskLevel | string;
     kind: ApprovalKind;
     params: unknown;
+    authorizationParams?: unknown;
     expiresAt?: number | null;
     channelMessageId?: string | null;
     metadata?: Record<string, unknown>;
+    operationBinding?: ApprovalOperationBinding;
     now?: number;
     supersedePending?: boolean;
+}
+export interface ApprovalOperationBinding {
+    operationId: string;
+    operationBindingHash: `sha256:${string}`;
+    continuationSchemaVersion: number;
 }
 export interface ApprovalRegistryDecisionResult {
     accepted: boolean;
     status: ApprovalRegistryStatus | "missing";
     decision?: ApprovalDecision;
-    reason?: ApprovalResolutionReason | "late" | "already_consumed" | "superseded";
+    reason?: ApprovalResolutionReason | "late" | "already_consumed" | "superseded" | "scope_mismatch";
     row?: ApprovalRegistryRow;
 }
+export interface ApprovalConsumptionScope {
+    runId: string;
+    requestGroupId?: string | null;
+    toolName: string;
+    params: unknown;
+    authorizationParams?: unknown;
+    agentId?: string | null;
+    operationBinding?: ApprovalOperationBinding;
+}
+export type ApprovalRegistryGrantAcquisition = {
+    acquired: true;
+    decision: "allow_once" | "allow_run";
+    approvalId: string;
+    source: "approved" | "consumed_run";
+    row: ApprovalRegistryRow;
+} | {
+    acquired: false;
+    reasonCode: "approval_grant_not_found" | "approval_grant_scope_mismatch";
+};
 export declare function stableStringify(value: unknown): string;
 export declare function hashApprovalParams(params: unknown): string;
+export declare function hashApprovalDecisionActor(input: {
+    channel: string;
+    actorId: string;
+}): `sha256:${string}`;
 export declare function createApprovalRegistryRequest(input: CreateApprovalRegistryRequestInput): ApprovalRegistryRow;
 export declare function getApprovalRegistryRow(id: string): ApprovalRegistryRow | undefined;
 export declare function getLatestApprovalForRun(runId: string): ApprovalRegistryRow | undefined;
@@ -57,6 +91,19 @@ export declare function findLatestApprovalByChannelMessage(params: {
     channelMessageId: string;
 }): ApprovalRegistryRow | undefined;
 export declare function attachApprovalChannelMessage(approvalId: string, channelMessageId: string, now?: number): boolean;
+export declare function attachApprovalChannelBinding(input: {
+    approvalId: string;
+    channelMessageId: string;
+    decisionActorFingerprint: `sha256:${string}`;
+    now?: number;
+}): boolean;
+export declare function listRequestedApprovalsForChannelCallback(input: {
+    runId: string;
+    channel: string;
+    channelMessageId: string;
+    decisionActorFingerprint: `sha256:${string}`;
+    now?: number;
+}): ApprovalRegistryRow[];
 export declare function expireApprovalRegistryRequest(approvalId: string, now?: number): ApprovalRegistryDecisionResult;
 export declare function resolveApprovalRegistryDecision(params: {
     approvalId: string;
@@ -65,6 +112,8 @@ export declare function resolveApprovalRegistryDecision(params: {
     decisionSource: string;
     now?: number;
 }): ApprovalRegistryDecisionResult;
-export declare function consumeApprovalRegistryDecision(approvalId: string, now?: number): ApprovalRegistryDecisionResult;
-export declare function describeLateApproval(row: ApprovalRegistryRow | undefined): string;
+export declare function consumeApprovalRegistryDecision(approvalId: string, now?: number, expected?: ApprovalConsumptionScope): ApprovalRegistryDecisionResult;
+export declare function acquireApprovalRegistryGrant(expected: ApprovalConsumptionScope, now?: number): ApprovalRegistryGrantAcquisition;
+export type ApprovalNoticeLanguage = "ko" | "en";
+export declare function describeLateApproval(row: ApprovalRegistryRow | undefined, language?: ApprovalNoticeLanguage): string;
 //# sourceMappingURL=approval-registry.d.ts.map

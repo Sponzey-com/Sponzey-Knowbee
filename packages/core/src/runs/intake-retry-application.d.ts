@@ -2,10 +2,12 @@ import { type RecoveryBudgetUsage } from "./recovery-budget.js";
 import type { FinalizationDependencies, FinalizationSource } from "./finalization.js";
 import { applyTerminalApplication } from "./terminal-application.js";
 import type { RunChunkDeliveryHandler } from "./delivery.js";
+import type { IntakeRecoveryAdmission } from "./loop-directive.js";
 export interface IntakeRetryDirective {
     summary: string;
     reason: string;
     message: string;
+    recoveryAdmission?: IntakeRecoveryAdmission;
     remainingItems?: string[];
     eventLabel?: string;
 }

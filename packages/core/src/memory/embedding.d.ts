@@ -1,3 +1,4 @@
+import type { MemoryConfig } from "../config/types.js";
 /**
  * Embedding providers for vector memory search.
  * Gracefully degrades to no-op if provider unavailable.
@@ -60,11 +61,12 @@ export declare class OpenAIEmbeddingProvider implements EmbeddingProvider {
     embed(text: string): Promise<number[]>;
     batchEmbed(texts: string[]): Promise<number[][]>;
 }
-export declare function getEmbeddingProvider(): EmbeddingProvider;
+type EmbeddingMemoryConfig = Pick<MemoryConfig, "embedding">;
+export declare function getEmbeddingProvider(memoryConfig?: EmbeddingMemoryConfig): EmbeddingProvider;
 /** Reset provider singleton (e.g., after config reload) */
 export declare function resetEmbeddingProvider(): void;
 export declare function getEmbeddingCacheKey(provider: EmbeddingProvider, textChecksum: string): string;
-export declare function getVectorBackendStatus(): {
+export declare function getVectorBackendStatus(memoryConfig?: EmbeddingMemoryConfig): {
     available: boolean;
     backend: "in_process_blob" | "none";
     reason?: string;
@@ -75,4 +77,5 @@ export declare function encodeEmbedding(vec: number[]): Buffer;
 export declare function decodeEmbedding(buf: Buffer): number[];
 /** Cosine similarity between two vectors */
 export declare function cosineSimilarity(a: number[], b: number[]): number;
+export {};
 //# sourceMappingURL=embedding.d.ts.map

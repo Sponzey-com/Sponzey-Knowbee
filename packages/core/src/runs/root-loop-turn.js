@@ -38,6 +38,18 @@ export async function runRootLoopTurn(params, dependencies, moduleDependencies =
             },
         };
     }
+    if (loopEntryApplication.kind === "execute") {
+        return {
+            kind: "continue",
+            pendingLoopDirective: null,
+            intakeProcessed: true,
+            state: {
+                ...params.state,
+                currentMessage: loopEntryApplication.nextMessage,
+                requiredToolNames: loopEntryApplication.requiredToolNames,
+            },
+        };
+    }
     if (nextPendingLoopDirective) {
         return {
             kind: "continue",
@@ -47,6 +59,8 @@ export async function runRootLoopTurn(params, dependencies, moduleDependencies =
         };
     }
     const executionCycleLaunch = moduleDependencies.prepareRootExecutionCyclePassLaunch({
+        artifactStorage: params.artifactStorage,
+        memoryJournal: params.memoryJournal,
         runId: params.runId,
         sessionId: params.sessionId,
         requestGroupId: params.requestGroupId,
@@ -60,10 +74,17 @@ export async function runRootLoopTurn(params, dependencies, moduleDependencies =
         ...(params.structuredRequest ? { structuredRequest: params.structuredRequest } : {}),
         requestMessage: params.requestMessage,
         workDir: params.workDir,
+        config: params.config,
+        ...(params.finalResponseIdentityContext
+            ? { finalResponseIdentityContext: params.finalResponseIdentityContext }
+            : {}),
         ...(params.toolsEnabled === false ? { toolsEnabled: false } : {}),
         isRootRequest: params.isRootRequest,
         contextMode: params.contextMode,
         taskProfile: params.taskProfile,
+        ...(params.scheduleId ? { scheduleId: params.scheduleId } : {}),
+        ...(params.includeScheduleMemory ? { includeScheduleMemory: true } : {}),
+        ...(params.memorySearchQuery ? { memorySearchQuery: params.memorySearchQuery } : {}),
         ...(params.workerSessionId ? { workerSessionId: params.workerSessionId } : {}),
         wantsDirectArtifactDelivery: params.wantsDirectArtifactDelivery,
         requiresFilesystemMutation: params.requiresFilesystemMutation,

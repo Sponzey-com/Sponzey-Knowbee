@@ -1,8 +1,6 @@
 import crypto from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-import JSON5 from "json5";
-import { TelegramChannel, buildSettingsChannelConnectionSnapshot, DiscordChannelAdapter, buildDiscordPermissionDoctor, GoogleChatChannelAdapter, buildGoogleChatWorkspaceDoctor, defineChannelCapabilities, recordChannelRuntimeEvent, startChannels, } from "../../channels/index.js";
+import { createArtifactStorageContext } from "../../artifacts/lifecycle.js";
+import { TelegramChannel, buildSettingsChannelConnectionSnapshot, DiscordChannelAdapter, buildDiscordPermissionDoctor, GoogleChatChannelAdapter, buildGoogleChatWorkspaceDoctor, createStartedChannelRecoveryRuntime, defineChannelCapabilities, recordChannelRuntimeEvent, } from "../../channels/index.js";
 import { buildIMessageCapabilityManifest, buildIMessageLocalBridgeDoctor, } from "../../channels/imessage/adapter.js";
 import { buildKakaoTalkLocalBridgeCapabilityManifest, buildKakaoTalkLocalBridgeDoctor, buildKakaoTalkOfficialCapabilityManifest, buildKakaoTalkOfficialDoctor, } from "../../channels/kakaotalk/adapter.js";
 import { SlackChannel } from "../../channels/slack/bot.js";
@@ -10,15 +8,25 @@ import { getActiveSlackChannel, getSlackRuntimeStatus, setActiveSlackChannel, se
 import { getActiveTelegramChannel, getTelegramRuntimeStatus, setActiveTelegramChannel, setTelegramRuntimeError, stopActiveTelegramChannel, } from "../../channels/telegram/runtime.js";
 import { getDiscordRuntimeStatus, setDiscordRuntimeError, stopDiscordRuntime, } from "../../channels/discord/runtime.js";
 import { getGoogleChatRuntimeStatus, setGoogleChatRuntimeError, stopGoogleChatRuntime, } from "../../channels/google-chat/runtime.js";
-import { getConfig, reloadConfig } from "../../config/index.js";
-import { PATHS } from "../../config/paths.js";
+import { DEFAULT_CONFIG, } from "../../config/types.js";
+import { readPersistedRawConfig, writePersistedRawConfig } from "../../config/persisted-file.js";
+import { redactLogText } from "../../logger/index.js";
+import { buildPersistedConfigurationCommand, buildPersistedRuntimeAppliedConfigurationCommand, buildRejectedConfigurationCommand, buildRuntimeAppliedConfigurationCommand, buildRuntimeFailedConfigurationCommand, } from "../../config/command-state.js";
 import { getDb, listMessageLedgerEvents, } from "../../db/index.js";
 import { eventBus } from "../../events/index.js";
 import { getApprovalRegistryRow, resolveApprovalRegistryDecision } from "../../runs/approval-registry.js";
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js";
+import { resolveRegisteredWebUiApproval } from "../ws/stream.js";
 import { getRuntimeBuildStatus } from "../../runtime/build-status.js";
 import { authMiddleware } from "../middleware/auth.js";
+import { getApiRuntimeConfig, getApiRuntimePaths } from "../runtime-context.js";
+import { activateChannelsAndRecoverPendingResponses, recoverPendingResponsesForChannelRuntime, } from "../../runtime/channel-activation-recovery.js";
+const defaultChannelsRouteDependencies = {
+    resolveRegisteredWebUiApproval,
+};
 const SECRET_KEY_PATTERN = /(?:api[_-]?key|token|secret|password|credential|authorization|cookie|raw[_-]?(?:body|payload|response)|signature)/i;
+const CHANNEL_ERROR_SECRET_MASK = "***";
+const CHANNEL_ERROR_PATH_MASK = "[internal-path-redacted]";
 const FINAL_DELIVERY_EVENT_KINDS = new Set([
     "delivery_finalized",
     "final_answer_delivered",
@@ -68,20 +76,39 @@ function redactValue(value, depth = 0) {
     }
     return result;
 }
-function readRawConfig() {
-    if (!existsSync(PATHS.configFile))
-        return {};
-    try {
-        return JSON5.parse(readFileSync(PATHS.configFile, "utf-8"));
-    }
-    catch {
-        return {};
-    }
+function collectChannelSecrets(config) {
+    return [
+        config.telegram?.botToken,
+        config.slack?.botToken,
+        config.slack?.appToken,
+        config.discord?.botToken,
+        config.discord?.publicKey,
+        config.googleChat?.appCredentialJson,
+        config.googleChat?.verificationToken,
+        config.googleChat?.webhookUrl,
+        config.kakaoTalk?.businessApiKey,
+    ].map((value) => value?.trim()).filter((value) => Boolean(value));
 }
-function writeRawConfig(raw) {
-    mkdirSync(dirname(PATHS.configFile), { recursive: true });
-    writeFileSync(PATHS.configFile, JSON5.stringify(raw, null, 2), "utf-8");
-    reloadConfig();
+function redactChannelErrorMessage(config, paths, message, fallback = "Channel runtime operation failed.") {
+    let redacted = (message ?? "").trim() || fallback;
+    for (const secret of collectChannelSecrets(config)) {
+        redacted = redacted.split(secret).join(CHANNEL_ERROR_SECRET_MASK);
+    }
+    for (const path of [paths.stateDir, paths.configFile, paths.dbFile, paths.setupStateFile]) {
+        if (path)
+            redacted = redacted.split(path).join(CHANNEL_ERROR_PATH_MASK);
+    }
+    redacted = redacted
+        .replace(/bot\d+:[^\s"'`<>]+/gi, `bot${CHANNEL_ERROR_SECRET_MASK}`)
+        .replace(/\bxox[abprs]-[A-Za-z0-9-]{8,}\b/g, CHANNEL_ERROR_SECRET_MASK)
+        .replace(/\bxapp-[A-Za-z0-9-]{8,}\b/g, CHANNEL_ERROR_SECRET_MASK)
+        .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, `Bearer ${CHANNEL_ERROR_SECRET_MASK}`);
+    const safelyRedacted = redactLogText(redacted);
+    return safelyRedacted.length > 240 ? `${safelyRedacted.slice(0, 237)}...` : safelyRedacted;
+}
+function channelRouteRuntimeErrorMessage(error, config, paths, fallback) {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    return redactChannelErrorMessage(config, paths, rawMessage, fallback);
 }
 function rawConfigKeyForProvider(provider) {
     return provider === "google_chat" ? "googleChat" : provider;
@@ -91,11 +118,10 @@ function ensureRawSection(raw, key) {
         raw[key] = {};
     return raw[key];
 }
-function updateRawChannelEnabled(provider, enabled) {
-    const raw = readRawConfig();
+function updateRawChannelEnabled(provider, enabled, current, paths) {
+    const raw = readPersistedRawConfig(paths);
     const section = ensureRawSection(raw, rawConfigKeyForProvider(provider));
     section.enabled = enabled;
-    const current = getConfig();
     if (provider === "telegram" && !section.botToken && current.telegram?.botToken) {
         section.botToken = current.telegram.botToken;
     }
@@ -125,13 +151,21 @@ function updateRawChannelEnabled(provider, enabled) {
         if (!section.verificationToken && current.googleChat?.verificationToken)
             section.verificationToken = current.googleChat.verificationToken;
     }
-    writeRawConfig(raw);
-    const connection = requireConnection(`${provider}:primary`);
+    writePersistedRawConfig(raw, paths);
+    const configKey = rawConfigKeyForProvider(provider);
+    const updatedConfig = {
+        ...current,
+        [configKey]: {
+            ...(current[configKey] ?? {}),
+            enabled,
+        },
+    };
+    const connection = requireConnection(`${provider}:primary`, updatedConfig);
     recordRuntime(connection, enabled ? "enabled" : "disabled", enabled ? "Channel enabled." : "Channel disabled.");
-    return connection;
+    return { connection, config: updatedConfig };
 }
-function updateRawLocalBridgeEnabled(connection, enabled, acknowledgeRisk) {
-    const raw = readRawConfig();
+function updateRawLocalBridgeEnabled(connection, enabled, acknowledgeRisk, current, paths) {
+    const raw = readPersistedRawConfig(paths);
     if (connection.connectionId === IMESSAGE_LOCAL_CONNECTION_ID) {
         const section = isRecord(raw.imessage) ? raw.imessage : {};
         section.enabled = enabled;
@@ -159,13 +193,48 @@ function updateRawLocalBridgeEnabled(connection, enabled, acknowledgeRisk) {
     else {
         throw new Error(`Unsupported local bridge connection: ${connection.connectionId}`);
     }
-    writeRawConfig(raw);
-    const updated = requireConnection(connection.connectionId);
+    writePersistedRawConfig(raw, paths);
+    let updatedConfig;
+    if (connection.connectionId === IMESSAGE_LOCAL_CONNECTION_ID) {
+        const base = (current.imessage ?? DEFAULT_CONFIG.imessage);
+        updatedConfig = {
+            ...current,
+            imessage: {
+                ...base,
+                enabled,
+                ...(enabled
+                    ? {
+                        mode: base.mode === "outgoing_only" ? "outgoing_only" : "manual_confirm",
+                        ...(acknowledgeRisk ? { riskAcknowledged: true } : {}),
+                        manualConfirmationRequired: base.manualConfirmationRequired,
+                    }
+                    : {}),
+            },
+        };
+    }
+    else {
+        const base = (current.kakaoTalk ?? DEFAULT_CONFIG.kakaoTalk);
+        updatedConfig = {
+            ...current,
+            kakaoTalk: {
+                ...base,
+                enabled,
+                ...(enabled
+                    ? {
+                        mode: "local_bridge",
+                        ...(acknowledgeRisk ? { riskAcknowledged: true } : {}),
+                        manualConfirmationRequired: base.manualConfirmationRequired,
+                    }
+                    : {}),
+            },
+        };
+    }
+    const updated = requireConnection(connection.connectionId, updatedConfig);
     recordRuntime(updated, enabled ? "enabled" : "disabled", enabled ? "Local bridge channel enabled." : "Local bridge channel disabled.", {
         providerRuntime: "not_started",
         classification: "channel_state",
     });
-    return updated;
+    return { connection: updated, config: updatedConfig };
 }
 function buildRuntimeSnapshot() {
     return {
@@ -175,9 +244,9 @@ function buildRuntimeSnapshot() {
         googleChat: getGoogleChatRuntimeStatus(),
     };
 }
-function listConnections() {
+function listConnections(config) {
     const connections = buildSettingsChannelConnectionSnapshot({
-        config: getConfig(),
+        config,
         runtime: buildRuntimeSnapshot(),
         persist: true,
     });
@@ -189,7 +258,7 @@ function listConnections() {
     for (const connectionId of knownFutureConnections) {
         if (connections.some((connection) => connection.connectionId === connectionId))
             continue;
-        const fallback = buildKnownFutureConnection(connectionId, Date.now());
+        const fallback = buildKnownFutureConnection(connectionId, Date.now(), config);
         if (fallback)
             connections.push(fallback);
     }
@@ -218,8 +287,7 @@ function localBridgeHealth(enabled, configured, doctor, now) {
         checkedAt: now,
     };
 }
-function buildKnownFutureConnection(channelId, now) {
-    const config = getConfig();
+function buildKnownFutureConnection(channelId, now, config) {
     if (channelId === IMESSAGE_LOCAL_CONNECTION_ID) {
         const imessage = config.imessage;
         const enabled = imessage?.enabled === true;
@@ -350,12 +418,12 @@ function buildPlaceholderCapabilities(provider, connectionKind) {
         },
     });
 }
-function getPlaceholderConnection(channelId) {
+function getPlaceholderConnection(channelId, config) {
     const provider = channelId.split(":")[0];
     if (!provider || !["imessage", "kakaotalk"].includes(provider))
         return undefined;
     const now = Date.now();
-    const known = buildKnownFutureConnection(channelId, now);
+    const known = buildKnownFutureConnection(channelId, now, config);
     if (known)
         return known;
     const connectionKind = channelId === "kakaotalk:official" ? "webhook" : LOCAL_BRIDGE_PROVIDERS.has(provider) ? "local_bridge" : "webhook";
@@ -390,11 +458,11 @@ function getPlaceholderConnection(channelId) {
         schemaVersion: 1,
     };
 }
-function findConnection(channelId) {
-    return listConnections().find((connection) => connection.connectionId === channelId) ?? getPlaceholderConnection(channelId);
+function findConnection(channelId, config) {
+    return listConnections(config).find((connection) => connection.connectionId === channelId) ?? getPlaceholderConnection(channelId, config);
 }
-function requireConnection(channelId) {
-    const connection = findConnection(channelId);
+function requireConnection(channelId, config) {
+    const connection = findConnection(channelId, config);
     if (!connection)
         throw new Error(`Unknown channel connection: ${channelId}`);
     return connection;
@@ -429,7 +497,7 @@ function providerRuntimeStatus(provider) {
         runtimeBuild,
     };
 }
-function connectionValidation(connection) {
+function connectionValidation(connection, config) {
     const issues = [];
     if (connection.enabled && !connection.configured) {
         issues.push({
@@ -453,7 +521,7 @@ function connectionValidation(connection) {
         });
     }
     if (connection.provider === "imessage") {
-        const doctor = buildIMessageLocalBridgeDoctor(getConfig().imessage);
+        const doctor = buildIMessageLocalBridgeDoctor(config.imessage);
         for (const issue of doctor.issues) {
             issues.push({
                 code: issue.code,
@@ -463,7 +531,7 @@ function connectionValidation(connection) {
         }
     }
     if (connection.provider === "kakaotalk" && connection.connectionId === KAKAOTALK_LOCAL_CONNECTION_ID) {
-        const doctor = buildKakaoTalkLocalBridgeDoctor(getConfig().kakaoTalk);
+        const doctor = buildKakaoTalkLocalBridgeDoctor(config.kakaoTalk);
         for (const issue of doctor.issues) {
             issues.push({
                 code: issue.code,
@@ -473,7 +541,7 @@ function connectionValidation(connection) {
         }
     }
     if (connection.provider === "kakaotalk" && connection.connectionId === "kakaotalk:official") {
-        const doctor = buildKakaoTalkOfficialDoctor(getConfig().kakaoTalk);
+        const doctor = buildKakaoTalkOfficialDoctor(config.kakaoTalk);
         for (const issue of doctor.issues) {
             issues.push({
                 code: issue.code,
@@ -513,7 +581,7 @@ function connectionValidation(connection) {
         });
     }
     if (connection.provider === "discord") {
-        const doctor = buildDiscordPermissionDoctor(getConfig().discord);
+        const doctor = buildDiscordPermissionDoctor(config.discord);
         for (const issue of doctor.issues) {
             issues.push({
                 code: issue.code,
@@ -523,7 +591,7 @@ function connectionValidation(connection) {
         }
     }
     if (connection.provider === "google_chat") {
-        const doctor = buildGoogleChatWorkspaceDoctor(getConfig().googleChat);
+        const doctor = buildGoogleChatWorkspaceDoctor(config.googleChat);
         for (const issue of doctor.issues) {
             issues.push({
                 code: issue.code,
@@ -537,7 +605,7 @@ function connectionValidation(connection) {
         issues,
     };
 }
-function channelSummary(connection) {
+function channelSummary(connection, config) {
     const capabilities = connection.capabilityManifest;
     return {
         channelId: connection.connectionId,
@@ -562,12 +630,12 @@ function channelSummary(connection) {
             requiresUserSession: capabilities.requiresUserSession,
             manualConfirmationRequired: capabilities.manualConfirmationRequired === true,
         },
-        validation: connectionValidation(connection),
+        validation: connectionValidation(connection, config),
     };
 }
-function channelDetail(connection) {
+function channelDetail(connection, config) {
     return {
-        ...channelSummary(connection),
+        ...channelSummary(connection, config),
         secrets: redactValue(connection.authSecretRefs),
         allowedUsers: connection.allowedUsers,
         allowedRooms: connection.allowedRooms,
@@ -597,20 +665,32 @@ function recordRuntime(connection, eventKind, summary, detail) {
 function asRuntimeProvider(provider) {
     return provider === "telegram" || provider === "slack" || provider === "discord" || provider === "google_chat" ? provider : undefined;
 }
-async function restartConnection(connection, body, reply) {
+const UNSUPPORTED_CHANNEL_RUNTIME_ERROR = "provider runtime is not implemented yet";
+function unsupportedChannelRuntimePayload(connection, config) {
+    return {
+        ok: false,
+        error: UNSUPPORTED_CHANNEL_RUNTIME_ERROR,
+        channel: channelSummary(connection, config),
+    };
+}
+async function restartConnection(connection, config, paths, body, reply) {
+    const cfg = config;
     if (!asRuntimeProvider(connection.provider)) {
         return reply.status(501).send({
-            ok: false,
-            error: "provider runtime is not implemented yet",
-            channel: channelSummary(connection),
+            ...unsupportedChannelRuntimePayload(connection, cfg),
+            configCommand: buildRejectedConfigurationCommand("channels.restart", "channel_runtime_not_implemented"),
         });
     }
-    const cfg = reloadConfig();
-    const refreshed = requireConnection(connection.connectionId);
-    const validation = connectionValidation(refreshed);
+    const refreshed = requireConnection(connection.connectionId, cfg);
+    const validation = connectionValidation(refreshed, cfg);
     if (!refreshed.enabled) {
         recordRuntime(refreshed, "restart_skipped_disabled", "Channel restart skipped because the channel is disabled.");
-        return { ok: true, status: "disabled", channel: channelSummary(refreshed) };
+        return {
+            ok: true,
+            status: "disabled",
+            channel: channelSummary(refreshed, cfg),
+            configCommand: buildRuntimeAppliedConfigurationCommand("channels.restart"),
+        };
     }
     if (!refreshed.configured || validation.ok === false) {
         recordRuntime(refreshed, "restart_failed_validation", "Channel restart blocked by validation.", { validation });
@@ -618,29 +698,39 @@ async function restartConnection(connection, body, reply) {
             ok: false,
             error: "enabled channel is missing required configuration",
             validation,
-            channel: channelSummary(refreshed),
+            channel: channelSummary(refreshed, cfg),
+            configCommand: buildRejectedConfigurationCommand("channels.restart", "channel_configuration_invalid"),
         });
     }
     if (body.dryRun === true) {
         recordRuntime(refreshed, "restart_dry_run", "Channel restart dry-run completed.", { initiatedBy: body.initiatedBy ?? "webui" });
-        return { ok: true, status: "dry_run", channel: channelSummary(refreshed) };
+        return {
+            ok: true,
+            status: "dry_run",
+            channel: channelSummary(refreshed, cfg),
+            configCommand: buildRuntimeAppliedConfigurationCommand("channels.restart.dry_run"),
+        };
     }
     try {
+        const artifactStorage = createArtifactStorageContext(paths);
+        let recovery;
         if (connection.provider === "telegram") {
             if (getActiveTelegramChannel())
                 stopActiveTelegramChannel();
             setTelegramRuntimeError(null);
-            const channel = new TelegramChannel(cfg.telegram);
+            const channel = new TelegramChannel(cfg.telegram, artifactStorage);
             await channel.start();
             setActiveTelegramChannel(channel);
+            recovery = await recoverPendingResponsesForChannelRuntime(createStartedChannelRecoveryRuntime({ telegram: channel }));
         }
         else if (connection.provider === "slack") {
             if (getActiveSlackChannel())
                 stopActiveSlackChannel();
             setSlackRuntimeError(null);
-            const channel = new SlackChannel(cfg.slack);
+            const channel = new SlackChannel(cfg.slack, artifactStorage);
             await channel.start();
             setActiveSlackChannel(channel);
+            recovery = await recoverPendingResponsesForChannelRuntime(createStartedChannelRecoveryRuntime({ slack: channel }));
         }
         else if (connection.provider === "discord") {
             stopDiscordRuntime();
@@ -654,12 +744,18 @@ async function restartConnection(connection, body, reply) {
             const adapter = new GoogleChatChannelAdapter({ config: cfg.googleChat });
             await adapter.start();
         }
-        const started = requireConnection(connection.connectionId);
+        const started = requireConnection(connection.connectionId, cfg);
         recordRuntime(started, "restarted", "Channel runtime restarted.", { initiatedBy: body.initiatedBy ?? "webui" });
-        return { ok: true, status: "started", channel: channelSummary(started) };
+        return {
+            ok: true,
+            status: "started",
+            channel: channelSummary(started, cfg),
+            ...(recovery ? { recovery } : {}),
+            configCommand: buildRuntimeAppliedConfigurationCommand("channels.restart"),
+        };
     }
     catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = channelRouteRuntimeErrorMessage(error, cfg, paths);
         if (connection.provider === "telegram")
             setTelegramRuntimeError(message);
         else if (connection.provider === "slack")
@@ -668,9 +764,14 @@ async function restartConnection(connection, body, reply) {
             setDiscordRuntimeError(message);
         else
             setGoogleChatRuntimeError(message);
-        const failed = requireConnection(connection.connectionId);
+        const failed = requireConnection(connection.connectionId, cfg);
         recordRuntime(failed, "restart_failed", "Channel runtime restart failed.", { message });
-        return reply.status(500).send({ ok: false, error: message, channel: channelSummary(failed) });
+        return reply.status(500).send({
+            ok: false,
+            error: message,
+            channel: channelSummary(failed, cfg),
+            configCommand: buildRuntimeFailedConfigurationCommand("channels.restart", "channel_restart_failed"),
+        });
     }
 }
 function messageLedgerResponse(event) {
@@ -830,17 +931,33 @@ function listApprovals(query) {
 function isApprovalDecision(value) {
     return value === "allow_once" || value === "allow_run" || value === "deny";
 }
-function respondToApproval(approvalId, body, sourceFallback) {
+function respondToApproval(approvalId, body, sourceFallback, dependencies) {
     const decision = body.decision;
     if (!isApprovalDecision(decision)) {
         return { ok: false, statusCode: 400, error: "invalid approval decision" };
     }
-    const result = resolveApprovalRegistryDecision({
-        approvalId,
-        decision,
-        decisionBy: body.decisionBy ?? "webui",
-        decisionSource: body.decisionSource ?? sourceFallback,
-    });
+    const pendingRow = getApprovalRegistryRow(approvalId);
+    const runtimeResumed = Boolean(pendingRow?.status === "requested" &&
+        dependencies.resolveRegisteredWebUiApproval({
+            approvalId: pendingRow.id,
+            runId: pendingRow.run_id,
+            decision,
+        }));
+    const runtimeRow = runtimeResumed ? getApprovalRegistryRow(approvalId) : null;
+    const result = runtimeRow && runtimeRow.status !== "requested"
+        ? {
+            accepted: true,
+            status: runtimeRow.status,
+            reason: undefined,
+            decision,
+            row: runtimeRow,
+        }
+        : resolveApprovalRegistryDecision({
+            approvalId,
+            decision,
+            decisionBy: body.decisionBy ?? "webui",
+            decisionSource: body.decisionSource ?? sourceFallback,
+        });
     if (result.accepted && result.row) {
         eventBus.emit("approval.resolved", {
             approvalId: result.row.id,
@@ -857,6 +974,7 @@ function respondToApproval(approvalId, body, sourceFallback) {
         status: result.status,
         reason: result.reason,
         decision: result.decision,
+        runtimeResumed,
         approval: result.row ? approvalResponse(result.row) : null,
     };
 }
@@ -869,19 +987,22 @@ function buildInteractionVerification(body) {
         suppliedSecretToken: Boolean(body.secretToken),
     };
 }
-export function registerChannelsRoute(app) {
-    app.get("/api/channels", { preHandler: authMiddleware }, async () => {
-        const channels = listConnections().map(channelSummary);
+export function registerChannelsRoute(app, dependencies = defaultChannelsRouteDependencies) {
+    app.get("/api/channels", { preHandler: authMiddleware }, async (req) => {
+        const config = getApiRuntimeConfig(req);
+        const channels = listConnections(config).map((connection) => channelSummary(connection, config));
         return { channels, count: channels.length };
     });
     app.get("/api/channels/:channelId", { preHandler: authMiddleware }, async (req, reply) => {
-        const connection = findConnection(req.params.channelId);
+        const config = getApiRuntimeConfig(req);
+        const connection = findConnection(req.params.channelId, config);
         if (!connection)
             return reply.status(404).send({ error: "Channel not found" });
-        return { channel: channelDetail(connection) };
+        return { channel: channelDetail(connection, config) };
     });
     app.get("/api/channels/:channelId/health", { preHandler: authMiddleware }, async (req, reply) => {
-        const connection = findConnection(req.params.channelId);
+        const config = getApiRuntimeConfig(req);
+        const connection = findConnection(req.params.channelId, config);
         if (!connection)
             return reply.status(404).send({ error: "Channel not found" });
         return {
@@ -889,11 +1010,12 @@ export function registerChannelsRoute(app) {
             provider: connection.provider,
             health: connection.health,
             runtime: providerRuntimeStatus(connection.provider),
-            validation: connectionValidation(connection),
+            validation: connectionValidation(connection, config),
         };
     });
     app.get("/api/channels/:channelId/capabilities", { preHandler: authMiddleware }, async (req, reply) => {
-        const connection = findConnection(req.params.channelId);
+        const config = getApiRuntimeConfig(req);
+        const connection = findConnection(req.params.channelId, config);
         if (!connection)
             return reply.status(404).send({ error: "Channel not found" });
         return {
@@ -903,7 +1025,9 @@ export function registerChannelsRoute(app) {
         };
     });
     app.post("/api/channels/:channelId/enable", { preHandler: authMiddleware }, async (req, reply) => {
-        const connection = findConnection(req.params.channelId);
+        const config = getApiRuntimeConfig(req);
+        const paths = getApiRuntimePaths(req);
+        const connection = findConnection(req.params.channelId, config);
         if (!connection)
             return reply.status(404).send({ error: "Channel not found" });
         const runtimeProvider = asRuntimeProvider(connection.provider);
@@ -914,34 +1038,51 @@ export function registerChannelsRoute(app) {
                     ok: false,
                     error: "local bridge channels require explicit risk acknowledgment",
                     requiresRiskAcknowledgment: true,
-                    channel: channelSummary(connection),
+                    channel: channelSummary(connection, config),
                 });
             }
             if (connection.capabilityManifest.requiresLocalBridge) {
-                const updated = updateRawLocalBridgeEnabled(connection, true, true);
-                return { ok: true, channel: channelDetail(updated) };
+                const updated = updateRawLocalBridgeEnabled(connection, true, true, config, paths);
+                return {
+                    ok: true,
+                    channel: channelDetail(updated.connection, updated.config),
+                    restartRequired: true,
+                    appliesOn: "explicit_restart",
+                    configCommand: buildPersistedConfigurationCommand("channels.enable"),
+                };
             }
             recordRuntime(connection, "enable_unsupported_provider", "Channel enable blocked because provider runtime is not implemented.");
-            return reply.status(501).send({
-                ok: false,
-                error: "provider runtime is not implemented yet",
-                channel: channelSummary(connection),
-            });
+            return reply.status(501).send(unsupportedChannelRuntimePayload(connection, config));
         }
-        const updated = updateRawChannelEnabled(runtimeProvider, true);
-        return { ok: true, channel: channelDetail(updated) };
+        const updated = updateRawChannelEnabled(runtimeProvider, true, config, paths);
+        return {
+            ok: true,
+            channel: channelDetail(updated.connection, updated.config),
+            restartRequired: true,
+            appliesOn: "explicit_restart",
+            configCommand: buildPersistedConfigurationCommand("channels.enable"),
+        };
     });
     app.post("/api/channels/:channelId/disable", { preHandler: authMiddleware }, async (req, reply) => {
-        const connection = findConnection(req.params.channelId);
+        const config = getApiRuntimeConfig(req);
+        const paths = getApiRuntimePaths(req);
+        const connection = findConnection(req.params.channelId, config);
         if (!connection)
             return reply.status(404).send({ error: "Channel not found" });
         const runtimeProvider = asRuntimeProvider(connection.provider);
         if (!runtimeProvider) {
             if (connection.capabilityManifest.requiresLocalBridge) {
-                const updated = updateRawLocalBridgeEnabled(connection, false, false);
-                return { ok: true, channel: channelDetail(updated) };
+                const updated = updateRawLocalBridgeEnabled(connection, false, false, config, paths);
+                return {
+                    ok: true,
+                    channel: channelDetail(updated.connection, updated.config),
+                    runtimeApplied: false,
+                    restartRequired: true,
+                    appliesOn: "next_start",
+                    configCommand: buildPersistedConfigurationCommand("channels.disable"),
+                };
             }
-            return reply.status(501).send({ ok: false, error: "provider runtime is not implemented yet", channel: channelSummary(connection) });
+            return reply.status(501).send(unsupportedChannelRuntimePayload(connection, config));
         }
         if (runtimeProvider === "telegram")
             stopActiveTelegramChannel();
@@ -951,27 +1092,37 @@ export function registerChannelsRoute(app) {
             stopDiscordRuntime();
         if (runtimeProvider === "google_chat")
             stopGoogleChatRuntime();
-        const updated = updateRawChannelEnabled(runtimeProvider, false);
-        return { ok: true, channel: channelDetail(updated) };
+        const updated = updateRawChannelEnabled(runtimeProvider, false, config, paths);
+        return {
+            ok: true,
+            channel: channelDetail(updated.connection, updated.config),
+            runtimeApplied: true,
+            restartRequired: false,
+            appliesOn: "current_runtime",
+            configCommand: buildPersistedRuntimeAppliedConfigurationCommand("channels.disable"),
+        };
     });
     app.post("/api/channels/:channelId/restart", { preHandler: authMiddleware }, async (req, reply) => {
-        const connection = findConnection(req.params.channelId);
+        const config = getApiRuntimeConfig(req);
+        const paths = getApiRuntimePaths(req);
+        const connection = findConnection(req.params.channelId, config);
         if (!connection)
             return reply.status(404).send({ error: "Channel not found" });
-        return restartConnection(connection, req.body ?? {}, reply);
+        return restartConnection(connection, config, paths, req.body ?? {}, reply);
     });
     app.post("/api/channels/:channelId/test", { preHandler: authMiddleware }, async (req, reply) => {
-        const connection = findConnection(req.params.channelId);
+        const config = getApiRuntimeConfig(req);
+        const connection = findConnection(req.params.channelId, config);
         if (!connection)
             return reply.status(404).send({ error: "Channel not found" });
-        const validation = connectionValidation(connection);
+        const validation = connectionValidation(connection, config);
         if (!connection.enabled) {
             recordRuntime(connection, "test_send_skipped_disabled", "Channel test send skipped because channel is disabled.");
-            return reply.status(400).send({ ok: false, error: "channel is disabled", validation, channel: channelSummary(connection) });
+            return reply.status(400).send({ ok: false, error: "channel is disabled", validation, channel: channelSummary(connection, config) });
         }
         if (!connection.configured || validation.ok === false) {
             recordRuntime(connection, "test_send_failed_validation", "Channel test send blocked by validation.", { validation });
-            return reply.status(400).send({ ok: false, error: "channel is missing required configuration", validation, channel: channelSummary(connection) });
+            return reply.status(400).send({ ok: false, error: "channel is missing required configuration", validation, channel: channelSummary(connection, config) });
         }
         recordRuntime(connection, "test_send_dry_run", "Channel test send dry-run accepted.", { initiatedBy: req.body?.initiatedBy ?? "webui" });
         return {
@@ -985,16 +1136,28 @@ export function registerChannelsRoute(app) {
                 timestamp: Date.now(),
                 idempotencyKey: `channel-test:${connection.connectionId}:${crypto.randomUUID()}`,
             },
-            channel: channelSummary(connection),
+            channel: channelSummary(connection, config),
         };
     });
-    app.post("/api/channels/restart", { preHandler: authMiddleware }, async (_req, reply) => {
+    app.post("/api/channels/restart", { preHandler: authMiddleware }, async (req, reply) => {
+        const config = getApiRuntimeConfig(req);
+        const paths = getApiRuntimePaths(req);
         try {
-            await startChannels();
-            return { ok: true, status: "started", channels: listConnections().map(channelSummary) };
+            const activation = await activateChannelsAndRecoverPendingResponses(config, paths);
+            return {
+                ok: true,
+                status: "started",
+                recovery: activation.recovery,
+                channels: listConnections(config).map((connection) => channelSummary(connection, config)),
+                configCommand: buildRuntimeAppliedConfigurationCommand("channels.restart_all"),
+            };
         }
         catch (error) {
-            return reply.status(500).send({ ok: false, error: error instanceof Error ? error.message : String(error) });
+            return reply.status(500).send({
+                ok: false,
+                error: channelRouteRuntimeErrorMessage(error, config, paths),
+                configCommand: buildRuntimeFailedConfigurationCommand("channels.restart_all", "channels_restart_failed"),
+            });
         }
     });
     app.get("/api/channel-messages", { preHandler: authMiddleware }, async (req) => {
@@ -1066,7 +1229,7 @@ export function registerChannelsRoute(app) {
         return { approvals, count: approvals.length };
     });
     app.post("/api/approvals/:approvalId/respond", { preHandler: authMiddleware }, async (req, reply) => {
-        const result = respondToApproval(req.params.approvalId, req.body ?? {}, "api:webui");
+        const result = respondToApproval(req.params.approvalId, req.body ?? {}, "api:webui", dependencies);
         if (result.statusCode === 400)
             return reply.status(400).send({ ok: false, error: result.error });
         if (result.status === "missing")
@@ -1080,7 +1243,8 @@ export function registerChannelsRoute(app) {
         if (!provider || !connectionId || !body.interactionId || !body.kind) {
             return reply.status(400).send({ ok: false, error: "provider, connectionId, interactionId, and kind are required" });
         }
-        const connection = findConnection(connectionId);
+        const config = getApiRuntimeConfig(req);
+        const connection = findConnection(connectionId, config);
         if (!connection)
             return reply.status(404).send({ ok: false, error: "Channel not found" });
         const verification = buildInteractionVerification(body);
@@ -1091,7 +1255,7 @@ export function registerChannelsRoute(app) {
                 decision: body.approvalDecision,
                 decisionBy: body.senderId ?? `${provider}:interaction`,
                 decisionSource: `channel:${provider}`,
-            }, `channel:${provider}`);
+            }, `channel:${provider}`, dependencies);
             if (result.statusCode === 400)
                 return reply.status(400).send({ ok: false, error: result.error, verification });
             approval = result;

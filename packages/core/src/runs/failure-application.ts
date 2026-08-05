@@ -1,20 +1,11 @@
+import { type SanitizedErrorSummary, sanitizeUserFacingError } from "./error-sanitizer.js"
 import type { FinalizationSource } from "./finalization.js"
 import { decideFatalFailureTerminalOutcome } from "./terminal-outcome-policy.js"
 
 interface FatalFailureApplicationDependencies {
   appendRunEvent: (runId: string, event: string) => void
-  setRunStepStatus: (
-    runId: string,
-    step: "executing",
-    status: "failed",
-    summary: string,
-  ) => void
-  updateRunStatus: (
-    runId: string,
-    status: "failed",
-    summary: string,
-    active: boolean,
-  ) => void
+  setRunStepStatus: (runId: string, step: "executing", status: "failed", summary: string) => void
+  updateRunStatus: (runId: string, status: "failed", summary: string, active: boolean) => void
   rememberRunFailure: (params: {
     runId: string
     sessionId: string
@@ -35,6 +26,7 @@ export interface FatalFailureApplicationParams {
   summary: string
   title: string
   extraEvents?: string[]
+  sanitizedError?: SanitizedErrorSummary
   appendMessageEventOnAbort?: boolean
   appendExtraEventsOnAbort?: boolean
 }
@@ -46,9 +38,11 @@ export function applyFatalFailure(
   const terminalOutcome = decideFatalFailureTerminalOutcome({ aborted: params.aborted })
   const shouldAppendMessageEvent = !params.aborted || params.appendMessageEventOnAbort === true
   const shouldAppendExtraEvents = !params.aborted || params.appendExtraEventsOnAbort === true
+  const userFacingMessage = (params.sanitizedError ?? sanitizeUserFacingError(params.message))
+    .userMessage
 
   if (shouldAppendMessageEvent) {
-    dependencies.appendRunEvent(params.runId, params.message)
+    dependencies.appendRunEvent(params.runId, userFacingMessage)
   }
   if (shouldAppendExtraEvents) {
     for (const event of params.extraEvents ?? []) {
@@ -61,14 +55,14 @@ export function applyFatalFailure(
     return "cancelled"
   }
 
-  dependencies.setRunStepStatus(params.runId, "executing", "failed", params.message)
-  dependencies.updateRunStatus(params.runId, "failed", params.message, false)
+  dependencies.setRunStepStatus(params.runId, "executing", "failed", userFacingMessage)
+  dependencies.updateRunStatus(params.runId, "failed", userFacingMessage, false)
   dependencies.rememberRunFailure({
     runId: params.runId,
     sessionId: params.sessionId,
     source: params.source,
     summary: params.summary,
-    detail: params.message,
+    detail: userFacingMessage,
     title: params.title,
   })
   return "failed"

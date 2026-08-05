@@ -36,21 +36,21 @@ function context(): AgentExecutionContext {
     },
     current_executor: {
       executor_id: "agent:knowbee",
-      display_name: "노비",
+      agent_name: "노비",
       can_delegate: true,
       available: true,
     },
     accessible_executors: [
       {
         executor_id: "node:finance",
-        display_name: "행랑아범",
+        agent_name: "행랑아범",
         role_name: "재무 담당",
         can_delegate: false,
         available: true,
       },
       {
         executor_id: "node:lead",
-        display_name: "마당쇠",
+        agent_name: "마당쇠",
         role_name: "개발 리드",
         can_delegate: true,
         available: true,
@@ -58,7 +58,7 @@ function context(): AgentExecutionContext {
     ],
     diagnostic_executors: [{
       executor_id: "node:backend",
-      display_name: "삼식이",
+      agent_name: "삼식이",
       role_name: "백엔드",
       can_delegate: false,
       available: true,

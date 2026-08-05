@@ -126,7 +126,7 @@ describe("runtime build/restart required status", () => {
     expect(status.warnings).toEqual([])
   })
 
-  it("requires channel smoke traces to prove request isolation, decision trace, topology run, and no provider-direct bypass", async () => {
+  it("requires channel smoke traces to prove request isolation, decision trace, and no provider-direct bypass", async () => {
     const scenario = getDefaultChannelSmokeScenarios().find((item) => item.id === "webui.basic_query")
     if (!scenario) throw new Error("missing webui.basic_query scenario")
     const execute = createDryRunChannelSmokeExecutor()
@@ -152,7 +152,6 @@ describe("runtime build/restart required status", () => {
     expect(failing.failures).toEqual(expect.arrayContaining([
       "request_group_id_not_run_id",
       "decision_trace_missing",
-      "topology_run_missing",
       "provider_direct_used",
     ]))
   })

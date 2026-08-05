@@ -152,6 +152,6 @@ describe("task006 topology workspace smart connect", () => {
     expect(html).toContain('data-testid="relation-mode-report"')
     expect(html).toContain('data-testid="enterprise-relation-more-select"')
     expect(html).toContain("추천 연결")
-    expect(html).toContain("Next와 Delegate")
+    expect(html).toContain("다음 단계와 위임")
   })
 })

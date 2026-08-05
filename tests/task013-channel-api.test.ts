@@ -1,15 +1,24 @@
 import { createRequire } from "node:module"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { registerChannelsRoute } from "../packages/core/src/api/routes/channels.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
 import {
   closeDb,
   insertMessageLedgerEvent,
 } from "../packages/core/src/db/index.js"
-import { createApprovalRegistryRequest, getApprovalRegistryRow } from "../packages/core/src/runs/approval-registry.js"
+import {
+  createApprovalRegistryRequest,
+  getApprovalRegistryRow,
+  resolveApprovalRegistryDecision,
+} from "../packages/core/src/runs/approval-registry.js"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: { logger: boolean }) => {
@@ -19,22 +28,26 @@ const Fastify = require("../packages/core/node_modules/fastify") as (options: { 
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempState(config: Record<string, unknown> = {}): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task013-channel-api-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  writeFileSync(join(stateDir, "config.json5"), JSON.stringify(config, null, 2), "utf-8")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task013-channel-api-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: JSON.stringify(config, null, 2),
+  })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
-async function withApp(fn: (app: ReturnType<typeof Fastify>) => Promise<void>): Promise<void> {
+async function withApp(
+  fn: (app: ReturnType<typeof Fastify>) => Promise<void>,
+  dependencies?: Parameters<typeof registerChannelsRoute>[1],
+): Promise<void> {
   const app = Fastify({ logger: false })
-  registerChannelsRoute(app)
+  installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+  registerChannelsRoute(app, dependencies)
   await app.ready()
   try {
     await fn(app)
@@ -63,11 +76,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -75,6 +83,17 @@ afterEach(() => {
 })
 
 describe("task013 channel API", () => {
+  it("passes config snapshots into channel validation helpers", () => {
+    const source = readFileSync("packages/core/src/api/routes/channels.ts", "utf-8")
+
+    expect(source).not.toContain("getConfig().imessage")
+    expect(source).not.toContain("getConfig().kakaoTalk")
+    expect(source).not.toContain("getConfig().discord")
+    expect(source).not.toContain("getConfig().googleChat")
+    expect(source).toContain("function connectionValidation(connection: ChannelConnectionRecord, config: KnowbeeConfig)")
+    expect(source).toContain("channelSummary(connection, config)")
+  })
+
   it("lists channel connections with redacted secrets and health/capability detail", async () => {
     await withApp(async (app) => {
       const list = await app.inject({ method: "GET", url: "/api/channels" })
@@ -122,10 +141,27 @@ describe("task013 channel API", () => {
       const disable = await app.inject({ method: "POST", url: "/api/channels/telegram:primary/disable" })
       expect(disable.statusCode).toBe(200)
       expect(disable.json().channel.enabled).toBe(false)
+      expect(disable.json()).toEqual(expect.objectContaining({
+        runtimeApplied: true,
+        restartRequired: false,
+        appliesOn: "current_runtime",
+        configCommand: expect.objectContaining({
+          kind: "channels.disable",
+          state: "completed",
+        }),
+      }))
 
       const enable = await app.inject({ method: "POST", url: "/api/channels/telegram:primary/enable" })
       expect(enable.statusCode).toBe(200)
       expect(enable.json().channel.enabled).toBe(true)
+      expect(enable.json()).toEqual(expect.objectContaining({
+        restartRequired: true,
+        appliesOn: "explicit_restart",
+        configCommand: expect.objectContaining({
+          kind: "channels.enable",
+          state: "completed",
+        }),
+      }))
 
       const bridge = await app.inject({ method: "POST", url: "/api/channels/imessage:local/enable" })
       expect(bridge.statusCode).toBe(400)
@@ -143,6 +179,10 @@ describe("task013 channel API", () => {
       expect(bridgeAck.json().channel).toEqual(expect.objectContaining({
         channelId: "imessage:local",
         enabled: true,
+      }))
+      expect(bridgeAck.json()).toEqual(expect.objectContaining({
+        restartRequired: true,
+        appliesOn: "explicit_restart",
       }))
       expect(bridgeAck.json().channel.validation.issues).toEqual(expect.arrayContaining([
         expect.objectContaining({ code: "local_bridge_not_available" }),
@@ -296,5 +336,51 @@ describe("task013 channel API", () => {
       expect(approvals.statusCode).toBe(200)
       expect(JSON.stringify(approvals.json())).not.toContain("approval-secret")
     })
+  })
+
+  it("resumes the live tool waiter when the approval REST API accepts a decision", async () => {
+    const resolveRegisteredWebUiApproval = vi.fn((input: {
+      approvalId: string
+      runId: string
+      decision: "allow_once" | "allow_run" | "deny"
+    }) => {
+      expect(getApprovalRegistryRow(input.approvalId)?.status).toBe("requested")
+      return resolveApprovalRegistryDecision({
+        approvalId: input.approvalId,
+        decision: input.decision,
+        decisionBy: "webui",
+        decisionSource: "user",
+      }).accepted
+    })
+    createApprovalRegistryRequest({
+      id: "approval-runtime-task013",
+      runId: "run-runtime-task013",
+      channel: "webui",
+      toolName: "web_search",
+      riskLevel: "safe",
+      kind: "approval",
+      params: { query: "current public fact" },
+      supersedePending: false,
+      now: 1_800_000_000_300,
+    })
+
+    await withApp(async (app) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/approvals/approval-runtime-task013/respond",
+        payload: { decision: "allow_run", decisionBy: "operator" },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual(expect.objectContaining({
+        accepted: true,
+        runtimeResumed: true,
+      }))
+      expect(resolveRegisteredWebUiApproval).toHaveBeenCalledWith({
+        approvalId: "approval-runtime-task013",
+        runId: "run-runtime-task013",
+        decision: "allow_run",
+      })
+    }, { resolveRegisteredWebUiApproval })
   })
 })

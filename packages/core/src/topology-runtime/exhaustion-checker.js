@@ -1,8 +1,11 @@
 export function checkFinalFailureExhaustion(input) {
     const unmetSuccessCriteriaIds = unmetSuccessCriteriaIdsForOutputs(input.workOrder, input.outputs);
     const successCriteriaStillNotMet = unmetSuccessCriteriaIds.length > 0;
-    const complete = input.recoveryReview.blockingUntriedOptions.length === 0;
-    const canFinalizeFailure = complete && successCriteriaStillNotMet;
+    const complete = input.recoveryReview.blockingUntriedOptions.length === 0
+        && input.solutionPathAssessment.complete;
+    const canFinalizeFailure = complete
+        && successCriteriaStillNotMet
+        && input.solutionPathAssessment.canFinalizeFailure;
     return {
         exhaustionSummary: {
             selfExecutionAttempted: input.recoveryReview.attempted.self_execution,
@@ -21,10 +24,13 @@ export function checkFinalFailureExhaustion(input) {
         unmetSuccessCriteriaIds,
         untriedOptions: [...input.recoveryReview.untriedOptions],
         blockingUntriedOptions: [...input.recoveryReview.blockingUntriedOptions],
+        solutionPathAssessment: structuredClone(input.solutionPathAssessment),
         reasonCodes: [
             canFinalizeFailure ? "final_failure_guard_passed" : "final_failure_guard_blocked",
             complete ? "exhaustion_complete" : "exhaustion_incomplete",
             successCriteriaStillNotMet ? "success_criteria_not_met" : "success_criteria_met",
+            input.solutionPathAssessment.canFinalizeFailure ? "solution_paths_exhausted" : "solution_path_still_available",
+            ...input.solutionPathAssessment.missingPaths.map((path) => `solution_path_unreviewed:${path}`),
             ...input.recoveryReview.reasonCodes,
         ],
     };

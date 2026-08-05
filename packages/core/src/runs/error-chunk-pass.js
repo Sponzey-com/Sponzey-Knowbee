@@ -1,27 +1,16 @@
-import { deliverTrackedChunk, } from "./delivery.js";
 import { applyExternalRecoveryAttempt, } from "./external-retry-application.js";
 import { applyFatalFailure, } from "./failure-application.js";
 import { describeWorkerRuntimeErrorReason } from "./recovery.js";
 const defaultModuleDependencies = {
     applyExternalRecoveryAttempt,
     applyFatalFailure,
-    deliverTrackedChunk,
     describeWorkerRuntimeErrorReason,
 };
 export async function applyErrorChunkPass(params, dependencies, moduleDependencies = defaultModuleDependencies) {
+    dependencies.appendRunEvent(params.runId, "user_facing_error_text_source:runtime_deterministic");
+    dependencies.appendRunEvent(params.runId, "user_facing_error_delivery_blocked:llm_required");
     if (params.executionRecoveryLimitStop) {
         dependencies.appendRunEvent(params.runId, "실행 복구를 자동으로 계속할 수 없어 중단합니다.");
-        await moduleDependencies.deliverTrackedChunk({
-            onChunk: params.onChunk,
-            chunk: params.chunk,
-            runId: params.runId,
-            source: params.source,
-            targetKey: params.sessionId,
-            ...(params.onDeliveryError ? { onError: params.onDeliveryError } : {}),
-            successfulFileDeliveries: params.successfulFileDeliveries,
-            successfulTextDeliveries: params.successfulTextDeliveries,
-            appendEvent: dependencies.appendRunEvent,
-        });
         return { failed: false };
     }
     if (params.activeWorkerRuntime && !params.aborted) {
@@ -43,17 +32,6 @@ export async function applyErrorChunkPass(params, dependencies, moduleDependenci
             },
             limitRemainingItems: ["작업 세션 실패 원인을 더 분석해야 하지만 새 안전 대안이나 필요한 결정 정보가 부족합니다."],
         }, dependencies);
-        await moduleDependencies.deliverTrackedChunk({
-            onChunk: params.onChunk,
-            chunk: params.chunk,
-            runId: params.runId,
-            source: params.source,
-            targetKey: params.sessionId,
-            ...(params.onDeliveryError ? { onError: params.onDeliveryError } : {}),
-            successfulFileDeliveries: params.successfulFileDeliveries,
-            successfulTextDeliveries: params.successfulTextDeliveries,
-            appendEvent: dependencies.appendRunEvent,
-        });
         return applyWorkerRuntimeRecoveryAttempt(workerRuntimeRecoveryAttempt);
     }
     const failureState = moduleDependencies.applyFatalFailure({
@@ -70,17 +48,6 @@ export async function applyErrorChunkPass(params, dependencies, moduleDependenci
         appendMessageEventOnAbort: true,
         appendExtraEventsOnAbort: true,
     }, dependencies);
-    await moduleDependencies.deliverTrackedChunk({
-        onChunk: params.onChunk,
-        chunk: params.chunk,
-        runId: params.runId,
-        source: params.source,
-        targetKey: params.sessionId,
-        ...(params.onDeliveryError ? { onError: params.onDeliveryError } : {}),
-        successfulFileDeliveries: params.successfulFileDeliveries,
-        successfulTextDeliveries: params.successfulTextDeliveries,
-        appendEvent: dependencies.appendRunEvent,
-    });
     return { failed: failureState === "failed" };
 }
 function applyWorkerRuntimeRecoveryAttempt(attempt) {

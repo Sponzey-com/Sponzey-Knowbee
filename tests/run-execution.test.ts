@@ -78,6 +78,22 @@ describe("run execution helpers", () => {
     })).toBe(false)
   })
 
+  it("does not treat a successful tool receipt as meaningful completion evidence by itself", () => {
+    expect(hasMeaningfulCompletionEvidence({
+      executionSemantics: {
+        filesystemEffect: "none",
+        privilegedOperation: "none",
+        artifactDelivery: "none",
+        approvalRequired: false,
+        approvalTool: "none",
+      },
+      preview: "",
+      deliverySatisfied: false,
+      successfulTools: [{ toolName: "stock_lookup", output: "request accepted" }],
+      sawRealFilesystemMutation: false,
+    })).toBe(false)
+  })
+
   it("builds structured tool execution receipts for success and failure cases", () => {
     const successReceipt = buildToolExecutionReceipt({
       toolName: "file_write",

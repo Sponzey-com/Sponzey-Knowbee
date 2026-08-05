@@ -40,8 +40,8 @@ describe("task008 simple inspector and advanced isolation", () => {
     )
 
     expect(html).toContain('data-testid="executor-inspector"')
-    expect(html).toContain("노비가 이해한 내용")
-    expect(html).toContain("연결된 실행자")
+    expect(html).toContain("메인 에이전트가 이해한 내용")
+    expect(html).toContain("연결된 서브 에이전트")
     expect(html).toContain("운영 담당자에게 넘김")
     expect(html).not.toContain("필요한 도구")
     expect(html).not.toContain("성공 기준")
@@ -115,8 +115,8 @@ describe("task008 simple inspector and advanced isolation", () => {
       }),
     )
 
-    expect(html).toContain("선택한 실행자")
-    expect(html).toContain("노비가 이해한 내용")
+    expect(html).toContain("선택한 서브 에이전트")
+    expect(html).toContain("메인 에이전트가 이해한 내용")
     expect(html).not.toContain('data-testid="executor-inspector-advanced-settings"')
     expect(html).not.toContain('data-testid="executor-inspector-runtime-mode"')
     expect(html).not.toContain('data-testid="executor-inspector-advanced-contract"')
@@ -126,7 +126,7 @@ describe("task008 simple inspector and advanced isolation", () => {
   })
 
   it("maps runtime modes to user-facing execution labels", () => {
-    expect(executorFriendlyRuntimeLabel("tool_execution")).toBe("도구 실행")
+    expect(executorFriendlyRuntimeLabel("tool_execution")).toBe("외부 도구 실행")
     expect(executorFriendlyRuntimeLabel("approval")).toBe("최종 검토")
     expect(executorFriendlyRuntimeLabel("external")).toBe("외부 처리")
     expect(executorFriendlyRuntimeLabel("auto")).toBe("자동 처리")
@@ -204,7 +204,7 @@ describe("task008 simple inspector and advanced isolation", () => {
     expect(html).toContain('data-testid="executor-graph-canvas"')
     expect(html).toContain('data-testid="topology-workspace-simple-sidebar"')
     expect(html).toContain('data-testid="executor-inspector"')
-    expect(html).toContain("선택한 실행자")
+    expect(html).toContain("선택한 서브 에이전트")
     expect(html).toContain("성격과 하는 일")
     expect(html).not.toContain('data-testid="enterprise-topology-inspector"')
   })

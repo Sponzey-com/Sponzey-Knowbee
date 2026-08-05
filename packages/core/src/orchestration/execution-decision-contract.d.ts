@@ -103,7 +103,7 @@ export interface AgentExecutionContextRequest {
 }
 export interface AgentExecutionExecutorProfile {
     executor_id: string;
-    display_name: string;
+    agent_name: string;
     role_name?: string;
     definition?: string;
     can_delegate: boolean;
@@ -118,7 +118,7 @@ export interface AgentExecutionDiagnosticExecutorProfile extends AgentExecutionE
 export interface AgentExecutionRequester {
     requester_id: string;
     requester_type: "user" | "executor" | "channel" | "system";
-    display_name?: string;
+    agent_name?: string;
 }
 export interface AgentExecutionConnection {
     from_executor_id: string;

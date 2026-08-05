@@ -1,9 +1,5 @@
 import { join } from "node:path";
 import { buildWebRetrievalPolicyDecision } from "./web-retrieval-policy.js";
-import { buildRetrievalTargetHash, evaluateRetrievalCacheEntry, listPersistentRetrievalCacheEntriesForTarget } from "./web-retrieval-cache.js";
-import { resolveWeatherLocationContract } from "./web-location-contract.js";
-import { buildFinanceKnownSources, FINANCE_ADAPTER_METADATA, resolveFinanceIndexTarget } from "./web-source-adapters/finance.js";
-import { buildWeatherKnownSources, WEATHER_ADAPTER_METADATA } from "./web-source-adapters/weather.js";
 import { loadWebRetrievalFixturesFromDir, runWebRetrievalFixtureRegression } from "./web-retrieval-smoke.js";
 const TOOL_EVENT_KINDS = new Set(["tool_started", "tool_done", "tool_failed", "tool_skipped"]);
 const WEB_TOOL_NAMES = new Set(["web_search", "web_fetch"]);
@@ -34,9 +30,6 @@ function asString(value) {
 function asNumber(value) {
     return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
-function asBoolean(value) {
-    return typeof value === "boolean" ? value : null;
-}
 function detailRecord(value) {
     return isRecord(value) ? value : null;
 }
@@ -46,9 +39,6 @@ function nestedRecord(value, key) {
 }
 function stringField(record, key) {
     return asString(record?.[key]);
-}
-function boolField(record, key) {
-    return asBoolean(record?.[key]);
 }
 function stringArray(value) {
     return Array.isArray(value) ? value.filter((item) => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()) : [];
@@ -325,105 +315,24 @@ function uniqueStrings(values) {
     }
     return out;
 }
-function knownTargetFromQuery(query) {
-    if (!query?.trim())
-        return { target: null, sources: [], adapters: [] };
-    const finance = resolveFinanceIndexTarget(query);
-    if (finance) {
-        return {
-            target: finance.targetContract,
-            sources: buildFinanceKnownSources(finance.key),
-            adapters: [adapterView(FINANCE_ADAPTER_METADATA)],
-        };
-    }
-    const weather = resolveWeatherLocationContract(query);
-    if (weather) {
-        return {
-            target: weather.targetContract,
-            sources: buildWeatherKnownSources(weather.contract),
-            adapters: [adapterView(WEATHER_ADAPTER_METADATA)],
-        };
-    }
-    return { target: null, sources: [], adapters: [] };
-}
-function adapterView(metadata) {
-    return {
-        adapterId: metadata.adapterId,
-        adapterVersion: metadata.adapterVersion,
-        parserVersion: metadata.parserVersion,
-        checksum: metadata.checksum,
-        status: metadata.status,
-        ...(metadata.degradedReason !== undefined ? { degradedReason: metadata.degradedReason } : {}),
-    };
-}
-function cacheViewForTarget(target) {
-    if (!target)
-        return { status: "not_loaded", entryCount: 0, entries: [] };
-    try {
-        const entries = listPersistentRetrievalCacheEntriesForTarget({
-            targetHash: buildRetrievalTargetHash(target),
-            freshnessPolicy: "latest_approximate",
-            limit: 5,
-        });
-        const evaluated = entries.map((entry) => {
-            const evaluation = evaluateRetrievalCacheEntry({ entry, userRequestedLatest: true });
-            return {
-                status: evaluation.status,
-                canUseForFinalAnswer: evaluation.canUseForFinalAnswer,
-                canUseAsDiscoveryHint: evaluation.canUseAsDiscoveryHint,
-                cacheAgeMs: evaluation.cacheAgeMs,
-                reason: evaluation.reason,
-                value: evaluation.entry?.value ?? null,
-                unit: evaluation.entry?.unit ?? null,
-                sourceDomain: evaluation.entry?.sourceEvidence.sourceDomain ?? null,
-            };
-        });
-        return { status: evaluated[0]?.status ?? "miss", entryCount: evaluated.length, entries: evaluated };
-    }
-    catch {
-        return { status: "not_loaded", entryCount: 0, entries: [] };
-    }
-}
-function verificationFromEvents(events) {
-    const verificationEvent = [...events].reverse().find((event) => event.eventType.includes("verification") || event.eventType.includes("verdict") || nestedRecord(event.detail, "verdict") || boolField(detailRecord(event.detail), "canAnswer") !== null);
-    const detail = detailRecord(verificationEvent?.detail);
-    const verdict = nestedRecord(verificationEvent?.detail, "verdict") ?? detail;
-    return {
-        canAnswer: boolField(verdict, "canAnswer"),
-        evidenceSufficiency: stringField(verdict, "evidenceSufficiency") ?? stringField(verdict, "sufficiency"),
-        acceptedValue: stringField(verdict, "acceptedValue"),
-        rejectionReason: stringField(verdict, "rejectionReason"),
-        mustAvoidGuessing: boolField(detail, "mustAvoidGuessing"),
-        policy: stringField(verdict, "policy") ?? stringField(detail, "policy") ?? "latest_approximate",
-        completionStrict: true,
-        semanticComparisonAllowed: false,
-        verificationMode: "contract_fields",
-    };
-}
-function candidateExtractionFromEvents(events) {
-    const candidateEvents = events.filter((event) => event.eventType.includes("candidate"));
-    let candidateCount = 0;
-    for (const event of candidateEvents) {
-        const detail = detailRecord(event.detail);
-        const explicit = asNumber(detail?.candidateCount);
-        if (explicit != null)
-            candidateCount += explicit;
-        else if (Array.isArray(detail?.candidates))
-            candidateCount += detail.candidates.length;
-    }
-    return {
-        eventCount: candidateEvents.length,
-        candidateCount,
-        lastSummary: candidateEvents.at(-1)?.summary ?? null,
-    };
-}
-function conflictResolverFromEvents(events) {
-    const event = [...events].reverse().find((item) => item.eventType.includes("conflict") || stringArray(nestedRecord(item.detail, "verdict")?.conflicts).length > 0);
+function resultDiagnosisFromEvents(events) {
+    const event = [...events].reverse().find((item) => item.eventType.includes("result_diagnosis") || item.eventType.includes("completion_review"));
     const detail = detailRecord(event?.detail);
-    const verdict = nestedRecord(event?.detail, "verdict");
+    const review = nestedRecord(detail, "review");
+    const receipt = nestedRecord(detail, "contextReceipt")
+        ?? nestedRecord(review, "contextReceipt")
+        ?? nestedRecord(detail, "resultDiagnosis");
+    const rawStatus = stringField(review, "status") ?? stringField(detail, "status");
+    const status = rawStatus === "complete" || rawStatus === "followup" || rawStatus === "ask_user"
+        ? rawStatus
+        : null;
     return {
-        status: stringField(detail, "conflictStatus") ?? stringField(detail, "status"),
-        conflicts: stringArray(verdict?.conflicts ?? detail?.conflicts),
+        status,
+        contextFingerprint: stringField(receipt, "contextFingerprint"),
+        criterionKeys: stringArray(receipt?.criterionKeys),
+        conditionCount: asNumber(receipt?.conditionCount),
+        evidenceRefs: stringArray(receipt?.evidenceRefs),
+        receiptPresent: receipt !== null,
     };
 }
 function degradedReasons(toolCalls, events) {
@@ -442,10 +351,6 @@ function degradedReasons(toolCalls, events) {
         const evidence = evidenceFromDetail(event.detail);
         if (evidence?.adapterStatus === "degraded")
             reasons.push(`${evidence.adapterId ?? "adapter"}:degraded`);
-        const detail = detailRecord(event.detail);
-        const status = stringField(detail, "status");
-        if (status && status !== "ready" && status !== "succeeded" && status !== "ok")
-            reasons.push(`${event.eventType}:${status}`);
     }
     return uniqueStrings(reasons);
 }
@@ -459,7 +364,7 @@ function attemptViewFromToolCall(call) {
         id: call.id,
         toolName: call.toolName,
         status: call.status,
-        method: policy?.method ?? (call.toolName === "web_search" ? "fast_text_search" : "direct_fetch"),
+        method: policy?.method ?? "direct_fetch",
         sourceKind: policy?.sourceKind ?? "unknown",
         reliability: policy?.reliability ?? "unknown",
         freshnessPolicy: policy?.freshnessPolicy ?? "latest_approximate",
@@ -494,8 +399,10 @@ function sourceAttemptFromEvent(event) {
 export function buildAdminWebRetrievalLab(input) {
     const toolCalls = buildAdminToolCallsInspector(input).calls;
     const webToolCalls = toolCalls.filter((call) => WEB_TOOL_NAMES.has(call.toolName));
-    const retrievalEvents = input.timeline.events.filter((event) => event.component === "web_retrieval" || event.eventType.startsWith("web_retrieval.") || event.eventType.includes("verification") || event.eventType.includes("candidate"));
-    const knownTarget = knownTargetFromQuery(input.query);
+    const retrievalEvents = input.timeline.events.filter((event) => event.component === "web_retrieval"
+        || event.eventType.startsWith("web_retrieval.")
+        || event.eventType.includes("result_diagnosis")
+        || event.eventType.includes("completion_review"));
     const eventsByContext = new Map();
     for (const event of retrievalEvents) {
         const key = contextKey(event);
@@ -515,32 +422,25 @@ export function buildAdminWebRetrievalLab(input) {
         const queryVariants = uniqueStrings([
             ...(input.query ? [input.query] : []),
             ...calls.flatMap((call) => queryVariantFromParams(call.paramsRedacted)),
-            ...knownTarget.sources.map((source) => source.url),
         ]);
         const attempts = [
             ...calls.map(attemptViewFromToolCall).filter((attempt) => attempt !== null),
             ...events.map(sourceAttemptFromEvent).filter((attempt) => attempt !== null),
         ];
         const reasons = degradedReasons(calls, events);
-        const verification = verificationFromEvents(events);
+        const resultDiagnosis = resultDiagnosisFromEvents(events);
         return {
             id: key,
             requestGroupId: events.find((event) => event.requestGroupId)?.requestGroupId ?? calls.find((call) => call.requestGroupId)?.requestGroupId ?? null,
             runId: events.find((event) => event.runId)?.runId ?? calls.find((call) => call.runId)?.runId ?? null,
             sessionKey: events.find((event) => event.sessionKey)?.sessionKey ?? calls.find((call) => call.sessionKey)?.sessionKey ?? null,
-            target: knownTarget.target,
-            sourceLadder: knownTarget.sources,
             queryVariants,
             fetchAttempts: attempts,
-            candidateExtraction: candidateExtractionFromEvents(events),
-            verification,
-            conflictResolver: conflictResolverFromEvents(events),
-            cache: cacheViewForTarget(knownTarget.target),
-            adapterMetadata: knownTarget.adapters,
+            resultDiagnosis,
             degradedState: { degraded: reasons.length > 0, reasons },
             policySeparation: {
-                discovery: "loose_search",
-                completion: "strict_contract_fields",
+                evidence: "provenance_only",
+                completion: "llm_result_diagnosis",
                 semanticComparisonAllowed: false,
             },
         };
@@ -550,7 +450,7 @@ export function buildAdminWebRetrievalLab(input) {
             sessions: sessions.length,
             attempts: sessions.reduce((sum, session) => sum + session.fetchAttempts.length, 0),
             degraded: sessions.filter((session) => session.degradedState.degraded).length,
-            answerable: sessions.filter((session) => session.verification.canAnswer === true).length,
+            diagnosed: sessions.filter((session) => session.resultDiagnosis.receiptPresent).length,
         },
         sessions,
     };
@@ -572,7 +472,7 @@ export function runAdminWebRetrievalFixtureReplay(input = {}) {
         generatedAt: now.getTime(),
         networkUsed: false,
         semanticComparisonAllowed: false,
-        verificationMode: "contract_fields",
+        verificationMode: "llm_result_diagnosis_contract",
         fixtureCount: fixtures.length,
         summary: {
             kind: summary.kind,
@@ -585,10 +485,9 @@ export function runAdminWebRetrievalFixtureReplay(input = {}) {
             title: result.title,
             status: result.status,
             attempts: result.attempts,
-            candidateCount: result.candidateCount,
-            canAnswer: result.verdict.canAnswer,
-            acceptedValue: result.verdict.acceptedValue,
-            evidenceSufficiency: result.verdict.evidenceSufficiency,
+            successfulSourceCount: result.successfulSourceCount,
+            evidenceSourceIds: result.evidenceSourceIds,
+            llmDiagnosisExpectation: result.llmDiagnosisExpectation,
             failures: result.failures,
         })),
     };

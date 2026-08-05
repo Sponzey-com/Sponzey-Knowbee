@@ -1,5 +1,9 @@
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { resolveWebUiLiveUpdateAck } from "../packages/core/src/api/ws/stream.ts"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.js"
 import type {
   AgentPromptBundle,
@@ -12,6 +16,7 @@ import type {
   SkillMcpAllowlist,
   StructuredTaskScope,
 } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
+import { closeDb } from "../packages/core/src/db/index.js"
 import {
   listLatencyMetrics,
   recordLatencyMetric,
@@ -28,6 +33,11 @@ import {
 import { buildReleasePerformanceSummary } from "../packages/core/src/release/performance-gate.ts"
 import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
 import { acknowledgeLiveUpdateMessage } from "../packages/webui/src/api/ws.ts"
+import { createTestResultDiagnosisDependencies } from "./fixtures/agent-runtime.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+import { createTestStartPlanBoundaryDependencies } from "./fixtures/start-plan.ts"
+
+const tempDirs: string[] = []
 
 const startRootRunMock = vi.fn()
 
@@ -121,8 +131,6 @@ function promptBundle(createdAt: number): AgentPromptBundle {
     agentId: "agent:researcher",
     agentType: "sub_agent",
     role: "research worker",
-    displayNameSnapshot: "Researcher",
-    nicknameSnapshot: "Res",
     personalitySnapshot: "Precise",
     teamContext: [],
     memoryPolicy,
@@ -173,6 +181,7 @@ function makeRuntimeDependencies(baseTime: number): {
   const nowRef = { value: baseTime }
   const clone = <T>(value: T): T => structuredClone(value)
   const dependencies: SubSessionRuntimeDependencies = {
+    ...createTestResultDiagnosisDependencies(),
     now: () => nowRef.value,
     idProvider: () => `id-${++nowRef.value}`,
     loadSubSessionByIdempotencyKey: (idempotencyKey) =>
@@ -205,6 +214,10 @@ function exclusiveFileLock(lockId: string, target = "/repo/file.ts"): ResourceLo
 }
 
 beforeEach(() => {
+  closeDb()
+  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task014-performance-"))
+  tempDirs.push(stateDir)
+  initializeTestDbRuntime(stateDir)
   resetLatencyMetrics()
   startRootRunMock.mockReset()
   startRootRunMock.mockReturnValue({
@@ -217,6 +230,11 @@ beforeEach(() => {
 
 afterEach(() => {
   resetLatencyMetrics()
+  closeDb()
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 describe("task014 performance slo", () => {
@@ -224,16 +242,23 @@ describe("task014 performance slo", () => {
     const baseTime = Date.parse("2026-04-21T01:00:00.000Z")
 
     const ingress = startIngressRun({
+      config: DEFAULT_CONFIG,
       runId: "run-ingress",
       message: "현재 상태 보여줘",
       sessionId: "session-ingress",
       source: "webui",
       model: undefined,
     })
-    expect(ingress.receipt.text).toBe("요청을 접수했습니다. 분석을 시작합니다.")
+    expect(ingress.acknowledgement).toMatchObject({
+      kind: "intake_acknowledgement",
+      state: "request_received",
+      language: "ko",
+      finalAnswer: false,
+    })
 
     await buildStartPlan(
       {
+        config: DEFAULT_CONFIG,
         message: "작업을 병렬로 나눠줘",
         sessionId: "session-task014",
         runId: "run-task014",
@@ -241,6 +266,7 @@ describe("task014 performance slo", () => {
         source: "webui",
       },
       {
+        ...createTestStartPlanBoundaryDependencies(),
         analyzeRequestEntrySemantics: vi.fn(() => ({
           reuse_conversation_context: false,
           active_queue_cancellation_mode: null,
@@ -303,7 +329,7 @@ describe("task014 performance slo", () => {
                 parentSessionId: "session-parent",
                 parentRunId: "run-parent",
                 agentId: "agent:researcher",
-                agentDisplayName: "Researcher",
+                agentName: "Researcher",
                 commandRequestId: "command:left",
                 status: "completed",
                 promptBundleId: "prompt-bundle:researcher",
@@ -326,7 +352,7 @@ describe("task014 performance slo", () => {
                 parentSessionId: "session-parent",
                 parentRunId: "run-parent",
                 agentId: "agent:researcher",
-                agentDisplayName: "Researcher",
+                agentName: "Researcher",
                 commandRequestId: "command:right",
                 status: "completed",
                 promptBundleId: "prompt-bundle:researcher",
@@ -396,7 +422,9 @@ describe("task014 performance slo", () => {
       concurrencyBlockedCount: 1,
     })
 
-    expect(summary.gateStatus).toBe("passed")
+    expect(summary.operationalStatus).toBe("passed")
+    expect(summary.gateStatus).toBe("failed")
+    expect(summary.acceptance.status).toBe("baseline_only")
     expect(summary.missingRequiredMetrics).toEqual([])
     expect(summary.metrics).toEqual(
       expect.arrayContaining([

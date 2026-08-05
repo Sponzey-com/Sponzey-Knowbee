@@ -3,8 +3,10 @@ import { shouldRetryTruncatedOutput } from "./recovery.js";
 export function deriveCompletionEvidenceState(params) {
     const textResponseSatisfied = params.preview.trim().length > 0
         && allowsTextOnlyCompletion({ executionSemantics: params.executionSemantics });
-    const executionSatisfied = params.successfulTools.length > 0
+    const verifiedToolEvidence = params.successfulTools.some(isVerifiedYeonjangCompletionEvidence);
+    const executionSatisfied = params.deliverySatisfied
         || params.sawRealFilesystemMutation
+        || verifiedToolEvidence
         || textResponseSatisfied;
     const deliveryRequired = params.executionSemantics.artifactDelivery === "direct";
     const deliverySatisfied = !deliveryRequired || params.deliverySatisfied;
@@ -34,6 +36,22 @@ export function deriveCompletionEvidenceState(params) {
         completionSatisfied,
     };
 }
+function isVerifiedYeonjangCompletionEvidence(tool) {
+    const details = tool.details;
+    if (!details || typeof details !== "object" || Array.isArray(details))
+        return false;
+    const evidence = details.evidence;
+    if (!evidence || typeof evidence !== "object" || Array.isArray(evidence))
+        return false;
+    const postCheck = evidence.postCheck;
+    if (!postCheck || typeof postCheck !== "object" || Array.isArray(postCheck))
+        return false;
+    return details.via === "yeonjang"
+        && evidence.schemaVersion === "yeonjang-evidence-v1"
+        && (postCheck.kind === "goal_validated"
+            || (postCheck.kind === "verified"
+                && postCheck.verified === true));
+}
 export function deriveCompletionStageState(params) {
     const evidenceState = deriveCompletionEvidenceState({
         executionSemantics: params.executionSemantics,
@@ -42,11 +60,13 @@ export function deriveCompletionStageState(params) {
         successfulTools: params.successfulTools,
         sawRealFilesystemMutation: params.sawRealFilesystemMutation,
     });
-    const interpretationStatus = params.review?.status === "followup"
+    const interpretationStatus = !params.review && params.successfulTools.length > 0
         ? "followup_required"
-        : params.review?.status === "ask_user"
-            ? "user_input_required"
-            : "satisfied";
+        : params.review?.status === "followup"
+            ? "followup_required"
+            : params.review?.status === "ask_user"
+                ? "user_input_required"
+                : "satisfied";
     const executionStatus = evidenceState.executionSatisfied ? "satisfied" : "missing";
     const deliveryStatus = !evidenceState.deliveryRequired
         ? "not_required"
@@ -68,7 +88,9 @@ export function deriveCompletionStageState(params) {
         : "settled";
     const blockingReasons = [];
     if (interpretationStatus === "followup_required") {
-        blockingReasons.push("completion review가 추가 follow-up 작업을 요구합니다.");
+        blockingReasons.push(!params.review && params.successfulTools.length > 0
+            ? "도구 실행 결과에 대한 LLM 결과 진단 receipt가 없습니다."
+            : "completion review가 추가 follow-up 작업을 요구합니다.");
     }
     if (interpretationStatus === "user_input_required") {
         blockingReasons.push("completion review가 사용자 추가 입력을 요구합니다.");
@@ -76,8 +98,8 @@ export function deriveCompletionStageState(params) {
     if (executionStatus === "missing" && evidenceState.conflictReason) {
         blockingReasons.push(evidenceState.conflictReason);
     }
-    if (deliveryStatus === "missing" && evidenceState.conflictReason) {
-        blockingReasons.push(evidenceState.conflictReason);
+    if (deliveryStatus === "missing") {
+        blockingReasons.push("요청된 직접 결과 전달이 아직 완료되지 않았습니다.");
     }
     if (truncatedRecoveryRequired) {
         blockingReasons.push("중간 절단된 출력이라 다른 방식의 복구가 필요합니다.");
@@ -113,7 +135,11 @@ export function deriveCompletionStageState(params) {
                 ? "completed"
                 : "pending",
             ...(interpretationStatus === "followup_required"
-                ? { reason: "completion review가 추가 follow-up 작업을 요구합니다." }
+                ? {
+                    reason: !params.review && params.successfulTools.length > 0
+                        ? "도구 실행 결과에 대한 LLM 결과 진단 receipt가 필요합니다."
+                        : "completion review가 추가 follow-up 작업을 요구합니다.",
+                }
                 : interpretationStatus === "user_input_required"
                     ? { reason: "completion review가 사용자 추가 입력을 요구합니다." }
                     : truncatedRecoveryRequired

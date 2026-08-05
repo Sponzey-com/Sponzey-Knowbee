@@ -1,4 +1,5 @@
 import type { AgentChunk } from "../agent/index.js"
+import type { UserFacingTextSource } from "./loop-directive.js"
 import {
   applyToolEndChunk,
   applyToolStartChunk,
@@ -18,12 +19,17 @@ import {
 import type { FinalizationSource } from "./finalization.js"
 import type { RecoveryBudgetUsage } from "./recovery-budget.js"
 import type { FailedCommandTool, SuccessfulToolEvidence } from "./recovery.js"
+import {
+  isRunScopedPreDispatchFailureDetails,
+} from "./run-scoped-tool-admission.js"
+import type { YeonjangSideEffectGoalValidationCandidate } from "../yeonjang/side-effect-goal-validation-review.js"
 
 type ChunkPassChunk = Exclude<AgentChunk, { type: "error" } | { type: "done" }>
 
 export interface ExecutionChunkPassResult {
   handled: boolean
   preview?: string
+  previewSource?: UserFacingTextSource
   executionRecovery?: ExecutionRecoveryPayload
   executionRecoveryLimitStop?: {
     summary: string
@@ -35,6 +41,7 @@ export interface ExecutionChunkPassResult {
     summary: string
     reason: string
     message: string
+    providerFailureReasonCode?: import("../ai/provider-failure.js").AIProviderFailureReasonCode
   }
   aiRecoveryLimitStop?: {
     summary: string
@@ -80,6 +87,7 @@ export function applyExecutionChunkPass(
     filesystemMutationPaths: Set<string>
     failedCommandTools: FailedCommandTool[]
     commandFailureSeen: boolean
+    yeonjangSideEffectGoalValidationCandidates?: YeonjangSideEffectGoalValidationCandidate[]
     recoveryBudgetUsage: RecoveryBudgetUsage
     usedTurns: number
     maxDelegationTurns: number
@@ -92,13 +100,37 @@ export function applyExecutionChunkPass(
     if (preview) {
       dependencies.updateRunSummary(params.runId, preview.slice(-500))
     }
+    if (params.chunk.notice?.kind === "agent_terminal_failure") {
+      const toolName = params.chunk.notice.toolName
+      return {
+        handled: true,
+        preview,
+        previewSource: params.chunk.textSource ?? "runtime_deterministic",
+        executionRecoveryLimitStop: {
+          summary: `${toolName} 실행이 확인된 실패로 중단되었습니다.`,
+          reason: params.chunk.notice.reason,
+          rawMessage: params.chunk.delta,
+          remainingItems: [`${toolName}의 확인된 실패 원인을 해소해야 합니다.`],
+        },
+        abortExecutionStream: true,
+      }
+    }
     return {
       handled: true,
       preview,
+      previewSource: params.chunk.textSource ?? "llm_generated",
     }
   }
 
   if (params.chunk.type === "execution_recovery") {
+    dependencies.appendRunEvent(
+      params.runId,
+      "internal_recovery_execution_payload_source:runtime_deterministic",
+    )
+    dependencies.appendRunEvent(
+      params.runId,
+      "internal_recovery_execution_payload_delivery:control_flow_only",
+    )
     const executionRecoveryAttempt: ExecutionRecoveryAttemptResult = moduleDependencies.applyExecutionRecoveryAttempt({
       runId: params.runId,
       sessionId: params.sessionId,
@@ -134,18 +166,57 @@ export function applyExecutionChunkPass(
   }
 
   if (params.chunk.type === "tool_end") {
+    if (
+      !params.chunk.success &&
+      isRunScopedPreDispatchFailureDetails(params.chunk.details)
+    ) {
+      params.pendingToolParams.delete(params.chunk.toolName)
+      const payload: ExecutionRecoveryPayload = {
+        summary: "실행 범위 검증 실패 후 다른 허용 전략을 검토합니다.",
+        reason: params.chunk.details.reasonCode,
+        reasonCode: params.chunk.details.reasonCode,
+        toolNames: [params.chunk.toolName],
+        evidenceRefs: [params.chunk.details.failureFingerprint],
+      }
+      const executionRecoveryAttempt =
+        moduleDependencies.applyExecutionRecoveryAttempt({
+          runId: params.runId,
+          sessionId: params.sessionId,
+          source: params.source,
+          recoveryBudgetUsage: params.recoveryBudgetUsage,
+          usedTurns: params.usedTurns,
+          maxDelegationTurns: params.maxDelegationTurns,
+          payload,
+        }, dependencies)
+      if (executionRecoveryAttempt.kind === "stop") {
+        return {
+          handled: true,
+          executionRecoveryLimitStop: executionRecoveryAttempt.stop,
+          abortExecutionStream: true,
+        }
+      }
+      return {
+        handled: true,
+        executionRecovery: executionRecoveryAttempt.payload,
+        abortExecutionStream: true,
+      }
+    }
     const toolReceiptState = moduleDependencies.applyToolEndChunk({
       runId: params.runId,
       toolName: params.chunk.toolName,
       success: params.chunk.success,
       output: params.chunk.output,
       toolDetails: params.chunk.details,
+      ...(params.chunk.evidenceSource ? { evidenceSource: params.chunk.evidenceSource } : {}),
       workDir: params.workDir,
       pendingToolParams: params.pendingToolParams,
       successfulTools: params.successfulTools,
       filesystemMutationPaths: params.filesystemMutationPaths,
       failedCommandTools: params.failedCommandTools,
       commandFailureSeen: params.commandFailureSeen,
+      ...(params.yeonjangSideEffectGoalValidationCandidates
+        ? { yeonjangSideEffectGoalValidationCandidates: params.yeonjangSideEffectGoalValidationCandidates }
+        : {}),
     }, dependencies)
 
     return {

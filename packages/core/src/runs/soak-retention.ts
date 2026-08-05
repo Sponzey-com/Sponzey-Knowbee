@@ -1,5 +1,11 @@
 import { readdirSync } from "node:fs"
-import { sanitizeUserFacingError, type SanitizedErrorKind } from "./error-sanitizer.js"
+import { redactLogText } from "../logger/index.js"
+import { sanitizeUserFacingError, type SanitizedErrorKind, type SanitizedErrorSummary } from "./error-sanitizer.js"
+import {
+  decideCleanupCandidate,
+  type CleanupCandidateEvidence,
+  type CleanupDecision,
+} from "../maintenance/cleanup-decision.js"
 
 export type SoakProfileId = "short" | "one_hour" | "eight_hour" | "twenty_four_hour"
 export type SoakOperationKind =
@@ -246,6 +252,7 @@ export interface RetentionItem {
   path?: string
   runId?: string
   active?: boolean
+  cleanupProtection?: Omit<CleanupCandidateEvidence, "candidateId" | "dataKind" | "retentionClass">
 }
 
 export interface RetentionCleanupCandidate extends RetentionItem {
@@ -278,6 +285,7 @@ export interface RetentionCleanupResult {
   plan: RetentionCleanupPlan
   deleted: RetentionCleanupCandidate[]
   failures: RetentionCleanupFailure[]
+  retained: Array<{ candidate: RetentionCleanupCandidate; decision: Extract<CleanupDecision, { decision: "retain" }> }>
   auditRecorded: boolean
 }
 
@@ -373,6 +381,22 @@ export const DEFAULT_SOAK_HEALTH_THRESHOLDS: SoakHealthThresholds = {
   auditRowCount: 100_000,
 }
 
+function soakOperationErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
+
+function retentionCleanupFailureSummary(error: unknown): SanitizedErrorSummary {
+  const rawMessage = error instanceof Error ? error.message : String(error)
+  const sanitized = sanitizeUserFacingError(rawMessage)
+  return {
+    ...sanitized,
+    userMessage: redactLogText(sanitized.userMessage),
+    reason: redactLogText(sanitized.reason),
+    ...(sanitized.actionHint ? { actionHint: redactLogText(sanitized.actionHint) } : {}),
+  }
+}
+
 export function getSoakProfile(profile: SoakProfileId | SoakProfile): SoakProfile {
   if (typeof profile !== "string") return profile
   return DEFAULT_SOAK_PROFILES[profile]
@@ -450,7 +474,7 @@ export async function runSoakProfile(options: SoakRunnerOptions): Promise<SoakRu
     } catch (error) {
       execution = buildSoakExecution(operation, iteration, operationStartedAt, now(), {
         ok: false,
-        errorMessage: error instanceof Error ? error.message : String(error),
+        errorMessage: soakOperationErrorMessage(error),
       })
     }
 
@@ -603,26 +627,47 @@ export async function runRetentionCleanup(options: RetentionCleanupApplyOptions)
   const plan = buildRetentionCleanupPlan(options)
   const deleted: RetentionCleanupCandidate[] = []
   const failures: RetentionCleanupFailure[] = []
+  const retained: RetentionCleanupResult["retained"] = []
 
   if (!plan.dryRun) {
     for (const candidate of plan.candidates) {
+      const decision = decideCleanupCandidate({
+        candidateId: candidate.id,
+        dataKind: retentionCleanupDataKind(candidate.kind),
+        retentionClass: "expired",
+        ...candidate.cleanupProtection,
+      })
+      if (decision.decision === "retain") {
+        retained.push({ candidate, decision })
+        continue
+      }
       try {
         if (!options.deleteCandidate) throw new Error("retention cleanup delete handler is not configured")
         await options.deleteCandidate(candidate)
         deleted.push(candidate)
       } catch (error) {
-        const sanitized = sanitizeUserFacingError(error instanceof Error ? error.message : String(error))
+        const sanitized = retentionCleanupFailureSummary(error)
         failures.push({ candidate, errorKind: sanitized.kind, userMessage: sanitized.userMessage })
       }
     }
   }
 
-  const result: RetentionCleanupResult = { plan, deleted, failures, auditRecorded: false }
+  const result: RetentionCleanupResult = { plan, deleted, failures, retained, auditRecorded: false }
   if (options.recordAudit) {
     await options.recordAudit(result)
     result.auditRecorded = true
   }
   return result
+}
+
+function retentionCleanupDataKind(kind: RetentionDataKind): CleanupCandidateEvidence["dataKind"] {
+  switch (kind) {
+    case "artifact": return "artifact"
+    case "audit_log": return "audit_log"
+    case "short_term_memory": return "memory"
+    case "temp_file": return "temporary_file"
+    case "schedule_history": return "other"
+  }
 }
 
 export function buildRetryFailureFingerprint(input: RetryFailureFingerprintInput): string {

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -10,7 +10,6 @@ import {
   resolveApprovalAggregate,
 } from "../packages/core/src/channels/approval-aggregation.ts"
 import { createTelegramChunkDeliveryHandler } from "../packages/core/src/channels/telegram/chunk-delivery.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { CONTRACT_SCHEMA_VERSION } from "../packages/core/src/contracts/index.ts"
 import type { SubSessionContract } from "../packages/core/src/contracts/sub-agent-orchestration.ts"
 import type {
@@ -35,39 +34,20 @@ import {
 } from "../packages/core/src/runs/message-ledger.ts"
 import { createRootRun } from "../packages/core/src/runs/store.ts"
 import type { RootRun } from "../packages/core/src/runs/types.ts"
+import { createTestResultDiagnosisDependencies } from "./fixtures/agent-runtime.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 const tempDirs: string[] = []
 
 function useTempConfig(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task013-channel-delivery-"))
   tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(
-    configPath,
-    `{
-    ai: { connection: { provider: "ollama", endpoint: "http://127.0.0.1:11434", model: "llama3.2" } },
-    webui: { enabled: true, host: "127.0.0.1", port: 18181, auth: { enabled: false } },
-    security: { approvalMode: "off" },
-    memory: { searchMode: "fts", sessionRetentionDays: 30 },
-    scheduler: { enabled: false, timezone: "Asia/Seoul" }
-  }`,
-    "utf-8",
-  )
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = configPath
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
-function restoreEnv(): void {
+function disposeTempState(): void {
   closeDb()
-  if (previousStateDir === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_STATE_DIR")
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) Reflect.deleteProperty(process.env, "KNOWBEE_CONFIG")
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -111,8 +91,8 @@ function subSession(overrides: Partial<SubSessionContract> = {}): SubSessionCont
     parentSessionId: "session-1",
     parentRunId: "run-1",
     agentId: "agent-weather",
-    agentDisplayName: "Weather Agent",
-    agentNickname: "weather",
+    agentName: "weather",
+    agentNameSnapshot: "weather",
     commandRequestId: "command-1",
     status: "running",
     promptBundleId: "bundle-1",
@@ -181,7 +161,6 @@ function runInputForProgress(subSessionId: string): RunSubSessionInput {
     agentId: "agent-progress",
     agentType: "sub_agent",
     role: "progress test",
-    displayNameSnapshot: "Progress Agent",
     teamContext: [],
     memoryPolicy: {},
     capabilityPolicy: {},
@@ -204,7 +183,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  restoreEnv()
+  disposeTempState()
 })
 
 describe("task013 channel delivery and approval observability", () => {
@@ -216,7 +195,7 @@ describe("task013 channel delivery and approval observability", () => {
         parentRunId: "run-progress",
         subSessionId: "sub-a",
         agentId: "agent-a",
-        agentDisplayName: "Alpha",
+        agentName: "Alpha",
         status: "running",
         summary: "first draft",
         at: 1_000,
@@ -227,7 +206,7 @@ describe("task013 channel delivery and approval observability", () => {
         parentRunId: "run-progress",
         subSessionId: "sub-a",
         agentId: "agent-a",
-        agentDisplayName: "Alpha",
+        agentName: "Alpha",
         status: "running",
         summary: "second draft",
         at: 2_000,
@@ -237,7 +216,7 @@ describe("task013 channel delivery and approval observability", () => {
       parentRunId: "run-progress",
       subSessionId: "sub-b",
       agentId: "agent-b",
-      agentDisplayName: "Beta",
+      agentName: "Beta",
       status: "running",
       summary: "collecting evidence",
       at: 4_100,
@@ -260,6 +239,7 @@ describe("task013 channel delivery and approval observability", () => {
     const ledgerEvents: MessageLedgerEventInput[] = []
     let time = 1_000
     const dependencies: SubSessionRuntimeDependencies = {
+      ...createTestResultDiagnosisDependencies(),
       now: () => {
         time += 1_000
         return time
@@ -305,13 +285,32 @@ describe("task013 channel delivery and approval observability", () => {
     expect(parentEvents.some((event) => event.startsWith("sub_session_progress_summary:"))).toBe(
       true,
     )
-    expect(
-      ledgerEvents.some(
-        (event) =>
-          event.eventKind === "sub_session_progress_summarized" &&
-          event.deliveryKind === "progress",
+    const progressLedgerEvent = ledgerEvents.find(
+      (event) =>
+        event.eventKind === "sub_session_progress_summarized" &&
+        event.deliveryKind === "progress",
+    )
+    expect(progressLedgerEvent).toBeDefined()
+    const progressItems =
+      ((progressLedgerEvent?.detail as { items?: Array<Record<string, unknown>> } | undefined)
+        ?.items) ?? []
+    expect(progressItems).toHaveLength(1)
+    expect(progressItems[0]).toEqual(
+      expect.objectContaining({
+        agentName: "Unnamed sub-agent",
+        agentNameSnapshot: null,
+        status: "running",
+      }),
+    )
+    expect(progressItems[0]).not.toHaveProperty("agentDisplayName")
+
+    for (const event of ledgerEvents.filter((entry) =>
+      ["sub_session_created", "sub_session_completed", "sub_session_result_suppressed"].includes(
+        entry.eventKind,
       ),
-    ).toBe(true)
+    )) {
+      expect(event.detail as Record<string, unknown>).not.toHaveProperty("agentDisplayName")
+    }
     expect(
       ledgerEvents.some(
         (event) =>
@@ -341,7 +340,7 @@ describe("task013 channel delivery and approval observability", () => {
       logError: vi.fn(),
     })
 
-    await onChunk?.({ type: "text", delta: "서브 에이전트 진행 요약" })
+    await onChunk?.({ type: "text", delta: "서브 에이전트 진행 요약", textSource: "llm_reviewed" })
     const receipt = await onChunk?.({ type: "done", totalTokens: 0 })
 
     expect(receipt?.textDeliveries?.[0]).toMatchObject({
@@ -356,27 +355,59 @@ describe("task013 channel delivery and approval observability", () => {
 
   it("suppresses duplicate final assistant text before channel delivery", async () => {
     const run = seedRun()
-    const firstChunk = vi.fn().mockResolvedValue(undefined)
+    const text = "최종 답변입니다."
+    const firstChunk = vi.fn(async (chunk: { type: string }) =>
+      chunk.type === "done"
+        ? {
+            textDeliveries: [
+              {
+                channel: "telegram" as const,
+                text,
+                messageIds: [13],
+                deliveryReceipts: [
+                  {
+                    channelId: "telegram:primary",
+                    provider: "telegram",
+                    connectionId: "telegram:primary",
+                    target: { roomId: "chat:task013" },
+                    status: "sent" as const,
+                    timestamp: 13,
+                    idempotencyKey: "telegram:task013:final",
+                    messageId: "13",
+                  },
+                ],
+              },
+            ],
+          }
+        : undefined,
+    )
     const secondChunk = vi.fn().mockResolvedValue(undefined)
 
     const first = await emitAssistantTextDelivery({
       runId: run.id,
       sessionId: run.sessionId,
       source: "telegram",
-      text: "최종 답변입니다.",
+      text,
       onChunk: firstChunk,
     })
     const second = await emitAssistantTextDelivery({
       runId: run.id,
       sessionId: run.sessionId,
       source: "telegram",
-      text: "최종 답변입니다.",
+      text,
       onChunk: secondChunk,
     })
 
     const events = listMessageLedgerEvents({ requestGroupId: run.requestGroupId })
 
-    expect(first).toEqual({ persisted: true, textDelivered: true, doneDelivered: true })
+    expect(first).toMatchObject({
+      persisted: true,
+      textDelivered: true,
+      doneDelivered: true,
+      runId: run.id,
+      receiptRef: expect.stringMatching(/^message-ledger:/u),
+      deliveredAtMs: expect.any(Number),
+    })
     expect(second).toEqual({ persisted: false, textDelivered: true, doneDelivered: true })
     expect(firstChunk).toHaveBeenCalledTimes(2)
     expect(secondChunk).not.toHaveBeenCalled()
@@ -487,8 +518,11 @@ describe("task013 channel delivery and approval observability", () => {
     const resolved = resolveApprovalAggregate(context, "allow_once", "user")
 
     expect(text).toContain("승인 항목: 2개")
-    expect(text).toContain("서브 세션: sub-1")
-    expect(text).toContain("에이전트: agent-b")
+    expect(text).toContain("도구: screen_capture")
+    expect(text).toContain("도구: web_fetch")
+    expect(text).not.toContain("sub-1")
+    expect(text).not.toContain("agent-b")
+    expect(text).not.toContain("https://example.test")
     expect(resolved).toHaveLength(2)
     expect(firstResolve).toHaveBeenCalledWith("allow_once", "user")
     expect(secondResolve).toHaveBeenCalledWith("allow_once", "user")
@@ -509,7 +543,12 @@ describe("task013 channel delivery and approval observability", () => {
       contextMode: "full",
       orchestrationMode: "orchestration",
       subSessionIds: ["sub-session-1"],
-      subSessionsSnapshot: [subSession()],
+      subSessionsSnapshot: [
+        subSession({
+          agentDisplayName: "Legacy Weather Display",
+          agentNameSnapshot: "Weather Canonical",
+        }),
+      ],
       delegationTurnCount: 0,
       maxDelegationTurns: 5,
       currentStepKey: "executing",
@@ -546,9 +585,12 @@ describe("task013 channel delivery and approval observability", () => {
       expect.objectContaining({
         subSessionId: "sub-session-1",
         agentId: "agent-weather",
+        agentName: "Weather Canonical",
+        agentNameSnapshot: "Weather Canonical",
         status: "running",
       }),
     )
+    expect(projection.subSessions?.[0]).not.toHaveProperty("agentDisplayName")
     expect(auditEvents.some((event) => event.summary === "sub-session progress")).toBe(true)
   })
 })

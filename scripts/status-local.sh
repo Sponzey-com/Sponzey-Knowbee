@@ -13,6 +13,7 @@ GATEWAY_PORT="${KNOWBEE_GATEWAY_PORT:-18888}"
 WEBUI_HOST="${KNOWBEE_WEBUI_HOST:-127.0.0.1}"
 WEBUI_PORT="${KNOWBEE_WEBUI_PORT:-4220}"
 MQTT_PORT="${KNOWBEE_MQTT_PORT:-1883}"
+GATEWAY_STATUS_TIMEOUT_SECONDS="10"
 
 read_pid() {
   local pid_file="$1"
@@ -21,15 +22,13 @@ read_pid() {
 
 pid_alive() {
   local pid="$1"
+  local state
   [[ -z "$pid" ]] && return 1
+  state="$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]')"
+  [[ "$state" == Z* ]] && return 1
   kill -0 "$pid" >/dev/null 2>&1 && return 0
-  if command -v lsof >/dev/null 2>&1 && lsof -p "$pid" >/dev/null 2>&1; then
-    return 0
-  fi
-  if ps -p "$pid" >/dev/null 2>&1; then
-    return 0
-  fi
-  return 1
+  command -v lsof >/dev/null 2>&1 && lsof -p "$pid" >/dev/null 2>&1 && return 0
+  ps -p "$pid" >/dev/null 2>&1
 }
 
 pid_command() {
@@ -99,9 +98,11 @@ print_pid_state() {
 }
 
 extract_status() {
-  KNOWBEE_STATUS_ROOT_DIR="$ROOT_DIR" node -e '
+  local raw="$1"
+  node -e '
     const { existsSync, readdirSync, statSync } = require("node:fs")
     const { join, relative } = require("node:path")
+    const root = process.argv[1] ?? ""
     const ignoredDirs = new Set([".git", "node_modules", ".turbo", ".cache"])
     function newestFileMtime(dir) {
       if (!existsSync(dir)) return null
@@ -178,7 +179,6 @@ extract_status() {
       }
     }
     function localRuntimeBuild(data) {
-      const root = process.env.KNOWBEE_STATUS_ROOT_DIR
       const processStartedAt = data.runtime?.startedAt ?? data.runtimeBuild?.processStartedAt
       const processStartMs = Date.parse(processStartedAt ?? "")
       if (!root) return { packages: [], buildRequired: undefined, restartRequired: undefined, warnings: [] }
@@ -208,10 +208,8 @@ extract_status() {
       if (restartRequired) warnings.push("restart_required")
       return { packages, buildRequired, restartRequired, warnings }
     }
-    let raw = ""
-    process.stdin.setEncoding("utf8")
-    process.stdin.on("data", (chunk) => raw += chunk)
-    process.stdin.on("end", () => {
+    const raw = process.argv[2] ?? ""
+    {
       try {
         const data = JSON.parse(raw)
         const runtimeBuild = data.runtimeBuild ?? {}
@@ -254,8 +252,23 @@ extract_status() {
       } catch {
         process.stdout.write("  status: invalid-json\n")
       }
-    })
-  '
+    }
+  ' "$ROOT_DIR" "$raw"
+}
+
+extract_health() {
+  local raw="$1"
+  node -e '
+    try {
+      const data = JSON.parse(process.argv[1] ?? "")
+      if (data.ok !== true || data.status !== "live" || !Number.isInteger(data.runtime?.pid)) {
+        process.exit(1)
+      }
+      process.stdout.write(`  status: ${data.status}\n  runtimePid: ${data.runtime.pid}\n`)
+    } catch {
+      process.exit(1)
+    }
+  ' "$raw"
 }
 
 print_gateway_health() {
@@ -264,13 +277,20 @@ print_gateway_health() {
     echo "  status: curl-not-found"
     return
   fi
-  local body
-  body="$(curl -fsS "http://$GATEWAY_HOST:$GATEWAY_PORT/api/status" 2>/dev/null || true)"
-  if [[ -z "$body" ]]; then
+  local body health_body
+  health_body="$(curl -fsS --max-time 2 "http://$GATEWAY_HOST:$GATEWAY_PORT/api/health" 2>/dev/null || true)"
+  if [[ -z "$health_body" ]] || ! extract_health "$health_body"; then
     echo "  status: unreachable"
     return
   fi
-  printf '%s' "$body" | extract_status
+
+  echo "Gateway detail"
+  body="$(curl -fsS --max-time "$GATEWAY_STATUS_TIMEOUT_SECONDS" "http://$GATEWAY_HOST:$GATEWAY_PORT/api/status" 2>/dev/null || true)"
+  if [[ -z "$body" ]]; then
+    echo "  status: unavailable"
+    return
+  fi
+  extract_status "$body"
 }
 
 print_channel_config_hint() {

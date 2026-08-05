@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest"
+import { DEFAULT_CONFIG } from "../packages/core/src/config/types.ts"
 import { buildIncomingIntentContract } from "../packages/core/src/runs/active-run-projection.ts"
 import { buildStartPlan } from "../packages/core/src/runs/start-plan.ts"
 import { hasExplicitContinuationReference } from "../packages/core/src/runs/request-isolation.ts"
+import { createTestStartPlanBoundaryDependencies } from "./fixtures/start-plan.ts"
 
 function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan>[1]>) {
   const reconnectRun = {
@@ -17,6 +19,7 @@ function createDependencies(overrides?: Partial<Parameters<typeof buildStartPlan
     sessionId: "session-1",
   } as any
   return {
+    ...createTestStartPlanBoundaryDependencies(),
     analyzeRequestEntrySemantics: vi.fn(() => ({ reuse_conversation_context: false, active_queue_cancellation_mode: null })),
     isReusableRequestGroup: vi.fn(() => false),
     listActiveSessionRequestGroups: vi.fn(() => [reconnectRun]),
@@ -46,6 +49,7 @@ describe("task006 continuation contract", () => {
   it("allows continuation only when the structured contract references an active target", async () => {
     const dependencies = createDependencies()
     const result = await buildStartPlan({
+      config: DEFAULT_CONFIG,
       message: "방금 그 파일 다시 보내줘",
       sessionId: "session-1",
       runId: "run-followup",
@@ -66,6 +70,7 @@ describe("task006 continuation contract", () => {
       listActiveSessionRequestGroups: vi.fn(() => []),
     })
     const result = await buildStartPlan({
+      config: DEFAULT_CONFIG,
       message: "그거 다시 보내줘",
       sessionId: "session-no-candidate",
       runId: "run-no-candidate",

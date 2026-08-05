@@ -1,16 +1,26 @@
 import type { Message, AIProvider } from "../ai/types.js"
 import type { DbMessage } from "../db/index.js"
 import { chatWithContextPreflight } from "../runs/context-preflight.js"
+import { loadPromptValue } from "./prompt-fragments.js"
 
 export const COMPRESS_THRESHOLD = 120_000   // tokens
 export const COMPRESS_MSG_COUNT = 40        // message count
 const TAIL_SIZE = 10                        // keep last N messages uncompressed
+const MEMORY_COMPRESSOR_SUMMARY_PROMPT_SOURCE_ID = "memory_compressor_summary_prompt_user"
+const MEMORY_RESTORE_PROMPT_CONTEXT_LABELS_SOURCE_ID = "memory_restore_prompt_context_labels_user"
 
-const SUMMARIZE_PROMPT = `다음 대화 내용을 한국어로 간결하게 요약해 주세요.
-중요한 결정, 실행된 명령, 파일 변경 내역을 반드시 포함하세요.
-200자 이내로 작성하세요.
+function memoryPromptValue(sourceId: string): string {
+  return loadPromptValue(sourceId, {}, { required: true })
+}
 
-[대화 내용]`
+function memoryContextLabel(key: string): string {
+  const value = memoryPromptValue(MEMORY_RESTORE_PROMPT_CONTEXT_LABELS_SOURCE_ID)
+    .split(/\r?\n/u)
+    .find((line) => line.startsWith(`${key}=`))
+    ?.slice(key.length + 1)
+    .trim()
+  return value ?? key
+}
 
 export function needsCompression(messages: Message[], totalTokens: number): boolean {
   return totalTokens > COMPRESS_THRESHOLD || messages.length > COMPRESS_MSG_COUNT
@@ -32,12 +42,12 @@ export async function compressContext(
 
   // Build a text representation of the head for summarization
   const conversationText = head.map((m) => {
-    const role = m.role === "user" ? "사용자" : "어시스턴트"
+    const role = m.role === "user" ? memoryContextLabel("transcript_user_label") : memoryContextLabel("transcript_assistant_label")
     const content =
       typeof m.content === "string"
         ? m.content
-        : "[도구 호출/결과]"
-    return `${role}: ${content.slice(0, 500)}`
+        : memoryContextLabel("transcript_tool_calls_results_label")
+    return `${role}${memoryContextLabel("transcript_speaker_separator")} ${content.slice(0, 500)}`
   }).join("\n\n")
 
   // Call the configured AI backend to summarize
@@ -45,7 +55,7 @@ export async function compressContext(
   for await (const chunk of chatWithContextPreflight({
     provider,
     model,
-    messages: [{ role: "user", content: `${SUMMARIZE_PROMPT}\n${conversationText}` }],
+    messages: [{ role: "user", content: `${memoryPromptValue(MEMORY_COMPRESSOR_SUMMARY_PROMPT_SOURCE_ID)}\n${conversationText}` }],
     maxTokens: 500,
     metadata: { operation: "session_compaction_summary" },
   })) {
@@ -56,7 +66,7 @@ export async function compressContext(
   // Replace head with a single summary message
   const summaryMessage: Message = {
     role: "user",
-    content: `[이전 대화 요약]\n${summary}`,
+    content: `${memoryContextLabel("previous_conversation_summary_header")}\n${summary}`,
   }
 
   // IDs of DB messages that are now compressed (the head)

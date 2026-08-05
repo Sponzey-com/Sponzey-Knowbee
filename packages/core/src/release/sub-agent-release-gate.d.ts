@@ -2,10 +2,12 @@ import { type SubAgentBenchmarkSuiteResult } from "../benchmarks/sub-agent-bench
 import type { MigrationPreflightRisk } from "../config/backup-rehearsal.js";
 import type { FeatureFlagMode } from "../runtime/rollout-safety.js";
 import { type ReleasePerformanceSummary } from "./performance-gate.js";
+import { type SubAgentReleaseThresholds, type SubAgentRolloutThresholdAuthorizationPort, type SubAgentRolloutThresholdPolicyCandidate } from "./sub-agent-rollout-threshold-policy.js";
 import type { UiModeReleaseGateSummary } from "./ui-mode-gate.js";
+export type { SubAgentReleaseThresholds } from "./sub-agent-rollout-threshold-policy.js";
 export type SubAgentReleaseModeId = "flag_off" | "dry_run_only" | "limited_beta" | "full_enable";
 export type SubAgentReleaseGateStatus = "passed" | "warning" | "failed";
-export type SubAgentReleaseGateCheckId = "release_mode_sequence" | "release_dry_run_summary" | "migration_rehearsal" | "feature_flag_off_rollback" | "no_sub_agent_fallback" | "disabled_agent_fallback" | "one_sub_agent_delegation" | "multiple_parallel_delegation" | "team_composition_validation" | "team_target_expansion" | "result_review_feedback_loop" | "memory_isolation" | "data_exchange_redaction" | "capability_permission_approval" | "model_cost_audit" | "fallback_reason_audit" | "channel_final_delivery_dedupe" | "react_flow_graph_validation" | "webui_runtime_projection" | "focus_template_import_safety" | "learning_history_restore_append_only" | "benchmark_threshold" | "nested_delegation_regression" | "cascade_stop" | "restart_resume_soak" | "duplicate_final_zero_tolerance" | "rollback_feature_flag_off";
+export type SubAgentReleaseGateCheckId = "release_mode_sequence" | "release_dry_run_summary" | "performance_acceptance" | "migration_rehearsal" | "feature_flag_off_rollback" | "no_sub_agent_fallback" | "disabled_agent_fallback" | "one_sub_agent_delegation" | "multiple_parallel_delegation" | "team_composition_validation" | "team_target_expansion" | "result_review_feedback_loop" | "memory_isolation" | "data_exchange_redaction" | "capability_permission_approval" | "model_cost_audit" | "fallback_reason_audit" | "channel_final_delivery_dedupe" | "react_flow_graph_validation" | "webui_runtime_projection" | "focus_template_import_safety" | "learning_history_restore_append_only" | "benchmark_threshold" | "nested_delegation_regression" | "cascade_stop" | "restart_resume_soak" | "duplicate_final_zero_tolerance" | "rollback_feature_flag_off";
 export interface SubAgentReleaseModeDefinition {
     id: SubAgentReleaseModeId;
     order: number;
@@ -15,14 +17,6 @@ export interface SubAgentReleaseModeDefinition {
     trafficPolicy: "single_knowbee_only" | "shadow_dry_run" | "limited_operator_beta" | "public_default";
     promotionCriteria: string[];
     rollbackAction: string;
-}
-export interface SubAgentReleaseThresholds {
-    duplicateFinalAnswerCount: 0;
-    spawnAckP95Ms: number;
-    hotRegistrySnapshotP95Ms: number;
-    plannerHotPathP95Ms: number;
-    firstProgressP95Ms: number;
-    restartRecoveryP95Ms: number;
 }
 export interface SubAgentRestartResumeSoakResult {
     kind: "knowbee.sub_agent.restart_resume_soak";
@@ -115,7 +109,7 @@ export interface SubAgentReleaseReadinessSummary {
     requestedMode: SubAgentReleaseModeId;
     gateStatus: SubAgentReleaseGateStatus;
     modes: SubAgentReleaseModeDefinition[];
-    defaultThresholds: SubAgentReleaseThresholds;
+    operationalReferenceThresholds: SubAgentReleaseThresholds;
     dryRunSummary: SubAgentReleaseDryRunSummary;
     soak: SubAgentRestartResumeSoakResult;
     rollback: SubAgentRollbackEvidence;
@@ -154,9 +148,14 @@ export interface SubAgentReleaseReadinessOptions {
     uiModeEvidence?: Pick<UiModeReleaseGateSummary, "gateStatus" | "blockingFailures">;
     soak?: SubAgentRestartResumeSoakResult;
     rollback?: SubAgentRollbackEvidence;
-    thresholds?: Partial<SubAgentReleaseThresholds>;
+    rolloutThresholdPolicy?: {
+        candidate: SubAgentRolloutThresholdPolicyCandidate;
+        authorizationPort: SubAgentRolloutThresholdAuthorizationPort;
+    };
 }
 export declare const SUB_AGENT_RELEASE_MODE_SEQUENCE: SubAgentReleaseModeDefinition[];
+export declare const SUB_AGENT_OPERATIONAL_REFERENCE_THRESHOLDS: SubAgentReleaseThresholds;
+/** @deprecated Use SUB_AGENT_OPERATIONAL_REFERENCE_THRESHOLDS for diagnostics only. */
 export declare const DEFAULT_SUB_AGENT_RELEASE_THRESHOLDS: SubAgentReleaseThresholds;
 export declare function runSubAgentRestartResumeSoak(input?: {
     now?: Date;

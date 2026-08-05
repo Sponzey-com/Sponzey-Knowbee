@@ -20,15 +20,13 @@ read_pid() {
 
 pid_alive() {
   local pid="$1"
+  local state
   [[ -z "$pid" ]] && return 1
+  state="$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]')"
+  [[ "$state" == Z* ]] && return 1
   kill -0 "$pid" >/dev/null 2>&1 && return 0
-  if command -v lsof >/dev/null 2>&1 && lsof -p "$pid" >/dev/null 2>&1; then
-    return 0
-  fi
-  if ps -p "$pid" >/dev/null 2>&1; then
-    return 0
-  fi
-  return 1
+  command -v lsof >/dev/null 2>&1 && lsof -p "$pid" >/dev/null 2>&1 && return 0
+  ps -p "$pid" >/dev/null 2>&1
 }
 
 pid_command() {
@@ -59,10 +57,25 @@ can_use_launchctl() {
     && command -v launchctl >/dev/null 2>&1
 }
 
+wait_launchctl_job_removed() {
+  local label="$1"
+  for _ in $(seq 1 40); do
+    if ! launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "launchctl 작업 제거 완료를 확인하지 못했습니다. label=$label"
+  return 1
+}
+
 remove_launchctl_job() {
   local label="$1"
   can_use_launchctl || return 0
   launchctl remove "$label" >/dev/null 2>&1 || true
+  if ! wait_launchctl_job_removed "$label"; then
+    return 1
+  fi
 }
 
 pids_for_port() {
@@ -142,6 +155,14 @@ stop_process() {
   fi
 
   if ! pid_belongs_to_repo "$pid"; then
+    # launchctl remove can terminate the job between the liveness check and
+    # ownership lookup. With neither command nor cwd observable, the PID is no
+    # longer attributable to a process we can safely signal.
+    if [[ -z "$(pid_cwd "$pid")" && -z "$(pid_command "$pid")" ]]; then
+      rm -f "$pid_file"
+      echo "$name PID가 종료 중이어서 stale PID 파일만 정리했습니다. PID=$pid"
+      return 0
+    fi
     echo "$name PID 파일이 현재 repo가 아닌 프로세스를 가리켜 종료하지 않았습니다. PID=$pid"
     echo "  cwd=$(pid_cwd "$pid")"
     echo "  cmd=$(pid_command "$pid")"

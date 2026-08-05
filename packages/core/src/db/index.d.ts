@@ -1,10 +1,48 @@
 import BetterSqlite3 from "better-sqlite3";
+import type { RuntimePaths } from "../config/paths.js";
 import { type ScheduleContract } from "../contracts/index.js";
-import { type AgentConfig, type AgentEntityType, type AgentRelationship, type AgentStatus, type CapabilityDelegationRequest, type CapabilityPolicy, type CapabilityRiskLevel, type DataExchangePackage, type HistoryVersion, type LearningEvent, type OwnerScope, type PermissionProfile, type RestoreEvent, type SubSessionContract, type TeamConfig, type TeamConflictPolicyMode, type TeamExecutionPlan, type TeamResultPolicyMode } from "../contracts/sub-agent-orchestration.js";
-import type { PromptSourceMetadata, PromptSourceSnapshot, PromptSourceState } from "../memory/knowbee-md.js";
+import { type AgentConfig, type AgentEntityType, type AgentRelationship, type AgentStatus, type CapabilityDelegationRequest, type CapabilityPolicy, type CapabilityRiskLevel, type DataExchangePackage, type HistoryVersion, type LearningEvent, type MemoryPolicy, type ModelProfile, type OwnerScope, type PermissionProfile, type RestoreEvent, type SubSessionContract, type TeamConfig, type TeamConflictPolicyMode, type TeamExecutionPlan, type TeamResultPolicyMode } from "../contracts/sub-agent-orchestration.js";
 import { type AgentMemoryState } from "../memory/agent-state.js";
 import { type MemoryCapsule, type MemoryCapsuleKind, type MemoryCapsuleOwnerType } from "../memory/capsule.js";
-export declare function getDb(): BetterSqlite3.Database;
+import type { PromptSourceMetadata, PromptSourceSnapshot, PromptSourceState } from "../memory/knowbee-md.js";
+export type DbRuntimeState = "uninitialized" | "opening" | "configuring" | "backup_check" | "migrating" | "reconciling" | "ready" | "failed";
+export interface DbRuntimeDependencies {
+    exists(path: string): boolean;
+    makeDirectory(path: string): void;
+    openDatabase(path: string): BetterSqlite3.Database;
+    createBackup(db: BetterSqlite3.Database, dbFile: string, backupDir: string): string | null;
+    migrate(db: BetterSqlite3.Database, options: {
+        backupSnapshotId: string | null;
+        lockedBy: string;
+    }): void;
+    reconcile(db: BetterSqlite3.Database): void;
+}
+export interface DbRuntimeContext {
+    readonly paths: Pick<RuntimePaths, "dbFile" | "stateDir">;
+    readonly migrationOwnerId: string;
+    readonly dependencies: DbRuntimeDependencies;
+}
+export interface DbRuntimeOptions {
+    paths: Pick<RuntimePaths, "dbFile" | "stateDir">;
+    migrationOwnerId?: string;
+    dependencies?: DbRuntimeDependencies;
+}
+export declare class DbRuntimeNotInitializedError extends Error {
+    readonly reasonCode = "db_runtime_not_initialized";
+    constructor();
+}
+export declare class DbRuntimePathMismatchError extends Error {
+    readonly reasonCode = "db_runtime_path_mismatch";
+    constructor();
+}
+export declare class DbRuntimeInitializationError extends Error {
+    readonly reasonCode = "db_runtime_initialization_failed";
+    constructor(cause: unknown);
+}
+export declare function createDbRuntimeContext(options: DbRuntimeOptions): DbRuntimeContext;
+export declare function getDbRuntimeState(): DbRuntimeState;
+export declare function initializeDbRuntime(context: DbRuntimeContext): BetterSqlite3.Database;
+export declare function getDb(options?: DbRuntimeOptions): BetterSqlite3.Database;
 export declare function closeDb(): void;
 export interface DbSession {
     id: string;
@@ -49,6 +87,18 @@ export interface DbAuditLog {
     error_code: string | null;
     retry_count: number | null;
     stop_reason: string | null;
+}
+export interface DbArtifactReceipt {
+    id: string;
+    run_id: string | null;
+    request_group_id: string | null;
+    channel: string;
+    artifact_path: string;
+    mime_type: string | null;
+    size_bytes: number | null;
+    delivery_receipt_json: string | null;
+    delivered_at: number | null;
+    created_at: number;
 }
 type DbAuditLogInput = Omit<DbAuditLog, "id" | "run_id" | "request_group_id" | "channel" | "error_code" | "retry_count" | "stop_reason"> & Partial<Pick<DbAuditLog, "run_id" | "request_group_id" | "channel" | "error_code" | "retry_count" | "stop_reason">>;
 export interface DbChannelMessageRef {
@@ -184,9 +234,8 @@ export interface DbAgentConfig {
     agent_id: string;
     agent_type: AgentEntityType;
     status: AgentStatus;
-    display_name: string;
-    nickname: string | null;
-    normalized_nickname: string | null;
+    agent_name: string;
+    normalized_agent_name: string;
     role: string;
     personality: string;
     specialty_tags_json: string;
@@ -209,8 +258,6 @@ export interface DbTeamConfig {
     team_id: string;
     status: Exclude<AgentStatus, "degraded">;
     display_name: string;
-    nickname: string | null;
-    normalized_nickname: string | null;
     purpose: string;
     owner_agent_id: string | null;
     lead_agent_id: string | null;
@@ -249,11 +296,11 @@ export interface DbAgentTeamMembership {
     created_at: number;
     updated_at: number;
 }
-export interface DbNicknameNamespace {
-    normalized_nickname: string;
+export interface DbAgentNameNamespace {
+    normalized_agent_name: string;
     entity_type: "agent" | "team";
     entity_id: string;
-    nickname_snapshot: string;
+    agent_name_snapshot: string;
     status: string;
     source: DbConfigSource;
     created_at: number;
@@ -278,8 +325,8 @@ export interface DbRunSubSession {
     parent_sub_session_id: string | null;
     parent_request_id: string | null;
     agent_id: string;
-    agent_display_name: string;
-    agent_nickname: string | null;
+    agent_name: string;
+    agent_name_snapshot: string | null;
     command_request_id: string;
     status: SubSessionContract["status"];
     prompt_bundle_id: string;
@@ -296,10 +343,12 @@ export interface DbAgentDataExchange {
     exchange_id: string;
     source_owner_type: DataExchangePackage["sourceOwner"]["ownerType"];
     source_owner_id: string;
-    source_nickname_snapshot: string | null;
+    source_agent_name: string | null;
+    source_agent_name_snapshot: string | null;
     recipient_owner_type: DataExchangePackage["recipientOwner"]["ownerType"];
     recipient_owner_id: string;
-    recipient_nickname_snapshot: string | null;
+    recipient_agent_name: string | null;
+    recipient_agent_name_snapshot: string | null;
     purpose: string;
     allowed_use: DataExchangePackage["allowedUse"];
     retention_policy: DataExchangePackage["retentionPolicy"];
@@ -318,7 +367,7 @@ export interface DbTeamExecutionPlan {
     team_execution_plan_id: string;
     parent_run_id: string;
     team_id: string;
-    team_nickname_snapshot: string | null;
+    team_name_snapshot: string | null;
     owner_agent_id: string;
     lead_agent_id: string;
     member_task_assignments_json: string;
@@ -395,7 +444,7 @@ export interface DbProfileRestoreEvent {
 }
 export type DbCapabilityCatalogStatus = "enabled" | "disabled" | "archived";
 export type DbAgentCapabilityBindingStatus = "enabled" | "disabled" | "archived";
-export type DbAgentCapabilityKind = "skill" | "mcp_server";
+export type DbAgentCapabilityKind = "skill" | "mcp_server" | "yeonjang";
 export interface DbSkillCatalogEntry {
     skill_id: string;
     status: DbCapabilityCatalogStatus;
@@ -457,6 +506,135 @@ export interface CapabilityCatalogPersistenceOptions {
     auditId?: string | null;
     now?: number;
 }
+export interface DbCapabilityMutationReceipt {
+    mutation_id: string;
+    nonce: string;
+    actor_ref: string;
+    scope: string;
+    purpose: string;
+    capability_kind: "skill" | "mcp_server" | "yeonjang";
+    target_revision: number;
+    state: string;
+    reason_code: string | null;
+    request_fingerprint: string | null;
+    receipt_json: string | null;
+    created_at: number;
+    updated_at: number;
+}
+export interface CapabilityMutationReceiptInput {
+    mutationId: string;
+    nonce: string;
+    actorRef: string;
+    scope: string;
+    purpose: string;
+    capabilityKind: DbCapabilityMutationReceipt["capability_kind"];
+    targetRevision: number;
+    state: string;
+    reasonCode?: string | null;
+    requestFingerprint?: string | null;
+    receiptJson?: string | null;
+    now: number;
+}
+export interface DbAgentIdentityMutationReceipt {
+    mutation_id: string;
+    nonce: string;
+    request_signature: string;
+    mutation_kind: "create" | "update" | "archive";
+    state: string;
+    receipt_json: string;
+    created_at: number;
+    updated_at: number;
+}
+export interface DbAgentRelationshipMutationReceipt {
+    mutation_id: string;
+    nonce: string;
+    actor_ref: string;
+    scope: string;
+    purpose: string;
+    mutation_kind: "connect" | "reparent" | "disconnect";
+    target_revision: number;
+    state: string;
+    reason_code: string | null;
+    request_fingerprint: string;
+    receipt_json: string | null;
+    created_at: number;
+    updated_at: number;
+}
+export interface DbAgentOperationalSettingsMutationReceipt {
+    mutation_id: string;
+    nonce: string;
+    actor_ref: string;
+    scope: string;
+    purpose: string;
+    mutation_kind: "update_model" | "clear_model" | "update_memory" | "update_permission";
+    target_revision: number;
+    state: string;
+    reason_code: string | null;
+    request_fingerprint: string;
+    receipt_json: string | null;
+    created_at: number;
+    updated_at: number;
+}
+export declare function getAgentOperationalSettingsMutationReceiptByNonce(nonce: string): DbAgentOperationalSettingsMutationReceipt | undefined;
+export declare function reserveAgentOperationalSettingsMutationReceipt(input: {
+    mutationId: string;
+    nonce: string;
+    actorRef: string;
+    scope: string;
+    purpose: string;
+    mutationKind: DbAgentOperationalSettingsMutationReceipt["mutation_kind"];
+    targetRevision: number;
+    state: string;
+    requestFingerprint: string;
+    now: number;
+}): boolean;
+export declare function updateAgentOperationalSettingsMutationReceipt(input: {
+    mutationId: string;
+    state: string;
+    reasonCode: string | null;
+    receiptJson: string;
+    now: number;
+}): boolean;
+export declare function getAgentRelationshipMutationReceiptByNonce(nonce: string): DbAgentRelationshipMutationReceipt | undefined;
+export declare function reserveAgentRelationshipMutationReceipt(input: {
+    mutationId: string;
+    nonce: string;
+    actorRef: string;
+    scope: string;
+    purpose: string;
+    mutationKind: DbAgentRelationshipMutationReceipt["mutation_kind"];
+    targetRevision: number;
+    state: string;
+    requestFingerprint: string;
+    now: number;
+}): boolean;
+export declare function updateAgentRelationshipMutationReceipt(input: {
+    mutationId: string;
+    state: string;
+    reasonCode: string | null;
+    receiptJson: string;
+    now: number;
+}): boolean;
+export declare function getAgentIdentityMutationReceiptByNonce(nonce: string): DbAgentIdentityMutationReceipt | undefined;
+export declare function saveAgentIdentityMutationReceipt(input: {
+    mutationId: string;
+    nonce: string;
+    requestSignature: string;
+    mutationKind: DbAgentIdentityMutationReceipt["mutation_kind"];
+    state: string;
+    receiptJson: string;
+    now: number;
+}): boolean;
+export declare function reserveCapabilityMutationReceipt(input: CapabilityMutationReceiptInput): boolean;
+export declare function getCapabilityMutationReceiptByNonce(nonce: string): DbCapabilityMutationReceipt | undefined;
+export declare function getCapabilityMutationReceipt(mutationId: string): DbCapabilityMutationReceipt | undefined;
+export declare function updateCapabilityMutationReceipt(input: {
+    mutationId: string;
+    state: string;
+    reasonCode?: string | null;
+    receiptJson?: string | null;
+    now: number;
+}): boolean;
 export interface SkillCatalogEntryInput {
     skillId: string;
     displayName: string;
@@ -492,20 +670,20 @@ export interface AgentCapabilityBindingInput {
     createdAt?: number;
     updatedAt?: number;
 }
-export interface NicknameNamespaceErrorDetails {
-    reasonCode: "nickname_required" | "nickname_conflict";
+export interface AgentNameNamespaceErrorDetails {
+    reasonCode: "agent_name_required" | "agent_name_conflict";
     attemptedEntityType: "agent" | "team";
     attemptedEntityId: string;
-    nickname: string | null;
-    normalizedNickname: string;
+    agentName: string | null;
+    normalizedAgentName: string;
     existingEntityType?: "agent" | "team";
     existingEntityId?: string;
-    existingNickname?: string | null;
+    existingAgentName?: string | null;
     existingStatus?: string;
 }
-export declare class NicknameNamespaceError extends Error {
-    readonly details: NicknameNamespaceErrorDetails;
-    constructor(details: NicknameNamespaceErrorDetails);
+export declare class AgentNameNamespaceError extends Error {
+    readonly details: AgentNameNamespaceErrorDetails;
+    constructor(details: AgentNameNamespaceErrorDetails);
 }
 export type DbControlEventSeverity = "debug" | "info" | "warning" | "error";
 export interface DbControlEvent {
@@ -817,21 +995,35 @@ export interface ArtifactMetadataInput {
     retentionPolicy?: DbArtifactRetentionPolicy;
     expiresAt?: number | null;
     metadata?: Record<string, unknown>;
+    dataClassification?: "user" | "internal" | "audit";
     createdAt?: number;
     updatedAt?: number;
 }
 export declare function insertSession(session: Omit<DbSession, "token_count">): void;
 export declare function getSession(id: string): DbSession | undefined;
 export declare function insertMessage(msg: DbMessage): void;
+export declare function insertMessageIfAbsent(msg: DbMessage): boolean;
 export declare function getMessages(sessionId: string): DbMessage[];
 export declare function getMessagesForRequestGroup(sessionId: string, requestGroupId: string): DbMessage[];
 export declare function getMessagesForRequestGroupWithRunMeta(sessionId: string, requestGroupId: string): DbRequestGroupMessage[];
 export declare function getMessagesForRun(sessionId: string, runId: string): DbMessage[];
-export declare function insertAuditLog(log: DbAuditLogInput): void;
+export declare function insertAuditLog(log: DbAuditLogInput): string;
+export declare function listAuditLogsForRun(runId: string): DbAuditLog[];
 export declare function insertChannelMessageRef(ref: Omit<DbChannelMessageRef, "id">): string;
+export declare function listChannelMessageRefsForRun(runId: string): DbChannelMessageRef[];
 export declare function insertDecisionTrace(input: DbDecisionTraceInput): string;
+export declare function listDecisionTracesForRun(runId: string): DbDecisionTrace[];
 export declare function insertMessageLedgerEvent(input: DbMessageLedgerInput): string | null;
 export declare function getMessageLedgerEventByIdempotencyKey(idempotencyKey: string): DbMessageLedgerEvent | undefined;
+export declare function transitionMessageLedgerEvent(input: {
+    idempotencyKey: string;
+    expectedEventKind: string;
+    expectedStatus: DbMessageLedgerStatus;
+    eventKind: string;
+    status: DbMessageLedgerStatus;
+    summary: string;
+    detail?: Record<string, unknown>;
+}): boolean;
 export declare function insertQueueBackpressureEvent(input: DbQueueBackpressureEventInput): string;
 export declare function listQueueBackpressureEvents(input?: {
     queueName?: string;
@@ -906,6 +1098,14 @@ export declare function listChannelRuntimeEvents(input?: {
 }): DbChannelRuntimeEvent[];
 export declare function insertChannelSmokeRun(input: DbChannelSmokeRunInput): string;
 export declare function updateChannelSmokeRun(id: string, fields: Partial<Pick<DbChannelSmokeRunInput, "status" | "finishedAt" | "scenarioCount" | "passedCount" | "failedCount" | "skippedCount" | "summary" | "metadata">>): void;
+/**
+ * Finalizes diagnostic runs owned by a previous Gateway process. CLI smoke
+ * runs have a separate process owner and are deliberately excluded.
+ */
+export declare function interruptGatewayOwnedChannelSmokeRunsStartedBefore(input: {
+    startedBefore: number;
+    finishedAt: number;
+}): number;
 export declare function insertChannelSmokeStep(input: DbChannelSmokeStepInput): string;
 export declare function getChannelSmokeRun(id: string): DbChannelSmokeRun | undefined;
 export declare function listChannelSmokeRuns(limit?: number): DbChannelSmokeRun[];
@@ -984,7 +1184,7 @@ export interface DbMemoryCapsule {
     lineage_id: string | null;
     channel_key: string | null;
     thread_key: string | null;
-    nickname_snapshot: string | null;
+    agent_name_snapshot: string | null;
     capsule_kind: MemoryCapsuleKind;
     summary: string;
     active_objectives_json: string;
@@ -1127,7 +1327,7 @@ export interface DbAgentMemoryState {
     lineage_id: string | null;
     channel_key: string | null;
     thread_key: string | null;
-    nickname_snapshot: string | null;
+    agent_name_snapshot: string | null;
     latest_capsule_id: string | null;
     current_raw_token_estimate: number;
     current_raw_message_count: number;
@@ -1179,6 +1379,23 @@ export interface MemorySearchFilters {
 }
 export declare function upsertAgentConfig(input: AgentConfig, options?: AgentConfigPersistenceOptions): void;
 export declare function getAgentConfig(agentId: string): DbAgentConfig | undefined;
+export declare function compareAndUpdateAgentIdentity(input: {
+    agentId: string;
+    expectedRevision: number;
+    agentName?: string;
+    role?: string;
+    archive?: boolean;
+    now: number;
+}): "updated" | "revision_conflict" | "agent_not_found";
+export declare function compareAndUpdateAgentOperationalSettings(input: {
+    agentId: string;
+    expectedRevision: number;
+    targetRevision: number;
+    modelProfile?: ModelProfile;
+    memoryPolicy: MemoryPolicy;
+    permissionProfile: PermissionProfile;
+    now: number;
+}): "updated" | "revision_conflict" | "agent_not_found" | "agent_config_invalid";
 export declare function listAgentConfigs(filters?: {
     enabledOnly?: boolean;
     includeArchived?: boolean;
@@ -1211,7 +1428,7 @@ export declare function listAgentCapabilityBindings(filters?: {
     includeArchived?: boolean;
     enabledOnly?: boolean;
 }): DbAgentCapabilityBinding[];
-export declare function listNicknameNamespaces(): DbNicknameNamespace[];
+export declare function listAgentNameNamespaces(): DbAgentNameNamespace[];
 export declare function upsertAgentRelationship(input: AgentRelationship, options?: {
     auditId?: string | null;
     now?: number;
@@ -1378,12 +1595,15 @@ export declare function hasArtifactReceipt(input: {
     runId: string;
     channel: string;
     artifactPath: string;
+    channelTarget?: string;
 }): boolean;
+export declare function listArtifactReceiptsForRun(runId: string): DbArtifactReceipt[];
 export declare function insertArtifactMetadata(input: ArtifactMetadataInput): string;
 export declare function getLatestArtifactMetadataByPath(artifactPath: string): DbArtifactMetadata | undefined;
 export declare function getArtifactMetadata(id: string): DbArtifactMetadata | undefined;
 export declare function listExpiredArtifactMetadata(now?: number): DbArtifactMetadata[];
 export declare function listActiveArtifactMetadata(): DbArtifactMetadata[];
+export declare function listArtifactMetadataForRun(runId: string): DbArtifactMetadata[];
 export declare function markArtifactDeleted(id: string, deletedAt?: number): void;
 export declare function insertDiagnosticEvent(input: {
     kind: string;

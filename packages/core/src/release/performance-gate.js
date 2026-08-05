@@ -34,8 +34,53 @@ function latencyTarget(id, title, metricName, targetDescription) {
         requiredForPublicRelease: true,
         metricName,
         budgetMs: LATENCY_BUDGET_MS[metricName],
+        budgetPurpose: "operational_health",
         targetDescription,
     };
+}
+function normalizeAcceptanceEvidence(evidence) {
+    if (!evidence) {
+        return {
+            status: "baseline_only",
+            matrixId: null,
+            matrixVersion: null,
+            baselineVersion: null,
+            authorizationId: null,
+            reasonCodes: ["performance_acceptance_evidence_missing"],
+        };
+    }
+    if (evidence.status === "rejected") {
+        return {
+            ...evidence,
+            reasonCodes: evidence.reasonCodes.length > 0
+                ? [...evidence.reasonCodes]
+                : ["performance_acceptance_rejected"],
+        };
+    }
+    if (evidence.status === "baseline_only") {
+        return {
+            ...evidence,
+            reasonCodes: evidence.reasonCodes.length > 0
+                ? [...evidence.reasonCodes]
+                : ["performance_acceptance_baseline_only"],
+        };
+    }
+    if (!evidence.matrixId?.trim() ||
+        !Number.isSafeInteger(evidence.matrixVersion) ||
+        (evidence.matrixVersion ?? 0) < 1 ||
+        !evidence.baselineVersion?.trim() ||
+        !evidence.authorizationId?.trim() ||
+        evidence.reasonCodes.length > 0) {
+        return {
+            status: "baseline_only",
+            matrixId: evidence.matrixId,
+            matrixVersion: evidence.matrixVersion,
+            baselineVersion: evidence.baselineVersion,
+            authorizationId: evidence.authorizationId,
+            reasonCodes: ["performance_acceptance_evidence_invalid"],
+        };
+    }
+    return { ...evidence, reasonCodes: [] };
 }
 function percentile95(values) {
     if (values.length === 0)
@@ -70,9 +115,7 @@ export function buildReleasePerformanceSummary(input = {}) {
     const windowMs = Math.max(1, input.windowMs ?? 15 * 60 * 1000);
     const nowMs = now.getTime();
     const metrics = (input.metrics ?? listLatencyMetrics()).filter((record) => nowMs - record.createdAt <= windowMs);
-    const metricResults = RELEASE_PERFORMANCE_TARGETS
-        .filter((target) => target.kind === "latency" && target.metricName)
-        .map((target) => {
+    const metricResults = RELEASE_PERFORMANCE_TARGETS.filter((target) => target.kind === "latency" && target.metricName).map((target) => {
         const records = metrics.filter((record) => record.name === target.metricName);
         const p95Ms = percentile95(records.map((record) => record.durationMs));
         const last = records[records.length - 1];
@@ -105,25 +148,36 @@ export function buildReleasePerformanceSummary(input = {}) {
         },
     ];
     const missingRequiredMetrics = metricResults
-        .filter((metric) => metric.status === "missing" && RELEASE_PERFORMANCE_TARGETS.find((target) => target.id === metric.targetId)?.requiredForPublicRelease)
+        .filter((metric) => metric.status === "missing" &&
+        RELEASE_PERFORMANCE_TARGETS.find((target) => target.id === metric.targetId)
+            ?.requiredForPublicRelease)
         .map((metric) => metric.targetId);
     const warnings = [
-        ...metricResults.map((metric) => metric.warning).filter((warning) => Boolean(warning)),
-        ...counters.map((counter) => counter.warning).filter((warning) => Boolean(warning)),
+        ...metricResults
+            .map((metric) => metric.warning)
+            .filter((warning) => Boolean(warning)),
+        ...counters
+            .map((counter) => counter.warning)
+            .filter((warning) => Boolean(warning)),
     ];
     const blockingFailures = metricResults
         .filter((metric) => metric.status === "timeout")
         .map((metric) => `${metric.targetId}: timeout recorded`);
-    const gateStatus = blockingFailures.length > 0
-        ? "failed"
-        : warnings.length > 0
-            ? "warning"
-            : "passed";
+    const operationalStatus = blockingFailures.length > 0 ? "failed" : warnings.length > 0 ? "warning" : "passed";
+    const acceptance = normalizeAcceptanceEvidence(input.acceptanceEvidence);
+    if (acceptance.status === "baseline_only") {
+        blockingFailures.push(...acceptance.reasonCodes);
+    }
+    else if (acceptance.status === "rejected") {
+        blockingFailures.push("performance_acceptance_rejected");
+    }
+    const gateStatus = blockingFailures.length > 0 ? "failed" : operationalStatus;
     return {
         kind: "knowbee.release.performance",
         generatedAt: now.toISOString(),
         windowMs,
         gateStatus,
+        operationalStatus,
         fastResponseHealth: getFastResponseHealthSnapshot({ now: nowMs, windowMs }),
         targets: RELEASE_PERFORMANCE_TARGETS,
         metrics: metricResults,
@@ -131,6 +185,7 @@ export function buildReleasePerformanceSummary(input = {}) {
         missingRequiredMetrics,
         warnings,
         blockingFailures,
+        acceptance,
     };
 }
 //# sourceMappingURL=performance-gate.js.map

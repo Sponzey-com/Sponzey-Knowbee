@@ -1,11 +1,19 @@
 import type { SlackConfig } from "../../config/types.js"
+import type { ArtifactStorageContext } from "../../artifacts/lifecycle.js"
+import type { MemoryJournalRepository } from "../../memory/journal.js"
+import type { AgentHierarchyStorage } from "../../orchestration/hierarchy.js"
 import { eventBus } from "../../events/index.js"
-import { createLogger } from "../../logger/index.js"
+import { createLogger, redactLogText } from "../../logger/index.js"
 import { cancelRootRun, getRootRun } from "../../runs/store.js"
 import { startIngressRun } from "../../runs/ingress.js"
+import type { RootRun } from "../../runs/types.js"
+import {
+  deliverIntakeAcknowledgementControl,
+  type IntakeAcknowledgementControl,
+} from "../intake-acknowledgement-control.js"
 import { createInboundMessageRecord } from "../../runs/request-isolation.js"
 import { recordMessageLedgerEvent } from "../../runs/message-ledger.js"
-import { insertChannelMessageRef } from "../../db/index.js"
+import { getSession, insertChannelMessageRef } from "../../db/index.js"
 import {
   buildAccessPolicyFromAllowedIds,
   evaluateInboundAccessPolicy,
@@ -13,12 +21,62 @@ import {
 } from "../access-policy.js"
 import { resolveChannelContinuation } from "../continuation.js"
 import type { InboundEnvelope } from "../contracts.js"
+import { buildChannelIngressFailureNotice } from "../ingress-failure-notice.js"
+import { renderChannelNoticeText, type ChannelNoticeRenderDependencies } from "../notice-rendering.js"
+import { detectPrimaryMessageLanguage } from "../language.js"
 import { createSlackChunkDeliveryHandler } from "./chunk-delivery.js"
 import { clearActiveSlackConversationForSession, handleSlackApprovalAction, handleSlackApprovalMessage, registerSlackApprovalHandler, setActiveSlackConversationForSession } from "./approval-handler.js"
-import { SlackResponder } from "./responder.js"
-import { getOrCreateSlackSession, newSlackSession, resolveSlackSessionKey } from "./session.js"
+import { SlackResponder, type SlackResponderLanguage } from "./responder.js"
+import {
+  getOrCreateSlackSession,
+  newSlackSession,
+  parseSlackSessionKey,
+  resolveSlackSessionKey,
+} from "./session.js"
+import type { ChannelPendingResponseDeliveryInput } from "../pending-response-delivery.js"
 
 const log = createLogger("channel:slack")
+
+function slackBotErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return redactLogText(raw)
+}
+
+export function resolveSlackInboundMessageLanguage(text: string): SlackResponderLanguage {
+  const visibleText = text.replace(/<@[A-Z0-9_]+>/gi, " ")
+  const language = detectPrimaryMessageLanguage(visibleText)
+  return language === "unknown" ? "en" : language
+}
+
+async function sendSlackContinuationConfirmation(params: {
+  responder: SlackResponder
+  originalRequest: string
+  rawText: string
+  dependencies?: ChannelNoticeRenderDependencies | undefined
+}): Promise<void> {
+  const renderedNotice = await renderChannelNoticeText({
+    originalRequest: params.originalRequest,
+    rawText: params.rawText,
+    ...(params.dependencies ? { dependencies: params.dependencies } : {}),
+  })
+  if (renderedNotice.status === "ready") {
+    await params.responder.sendReceipt(renderedNotice.text)
+  } else {
+    log.warn(`Skipped Slack continuation confirmation delivery: ${renderedNotice.reason}`)
+  }
+}
+
+async function sendSlackIngressReceipt(params: {
+  responder: SlackResponder
+  control: IntakeAcknowledgementControl
+}): Promise<string | undefined> {
+  const result = await deliverIntakeAcknowledgementControl({
+    control: params.control,
+    deliver: (text) => params.responder.sendIntakeAcknowledgement(text),
+    onFailure: (error) => log.fieldDebug(`Slack intake acknowledgement delivery failed: ${slackBotErrorMessage(error)}`),
+  })
+  return result.status === "delivered" ? result.reference : undefined
+}
 
 export function findSlackReplyTaskRef(params: {
   channelId: string
@@ -126,13 +184,32 @@ interface WebSocketLike {
   addEventListener(type: string, listener: (event: { data?: unknown }) => void): void
 }
 
+export interface SlackLiveSmokeIngressReceipt {
+  requestId: string
+  runId: string
+  requestGroupId: string
+  threadTs: string
+  finished: Promise<RootRun | undefined>
+}
+
 export class SlackChannel {
   private socket: WebSocketLike | null = null
   private runningRuns = new Map<string, Set<string>>()
   private sessionIds = new Map<string, string>()
   private seenInboundEvents = new Map<string, number>()
+  private liveSmokeSequence = 0
+  private liveSmokeStartObservers = new Map<
+    string,
+    (receipt: SlackLiveSmokeIngressReceipt) => void
+  >()
 
-  constructor(private config: SlackConfig) {}
+  constructor(
+    private config: SlackConfig,
+    private artifactStorage: ArtifactStorageContext,
+    private noticeRendering?: ChannelNoticeRenderDependencies,
+    private memoryJournal?: MemoryJournalRepository,
+    private hierarchyStorage?: AgentHierarchyStorage,
+  ) {}
 
   async start(): Promise<void> {
     log.info(
@@ -140,9 +217,9 @@ export class SlackChannel {
     )
 
     registerSlackApprovalHandler({
-      sendApprovalRequest: async ({ channelId, threadTs, runId, text }) => {
-        const responder = new SlackResponder(this.config, channelId, threadTs)
-        await responder.sendApprovalRequest(runId, text)
+      sendApprovalRequest: async ({ channelId, threadTs, runId, text, language }) => {
+        const responder = new SlackResponder(this.config, channelId, threadTs, language ?? "ko")
+        await responder.sendApprovalRequest(runId, text, language)
       },
     })
 
@@ -181,7 +258,7 @@ export class SlackChannel {
       })
       this.socket.addEventListener("message", (event) => {
         void this.handleSocketMessage(String(event.data ?? "")).catch((error) => {
-          log.error(`Slack message handling failed: ${error instanceof Error ? error.message : String(error)}`)
+          log.error(`Slack message handling failed: ${slackBotErrorMessage(error)}`)
         })
       })
     })
@@ -190,6 +267,80 @@ export class SlackChannel {
   stop(): void {
     this.socket?.close()
     this.socket = null
+  }
+
+  async acceptLiveSmokeRequest(input: {
+    request: string
+    target: { channelId: string; userId: string; threadTs?: string }
+  }): Promise<SlackLiveSmokeIngressReceipt> {
+    if (!this.socket) throw new Error("slack_live_smoke_runtime_unavailable")
+    if (
+      !this.config.allowedUserIds.includes(input.target.userId) ||
+      !this.config.allowedChannelIds.includes(input.target.channelId)
+    ) {
+      throw new Error("slack_live_smoke_target_not_allowed")
+    }
+    const request = input.request.trim()
+    if (!request) throw new Error("slack_live_smoke_request_required")
+
+    this.liveSmokeSequence = (this.liveSmokeSequence + 1) % 1_000_000
+    const seconds = Math.floor(Date.now() / 1_000)
+    const fraction = String(this.liveSmokeSequence).padStart(6, "0")
+    const messageTs = `${seconds}.${fraction}`
+    const threadTs = input.target.threadTs ?? messageTs
+    const eventKey = `${input.target.channelId}:${messageTs}`
+    let started: SlackLiveSmokeIngressReceipt | undefined
+    this.liveSmokeStartObservers.set(eventKey, (receipt) => {
+      started = receipt
+    })
+    try {
+      await this.handleSocketMessage(
+        JSON.stringify({
+          payload: {
+            type: "events_api",
+            event: {
+              type: "message",
+              user: input.target.userId,
+              channel: input.target.channelId,
+              text: request,
+              ts: messageTs,
+              ...(input.target.threadTs ? { thread_ts: input.target.threadTs } : {}),
+            },
+          },
+        }),
+      )
+    } finally {
+      this.liveSmokeStartObservers.delete(eventKey)
+    }
+    if (!started) throw new Error("slack_live_smoke_ingress_not_started")
+    if (started.threadTs !== threadTs) throw new Error("slack_live_smoke_thread_mismatch")
+    return started
+  }
+
+  createPendingResponseDeliveryHandler(input: ChannelPendingResponseDeliveryInput) {
+    const session = getSession(input.sessionId)
+    if (!session || session.source !== "slack" || !session.source_id) return undefined
+    const target = parseSlackSessionKey(session.source_id)
+    if (!target) return undefined
+    const responder = new SlackResponder(
+      this.config,
+      target.channelId,
+      target.threadTs,
+      input.language,
+    )
+    return createSlackChunkDeliveryHandler({
+      artifactStorage: this.artifactStorage,
+      responder,
+      sessionId: input.sessionId,
+      channelId: target.channelId,
+      threadTs: target.threadTs,
+      ...(input.language ? { language: input.language } : {}),
+      getRunId: () => input.runId,
+      deliveryKind: "final",
+      noticeRendering: this.noticeRendering,
+      recordOutgoingMessageRef: (params) => this.recordOutgoingMessageRef(params),
+      logError: (message) => log.error(message),
+    })
   }
 
   private addSessionRun(sessionKey: string, runId: string): void {
@@ -322,20 +473,20 @@ export class SlackChannel {
     recordChannelAccessPolicyResult(access)
     if (!access.allowed) {
       log.warn(`Ignored Slack message by policy user=${userId} channel=${channelId} reason=${access.policy.reasonCode}`)
-      const responder = new SlackResponder(this.config, channelId, threadTs)
-      await responder.sendReceipt(access.responseText ?? "This channel request is blocked by Knowbee's access policy.").catch(() => undefined)
       return
     }
 
     log.info(`Accepted Slack message user=${userId} channel=${channelId} thread=${threadTs}`)
+    const language = resolveSlackInboundMessageLanguage(text)
 
     const approvalHandled = await handleSlackApprovalMessage({
       channelId,
       threadTs,
       userId,
       text,
+      language,
       reply: async (message) => {
-        const responder = new SlackResponder(this.config, channelId, threadTs)
+        const responder = new SlackResponder(this.config, channelId, threadTs, language)
         await responder.sendReceipt(message)
       },
     })
@@ -352,13 +503,21 @@ export class SlackChannel {
       userId,
     })
 
-    setActiveSlackConversationForSession(sessionId, channelId, userId, threadTs)
-    const responder = new SlackResponder(this.config, channelId, threadTs)
+    setActiveSlackConversationForSession(sessionId, channelId, userId, threadTs, language)
+    const responder = new SlackResponder(this.config, channelId, threadTs, language)
 
     let startedRunId = ""
-    const continuation = resolveChannelContinuation({ envelope: access.envelope })
+    const continuation = resolveChannelContinuation({ envelope: access.envelope, language })
     if (continuation.status === "ambiguous") {
-      await responder.sendReceipt(continuation.confirmationPrompt ?? "Please choose which previous task to continue.")
+      const confirmationText = continuation.confirmationNotice?.text ?? continuation.confirmationPrompt
+      if (confirmationText?.trim()) {
+        await sendSlackContinuationConfirmation({
+          responder,
+          originalRequest: text,
+          rawText: confirmationText,
+          dependencies: this.noticeRendering,
+        })
+      }
       clearActiveSlackConversationForSession(sessionId)
       return
     }
@@ -378,16 +537,27 @@ export class SlackChannel {
       }
 
       const onChunk = createSlackChunkDeliveryHandler({
+        artifactStorage: this.artifactStorage,
         responder,
         sessionId,
         channelId,
         threadTs,
+        language,
         getRunId: () => startedRunId || undefined,
         recordOutgoingMessageRef: (params) => this.recordOutgoingMessageRef(params),
         logError: (message) => log.error(message),
+        noticeRendering: this.noticeRendering,
       })
 
-      const { started, receipt } = startIngressRun({
+      const runtimeConfig = this.noticeRendering?.config
+      if (!runtimeConfig) throw new Error("Slack root run config snapshot is missing.")
+      if (!this.memoryJournal) throw new Error("Slack memory journal context is missing.")
+      if (!this.hierarchyStorage) throw new Error("Slack hierarchy storage context is missing.")
+      const { started, acknowledgement } = startIngressRun({
+        artifactStorage: this.artifactStorage,
+        memoryJournal: this.memoryJournal,
+        hierarchyStorage: this.hierarchyStorage,
+        config: runtimeConfig,
         message: text,
         sessionId,
         ...(repliedTaskRef ? { requestGroupId: repliedTaskRef.request_group_id, forceRequestGroupReuse: true } : {}),
@@ -408,35 +578,45 @@ export class SlackChannel {
 
       startedRunId = started.runId
       this.addSessionRun(sessionKey, started.runId)
+      this.liveSmokeStartObservers.get(inboundEventKey)?.({
+        requestId: started.runId,
+        runId: started.runId,
+        requestGroupId: getRootRun(started.runId)?.requestGroupId ?? started.runId,
+        threadTs,
+        finished: started.finished,
+      })
 
-      if (receipt.text.trim()) {
-        const receiptMessageId = await responder.sendReceipt(receipt.text)
-        const startedRun = getRootRun(started.runId)
-        recordMessageLedgerEvent({
-          runId: started.runId,
-          requestGroupId: startedRun?.requestGroupId ?? started.runId,
-          sessionKey: sessionId,
-          threadKey: sessionKey,
-          channel: "slack",
-          eventKind: "fast_receipt_sent",
-          deliveryKey: `slack:receipt:${channelId}:${threadTs ?? "channel"}:${receiptMessageId}`,
-          idempotencyKey: `slack:receipt:${started.runId}:${receiptMessageId}`,
-          status: "sent",
-          summary: "Slack 접수 메시지를 전송했습니다.",
-          detail: {
+      {
+        const receiptMessageId = await sendSlackIngressReceipt({ responder, control: acknowledgement })
+        if (receiptMessageId !== undefined) {
+          const startedRun = getRootRun(started.runId)
+          recordMessageLedgerEvent({
+            runId: started.runId,
+            requestGroupId: startedRun?.requestGroupId ?? started.runId,
+            sessionKey: sessionId,
+            threadKey: sessionKey,
+            channel: "slack",
+            eventKind: "fast_receipt_sent",
+            deliveryKey: `slack:receipt:${channelId}:${threadTs ?? "channel"}:${receiptMessageId}`,
+            idempotencyKey: `slack:receipt:${started.runId}:${receiptMessageId}`,
+            status: "sent",
+            summary: "Slack 접수 메시지를 전송했습니다.",
+            detail: {
+              acknowledgementControl: acknowledgement,
+              channelId,
+              ...(threadTs ? { threadTs } : {}),
+              messageId: receiptMessageId,
+            },
+          })
+          this.recordOutgoingMessageRef({
+            sessionId,
+            runId: started.runId,
             channelId,
-            ...(threadTs ? { threadTs } : {}),
+            threadTs,
             messageId: receiptMessageId,
-          },
-        })
-        this.recordOutgoingMessageRef({
-          sessionId,
-          runId: started.runId,
-          channelId,
-          threadTs,
-          messageId: receiptMessageId,
-          role: "assistant",
-        })
+            role: "assistant",
+          })
+        }
       }
 
       void started.finished.finally(() => {
@@ -447,9 +627,23 @@ export class SlackChannel {
       })
     } catch (error) {
       clearActiveSlackConversationForSession(sessionId)
-      const message = error instanceof Error ? error.message : String(error)
+      const message = slackBotErrorMessage(error)
+      const notice = buildChannelIngressFailureNotice({
+        provider: "slack",
+        userMessage: text,
+        reason: message,
+      })
       log.error(`Slack ingress failed: ${message}`)
-      await responder.sendError(message)
+      const renderedNotice = await renderChannelNoticeText({
+        originalRequest: text,
+        rawText: notice.text,
+        ...(this.noticeRendering ? { dependencies: this.noticeRendering } : {}),
+      })
+      if (renderedNotice.status === "ready") {
+        await responder.sendError(renderedNotice.text)
+      } else {
+        log.warn(`Skipped Slack ingress failure notice delivery: ${renderedNotice.reason}`)
+      }
     }
   }
 

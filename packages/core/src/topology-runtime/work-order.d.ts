@@ -35,7 +35,8 @@ export interface WorkOrderRuntimeEnvelopeInput {
     commandRequestId?: string;
     subSessionId?: string;
     targetAgentId?: string;
-    targetNicknameSnapshot?: string;
+    targetAgentName?: string;
+    targetAgentNameSnapshot?: string;
     contextPackageId?: string;
     now?: () => number;
     authorityPreflight?: WorkOrderAuthorityPreflightInput;

@@ -1,8 +1,8 @@
 import { buildSetupDraft } from "../control-plane/index.js";
 import { resolveProviderForConnection, } from "../ai/index.js";
 import { attachCapabilityProfileToTrace, getProviderCapabilityMatrix } from "../ai/capabilities.js";
-export function resolveRunRoute(input) {
-    return resolveRunRouteFromDraft(buildSetupDraft(), input);
+export function resolveRunRoute(input, config) {
+    return resolveRunRouteFromDraft(buildSetupDraft(config, null), input);
 }
 export function isExplicitProviderRouteTarget(value) {
     return normalizeTargetId(value) !== undefined;

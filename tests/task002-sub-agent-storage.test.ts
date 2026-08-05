@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { PATHS, reloadConfig } from "../packages/core/src/config/index.js"
 import { dryRunDatabaseMigrations, getDatabaseMigrationStatus } from "../packages/core/src/config/operations.ts"
 import {
   closeDb,
@@ -31,7 +30,7 @@ import {
   subAgentStorageSchemaVersion,
   upsertAgentConfig,
   upsertTeamConfig,
-} from "../packages/core/src/db/index.ts"
+} from "../packages/core/src/db/index.js"
 import { MIGRATIONS } from "../packages/core/src/db/migrations.ts"
 import {
   CONTRACT_SCHEMA_VERSION,
@@ -48,19 +47,19 @@ import {
   type SubSessionContract,
   type TeamConfig,
 } from "../packages/core/src/index.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const now = Date.UTC(2026, 3, 20, 0, 0, 0)
+let runtimeFixture: ReturnType<typeof createTestRuntimeConfigFixture>
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task002-sub-agent-storage-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task002-sub-agent-storage-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function owner(ownerId = "agent:knowbee"): RuntimeIdentity["owner"] {
@@ -144,7 +143,6 @@ function teamConfig(memberAgentIds = ["agent:researcher"]): TeamConfig {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     teamId: "team:research",
     displayName: "Research Team",
-    nickname: "Research",
     status: "enabled",
     purpose: "Research and evidence collection",
     memberAgentIds,
@@ -162,8 +160,8 @@ function subSession(): SubSessionContract {
     parentSessionId: "session:parent",
     parentRunId: "run-parent",
     agentId: "agent:researcher",
-    agentDisplayName: "Researcher",
-    agentNickname: "Researcher",
+    agentName: "Researcher",
+    agentNameSnapshot: "Researcher",
     commandRequestId: "command:1",
     status: "queued",
     promptBundleId: "bundle:1",
@@ -176,11 +174,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -208,7 +201,7 @@ describe("task002 sub-agent storage", () => {
 
     expect(requiredTables.every((table) => existingTables.includes(table))).toBe(true)
     expect(subAgentStorageSchemaVersion()).toBe(CONTRACT_SCHEMA_VERSION)
-    expect(getDatabaseMigrationStatus().currentVersion).toBe(MIGRATIONS[MIGRATIONS.length - 1]?.version)
+    expect(getDatabaseMigrationStatus(runtimeFixture.paths.dbFile).currentVersion).toBe(MIGRATIONS[MIGRATIONS.length - 1]?.version)
   })
 
   it("keeps existing session, audit, and memory storage usable after the migration", () => {
@@ -289,7 +282,8 @@ describe("task002 sub-agent storage", () => {
     expect(insertRunSubSession(session, { now })).toBe(false)
     expect(getRunSubSessionByIdempotencyKey(session.identity.idempotencyKey)).toMatchObject({
       sub_session_id: "sub-session:1",
-      agent_display_name: "Researcher",
+      agent_name: "Researcher",
+      agent_name_snapshot: "Researcher",
     })
 
     const exchange: DataExchangePackage = {
@@ -308,6 +302,12 @@ describe("task002 sub-agent storage", () => {
     expect(insertAgentDataExchange(exchange, { expiresAt: now + 1_000 })).toBe(true)
     expect(insertAgentDataExchange(exchange, { expiresAt: now + 1_000 })).toBe(false)
     expect(getAgentDataExchange("exchange:1")?.expires_at).toBe(now + 1_000)
+    expect(getAgentDataExchange("exchange:1")).toMatchObject({
+      source_agent_name: null,
+      source_agent_name_snapshot: null,
+      recipient_agent_name: null,
+      recipient_agent_name_snapshot: null,
+    })
 
     const delegation: CapabilityDelegationRequest = {
       identity: identity("capability", "delegation:1"),
@@ -383,7 +383,7 @@ describe("task002 sub-agent storage", () => {
   it("dry-runs the sub-agent storage migration without mutating schema_migrations", () => {
     getDb().prepare("DELETE FROM schema_migrations WHERE version = ?").run(35)
     const before = getDb().prepare("SELECT version FROM schema_migrations ORDER BY version").all()
-    const dryRun = dryRunDatabaseMigrations(PATHS.dbFile)
+    const dryRun = dryRunDatabaseMigrations(runtimeFixture.paths.dbFile)
     const after = getDb().prepare("SELECT version FROM schema_migrations ORDER BY version").all()
 
     expect(dryRun.changesDatabase).toBe(false)

@@ -57,8 +57,8 @@ import type {
 const DRAFT_TOPOLOGY_OPTIONS = [
   {
     id: "workspace:draft",
-    labelKo: "첫 토폴로지",
-    labelEn: "First topology",
+    labelKo: "첫 서브 에이전트 설정",
+    labelEn: "First sub-agent setup",
   },
 ]
 
@@ -463,7 +463,7 @@ export function LegacyEnterpriseTopologyPage({
     const starterTemplate = TOPOLOGY_WORKSPACE_STARTER_TEMPLATES.find((template) => template.id === templateId)
     const starter = buildTopologyWorkspaceStarterDraft(templateId, {
       topologyId,
-      name: text("첫 토폴로지", "First topology"),
+      name: text("첫 위임 흐름", "First delegation flow"),
       now: Date.now(),
     })
     if (starterTemplate) {

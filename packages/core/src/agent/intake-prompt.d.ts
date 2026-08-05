@@ -1,4 +1,4 @@
-export type TaskIntakeIntentCategory = "direct_answer" | "task_intake" | "schedule_request" | "clarification" | "reject";
+export type { TaskIntakeIntentCategory } from "./intake-category.js";
 export type TaskIntakeMessageMode = "direct_answer" | "accepted_receipt" | "failed_receipt" | "clarification_receipt";
 export type TaskIntakeActionType = "reply" | "run_task" | "delegate_agent" | "create_schedule" | "update_schedule" | "cancel_schedule" | "ask_user" | "log_only";
 export type TaskIntakePriority = "low" | "normal" | "high" | "urgent";
@@ -9,5 +9,18 @@ export interface TaskIntakePromptOptions {
     workDir?: string;
     locale?: "ko" | "en";
 }
+export interface TaskIntakeFirstResponsePromptOptions extends TaskIntakePromptOptions {
+    mainAgentName: string;
+    productName: string;
+    productNameKo: string;
+    identityContext?: string;
+}
+export interface TaskIntakeFirstResponsePromptAssembly {
+    systemPrompt: string;
+    taskIntakePromptSha256: string;
+    finalResponsePromptSha256: string;
+}
 export declare function buildTaskIntakeSystemPrompt(options?: TaskIntakePromptOptions): string;
+export declare function buildTaskIntakeFirstResponseSystemPrompt(options: TaskIntakeFirstResponsePromptOptions): string;
+export declare function buildTaskIntakeFirstResponsePromptAssembly(options: TaskIntakeFirstResponsePromptOptions): TaskIntakeFirstResponsePromptAssembly;
 //# sourceMappingURL=intake-prompt.d.ts.map

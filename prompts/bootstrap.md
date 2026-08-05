@@ -34,7 +34,7 @@ Create the following sources if they do not exist.
 - `definitions`: `prompts/definitions.md`, shared terms and runtime concepts
 - `soul`: `prompts/soul.md`, long-term operating policy and completion rules
 - `planner`: `prompts/planner.md`, intake and execution-brief policy
-- `knowbee_execution`: `prompts/knowbee-execution.md`, shared execution decision policy for root Knowbee and delegated agents
+- `knowbee_execution`: `prompts/knowbee-execution.md`, shared execution decision policy for the root main agent and delegated agents
 - `memory_policy`: `prompts/memory_policy.md`, memory injection and write policy
 - `tool_policy`: `prompts/tool_policy.md`, tool selection and execution policy
 - `recovery_policy`: `prompts/recovery_policy.md`, failure classification and recovery policy
@@ -72,12 +72,12 @@ Create the following definitions if they do not exist.
 - task identity definition: separate run id, session key, request group id, lineage root run id, and parent run id.
 - receipt definition: execution and delivery completion are judged by structured receipts, not text claims.
 - recovery definition: record a recovery key to avoid repeating the same target and same error.
-- sub-agent hierarchy definition: separate Knowbee, SubAgent, ParentAgent, ChildAgent, Team, TeamLead, and OrchestrationPlan.
+- sub-agent hierarchy definition: separate ProductName, MainAgent, SubAgent, ParentAgent, ChildAgent, Team, TeamLead, and OrchestrationPlan.
 - delegation contract definition: separate `CommandRequest`, `DataExchangePackage`, `ResultReport`, and `FeedbackRequest`.
 - execution decision definition: every current agent can decide domain, behavior pattern, delegation, self-solve, and fallback from its own hierarchy position.
 - topology executor definition: visible executor nodes map user-facing work to graph execution plans, and count signals trigger alternative search instead of failure.
 - prompt bundle source definition: user/request context, agent profile text, imported profile text, runtime policy sources, and tool policy sources are separate source classes for preflight and prompt assembly.
-- attribution definition: user-facing source attribution uses nickname snapshots, while storage and permission checks use internal IDs.
+- attribution definition: user-facing source attribution uses `agent_name` snapshots, while storage and permission checks use internal IDs.
 - team execution definition: a Team is a planning group that expands into member-level work for the owner's direct child members, not an execution actor.
 
 ---
@@ -104,3 +104,7 @@ First-run initialization is complete only when all of the following are true.
 - Unconfirmed user facts are not inferred.
 - The bootstrap source is excluded from normal runtime assembly.
 - The initialization result is recorded in audit or diagnostics.
+
+## Out Of Scope
+
+- This module does not own normal user-request execution, runtime prompt behavior after startup, identity behavior, user profile inference, tool execution, memory writes, channel delivery, logging policy, or final response wording.

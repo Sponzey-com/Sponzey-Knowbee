@@ -1,9 +1,13 @@
 import { getDefaultModel, getProvider } from "../ai/index.js";
-import { getConfig } from "../config/index.js";
+import { sanitizeUserFacingError } from "../runs/error-sanitizer.js";
 import { clearAgentMemoryStateLatestCapsule, getMessages, getMessagesForRequestGroup, getMemoryCapsule, insertDiagnosticEvent, listAgentMemoryStatesForAgent, listMemoryCapsuleRollups, listMemoryCompactionRuns, listMemoryRecallEvents, listRecentAgentMemoryStates, } from "../db/index.js";
 import { buildMemoryQualitySnapshot } from "./quality.js";
-import { buildRootSessionCompactionReasonCodes, estimateContextTokens, executeRootSessionCompaction, extractRootSessionDeterministicState, } from "./compaction.js";
+import { buildRootSessionCompactionReasonCodes, resolveShortTermCompactionPolicy, estimateContextTokens, executeRootSessionCompaction, extractRootSessionDeterministicState, } from "./compaction.js";
 import { buildMaintenanceRestoreContext, renderMaintenanceRestorePromptBlock } from "./retrieval-restore.js";
+function memoryInspectorProviderErrorReason(error) {
+    const message = error instanceof Error ? error.message : "provider_resolution_failed";
+    return sanitizeUserFacingError(message).reason;
+}
 function clampLimit(value, fallback = 8) {
     return Number.isFinite(value) ? Math.max(1, Math.min(50, Math.floor(value ?? fallback))) : fallback;
 }
@@ -147,12 +151,13 @@ function buildInspectorSnapshotInput(input) {
         ...(input.requestGroupId ? { requestGroupId: input.requestGroupId } : {}),
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
         ...(input.now !== undefined ? { now: input.now } : {}),
+        config: input.config,
     };
 }
-export function buildMemoryInspectorSnapshot(input = {}) {
+export function buildMemoryInspectorSnapshot(input) {
     const now = input.now ?? Date.now();
     const limit = clampLimit(input.limit);
-    const config = getConfig();
+    const config = input.config;
     const configuredPolicy = {
         explicitModelId: config.memory.compaction?.modelId?.trim() || null,
         fallbackModelId: config.memory.compaction?.fallbackModelId?.trim() || null,
@@ -200,7 +205,7 @@ export function buildMemoryInspectorSnapshot(input = {}) {
             ...(state.ownerScope.lineageId ? { lineageId: state.ownerScope.lineageId } : {}),
             ...(state.ownerScope.channelKey ? { channelKey: state.ownerScope.channelKey } : {}),
             ...(state.ownerScope.threadKey ? { threadKey: state.ownerScope.threadKey } : {}),
-            ...(state.nicknameSnapshot ? { nicknameSnapshot: state.nicknameSnapshot } : {}),
+            ...(state.agentNameSnapshot ? { agentNameSnapshot: state.agentNameSnapshot } : {}),
             ...(state.latestCapsuleId ? { latestCapsuleId: state.latestCapsuleId } : {}),
             currentRawTokenEstimate: state.currentRawTokenEstimate,
             currentRawMessageCount: state.currentRawMessageCount,
@@ -279,7 +284,7 @@ export function buildMemoryInspectorSnapshot(input = {}) {
         .map((card) => (card.latestRollupAgeMs != null ? now - card.latestRollupAgeMs : null))
         .filter((value) => value != null)
         .sort((left, right) => right - left)[0] ?? null;
-    const configuredExecutionModel = getDefaultModel().trim();
+    const configuredExecutionModel = getDefaultModel(config).trim();
     const canForceCompaction = Boolean(selectedOwner
         && selectedOwner.ownerType === "main_agent"
         && selectedOwner.sessionId
@@ -323,7 +328,8 @@ export function buildMemoryInspectorSnapshot(input = {}) {
     };
 }
 export async function runMemoryInspectorControl(input) {
-    const snapshot = buildMemoryInspectorSnapshot(buildInspectorSnapshotInput(input));
+    const controlConfig = input.config;
+    const snapshot = buildMemoryInspectorSnapshot(buildInspectorSnapshotInput({ ...input, config: controlConfig }));
     const control = snapshot.controls.find((item) => item.action === input.action);
     if (!control) {
         return { action: input.action, enabled: false, reason: "unknown_action" };
@@ -349,7 +355,7 @@ export async function runMemoryInspectorControl(input) {
             if (!selectedOwner || selectedOwner.ownerType !== "main_agent") {
                 return { action: input.action, enabled: false, reason: "main_agent_root_session_only" };
             }
-            const model = input.model?.trim() || getDefaultModel().trim();
+            const model = input.model?.trim() || getDefaultModel(controlConfig).trim();
             if (!model) {
                 return { action: input.action, enabled: false, reason: "no_configured_compaction_model" };
             }
@@ -359,13 +365,13 @@ export async function runMemoryInspectorControl(input) {
             }
             let provider;
             try {
-                provider = input.provider ?? getProvider();
+                provider = input.provider ?? getProvider(undefined, controlConfig);
             }
             catch (error) {
                 return {
                     action: input.action,
                     enabled: false,
-                    reason: error instanceof Error ? error.message : "provider_resolution_failed",
+                    reason: memoryInspectorProviderErrorReason(error),
                 };
             }
             const sourceTokenEstimate = Math.max(selectedOwner.currentRawTokenEstimate, estimateContextTokens(messages));
@@ -377,13 +383,16 @@ export async function runMemoryInspectorControl(input) {
                 provider,
                 model,
                 sessionId: selectedOwner.sessionId,
+                agentNameSnapshot: selectedOwner.agentNameSnapshot ?? "Knowbee",
                 ...(selectedOwner.requestGroupId ? { requestGroupId: selectedOwner.requestGroupId } : {}),
                 messages,
                 sourceTokenEstimate,
+                memoryConfig: controlConfig.memory,
                 triggerReasonCodes: buildRootSessionCompactionReasonCodes({
                     messages,
                     totalTokens: sourceTokenEstimate,
                     deterministicState,
+                    policy: resolveShortTermCompactionPolicy(controlConfig.memory),
                 }),
             });
             insertDiagnosticEvent({
@@ -399,7 +408,7 @@ export async function runMemoryInspectorControl(input) {
                     tailMessageCount: result.tailMessageCount,
                 },
             });
-            const refreshed = buildMemoryInspectorSnapshot(buildInspectorSnapshotInput(input));
+            const refreshed = buildMemoryInspectorSnapshot(buildInspectorSnapshotInput({ ...input, config: controlConfig }));
             return {
                 action: input.action,
                 enabled: true,

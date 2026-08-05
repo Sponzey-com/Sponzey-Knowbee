@@ -1,20 +1,29 @@
 use std::env;
 use std::fs;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Output, Stdio};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread::sleep;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::automation::{
     ApplicationLaunchRequest, ApplicationLaunchResult, AutomationBackend, AutomationCapabilities,
-    CameraCaptureRequest, CameraCaptureResult, CameraDevice, CommandExecutionRequest,
-    CommandExecutionResult, KeyboardActionKind, KeyboardActionRequest, KeyboardActionResult,
-    KeyboardTypeRequest, KeyboardTypeResult, MouseActionKind, MouseActionRequest,
-    MouseActionResult, MouseClickRequest, MouseClickResult, MouseMoveRequest, MouseMoveResult,
-    PlatformKind, ScreenCaptureRequest, ScreenCaptureResult, SystemControlRequest,
+    BrowserFocusExecutionResult, CameraCaptureProcessError, CameraCaptureRequest,
+    CameraCaptureResult, CameraDevice, CameraPermissionState, CameraPermissionStatus,
+    CommandExecutionRequest, CommandExecutionResult, FocusedTargetResult, KeyboardActionKind,
+    KeyboardActionRequest, KeyboardActionResult, KeyboardTypeRequest, KeyboardTypeResult,
+    MouseActionKind, MouseActionRequest, MouseActionResult, MouseClickRequest, MouseClickResult,
+    MouseMoveRequest, MouseMoveResult, MousePositionResult, PlatformKind,
+    ScreenCaptureProcessError, ScreenCaptureRequest, ScreenCaptureResult, SystemControlRequest,
     SystemControlResult, SystemSnapshot,
 };
 use crate::platform::shared;
@@ -172,9 +181,36 @@ impl AutomationBackend for PlatformBackend {
         Ok(cameras)
     }
 
+    fn camera_permission_status(&self) -> Result<CameraPermissionStatus> {
+        let executable_path = resolve_camera_capture_command_path()?;
+        let mut command = Command::new(&executable_path);
+        command
+            .arg("--camera-capture-helper")
+            .arg("--permission-status");
+        let output = run_camera_helper_command(
+            &mut command,
+            CameraHelperCommandOptions {
+                timeout: Duration::from_secs(5),
+                termination_grace: Duration::from_millis(250),
+            },
+        )?;
+        if !output.status.success() {
+            bail!("camera permission status helper failed");
+        }
+        serde_json::from_slice(&output.stdout)
+            .context("failed to parse camera permission status helper output")
+    }
+
     fn capture_camera(&self, request: CameraCaptureRequest) -> Result<CameraCaptureResult> {
         shared::validate_camera_request(&request)?;
+        let cancellation = Arc::clone(&request.cancellation);
+        if let Some(error) =
+            camera_capture_permission_error(self.camera_permission_status()?.status)
+        {
+            return Err(error.into());
+        }
         let inline_base64 = request.inline_base64;
+        let capture_budget = CameraCaptureBudget::from_millis(request.capture_timeout_ms);
 
         let output_path = resolve_camera_output_path(request.output_path.as_deref())?;
         let executable_path = resolve_camera_capture_command_path()?;
@@ -186,15 +222,27 @@ impl AutomationBackend for PlatformBackend {
         if inline_base64 {
             command.arg("--inline-base64");
         }
+        command
+            .arg("--capture-timeout-ms")
+            .arg(capture_budget.operation_millis().to_string());
 
-        let output = command.output().with_context(|| {
-            format!(
-                "failed to execute Yeonjang camera capture command: {}",
-                executable_path.display()
-            )
-        })?;
+        let output = match run_camera_helper_command_with_cancellation(
+            &mut command,
+            capture_budget.command_options(),
+            &cancellation,
+        ) {
+            Ok(output) => output,
+            Err(error) => {
+                let _ = fs::remove_file(&output_path);
+                return Err(error);
+            }
+        };
 
         if !output.status.success() {
+            if is_camera_capture_timeout_output(&output) {
+                let _ = fs::remove_file(&output_path);
+                return Err(CameraCaptureProcessError::timed_out().into());
+            }
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
             bail!(
@@ -235,6 +283,7 @@ impl AutomationBackend for PlatformBackend {
 
         Ok(CameraCaptureResult {
             device_id: actual_device_id,
+            artifact_ref: None,
             output_path: if inline_base64 {
                 None
             } else {
@@ -259,7 +308,8 @@ impl AutomationBackend for PlatformBackend {
         let inline_base64 = request.inline_base64;
         let (output_path, _explicit_output_path) =
             resolve_screen_output_path(request.output_path.as_deref())?;
-        let script_path = write_swift_screen_script()?;
+        let script_path = write_swift_screen_script()
+            .map_err(|_| ScreenCaptureProcessError::helper_spawn_failed())?;
 
         let mut command = Command::new("xcrun");
         command.arg("swift").arg(&script_path).arg(&output_path);
@@ -272,32 +322,18 @@ impl AutomationBackend for PlatformBackend {
             command.arg("--inline-base64");
         }
 
-        let output = command.output().with_context(|| {
-            format!(
-                "failed to execute screen capture helper: {}",
-                script_path.display()
-            )
-        })?;
+        let output = command
+            .output()
+            .map_err(|_| ScreenCaptureProcessError::helper_spawn_failed())?;
 
         let _ = fs::remove_file(&script_path);
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            bail!(
-                "screen capture failed: {}{}{}",
-                stderr.trim(),
-                if !stderr.trim().is_empty() && !stdout.trim().is_empty() {
-                    " | "
-                } else {
-                    ""
-                },
-                stdout.trim()
-            );
+            return Err(screen_capture_process_error(&output).into());
         }
 
         let parsed: Value = serde_json::from_slice(&output.stdout)
-            .context("failed to parse screen capture helper output")?;
+            .map_err(|_| ScreenCaptureProcessError::helper_protocol_invalid())?;
 
         let metadata = build_file_metadata(&output_path, inline_base64, "image/png");
         let base64_data = if inline_base64 {
@@ -306,7 +342,7 @@ impl AutomationBackend for PlatformBackend {
                     .get("base64Data")
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned)
-                    .context("screen capture must include inline base64 data")?,
+                    .ok_or_else(ScreenCaptureProcessError::helper_protocol_invalid)?,
             )
         } else {
             None
@@ -318,6 +354,7 @@ impl AutomationBackend for PlatformBackend {
 
         Ok(ScreenCaptureResult {
             display: request.display,
+            artifact_ref: None,
             output_path: if inline_base64 {
                 None
             } else {
@@ -345,6 +382,15 @@ impl AutomationBackend for PlatformBackend {
             x: request.x,
             y: request.y,
             message: "Mouse move completed.".to_string(),
+        })
+    }
+
+    fn mouse_position(&self) -> Result<MousePositionResult> {
+        let (x, y) = current_mouse_position_via_core_graphics()?;
+        Ok(MousePositionResult {
+            x,
+            y,
+            message: "Mouse position observed.".to_string(),
         })
     }
 
@@ -479,6 +525,54 @@ impl AutomationBackend for PlatformBackend {
         })
     }
 
+    fn focused_target(&self) -> Result<FocusedTargetResult> {
+        let output = Command::new("osascript")
+            .arg("-e")
+            .arg("tell application \"System Events\" to get name of first application process whose frontmost is true")
+            .output()
+            .context("failed to observe macOS focused app")?;
+        if !output.status.success() {
+            return Ok(shared::focused_target_result(None, None, None));
+        }
+        let app_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(shared::focused_target_result(
+            (!app_name.is_empty()).then_some(app_name),
+            None,
+            None,
+        ))
+    }
+
+    fn focus_browser(
+        &self,
+        process_name: &str,
+        interactive_desktop_session: bool,
+    ) -> BrowserFocusExecutionResult {
+        let result = execute_macos_browser_focus_private(
+            MacosBrowserFocusPlanInput {
+                approval_granted: true,
+                capability_advertised: true,
+                command_backend_ready: true,
+                focused_target_observation_backend_ready: true,
+                interactive_desktop_session,
+                target_alias: None,
+                process_name: Some(process_name.trim().to_string()),
+                raw_window_title: None,
+                raw_url: None,
+                pid: None,
+                window_id: None,
+                tab_id: None,
+            },
+            |script| {
+                let output = Command::new("osascript").arg("-e").arg(script).output()?;
+                Ok(output.status.success())
+            },
+        );
+        BrowserFocusExecutionResult {
+            command_accepted: result.command_accepted,
+            reason_code: result.reason_code,
+        }
+    }
+
     fn perform_keyboard_action(
         &self,
         request: KeyboardActionRequest,
@@ -539,10 +633,350 @@ impl AutomationBackend for PlatformBackend {
     }
 }
 
+fn camera_capture_permission_error(
+    state: CameraPermissionState,
+) -> Option<CameraCaptureProcessError> {
+    match state {
+        CameraPermissionState::Denied => Some(CameraCaptureProcessError::permission_denied()),
+        CameraPermissionState::Restricted => {
+            Some(CameraCaptureProcessError::permission_restricted())
+        }
+        CameraPermissionState::Authorized
+        | CameraPermissionState::NotDetermined
+        | CameraPermissionState::Unavailable => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CameraHelperCommandOptions {
+    timeout: Duration,
+    termination_grace: Duration,
+}
+
+const DEFAULT_CAMERA_CAPTURE_OPERATION_BUDGET_MS: u64 = 60_000;
+const MIN_CAMERA_CAPTURE_OPERATION_BUDGET_MS: u64 = 1_000;
+const MAX_CAMERA_CAPTURE_OPERATION_BUDGET_MS: u64 = 60_000;
+const CAMERA_CAPTURE_CLEANUP_GRACE_MS: u64 = 2_000;
+
+#[derive(Debug, Clone, Copy)]
+struct CameraCaptureBudget {
+    operation: Duration,
+}
+
+impl CameraCaptureBudget {
+    fn from_millis(requested: Option<u64>) -> Self {
+        let millis = requested
+            .unwrap_or(DEFAULT_CAMERA_CAPTURE_OPERATION_BUDGET_MS)
+            .clamp(
+                MIN_CAMERA_CAPTURE_OPERATION_BUDGET_MS,
+                MAX_CAMERA_CAPTURE_OPERATION_BUDGET_MS,
+            );
+        Self {
+            operation: Duration::from_millis(millis),
+        }
+    }
+
+    fn operation_millis(self) -> u128 {
+        self.operation.as_millis()
+    }
+
+    fn command_options(self) -> CameraHelperCommandOptions {
+        CameraHelperCommandOptions {
+            timeout: self.operation + Duration::from_millis(CAMERA_CAPTURE_CLEANUP_GRACE_MS),
+            termination_grace: Duration::from_millis(250),
+        }
+    }
+}
+
+fn is_camera_capture_timeout_output(output: &Output) -> bool {
+    output.status.code() == Some(8)
+}
+
+fn run_camera_helper_command(
+    command: &mut Command,
+    options: CameraHelperCommandOptions,
+) -> Result<Output> {
+    let cancellation = AtomicBool::new(false);
+    run_camera_helper_command_with_cancellation(command, options, &cancellation)
+}
+
+fn run_camera_helper_command_with_cancellation(
+    command: &mut Command,
+    options: CameraHelperCommandOptions,
+    cancellation: &AtomicBool,
+) -> Result<Output> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0);
+
+    let mut child = command
+        .spawn()
+        .context("failed to start the bounded camera capture helper")?;
+    let started_at = Instant::now();
+
+    loop {
+        if cancellation.load(Ordering::SeqCst) {
+            terminate_process_group(&mut child, options.termination_grace)?;
+            return Err(CameraCaptureProcessError::cancelled().into());
+        }
+        if child
+            .try_wait()
+            .context("failed to observe the camera capture helper")?
+            .is_some()
+        {
+            return child
+                .wait_with_output()
+                .context("failed to collect the camera capture helper result");
+        }
+
+        if started_at.elapsed() >= options.timeout {
+            terminate_process_group(&mut child, options.termination_grace)?;
+            return Err(CameraCaptureProcessError::timed_out().into());
+        }
+
+        sleep(Duration::from_millis(25));
+    }
+}
+
+fn terminate_process_group(
+    child: &mut std::process::Child,
+    termination_grace: Duration,
+) -> Result<()> {
+    signal_process_group(child.id(), libc::SIGTERM)?;
+    let grace_started_at = Instant::now();
+    while grace_started_at.elapsed() < termination_grace {
+        if child
+            .try_wait()
+            .context("failed to observe camera helper termination")?
+            .is_some()
+        {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(10));
+    }
+
+    signal_process_group(child.id(), libc::SIGKILL)?;
+    child
+        .wait()
+        .context("failed to reap the timed-out camera capture helper")?;
+    Ok(())
+}
+
+fn signal_process_group(process_group_id: u32, signal: i32) -> Result<()> {
+    let result = unsafe { libc::kill(-(process_group_id as i32), signal) };
+    if result == 0 {
+        return Ok(());
+    }
+
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        return Ok(());
+    }
+    Err(error).context("failed to terminate the camera capture helper process group")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MacosKeyboardTarget {
     Keystroke(String),
     KeyCode(u16),
+}
+
+#[derive(Debug, Clone)]
+struct MacosBrowserFocusPlanInput {
+    approval_granted: bool,
+    capability_advertised: bool,
+    command_backend_ready: bool,
+    focused_target_observation_backend_ready: bool,
+    interactive_desktop_session: bool,
+    target_alias: Option<String>,
+    process_name: Option<String>,
+    raw_window_title: Option<String>,
+    raw_url: Option<String>,
+    pid: Option<u32>,
+    window_id: Option<String>,
+    tab_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct MacosBrowserFocusCommandPlan {
+    command_accepted_candidate: bool,
+    execute_os_focus_now: bool,
+    reason_code: &'static str,
+    backend_family: &'static str,
+    public_target_name: String,
+    post_check_mode: &'static str,
+    audit_only_fields: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct MacosBrowserFocusCommandExecutionResult {
+    command_accepted: bool,
+    reason_code: &'static str,
+    focused_target_observation_required: bool,
+    goal_success: bool,
+}
+
+fn build_macos_browser_focus_command_plan(
+    input: MacosBrowserFocusPlanInput,
+) -> Result<MacosBrowserFocusCommandPlan> {
+    if !input.approval_granted {
+        bail!("side_effect_authorization_required");
+    }
+    if !input.capability_advertised {
+        bail!("capability_not_supported");
+    }
+    if !input.command_backend_ready {
+        bail!("command_backend_required");
+    }
+    if !input.focused_target_observation_backend_ready {
+        bail!("focused_target_observation_backend_required");
+    }
+    if !input.interactive_desktop_session {
+        bail!("headless_unavailable");
+    }
+
+    let _audit_only_identity_present =
+        input.pid.is_some() || input.window_id.is_some() || input.tab_id.is_some();
+    let public_target_name = resolve_macos_browser_focus_public_target_name(&input)?;
+
+    Ok(MacosBrowserFocusCommandPlan {
+        command_accepted_candidate: true,
+        execute_os_focus_now: false,
+        reason_code: "macos_browser_focus_command_plan_ready",
+        backend_family: "osascript",
+        public_target_name,
+        post_check_mode: "focused_target_observation_required",
+        audit_only_fields: vec![
+            "rawWindowTitle",
+            "rawUrl",
+            "queryToken",
+            "pid",
+            "windowId",
+            "tabId",
+            "automationScriptText",
+        ],
+    })
+}
+
+fn resolve_macos_browser_focus_public_target_name(
+    input: &MacosBrowserFocusPlanInput,
+) -> Result<String> {
+    for candidate in [
+        input.target_alias.as_deref(),
+        input.process_name.as_deref(),
+        input.raw_window_title.as_deref(),
+        input.raw_url.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let normalized = candidate.trim();
+        if !normalized.is_empty() {
+            return Ok(normalized.to_string());
+        }
+    }
+
+    bail!("target_identity_required")
+}
+
+fn execute_macos_browser_focus_command_plan<F>(
+    plan: &MacosBrowserFocusCommandPlan,
+    runner: F,
+) -> MacosBrowserFocusCommandExecutionResult
+where
+    F: FnOnce() -> Result<bool>,
+{
+    if !plan.command_accepted_candidate {
+        return macos_browser_focus_execution_result(false, "command_plan_not_ready");
+    }
+
+    match runner() {
+        Ok(true) => {
+            macos_browser_focus_execution_result(true, "macos_browser_focus_command_accepted")
+        }
+        Ok(false) => {
+            macos_browser_focus_execution_result(false, "macos_browser_focus_command_rejected")
+        }
+        Err(_) => macos_browser_focus_execution_result(false, "macos_browser_focus_command_failed"),
+    }
+}
+
+fn build_macos_browser_focus_osascript(plan: &MacosBrowserFocusCommandPlan) -> Result<String> {
+    if !plan.command_accepted_candidate {
+        bail!("command_plan_not_ready");
+    }
+    if plan.backend_family != "osascript" {
+        bail!("unsupported_browser_focus_backend_family");
+    }
+    let target_name = plan.public_target_name.trim();
+    if target_name.is_empty() {
+        bail!("target_identity_required");
+    }
+
+    Ok(format!(
+        "tell application {} to activate",
+        apple_script_string_literal(target_name)
+    ))
+}
+
+fn execute_macos_browser_focus_private<F>(
+    input: MacosBrowserFocusPlanInput,
+    runner: F,
+) -> MacosBrowserFocusCommandExecutionResult
+where
+    F: FnOnce(&str) -> Result<bool>,
+{
+    let plan = match build_macos_browser_focus_command_plan(input) {
+        Ok(plan) => plan,
+        Err(error) => {
+            return macos_browser_focus_execution_result(
+                false,
+                macos_browser_focus_sanitized_reason_code(&error),
+            );
+        }
+    };
+    let script = match build_macos_browser_focus_osascript(&plan) {
+        Ok(script) => script,
+        Err(error) => {
+            return macos_browser_focus_execution_result(
+                false,
+                macos_browser_focus_sanitized_reason_code(&error),
+            );
+        }
+    };
+
+    execute_macos_browser_focus_command_plan(&plan, || runner(&script))
+}
+
+fn macos_browser_focus_sanitized_reason_code(error: &anyhow::Error) -> &'static str {
+    let message = error.to_string();
+    match message.as_str() {
+        "side_effect_authorization_required" => "side_effect_authorization_required",
+        "capability_not_supported" => "capability_not_supported",
+        "command_backend_required" => "command_backend_required",
+        "focused_target_observation_backend_required" => {
+            "focused_target_observation_backend_required"
+        }
+        "headless_unavailable" => "headless_unavailable",
+        "target_identity_required" => "target_identity_required",
+        "command_plan_not_ready" => "command_plan_not_ready",
+        "unsupported_browser_focus_backend_family" => "unsupported_browser_focus_backend_family",
+        _ => "macos_browser_focus_command_failed",
+    }
+}
+
+fn macos_browser_focus_execution_result(
+    command_accepted: bool,
+    reason_code: &'static str,
+) -> MacosBrowserFocusCommandExecutionResult {
+    MacosBrowserFocusCommandExecutionResult {
+        command_accepted,
+        reason_code,
+        focused_target_observation_required: true,
+        goal_success: false,
+    }
 }
 
 fn run_osascript(script: &str) -> Result<()> {
@@ -606,6 +1040,39 @@ fn move_mouse_via_core_graphics(x: i32, y: i32) -> Result<()> {
         None,
         None,
     ))
+}
+
+fn current_mouse_position_via_core_graphics() -> Result<(i32, i32)> {
+    let script_path = write_swift_mouse_position_script()?;
+    let output = Command::new("xcrun")
+        .arg("swift")
+        .arg(&script_path)
+        .output()
+        .with_context(|| {
+            format!(
+                "failed to execute mouse position helper: {}",
+                script_path.display()
+            )
+        })?;
+
+    let _ = fs::remove_file(&script_path);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        bail!(
+            "mouse position observation failed: {}{}{}",
+            stderr.trim(),
+            if !stderr.trim().is_empty() && !stdout.trim().is_empty() {
+                " | "
+            } else {
+                ""
+            },
+            stdout.trim()
+        );
+    }
+
+    parse_mouse_position_json(String::from_utf8_lossy(&output.stdout).as_ref())
 }
 
 fn click_mouse_via_core_graphics(x: i32, y: i32, button: &str, double: bool) -> Result<()> {
@@ -872,11 +1339,7 @@ fn resolve_macos_keyboard_target(key: &str) -> Result<MacosKeyboardTarget> {
         return Ok(MacosKeyboardTarget::Keystroke(trimmed.to_string()));
     }
 
-    let normalized = trimmed
-        .to_lowercase()
-        .replace('_', "")
-        .replace('-', "")
-        .replace(' ', "");
+    let normalized = trimmed.to_lowercase().replace(['_', '-', ' '], "");
 
     let key_code = match normalized.as_str() {
         "enter" | "return" => Some(36),
@@ -949,11 +1412,7 @@ fn resolve_macos_keyboard_key_code(key: &str) -> Result<u16> {
         bail!("keyboard key must not be empty");
     }
 
-    let normalized = trimmed
-        .to_lowercase()
-        .replace('_', "")
-        .replace('-', "")
-        .replace(' ', "");
+    let normalized = trimmed.to_lowercase().replace(['_', '-', ' '], "");
 
     let code = match normalized.as_str() {
         "a" => Some(0),
@@ -1069,10 +1528,7 @@ fn resolve_camera_output_path(output_path: Option<&str>) -> Result<String> {
                 Ok(path.to_string())
             }
         }
-        _ => {
-            let path = env::temp_dir().join(build_generated_capture_name("yeonjang-camera", "jpg"));
-            Ok(path.display().to_string())
-        }
+        _ => bail!("capture artifact output path is required"),
     }
 }
 
@@ -1092,10 +1548,7 @@ fn resolve_screen_output_path(output_path: Option<&str>) -> Result<(String, bool
                 Ok((path.to_string(), true))
             }
         }
-        _ => {
-            let path = env::temp_dir().join(build_generated_capture_name("yeonjang-screen", "png"));
-            Ok((path.display().to_string(), false))
-        }
+        _ => bail!("capture artifact output path is required"),
     }
 }
 
@@ -1176,6 +1629,14 @@ fn normalize_macos_screen_capture_display(display: u32) -> u32 {
     display.saturating_add(1)
 }
 
+fn screen_capture_process_error(output: &Output) -> ScreenCaptureProcessError {
+    match output.status.code() {
+        Some(10) => ScreenCaptureProcessError::permission_not_granted(),
+        Some(11) => ScreenCaptureProcessError::helper_spawn_failed(),
+        Some(12) | None | Some(_) => ScreenCaptureProcessError::helper_exited(),
+    }
+}
+
 fn write_swift_mouse_action_script() -> Result<PathBuf> {
     let script_path = env::temp_dir().join(format!(
         "yeonjang-mouse-action-{}.swift",
@@ -1184,6 +1645,32 @@ fn write_swift_mouse_action_script() -> Result<PathBuf> {
     fs::write(&script_path, SWIFT_MOUSE_ACTION)
         .with_context(|| format!("failed to write swift helper to {}", script_path.display()))?;
     Ok(script_path)
+}
+
+fn write_swift_mouse_position_script() -> Result<PathBuf> {
+    let script_path = env::temp_dir().join(format!(
+        "yeonjang-mouse-position-{}.swift",
+        std::process::id()
+    ));
+    fs::write(&script_path, SWIFT_MOUSE_POSITION)
+        .with_context(|| format!("failed to write swift helper to {}", script_path.display()))?;
+    Ok(script_path)
+}
+
+fn parse_mouse_position_json(output: &str) -> Result<(i32, i32)> {
+    let value = serde_json::from_str::<Value>(output.trim())
+        .context("failed to parse mouse position helper JSON")?;
+    let x = value
+        .get("x")
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .context("mouse position helper JSON missing x")?;
+    let y = value
+        .get("y")
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .context("mouse position helper JSON missing y")?;
+    Ok((x, y))
 }
 
 fn write_swift_keyboard_action_script() -> Result<PathBuf> {
@@ -1248,10 +1735,8 @@ while index < args.count {
 }
 
 if !CGPreflightScreenCaptureAccess() {
-    guard CGRequestScreenCaptureAccess() else {
-        fputs("Screen Recording permission was not granted\n", stderr)
-        exit(10)
-    }
+    fputs("SCREEN_PERMISSION_NOT_GRANTED\n", stderr)
+    exit(10)
 }
 
 let task = Process()
@@ -1287,6 +1772,20 @@ var payload: [String: Any] = [
 if includeBase64 {
     payload["base64Data"] = try Data(contentsOf: URL(fileURLWithPath: outputPath)).base64EncodedString()
 }
+let data = try JSONSerialization.data(withJSONObject: payload, options: [])
+FileHandle.standardOutput.write(data)
+"#;
+
+const SWIFT_MOUSE_POSITION: &str = r#"
+import Foundation
+import ApplicationServices
+
+let event = CGEvent(source: nil)
+let point = event?.location ?? CGPoint(x: 0, y: 0)
+let payload: [String: Int] = [
+    "x": Int(point.x.rounded()),
+    "y": Int(point.y.rounded())
+]
 let data = try JSONSerialization.data(withJSONObject: payload, options: [])
 FileHandle.standardOutput.write(data)
 "#;
@@ -1576,12 +2075,26 @@ do {
 #[cfg(test)]
 mod tests {
     use super::{
-        MacosKeyboardTarget, PlatformBackend, build_modifier_clause, build_modifier_key_codes,
+        CameraCaptureBudget, CameraHelperCommandOptions, MacosBrowserFocusCommandPlan,
+        MacosBrowserFocusPlanInput, MacosKeyboardTarget, PlatformBackend,
+        build_macos_browser_focus_command_plan, build_macos_browser_focus_osascript,
+        build_modifier_clause, build_modifier_key_codes, camera_capture_permission_error,
+        execute_macos_browser_focus_command_plan, execute_macos_browser_focus_private,
         normalize_macos_screen_capture_display, normalize_mouse_button_name,
         resolve_macos_keyboard_key_code, resolve_macos_keyboard_target,
-        resolve_macos_system_control, resolve_optional_mouse_point,
+        resolve_macos_system_control, resolve_optional_mouse_point, run_camera_helper_command,
+        run_camera_helper_command_with_cancellation,
     };
-    use crate::automation::{AutomationBackend, SystemControlRequest};
+    use crate::automation::{AutomationBackend, CameraPermissionState, SystemControlRequest};
+    use std::fs;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::Command;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
     fn resolves_letter_shortcut_to_keystroke() {
@@ -1662,6 +2175,218 @@ mod tests {
     }
 
     #[test]
+    fn camera_helper_timeout_terminates_its_process_group() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let pid_path = std::env::temp_dir().join(format!(
+            "yeonjang-camera-helper-child-{}-{suffix}.pid",
+            std::process::id()
+        ));
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("sleep 30 & child=$!; echo \"$child\" > \"$1\"; wait")
+            .arg("camera-helper-test")
+            .arg(&pid_path);
+
+        let error = run_camera_helper_command(
+            &mut command,
+            CameraHelperCommandOptions {
+                timeout: Duration::from_millis(150),
+                termination_grace: Duration::from_millis(100),
+            },
+        )
+        .expect_err("helper must time out");
+
+        assert_eq!(
+            error
+                .downcast_ref::<crate::automation::CameraCaptureProcessError>()
+                .map(|failure| failure.code()),
+            Some("camera_helper_timeout")
+        );
+
+        let child_pid = fs::read_to_string(&pid_path)
+            .expect("child pid")
+            .trim()
+            .parse::<i32>()
+            .expect("numeric child pid");
+        let mut alive = true;
+        for _ in 0..20 {
+            alive = unsafe { libc::kill(child_pid, 0) } == 0;
+            if !alive {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        let _ = fs::remove_file(pid_path);
+        assert!(!alive, "timed-out helper child must not remain alive");
+    }
+
+    #[test]
+    fn camera_helper_cancellation_terminates_its_process_group() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let pid_path = std::env::temp_dir().join(format!(
+            "yeonjang-camera-helper-cancel-child-{}-{suffix}.pid",
+            std::process::id()
+        ));
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("sleep 30 & child=$!; echo \"$child\" > \"$1\"; wait")
+            .arg("camera-helper-cancel-test")
+            .arg(&pid_path);
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let cancellation_trigger = Arc::clone(&cancellation);
+        let trigger = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(150));
+            cancellation_trigger.store(true, Ordering::SeqCst);
+        });
+
+        let error = run_camera_helper_command_with_cancellation(
+            &mut command,
+            CameraHelperCommandOptions {
+                timeout: Duration::from_secs(5),
+                termination_grace: Duration::from_millis(100),
+            },
+            &cancellation,
+        )
+        .expect_err("helper must be cancelled");
+        trigger.join().expect("cancellation trigger");
+
+        assert_eq!(
+            error
+                .downcast_ref::<crate::automation::CameraCaptureProcessError>()
+                .map(|failure| failure.code()),
+            Some("camera_capture_cancelled")
+        );
+        let child_pid = fs::read_to_string(&pid_path)
+            .expect("child pid")
+            .trim()
+            .parse::<i32>()
+            .expect("numeric child pid");
+        let mut alive = true;
+        for _ in 0..20 {
+            alive = unsafe { libc::kill(child_pid, 0) } == 0;
+            if !alive {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        let _ = fs::remove_file(pid_path);
+        assert!(!alive, "cancelled helper child must not remain alive");
+    }
+
+    #[test]
+    fn camera_helper_runner_preserves_completed_output_and_exit_status() {
+        let options = CameraHelperCommandOptions {
+            timeout: Duration::from_secs(1),
+            termination_grace: Duration::from_millis(100),
+        };
+        let mut successful = Command::new("/bin/sh");
+        successful.arg("-c").arg("printf camera-ok");
+        let success = run_camera_helper_command(&mut successful, options)
+            .expect("completed helper should return output");
+        assert!(success.status.success());
+        assert_eq!(success.stdout, b"camera-ok");
+
+        let mut failed = Command::new("/bin/sh");
+        failed.arg("-c").arg("printf camera-failed >&2; exit 7");
+        let failure = run_camera_helper_command(&mut failed, options)
+            .expect("non-zero helper should preserve its process result");
+        assert_eq!(failure.status.code(), Some(7));
+        assert_eq!(failure.stderr, b"camera-failed");
+    }
+
+    #[test]
+    fn camera_capture_budget_derives_watchdog_after_operation_deadline() {
+        let budget = CameraCaptureBudget::from_millis(Some(5_000));
+        let options = budget.command_options();
+
+        assert_eq!(budget.operation_millis(), 5_000);
+        assert_eq!(options.timeout, Duration::from_millis(7_000));
+        assert_eq!(options.termination_grace, Duration::from_millis(250));
+    }
+
+    #[test]
+    fn camera_capture_budget_applies_version_compatible_bounds() {
+        assert_eq!(
+            CameraCaptureBudget::from_millis(None).operation_millis(),
+            60_000
+        );
+        assert_eq!(
+            CameraCaptureBudget::from_millis(Some(1)).operation_millis(),
+            1_000
+        );
+        assert_eq!(
+            CameraCaptureBudget::from_millis(Some(90_000)).operation_millis(),
+            60_000
+        );
+    }
+
+    #[test]
+    fn camera_helper_timeout_exit_maps_to_the_typed_timeout_reason() {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(8 << 8),
+            stdout: Vec::new(),
+            stderr: b"Timed out while waiting for camera capture".to_vec(),
+        };
+
+        assert!(super::is_camera_capture_timeout_output(&output));
+    }
+
+    #[test]
+    fn screen_helper_never_requests_os_permission_during_capture() {
+        assert!(super::SWIFT_SCREEN_CAPTURE.contains("CGPreflightScreenCaptureAccess"));
+        assert!(!super::SWIFT_SCREEN_CAPTURE.contains("CGRequestScreenCaptureAccess"));
+    }
+
+    #[test]
+    fn screen_helper_exit_codes_map_without_reading_stderr_text() {
+        let permission = std::process::Output {
+            status: std::process::ExitStatus::from_raw(10 << 8),
+            stdout: Vec::new(),
+            stderr: b"/private/path must stay private".to_vec(),
+        };
+        let helper_exit = std::process::Output {
+            status: std::process::ExitStatus::from_raw(12 << 8),
+            stdout: Vec::new(),
+            stderr: b"token=private".to_vec(),
+        };
+
+        assert_eq!(
+            super::screen_capture_process_error(&permission).code(),
+            "screen_permission_not_granted"
+        );
+        assert_eq!(
+            super::screen_capture_process_error(&helper_exit).code(),
+            "screen_helper_exited"
+        );
+    }
+
+    #[test]
+    fn camera_capture_preflight_rejects_only_durable_denied_permission_states() {
+        assert_eq!(
+            camera_capture_permission_error(CameraPermissionState::Denied)
+                .expect("denied")
+                .code(),
+            "camera_permission_denied"
+        );
+        assert_eq!(
+            camera_capture_permission_error(CameraPermissionState::Restricted)
+                .expect("restricted")
+                .code(),
+            "camera_permission_restricted"
+        );
+        assert!(camera_capture_permission_error(CameraPermissionState::Authorized).is_none());
+        assert!(camera_capture_permission_error(CameraPermissionState::NotDetermined).is_none());
+    }
+
+    #[test]
     fn macos_capabilities_report_system_control() {
         let capabilities = PlatformBackend.capabilities();
         assert!(capabilities.system_control);
@@ -1695,5 +2420,374 @@ mod tests {
                 .to_string()
                 .contains("target `remote-host` is not supported")
         );
+    }
+
+    #[test]
+    fn builds_browser_focus_command_plan_only_after_macos_preconditions() {
+        let plan = build_macos_browser_focus_command_plan(MacosBrowserFocusPlanInput {
+            approval_granted: true,
+            capability_advertised: true,
+            command_backend_ready: true,
+            focused_target_observation_backend_ready: true,
+            interactive_desktop_session: true,
+            target_alias: Some("업무 브라우저".to_string()),
+            process_name: Some("Google Chrome".to_string()),
+            raw_window_title: Some("Private Admin Console".to_string()),
+            raw_url: Some("https://example.test/admin?token=private".to_string()),
+            pid: Some(4401),
+            window_id: Some("window-private".to_string()),
+            tab_id: Some("tab-private".to_string()),
+        })
+        .expect("macOS focus plan should be accepted");
+
+        assert!(plan.command_accepted_candidate);
+        assert!(!plan.execute_os_focus_now);
+        assert_eq!(plan.reason_code, "macos_browser_focus_command_plan_ready");
+        assert_eq!(plan.backend_family, "osascript");
+        assert_eq!(plan.public_target_name, "업무 브라우저");
+        assert_eq!(plan.post_check_mode, "focused_target_observation_required");
+        assert_eq!(
+            plan.audit_only_fields,
+            vec![
+                "rawWindowTitle",
+                "rawUrl",
+                "queryToken",
+                "pid",
+                "windowId",
+                "tabId",
+                "automationScriptText",
+            ]
+        );
+
+        let public = serde_json::to_string(&plan).expect("serialize plan");
+        assert!(!public.contains("Private Admin Console"));
+        assert!(!public.contains("https://example.test"));
+        assert!(!public.contains("token=private"));
+        assert!(!public.contains("4401"));
+        assert!(!public.contains("window-private"));
+        assert!(!public.contains("tab-private"));
+        assert!(!public.contains("osascript private"));
+    }
+
+    #[test]
+    fn rejects_browser_focus_plan_without_required_gate() {
+        let error = build_macos_browser_focus_command_plan(MacosBrowserFocusPlanInput {
+            approval_granted: false,
+            capability_advertised: true,
+            command_backend_ready: true,
+            focused_target_observation_backend_ready: true,
+            interactive_desktop_session: true,
+            target_alias: Some("업무 브라우저".to_string()),
+            process_name: Some("Google Chrome".to_string()),
+            raw_window_title: None,
+            raw_url: None,
+            pid: None,
+            window_id: None,
+            tab_id: None,
+        })
+        .expect_err("approval gate should block browser focus plan");
+
+        assert!(
+            error
+                .to_string()
+                .contains("side_effect_authorization_required")
+        );
+    }
+
+    #[test]
+    fn rejects_browser_focus_plan_without_target_identity() {
+        let error = build_macos_browser_focus_command_plan(MacosBrowserFocusPlanInput {
+            approval_granted: true,
+            capability_advertised: true,
+            command_backend_ready: true,
+            focused_target_observation_backend_ready: true,
+            interactive_desktop_session: true,
+            target_alias: None,
+            process_name: None,
+            raw_window_title: None,
+            raw_url: None,
+            pid: None,
+            window_id: None,
+            tab_id: None,
+        })
+        .expect_err("target identity should be required");
+
+        assert!(error.to_string().contains("target_identity_required"));
+    }
+
+    #[test]
+    fn executes_browser_focus_plan_through_injected_runner() {
+        let plan = build_macos_browser_focus_command_plan(MacosBrowserFocusPlanInput {
+            approval_granted: true,
+            capability_advertised: true,
+            command_backend_ready: true,
+            focused_target_observation_backend_ready: true,
+            interactive_desktop_session: true,
+            target_alias: Some("업무 브라우저".to_string()),
+            process_name: Some("Google Chrome".to_string()),
+            raw_window_title: Some("Private Admin Console".to_string()),
+            raw_url: Some("https://example.test/admin?token=private".to_string()),
+            pid: Some(4401),
+            window_id: Some("window-private".to_string()),
+            tab_id: Some("tab-private".to_string()),
+        })
+        .expect("plan should be ready");
+        let mut called = false;
+
+        let result = execute_macos_browser_focus_command_plan(&plan, || {
+            called = true;
+            Ok(true)
+        });
+
+        assert!(called);
+        assert!(result.command_accepted);
+        assert_eq!(result.reason_code, "macos_browser_focus_command_accepted");
+        assert!(result.focused_target_observation_required);
+        assert!(!result.goal_success);
+
+        let public = serde_json::to_string(&result).expect("serialize execution result");
+        assert!(!public.contains("Private Admin Console"));
+        assert!(!public.contains("https://example.test"));
+        assert!(!public.contains("token=private"));
+        assert!(!public.contains("4401"));
+        assert!(!public.contains("window-private"));
+        assert!(!public.contains("tab-private"));
+        assert!(!public.contains("osascript"));
+    }
+
+    #[test]
+    fn maps_browser_focus_runner_rejection_to_sanitized_reason() {
+        let plan = build_macos_browser_focus_command_plan(MacosBrowserFocusPlanInput {
+            approval_granted: true,
+            capability_advertised: true,
+            command_backend_ready: true,
+            focused_target_observation_backend_ready: true,
+            interactive_desktop_session: true,
+            target_alias: Some("업무 브라우저".to_string()),
+            process_name: Some("Google Chrome".to_string()),
+            raw_window_title: None,
+            raw_url: None,
+            pid: None,
+            window_id: None,
+            tab_id: None,
+        })
+        .expect("plan should be ready");
+
+        let result = execute_macos_browser_focus_command_plan(&plan, || Ok(false));
+
+        assert!(!result.command_accepted);
+        assert_eq!(result.reason_code, "macos_browser_focus_command_rejected");
+        assert!(result.focused_target_observation_required);
+        assert!(!result.goal_success);
+    }
+
+    #[test]
+    fn maps_browser_focus_runner_error_without_leaking_raw_error() {
+        let plan = build_macos_browser_focus_command_plan(MacosBrowserFocusPlanInput {
+            approval_granted: true,
+            capability_advertised: true,
+            command_backend_ready: true,
+            focused_target_observation_backend_ready: true,
+            interactive_desktop_session: true,
+            target_alias: Some("업무 브라우저".to_string()),
+            process_name: Some("Google Chrome".to_string()),
+            raw_window_title: Some("Private Admin Console".to_string()),
+            raw_url: Some("https://example.test/admin?token=private".to_string()),
+            pid: Some(4401),
+            window_id: Some("window-private".to_string()),
+            tab_id: Some("tab-private".to_string()),
+        })
+        .expect("plan should be ready");
+
+        let result = execute_macos_browser_focus_command_plan(&plan, || {
+            anyhow::bail!("osascript private failure for window-private")
+        });
+        let public = serde_json::to_string(&result).expect("serialize execution result");
+
+        assert!(!result.command_accepted);
+        assert_eq!(result.reason_code, "macos_browser_focus_command_failed");
+        assert!(!public.contains("osascript private"));
+        assert!(!public.contains("window-private"));
+        assert!(!public.contains("Private Admin Console"));
+    }
+
+    #[test]
+    fn does_not_call_runner_for_unready_browser_focus_plan() {
+        let plan = MacosBrowserFocusCommandPlan {
+            command_accepted_candidate: false,
+            execute_os_focus_now: false,
+            reason_code: "command_backend_required",
+            backend_family: "osascript",
+            public_target_name: "업무 브라우저".to_string(),
+            post_check_mode: "focused_target_observation_required",
+            audit_only_fields: vec![],
+        };
+        let mut called = false;
+
+        let result = execute_macos_browser_focus_command_plan(&plan, || {
+            called = true;
+            Ok(true)
+        });
+
+        assert!(!called);
+        assert!(!result.command_accepted);
+        assert_eq!(result.reason_code, "command_plan_not_ready");
+        assert!(!result.goal_success);
+    }
+
+    #[test]
+    fn builds_private_browser_focus_osascript_from_sanitized_plan() {
+        let plan = MacosBrowserFocusCommandPlan {
+            command_accepted_candidate: true,
+            execute_os_focus_now: false,
+            reason_code: "macos_browser_focus_command_plan_ready",
+            backend_family: "osascript",
+            public_target_name: "Chrome \"Work\" \\ Desk".to_string(),
+            post_check_mode: "focused_target_observation_required",
+            audit_only_fields: vec!["automationScriptText"],
+        };
+
+        let script = build_macos_browser_focus_osascript(&plan).expect("script should build");
+
+        assert!(script.contains("tell application \"Chrome \\\"Work\\\" \\\\ Desk\""));
+        assert!(script.contains("activate"));
+        assert!(!script.contains("Private Admin Console"));
+        assert!(!script.contains("https://example.test"));
+        assert!(!script.contains("window-private"));
+    }
+
+    #[test]
+    fn rejects_private_browser_focus_osascript_for_unready_plan() {
+        let plan = MacosBrowserFocusCommandPlan {
+            command_accepted_candidate: false,
+            execute_os_focus_now: false,
+            reason_code: "command_backend_required",
+            backend_family: "osascript",
+            public_target_name: "Chrome".to_string(),
+            post_check_mode: "focused_target_observation_required",
+            audit_only_fields: vec![],
+        };
+
+        let error = build_macos_browser_focus_osascript(&plan)
+            .expect_err("unready plan should not build script");
+
+        assert!(error.to_string().contains("command_plan_not_ready"));
+    }
+
+    #[test]
+    fn browser_focus_execution_result_never_contains_private_script_text() {
+        let plan = MacosBrowserFocusCommandPlan {
+            command_accepted_candidate: true,
+            execute_os_focus_now: false,
+            reason_code: "macos_browser_focus_command_plan_ready",
+            backend_family: "osascript",
+            public_target_name: "Chrome".to_string(),
+            post_check_mode: "focused_target_observation_required",
+            audit_only_fields: vec!["automationScriptText"],
+        };
+        let script = build_macos_browser_focus_osascript(&plan).expect("script should build");
+
+        let result = execute_macos_browser_focus_command_plan(&plan, || {
+            assert!(script.contains("tell application"));
+            Ok(true)
+        });
+        let public = serde_json::to_string(&result).expect("serialize execution result");
+
+        assert!(!public.contains("tell application"));
+        assert!(!public.contains("activate"));
+        assert!(!public.contains("automationScriptText"));
+    }
+
+    #[test]
+    fn private_browser_focus_executor_passes_script_to_injected_runner_only() {
+        let mut captured_script = String::new();
+        let result = execute_macos_browser_focus_private(
+            MacosBrowserFocusPlanInput {
+                approval_granted: true,
+                capability_advertised: true,
+                command_backend_ready: true,
+                focused_target_observation_backend_ready: true,
+                interactive_desktop_session: true,
+                target_alias: Some("Chrome \"Work\"".to_string()),
+                process_name: Some("Google Chrome".to_string()),
+                raw_window_title: Some("Private Admin Console".to_string()),
+                raw_url: Some("https://example.test/admin?token=private".to_string()),
+                pid: Some(4401),
+                window_id: Some("window-private".to_string()),
+                tab_id: Some("tab-private".to_string()),
+            },
+            |script| {
+                captured_script = script.to_string();
+                Ok(script.contains("tell application \"Chrome \\\"Work\\\"\" to activate"))
+            },
+        );
+
+        assert!(captured_script.contains("tell application"));
+        assert!(result.command_accepted);
+        assert_eq!(result.reason_code, "macos_browser_focus_command_accepted");
+        assert!(!result.goal_success);
+
+        let public = serde_json::to_string(&result).expect("serialize execution result");
+        assert!(!public.contains("tell application"));
+        assert!(!public.contains("Chrome"));
+        assert!(!public.contains("Private Admin Console"));
+        assert!(!public.contains("https://example.test"));
+        assert!(!public.contains("token=private"));
+        assert!(!public.contains("window-private"));
+    }
+
+    #[test]
+    fn private_browser_focus_executor_does_not_call_runner_when_plan_is_blocked() {
+        let mut called = false;
+        let result = execute_macos_browser_focus_private(
+            MacosBrowserFocusPlanInput {
+                approval_granted: false,
+                capability_advertised: true,
+                command_backend_ready: true,
+                focused_target_observation_backend_ready: true,
+                interactive_desktop_session: true,
+                target_alias: Some("Chrome".to_string()),
+                process_name: Some("Google Chrome".to_string()),
+                raw_window_title: None,
+                raw_url: None,
+                pid: None,
+                window_id: None,
+                tab_id: None,
+            },
+            |_script| {
+                called = true;
+                Ok(true)
+            },
+        );
+
+        assert!(!called);
+        assert!(!result.command_accepted);
+        assert_eq!(result.reason_code, "side_effect_authorization_required");
+        assert!(!result.goal_success);
+    }
+
+    #[test]
+    fn private_browser_focus_executor_sanitizes_script_builder_failure() {
+        let result = execute_macos_browser_focus_private(
+            MacosBrowserFocusPlanInput {
+                approval_granted: true,
+                capability_advertised: true,
+                command_backend_ready: true,
+                focused_target_observation_backend_ready: true,
+                interactive_desktop_session: true,
+                target_alias: Some("   ".to_string()),
+                process_name: None,
+                raw_window_title: None,
+                raw_url: None,
+                pid: None,
+                window_id: None,
+                tab_id: None,
+            },
+            |_script| Ok(true),
+        );
+
+        assert!(!result.command_accepted);
+        assert_eq!(result.reason_code, "target_identity_required");
+        assert!(!result.goal_success);
     }
 }

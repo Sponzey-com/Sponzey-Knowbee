@@ -54,8 +54,8 @@ const QUICK_FIX_LABELS: Record<EnterpriseTopologyQuickFixId, string> = {
   add_approval_step: "승인 단계 추가",
   connect_selected_nodes: "선택 서브 에이전트 연결",
   add_tool_permission: "도구 권한 추가",
-  add_fallback_path: "fallback path 추가",
-  set_output_preset: "output preset 설정",
+  add_fallback_path: "예외 처리 경로 추가",
+  set_output_preset: "결과 형식 설정",
 }
 
 function metadataRecord(value: EnterpriseMetadataValue | undefined): Record<string, EnterpriseMetadataValue | undefined> | null {
@@ -65,6 +65,49 @@ function metadataRecord(value: EnterpriseMetadataValue | undefined): Record<stri
 function nodeById(topology: EnterpriseTopology | undefined, nodeId: string | undefined) {
   if (!topology || !nodeId) return undefined
   return topology.nodes.find((node) => node.id === nodeId)
+}
+
+function stripRepeatedPrefix(value: string, prefix: string): string {
+  let normalized = value
+  const marker = `${prefix}:`
+  while (normalized.startsWith(`${marker}${marker}`)) {
+    normalized = normalized.slice(marker.length)
+  }
+  return normalized
+}
+
+function nodeDisplayLabel(topology: EnterpriseTopology | undefined, nodeId: string | undefined): string {
+  if (!nodeId) return "서브 에이전트"
+  const normalized = stripRepeatedPrefix(nodeId, "node")
+  const node = nodeById(topology, nodeId) ?? nodeById(topology, normalized)
+  return node?.displayName ?? node?.name ?? "서브 에이전트"
+}
+
+function createdNodeNames(operations: readonly EnterpriseTopologyGuiOperation[]): Map<string, string> {
+  const names = new Map<string, string>()
+  for (const operation of operations) {
+    if (operation.op === "createNode") {
+      names.set(operation.nodeId, operation.name ?? "새 서브 에이전트")
+    }
+  }
+  return names
+}
+
+function entityDisplayLabel(
+  ref: EnterpriseEntityRef,
+  topology: EnterpriseTopology | undefined,
+  createdNames = new Map<string, string>(),
+): string {
+  if (ref.entityType === "node") {
+    return createdNames.get(ref.id) ?? nodeDisplayLabel(topology, ref.id)
+  }
+  if (ref.entityType === "enterprise_tool") return "도구"
+  if (ref.entityType === "enterprise_system") return "시스템"
+  if (ref.entityType === "relation") return "연결"
+  if (ref.entityType === "position") return topology?.positions.find((item) => item.id === ref.id)?.name ?? "담당자"
+  if (ref.entityType === "person") return topology?.persons.find((item) => item.id === ref.id)?.name ?? "사람"
+  if (ref.entityType === "org_unit") return topology?.orgUnits.find((item) => item.id === ref.id)?.name ?? "조직"
+  return ref.id
 }
 
 function defaultApprovalHolder(topology: EnterpriseTopology | undefined, nodeId: string | undefined) {
@@ -91,13 +134,17 @@ function nodeId(prefix: string, sourceId: string): string {
   return `node:${prefix}:${sourceId}`.replace(/[^a-zA-Z0-9:_-]+/g, "-")
 }
 
-function quickFixPreview(operation: EnterpriseTopologyGuiOperation): EnterpriseTopologyQuickFixOperationPreview {
+function quickFixPreview(
+  operation: EnterpriseTopologyGuiOperation,
+  topology?: EnterpriseTopology,
+  createdNames = new Map<string, string>(),
+): EnterpriseTopologyQuickFixOperationPreview {
   if (operation.op === "createNode") {
     return {
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.nodeId,
-      summary: `node 생성: ${operation.name ?? operation.nodeId}`,
+      summary: `서브 에이전트 추가: ${operation.name ?? "새 서브 에이전트"}`,
     }
   }
   if (operation.op === "updateNode") {
@@ -105,7 +152,7 @@ function quickFixPreview(operation: EnterpriseTopologyGuiOperation): EnterpriseT
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.nodeId,
-      summary: `node 수정: ${operation.nodeId}`,
+      summary: `서브 에이전트 설정 수정: ${nodeDisplayLabel(topology, operation.nodeId)}`,
     }
   }
   if (operation.op === "moveNode") {
@@ -113,7 +160,7 @@ function quickFixPreview(operation: EnterpriseTopologyGuiOperation): EnterpriseT
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.nodeId,
-      summary: `node 위치 변경: ${operation.nodeId}`,
+      summary: `서브 에이전트 위치 변경: ${nodeDisplayLabel(topology, operation.nodeId)}`,
     }
   }
   if (operation.op === "deleteNode") {
@@ -121,7 +168,7 @@ function quickFixPreview(operation: EnterpriseTopologyGuiOperation): EnterpriseT
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.nodeId,
-      summary: `node 보관: ${operation.nodeId}`,
+      summary: `서브 에이전트 보관: ${nodeDisplayLabel(topology, operation.nodeId)}`,
     }
   }
   if (operation.op === "createRelation") {
@@ -129,7 +176,7 @@ function quickFixPreview(operation: EnterpriseTopologyGuiOperation): EnterpriseT
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.relationId,
-      summary: `관계 생성: ${operation.from.id} -> ${operation.to.id}`,
+      summary: `연결 추가: ${entityDisplayLabel(operation.from, topology, createdNames)} -> ${entityDisplayLabel(operation.to, topology, createdNames)}`,
     }
   }
   if (operation.op === "updateRelation") {
@@ -137,14 +184,14 @@ function quickFixPreview(operation: EnterpriseTopologyGuiOperation): EnterpriseT
       operationId: operation.operationId,
       op: operation.op,
       targetId: operation.relationId,
-      summary: `관계 수정: ${operation.relationId}`,
+      summary: "연결 설정 수정",
     }
   }
   return {
     operationId: operation.operationId,
     op: operation.op,
     targetId: operation.relationId,
-    summary: `관계 보관: ${operation.relationId}`,
+    summary: "연결 보관",
   }
 }
 
@@ -152,12 +199,14 @@ function quickFixPlan(
   quickFixId: EnterpriseTopologyQuickFixId,
   operations: EnterpriseTopologyGuiOperation[],
   label = QUICK_FIX_LABELS[quickFixId],
+  topology?: EnterpriseTopology,
 ): EnterpriseTopologyQuickFixOperationPlan {
+  const createdNames = createdNodeNames(operations)
   return {
     quickFixId,
     label,
     operations,
-    preview: operations.map(quickFixPreview),
+    preview: operations.map((operation) => quickFixPreview(operation, topology, createdNames)),
   }
 }
 
@@ -197,28 +246,28 @@ function fallbackOperations(input: {
       operationId: `quickfix:fallback-node:${input.sourceNodeId}`,
       op: "createNode",
       at: input.at,
-      label: "fallback node 추가",
+      label: "예외 처리 서브 에이전트 추가",
       nodeId: fallbackNodeId,
-      name: input.reasonLabel ?? "Fallback 처리",
+      name: input.reasonLabel ?? "예외 처리",
       nodeType: "review_node",
     },
     {
       ...createGuiDraftOperationBase("createRelation", {
         operationId: `quickfix:fallback-relation:${input.sourceNodeId}:${fallbackNodeId}`,
         at: input.at,
-        label: "fallback path 연결",
+        label: "예외 처리 경로 연결",
       }),
       relationId: relationId("fallback", input.sourceNodeId, fallbackNodeId),
       relationType: "delegates_to",
       from: { entityType: "node", id: input.sourceNodeId },
       to: { entityType: "node", id: fallbackNodeId },
-      label: "fallback",
+      label: "예외 처리",
     },
     {
       ...createGuiDraftOperationBase("updateNode", {
         operationId: `quickfix:fallback-policy:${input.sourceNodeId}`,
         at: input.at,
-        label: "fallback 정책 설정",
+        label: "예외 처리 정책 설정",
       }),
       nodeId: input.sourceNodeId,
       patch: {
@@ -249,7 +298,7 @@ function outputPresetOperation(input: {
     ...createGuiDraftOperationBase("updateNode", {
       operationId: `quickfix:output-preset:${input.nodeId}`,
       at: input.at,
-      label: "output preset 설정",
+      label: "결과 형식 설정",
     }),
     nodeId: input.nodeId,
     patch: {
@@ -283,7 +332,7 @@ export function buildTopologyQuickFixPlans(
       nodeId: "node:start",
       name: "시작 업무",
       nodeType: "function",
-    }])]
+    }], undefined, topology)]
   }
 
   if (issue.reasonCode === "connect_selected_nodes" && issue.sourceEntityId && issue.targetEntityId) {
@@ -298,7 +347,7 @@ export function buildTopologyQuickFixPlans(
       from: { entityType: "node", id: issue.sourceEntityId },
       to: { entityType: "node", id: issue.targetEntityId },
       label: "다음 업무",
-    }])]
+    }], undefined, topology)]
   }
 
   if (issue.reasonCode === "approval_authority_missing" && issue.entityId) {
@@ -317,7 +366,7 @@ export function buildTopologyQuickFixPlans(
         from: holder,
         to: target,
         label: "승인",
-      }], "승인 단계 추가")]
+      }], "승인 단계 추가", topology)]
     }
 
     return [quickFixPlan("add_approval_step", [{
@@ -329,7 +378,7 @@ export function buildTopologyQuickFixPlans(
       nodeId: nodeId("approval-review", issue.entityId),
       name: "승인 검토 서브 에이전트",
       nodeType: "approval_node",
-    }])]
+    }], undefined, topology)]
   }
 
   if (issue.reasonCode === "empty_process_steps" && issue.entityId) {
@@ -342,7 +391,7 @@ export function buildTopologyQuickFixPlans(
       nodeId: nodeId("delegation-target", issue.entityId),
       name: "새 하위 업무",
       nodeType: "process_step",
-    }])]
+    }], undefined, topology)]
   }
 
   if (issue.reasonCode === "invalid_relation_endpoint" && issue.relationId) {
@@ -357,7 +406,7 @@ export function buildTopologyQuickFixPlans(
         relationType: "belongs_to",
         label: "소속",
       },
-    }], "선택 서브 에이전트 연결")]
+    }], "선택 서브 에이전트 연결", topology)]
   }
 
   if ((issue.reasonCode === "fallback_path_missing" || issue.reasonCode === "runtime_failure_report") && issue.entityId) {
@@ -365,7 +414,7 @@ export function buildTopologyQuickFixPlans(
       sourceNodeId: issue.entityId,
       topology,
       at,
-    }))]
+    }), undefined, topology)]
   }
 
   if ((issue.reasonCode === "missing_success_criteria" || issue.reasonCode === "output_preset_missing") && issue.entityId) {
@@ -373,7 +422,7 @@ export function buildTopologyQuickFixPlans(
       nodeId: issue.entityId,
       topology,
       at,
-    })])]
+    })], undefined, topology)]
   }
 
   return []
@@ -392,7 +441,71 @@ function validationIssueTitle(issue: EnterpriseTopologyValidationIssue): string 
   if (issue.reasonCode === "approval_authority_missing") return "승인자를 연결해야 합니다."
   if (issue.reasonCode === "missing_success_criteria") return "완료 기준이 필요합니다."
   if (issue.reasonCode === "invalid_relation_endpoint") return "연결 종류가 맞지 않습니다."
-  return issue.message
+  return sanitizeIssueCopy(issue.message, "확인할 문제가 있습니다.")
+}
+
+function validationIssueDetail(issue: EnterpriseTopologyValidationIssue): string {
+  if (issue.reasonCode === "tool_permission_missing") {
+    return "이 서브 에이전트가 필요한 도구를 사용할 권한이 없습니다."
+  }
+  if (issue.reasonCode === "system_permission_missing") {
+    return "이 서브 에이전트가 필요한 데이터나 시스템에 접근할 권한이 없습니다."
+  }
+  if (issue.reasonCode === "approval_authority_missing") {
+    return "승인이 필요한 흐름에 승인 담당자가 연결되어 있지 않습니다."
+  }
+  if (issue.reasonCode === "missing_success_criteria") {
+    return "이 서브 에이전트가 일을 마쳤는지 판단할 완료 기준이 없습니다."
+  }
+  if (issue.reasonCode === "invalid_relation_endpoint") {
+    return "현재 연결 대상 조합에 맞는 연결 종류로 수정해야 합니다."
+  }
+  if (issue.reasonCode === "fallback_path_missing") {
+    return "실패했을 때 넘길 예외 처리 경로가 없습니다."
+  }
+  if (issue.reasonCode === "runtime_failure_report") {
+    return "최근 실행 실패를 바탕으로 복구 경로를 확인해야 합니다."
+  }
+  if (issue.reasonCode === "empty_process_steps") {
+    return "처리할 하위 업무가 비어 있습니다."
+  }
+  if (issue.reasonCode === "output_preset_missing") {
+    return "결과를 어떤 형식으로 정리할지 정해야 합니다."
+  }
+  return sanitizeIssueCopy(issue.message, "이 항목을 확인해야 합니다.")
+}
+
+function sanitizeIssueCopy(value: unknown, fallback: string): string {
+  const raw = typeof value === "string" && value.trim() ? value.trim() : fallback
+  return raw
+    .replace(/\bNode\b/g, "서브 에이전트")
+    .replace(/\bnode\b/g, "서브 에이전트")
+    .replace(/fallback path/g, "예외 처리 경로")
+    .replace(/fallback node/g, "예외 처리 서브 에이전트")
+    .replace(/output preset/g, "결과 형식")
+}
+
+function reasonCodeLabel(reasonCode: string): string {
+  if (reasonCode === "tool_permission_missing") return "도구 권한 필요"
+  if (reasonCode === "system_permission_missing") return "시스템 권한 필요"
+  if (reasonCode === "approval_authority_missing") return "승인 담당자 필요"
+  if (reasonCode === "missing_success_criteria") return "완료 기준 필요"
+  if (reasonCode === "invalid_relation_endpoint") return "연결 종류 확인"
+  if (reasonCode === "fallback_path_missing") return "예외 처리 경로 필요"
+  if (reasonCode === "runtime_failure_report") return "실행 실패 복구"
+  if (reasonCode === "empty_process_steps") return "하위 업무 필요"
+  if (reasonCode === "output_preset_missing") return "결과 형식 필요"
+  return sanitizeIssueCopy(reasonCode.replace(/_/g, " "), "확인 필요")
+}
+
+function targetDisplayLabel(targetId: string, topology: EnterpriseTopology | null | undefined): string {
+  if (targetId.startsWith("node:")) {
+    return nodeDisplayLabel(topology ?? undefined, targetId.slice("node:".length))
+  }
+  if (targetId.startsWith("relation:")) return "연결"
+  if (targetId.startsWith("enterprise_tool:")) return "도구"
+  if (targetId.startsWith("enterprise_system:")) return "시스템"
+  return "대상"
 }
 
 function gapRecord(value: unknown): Record<string, unknown> {
@@ -459,7 +572,7 @@ export function buildTopologyWorkspaceIssues(input: {
         source,
         severity: issue.severity,
         title: validationIssueTitle(issue),
-        detail: issue.message,
+        detail: validationIssueDetail(issue),
         reasonCode: issue.reasonCode,
         targetId: topologyIssueTargetId(issue),
         validationIssue: issue,
@@ -479,7 +592,7 @@ export function buildTopologyWorkspaceIssues(input: {
       source: "runtime",
       severity: "blocked",
       title: "실행 실패를 복구해야 합니다.",
-      detail: failure.report.recommendedAction,
+      detail: sanitizeIssueCopy(failure.report.recommendedAction, "최근 실행 실패를 복구해야 합니다."),
       reasonCode: "runtime_failure_report",
       targetId: `node:${failure.nodeId}`,
       runId: failure.topologyRunId,
@@ -503,14 +616,17 @@ export function buildTopologyWorkspaceIssues(input: {
       id: `gap:${reasonCode}:${index}`,
       source: "gap",
       severity: gapSeverity(record.severity),
-      title: typeof record.summary === "string" ? record.summary : typeof record.title === "string" ? record.title : "개선 후보가 있습니다.",
+      title: sanitizeIssueCopy(
+        typeof record.summary === "string" ? record.summary : typeof record.title === "string" ? record.title : undefined,
+        "개선 후보가 있습니다.",
+      ),
       detail: typeof record.recommendation === "string"
-        ? record.recommendation
+        ? sanitizeIssueCopy(record.recommendation, "개선 후보를 확인하세요.")
         : typeof record.message === "string"
-          ? record.message
+          ? sanitizeIssueCopy(record.message, "개선 후보를 확인하세요.")
           : typeof record.detail === "string"
-            ? record.detail
-            : reasonCode,
+            ? sanitizeIssueCopy(record.detail, "개선 후보를 확인하세요.")
+            : reasonCodeLabel(reasonCode),
       reasonCode,
       targetId,
       quickFixPlans: entityId
@@ -649,9 +765,9 @@ export function TopologyValidationAssistant({
                   </span>
                 </div>
                 <div className="mt-1 flex flex-wrap gap-1 text-[11px] text-stone-500">
-                  <span>{issue.reasonCode}</span>
+                  <span>{reasonCodeLabel(issue.reasonCode)}</span>
                   <span>{text(SEVERITY_LABELS[issue.severity].ko, SEVERITY_LABELS[issue.severity].en)}</span>
-                  {issue.targetId ? <span>{issue.targetId}</span> : null}
+                  {issue.targetId ? <span>{text("대상", "Target")}: {targetDisplayLabel(issue.targetId, topology)}</span> : null}
                 </div>
 
                 {primaryPlan ? (

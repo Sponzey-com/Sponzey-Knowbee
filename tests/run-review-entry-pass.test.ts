@@ -33,6 +33,7 @@ describe("run review entry pass", () => {
       source: "telegram",
       onChunk: undefined,
       preview: "preview text",
+      previewSource: "llm_reviewed",
       workerSessionId: "worker-1",
       persistRuntimePreview: true,
       directDeliveryApplication: {
@@ -108,6 +109,7 @@ describe("run review entry pass", () => {
       source: "cli",
       onChunk: undefined,
       preview: "plain preview",
+      previewSource: "llm_reviewed",
       persistRuntimePreview: false,
       directDeliveryApplication: { kind: "none" },
       recoveryBudgetUsage: {

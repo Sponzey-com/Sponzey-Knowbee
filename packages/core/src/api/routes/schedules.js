@@ -1,9 +1,11 @@
 import { getSchedules, getSchedule, insertSchedule, updateSchedule, deleteSchedule, getScheduleRuns, countScheduleRuns, getScheduleStats, upsertScheduleMemoryEntry, } from "../../db/index.js";
 import { runSchedule } from "../../scheduler/index.js";
+import { createArtifactStorageContext } from "../../artifacts/lifecycle.js";
+import { createAgentHierarchyStorage } from "../../orchestration/hierarchy.js";
 import { getNextRunForTimezone, isValidCron, isValidTimeZone, normalizeScheduleTimezone } from "../../scheduler/cron.js";
 import { reconcileScheduleExecution, removeManagedScheduleExecution } from "../../scheduler/system-cron.js";
 import { authMiddleware } from "../middleware/auth.js";
-import { getConfig } from "../../config/index.js";
+import { getApiRuntimeConfig, getApiRuntimePaths } from "../runtime-context.js";
 import { CONTRACT_SCHEMA_VERSION } from "../../contracts/index.js";
 import { applyLegacyScheduleMigration, dryRunLegacyScheduleMigration, keepLegacySchedule, listLegacyScheduleMigrationItems, } from "../../schedules/legacy-migration.js";
 function syncScheduleMemoryEntry(input) {
@@ -17,12 +19,11 @@ function syncScheduleMemoryEntry(input) {
         metadata: { ...(input.metadata ?? {}), ...(input.timezone ? { timezone: input.timezone } : {}) },
     });
 }
-function resolveDefaultScheduleTimezone() {
-    const config = getConfig();
+function resolveDefaultScheduleTimezone(config) {
     return normalizeScheduleTimezone(config.scheduler.timezone, config.profile.timezone);
 }
-function resolveBodyTimezone(input) {
-    const timezone = input?.trim() || resolveDefaultScheduleTimezone();
+function resolveBodyTimezone(input, config) {
+    const timezone = input?.trim() || resolveDefaultScheduleTimezone(config);
     if (!isValidTimeZone(timezone))
         throw new Error(`invalid timezone: ${timezone}`);
     return normalizeScheduleTimezone(timezone);
@@ -39,6 +40,7 @@ function buildApiScheduleContract(input) {
     return {
         schemaVersion: CONTRACT_SCHEMA_VERSION,
         kind: "recurring",
+        responseLanguageMode: "same_as_request",
         time: {
             cron: input.cron,
             timezone: input.timezone,
@@ -63,7 +65,7 @@ function buildApiScheduleContract(input) {
         summary: input.name,
     };
 }
-export function registerSchedulesRoute(app) {
+export function registerSchedulesRoute(app, memoryJournal) {
     // GET /api/schedules
     app.get("/api/schedules", { preHandler: authMiddleware }, async () => {
         const rows = getSchedules();
@@ -83,19 +85,22 @@ export function registerSchedulesRoute(app) {
         };
     });
     // GET /api/schedules/legacy
-    app.get("/api/schedules/legacy", { preHandler: authMiddleware }, async () => {
-        return { schedules: listLegacyScheduleMigrationItems() };
+    app.get("/api/schedules/legacy", { preHandler: authMiddleware }, async (req) => {
+        const config = getApiRuntimeConfig(req);
+        return { schedules: listLegacyScheduleMigrationItems(config) };
     });
     // POST /api/schedules/:id/legacy/dry-run
     app.post("/api/schedules/:id/legacy/dry-run", { preHandler: authMiddleware }, async (req, reply) => {
-        const report = dryRunLegacyScheduleMigration(req.params.id, { audit: true });
+        const config = getApiRuntimeConfig(req);
+        const report = dryRunLegacyScheduleMigration(req.params.id, { audit: true, config });
         if (!report)
             return reply.status(404).send({ error: "Not found" });
         return report;
     });
     // POST /api/schedules/:id/legacy/convert
     app.post("/api/schedules/:id/legacy/convert", { preHandler: authMiddleware }, async (req, reply) => {
-        const result = applyLegacyScheduleMigration(req.params.id);
+        const config = getApiRuntimeConfig(req);
+        const result = applyLegacyScheduleMigration(req.params.id, { config });
         if (!result.report && result.error === "schedule_not_found")
             return reply.status(404).send({ error: "Not found" });
         if (!result.ok)
@@ -104,7 +109,8 @@ export function registerSchedulesRoute(app) {
     });
     // POST /api/schedules/:id/legacy/keep
     app.post("/api/schedules/:id/legacy/keep", { preHandler: authMiddleware }, async (req, reply) => {
-        const result = keepLegacySchedule(req.params.id);
+        const config = getApiRuntimeConfig(req);
+        const result = keepLegacySchedule(req.params.id, { config });
         if (!result.report && result.error === "schedule_not_found")
             return reply.status(404).send({ error: "Not found" });
         return { ok: result.ok, report: result.report };
@@ -118,9 +124,10 @@ export function registerSchedulesRoute(app) {
             return reply.status(400).send({ error: "prompt is required" });
         if (!cron?.trim() || !isValidCron(cron))
             return reply.status(400).send({ error: "invalid cron expression" });
+        const config = getApiRuntimeConfig(req);
         let timezone;
         try {
-            timezone = resolveBodyTimezone(req.body.timezone);
+            timezone = resolveBodyTimezone(req.body.timezone, config);
         }
         catch {
             return reply.status(400).send({ error: "invalid timezone" });
@@ -152,7 +159,7 @@ export function registerSchedulesRoute(app) {
             nextRunAt: resolveNextRunAt(cron, now, timezone),
             metadata: { source: "webui" },
         });
-        reconcileScheduleExecution(id);
+        reconcileScheduleExecution(id, getApiRuntimePaths(req));
         return reply.status(201).send({ id });
     });
     // GET /api/schedules/:id
@@ -171,10 +178,11 @@ export function registerSchedulesRoute(app) {
         const { name, cron, prompt, model, enabled } = req.body;
         if (cron && !isValidCron(cron))
             return reply.status(400).send({ error: "invalid cron expression" });
+        const config = getApiRuntimeConfig(req);
         let timezone;
         if (req.body.timezone !== undefined) {
             try {
-                timezone = resolveBodyTimezone(req.body.timezone);
+                timezone = resolveBodyTimezone(req.body.timezone, config);
             }
             catch {
                 return reply.status(400).send({ error: "invalid timezone" });
@@ -201,7 +209,7 @@ export function registerSchedulesRoute(app) {
                 metadata: { source: "webui", updatedBy: "api" },
             });
         }
-        reconcileScheduleExecution(id);
+        reconcileScheduleExecution(id, getApiRuntimePaths(req));
         return { ok: true };
     });
     // DELETE /api/schedules/:id
@@ -209,7 +217,7 @@ export function registerSchedulesRoute(app) {
         const s = getSchedule(req.params.id);
         if (!s)
             return reply.status(404).send({ error: "Not found" });
-        removeManagedScheduleExecution(req.params.id);
+        removeManagedScheduleExecution(req.params.id, getApiRuntimePaths(req));
         syncScheduleMemoryEntry({
             id: s.id,
             name: s.name,
@@ -242,7 +250,8 @@ export function registerSchedulesRoute(app) {
         const s = getSchedule(req.params.id);
         if (!s)
             return reply.status(404).send({ error: "Not found" });
-        const runId = await runSchedule(req.params.id, "manual");
+        const config = getApiRuntimeConfig(req);
+        const runId = await runSchedule(req.params.id, "manual", config, createArtifactStorageContext(getApiRuntimePaths(req)), memoryJournal, createAgentHierarchyStorage(getApiRuntimePaths(req)));
         return { runId, status: "started" };
     });
     // PATCH /api/schedules/:id/toggle — flip enabled
@@ -262,7 +271,7 @@ export function registerSchedulesRoute(app) {
             nextRunAt: enabled ? resolveNextRunAt(s.cron_expression, s.last_run_at ?? s.created_at, s.timezone) : null,
             metadata: { source: "webui", toggledAt: Date.now() },
         });
-        reconcileScheduleExecution(req.params.id);
+        reconcileScheduleExecution(req.params.id, getApiRuntimePaths(req));
         return { ok: true, enabled };
     });
     // GET /api/schedules/:id/stats

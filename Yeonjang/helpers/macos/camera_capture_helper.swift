@@ -111,13 +111,62 @@ func waitForCaptureCompletion(delegate: PhotoDelegate, timeoutSeconds: TimeInter
 }
 
 let args = Array(CommandLine.arguments.dropFirst())
+if args == ["--permission-status"] {
+    let authorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+    let status: String
+    let reason: String
+    let canAttemptCapture: Bool
+    let requiresUserAction: Bool
+
+    switch authorizationStatus {
+    case .authorized:
+        status = "authorized"
+        reason = "camera_permission_authorized"
+        canAttemptCapture = true
+        requiresUserAction = false
+    case .notDetermined:
+        status = "not_determined"
+        reason = "camera_permission_not_determined"
+        canAttemptCapture = true
+        requiresUserAction = true
+    case .denied:
+        status = "denied"
+        reason = "camera_permission_denied"
+        canAttemptCapture = false
+        requiresUserAction = true
+    case .restricted:
+        status = "restricted"
+        reason = "camera_permission_restricted"
+        canAttemptCapture = false
+        requiresUserAction = true
+    @unknown default:
+        status = "unavailable"
+        reason = "camera_permission_status_unavailable"
+        canAttemptCapture = false
+        requiresUserAction = false
+    }
+
+    let permissionPayload: [String: Any] = [
+        "status": status,
+        "reason": reason,
+        "platform": "macos",
+        "canAttemptCapture": canAttemptCapture,
+        "requiresUserAction": requiresUserAction,
+    ]
+    let permissionData = try JSONSerialization.data(withJSONObject: permissionPayload, options: [])
+    FileHandle.standardOutput.write(permissionData)
+    exit(0)
+}
+
 guard let outputPath = args.first, !outputPath.isEmpty else {
     fputs("output path argument is required\n", stderr)
     exit(2)
 }
 
+let operationStartedAt = Date()
 var includeBase64 = false
 var requestedId: String?
+var captureTimeoutMilliseconds: Double = 60_000
 var index = 1
 while index < args.count {
     switch args[index] {
@@ -130,6 +179,18 @@ while index < args.count {
             exit(2)
         }
         requestedId = args[index + 1]
+        index += 2
+    case "--capture-timeout-ms":
+        guard
+            index + 1 < args.count,
+            let parsed = Double(args[index + 1]),
+            parsed >= 1_000,
+            parsed <= 60_000
+        else {
+            fputs("capture timeout must be between 1000 and 60000 milliseconds\n", stderr)
+            exit(2)
+        }
+        captureTimeoutMilliseconds = parsed
         index += 2
     default:
         if requestedId == nil {
@@ -228,7 +289,9 @@ if !destinationDirectory.path.isEmpty {
 let delegate = PhotoDelegate(destination: destinationURL)
 photoOutput.capturePhoto(with: AVCapturePhotoSettings(), delegate: delegate)
 
-if !waitForCaptureCompletion(delegate: delegate, timeoutSeconds: 60) {
+let elapsedMilliseconds = Date().timeIntervalSince(operationStartedAt) * 1_000
+let remainingSeconds = max(0, captureTimeoutMilliseconds - elapsedMilliseconds) / 1_000
+if remainingSeconds <= 0 || !waitForCaptureCompletion(delegate: delegate, timeoutSeconds: remainingSeconds) {
     session.stopRunning()
     fputs("Timed out while waiting for camera capture\n", stderr)
     exit(8)

@@ -1,13 +1,15 @@
 import type { FastifyInstance } from "fastify"
 import { authMiddleware } from "../middleware/auth.js"
-import { getUiModeState, savePreferredUiMode, type PreferredUiMode } from "../../ui/mode.js"
-import { getConfig } from "../../config/index.js"
+import { getUiModeState, savePreferredUiMode, type PreferredUiMode, type UiModeRuntimeInput } from "../../ui/mode.js"
+import type { KnowbeeConfig } from "../../config/index.js"
+import type { RuntimePaths } from "../../config/paths.js"
 import { readSetupState } from "../../control-plane/index.js"
 import { getMqttExtensionSnapshots } from "../../mqtt/broker.js"
 import { listActiveRootRuns } from "../../runs/store.js"
 import { buildUiViewModels, type UiShellDomainState } from "../../ui/view-model.js"
 import { buildYeonjangFleetProjection } from "../../yeonjang/topology.js"
 import { buildYeonjangBroadcastPolicyProjection } from "../../yeonjang/broadcast-policy.js"
+import { getApiRuntimeConfig, getApiRuntimePaths } from "../runtime-context.js"
 
 function parsePreferredUiMode(value: unknown): PreferredUiMode | null {
   if (typeof value !== "string") return null
@@ -16,8 +18,11 @@ function parsePreferredUiMode(value: unknown): PreferredUiMode | null {
   return null
 }
 
-function buildUiShellDomainState(): UiShellDomainState {
-  const cfg = getConfig()
+export interface UiModeRouteOptions extends Omit<UiModeRuntimeInput, "config"> {}
+
+function buildUiShellDomainState(options: UiModeRouteOptions, config: KnowbeeConfig, paths: RuntimePaths): UiShellDomainState {
+  const cfg = config
+  const modeOptions = { ...options, config }
   const activeRuns = listActiveRootRuns()
   const extensions = getMqttExtensionSnapshots()
   const yeonjang = buildYeonjangFleetProjection({ snapshots: extensions })
@@ -47,9 +52,9 @@ function buildUiShellDomainState(): UiShellDomainState {
   )
   return {
     generatedAt: Date.now(),
-    mode: getUiModeState(),
+    mode: getUiModeState(modeOptions),
     setupState: {
-      completed: readSetupState().completed,
+      completed: readSetupState(paths).completed,
     },
     runtimeHealth: {
       ai: {
@@ -91,13 +96,15 @@ function buildUiShellDomainState(): UiShellDomainState {
   }
 }
 
-export function registerUiModeRoute(app: FastifyInstance): void {
-  app.get("/api/ui/mode", { preHandler: authMiddleware }, async () => {
-    return getUiModeState()
+export function registerUiModeRoute(app: FastifyInstance, options: UiModeRouteOptions = {}): void {
+  app.get("/api/ui/mode", { preHandler: authMiddleware }, async (req) => {
+    const config = getApiRuntimeConfig(req)
+    return getUiModeState({ ...options, config })
   })
 
-  app.get("/api/ui/shell", { preHandler: authMiddleware }, async () => {
-    const shell = buildUiShellDomainState()
+  app.get("/api/ui/shell", { preHandler: authMiddleware }, async (req) => {
+    const config = getApiRuntimeConfig(req)
+    const shell = buildUiShellDomainState(options, config, getApiRuntimePaths(req))
     return { ...shell, viewModel: buildUiViewModels(shell) }
   })
 
@@ -113,7 +120,14 @@ export function registerUiModeRoute(app: FastifyInstance): void {
           allowedModes: ["beginner", "advanced"],
         })
       }
-      return reply.status(200).send({ ok: true, ...savePreferredUiMode(mode) })
+      const config = getApiRuntimeConfig(req)
+      const paths = getApiRuntimePaths(req)
+      return reply.status(200).send({
+        ok: true,
+        ...savePreferredUiMode(mode, { ...options, config }, paths),
+        restartRequired: true,
+        appliesOn: "next_start",
+      })
     },
   )
 }

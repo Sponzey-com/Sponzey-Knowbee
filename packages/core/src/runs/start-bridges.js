@@ -1,4 +1,4 @@
-import { applyLoopDirective } from "./loop-directive-application.js";
+import { applyLoopDirective, } from "./loop-directive-application.js";
 import { runIntakeBridgePass, } from "./intake-bridge-pass.js";
 const defaultModuleDependencies = {
     applyLoopDirective,
@@ -15,6 +15,12 @@ export function buildStartFinalizationDependencies(params) {
             ? { rememberRunAwaitingUser: params.rememberRunAwaitingUser }
             : {}),
         ...(params.onDeliveryError ? { onDeliveryError: params.onDeliveryError } : {}),
+        ...(params.recordFirstResponseReceipt
+            ? { recordFirstResponseReceipt: params.recordFirstResponseReceipt }
+            : {}),
+        ...(params.firstResponseMonotonicNow
+            ? { firstResponseMonotonicNow: params.firstResponseMonotonicNow }
+            : {}),
     };
 }
 export async function executeStartLoopDirective(params, moduleDependencies = defaultModuleDependencies) {
@@ -31,6 +37,10 @@ export async function runStartIntakeBridge(params, dependencies, moduleDependenc
         startDelegatedRun: params.startDelegatedRun,
         normalizeTaskProfile: dependencies.normalizeTaskProfile,
         logInfo: dependencies.logInfo,
+        recordCanonicalIntakeDiagnosis: dependencies.recordCanonicalIntakeDiagnosis,
+        authorizeCanonicalIntakePlan: dependencies.authorizeCanonicalIntakePlan,
+        recordCanonicalExecutionStart: dependencies.recordCanonicalExecutionStart,
+        releaseCanonicalSimplePath: dependencies.releaseCanonicalSimplePath,
         ...(dependencies.recordExecutionDecisionTrace
             ? { recordExecutionDecisionTrace: dependencies.recordExecutionDecisionTrace }
             : {}),

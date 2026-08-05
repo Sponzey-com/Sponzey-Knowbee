@@ -1,5 +1,5 @@
 export type UiRedactionAudience = "beginner" | "advanced" | "admin" | "export";
-export type UiRedactionReason = "secret" | "raw_payload" | "raw_html" | "local_path";
+export type UiRedactionReason = "secret" | "raw_payload" | "raw_html" | "local_path" | "internal_llm_data";
 export interface UiRedactionRecord {
     path: string;
     reason: UiRedactionReason;

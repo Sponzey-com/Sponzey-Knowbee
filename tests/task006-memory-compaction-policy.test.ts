@@ -1,19 +1,17 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import type { AIChunk, AIProvider, ChatParams, Message } from "../packages/core/src/ai/types.js"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import {
   closeDb,
   insertSession,
   listMemoryCompactionRuns,
 } from "../packages/core/src/db/index.js"
-import { closeMemoryJournalDb } from "../packages/core/src/memory/journal.js"
 import { executeRootSessionCompaction } from "../packages/core/src/memory/compaction.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
+import { createTestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 class PolicyProvider implements AIProvider {
@@ -33,22 +31,21 @@ class PolicyProvider implements AIProvider {
   async *chat(params: ChatParams): AsyncGenerator<AIChunk> {
     this.calls.push(params.model)
     const behavior = this.behavior[params.model] ?? { type: "fail" as const }
-    if (behavior.type === "fail") throw new Error(`model failed: ${params.model}`)
+    if (behavior.type === "fail") {
+      throw new Error(`model failed: ${params.model} token=sk-memory-secret-1234567890 path=/Users/example/private/compaction.json`)
+    }
     yield { type: "text_delta", delta: JSON.stringify(behavior.payload) }
     yield { type: "message_stop", usage: { input_tokens: 1, output_tokens: 1 } }
   }
 }
 
-function useTempState(configBody: string): void {
+function useTempState(configBody: string) {
   closeDb()
-  closeMemoryJournalDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task006-memory-policy-"))
-  tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, configBody, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task006-memory-policy-"))
+  tempDirs.push(rootDir)
+  const fixture = createTestRuntimeConfigFixture({ rootDir, configText: configBody })
+  initializeTestDbRuntime(fixture.paths.stateDir)
+  return fixture.config
 }
 
 function sampleMessages(): Message[] {
@@ -81,12 +78,6 @@ function seedSession(): void {
 
 afterEach(() => {
   closeDb()
-  closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -95,7 +86,7 @@ afterEach(() => {
 
 describe("task006 memory compaction model policy", () => {
   it("falls back from explicit compaction model to configured fallback model and records audit", async () => {
-    useTempState(`{
+    const config = useTempState(`{
       memory: {
         compaction: {
           modelId: "compact-primary",
@@ -127,9 +118,11 @@ describe("task006 memory compaction model policy", () => {
       provider,
       model: "execution-model",
       sessionId: "session-task006-memory-policy",
+      agentNameSnapshot: "노비",
       requestGroupId: "group-task006-memory-policy",
       messages: sampleMessages(),
       sourceTokenEstimate: 180_000,
+      memoryConfig: config.memory,
       triggerReasonCodes: ["token_threshold_exceeded"],
     })
 
@@ -144,10 +137,15 @@ describe("task006 memory compaction model policy", () => {
         heuristicFallbackApplied: false,
       }),
     )
+    const serializedAudit = JSON.stringify(run?.metadata?.["compactionModelAudit"])
+    expect(serializedAudit).not.toContain("sk-memory-secret-1234567890")
+    expect(serializedAudit).not.toContain("/Users/example/private/compaction.json")
+    expect(serializedAudit).toContain("***")
+    expect(serializedAudit).toContain("[internal-path-redacted]")
   })
 
   it("uses heuristic summary fallback when every compaction model attempt fails or is budget-blocked", async () => {
-    useTempState(`{
+    const config = useTempState(`{
       memory: {
         compaction: {
           modelId: "compact-primary",
@@ -174,9 +172,11 @@ describe("task006 memory compaction model policy", () => {
       provider,
       model: "execution-model",
       sessionId: "session-task006-memory-policy",
+      agentNameSnapshot: "노비",
       requestGroupId: "group-task006-memory-policy",
       messages: sampleMessages(),
       sourceTokenEstimate: 180_000,
+      memoryConfig: config.memory,
       triggerReasonCodes: ["token_threshold_exceeded"],
     })
 

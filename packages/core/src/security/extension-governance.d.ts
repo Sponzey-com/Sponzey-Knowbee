@@ -1,4 +1,6 @@
-import { type KnowbeeConfig } from "../config/index.js";
+import type { RuntimePaths } from "../config/paths.js";
+import { type PersistedConfigFileSystem } from "../config/persisted-file.js";
+import type { KnowbeeConfig } from "../config/types.js";
 import type { AnyTool } from "../tools/types.js";
 export type ExtensionKind = "mcp_server" | "mcp_tool" | "skill" | "hook" | "yeonjang_tool" | "internal_tool" | "plugin";
 export type ExtensionTrustLevel = "builtin" | "local" | "external" | "unknown";
@@ -57,6 +59,11 @@ export interface ExtensionRollbackPoint {
     contentBase64: string;
     createdAt: number;
 }
+export interface ExtensionGovernanceStorage {
+    readonly rollbackDir: string;
+    readonly fileSystem: PersistedConfigFileSystem;
+}
+export declare function createExtensionGovernanceStorage(paths: Pick<RuntimePaths, "stateDir">, fileSystem?: PersistedConfigFileSystem): ExtensionGovernanceStorage;
 export interface ExtensionActivationResult {
     ok: boolean;
     entry: ExtensionRegistryEntry;
@@ -77,8 +84,9 @@ export interface MinimalMcpServerStatus {
     error?: string;
     tools: MinimalMcpToolStatus[];
 }
-export declare function buildExtensionRegistrySnapshot(input?: {
-    config?: KnowbeeConfig;
+export declare function buildExtensionRegistrySnapshot(input: {
+    config: KnowbeeConfig;
+    storage: ExtensionGovernanceStorage;
     tools?: AnyTool[];
     mcpStatuses?: MinimalMcpServerStatus[];
     now?: Date;
@@ -127,8 +135,9 @@ export declare function runExtensionHookSafely<T>(input: {
 export declare function createExtensionRollbackPoint(input: {
     extensionId: string;
     sourcePath: string;
+    storage: ExtensionGovernanceStorage;
 }): ExtensionRollbackPoint;
-export declare function rollbackExtensionToPoint(extensionId: string): ExtensionRollbackPoint;
+export declare function rollbackExtensionToPoint(extensionId: string, storage: ExtensionGovernanceStorage): ExtensionRollbackPoint;
 export declare function activateExtensionWithTrustPolicy(entry: ExtensionRegistryEntry, input?: {
     approved?: boolean;
 }): ExtensionActivationResult;

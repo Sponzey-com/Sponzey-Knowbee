@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type { ChannelSource } from "../channels/contracts.js";
 import type { OrchestrationPlan } from "../contracts/sub-agent-orchestration.js";
 import type { DelegatedTaskDispatchResult } from "./orchestration-dispatch.js";
+import type { LoopDirective } from "./loop-directive.js";
 export declare const TOPOLOGY_DISPATCH_FOLLOWUP_ACTIONS: readonly ["redelegate", "self_solve", "ask_user", "return_to_parent", "fail_with_reason"];
 export type TopologyDispatchFollowupAction = (typeof TOPOLOGY_DISPATCH_FOLLOWUP_ACTIONS)[number];
 export interface TopologyDispatchFollowupDecision {
@@ -41,5 +42,6 @@ export interface TopologyDispatchFollowupTraceRecordResult {
     traceEventCount: number;
 }
 export declare function resolveTopologyDispatchFollowupDecision(input: ResolveTopologyDispatchFollowupDecisionInput): TopologyDispatchFollowupDecision | undefined;
+export declare function buildTopologyDispatchFollowupDirective(decision: TopologyDispatchFollowupDecision): LoopDirective | null;
 export declare function recordTopologyDispatchFollowupTrace(input: RecordTopologyDispatchFollowupTraceInput): TopologyDispatchFollowupTraceRecordResult;
 //# sourceMappingURL=topology-dispatch-fallback.d.ts.map

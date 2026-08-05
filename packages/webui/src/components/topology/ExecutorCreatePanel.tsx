@@ -10,6 +10,7 @@ import {
   type NodeDefinitionDraft,
   type NodeDefinitionTriggerField,
 } from "../../lib/node-definition-suggestion"
+import { mainAgentSubjectEn, mainAgentSubjectKo } from "../../lib/main-agent-copy"
 import { useUiI18n } from "../../lib/ui-i18n"
 import { NodeDefinitionAiButton } from "./NodeDefinitionAiButton"
 import { NodeDefinitionAiDialog } from "./NodeDefinitionAiDialog"
@@ -25,6 +26,7 @@ export interface ExecutorCreatePanelSubmit {
 export interface ExecutorCreatePanelProps {
   initialName?: string
   initialDescription?: string
+  rootAgentLabel?: string
   titleKo?: string
   titleEn?: string
   helperKo?: string
@@ -54,10 +56,11 @@ const DESCRIPTION_EXAMPLES = [
 export function ExecutorCreatePanel({
   initialName = "",
   initialDescription = "",
+  rootAgentLabel,
   titleKo = "서브 에이전트 추가",
   titleEn = "Add sub-agent",
-  helperKo = "이름과 하는 일만 적으면 나머지는 노비가 먼저 추론합니다.",
-  helperEn = "Enter only the name and what it does; Knowbee infers the rest first.",
+  helperKo,
+  helperEn,
   descriptionLabelKo = "하는 일",
   descriptionLabelEn = "What it does",
   descriptionPlaceholderKo = "예: 고객 요청을 읽고 CRM에서 정보를 확인한다.",
@@ -79,6 +82,14 @@ export function ExecutorCreatePanel({
   const trimmedName = name.trim()
   const trimmedDescription = description.trim()
   const canCreate = trimmedName.length > 0 && trimmedDescription.length > 0
+  const rootAgentSubjectKo = mainAgentSubjectKo(rootAgentLabel)
+  const rootAgentSubjectEn = mainAgentSubjectEn(rootAgentLabel)
+  const resolvedHelperKo =
+    helperKo ??
+    `이름과 하는 일만 적으면 나머지는 ${rootAgentSubjectKo} 먼저 추론합니다.`
+  const resolvedHelperEn =
+    helperEn ??
+    `Enter only the name and what it does; ${rootAgentSubjectEn} infers the rest first.`
   const inference = React.useMemo(
     () => inferExecutorFromDescription({ name: trimmedName, description: trimmedDescription }),
     [trimmedDescription, trimmedName],
@@ -120,7 +131,7 @@ export function ExecutorCreatePanel({
             {text(titleKo, titleEn)}
           </div>
           <div className="mt-1 text-xs leading-5 text-stone-500">
-            {text(helperKo, helperEn)}
+            {text(resolvedHelperKo, resolvedHelperEn)}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -211,8 +222,8 @@ export function ExecutorCreatePanel({
             data-testid="executor-create-waiting-understanding"
           >
             {text(
-              "이름과 성격을 입력하면 노비가 이해한 내용을 바로 보여줍니다.",
-              "Enter a name and character to preview what Knowbee understood.",
+              `이름과 성격을 입력하면 ${rootAgentSubjectKo} 이해한 내용을 바로 보여줍니다.`,
+              `Enter a name and character to preview what ${rootAgentSubjectEn} understood.`,
             )}
           </div>
         ) : (
@@ -220,6 +231,8 @@ export function ExecutorCreatePanel({
             name={trimmedName}
             description={trimmedDescription}
             inference={inference}
+            titleKo={`${rootAgentSubjectKo} 이해한 내용`}
+            titleEn={`What ${rootAgentSubjectEn} understood`}
             confirmDisabled={!canCreate}
             onConfirm={() => submit(true)}
           />

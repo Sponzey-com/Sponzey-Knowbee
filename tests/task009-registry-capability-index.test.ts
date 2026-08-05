@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import {
   closeDb,
   getDb,
@@ -14,6 +15,10 @@ import {
 import {
   type AgentRelationship,
   CONTRACT_SCHEMA_VERSION,
+  type LlmDiagnosisProvider,
+  type LlmDiagnosisSchemaRepairProvider,
+  type LlmRequestDiagnosisRecord,
+  type LlmResultDiagnosisRecord,
   type MemoryPolicy,
   type ModelProfile,
   type OrchestrationPlan,
@@ -36,19 +41,55 @@ import {
 } from "../packages/core/src/runs/store.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 let now = Date.UTC(2026, 3, 24, 0, 0, 0)
+
+const validRequestDiagnosis: LlmRequestDiagnosisRecord = {
+  diagnosis_summary: "The request should be delegated after planning.",
+  intent: "implementation_request",
+  goal: "Run the delegated registry capability task.",
+  constraints: ["Stay within the delegated scope."],
+  missing_information: [],
+  risk: "low",
+  confidence: "high",
+  recommended_action: "delegate",
+  reason: "A configured sub-agent can handle this scope.",
+}
+
+const validResultDiagnosis: LlmResultDiagnosisRecord = {
+  diagnosis_summary: "The child result is sufficient for parent aggregation.",
+  sufficiency: "sufficient",
+  missing_information: [],
+  conflicts: [],
+  risk: "none",
+  risks: [],
+  confidence: "high",
+  recommended_action: "final_report",
+  reason: "The child result satisfies the expected output.",
+}
+
+class DispatchDiagnosisProvider implements LlmDiagnosisProvider, LlmDiagnosisSchemaRepairProvider {
+  async diagnoseRequest(): Promise<unknown> {
+    return validRequestDiagnosis
+  }
+
+  async diagnoseResult(): Promise<unknown> {
+    return validResultDiagnosis
+  }
+
+  async repairDiagnosis(): Promise<unknown> {
+    return validRequestDiagnosis
+  }
+}
 
 function useTempState(): void {
   closeDb()
   clearAgentCapabilityIndexCache()
   now = Date.UTC(2026, 3, 24, 0, 0, 0)
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task009-registry-index-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task009-registry-index-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function owner(ownerId: string): RuntimeIdentity["owner"] {
@@ -103,6 +144,7 @@ function subAgent(agentId: string, overrides: Partial<SubAgentConfig> = {}): Sub
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     agentType: "sub_agent",
     agentId,
+    agentName: agentId.replace("agent:", ""),
     displayName: agentId.replace("agent:", ""),
     nickname: agentId.replace("agent:", ""),
     status: "enabled",
@@ -177,7 +219,6 @@ function teamConfig(overrides: Partial<TeamConfig> = {}): TeamConfig {
     schemaVersion: CONTRACT_SCHEMA_VERSION,
     teamId,
     displayName: "Registry Team",
-    nickname: "Registry Team",
     status: "enabled",
     purpose: "Registry coverage smoke.",
     ownerAgentId: "agent:knowbee",
@@ -214,7 +255,7 @@ function emptyRegistryConfig() {
 
 function buildSnapshot() {
   return buildOrchestrationRegistrySnapshot({
-    getConfig: emptyRegistryConfig,
+    config: emptyRegistryConfig(),
     now: () => now,
   })
 }
@@ -226,11 +267,6 @@ beforeEach(() => {
 afterEach(() => {
   closeDb()
   clearAgentCapabilityIndexCache()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -257,6 +293,9 @@ describe("task009 registry snapshot and capability index", () => {
     expect(second).toEqual(first)
     expect(first.status).toBe("ready")
     expect(first.agents[0]?.status).toBe("enabled")
+    expect(first.agents[0]).toEqual(expect.objectContaining({ agentName: "alpha" }))
+    expect(first.agents[0]).not.toHaveProperty("displayName")
+    expect(first.agents[0]).not.toHaveProperty("nickname")
     expect(first.agents[0]?.capabilitySummary.enabledSkillIds).toEqual(["skill:research"])
     expect(first.agents[0]?.modelSummary.availability).toBe("available")
     expect(first.hierarchy?.directChildrenByParent["agent:knowbee"]).toEqual(["agent:alpha"])
@@ -321,7 +360,7 @@ describe("task009 registry snapshot and capability index", () => {
     upsertAgentRelationship(relationship("agent:knowbee", "agent:alpha"), { now })
 
     const snapshot = buildOrchestrationRegistrySnapshot({
-      getConfig: () => ({
+      config: {
         ...emptyRegistryConfig(),
         ai: {
           connection: {
@@ -329,7 +368,7 @@ describe("task009 registry snapshot and capability index", () => {
             model: "gpt-5.4-mini",
           },
         },
-      }),
+      },
       now: () => now,
     })
     const alpha = snapshot.agents.find((agent) => agent.agentId === "agent:alpha")
@@ -430,9 +469,11 @@ describe("task009 registry snapshot and capability index", () => {
       createdAt: now,
     }
     const childRunParams: StartRootRunParams[] = []
+    const diagnosisProvider = new DispatchDiagnosisProvider()
     const result = await dispatchDelegatedSubAgentTasks({
       plan,
       parentRunId: "run:parent",
+      parentAgentName: "Knowbee",
       parentSessionId: "session:parent",
       parentRequestGroupId: "request-group:parent",
       source: "webui",
@@ -440,6 +481,7 @@ describe("task009 registry snapshot and capability index", () => {
       workDir: process.cwd(),
       controller: new AbortController(),
     }, {
+      config: runtimeFixture.config,
       startSubAgentRun: (params) => {
         childRunParams.push(params)
         const child = createRootRun({
@@ -465,6 +507,8 @@ describe("task009 registry snapshot and capability index", () => {
         }
       },
       now: () => now,
+      diagnosisProvider,
+      diagnosisRepairProvider: diagnosisProvider,
     })
 
     const stored = getDb()
@@ -506,8 +550,24 @@ describe("task009 registry snapshot and capability index", () => {
       },
       { now },
     )
-    upsertAgentConfig(subAgent("agent:alpha"), { source: "manual", now })
-    upsertAgentConfig(subAgent("agent:beta"), { source: "manual", now })
+    const filesystemPermissionProfile: PermissionProfile = {
+      ...permissionProfile,
+      allowFilesystemWrite: true,
+    }
+    upsertAgentConfig(subAgent("agent:alpha", {
+      capabilityPolicy: {
+        permissionProfile: filesystemPermissionProfile,
+        skillMcpAllowlist: allowlist("agent:alpha"),
+        rateLimit: { maxConcurrentCalls: 2 },
+      },
+    }), { source: "manual", now })
+    upsertAgentConfig(subAgent("agent:beta", {
+      capabilityPolicy: {
+        permissionProfile: filesystemPermissionProfile,
+        skillMcpAllowlist: allowlist("agent:beta"),
+        rateLimit: { maxConcurrentCalls: 2 },
+      },
+    }), { source: "manual", now })
     upsertAgentRelationship(relationship("agent:knowbee", "agent:alpha", 0), { now })
     upsertAgentRelationship(relationship("agent:knowbee", "agent:beta", 1), { now })
     upsertTeamConfig(
@@ -591,9 +651,11 @@ describe("task009 registry snapshot and capability index", () => {
       createdAt: now,
     }
     const childRunParams: StartRootRunParams[] = []
+    const diagnosisProvider = new DispatchDiagnosisProvider()
     const result = await dispatchDelegatedSubAgentTasks({
       plan,
       parentRunId: "run:team-parent",
+      parentAgentName: "Knowbee",
       parentSessionId: "session:team-parent",
       parentRequestGroupId: "request-group:team-parent",
       source: "telegram",
@@ -601,6 +663,7 @@ describe("task009 registry snapshot and capability index", () => {
       workDir: process.cwd(),
       controller: new AbortController(),
     }, {
+      config: runtimeFixture.config,
       startSubAgentRun: (params) => {
         childRunParams.push(params)
         const child = createRootRun({
@@ -631,6 +694,8 @@ describe("task009 registry snapshot and capability index", () => {
         }
       },
       now: () => now,
+      diagnosisProvider,
+      diagnosisRepairProvider: diagnosisProvider,
     })
 
     const teamPlans = getDb()
@@ -730,6 +795,7 @@ describe("task009 registry snapshot and capability index", () => {
     const result = await dispatchDelegatedSubAgentTasks({
       plan,
       parentRunId: "run:inferred-team",
+      parentAgentName: "Knowbee",
       parentSessionId: "session:inferred-team",
       parentRequestGroupId: "request-group:inferred-team",
       source: "telegram",
@@ -737,6 +803,7 @@ describe("task009 registry snapshot and capability index", () => {
       workDir: process.cwd(),
       controller: new AbortController(),
     }, {
+      config: runtimeFixture.config,
       startSubAgentRun: () => {
         throw new Error("hidden inferred team dispatch should not start child runs")
       },
@@ -806,6 +873,9 @@ describe("task009 registry snapshot and capability index", () => {
     const snapshot = buildSnapshot()
     const team = snapshot.teams.find((candidate) => candidate.teamId === "team:coverage")
 
+    expect(team).toBeDefined()
+    expect(team).toEqual(expect.objectContaining({ displayName: "Registry Team" }))
+    expect(team).not.toHaveProperty("nickname")
     expect(team?.health?.status).toBe("degraded")
     expect(team?.coverage?.activeMemberAgentIds).toEqual(["agent:lead"])
     expect(team?.coverage?.capabilityCoverage.missing).toEqual(["research"])
@@ -819,9 +889,11 @@ describe("task009 registry snapshot and capability index", () => {
   })
 
   it("returns a degraded single Knowbee fallback snapshot when registry loading fails", () => {
+    const secret = "sk-task0587-registry-secret-1234567890"
+    const localPath = "/Users/dongwooshin/private/registry-config.json"
     const snapshot = buildOrchestrationRegistrySnapshot({
-      getConfig: () => {
-        throw new Error("config unavailable")
+      get config() {
+        throw new Error(`config unavailable token=${secret} path=${localPath}`)
       },
       now: () => now,
     })
@@ -838,6 +910,11 @@ describe("task009 registry snapshot and capability index", () => {
     expect(snapshot.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       "registry_load_failed",
     )
+    const serialized = JSON.stringify(snapshot)
+    expect(serialized).not.toContain(secret)
+    expect(serialized).not.toContain(localPath)
+    expect(serialized).not.toContain("token=")
+    expect(serialized).not.toContain("[internal-path-redacted]")
   })
 
   it("invalidates the hot capability index when catalog state changes", () => {

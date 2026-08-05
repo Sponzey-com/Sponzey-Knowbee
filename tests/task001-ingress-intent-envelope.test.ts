@@ -1,17 +1,24 @@
 import { describe, expect, it } from "vitest"
-import { buildIngressDedupeKey, buildIngressReceipt, resolveIngressStartParams } from "../packages/core/src/runs/ingress.ts"
-import { detectRelativeScheduleRequest } from "../packages/core/src/agent/intake.ts"
+import { buildIngressAcknowledgement, buildIngressDedupeKey, resolveIngressStartParams } from "../packages/core/src/runs/ingress.ts"
 
 describe("task001 ingress and intent envelope", () => {
   it("builds an immediate ingress receipt without interpreting the task", () => {
-    expect(buildIngressReceipt("화면 캡처해서 보여줘")).toEqual({
+    expect(buildIngressAcknowledgement("화면 캡처해서 보여줘")).toEqual({
+      kind: "intake_acknowledgement",
+      state: "request_received",
       language: "ko",
-      text: "요청을 접수했습니다. 분석을 시작합니다.",
+      deliveryMode: "interactive_control",
+      finalAnswer: false,
+      assistantIdentityClaim: false,
     })
 
-    expect(buildIngressReceipt("capture the main display")).toEqual({
+    expect(buildIngressAcknowledgement("capture the main display")).toEqual({
+      kind: "intake_acknowledgement",
+      state: "request_received",
       language: "en",
-      text: "Request received. Starting analysis.",
+      deliveryMode: "interactive_control",
+      finalAnswer: false,
+      assistantIdentityClaim: false,
     })
   })
 
@@ -52,22 +59,4 @@ describe("task001 ingress and intent envelope", () => {
     })).toBe("slack:slack:C123:T456:C123:T456:M789")
   })
 
-  it("produces a validated intent envelope for relative scheduling", () => {
-    const result = detectRelativeScheduleRequest(
-      "5초뒤 안녕이라고 해줘",
-      Date.parse("2026-03-16T09:00:00.000Z"),
-      5,
-      {
-        destination: "telegram chat 42120565, main thread",
-        contextLines: ["Execution channel: telegram chat 42120565, main thread"],
-      },
-    )
-
-    expect(result).not.toBeNull()
-    expect(result?.intent_envelope.intent_type).toBe("schedule_request")
-    expect(result?.intent_envelope.destination).toBe("telegram chat 42120565, main thread at the scheduled time")
-    expect(result?.intent_envelope.target).toContain("안녕")
-    expect(result?.intent_envelope.complete_condition.length).toBeGreaterThan(0)
-    expect(result?.notes).toContain("intent-envelope-validated")
-  })
 })

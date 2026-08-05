@@ -1,6 +1,7 @@
-import type { CompletionStageState } from "./completion-state.js";
+import type { CanonicalWorkAggregate } from "../contracts/canonical-work-aggregate.js";
 import type { RunScope, RunStatus } from "./types.js";
-export type RunCompletionOutcomeStatus = "completed_delivered" | "completed_in_chat" | "awaiting_approval" | "awaiting_user_input" | "completed_impossible" | "failed_recoverable" | "failed_final";
+export type RequestExecutionOutcomeStatus = "in_progress" | "awaiting_approval" | "awaiting_user" | "succeeded" | "partially_succeeded" | "blocked" | "exhausted" | "cancelled" | "internal_fault";
+export type RequestDeliveryOutcomeStatus = "not_started" | "pending" | "delivered" | "failed";
 export type RunFlowStatusTransitionDecision = {
     allowed: true;
 } | {
@@ -16,15 +17,9 @@ export interface RunFlowIdentifiers {
     parentRunId?: string;
     scheduleId?: string;
 }
-export interface RunCompletionOutcomeInput {
-    completion?: CompletionStageState | undefined;
-    approvalPending?: boolean | undefined;
-    impossible?: boolean | undefined;
-    finalFailure?: boolean | undefined;
-}
-export interface RunCompletionOutcome {
-    status: RunCompletionOutcomeStatus;
-    reason: string;
+export interface RequestExecutionOutcome {
+    executionStatus: RequestExecutionOutcomeStatus;
+    deliveryStatus: RequestDeliveryOutcomeStatus;
 }
 export declare const TERMINAL_RUN_STATUSES: ["completed", "failed", "cancelled", "interrupted"];
 export declare function isTerminalRunStatus(status: RunStatus): boolean;
@@ -38,5 +33,9 @@ export declare function resolveRunFlowIdentifiers(params: {
     runScope?: RunScope | undefined;
     scheduleId?: string | undefined;
 }): RunFlowIdentifiers;
-export declare function deriveRunCompletionOutcome(input: RunCompletionOutcomeInput): RunCompletionOutcome;
+export declare function projectRequestExecutionOutcome(input: {
+    aggregate: CanonicalWorkAggregate;
+    runStatus: RunStatus;
+    deliveryStatus: RequestDeliveryOutcomeStatus;
+}): RequestExecutionOutcome;
 //# sourceMappingURL=flow-contract.d.ts.map

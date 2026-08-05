@@ -71,4 +71,5 @@ export interface DoctorResponse {
   ok: boolean
   report: DoctorReport
   artifactPath: string | null
+  artifactId: string | null
 }

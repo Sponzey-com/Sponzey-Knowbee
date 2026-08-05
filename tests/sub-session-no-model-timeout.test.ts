@@ -16,6 +16,8 @@ import {
   SubSessionRunner,
   type SubSessionRuntimeDependencies,
 } from "../packages/core/src/orchestration/sub-session-runner.ts"
+import { createTestSubSessionMemoryDependencies } from "./fixtures/sub-session-runtime.ts"
+import { createTestResultDiagnosisDependencies } from "./fixtures/agent-runtime.ts"
 
 const now = Date.UTC(2026, 4, 8, 0, 0, 0)
 
@@ -89,8 +91,6 @@ function promptBundle(): AgentPromptBundle {
     agentId: "agent:slow",
     agentType: "sub_agent",
     role: "slow child worker",
-    displayNameSnapshot: "Slow Worker",
-    nicknameSnapshot: "느림이",
     personalitySnapshot: "Careful.",
     teamContext: [],
     memoryPolicy,
@@ -122,7 +122,7 @@ function command(): CommandRequest {
     parentRunId: "run:parent",
     subSessionId: "sub:slow",
     targetAgentId: "agent:slow",
-    targetNicknameSnapshot: "느림이",
+    targetAgentNameSnapshot: "느림이",
     taskScope,
     contextPackageIds: [],
     expectedOutputs: [expectedOutput],
@@ -134,6 +134,8 @@ function dependencies(): SubSessionRuntimeDependencies {
   let tick = now
   const clone = <T>(value: T): T => structuredClone(value)
   return {
+    ...createTestSubSessionMemoryDependencies(),
+    ...createTestResultDiagnosisDependencies(),
     now: () => {
       tick += 1
       return tick

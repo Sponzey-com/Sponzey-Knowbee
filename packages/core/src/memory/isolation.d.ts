@@ -4,6 +4,8 @@ import { type DbAgentDataExchange, type MemoryScope } from "../db/index.js";
 import type { PromptBundleContextMemoryRef } from "../runs/context-preflight.js";
 import { type DetailedMemorySearchResult, type StoreMemoryDocumentParams } from "./store.js";
 import { type MemoryWritebackCandidate, type PreparedMemoryWritebackCandidate } from "./writeback.js";
+import { type LongTermMemoryWriteGateInput } from "./long-term-write-gate.js";
+export { LONG_TERM_MEMORY_CATEGORIES, validateLongTermMemoryWriteGate, type LongTermMemoryCategory, type LongTermMemorySensitivity, type LongTermMemoryStorageNeed, type LongTermMemoryUserIntent, type LongTermMemoryWriteGateDecision, type LongTermMemoryWriteGateInput, type LongTermMemoryWriteGateIssueCode, } from "./long-term-write-gate.js";
 export type MemoryVisibility = MemoryPolicy["visibility"];
 export type MemoryAccessMode = "owner_direct" | "recipient_via_exchange";
 export type MemoryOwnerScopeKind = "knowbee" | "agent" | "run" | "system" | "team_projection";
@@ -22,7 +24,7 @@ export interface MemoryOwnerScopePolicy {
     writeAllowed: boolean;
     reasonCode?: "team_projection_read_only" | "memory_owner_scope_missing";
 }
-export type DataExchangeValidationIssueCode = "source_owner_missing" | "recipient_owner_missing" | "source_nickname_missing" | "recipient_nickname_missing" | "purpose_missing" | "allowed_use_missing" | "retention_policy_missing" | "redaction_state_missing" | "provenance_refs_missing" | "provenance_refs_unrecognized" | "payload_missing" | "data_exchange_expired" | "data_exchange_blocked" | "data_exchange_wrong_recipient" | "data_exchange_wrong_source" | "data_exchange_use_not_allowed";
+export type DataExchangeValidationIssueCode = "source_owner_missing" | "recipient_owner_missing" | "source_agent_name_missing" | "source_agent_name_mismatch" | "recipient_agent_name_missing" | "recipient_agent_name_mismatch" | "purpose_missing" | "allowed_use_missing" | "retention_policy_missing" | "redaction_state_missing" | "provenance_refs_missing" | "provenance_refs_unrecognized" | "payload_missing" | "data_exchange_expired" | "data_exchange_blocked" | "data_exchange_wrong_recipient" | "data_exchange_wrong_source" | "data_exchange_use_not_allowed";
 export interface DataExchangeValidationIssue {
     code: DataExchangeValidationIssueCode;
     path: string;
@@ -42,8 +44,10 @@ export interface DataExchangeSanitizedView {
     exchangeId: string;
     sourceOwner: OwnerScope;
     recipientOwner: OwnerScope;
-    sourceNicknameSnapshot: string;
-    recipientNicknameSnapshot: string;
+    sourceAgentName: string;
+    sourceAgentNameSnapshot: string;
+    recipientAgentName: string;
+    recipientAgentNameSnapshot: string;
     purpose: string;
     allowedUse: DataExchangePackage["allowedUse"];
     retentionPolicy: DataExchangeRetentionPolicy;
@@ -67,6 +71,7 @@ export interface StoreOwnerScopedMemoryParams extends Omit<StoreMemoryDocumentPa
     owner: OwnerScope;
     visibility: MemoryVisibility;
     retentionPolicy: MemoryPolicy["retentionPolicy"];
+    longTermWriteGate?: LongTermMemoryWriteGateInput;
     historyVersion?: number;
     scope?: MemoryScope;
     metadata?: Record<string, unknown>;
@@ -74,8 +79,10 @@ export interface StoreOwnerScopedMemoryParams extends Omit<StoreMemoryDocumentPa
 export interface CreateDataExchangePackageInput {
     sourceOwner: OwnerScope;
     recipientOwner: OwnerScope;
-    sourceNicknameSnapshot?: string;
-    recipientNicknameSnapshot?: string;
+    sourceAgentName?: string;
+    sourceAgentNameSnapshot?: string;
+    recipientAgentName?: string;
+    recipientAgentNameSnapshot?: string;
     purpose: string;
     allowedUse: DataExchangePackage["allowedUse"];
     retentionPolicy: DataExchangeRetentionPolicy;

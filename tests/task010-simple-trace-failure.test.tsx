@@ -41,9 +41,9 @@ describe("task010 simple trace and failure explanation", () => {
     expect(html).toContain("고객 접수 담당자 -> CRM 조회")
     expect(html).toContain("실패 이유")
     expect(html).toContain("완료 기준을 만족하지 못해 실패했습니다.")
-    expect(html).toContain("노비가 시도한 것")
-    expect(html).toContain("도구 실행")
-    expect(html).toContain("tool:crm-search 실행")
+    expect(html).toContain("메인 에이전트가 시도한 것")
+    expect(html).toContain("외부 도구 실행")
+    expect(html).not.toContain("tool:crm-search 실행")
     expect(html).toContain("다음 조치")
     expect(html).toContain("예외 처리 경로를 추가해 실패 시 넘길 곳을 정하세요.")
   })
@@ -95,14 +95,16 @@ describe("task010 simple trace and failure explanation", () => {
     ])
     expect(model.quickActions.every((action) => action.operations.length > 0)).toBe(true)
     expect(html).toContain('data-testid="executor-result-quick-action-preview"')
-    expect(html).toContain("node 수정: node:crm")
+    expect(html).toContain("서브 에이전트 설정 수정: CRM 조회")
+    expect(html).not.toContain("node 수정")
+    expect(html).not.toContain("node:crm")
     expect(html).toContain("권한 추가")
     expect(html).toContain("부분 정보로 넘기기")
     expect(html).toContain("예외 처리로 이동")
     expect(html).toContain("설명 수정")
   })
 
-  it("keeps the existing trace overlay and raw ids available inside advanced details", () => {
+  it("keeps the trace overlay available without rendering raw ids inside advanced details", () => {
     const { topology, graph, overlay } = fixture()
     const html = renderToStaticMarkup(
       createElement(ExecutorRunResultPanel, {
@@ -113,12 +115,14 @@ describe("task010 simple trace and failure explanation", () => {
       }),
     )
 
-    expect(html).toContain('data-testid="executor-result-raw-trace"')
+    expect(html).toContain('data-testid="executor-result-diagnostic-trace"')
     expect(html).toContain('data-testid="topology-run-trace-overlay"')
-    expect(html).toContain("work-order:crm")
-    expect(html).toContain("node-run:crm")
-    expect(html).toContain("trace:failure:crm")
-    expect(html).toContain("failure:crm")
+    expect(html).toContain("실행 단계 기록")
+    expect(html).toContain("실패 진단 기록")
+    expect(html).not.toContain("work-order:crm")
+    expect(html).not.toContain("node-run:crm")
+    expect(html).not.toContain("trace:failure:crm")
+    expect(html).not.toContain("failure:crm")
   })
 
   it("wires the simple workspace canvas to the simple result panel when a run exists", () => {

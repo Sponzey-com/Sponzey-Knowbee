@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   buildUnifiedSettingsViewModel,
   type UnifiedSettingsAgentInput,
+  type UnifiedSettingsMode,
 } from "../packages/core/src/ui/unified-settings.ts"
 
 const rootAgent = {
@@ -14,6 +15,7 @@ const rootAgent = {
 function agent(overrides: Partial<UnifiedSettingsAgentInput> = {}): UnifiedSettingsAgentInput {
   return {
     id: "agent:researcher",
+    agentName: "조사",
     displayName: "Researcher",
     nickname: "조사",
     role: "Research helper",
@@ -35,13 +37,14 @@ describe("task003 unified settings view model builder", () => {
     const view = buildUnifiedSettingsViewModel({
       locale: "ko",
       productName: "노비",
-      mode: "single_knowbee",
+      mode: "single_knowbee" as unknown as UnifiedSettingsMode,
       lifecycleState: "empty",
       rootAgent,
       agents: [],
     })
 
     expect(view.title).toBe("서브 에이전트 설정")
+    expect(view.summary.mode).toBe("direct_main_agent")
     expect(view.summary.status).toBe("skipped")
     expect(view.summary.primaryAction).toEqual({
       id: "create_first_sub_agent",
@@ -67,8 +70,8 @@ describe("task003 unified settings view model builder", () => {
       lifecycleState: "drafting",
       rootAgent,
       agents: [
-        agent({ id: "agent:a", displayName: "Researcher", nickname: "조사" }),
-        agent({ id: "agent:b", displayName: "Researcher", nickname: "조사" }),
+        agent({ id: "agent:a", agentName: "조사", displayName: "Researcher", nickname: "legacy-a" }),
+        agent({ id: "agent:b", agentName: " 조사 ", displayName: "Writer", nickname: "legacy-b" }),
       ],
     })
 
@@ -79,7 +82,7 @@ describe("task003 unified settings view model builder", () => {
     expect(view.actions.find((action) => action.id === "activate_settings")).toEqual(
       expect.objectContaining({ disabled: true, disabledReason: "readiness_blocked" }),
     )
-    expect(view.diagnostics.reasonCodes).toEqual(expect.arrayContaining(["display_name_duplicate", "nickname_duplicate"]))
+    expect(view.diagnostics.reasonCodes).toContain("agent_name_duplicate")
   })
 
   it("projects agent list, selected detail, and graph labels without using internal ids as user-facing labels", () => {
@@ -94,6 +97,7 @@ describe("task003 unified settings view model builder", () => {
         agent(),
         agent({
           id: "agent:writer",
+          agentName: "작성",
           displayName: "Writer",
           nickname: "작성",
           role: "Writing helper",
@@ -129,6 +133,39 @@ describe("task003 unified settings view model builder", () => {
     expect(userFacingText.join(" ")).not.toMatch(/agent:researcher|agent:writer/)
   })
 
+  it("does not expose legacy nickname or displayName as the agent label when agentName is missing", () => {
+    const view = buildUnifiedSettingsViewModel({
+      locale: "ko",
+      productName: "노비",
+      mode: "orchestration",
+      lifecycleState: "drafting",
+      rootAgent,
+      selectedAgentId: "agent:legacy",
+      agents: [
+        agent({
+          id: "agent:legacy",
+          agentName: undefined,
+          displayName: "Legacy Display",
+          nickname: "Legacy Nickname",
+        }),
+      ],
+    })
+
+    const labels = [
+      view.agents[0]?.label,
+      view.selectedAgent?.label,
+      view.selectedAgentDetail?.label,
+      view.graph.nodes.map((node) => node.label),
+      view.graph.edges.flatMap((edge) => [edge.sourceLabel, edge.targetLabel]),
+    ].flat().join(" ")
+
+    expect(view.summary.status).toBe("needs_attention")
+    expect(view.diagnostics.reasonCodes).toContain("agent_name_required")
+    expect(labels).toContain("서브 에이전트")
+    expect(labels).not.toContain("Legacy Display")
+    expect(labels).not.toContain("Legacy Nickname")
+  })
+
   it("redacts unsafe labels, descriptions, and diagnostics while keeping ids only in action payloads", () => {
     const view = buildUnifiedSettingsViewModel({
       locale: "ko",
@@ -140,6 +177,7 @@ describe("task003 unified settings view model builder", () => {
       agents: [
         agent({
           id: "agent:secret-internal-123",
+          agentName: "Bearer sk-task003-agent-name-secret-1234567890",
           displayName: "{\"token\":\"sk-task003-secret-value-1234567890\"}",
           nickname: "Bearer sk-task003-nickname-secret-1234567890",
           role: "Uses /Users/dongwooshin/.knowbee/private/raw.json",

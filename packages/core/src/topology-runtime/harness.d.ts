@@ -6,6 +6,9 @@ import type { OrchestrationModeSnapshot } from "../orchestration/mode.js";
 import { type EnterpriseTopologyRegistryStore } from "../topology/registry.js";
 import { type NodeRuntimeExecutionResult, type NodeRuntimeSelfExecutor } from "./node-runtime.js";
 import { type TopologyTracePersistenceResult } from "./trace.js";
+import { type LlmDiagnosisProvider } from "../contracts/llm-diagnosis-provider.js";
+import type { LlmDiagnosisSchemaRepairProvider } from "../contracts/llm-diagnosis-schema-repair-provider.js";
+import { type LlmSolutionPlanProvider, type LlmSolutionPlanRepairProvider, type SolutionPlanCapabilitySelection } from "../contracts/llm-solution-plan-provider.js";
 export declare const TOPOLOGY_RUNTIME_FEATURE_KEY: "topology_runtime_enabled";
 export type TopologyRootRunRoutingMode = "route" | "fallback";
 export type TopologyRootRunFallbackReasonCode = "feature_flag_off" | "non_root_request" | "topology_routing_not_opted_in" | "topology_not_found" | "topology_not_active" | "active_topology_not_found" | "topology_export_missing" | "topology_validation_blocked" | "compiled_snapshot_missing" | "entry_node_missing" | "selected_executor_missing" | "selected_executor_not_direct_child" | "selected_executor_path_invalid";
@@ -47,7 +50,7 @@ export type TopologyRootRunExecutionResult = {
     persistence: TopologyTracePersistenceResult;
 } | {
     ok: false;
-    reasonCode: TopologyRootRunFallbackReasonCode | "work_order_envelope_invalid" | "topology_runtime_failed";
+    reasonCode: TopologyRootRunFallbackReasonCode | "work_order_envelope_invalid" | "planning_admission_blocked" | "result_diagnosis_reanalysis_required" | "topology_runtime_terminal_stop" | "topology_runtime_failed";
     fallbackSummary: string;
     issues: string[];
     runtimeResult?: NodeRuntimeExecutionResult;
@@ -77,6 +80,48 @@ export interface RunTopologyRootRunInput {
     registry?: EnterpriseTopologyRegistryStore;
     now?: () => number;
     selfExecute?: NodeRuntimeSelfExecutor;
+    diagnosisProvider?: LlmDiagnosisProvider;
+    diagnosisRepairProvider?: LlmDiagnosisSchemaRepairProvider;
+    planningAdmission?: {
+        required: true;
+        diagnosisProvider?: LlmDiagnosisProvider;
+        diagnosisRepairProvider?: LlmDiagnosisSchemaRepairProvider;
+        solutionPlanProvider?: LlmSolutionPlanProvider;
+        solutionPlanRepairProvider?: LlmSolutionPlanRepairProvider;
+    };
+    onPlanningAdmitted?: (input: {
+        requestDiagnosisReceiptId: string;
+        solutionPlanReceiptId: string;
+        capabilitySelections: SolutionPlanCapabilitySelection[];
+    }) => Promise<{
+        ok: true;
+    } | {
+        ok: false;
+        reasonCode: string;
+    }> | {
+        ok: true;
+    } | {
+        ok: false;
+        reasonCode: string;
+    };
+    resultDiagnosisAdmission?: {
+        required: true;
+        diagnosisProvider?: LlmDiagnosisProvider;
+        diagnosisRepairProvider?: LlmDiagnosisSchemaRepairProvider;
+    };
+    onResultDiagnosed?: (input: {
+        resultDiagnosisReceiptId: string;
+    }) => Promise<{
+        ok: true;
+    } | {
+        ok: false;
+        reasonCode: string;
+    }> | {
+        ok: true;
+    } | {
+        ok: false;
+        reasonCode: string;
+    };
 }
 export declare function resolveTopologyRootRunRouting(input: ResolveTopologyRootRunRoutingInput): TopologyRootRunRoutingDecision;
 export declare function runTopologyRootRun(input: RunTopologyRootRunInput): Promise<TopologyRootRunExecutionResult>;

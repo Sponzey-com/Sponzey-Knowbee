@@ -1,6 +1,7 @@
-import { basename, resolve } from "node:path";
 import { homedir } from "node:os";
-import { buildArtifactApiUrls, guessArtifactMimeType } from "../artifacts/lifecycle.js";
+import { basename, resolve } from "node:path";
+import { buildArtifactApiUrls, guessArtifactMimeType, } from "../artifacts/lifecycle.js";
+import { internalRunPromptPrefixSnapshot, } from "./internal-prompt-prefixes.js";
 const ACTIVE_RUN_STATUSES = ["queued", "running", "awaiting_approval", "awaiting_user"];
 function extractPromptField(prompt, field) {
     const match = prompt.match(new RegExp(`^${field}:\\s*(.+)$`, "im"));
@@ -9,22 +10,22 @@ function extractPromptField(prompt, field) {
 function isInternalRunPrompt(prompt) {
     return prompt.trim().startsWith("[");
 }
-function classifyAttemptKind(run, index) {
+function classifyAttemptKind(run, index, prefixSnapshot) {
     const prompt = run.prompt.trim();
-    if (prompt.startsWith("[Task Intake Bridge]"))
-        return "intake_bridge";
-    if (prompt.startsWith("[Approval Granted Continuation]"))
-        return "approval_continuation";
-    if (prompt.startsWith("[Filesystem Verification]"))
-        return "verification";
-    if (prompt.startsWith("[Filesystem Execution Required]"))
-        return "filesystem_retry";
-    if (prompt.startsWith("[Truncated Output Recovery]"))
-        return "truncated_recovery";
-    if (prompt.startsWith("[Scheduled Task]"))
-        return "scheduled_execution";
+    for (const [prefixKey, kind] of INTERNAL_ATTEMPT_KIND_PREFIXES) {
+        if (prompt.startsWith(prefixSnapshot[prefixKey]))
+            return kind;
+    }
     return index === 0 ? "primary" : "followup";
 }
+const INTERNAL_ATTEMPT_KIND_PREFIXES = [
+    ["task_intake_bridge", "intake_bridge"],
+    ["approval_granted_continuation", "approval_continuation"],
+    ["filesystem_verification", "verification"],
+    ["filesystem_execution_required", "filesystem_retry"],
+    ["truncated_output_recovery", "truncated_recovery"],
+    ["scheduled_task", "scheduled_execution"],
+];
 function isUserVisibleAttemptKind(kind) {
     switch (kind) {
         case "primary":
@@ -124,7 +125,11 @@ function resolveRunRelationshipKind(run, kind, index) {
         case "approval_continuation":
             return "followup_execution";
         case "followup":
-            return run.runScope === "child" || run.parentRunId ? "child_execution" : index === 0 ? "root_request" : "followup_execution";
+            return run.runScope === "child" || run.parentRunId
+                ? "child_execution"
+                : index === 0
+                    ? "root_request"
+                    : "followup_execution";
     }
 }
 function computeTaskStatus(params) {
@@ -257,9 +262,9 @@ function expandDisplayPath(value) {
 function guessMimeTypeFromPath(filePath) {
     return guessArtifactMimeType(filePath);
 }
-function buildArtifactUrls(filePath) {
+function buildArtifactUrls(filePath, artifactStorage) {
     const expandedPath = expandDisplayPath(filePath);
-    return buildArtifactApiUrls(expandedPath);
+    return buildArtifactApiUrls(expandedPath, artifactStorage);
 }
 function extractArtifactFromUrl(url) {
     if (!url.startsWith("/api/artifacts/"))
@@ -277,7 +282,7 @@ function extractArtifactFromUrl(url) {
         ...(mimeType ? { mimeType } : {}),
     };
 }
-function extractDeliveredArtifact(summary) {
+function extractDeliveredArtifact(summary, artifactStorage) {
     const match = summary.match(/파일 전달 완료:\s*(.+)$/);
     const rawPath = match?.[1]?.trim();
     if (!rawPath)
@@ -286,26 +291,29 @@ function extractDeliveredArtifact(summary) {
     if (urlArtifact)
         return urlArtifact;
     const resolvedPath = expandDisplayPath(rawPath);
-    const artifactUrls = buildArtifactUrls(resolvedPath);
+    const artifactUrls = buildArtifactUrls(resolvedPath, artifactStorage);
     const mimeType = guessMimeTypeFromPath(resolvedPath);
     return {
-        filePath: resolvedPath,
         fileName: basename(resolvedPath),
-        ...(artifactUrls ? { url: artifactUrls.previewUrl, previewUrl: artifactUrls.previewUrl, downloadUrl: artifactUrls.downloadUrl } : {}),
+        ...(artifactUrls
+            ? {
+                url: artifactUrls.previewUrl,
+                previewUrl: artifactUrls.previewUrl,
+                downloadUrl: artifactUrls.downloadUrl,
+            }
+            : {}),
         ...(mimeType ? { previewable: mimeType.startsWith("image/") } : {}),
         ...(mimeType ? { mimeType } : {}),
     };
 }
-function resolveTaskDeliverySignal(orderedRuns, attempts) {
+function resolveTaskDeliverySignal(orderedRuns, attempts, artifactStorage) {
     // knowbee-critical-decision-audit: task-model.delivery_status_label
     // System event-label projection until delivery receipts become the sole status source.
     const sourceAttemptId = attempts.at(-1)?.id;
-    const recentEvents = orderedRuns
-        .flatMap((run) => run.recentEvents)
-        .reverse();
+    const recentEvents = orderedRuns.flatMap((run) => run.recentEvents).reverse();
     const deliveredEvent = recentEvents.find((event) => /(전달 완료|파일 전달 완료|응답 전달 완료|텍스트 전달 완료|message delivered|delivery complete)/i.test(event.label));
     if (deliveredEvent) {
-        const deliveredArtifact = extractDeliveredArtifact(deliveredEvent.label);
+        const deliveredArtifact = extractDeliveredArtifact(deliveredEvent.label, artifactStorage);
         return {
             status: "delivered",
             ...(sourceAttemptId ? { sourceAttemptId } : {}),
@@ -328,9 +336,9 @@ function resolveTaskDeliverySignal(orderedRuns, attempts) {
         };
     }
     const latestRun = [...orderedRuns].sort((a, b) => b.updatedAt - a.updatedAt)[0];
-    const pendingDeliverySummary = latestRun
-        && /(전달|메신저|telegram|webui|cli)/i.test(`${latestRun.summary}\n${latestRun.prompt}`)
-        && ACTIVE_RUN_STATUSES.includes(latestRun.status)
+    const pendingDeliverySummary = latestRun &&
+        /(전달|메신저|telegram|webui|cli)/i.test(`${latestRun.summary}\n${latestRun.prompt}`) &&
+        ACTIVE_RUN_STATUSES.includes(latestRun.status)
         ? latestRun.summary.trim() || latestRun.prompt.trim()
         : undefined;
     if (pendingDeliverySummary && latestRun) {
@@ -347,8 +355,8 @@ function resolveTaskDeliverySignal(orderedRuns, attempts) {
         ...(sourceAttemptId ? { sourceAttemptId } : {}),
     };
 }
-function deriveTaskDelivery(taskId, orderedRuns, attempts) {
-    const signal = resolveTaskDeliverySignal(orderedRuns, attempts);
+function deriveTaskDelivery(taskId, orderedRuns, attempts, artifactStorage) {
+    const signal = resolveTaskDeliverySignal(orderedRuns, attempts, artifactStorage);
     return {
         taskId,
         status: signal.status,
@@ -378,7 +386,7 @@ function resolveTaskActivityKind(status, recovery) {
             return undefined;
     }
 }
-function buildTaskActivities(taskId, attempts, orderedRuns) {
+function buildTaskActivities(taskId, attempts, orderedRuns, artifactStorage) {
     const activities = [];
     for (const attempt of attempts) {
         const recovery = isRecoveryAttemptKind(attempt.kind);
@@ -409,7 +417,7 @@ function buildTaskActivities(taskId, attempts, orderedRuns) {
             });
         }
     }
-    const deliverySignal = resolveTaskDeliverySignal(orderedRuns, attempts);
+    const deliverySignal = resolveTaskDeliverySignal(orderedRuns, attempts, artifactStorage);
     if (deliverySignal.status !== "not_requested" && deliverySignal.at !== undefined) {
         activities.push({
             id: deliverySignal.eventId || `${taskId}:delivery:${deliverySignal.status}`,
@@ -481,9 +489,15 @@ function extractPromptSources(snapshot) {
             return undefined;
         return {
             sourceId,
-            ...(typeof candidate.locale === "string" && candidate.locale.trim() ? { locale: candidate.locale.trim() } : {}),
-            ...(typeof candidate.version === "string" && candidate.version.trim() ? { version: candidate.version.trim() } : {}),
-            ...(typeof candidate.checksum === "string" && candidate.checksum.trim() ? { checksum: candidate.checksum.trim() } : {}),
+            ...(typeof candidate.locale === "string" && candidate.locale.trim()
+                ? { locale: candidate.locale.trim() }
+                : {}),
+            ...(typeof candidate.version === "string" && candidate.version.trim()
+                ? { version: candidate.version.trim() }
+                : {}),
+            ...(typeof candidate.checksum === "string" && candidate.checksum.trim()
+                ? { checksum: candidate.checksum.trim() }
+                : {}),
         };
     })
         .filter((value) => Boolean(value));
@@ -504,15 +518,15 @@ function buildTaskDiagnostics(orderedRuns, latestRun, continuity) {
     const promptSourceVersion = extractPromptSourceVersion(latestRun.promptSourceSnapshot);
     const lastRecoveryKey = continuity?.failedRecoveryKey;
     const recoveryBudget = continuity?.recoveryBudget;
-    if (promptSourceIds.length === 0
-        && !promptSourceVersion
-        && latencyEvents.length === 0
-        && memoryEvents.length === 0
-        && toolEvents.length === 0
-        && deliveryEvents.length === 0
-        && recoveryEvents.length === 0
-        && !lastRecoveryKey
-        && !recoveryBudget) {
+    if (promptSourceIds.length === 0 &&
+        !promptSourceVersion &&
+        latencyEvents.length === 0 &&
+        memoryEvents.length === 0 &&
+        toolEvents.length === 0 &&
+        deliveryEvents.length === 0 &&
+        recoveryEvents.length === 0 &&
+        !lastRecoveryKey &&
+        !recoveryBudget) {
         return undefined;
     }
     return {
@@ -567,10 +581,10 @@ function deriveTaskFailure(orderedRuns, attempts, delivery) {
         const sourceRun = delivery.sourceAttemptId
             ? orderedRuns.find((run) => run.id === delivery.sourceAttemptId)
             : undefined;
-        const summary = delivery.summary?.trim()
-            || [...(sourceRun?.recentEvents ?? [])].sort((a, b) => b.at - a.at)[0]?.label?.trim()
-            || sourceRun?.summary?.trim()
-            || "결과 전달 중 오류가 발생했습니다.";
+        const summary = delivery.summary?.trim() ||
+            [...(sourceRun?.recentEvents ?? [])].sort((a, b) => b.at - a.at)[0]?.label?.trim() ||
+            sourceRun?.summary?.trim() ||
+            "결과 전달 중 오류가 발생했습니다.";
         return {
             kind: "delivery",
             status: "failed",
@@ -586,10 +600,10 @@ function deriveTaskFailure(orderedRuns, attempts, delivery) {
     if (!failedRun)
         return undefined;
     const failedAttempt = attempts.find((attempt) => attempt.id === failedRun.id);
-    const summary = [...failedRun.recentEvents].sort((a, b) => b.at - a.at)[0]?.label?.trim()
-        || failedRun.summary.trim()
-        || failedAttempt?.summary?.trim()
-        || describeAttemptFailureTitle(failedAttempt?.kind ?? "followup", failedRun.status);
+    const summary = [...failedRun.recentEvents].sort((a, b) => b.at - a.at)[0]?.label?.trim() ||
+        failedRun.summary.trim() ||
+        failedAttempt?.summary?.trim() ||
+        describeAttemptFailureTitle(failedAttempt?.kind ?? "followup", failedRun.status);
     return {
         kind: failedAttempt && isRecoveryAttemptKind(failedAttempt.kind) ? "recovery" : "execution",
         status: failedRun.status,
@@ -601,11 +615,17 @@ function deriveTaskFailure(orderedRuns, attempts, delivery) {
 }
 function buildTaskChecklist(params) {
     const terminalFailure = params.failure && !ACTIVE_RUN_STATUSES.includes(params.status) ? params.failure : undefined;
-    const intakeAttempt = [...params.attempts].reverse().find((attempt) => attempt.kind === "intake_bridge");
+    const intakeAttempt = [...params.attempts]
+        .reverse()
+        .find((attempt) => attempt.kind === "intake_bridge");
     const executionAttempts = params.attempts.filter((attempt) => isExecutionAttemptKind(attempt.kind));
     const latestExecutionAttempt = executionAttempts.at(-1);
-    const activeExecutionAttempt = [...executionAttempts].reverse().find((attempt) => ACTIVE_RUN_STATUSES.includes(attempt.status));
-    const completedExecutionAttempt = [...executionAttempts].reverse().find((attempt) => attempt.status === "completed");
+    const activeExecutionAttempt = [...executionAttempts]
+        .reverse()
+        .find((attempt) => ACTIVE_RUN_STATUSES.includes(attempt.status));
+    const completedExecutionAttempt = [...executionAttempts]
+        .reverse()
+        .find((attempt) => attempt.status === "completed");
     const requestItem = (() => {
         if (!intakeAttempt) {
             return {
@@ -642,7 +662,10 @@ function buildTaskChecklist(params) {
                 ...(activeExecutionAttempt.summary ? { summary: activeExecutionAttempt.summary } : {}),
             };
         }
-        if (completedExecutionAttempt || params.delivery.status === "delivered" || params.delivery.status === "failed" || params.status === "completed") {
+        if (completedExecutionAttempt ||
+            params.delivery.status === "delivered" ||
+            params.delivery.status === "failed" ||
+            params.status === "completed") {
             const summary = completedExecutionAttempt?.summary || latestExecutionAttempt?.summary || params.summary;
             return {
                 key: "execution",
@@ -740,7 +763,9 @@ function buildTaskChecklist(params) {
         failedCount: actionableItems.filter((item) => item.status === "failed" || item.status === "cancelled").length,
     };
 }
-export function buildTaskModels(runs, continuitySnapshots = []) {
+// biome-ignore lint/style/useDefaultParameterLast: keep the legacy one-argument projection API.
+export function buildTaskModels(runs, continuitySnapshots = [], artifactStorage) {
+    const prefixSnapshot = internalRunPromptPrefixSnapshot();
     const grouped = new Map();
     const runsById = new Map(runs.map((run) => [run.id, run]));
     const continuityByLineage = new Map(continuitySnapshots.map((snapshot) => [snapshot.lineageRootRunId, snapshot]));
@@ -767,7 +792,7 @@ export function buildTaskModels(runs, continuitySnapshots = []) {
         const contextMode = getRequestContextMode(anchorRun) ?? getRequestContextMode(rootRun);
         const summary = computeTaskSummary(groupRuns);
         const attempts = orderedRuns.map((run, index) => {
-            const kind = classifyAttemptKind(run, index);
+            const kind = classifyAttemptKind(run, index, prefixSnapshot);
             const executionKind = resolveAttemptExecutionKind(kind);
             const relationshipKind = resolveRunRelationshipKind(run, kind, index);
             const attemptRootRun = resolveRootRun(run, runsById);
@@ -787,9 +812,9 @@ export function buildTaskModels(runs, continuitySnapshots = []) {
                     ? { augmentationOfRunId: run.parentRunId ?? previousRun?.id ?? attemptRootRun.id }
                     : {}),
                 title: kind === "scheduled_execution"
-                    ? extractPromptField(run.prompt, "Task")
-                        || extractPromptField(run.prompt, "Goal")
-                        || run.title
+                    ? extractPromptField(run.prompt, "Task") ||
+                        extractPromptField(run.prompt, "Goal") ||
+                        run.title
                     : run.title,
                 prompt: run.prompt,
                 status: run.status,
@@ -816,10 +841,10 @@ export function buildTaskModels(runs, continuitySnapshots = []) {
                 updatedAt: attempt.updatedAt,
             };
         });
-        const delivery = deriveTaskDelivery(taskId, orderedRuns, attempts);
+        const delivery = deriveTaskDelivery(taskId, orderedRuns, attempts, artifactStorage);
         const status = computeTaskStatus({ groupRuns, attempts, delivery });
         const failure = deriveTaskFailure(orderedRuns, attempts, delivery);
-        const activities = buildTaskActivities(taskId, attempts, orderedRuns);
+        const activities = buildTaskActivities(taskId, attempts, orderedRuns, artifactStorage);
         const continuity = mapContinuitySnapshot(continuityByLineage.get(taskId));
         const diagnostics = buildTaskDiagnostics(orderedRuns, latestRun, continuity);
         const checklist = buildTaskChecklist({
@@ -854,8 +879,8 @@ export function buildTaskModels(runs, continuitySnapshots = []) {
             requestText: computeTaskRequest(groupRuns),
             summary,
             status,
-            canCancel: ACTIVE_RUN_STATUSES.includes(status)
-                && attempts.some((attempt) => ACTIVE_RUN_STATUSES.includes(attempt.status)),
+            canCancel: ACTIVE_RUN_STATUSES.includes(status) &&
+                attempts.some((attempt) => ACTIVE_RUN_STATUSES.includes(attempt.status)),
             createdAt: anchorRun.createdAt,
             updatedAt: latestRun.updatedAt,
             attempts,
@@ -869,6 +894,6 @@ export function buildTaskModels(runs, continuitySnapshots = []) {
             activities,
         });
     }
-    return tasks.sort((a, b) => (b.createdAt - a.createdAt) || (b.updatedAt - a.updatedAt));
+    return tasks.sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt);
 }
 //# sourceMappingURL=task-model.js.map

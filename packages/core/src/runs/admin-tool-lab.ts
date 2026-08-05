@@ -3,13 +3,6 @@ import type { ControlTimeline, ControlTimelineEvent } from "../control-plane/tim
 import type { DbMessageLedgerEvent, DbMessageLedgerStatus } from "../db/index.js"
 import type { SourceEvidence, SourceFreshnessPolicy, SourceKind, SourceReliability, WebRetrievalMethod } from "./web-retrieval-policy.js"
 import { buildWebRetrievalPolicyDecision } from "./web-retrieval-policy.js"
-import { buildRetrievalTargetHash, evaluateRetrievalCacheEntry, listPersistentRetrievalCacheEntriesForTarget, type RetrievalCacheStatus } from "./web-retrieval-cache.js"
-import type { RetrievalTargetContract } from "./web-retrieval-session.js"
-import type { RetrievalEvidenceSufficiency, RetrievalVerificationVerdict } from "./web-retrieval-verification.js"
-import { resolveWeatherLocationContract } from "./web-location-contract.js"
-import { buildFinanceKnownSources, FINANCE_ADAPTER_METADATA, resolveFinanceIndexTarget } from "./web-source-adapters/finance.js"
-import { buildWeatherKnownSources, WEATHER_ADAPTER_METADATA } from "./web-source-adapters/weather.js"
-import type { WebSourceAdapterMetadata } from "./web-source-adapters/types.js"
 import { loadWebRetrievalFixturesFromDir, runWebRetrievalFixtureRegression, type WebRetrievalFixtureRegressionSummary } from "./web-retrieval-smoke.js"
 
 export type AdminToolCallStatus = "started" | "succeeded" | "failed" | "skipped" | "unknown"
@@ -45,16 +38,6 @@ export interface AdminToolCallsInspector {
   calls: AdminToolCallView[]
 }
 
-export interface AdminWebRetrievalKnownSourceView {
-  method: string
-  url: string
-  sourceDomain: string
-  sourceKind: SourceKind
-  reliability: SourceReliability
-  sourceLabel: string
-  expectedTargetBinding: string
-}
-
 export interface AdminWebRetrievalAttemptView {
   id: string
   toolName: string
@@ -71,31 +54,13 @@ export interface AdminWebRetrievalAttemptView {
   signalCount: number
 }
 
-export interface AdminWebRetrievalVerificationView {
-  canAnswer: boolean | null
-  evidenceSufficiency: RetrievalEvidenceSufficiency | string | null
-  acceptedValue: string | null
-  rejectionReason: string | null
-  mustAvoidGuessing: boolean | null
-  policy: SourceFreshnessPolicy | string | null
-  completionStrict: true
-  semanticComparisonAllowed: false
-  verificationMode: "contract_fields"
-}
-
-export interface AdminWebRetrievalCacheView {
-  status: RetrievalCacheStatus | "not_loaded"
-  entryCount: number
-  entries: Array<{
-    status: RetrievalCacheStatus
-    canUseForFinalAnswer: boolean
-    canUseAsDiscoveryHint: boolean
-    cacheAgeMs: number | null
-    reason: string
-    value: string | null
-    unit: string | null
-    sourceDomain: string | null
-  }>
+export interface AdminWebRetrievalDiagnosisView {
+  status: "complete" | "followup" | "ask_user" | null
+  contextFingerprint: string | null
+  criterionKeys: string[]
+  conditionCount: number | null
+  evidenceRefs: string[]
+  receiptPresent: boolean
 }
 
 export interface AdminWebRetrievalSessionView {
@@ -103,29 +68,16 @@ export interface AdminWebRetrievalSessionView {
   requestGroupId: string | null
   runId: string | null
   sessionKey: string | null
-  target: RetrievalTargetContract | null
-  sourceLadder: AdminWebRetrievalKnownSourceView[]
   queryVariants: string[]
   fetchAttempts: AdminWebRetrievalAttemptView[]
-  candidateExtraction: {
-    eventCount: number
-    candidateCount: number
-    lastSummary: string | null
-  }
-  verification: AdminWebRetrievalVerificationView
-  conflictResolver: {
-    status: string | null
-    conflicts: string[]
-  }
-  cache: AdminWebRetrievalCacheView
-  adapterMetadata: Array<Pick<WebSourceAdapterMetadata, "adapterId" | "adapterVersion" | "parserVersion" | "checksum" | "status" | "degradedReason">>
+  resultDiagnosis: AdminWebRetrievalDiagnosisView
   degradedState: {
     degraded: boolean
     reasons: string[]
   }
   policySeparation: {
-    discovery: "loose_search"
-    completion: "strict_contract_fields"
+    evidence: "provenance_only"
+    completion: "llm_result_diagnosis"
     semanticComparisonAllowed: false
   }
 }
@@ -135,7 +87,7 @@ export interface AdminWebRetrievalLab {
     sessions: number
     attempts: number
     degraded: number
-    answerable: number
+    diagnosed: number
   }
   sessions: AdminWebRetrievalSessionView[]
 }
@@ -150,10 +102,14 @@ export interface AdminFixtureReplayResultView {
   title: string
   status: string
   attempts: number
-  candidateCount: number
-  canAnswer: boolean
-  acceptedValue: string | null
-  evidenceSufficiency: string
+  successfulSourceCount: number
+  evidenceSourceIds: string[]
+  llmDiagnosisExpectation: {
+    status: "complete" | "followup" | "ask_user"
+    requiredEvidenceSourceIds: string[]
+    requiredConditionVerdicts: string[]
+    changedStrategyRequired: boolean
+  }
   failures: string[]
 }
 
@@ -162,7 +118,7 @@ export interface AdminFixtureReplayResponse {
   generatedAt: number
   networkUsed: false
   semanticComparisonAllowed: false
-  verificationMode: "contract_fields"
+  verificationMode: "llm_result_diagnosis_contract"
   fixtureCount: number
   summary: Pick<WebRetrievalFixtureRegressionSummary, "kind" | "policyVersion" | "status" | "counts">
   results: AdminFixtureReplayResultView[]
@@ -220,10 +176,6 @@ function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null
 }
 
-function asBoolean(value: unknown): boolean | null {
-  return typeof value === "boolean" ? value : null
-}
-
 function detailRecord(value: unknown): Record<string, unknown> | null {
   return isRecord(value) ? value : null
 }
@@ -235,10 +187,6 @@ function nestedRecord(value: unknown, key: string): Record<string, unknown> | nu
 
 function stringField(record: Record<string, unknown> | null, key: string): string | null {
   return asString(record?.[key])
-}
-
-function boolField(record: Record<string, unknown> | null, key: string): boolean | null {
-  return asBoolean(record?.[key])
 }
 
 function stringArray(value: unknown): string[] {
@@ -507,109 +455,26 @@ function uniqueStrings(values: string[]): string[] {
   return out
 }
 
-function knownTargetFromQuery(query: string | undefined): {
-  target: RetrievalTargetContract | null
-  sources: AdminWebRetrievalKnownSourceView[]
-  adapters: Array<Pick<WebSourceAdapterMetadata, "adapterId" | "adapterVersion" | "parserVersion" | "checksum" | "status" | "degradedReason">>
-} {
-  if (!query?.trim()) return { target: null, sources: [], adapters: [] }
-  const finance = resolveFinanceIndexTarget(query)
-  if (finance) {
-    return {
-      target: finance.targetContract,
-      sources: buildFinanceKnownSources(finance.key),
-      adapters: [adapterView(FINANCE_ADAPTER_METADATA)],
-    }
-  }
-  const weather = resolveWeatherLocationContract(query)
-  if (weather) {
-    return {
-      target: weather.targetContract,
-      sources: buildWeatherKnownSources(weather.contract),
-      adapters: [adapterView(WEATHER_ADAPTER_METADATA)],
-    }
-  }
-  return { target: null, sources: [], adapters: [] }
-}
-
-function adapterView(metadata: WebSourceAdapterMetadata): Pick<WebSourceAdapterMetadata, "adapterId" | "adapterVersion" | "parserVersion" | "checksum" | "status" | "degradedReason"> {
-  return {
-    adapterId: metadata.adapterId,
-    adapterVersion: metadata.adapterVersion,
-    parserVersion: metadata.parserVersion,
-    checksum: metadata.checksum,
-    status: metadata.status,
-    ...(metadata.degradedReason !== undefined ? { degradedReason: metadata.degradedReason } : {}),
-  }
-}
-
-function cacheViewForTarget(target: RetrievalTargetContract | null): AdminWebRetrievalCacheView {
-  if (!target) return { status: "not_loaded", entryCount: 0, entries: [] }
-  try {
-    const entries = listPersistentRetrievalCacheEntriesForTarget({
-      targetHash: buildRetrievalTargetHash(target),
-      freshnessPolicy: "latest_approximate",
-      limit: 5,
-    })
-    const evaluated = entries.map((entry) => {
-      const evaluation = evaluateRetrievalCacheEntry({ entry, userRequestedLatest: true })
-      return {
-        status: evaluation.status,
-        canUseForFinalAnswer: evaluation.canUseForFinalAnswer,
-        canUseAsDiscoveryHint: evaluation.canUseAsDiscoveryHint,
-        cacheAgeMs: evaluation.cacheAgeMs,
-        reason: evaluation.reason,
-        value: evaluation.entry?.value ?? null,
-        unit: evaluation.entry?.unit ?? null,
-        sourceDomain: evaluation.entry?.sourceEvidence.sourceDomain ?? null,
-      }
-    })
-    return { status: evaluated[0]?.status ?? "miss", entryCount: evaluated.length, entries: evaluated }
-  } catch {
-    return { status: "not_loaded", entryCount: 0, entries: [] }
-  }
-}
-
-function verificationFromEvents(events: ControlTimelineEvent[]): AdminWebRetrievalVerificationView {
-  const verificationEvent = [...events].reverse().find((event) => event.eventType.includes("verification") || event.eventType.includes("verdict") || nestedRecord(event.detail, "verdict") || boolField(detailRecord(event.detail), "canAnswer") !== null)
-  const detail = detailRecord(verificationEvent?.detail)
-  const verdict = nestedRecord(verificationEvent?.detail, "verdict") ?? detail
-  return {
-    canAnswer: boolField(verdict, "canAnswer"),
-    evidenceSufficiency: stringField(verdict, "evidenceSufficiency") ?? stringField(verdict, "sufficiency"),
-    acceptedValue: stringField(verdict, "acceptedValue"),
-    rejectionReason: stringField(verdict, "rejectionReason"),
-    mustAvoidGuessing: boolField(detail, "mustAvoidGuessing"),
-    policy: stringField(verdict, "policy") ?? stringField(detail, "policy") ?? "latest_approximate",
-    completionStrict: true,
-    semanticComparisonAllowed: false,
-    verificationMode: "contract_fields",
-  }
-}
-
-function candidateExtractionFromEvents(events: ControlTimelineEvent[]): AdminWebRetrievalSessionView["candidateExtraction"] {
-  const candidateEvents = events.filter((event) => event.eventType.includes("candidate"))
-  let candidateCount = 0
-  for (const event of candidateEvents) {
-    const detail = detailRecord(event.detail)
-    const explicit = asNumber(detail?.candidateCount)
-    if (explicit != null) candidateCount += explicit
-    else if (Array.isArray(detail?.candidates)) candidateCount += detail.candidates.length
-  }
-  return {
-    eventCount: candidateEvents.length,
-    candidateCount,
-    lastSummary: candidateEvents.at(-1)?.summary ?? null,
-  }
-}
-
-function conflictResolverFromEvents(events: ControlTimelineEvent[]): AdminWebRetrievalSessionView["conflictResolver"] {
-  const event = [...events].reverse().find((item) => item.eventType.includes("conflict") || stringArray(nestedRecord(item.detail, "verdict")?.conflicts).length > 0)
+function resultDiagnosisFromEvents(events: ControlTimelineEvent[]): AdminWebRetrievalDiagnosisView {
+  const event = [...events].reverse().find((item) =>
+    item.eventType.includes("result_diagnosis") || item.eventType.includes("completion_review"),
+  )
   const detail = detailRecord(event?.detail)
-  const verdict = nestedRecord(event?.detail, "verdict")
+  const review = nestedRecord(detail, "review")
+  const receipt = nestedRecord(detail, "contextReceipt")
+    ?? nestedRecord(review, "contextReceipt")
+    ?? nestedRecord(detail, "resultDiagnosis")
+  const rawStatus = stringField(review, "status") ?? stringField(detail, "status")
+  const status = rawStatus === "complete" || rawStatus === "followup" || rawStatus === "ask_user"
+    ? rawStatus
+    : null
   return {
-    status: stringField(detail, "conflictStatus") ?? stringField(detail, "status"),
-    conflicts: stringArray(verdict?.conflicts ?? detail?.conflicts),
+    status,
+    contextFingerprint: stringField(receipt, "contextFingerprint"),
+    criterionKeys: stringArray(receipt?.criterionKeys),
+    conditionCount: asNumber(receipt?.conditionCount),
+    evidenceRefs: stringArray(receipt?.evidenceRefs),
+    receiptPresent: receipt !== null,
   }
 }
 
@@ -624,9 +489,6 @@ function degradedReasons(toolCalls: AdminToolCallView[], events: ControlTimeline
     if (event.severity === "warning") reasons.push(`${event.eventType}:warning`)
     const evidence = evidenceFromDetail(event.detail)
     if (evidence?.adapterStatus === "degraded") reasons.push(`${evidence.adapterId ?? "adapter"}:degraded`)
-    const detail = detailRecord(event.detail)
-    const status = stringField(detail, "status")
-    if (status && status !== "ready" && status !== "succeeded" && status !== "ok") reasons.push(`${event.eventType}:${status}`)
   }
   return uniqueStrings(reasons)
 }
@@ -640,7 +502,7 @@ function attemptViewFromToolCall(call: AdminToolCallView): AdminWebRetrievalAtte
     id: call.id,
     toolName: call.toolName,
     status: call.status,
-    method: policy?.method ?? (call.toolName === "web_search" ? "fast_text_search" : "direct_fetch"),
+    method: policy?.method ?? "direct_fetch",
     sourceKind: policy?.sourceKind ?? "unknown",
     reliability: policy?.reliability ?? "unknown",
     freshnessPolicy: policy?.freshnessPolicy ?? "latest_approximate",
@@ -676,8 +538,12 @@ function sourceAttemptFromEvent(event: ControlTimelineEvent): AdminWebRetrievalA
 export function buildAdminWebRetrievalLab(input: Pick<LabInput, "timeline" | "ledgerEvents" | "query" | "limit">): AdminWebRetrievalLab {
   const toolCalls = buildAdminToolCallsInspector(input).calls
   const webToolCalls = toolCalls.filter((call) => WEB_TOOL_NAMES.has(call.toolName))
-  const retrievalEvents = input.timeline.events.filter((event) => event.component === "web_retrieval" || event.eventType.startsWith("web_retrieval.") || event.eventType.includes("verification") || event.eventType.includes("candidate"))
-  const knownTarget = knownTargetFromQuery(input.query)
+  const retrievalEvents = input.timeline.events.filter((event) =>
+    event.component === "web_retrieval"
+    || event.eventType.startsWith("web_retrieval.")
+    || event.eventType.includes("result_diagnosis")
+    || event.eventType.includes("completion_review"),
+  )
   const eventsByContext = new Map<string, ControlTimelineEvent[]>()
   for (const event of retrievalEvents) {
     const key = contextKey(event)
@@ -696,32 +562,25 @@ export function buildAdminWebRetrievalLab(input: Pick<LabInput, "timeline" | "le
     const queryVariants = uniqueStrings([
       ...(input.query ? [input.query] : []),
       ...calls.flatMap((call) => queryVariantFromParams(call.paramsRedacted)),
-      ...knownTarget.sources.map((source) => source.url),
     ])
     const attempts = [
       ...calls.map(attemptViewFromToolCall).filter((attempt): attempt is AdminWebRetrievalAttemptView => attempt !== null),
       ...events.map(sourceAttemptFromEvent).filter((attempt): attempt is AdminWebRetrievalAttemptView => attempt !== null),
     ]
     const reasons = degradedReasons(calls, events)
-    const verification = verificationFromEvents(events)
+    const resultDiagnosis = resultDiagnosisFromEvents(events)
     return {
       id: key,
       requestGroupId: events.find((event) => event.requestGroupId)?.requestGroupId ?? calls.find((call) => call.requestGroupId)?.requestGroupId ?? null,
       runId: events.find((event) => event.runId)?.runId ?? calls.find((call) => call.runId)?.runId ?? null,
       sessionKey: events.find((event) => event.sessionKey)?.sessionKey ?? calls.find((call) => call.sessionKey)?.sessionKey ?? null,
-      target: knownTarget.target,
-      sourceLadder: knownTarget.sources,
       queryVariants,
       fetchAttempts: attempts,
-      candidateExtraction: candidateExtractionFromEvents(events),
-      verification,
-      conflictResolver: conflictResolverFromEvents(events),
-      cache: cacheViewForTarget(knownTarget.target),
-      adapterMetadata: knownTarget.adapters,
+      resultDiagnosis,
       degradedState: { degraded: reasons.length > 0, reasons },
       policySeparation: {
-        discovery: "loose_search",
-        completion: "strict_contract_fields",
+        evidence: "provenance_only",
+        completion: "llm_result_diagnosis",
         semanticComparisonAllowed: false,
       },
     } satisfies AdminWebRetrievalSessionView
@@ -732,7 +591,7 @@ export function buildAdminWebRetrievalLab(input: Pick<LabInput, "timeline" | "le
       sessions: sessions.length,
       attempts: sessions.reduce((sum, session) => sum + session.fetchAttempts.length, 0),
       degraded: sessions.filter((session) => session.degradedState.degraded).length,
-      answerable: sessions.filter((session) => session.verification.canAnswer === true).length,
+      diagnosed: sessions.filter((session) => session.resultDiagnosis.receiptPresent).length,
     },
     sessions,
   }
@@ -756,7 +615,7 @@ export function runAdminWebRetrievalFixtureReplay(input: { fixtureIds?: string[]
     generatedAt: now.getTime(),
     networkUsed: false,
     semanticComparisonAllowed: false,
-    verificationMode: "contract_fields",
+    verificationMode: "llm_result_diagnosis_contract",
     fixtureCount: fixtures.length,
     summary: {
       kind: summary.kind,
@@ -769,10 +628,9 @@ export function runAdminWebRetrievalFixtureReplay(input: { fixtureIds?: string[]
       title: result.title,
       status: result.status,
       attempts: result.attempts,
-      candidateCount: result.candidateCount,
-      canAnswer: result.verdict.canAnswer,
-      acceptedValue: result.verdict.acceptedValue,
-      evidenceSufficiency: result.verdict.evidenceSufficiency,
+      successfulSourceCount: result.successfulSourceCount,
+      evidenceSourceIds: result.evidenceSourceIds,
+      llmDiagnosisExpectation: result.llmDiagnosisExpectation,
       failures: result.failures,
     })),
   }

@@ -22,6 +22,8 @@ import {
   transitionSubSessionStatus,
 } from "../packages/core/src/orchestration/sub-session-runner.ts"
 import type { MessageLedgerEventInput } from "../packages/core/src/runs/message-ledger.ts"
+import { createTestSubSessionMemoryDependencies } from "./fixtures/sub-session-runtime.ts"
+import { createTestResultDiagnosisDependencies } from "./fixtures/agent-runtime.ts"
 
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
@@ -109,8 +111,6 @@ function promptBundle(bundleId = "prompt-bundle:researcher"): AgentPromptBundle 
     agentId: "agent:researcher",
     agentType: "sub_agent",
     role: "dry-run worker",
-    displayNameSnapshot: "Researcher",
-    nicknameSnapshot: "Res",
     personalitySnapshot: "Precise",
     teamContext: [],
     memoryPolicy,
@@ -152,13 +152,11 @@ function runInput(id: string, overrides: Partial<RunSubSessionInput> = {}): RunS
     command: command(id),
     parentAgent: {
       agentId: "agent:knowbee",
-      displayName: "Knowbee",
-      nickname: "노비",
+      agentName: "노비",
     },
     agent: {
       agentId: "agent:researcher",
-      displayName: "Researcher",
-      nickname: "Res",
+      agentName: "Res",
     },
     parentSessionId: "session-parent",
     promptBundle: promptBundle(),
@@ -180,6 +178,8 @@ function makeMemoryDependencies() {
     statusHistory.set(subSession.subSessionId, existing)
   }
   const dependencies: SubSessionRuntimeDependencies = {
+    ...createTestSubSessionMemoryDependencies(),
+    ...createTestResultDiagnosisDependencies(),
     now: () => {
       time += 1
       return time
@@ -237,9 +237,11 @@ describe("task013 sub-session dry-run lifecycle", () => {
     )
 
     expect(outcome.status).toBe("completed")
-    expect(outcome.subSession.parentAgentNickname).toBe("노비")
-    expect(outcome.subSession.agentNickname).toBe("Res")
-    expect(outcome.resultReport?.source?.nicknameSnapshot).toBe("Res")
+    expect(outcome.subSession.parentAgentNameSnapshot).toBe("노비")
+    expect(outcome.subSession.agentNameSnapshot).toBe("Res")
+    expect(outcome.subSession).not.toHaveProperty("parentAgentNickname")
+    expect(outcome.subSession).not.toHaveProperty("agentNickname")
+    expect(outcome.resultReport?.source?.agentNameSnapshot).toBe("Res")
     expect(statusHistory.get("sub:dry-run")).toEqual(["created", "queued", "running", "completed"])
     expect(events.map((event) => event.label)).toEqual(
       expect.arrayContaining([

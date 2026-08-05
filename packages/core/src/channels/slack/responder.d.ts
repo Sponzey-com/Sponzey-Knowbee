@@ -1,5 +1,9 @@
 import type { SlackConfig } from "../../config/types.js";
+import type { ApprovalAggregateTextLanguage } from "../approval-aggregation.js";
 import { type SlackFileDeliveryResult, type SlackTextPartsDeliveryResult } from "./message-delivery.js";
+import { type InteractiveControlText } from "../interactive-control.js";
+import type { IntakeAcknowledgementControlText } from "../intake-acknowledgement-control.js";
+export type SlackResponderLanguage = "ko" | "en";
 export interface SlackApiEnvelope<T = Record<string, unknown>> {
     ok: boolean;
     error?: string;
@@ -21,7 +25,8 @@ export declare class SlackResponder {
     private config;
     private channelId;
     private threadTs;
-    constructor(config: SlackConfig, channelId: string, threadTs: string);
+    private language;
+    constructor(config: SlackConfig, channelId: string, threadTs: string, language?: SlackResponderLanguage);
     private api;
     sendToolStatus(toolName: string): Promise<string>;
     updateToolStatus(messageId: string, toolName: string, success: boolean): Promise<void>;
@@ -30,7 +35,8 @@ export declare class SlackResponder {
     sendFinalResponseWithReceipts(text: string, idempotencyKeyPrefix: string): Promise<SlackTextPartsDeliveryResult>;
     sendError(message: string): Promise<string>;
     sendReceipt(text: string): Promise<string>;
-    sendApprovalRequest(runId: string, text: string): Promise<string>;
+    sendIntakeAcknowledgement(text: IntakeAcknowledgementControlText): Promise<string>;
+    sendApprovalRequest(runId: string, text: InteractiveControlText, language?: ApprovalAggregateTextLanguage): Promise<string>;
     sendFile(filePath: string, caption?: string): Promise<string>;
     sendFileWithReceipt(filePath: string, idempotencyKey: string, caption?: string): Promise<SlackFileDeliveryResult>;
 }

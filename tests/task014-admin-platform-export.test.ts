@@ -1,10 +1,12 @@
 import { createRequire } from "node:module"
-import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { registerAdminRoute } from "../packages/core/src/api/routes/admin.ts"
-import { reloadConfig } from "../packages/core/src/config/index.js"
+import { installApiRuntimeConfig } from "../packages/core/src/api/runtime-context.ts"
+import { createTestRuntimeConfigFixture, type TestRuntimeConfigFixture } from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 import { recordControlEvent } from "../packages/core/src/control-plane/timeline.ts"
 import { closeDb, getDb, insertAuditLog, insertDiagnosticEvent } from "../packages/core/src/db/index.js"
 
@@ -12,39 +14,22 @@ const require = createRequire(import.meta.url)
 const Fastify = require("../packages/core/node_modules/fastify") as (options: { logger: boolean }) => {
   ready(): Promise<void>
   close(): Promise<void>
-  inject(options: { method: string; url: string; payload?: unknown }): Promise<{ statusCode: number; json(): any }>
+  inject(options: { method: string; url: string; payload?: unknown }): Promise<{ statusCode: number; body: string; json(): any }>
 }
 
 const tempDirs: string[] = []
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousAdminUi = process.env["KNOWBEE_ADMIN_UI"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
-const previousNodeEnv = process.env["NODE_ENV"]
+let runtimeFixture: TestRuntimeConfigFixture
 
-function useTempState(): string {
+function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task014-admin-platform-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_ADMIN_UI"] = "1"
-  delete process.env["KNOWBEE_CONFIG"]
-  delete process.env["NODE_ENV"]
-  reloadConfig()
-  getDb()
-  return stateDir
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task014-admin-platform-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function restoreEnv(): void {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousAdminUi === undefined) delete process.env["KNOWBEE_ADMIN_UI"]
-  else process.env["KNOWBEE_ADMIN_UI"] = previousAdminUi
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  if (previousNodeEnv === undefined) delete process.env["NODE_ENV"]
-  else process.env["NODE_ENV"] = previousNodeEnv
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -72,7 +57,7 @@ afterEach(() => {
 
 describe("task014 admin platform inspectors and diagnostic export", () => {
   it("shows Yeonjang/MQTT, DB migration state, and writes sanitized export bundles", async () => {
-    const stateDir = process.env["KNOWBEE_STATE_DIR"]!
+    const stateDir = runtimeFixture.paths.stateDir
     const snapshotDir = join(stateDir, "backups", "snapshots", "snapshot-task014")
     mkdirSync(snapshotDir, { recursive: true })
     writeFileSync(join(snapshotDir, "manifest.json"), JSON.stringify({
@@ -122,6 +107,19 @@ describe("task014 admin platform inspectors and diagnostic export", () => {
         providerRawResponse: "<!doctype html><html><body>blocked</body></html>",
       },
     })
+    recordControlEvent({
+      eventType: "yeonjang.goal.validation",
+      component: "yeonjang",
+      requestGroupId: "group-task014",
+      severity: "warning",
+      summary: "yeonjang-goal-validation:task014 operationId=operation:task014 receipt payload raw observed state structured diagnosis payload DB row",
+      detail: {
+        operationId: "operation:task014",
+        receiptPayload: "task014 private receipt payload",
+        rawObservedState: "task014 raw observed state",
+        structuredDiagnosisPayload: { verdict: "task014 private structured diagnosis" },
+      },
+    })
     insertDiagnosticEvent({
       kind: "migration.failed",
       summary: "TASK014 migration diagnostic",
@@ -130,6 +128,9 @@ describe("task014 admin platform inspectors and diagnostic export", () => {
         backupPath: "/Users/dongwooshin/.knowbee/backups/raw.sqlite3",
         token: "sk-task014-diagnostic-secret",
         html: "<html><body>do not export</body></html>",
+        request_diagnosis: { goal: "TASK014 private diagnosis goal" },
+        operation_id: "operation:task014-diagnostic",
+        raw_observed_state: "task014 diagnostic raw observed state",
       },
     })
     insertAuditLog({
@@ -137,8 +138,16 @@ describe("task014 admin platform inspectors and diagnostic export", () => {
       session_id: null,
       source: "test",
       tool_name: "task014.audit",
-      params: JSON.stringify({ authorization: "Bearer sk-task014-audit-secret", localPath: "/Users/dongwooshin/.knowbee/raw/audit.html" }),
-      output: JSON.stringify({ providerRawResponse: "<html><body>audit</body></html>" }),
+      params: JSON.stringify({
+        authorization: "Bearer sk-task014-audit-secret",
+        localPath: "/Users/dongwooshin/.knowbee/raw/audit.html",
+        operationId: "operation:task014-audit",
+      }),
+      output: JSON.stringify({
+        providerRawResponse: "<html><body>audit</body></html>",
+        serialized: JSON.stringify({ solution_plan: { steps: ["TASK014 private plan step"] } }),
+        receiptPayload: "task014 audit receipt payload",
+      }),
       result: "failed",
       duration_ms: null,
       approval_required: 0,
@@ -147,7 +156,15 @@ describe("task014 admin platform inspectors and diagnostic export", () => {
     })
 
     const app = Fastify({ logger: false })
-    registerAdminRoute(app)
+    installApiRuntimeConfig(app as never, runtimeFixture.config, runtimeFixture.paths)
+    registerAdminRoute(app, {
+      uiModeRuntime: {
+        adminActivation: {
+          env: { KNOWBEE_ADMIN_UI: "1" },
+          nodeEnv: undefined,
+        },
+      },
+    })
     await app.ready()
     try {
       const inspectorResponse = await app.inject({ method: "GET", url: "/api/admin/platform-inspectors?limit=100" })
@@ -178,12 +195,19 @@ describe("task014 admin platform inspectors and diagnostic export", () => {
       const job = await waitForExportJob(app, started.job.id)
       expect(job.status).toBe("succeeded")
       expect(job.progress).toBe(100)
-      expect(job.bundlePath).toBeTruthy()
+      expect(job.bundlePath).toBe("[internal-path-redacted]")
+      expect(job.bundleUrl).toBe(`/api/admin/diagnostic-exports/${encodeURIComponent(job.id)}/bundle`)
 
-      const bundle = readFileSync(job.bundlePath, "utf-8")
+      const bundleResponse = await app.inject({ method: "GET", url: job.bundleUrl })
+      expect(bundleResponse.statusCode).toBe(200)
+      const bundle = bundleResponse.body
       expect(bundle).toContain("knowbee.admin.diagnostic_export")
       expect(bundle).toContain("[redacted")
       expect(bundle).not.toMatch(/sk-task014|Bearer sk-|\/Users\/dongwooshin|<!doctype|<html/i)
+      expect(bundle).not.toMatch(/TASK014 private diagnosis goal|TASK014 private plan step/u)
+      expect(bundle).toContain("[internal-evidence-redacted]")
+      expect(bundle).not.toMatch(/yeonjang-goal-validation|operationId|operation:task014|receipt payload|raw observed state|structured diagnosis payload|DB row/u)
+      expect(bundle).not.toMatch(/task014 private receipt payload|task014 private structured diagnosis|task014 diagnostic raw observed state|task014 audit receipt payload/u)
 
       const listResponse = await app.inject({ method: "GET", url: "/api/admin/diagnostic-exports" })
       expect(listResponse.statusCode).toBe(200)

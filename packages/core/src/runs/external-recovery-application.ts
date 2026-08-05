@@ -1,10 +1,15 @@
 import type { RunChunkDeliveryHandler } from "./delivery.js"
-import type { FinalizationDependencies, FinalizationSource } from "./finalization.js"
+import type {
+  FinalizationDependencies,
+  FinalizationSource,
+  StandaloneAssistantMessageResponseContext,
+} from "./finalization.js"
 import type { ExternalRecoveryPlan } from "./external-recovery.js"
 import { applyTerminalApplication } from "./terminal-application.js"
 
 export type AppliedExternalRecoveryPlan =
   | { kind: "stop" }
+  | { kind: "review" }
   | {
       kind: "retry"
       nextState: ExternalRecoveryPlan["nextState"]
@@ -30,6 +35,7 @@ export async function applyExternalRecoveryPlan(
     source: FinalizationSource
     onChunk: RunChunkDeliveryHandler | undefined
     preview: string
+    responseContext?: StandaloneAssistantMessageResponseContext | undefined
     plan: ExternalRecoveryPlan
     seenKeys: Set<string>
     finalizationDependencies: FinalizationDependencies
@@ -37,20 +43,27 @@ export async function applyExternalRecoveryPlan(
   dependencies: ExternalRecoveryApplicationDependencies,
   moduleDependencies: ExternalRecoveryApplicationModuleDependencies = defaultModuleDependencies,
 ): Promise<AppliedExternalRecoveryPlan> {
+  if (params.plan.reviewRequired) {
+    params.seenKeys.add(params.plan.recoveryKey)
+    dependencies.appendRunEvent(params.runId, params.plan.eventLabel)
+    return { kind: "review" }
+  }
+
   if (params.plan.duplicateStop) {
     await moduleDependencies.applyTerminalApplication({
       runId: params.runId,
       sessionId: params.sessionId,
       source: params.source,
       onChunk: params.onChunk,
-        application: {
-          kind: "stop",
-          preview: params.preview,
-          summary: params.plan.duplicateStop.summary,
-          ...(params.plan.duplicateStop.reason ? { reason: params.plan.duplicateStop.reason } : {}),
-          ...(params.plan.duplicateStop.rawMessage ? { rawMessage: params.plan.duplicateStop.rawMessage } : {}),
-          remainingItems: params.plan.duplicateStop.remainingItems,
-        },
+      ...(params.responseContext ? { responseContext: params.responseContext } : {}),
+      application: {
+        kind: "stop",
+        preview: params.preview,
+        summary: params.plan.duplicateStop.summary,
+        ...(params.plan.duplicateStop.reason ? { reason: params.plan.duplicateStop.reason } : {}),
+        ...(params.plan.duplicateStop.rawMessage ? { rawMessage: params.plan.duplicateStop.rawMessage } : {}),
+        remainingItems: params.plan.duplicateStop.remainingItems,
+      },
       dependencies: params.finalizationDependencies,
     })
     return { kind: "stop" }

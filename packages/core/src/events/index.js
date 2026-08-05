@@ -1,3 +1,8 @@
+import { createLogger } from "../logger/index.js";
+const log = createLogger("events");
+function logListenerError(event, error) {
+    log.error("Unhandled event listener error", { event, error });
+}
 class TypedEventBus {
     listeners = new Map();
     on(event, listener) {
@@ -16,9 +21,14 @@ class TypedEventBus {
         if (!set)
             return;
         for (const listener of set) {
-            void Promise.resolve(listener(payload)).catch((err) => {
-                console.error(`[events] Unhandled error in listener for "${key}":`, err);
-            });
+            try {
+                void Promise.resolve(listener(payload)).catch((err) => {
+                    logListenerError(key, err);
+                });
+            }
+            catch (err) {
+                logListenerError(key, err);
+            }
         }
     }
     once(event, listener) {

@@ -1,50 +1,57 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.ts"
+import { createArtifactStorageContext } from "../packages/core/src/artifacts/lifecycle.ts"
 import { closeDb } from "../packages/core/src/db/index.js"
 import {
   AGENT_EXECUTION_DECISION_V2_CONTRACT_VERSION,
   type AgentExecutionContext,
   type AgentExecutionDecisionV2,
 } from "../packages/core/src/orchestration/execution-decision-contract.ts"
-import {
-  buildExecutionGraphSnapshot,
-} from "../packages/core/src/orchestration/execution-graph-snapshot.ts"
+import { buildExecutionGraphSnapshot } from "../packages/core/src/orchestration/execution-graph-snapshot.ts"
 import { runAgentExecutionHarness } from "../packages/core/src/orchestration/execution-harness.ts"
 import {
   buildExampleEnterpriseTopology,
   createEnterpriseTopologyRegistry,
 } from "../packages/core/src/index.ts"
 import { runIntakeBridgePass } from "../packages/core/src/runs/intake-bridge-pass.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const now = Date.UTC(2026, 4, 8, 0, 0, 0)
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-no-provider-direct-v2-"))
-  tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json")
-  writeFileSync(process.env.KNOWBEE_CONFIG, JSON.stringify({
-    orchestration: {
-      mode: "orchestration",
-      featureFlagEnabled: true,
-      subAgents: [],
-      teams: [],
-    },
-    ai: {
-      connection: {
-        provider: "openai",
-        model: "gpt-test",
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-no-provider-direct-v2-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({
+    rootDir,
+    configText: JSON.stringify(
+      {
+        orchestration: {
+          mode: "orchestration",
+          featureFlagEnabled: true,
+          subAgents: [],
+          teams: [],
+        },
+        ai: {
+          connection: {
+            provider: "openai",
+            model: "gpt-test",
+          },
+        },
       },
-    },
-  }, null, 2))
-  reloadConfig()
+      null,
+      2,
+    ),
+  })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 afterEach(() => {
@@ -52,11 +59,6 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
-  if (previousStateDir === undefined) delete process.env.KNOWBEE_STATE_DIR
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) delete process.env.KNOWBEE_CONFIG
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
 })
 
 function activateExampleTopology(): void {
@@ -79,6 +81,10 @@ function createDependencies() {
     scheduleDelayedRun: vi.fn(),
     startDelegatedRun: vi.fn(),
     normalizeTaskProfile: vi.fn((taskProfile: string | undefined) => taskProfile ?? "general_chat"),
+    recordCanonicalIntakeDiagnosis: vi.fn(async () => ({ ok: true as const })),
+    authorizeCanonicalIntakePlan: vi.fn(async () => ({ ok: true as const })),
+    recordCanonicalExecutionStart: vi.fn(async () => ({ ok: true as const })),
+    releaseCanonicalSimplePath: vi.fn(async () => ({ ok: true as const })),
     recordExecutionDecisionTrace: vi.fn(),
     logInfo: vi.fn(),
   }
@@ -95,17 +101,19 @@ function taskIntakeResult(actionPayload: Record<string, unknown> = {}) {
       mode: "accepted_receipt" as const,
       text: "요청을 접수했습니다.",
     },
-    action_items: [{
-      id: "run-task-1",
-      type: "run_task" as const,
-      title: "채널 요청 처리",
-      priority: "normal" as const,
-      reason: "후속 실행",
-      payload: {
-        goal: "채널 요청을 처리한다.",
-        ...actionPayload,
+    action_items: [
+      {
+        id: "run-task-1",
+        type: "run_task" as const,
+        title: "채널 요청 처리",
+        priority: "normal" as const,
+        reason: "후속 실행",
+        payload: {
+          goal: "채널 요청을 처리한다.",
+          ...actionPayload,
+        },
       },
-    }],
+    ],
     structured_request: {
       source_language: "ko" as const,
       normalized_english: "Handle the channel request.",
@@ -206,10 +214,14 @@ function moduleDependencies(input: {
     inferDelegatedTaskProfile: vi.fn().mockReturnValue("general_chat"),
     buildFollowupPrompt: vi.fn().mockReturnValue("followup prompt"),
     buildExecutionGraphSnapshot,
-    runAgentExecutionHarness: input.runAgentExecutionHarness ?? vi.fn((harnessInput) => runAgentExecutionHarness({
-      ...harnessInput,
-      callModel: async ({ context }) => JSON.stringify(selfSolveDecision(context)),
-    })),
+    runAgentExecutionHarness:
+      input.runAgentExecutionHarness ??
+      vi.fn((harnessInput) =>
+        runAgentExecutionHarness({
+          ...harnessInput,
+          callModel: async ({ context }) => JSON.stringify(selfSolveDecision(context)),
+        }),
+      ),
   }
 }
 
@@ -220,23 +232,33 @@ describe("provider direct with topology v2", () => {
     const dependencies = createDependencies()
     const resolveRunRoute = vi.fn()
 
-    const result = await runIntakeBridgePass({
-      message: "일반 요청을 처리해줘",
-      originalRequest: "일반 요청을 처리해줘",
-      sessionId: "session:no-provider-v2",
-      requestGroupId: "run:no-provider-v2",
-      model: "gpt-test",
-      workDir: "/tmp",
-      source: "telegram",
-      runId: "run:no-provider-v2",
-      onChunk: undefined,
-      reuseConversationContext: false,
-    }, dependencies, moduleDependencies({
-      analyzeTaskIntake: () => taskIntakeResult(),
-      resolveRunRoute,
-    }))
+    const result = await runIntakeBridgePass(
+      {
+        config: runtimeFixture.config,
+        message: "일반 요청을 처리해줘",
+        originalRequest: "일반 요청을 처리해줘",
+        sessionId: "session:no-provider-v2",
+        requestGroupId: "run:no-provider-v2",
+        model: "gpt-test",
+        workDir: "/tmp",
+        source: "telegram",
+        runId: "run:no-provider-v2",
+        artifactStorage: createArtifactStorageContext(runtimeFixture.paths),
+        onChunk: undefined,
+        reuseConversationContext: false,
+      },
+      dependencies,
+      moduleDependencies({
+        analyzeTaskIntake: () => taskIntakeResult(),
+        resolveRunRoute,
+      }),
+    )
 
-    expect(result).toBeNull()
+    expect(result).toMatchObject({
+      kind: "execute",
+      message: "followup prompt",
+      eventLabel: "LLM intake 실행 계약 적용",
+    })
     expect(resolveRunRoute).not.toHaveBeenCalled()
     expect(dependencies.startDelegatedRun).not.toHaveBeenCalled()
     expect(dependencies.appendRunEvent).toHaveBeenCalledWith(
@@ -258,32 +280,43 @@ describe("provider direct with topology v2", () => {
     })
     const decisionHarness = vi.fn()
 
-    const result = await runIntakeBridgePass({
-      message: "openai로 처리해줘",
-      originalRequest: "openai로 처리해줘",
-      sessionId: "session:explicit-provider-v2",
-      requestGroupId: "run:explicit-provider-v2",
-      model: "gpt-test",
-      workDir: "/tmp",
-      source: "telegram",
-      runId: "run:explicit-provider-v2",
-      onChunk: undefined,
-      reuseConversationContext: false,
-    }, dependencies, moduleDependencies({
-      analyzeTaskIntake: () => taskIntakeResult({ preferred_target: "provider:openai" }),
-      resolveRunRoute,
-      runAgentExecutionHarness: decisionHarness,
-    }))
+    const result = await runIntakeBridgePass(
+      {
+        config: runtimeFixture.config,
+        message: "openai로 처리해줘",
+        originalRequest: "openai로 처리해줘",
+        sessionId: "session:explicit-provider-v2",
+        requestGroupId: "run:explicit-provider-v2",
+        model: "gpt-test",
+        workDir: "/tmp",
+        source: "telegram",
+        runId: "run:explicit-provider-v2",
+        artifactStorage: createArtifactStorageContext(runtimeFixture.paths),
+        onChunk: undefined,
+        reuseConversationContext: false,
+      },
+      dependencies,
+      moduleDependencies({
+        analyzeTaskIntake: () => taskIntakeResult({ preferred_target: "provider:openai" }),
+        resolveRunRoute,
+        runAgentExecutionHarness: decisionHarness,
+      }),
+    )
 
     expect(result?.kind).toBe("complete_silent")
-    expect(resolveRunRoute).toHaveBeenCalledWith(expect.objectContaining({
-      preferredTarget: "provider:openai",
-    }))
+    expect(resolveRunRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preferredTarget: "provider:openai",
+      }),
+      expect.objectContaining({ orchestration: expect.any(Object) }),
+    )
     expect(decisionHarness).not.toHaveBeenCalled()
-    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(expect.objectContaining({
-      targetId: "provider:openai",
-      targetLabel: "OpenAI",
-      providerId: "openai",
-    }))
+    expect(dependencies.startDelegatedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetId: "provider:openai",
+        targetLabel: "OpenAI",
+        providerId: "openai",
+      }),
+    )
   })
 })

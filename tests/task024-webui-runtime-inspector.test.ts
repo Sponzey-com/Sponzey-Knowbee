@@ -9,10 +9,13 @@ import {
   describeRuntimeApprovalState,
   describeRuntimeFinalizerStatus,
   describeRuntimeTopologyRouting,
+  runtimeOrchestrationModeLabel,
   runtimeTopologyReasonLabel,
   runtimeControlActionLabels,
   runtimeExecutorDisplayName,
   runtimeExecutorRoleName,
+  runtimeSubSessionAgentName,
+  runtimeValidationStatusLabel,
   selectRuntimeSubSession,
   selectRuntimeTopologyActiveState,
 } from "../packages/webui/src/lib/runtime-inspector.js"
@@ -66,7 +69,7 @@ function projection(): RunRuntimeInspectorProjection {
         "node:reviewer": "Reviewer",
       },
       executionDecisionExecutorRoleNameById: {
-        "agent:knowbee": "마스터 실행자",
+        "agent:knowbee": "메인 에이전트",
         "workspace:draft:node:researcher": "시장 분석 실행자",
         "workspace:draft:node:reviewer": "검토 실행자",
         "node:researcher": "시장 분석 실행자",
@@ -114,8 +117,8 @@ function projection(): RunRuntimeInspectorProjection {
         subSessionId: "sub:running",
         parentRunId: "run:task024",
         agentId: "agent:researcher",
-        agentDisplayName: "Researcher",
-        agentNickname: "Researcher",
+        agentName: "Researcher",
+        agentNameSnapshot: "Researcher",
         status: "running",
         commandSummary: "Inspect runtime projection",
         expectedOutputs: [
@@ -159,7 +162,8 @@ function projection(): RunRuntimeInspectorProjection {
         subSessionId: "sub:revision",
         parentRunId: "run:task024",
         agentId: "agent:reviewer",
-        agentDisplayName: "Reviewer",
+        agentName: "Reviewer",
+        agentNameSnapshot: "Reviewer",
         status: "needs_revision",
         commandSummary: "Review answer",
         expectedOutputs: [],
@@ -199,9 +203,11 @@ function projection(): RunRuntimeInspectorProjection {
       {
         exchangeId: "exchange:task024",
         sourceOwnerId: "agent:researcher",
-        sourceNickname: "Researcher",
+        sourceAgentName: "Researcher",
+        sourceAgentNameSnapshot: "Researcher",
         recipientOwnerId: "agent:reviewer",
-        recipientNickname: "Reviewer",
+        recipientAgentName: "Reviewer",
+        recipientAgentNameSnapshot: "Reviewer",
         purpose: "Share redacted research summary",
         allowedUse: "temporary_context",
         retentionPolicy: "session_only",
@@ -246,18 +252,31 @@ function projection(): RunRuntimeInspectorProjection {
 }
 
 describe("task024 webui runtime inspector helpers", () => {
+  it("labels canonical and legacy direct main-agent runtime modes without exposing raw mode names", () => {
+    expect(runtimeOrchestrationModeLabel("direct_main_agent", text)).toBe("메인 에이전트 직접 처리")
+    expect(runtimeOrchestrationModeLabel("single_knowbee", text)).toBe("메인 에이전트 직접 처리")
+    expect(runtimeOrchestrationModeLabel("orchestration", text)).toBe("서브 에이전트 위임")
+  })
+
+  it("uses sub-agent relationship wording for direct-child validation status", () => {
+    const label = runtimeValidationStatusLabel("selected_executor_not_direct_child", text)
+
+    expect(label).toBe("선택된 서브 에이전트가 현재 서브 에이전트의 직속 서브 에이전트가 아님")
+    expect(label).not.toContain("직접 하위")
+  })
+
   it("selects sub-sessions and summarizes runtime projection state", () => {
     const runtime = projection()
     const selected = selectRuntimeSubSession(runtime, "sub:revision")
     const cards = buildRuntimeInspectorSummaryCards(runtime, text)
 
-    expect(selected?.agentDisplayName).toBe("Reviewer")
+    expect(selected?.agentName).toBe("Reviewer")
     expect(selected?.review?.parentIntegrationStatus).toBe("blocked_insufficient_evidence")
-    expect(cards.find((card) => card.id === "mode")?.value).toBe("orchestration")
+    expect(cards.find((card) => card.id === "mode")?.value).toBe("서브 에이전트 위임")
     expect(cards.find((card) => card.id === "subsessions")?.tone).toBe("amber")
     expect(cards.find((card) => card.id === "data")?.value).toBe("1")
     expect(cards.find((card) => card.id === "topology")?.value).toBe("Researcher")
-    expect(describeRuntimeFinalizerStatus(runtime, text)).toContain("parent finalizer")
+    expect(describeRuntimeFinalizerStatus(runtime, text)).toBe("최종 답변 전달 완료")
   })
 
   it("labels approval states and only exposes controls supplied by the server policy", () => {
@@ -270,6 +289,36 @@ describe("task024 webui runtime inspector helpers", () => {
     )
     expect(runtimeControlActionLabels(running, text)).toEqual(["전송", "방향 조정", "중지"])
     expect(runtimeControlActionLabels(revision, text)).toEqual(["재시도", "피드백", "재위임"])
+  })
+
+  it("renders sub-session labels as one canonical agent name", () => {
+    const runtime = projection()
+    ;(runtime.subSessions[0]! as typeof runtime.subSessions[number] & {
+      agentDisplayName: string
+    }).agentDisplayName = "Legacy Display Name"
+    runtime.subSessions[0]!.agentName = "Canonical Agent Name"
+    runtime.subSessions[0]!.agentNameSnapshot = "Snapshot Agent Name"
+
+    const html = renderToStaticMarkup(
+      createElement(RunRuntimeInspectorPanel, {
+        projection: runtime,
+        selectedSubSessionId: "sub:running",
+        onSelectSubSession: () => undefined,
+        loading: false,
+        error: "",
+      }),
+    )
+
+    expect(runtimeSubSessionAgentName(runtime.subSessions[0]!)).toBe("Canonical Agent Name")
+    expect(html).toContain("Canonical Agent Name")
+    expect(html).not.toContain("Snapshot Agent Name")
+    expect(html).not.toContain("Legacy Display Name")
+  })
+
+  it("does not use legacy sub-session display names or internal ids as fallback labels", () => {
+    expect(runtimeSubSessionAgentName({
+      agentId: "agent:internal-id",
+    })).toBe("Unnamed sub-agent")
   })
 
   it("describes topology routing and exposes active node/edge state for the topology canvas", () => {
@@ -307,12 +356,43 @@ describe("task024 webui runtime inspector helpers", () => {
     expect(viewModels.basic.selectedExecutorName).toBe("Researcher")
     expect(viewModels.basic.selectedExecutorRoleName).toBe("시장 분석 실행자")
     expect(viewModels.basic.selectedPathNames).toEqual(["노비", "Researcher"])
-    expect(viewModels.basic.delegationStatus).toBe("하위 실행자에게 위임")
-    expect(viewModels.basic.aggregationStatus).toContain("parent finalizer")
+    expect(viewModels.basic.delegationStatus).toBe("하위 서브 에이전트에게 위임")
+    expect(viewModels.basic.aggregationStatus).toBe("최종 답변 전달 완료")
+    expect(viewModels.diagnostic.identity.map((item) => item.label)).toEqual(expect.arrayContaining([
+      "실행",
+      "요청 그룹",
+      "최상위 실행",
+    ]))
+    expect(viewModels.diagnostic.routing.map((item) => item.label)).toEqual(expect.arrayContaining([
+      "위임 구조",
+      "위임 구조 출처",
+      "위임 흐름 ID",
+      "위임 흐름 출처",
+    ]))
     expect(viewModels.diagnostic.identity.map((item) => item.value)).toContain("group:task024")
     expect(viewModels.diagnostic.executorIds.find((item) => item.id === "selected")?.values).toEqual([
       "workspace:draft:node:researcher",
     ])
+  })
+
+  it("uses the configured root executor name for direct root route labels", () => {
+    const runtime = projection()
+    runtime.topologyRouting.executionDecisionRoute = "root_knowbee_direct"
+    runtime.topologyRouting.executionDecisionExecutorNameById["agent:knowbee"] = "마당쇠"
+    const viewModels = buildRuntimeInspectorViewModels(runtime, text)
+
+    expect(viewModels.basic.delegationStatus).toBe("마당쇠가 직접 처리")
+    expect(viewModels.basic.delegationStatus).not.toBe("노비가 직접 처리")
+  })
+
+  it("uses the configured root executor name for direct fallback labels", () => {
+    const runtime = projection()
+    runtime.topologyRouting.executionDecisionFallbackReason = "root_knowbee_direct"
+    runtime.topologyRouting.executionDecisionExecutorNameById["agent:knowbee"] = "마당쇠"
+    const viewModels = buildRuntimeInspectorViewModels(runtime, text)
+
+    expect(viewModels.basic.routingPills).toContain("대안 마당쇠가 처리")
+    expect(viewModels.basic.routingPills.join(" ")).not.toContain("노비가 처리")
   })
 
   it("renders decision names in the basic view and keeps internal ids in diagnostics", () => {
@@ -334,18 +414,19 @@ describe("task024 webui runtime inspector helpers", () => {
     const migrationSourceStart = html.indexOf("executor_topology_v2_materialized_read_model")
 
     expect(runtimeTopologyReasonLabel("topology_routing_not_opted_in", text)).toBe("저장된 위임 흐름을 쓰지 않음")
-    expect(html).toContain("노비 실행 판단")
+    expect(html).toContain("메인 에이전트 실행 판단")
     expect(html).toContain("실행 흐름")
     expect(html).toContain("진단 정보")
-    expect(html).toContain("판단 후보 ID")
-    expect(html).toContain("전체 등록 실행자 ID")
-    expect(html).toContain("선택된 실행자")
+    expect(html).toContain("판단 후보 내부 식별자")
+    expect(html).toContain("등록된 내부 식별자")
+    expect(html).toContain("선택된 서브 에이전트")
     expect(html).toContain("시장 분석 실행자")
     expect(html).toContain("Researcher")
     expect(html).toContain("Reviewer")
     expect(html).toContain("노비")
     expect(html).toContain("위임 흐름")
-    expect(html).toContain("스키마")
+    expect(html).toContain("구성 형식")
+    expect(html).toContain("최종 답변 전달 완료")
     expect(html).toContain("executor_topology_v2_materialized_read_model")
     expect(html).toContain("직접 실행 대안 차단됨")
     expect(diagnosticStart).toBeGreaterThan(0)
@@ -353,6 +434,8 @@ describe("task024 webui runtime inspector helpers", () => {
     expect(rawReasonStart).toBeGreaterThan(diagnosticStart)
     expect(migrationSourceStart).toBeGreaterThan(diagnosticStart)
     expect(html).not.toContain("provider_direct_blocked_without_explicit_target")
+    expect(html).not.toContain("parent finalizer")
+    expect(html).not.toContain("orchestration</div>")
     expect(html).not.toContain("라우터")
   })
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   applyChunkDeliveryReceipt,
   buildSuccessfulDeliverySummary,
@@ -11,6 +11,20 @@ import {
   type SuccessfulFileDelivery,
   type SuccessfulTextDelivery,
 } from "../packages/core/src/runs/delivery.ts"
+import {
+  createTestDbRuntimeFixture,
+  type TestDbRuntimeFixture,
+} from "./fixtures/runtime-db.ts"
+
+let dbRuntime: TestDbRuntimeFixture
+
+beforeEach(() => {
+  dbRuntime = createTestDbRuntimeFixture("knowbee-run-delivery-")
+})
+
+afterEach(() => {
+  dbRuntime.dispose()
+})
 
 describe("runs delivery helpers", () => {
   it("summarizes the most recent successful file delivery", () => {
@@ -164,9 +178,11 @@ describe("runs delivery helpers", () => {
 
   it("returns undefined and reports an error when chunk delivery throws", async () => {
     const onError = vi.fn()
+    const secret = "sk-task0582-delivery-secret-1234567890"
+    const localPath = "/Users/dongwooshin/private/delivery-secret.txt"
     const result = await deliverChunk({
       onChunk: async () => {
-        throw new Error("boom <html><body>raw upstream page</body></html>")
+        throw new Error(`boom token=${secret} path=${localPath} <html><body>raw upstream page</body></html>`)
       },
       chunk: { type: "text", delta: "hello" },
       runId: "run-1",
@@ -179,6 +195,8 @@ describe("runs delivery helpers", () => {
     expect(onError.mock.calls[0]?.[0]).toContain("chunk delivery failed")
     expect(onError.mock.calls[0]?.[0]).not.toContain("<html>")
     expect(onError.mock.calls[0]?.[0]).not.toContain("raw upstream page")
+    expect(onError.mock.calls[0]?.[0]).not.toContain(secret)
+    expect(onError.mock.calls[0]?.[0]).not.toContain(localPath)
   })
 
   it("delivers a chunk and applies delivery receipts in one helper", async () => {
@@ -282,12 +300,37 @@ describe("runs delivery helpers", () => {
     const emitStream = vi.fn()
     const emitEnd = vi.fn()
     const writeReplyLog = vi.fn()
-    const onChunk = vi.fn().mockResolvedValue(undefined)
+    const deliveredText = "안녕하세요 task014"
+    const onChunk = vi.fn(async (chunk: { type: string }) =>
+      chunk.type === "done"
+        ? {
+            textDeliveries: [
+              {
+                channel: "telegram" as const,
+                text: deliveredText,
+                messageIds: [14],
+                deliveryReceipts: [
+                  {
+                    channelId: "telegram:primary",
+                    provider: "telegram",
+                    connectionId: "telegram:primary",
+                    target: { roomId: "chat:task014" },
+                    status: "sent" as const,
+                    timestamp: 123,
+                    idempotencyKey: "telegram:task014:final",
+                    messageId: "14",
+                  },
+                ],
+              },
+            ],
+          }
+        : undefined,
+    )
 
     const receipt = await emitAssistantTextDelivery({
       runId: "run-delivery-assistant-text",
       sessionId: "session-delivery-assistant-text",
-      text: "안녕하세요 task014",
+      text: deliveredText,
       source: "telegram",
       onChunk,
       force: true,
@@ -310,6 +353,11 @@ describe("runs delivery helpers", () => {
     expect(emitStream).toHaveBeenCalledWith({ sessionId: "session-delivery-assistant-text", runId: "run-delivery-assistant-text", delta: "안녕하세요 task014" })
     expect(emitEnd).toHaveBeenCalledWith({ sessionId: "session-delivery-assistant-text", runId: "run-delivery-assistant-text", durationMs: 0 })
     expect(onChunk).toHaveBeenCalledTimes(2)
+    expect(onChunk).toHaveBeenNthCalledWith(1, {
+      type: "text",
+      delta: "안녕하세요 task014",
+      textSource: "llm_reviewed",
+    })
     expect(writeReplyLog).toHaveBeenCalledWith("telegram", "안녕하세요 task014")
   })
 

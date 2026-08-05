@@ -1,8 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import {
   closeDb,
   getDb,
@@ -17,28 +16,16 @@ import {
   recordPromptTimeRecallTrace,
   renderMaintenanceRestorePromptBlock,
 } from "../packages/core/src/memory/retrieval-restore.ts"
-import { closeMemoryJournalDb } from "../packages/core/src/memory/journal.js"
 import { storeMemoryDocument } from "../packages/core/src/memory/store.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
 
 function useTempState(): void {
   closeDb()
-  closeMemoryJournalDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task005-restore-"))
   tempDirs.push(stateDir)
-  const configPath = join(stateDir, "config.json5")
-  writeFileSync(configPath, `{
-    ai: { connection: { provider: "ollama", model: "llama3.2", endpoint: "http://127.0.0.1:11434" } },
-    memory: { searchMode: "fts" },
-    webui: { enabled: true, host: "127.0.0.1", port: 0, auth: { enabled: false } },
-    security: { approvalMode: "off" }
-  }`, "utf-8")
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  process.env["KNOWBEE_CONFIG"] = configPath
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 function baseCapsule(capsuleId: string, createdAt: number, summary: string): MemoryCapsule {
@@ -54,7 +41,7 @@ function baseCapsule(capsuleId: string, createdAt: number, summary: string): Mem
       channelKey: "webui",
       threadKey: "thread-main",
     },
-    nicknameSnapshot: "노비",
+    agentNameSnapshot: "노비",
     capsuleKind: "session_compaction",
     summary,
     activeObjectives: ["현재 작업 유지"],
@@ -78,12 +65,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  closeMemoryJournalDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })

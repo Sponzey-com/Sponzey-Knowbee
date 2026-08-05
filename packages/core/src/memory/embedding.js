@@ -1,7 +1,4 @@
-/**
- * Embedding providers for vector memory search.
- * Gracefully degrades to no-op if provider unavailable.
- */
+import { createHash } from "node:crypto";
 // ── Null (no-op) provider ────────────────────────────────────────────────────
 export class NullEmbeddingProvider {
     providerId = "none";
@@ -105,38 +102,40 @@ export class OpenAIEmbeddingProvider {
         return data.data.map((d) => d.embedding);
     }
 }
-// ── Factory ──────────────────────────────────────────────────────────────────
-import { getConfig } from "../config/index.js";
 let _provider = null;
-export function getEmbeddingProvider() {
-    if (_provider)
-        return _provider;
-    const cfg = getConfig();
-    const emb = cfg.memory?.embedding;
+function embeddingConfigKey(embedding) {
+    return createHash("sha256").update(JSON.stringify(embedding ?? null)).digest("hex");
+}
+function createEmbeddingProvider(memoryConfig) {
+    const emb = memoryConfig?.embedding;
     if (!emb) {
-        _provider = new NullEmbeddingProvider();
-        return _provider;
+        return new NullEmbeddingProvider();
     }
     if (emb.provider === "ollama") {
-        _provider = new OllamaEmbeddingProvider({
+        return new OllamaEmbeddingProvider({
             ...(emb.baseUrl !== undefined && { baseUrl: emb.baseUrl }),
             model: emb.model,
         });
     }
     else if (emb.provider === "voyage" && emb.apiKey) {
-        _provider = new VoyageEmbeddingProvider({ apiKey: emb.apiKey, model: emb.model });
+        return new VoyageEmbeddingProvider({ apiKey: emb.apiKey, model: emb.model });
     }
     else if (emb.provider === "openai" && emb.apiKey) {
-        _provider = new OpenAIEmbeddingProvider({
+        return new OpenAIEmbeddingProvider({
             apiKey: emb.apiKey,
             model: emb.model,
             ...(emb.baseUrl !== undefined && { baseUrl: emb.baseUrl }),
         });
     }
-    else {
-        _provider = new NullEmbeddingProvider();
-    }
-    return _provider;
+    return new NullEmbeddingProvider();
+}
+export function getEmbeddingProvider(memoryConfig) {
+    const key = embeddingConfigKey(memoryConfig?.embedding);
+    if (_provider?.key === key)
+        return _provider.provider;
+    const provider = createEmbeddingProvider(memoryConfig);
+    _provider = { key, provider };
+    return provider;
 }
 /** Reset provider singleton (e.g., after config reload) */
 export function resetEmbeddingProvider() {
@@ -145,8 +144,8 @@ export function resetEmbeddingProvider() {
 export function getEmbeddingCacheKey(provider, textChecksum) {
     return `${provider.providerId}:${provider.modelId}:${provider.dimensions}:${textChecksum}`;
 }
-export function getVectorBackendStatus() {
-    const provider = getEmbeddingProvider();
+export function getVectorBackendStatus(memoryConfig) {
+    const provider = getEmbeddingProvider(memoryConfig);
     if (provider.dimensions <= 0) {
         return { available: false, backend: "none", reason: "embedding provider is not configured" };
     }

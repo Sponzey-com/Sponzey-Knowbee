@@ -1,3 +1,4 @@
+import { type SanitizedErrorSummary } from "./error-sanitizer.js";
 import type { FinalizationSource } from "./finalization.js";
 interface FatalFailureApplicationDependencies {
     appendRunEvent: (runId: string, event: string) => void;
@@ -22,6 +23,7 @@ export interface FatalFailureApplicationParams {
     summary: string;
     title: string;
     extraEvents?: string[];
+    sanitizedError?: SanitizedErrorSummary;
     appendMessageEventOnAbort?: boolean;
     appendExtraEventsOnAbort?: boolean;
 }

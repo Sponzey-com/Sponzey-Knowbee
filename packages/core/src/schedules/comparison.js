@@ -1,8 +1,23 @@
 import { detectAvailableProvider, getDefaultModel, getProvider } from "../ai/index.js";
 import { buildDeliveryProjection, buildScheduleIdentityProjection, buildSchedulePayloadProjection, toCanonicalJson, } from "../contracts/index.js";
 import { chatWithContextPreflight } from "../runs/context-preflight.js";
+import { sanitizeUserFacingError } from "../runs/error-sanitizer.js";
 import { loadPromptTemplate } from "../memory/knowbee-md.js";
+import { loadPromptValue } from "../memory/prompt-fragments.js";
+function scheduleComparisonProviderErrorUserMessage(error) {
+    const message = error instanceof Error ? error.message : "예약 비교 AI 호출이 실패했습니다.";
+    return sanitizeUserFacingError(message).userMessage;
+}
 const DEFAULT_TIMEOUT_MS = 2_000;
+const COMPARISON_PROMPT_CONTEXT_LABELS_SOURCE_ID = "comparison_prompt_context_labels_user";
+function comparisonPromptContextLabel(key) {
+    const value = loadPromptValue(COMPARISON_PROMPT_CONTEXT_LABELS_SOURCE_ID, {}, { required: true })
+        .split(/\r?\n/u)
+        .find((line) => line.startsWith(`${key}=`))
+        ?.slice(key.length + 1)
+        .trim();
+    return value ?? key;
+}
 function comparisonProjection(contract) {
     // knowbee-critical-decision-audit: schedules.comparison.contract_projection_only
     // Comparator input must remain contract-only. Raw prompt, display title, and candidate metadata are excluded.
@@ -18,10 +33,10 @@ function buildComparisonPrompt(params) {
     return [{
             role: "user",
             content: [
-                "Incoming schedule contract:",
+                comparisonPromptContextLabel("incoming_schedule_contract_label"),
                 toCanonicalJson(comparisonProjection(params.incoming)),
                 "",
-                "Candidate schedule contracts:",
+                comparisonPromptContextLabel("candidate_schedule_contracts_label"),
                 toCanonicalJson(params.candidates.map((candidate) => ({
                     id: candidate.id,
                     contract: comparisonProjection(candidate.contract),
@@ -122,8 +137,15 @@ export async function compareScheduleContractsWithAI(params) {
             userMessage: "비교할 기존 예약 후보가 없습니다.",
         };
     }
-    const model = params.model?.trim() || getDefaultModel();
-    const providerId = params.providerId?.trim() || detectAvailableProvider();
+    if (!params.config) {
+        return {
+            decision: "clarify",
+            reasonCode: "no_configured_provider",
+            userMessage: "예약 비교에 사용할 AI 설정이 없어 사용자의 확인이 필요합니다.",
+        };
+    }
+    const model = params.model?.trim() || getDefaultModel(params.config);
+    const providerId = params.providerId?.trim() || detectAvailableProvider(params.config);
     if (!model || !providerId) {
         return {
             decision: "clarify",
@@ -133,7 +155,7 @@ export async function compareScheduleContractsWithAI(params) {
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), Math.max(250, params.timeoutMs ?? DEFAULT_TIMEOUT_MS));
-    const provider = params.provider ?? getProvider(providerId);
+    const provider = params.provider ?? getProvider(providerId, params.config);
     let raw = "";
     try {
         for await (const chunk of chatWithContextPreflight({
@@ -161,7 +183,7 @@ export async function compareScheduleContractsWithAI(params) {
         return {
             decision: "clarify",
             reasonCode: "provider_error",
-            userMessage: err instanceof Error ? err.message : "예약 비교 AI 호출이 실패했습니다.",
+            userMessage: scheduleComparisonProviderErrorUserMessage(err),
         };
     }
     finally {

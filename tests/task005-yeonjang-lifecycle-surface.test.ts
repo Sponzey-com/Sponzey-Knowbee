@@ -2,23 +2,25 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import { closeDb } from "../packages/core/src/db/index.js"
 import { runDoctor } from "../packages/core/src/diagnostics/doctor.js"
 import { buildRuntimeManifest } from "../packages/core/src/runtime/manifest.js"
 import { upsertYeonjangRegistryObservation } from "../packages/core/src/yeonjang/registry.ts"
+import {
+  createTestRuntimeConfigFixture,
+  type TestRuntimeConfigFixture,
+} from "./fixtures/runtime-config.ts"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
-const previousStateDir = process.env["KNOWBEE_STATE_DIR"]
-const previousConfig = process.env["KNOWBEE_CONFIG"]
 const tempDirs: string[] = []
+let runtimeFixture: TestRuntimeConfigFixture
 
 function useTempState(): void {
   closeDb()
-  const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task005-yeonjang-lifecycle-"))
-  tempDirs.push(stateDir)
-  process.env["KNOWBEE_STATE_DIR"] = stateDir
-  delete process.env["KNOWBEE_CONFIG"]
-  reloadConfig()
+  const rootDir = mkdtempSync(join(tmpdir(), "knowbee-task005-yeonjang-lifecycle-"))
+  tempDirs.push(rootDir)
+  runtimeFixture = createTestRuntimeConfigFixture({ rootDir })
+  initializeTestDbRuntime(runtimeFixture.paths.stateDir)
 }
 
 function seedObservation(overrides: Partial<Parameters<typeof upsertYeonjangRegistryObservation>[0]> = {}) {
@@ -57,11 +59,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) delete process.env["KNOWBEE_STATE_DIR"]
-  else process.env["KNOWBEE_STATE_DIR"] = previousStateDir
-  if (previousConfig === undefined) delete process.env["KNOWBEE_CONFIG"]
-  else process.env["KNOWBEE_CONFIG"] = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -74,11 +71,13 @@ describe("task005 yeonjang lifecycle surface", () => {
       startupMode: "autostart",
       windowMode: "hidden",
       trayState: "visible",
-    })).toEqual({ ok: true, instanceId: "inst-local-1", sessionId: "sess-local-1" })
+    })).toEqual({ ok: true, instanceId: "inst-local-1", sessionId: "sess-local-1", claimOutcome: "accepted" })
 
     const manifest = buildRuntimeManifest({
       includeEnvironment: false,
       includeReleasePackage: false,
+      config: runtimeFixture.config,
+      paths: runtimeFixture.paths,
     })
 
     expect(manifest.yeonjang.nodes[0]).toEqual(expect.objectContaining({
@@ -95,9 +94,9 @@ describe("task005 yeonjang lifecycle surface", () => {
       startupMode: "manual",
       windowMode: "visible",
       trayState: "unavailable",
-    })).toEqual({ ok: true, instanceId: "inst-local-1", sessionId: "sess-local-1" })
+    })).toEqual({ ok: true, instanceId: "inst-local-1", sessionId: "sess-local-1", claimOutcome: "accepted" })
 
-    const report = runDoctor({
+    const report = runDoctor({ config: runtimeFixture.config, paths: runtimeFixture.paths,
       mode: "quick",
       includeEnvironment: false,
       includeReleasePackage: false,

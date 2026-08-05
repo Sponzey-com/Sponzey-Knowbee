@@ -1,5 +1,6 @@
 export type YeonjangTargetSelectorType =
   | "local"
+  | "node_id"
   | "instance_id"
   | "instance_alias"
   | "call_name"
@@ -17,6 +18,11 @@ export type YeonjangTargetSelectorState =
 
 export interface YeonjangTargetSelectorLocal {
   type: "local"
+}
+
+export interface YeonjangTargetSelectorByNodeId {
+  type: "node_id"
+  nodeId: string
 }
 
 export interface YeonjangTargetSelectorByInstanceId {
@@ -48,6 +54,7 @@ export interface YeonjangTargetSelectorFilteredGroup {
 
 export type YeonjangTargetSelector =
   | YeonjangTargetSelectorLocal
+  | YeonjangTargetSelectorByNodeId
   | YeonjangTargetSelectorByInstanceId
   | YeonjangTargetSelectorByInstanceAlias
   | YeonjangTargetSelectorByCallName
@@ -66,6 +73,7 @@ export type YeonjangTargetSelectorValidationResult =
 
 const SELECTOR_TYPES = new Set<YeonjangTargetSelectorType>([
   "local",
+  "node_id",
   "instance_id",
   "instance_alias",
   "call_name",
@@ -163,6 +171,11 @@ export function validateYeonjangTargetSelector(value: unknown): YeonjangTargetSe
     case "local":
     case "all_online":
       break
+    case "node_id": {
+      const nodeId = normalizeString(value.nodeId)
+      if (!nodeId) addIssue(issues, "$.nodeId", "Expected non-empty nodeId.")
+      break
+    }
     case "instance_id": {
       const instanceId = normalizeString(value.instanceId)
       if (!instanceId) addIssue(issues, "$.instanceId", "Expected non-empty instanceId.")
@@ -211,6 +224,11 @@ export function normalizeYeonjangTargetSelector(selector: YeonjangTargetSelector
     case "local":
     case "all_online":
       return { type: selector.type }
+    case "node_id":
+      return {
+        type: "node_id",
+        nodeId: selector.nodeId.trim(),
+      }
     case "instance_id":
       return {
         type: "instance_id",
@@ -243,6 +261,8 @@ export function serializeYeonjangTargetSelector(selector: YeonjangTargetSelector
     case "local":
     case "all_online":
       return normalized.type
+    case "node_id":
+      return `node-id:${normalized.nodeId}`
     case "instance_id":
       return `instance-id:${normalized.instanceId}`
     case "instance_alias":
@@ -263,6 +283,18 @@ export function buildYeonjangTargetSelectorSchemaProperty(): Record<string, unkn
           type: { type: "string", const: "local" },
         },
         required: ["type"],
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        properties: {
+          type: { type: "string", const: "node_id" },
+          nodeId: {
+            type: "string",
+            description: "등록된 Yeonjang 노드 ID. 사용자가 yeonjang-main 같은 노드 ID를 명시했을 때 사용합니다.",
+          },
+        },
+        required: ["type", "nodeId"],
         additionalProperties: false,
       },
       {
@@ -327,7 +359,8 @@ export function buildYeonjangTargetSelectorSchemaProperty(): Record<string, unkn
     ],
     description: [
       "구조화된 Yeonjang target selector.",
-      "단일 실행 도구에서는 local / instance_id / instance_alias / call_name만 바로 실행됩니다.",
+      "단일 실행 도구에서는 local / node_id / instance_id / instance_alias / call_name만 바로 실행됩니다.",
+      "노드 ID, 인스턴스 ID, 인스턴스 별칭은 서로 다른 식별자이므로 사용자가 제공한 식별자 종류를 바꾸지 마세요.",
       "all_online / filtered_group은 fan-out 작업용으로 예약되어 있으며 현재는 단일 실행에서 거부됩니다.",
     ].join(" "),
   }

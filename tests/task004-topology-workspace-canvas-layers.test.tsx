@@ -142,9 +142,18 @@ function workspaceModel(layer: "build" | "run" | "trace" | "improve" | "resource
   })
 }
 
+function visibleText(markup: string): string {
+  return markup
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
 describe("task004 topology workspace canvas layers", () => {
   it("shows declared topology nodes and edges in the build layer", () => {
-    const layerModel = buildTopologyWorkspaceCanvasModel({ workspaceModel: workspaceModel("build") })
+    const layerModel = buildTopologyWorkspaceCanvasModel({
+      workspaceModel: workspaceModel("build"),
+    })
 
     expect(layerModel.layer).toBe("build")
     expect(layerModel.visibleDeclaredNodes.map((node) => node.data.source)).toEqual([
@@ -169,9 +178,13 @@ describe("task004 topology workspace canvas layers", () => {
       workspaceModel: workspaceModel("trace"),
       traceOverlay,
     })
-    const tracedEdge = layerModel.visibleDeclaredEdges.find((edge) => edge.id === "relation:customer-request-intake-review")
+    const tracedEdge = layerModel.visibleDeclaredEdges.find(
+      (edge) => edge.id === "relation:customer-request-intake-review",
+    )
 
-    expect(layerModel.visibleDeclaredNodes.map((node) => node.id)).toContain("node:node:customer-request-intake")
+    expect(layerModel.visibleDeclaredNodes.map((node) => node.id)).toContain(
+      "node:node:customer-request-intake",
+    )
     expect(tracedEdge?.source).toBe("node:node:customer-request-intake")
     expect(tracedEdge?.target).toBe("node:node:customer-request-review")
     expect(tracedEdge?.className).toContain("topology-workspace-trace-edge")
@@ -180,37 +193,57 @@ describe("task004 topology workspace canvas layers", () => {
   })
 
   it("renders runtime resources as muted dashed resource nodes", () => {
-    const layerModel = buildTopologyWorkspaceCanvasModel({ workspaceModel: workspaceModel("resources") })
+    const layerModel = buildTopologyWorkspaceCanvasModel({
+      workspaceModel: workspaceModel("resources"),
+    })
     const html = renderToStaticMarkup(
       createElement(TopologyWorkspaceCanvas, { workspaceModel: workspaceModel("resources") }),
     )
 
     expect(layerModel.visibleDeclaredNodes).toHaveLength(0)
-    expect(layerModel.resourceNodes.map((node) => node.data.source)).toEqual(["runtime_resource", "runtime_resource"])
+    expect(layerModel.resourceNodes.map((node) => node.data.source)).toEqual([
+      "runtime_resource",
+      "runtime_resource",
+    ])
     expect(layerModel.resourceNodes.every((node) => node.data.muted)).toBe(true)
-    expect(layerModel.resourceNodes.every((node) => node.data.strokePattern === "dashed")).toBe(true)
+    expect(layerModel.resourceNodes.every((node) => node.data.strokePattern === "dashed")).toBe(
+      true,
+    )
     expect(layerModel.resourceEdges[0]?.style?.strokeDasharray).toBe("6 4")
     expect(html).toContain('data-testid="topology-workspace-resources-layer"')
     expect(html).toContain('data-testid="topology-workspace-resource-node"')
     expect(html).toContain("Support Team")
+    expect(visibleText(html)).toContain("실행 리소스 보기")
+    expect(visibleText(html)).toContain("2 항목 / 1 연결")
+    expect(visibleText(html)).toContain("서브 에이전트/팀 가져오기")
+    expect(visibleText(html)).not.toContain("nodes")
+    expect(visibleText(html)).not.toContain("edges")
+    expect(visibleText(html)).not.toContain("Agent/Team")
+    expect(visibleText(html)).not.toContain("Resource projection")
   })
 
   it("shows observed-only edges in the improve layer with dashed styling", () => {
-    const layerModel = buildTopologyWorkspaceCanvasModel({ workspaceModel: workspaceModel("improve") })
+    const layerModel = buildTopologyWorkspaceCanvasModel({
+      workspaceModel: workspaceModel("improve"),
+    })
 
     expect(layerModel.visibleDeclaredEdges).toHaveLength(2)
     expect(layerModel.observedEdges).toHaveLength(1)
-    expect(layerModel.observedEdges[0]).toEqual(expect.objectContaining({
-      id: "observed:observed:intake-review",
-      className: "topology-workspace-observed-edge",
-    }))
+    expect(layerModel.observedEdges[0]).toEqual(
+      expect.objectContaining({
+        id: "observed:observed:intake-review",
+        className: "topology-workspace-observed-edge",
+      }),
+    )
     expect(layerModel.observedEdges[0]?.style?.strokeDasharray).toBe("6 4")
     expect(layerModel.observedEdges[0]?.data?.source).toBe("observed")
     expect(layerModel.legend.map((item) => item.id)).toEqual(["declared", "observed"])
   })
 
   it("changes legend content by layer and includes label plus stroke pattern semantics", () => {
-    expect(topologyWorkspaceCanvasLegend("build").map((item) => [item.labelKo, item.strokePattern])).toEqual([
+    expect(
+      topologyWorkspaceCanvasLegend("build").map((item) => [item.labelKo, item.strokePattern]),
+    ).toEqual([
       ["업무 항목", "solid"],
       ["연결", "solid"],
     ])
@@ -219,7 +252,9 @@ describe("task004 topology workspace canvas layers", () => {
       "trace-failed",
       "trace-candidate",
     ])
-    expect(topologyWorkspaceCanvasLegend("resources").map((item) => item.strokePattern)).toEqual(["dashed", "dashed"])
+    expect(topologyWorkspaceCanvasLegend("resources").map((item) => item.strokePattern)).toEqual([
+      "dashed",
+      "dashed",
+    ])
   })
 })
-

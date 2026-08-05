@@ -1,21 +1,28 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PATHS } from "../config/paths.js";
-import { createLogger } from "../logger/index.js";
+import { NODE_PERSISTED_FILE_SYSTEM, writeAtomicTextFile, } from "../config/persisted-file.js";
+import { createLogger, redactLogText } from "../logger/index.js";
 const log = createLogger("update:service");
 const DEFAULT_GITHUB_REPOSITORY_URL = "https://github.com/Sponzey-com/Sponzey-Knowbee";
+function updateServiceErrorMessage(error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    return redactLogText(raw);
+}
+export function createUpdateRuntimeContext(paths, env, fileSystem = NODE_PERSISTED_FILE_SYSTEM) {
+    return Object.freeze({
+        stateFilePath: join(paths.stateDir, "update-state.json"),
+        repositoryUrl: sanitizeRepositoryUrl(env["KNOWBEE_UPDATE_REPOSITORY"]
+            ?? env["WIZBY_UPDATE_REPOSITORY"]
+            ?? env["HOWIE_UPDATE_REPOSITORY"]),
+        fileSystem,
+    });
+}
 function getWorkspacePackageJsonPath() {
     return fileURLToPath(new URL("../../../package.json", import.meta.url));
 }
 function getGitConfigPath() {
     return fileURLToPath(new URL("../../../.git/config", import.meta.url));
-}
-function getUpdateStateFilePath() {
-    return `${PATHS.stateDir}/update-state.json`;
-}
-function ensureParentDir(filePath) {
-    mkdirSync(dirname(filePath), { recursive: true });
 }
 function normalizeVersion(value) {
     if (!value)
@@ -69,12 +76,12 @@ function buildSnapshot(partial) {
         releaseUrl: partial.releaseUrl ?? null,
     };
 }
-function readStoredSnapshot() {
-    const path = getUpdateStateFilePath();
-    if (!existsSync(path))
+function readStoredSnapshot(context) {
+    const path = context.stateFilePath;
+    if (!context.fileSystem.exists(path))
         return null;
     try {
-        const parsed = JSON.parse(readFileSync(path, "utf-8"));
+        const parsed = JSON.parse(context.fileSystem.readText(path));
         return buildSnapshot({
             currentVersion: typeof parsed.currentVersion === "string" ? parsed.currentVersion : getCurrentAppVersion(),
             latestVersion: typeof parsed.latestVersion === "string" ? parsed.latestVersion : null,
@@ -91,10 +98,9 @@ function readStoredSnapshot() {
         return null;
     }
 }
-function writeStoredSnapshot(snapshot) {
-    const path = getUpdateStateFilePath();
-    ensureParentDir(path);
-    writeFileSync(path, JSON.stringify(snapshot, null, 2), "utf-8");
+function writeStoredSnapshot(snapshot, context) {
+    const path = context.stateFilePath;
+    writeAtomicTextFile(path, JSON.stringify(snapshot, null, 2), context.fileSystem);
     return snapshot;
 }
 function sanitizeRepositoryUrl(value) {
@@ -113,9 +119,8 @@ function sanitizeRepositoryUrl(value) {
         return trimmed.replace(/\.git$/i, "");
     }
 }
-function getConfiguredRepositoryUrl() {
-    const explicit = process.env["KNOWBEE_UPDATE_REPOSITORY"] ?? process.env["WIZBY_UPDATE_REPOSITORY"] ?? process.env["HOWIE_UPDATE_REPOSITORY"];
-    const explicitRepository = sanitizeRepositoryUrl(explicit);
+function getConfiguredRepositoryUrl(context, options = {}) {
+    const explicitRepository = sanitizeRepositoryUrl(options.repositoryUrl) ?? context.repositoryUrl;
     if (explicitRepository)
         return explicitRepository;
     const gitConfigPath = getGitConfigPath();
@@ -219,21 +224,21 @@ async function fetchGithubLatestRelease(ref, currentVersion, repositoryUrl) {
         releaseUrl: `${repositoryUrl.replace(/\.git$/i, "")}/tags`,
     });
 }
-export function getUpdateSnapshot() {
+export function getUpdateSnapshot(context, options = {}) {
     const currentVersion = getCurrentAppVersion();
-    const stored = readStoredSnapshot();
+    const stored = readStoredSnapshot(context);
     if (!stored) {
         return buildSnapshot({
             currentVersion,
-            repositoryUrl: getConfiguredRepositoryUrl(),
+            repositoryUrl: getConfiguredRepositoryUrl(context, options),
             message: "아직 업데이트 확인을 실행하지 않았습니다.",
         });
     }
     return buildSnapshot({ ...stored, currentVersion });
 }
-export async function checkForUpdates() {
+export async function checkForUpdates(context, options = {}) {
     const currentVersion = getCurrentAppVersion();
-    const repositoryUrl = getConfiguredRepositoryUrl();
+    const repositoryUrl = getConfiguredRepositoryUrl(context, options);
     const githubRef = parseGithubRepository(repositoryUrl);
     if (!githubRef) {
         const snapshot = buildSnapshot({
@@ -244,24 +249,25 @@ export async function checkForUpdates() {
             repositoryUrl,
             message: "GitHub 저장소 정보를 해석하지 못했습니다. 업데이트 대상 저장소 설정을 확인해 주세요.",
         });
-        return writeStoredSnapshot(snapshot);
+        return writeStoredSnapshot(snapshot, context);
     }
     try {
         const snapshot = await fetchGithubLatestRelease(githubRef, currentVersion, repositoryUrl);
-        return writeStoredSnapshot(snapshot);
+        return writeStoredSnapshot(snapshot, context);
     }
     catch (error) {
         log.error("update check failed", error);
+        const message = updateServiceErrorMessage(error);
         const snapshot = buildSnapshot({
             currentVersion,
             checkedAt: Date.now(),
             status: "error",
             updateAvailable: false,
             repositoryUrl,
-            message: error instanceof Error ? error.message : String(error),
+            message,
             source: "github_release",
         });
-        return writeStoredSnapshot(snapshot);
+        return writeStoredSnapshot(snapshot, context);
     }
 }
 //# sourceMappingURL=service.js.map

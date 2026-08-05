@@ -1,6 +1,7 @@
 import { recordLatencyMetric } from "../observability/latency.js"
+import { redactLogText } from "../logger/index.js"
 
-export type CandidateKind = "schedule" | "run" | "artifact" | "memory"
+export type CandidateKind = "schedule" | "run" | "artifact"
 
 export type CandidateReason =
   | "explicit_id"
@@ -11,7 +12,6 @@ export type CandidateReason =
   | "run_contract_projection"
   | "artifact_id"
   | "artifact_path"
-  | "semantic_candidate"
 
 export type CandidateSource =
   | "explicit_id"
@@ -19,7 +19,6 @@ export type CandidateSource =
   | "schedule_store"
   | "run_store"
   | "artifact_store"
-  | "memory_vector"
 
 export type CandidateProviderStage = "fast" | "store" | "slow"
 
@@ -55,7 +54,6 @@ export interface CandidateSearchInput {
     artifactId?: string
   }
   structuredKeys?: Record<string, string | null | undefined>
-  semanticQuery?: string
   sessionId?: string
   requestGroupId?: string
   source?: string
@@ -124,6 +122,12 @@ function isFastPathCandidate(candidate: CandidateResult): boolean {
     && candidate.requiresFinalDecision === false
 }
 
+function candidateProviderErrorTrace(error: unknown): Pick<CandidateProviderTrace, "timedOut" | "error"> {
+  const raw = error instanceof Error ? error.message : String(error)
+  if (raw === "candidate provider timeout") return { timedOut: true }
+  return { error: redactLogText(raw) }
+}
+
 async function runProviderWithTimeout<TInput extends CandidateSearchInput, TPayload>(
   provider: CandidateProvider<TInput, TPayload>,
   input: TInput,
@@ -157,9 +161,7 @@ async function runProviderWithTimeout<TInput extends CandidateSearchInput, TPayl
       durationMs: params.now() - started,
       candidateCount: 0,
       candidates: [],
-      ...(error instanceof Error && error.message === "candidate provider timeout"
-        ? { timedOut: true }
-        : { error: error instanceof Error ? error.message : String(error) }),
+      ...candidateProviderErrorTrace(error),
     }
   } finally {
     timeout.clear()
@@ -300,8 +302,8 @@ export function createStructuredKeyProvider<TInput extends CandidateSearchInput,
 export function createStoreCandidateProvider<TInput extends CandidateSearchInput, TPayload>(params: {
   id: string
   source: "schedule_store" | "run_store" | "artifact_store"
-  candidateKind: Exclude<CandidateKind, "memory">
-  candidateReason: Exclude<CandidateReason, "explicit_id" | "structured_key" | "semantic_candidate">
+  candidateKind: CandidateKind
+  candidateReason: Exclude<CandidateReason, "explicit_id" | "structured_key">
   find: (input: TInput) => Array<TPayload> | Promise<Array<TPayload>>
   candidateId: (payload: TPayload) => string
   matchedKeys?: (payload: TPayload) => string[]
@@ -326,38 +328,6 @@ export function createStoreCandidateProvider<TInput extends CandidateSearchInput
   }
 }
 
-export function createMemoryVectorProvider<TInput extends CandidateSearchInput, TPayload>(params: {
-  id?: string
-  enabled?: boolean
-  search: (input: TInput, signal: AbortSignal) => Promise<Array<{ id: string; payload: TPayload; score?: number }>>
-}): CandidateProvider<TInput, TPayload> {
-  return {
-    id: params.id ?? "memory-vector-provider",
-    source: "memory_vector",
-    stage: "slow",
-    async find(input, context) {
-      if (params.enabled === false) return []
-      const query = input.semanticQuery?.trim()
-      if (!query) return []
-      const results = await params.search(input, context.signal)
-      return results.map((result) => ({
-        candidateId: result.id,
-        candidateKind: "memory",
-        candidateReason: "semantic_candidate",
-        source: "memory_vector",
-        payload: result.payload,
-        matchedKeys: ["semantic_candidate"],
-        requiresFinalDecision: true,
-        score: {
-          kind: "candidate_score",
-          metric: "vector",
-          value: result.score ?? 0,
-        },
-      }))
-    },
-  }
-}
-
 export function decideCandidateFinal<TPayload>(params: {
   requested: Exclude<CandidateFinalDecisionKind, "new" | "clarify">
   candidate?: CandidateResult<TPayload>
@@ -368,15 +338,6 @@ export function decideCandidateFinal<TPayload>(params: {
       kind: "new",
       finalDecisionSource: "safe_fallback",
       reasonCode: "no_candidate",
-    }
-  }
-
-  if (params.candidate.candidateReason === "semantic_candidate" && params.finalDecisionSource !== "contract_ai" && params.finalDecisionSource !== "user_choice") {
-    return {
-      kind: "clarify",
-      finalDecisionSource: "safe_fallback",
-      selectedCandidate: params.candidate,
-      reasonCode: "semantic_candidate_requires_contract_or_user_choice",
     }
   }
 

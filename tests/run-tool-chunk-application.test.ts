@@ -49,7 +49,13 @@ describe("tool chunk application", () => {
 
     expect(pendingToolParams.has("file_write")).toBe(false)
     expect(result.sawRealFilesystemMutation).toBe(true)
-    expect(successfulTools).toEqual([{ toolName: "file_write", output: "written" }])
+    expect(successfulTools).toEqual([
+      {
+        toolName: "file_write",
+        output: "written",
+        details: { path: "/tmp/work/demo.txt" },
+      },
+    ])
     expect([...filesystemMutationPaths]).toContain("/tmp/work/demo.txt")
     expect(appendRunEvent).toHaveBeenCalledWith("run-2", "file_write 실행 완료")
     expect(updateRunSummary).toHaveBeenCalledWith("run-2", "file_write 실행 완료")

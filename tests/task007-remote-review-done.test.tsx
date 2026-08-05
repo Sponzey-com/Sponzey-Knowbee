@@ -16,7 +16,6 @@ import { countCapabilities } from "../packages/webui/src/contracts/capabilities.
 import type { SetupDraft, SetupState } from "../packages/webui/src/contracts/setup.ts"
 import { buildDoneRuntimeSummary, buildReviewReadinessBoard } from "../packages/webui/src/lib/setup-readiness.ts"
 import { createSetupSteps } from "../packages/webui/src/lib/setup-step-meta.ts"
-import { buildSetupVisualizationRegistry } from "../packages/webui/src/lib/setup-visualization-scenes.ts"
 
 function draft(): SetupDraft {
   return {
@@ -288,39 +287,6 @@ function findClickableByDataValue(node: unknown, key: string, value: string): ((
 }
 
 describe("task007 remote access, review, and done", () => {
-  it("projects remote_access as a network map without turning Yeonjang into a subordinate node", () => {
-    const registry = buildSetupVisualizationRegistry({
-      draft: draft(),
-      checks: checks(),
-      shell: shell(),
-      status: status(),
-      capabilities: capabilities(),
-      state: state("remote_access"),
-      language: "ko",
-    })
-    const scene = registry.scenesById["scene:remote_access"]!
-
-    expect(scene.nodes.map((node) => node.id)).toEqual(expect.arrayContaining([
-      "node:remote:endpoint",
-      "node:remote:auth_boundary",
-      "node:remote:mqtt_bridge",
-      "node:remote:external_clients",
-    ]))
-    expect(scene.nodes.map((node) => node.id)).not.toContain("node:remote:yeonjang")
-    expect(scene.nodes.find((node) => node.id === "node:remote:auth_boundary")).toEqual(expect.objectContaining({
-      status: "warning",
-      badges: expect.arrayContaining(["auth:off", "token:disabled"]),
-    }))
-    expect(scene.nodes.find((node) => node.id === "node:remote:mqtt_bridge")).toEqual(expect.objectContaining({
-      status: "error",
-      badges: expect.arrayContaining(["mqtt:on", "yeonjang:2"]),
-    }))
-    expect(scene.alerts?.map((alert) => alert.message)).toEqual(expect.arrayContaining([
-      "로컬이 아닌 host에서 WebUI 인증이 꺼져 있습니다.",
-      "MQTT 브로커를 켜려면 username과 password가 모두 필요합니다.",
-    ]))
-  })
-
   it("builds a readiness board with blockers, risk paths, and per-step tiles", () => {
     const steps = createSetupSteps(capabilities(), draft(), state("review"), "ko")
     const board = buildReviewReadinessBoard({
@@ -341,7 +307,6 @@ describe("task007 remote access, review, and done", () => {
     expect(board.riskPaths.map((issue) => issue.id)).toEqual(expect.arrayContaining([
       "risk:approvals-off",
       "risk:fallback-allow",
-      "risk:delegation-unlimited",
       "risk:remote-open",
     ]))
   })
@@ -398,11 +363,11 @@ describe("task007 remote access, review, and done", () => {
 
     expect(withOrchestration.actions.map((action) => action.href)).toEqual([
       "/advanced/dashboard",
-      "/advanced/settings",
+      "/advanced/ai",
     ])
     expect(withoutOrchestration.actions.map((action) => action.href)).toEqual([
       "/advanced/dashboard",
-      "/advanced/settings",
+      "/advanced/ai",
     ])
   })
 })

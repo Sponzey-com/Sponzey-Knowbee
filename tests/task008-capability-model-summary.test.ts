@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { reloadConfig } from "../packages/core/src/config/index.js"
 import {
   closeDb,
   listAgentCapabilityBindings,
@@ -24,19 +23,16 @@ import {
 } from "../packages/core/src/index.ts"
 import { resolveAgentCapabilityModelSummary } from "../packages/core/src/orchestration/capability-model.js"
 import { buildOrchestrationRegistrySnapshot } from "../packages/core/src/orchestration/registry.js"
+import { initializeTestDbRuntime } from "./fixtures/runtime-db.ts"
 
 const tempDirs: string[] = []
-const previousStateDir = process.env.KNOWBEE_STATE_DIR
-const previousConfig = process.env.KNOWBEE_CONFIG
 const now = Date.UTC(2026, 3, 24, 0, 0, 0)
 
 function useTempState(): void {
   closeDb()
   const stateDir = mkdtempSync(join(tmpdir(), "knowbee-task008-capability-model-"))
   tempDirs.push(stateDir)
-  process.env.KNOWBEE_STATE_DIR = stateDir
-  process.env.KNOWBEE_CONFIG = join(stateDir, "config.json5")
-  reloadConfig()
+  initializeTestDbRuntime(stateDir)
 }
 
 function owner(
@@ -148,11 +144,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb()
-  if (previousStateDir === undefined) process.env.KNOWBEE_STATE_DIR = undefined
-  else process.env.KNOWBEE_STATE_DIR = previousStateDir
-  if (previousConfig === undefined) process.env.KNOWBEE_CONFIG = undefined
-  else process.env.KNOWBEE_CONFIG = previousConfig
-  reloadConfig()
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -213,7 +204,7 @@ describe("task008 capability and model summaries", () => {
     ).toHaveLength(2)
 
     const snapshot = buildOrchestrationRegistrySnapshot({
-      getConfig: emptyRegistryConfig,
+      config: emptyRegistryConfig(),
       now: () => now,
     })
     const entry = snapshot.agents.find((candidate) => candidate.agentId === "agent:alpha")
@@ -286,7 +277,7 @@ describe("task008 capability and model summaries", () => {
     )
 
     const snapshot = buildOrchestrationRegistrySnapshot({
-      getConfig: emptyRegistryConfig,
+      config: emptyRegistryConfig(),
       now: () => now,
     })
     const alpha = snapshot.agents.find((candidate) => candidate.agentId === "agent:alpha")
@@ -323,7 +314,7 @@ describe("task008 capability and model summaries", () => {
     upsertAgentConfig(subAgentConfig("agent:alpha", "Alpha"), { source: "manual", now })
 
     const snapshot = buildOrchestrationRegistrySnapshot({
-      getConfig: emptyRegistryConfig,
+      config: emptyRegistryConfig(),
       now: () => now,
     })
     const alpha = snapshot.agents.find((candidate) => candidate.agentId === "agent:alpha")
@@ -384,7 +375,7 @@ describe("task008 capability and model summaries", () => {
     upsertAgentConfig(agent, { source: "manual", now })
 
     const snapshot = buildOrchestrationRegistrySnapshot({
-      getConfig: emptyRegistryConfig,
+      config: emptyRegistryConfig(),
       now: () => now,
     })
     const alpha = snapshot.agents.find((candidate) => candidate.agentId === "agent:alpha")
