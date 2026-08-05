@@ -773,7 +773,7 @@ impl LiveRuntime {
             "duplicate runtime unexpectedly succeeded"
         );
         assert!(
-            failure.contains("InstanceLease(AlreadyRunning)"),
+            failure.contains("already_running"),
             "duplicate runtime returned the wrong failure: {failure}"
         );
         assert!(!failure.contains(BROKER_PASSWORD));
@@ -1734,9 +1734,95 @@ async fn exercise_running_command_cancellation(
     .expect("actual command cancellation did not converge");
 
     assert_eq!(ack["schema_id"], "yeonjang.cancel-ack.v2");
-    assert_eq!(ack["payload"]["outcome"], "accepted");
     assert_eq!(ack["payload"]["target_terminal"], false);
     assert_eq!(ack["authorization"]["scope"], "response.publish");
+    if ack["payload"]["outcome"] == "already_terminal" {
+        assert_eq!(
+            terminal["payload"]["terminal"]["execution_outcome"],
+            "succeeded",
+            "already-terminal cancellation target: {}",
+            bounded_json(&terminal)
+        );
+        let artifact = terminal["payload"]["artifact"]
+            .as_object()
+            .expect("already-terminal cancellation artifact");
+        let artifact_ref = required_text(
+            &artifact["artifactRef"],
+            "already-terminal cancellation artifact ref",
+        );
+        let full_digest = required_text(
+            &artifact["fullDigest"],
+            "already-terminal cancellation digest",
+        );
+        let total_size = artifact["sizeBytes"]
+            .as_u64()
+            .expect("already-terminal cancellation artifact size");
+        let lifecycle_revision = artifact["lifecycleRevision"]
+            .as_u64()
+            .expect("already-terminal cancellation lifecycle revision");
+        let transfer_id = "transfer-running-cancellation-race";
+        publish_json(
+            client,
+            topics.control(),
+            signed_artifact_control(
+                topics,
+                fixture,
+                &capture,
+                transfer_id,
+                artifact_ref,
+                full_digest,
+                lifecycle_revision,
+                false,
+                signer,
+                now_ms(),
+            ),
+        )
+        .await;
+        let bytes = collect_artifact(
+            events,
+            &topics
+                .artifact_chunk(transfer_id)
+                .expect("already-terminal cancellation artifact chunk topic"),
+            artifact_ref,
+            full_digest,
+            total_size,
+        )
+        .await;
+        verify_image("camera.capture", &bytes);
+        let awaiting_ack = cleanup_receipt(&fixture.artifact_root, artifact_ref)
+            .expect("already-terminal cancellation awaiting-ack receipt");
+        let acknowledgement_revision = awaiting_ack["revision"]
+            .as_u64()
+            .expect("already-terminal cancellation acknowledgement revision");
+        publish_json(
+            client,
+            topics
+                .artifact_ack(transfer_id)
+                .expect("already-terminal cancellation artifact ack topic"),
+            signed_artifact_control(
+                topics,
+                fixture,
+                &capture,
+                transfer_id,
+                artifact_ref,
+                full_digest,
+                acknowledgement_revision,
+                true,
+                signer,
+                now_ms(),
+            ),
+        )
+        .await;
+        expect_outgoing_publish(
+            events,
+            "already-terminal cancellation artifact acknowledgement",
+        )
+        .await;
+        wait_for_artifact_cleanup(&fixture.artifact_root, artifact_ref, "acknowledged").await;
+        return;
+    }
+
+    assert_eq!(ack["payload"]["outcome"], "accepted");
     assert_eq!(
         terminal["payload"]["terminal"]["failure"]["reason_code"],
         "cancelled"

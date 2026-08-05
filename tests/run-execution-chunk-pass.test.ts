@@ -52,6 +52,43 @@ describe("execution chunk pass", () => {
     expect(dependencies.updateRunSummary).toHaveBeenCalledWith("run-1", "hello")
   })
 
+  it("turns an agent terminal tool failure into a terminal stop before completion review", () => {
+    const dependencies = createDependencies()
+
+    const result = applyExecutionChunkPass({
+      ...createBaseParams(),
+      chunk: {
+        type: "text",
+        delta: "Yeonjang 화면 캡처 실패: capability advertisement is unavailable.",
+        textSource: "runtime_deterministic",
+        notice: {
+          kind: "agent_terminal_failure",
+          toolName: "screen_capture",
+          failureTrust: "sanitized_tool_failure",
+          reason: "SIDE_EFFECT_MANUAL_INTERVENTION",
+          deliveryMode: "diagnostic",
+          textSource: "agent_terminal_failure_notice",
+          renderingRequired: "llm_final_response",
+          finalAnswer: false,
+          assistantIdentityClaim: false,
+        },
+      },
+    }, dependencies)
+
+    expect(result).toEqual({
+      handled: true,
+      preview: "Yeonjang 화면 캡처 실패: capability advertisement is unavailable.",
+      previewSource: "runtime_deterministic",
+      executionRecoveryLimitStop: {
+        summary: "screen_capture 실행이 확인된 실패로 중단되었습니다.",
+        reason: "SIDE_EFFECT_MANUAL_INTERVENTION",
+        rawMessage: "Yeonjang 화면 캡처 실패: capability advertisement is unavailable.",
+        remainingItems: ["screen_capture의 확인된 실패 원인을 해소해야 합니다."],
+      },
+      abortExecutionStream: true,
+    })
+  })
+
   it("returns execution recovery stop with abort flag", () => {
     const dependencies = createDependencies()
 

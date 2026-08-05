@@ -129,6 +129,47 @@ fn direct_handler_executes_one_exact_effect_and_returns_terminal_content() {
 }
 
 #[test]
+fn exact_duplicate_in_progress_rejection_keeps_the_ingress_correlation() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler = handler_with_terminal_repository(
+        Arc::new(SuccessPort(Arc::clone(&calls))),
+        Arc::new(AcceptSignatures),
+        allowed_policy(),
+        Arc::new(AlwaysInProgressTerminalRepository),
+    );
+    let bytes = valid_command_bytes();
+    let expected_correlation = format!("sha256:{:x}", sha2::Sha256::digest(&bytes));
+
+    let first = handler.handle(
+        &topics().command(),
+        &bytes,
+        1_000,
+        binding(TargetPlatform::Macos),
+    );
+    assert!(matches!(
+        first,
+        MqttV2HandlerResult::Rejected(ref failure)
+            if failure.reason_code() == ExecutionFailureReason::IdempotencyInProgress
+    ));
+
+    let duplicate = handler.handle(
+        &topics().command(),
+        &bytes,
+        1_001,
+        binding(TargetPlatform::Macos),
+    );
+    let MqttV2HandlerResult::Rejected(failure) = duplicate else {
+        panic!("in-progress exact duplicate must return a requester-correlated rejection");
+    };
+    assert_eq!(
+        failure.reason_code(),
+        ExecutionFailureReason::IdempotencyInProgress
+    );
+    assert_eq!(failure.correlation_id(), expected_correlation);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn direct_handler_observes_authorization_and_common_execution_stages() {
     let calls = Arc::new(AtomicUsize::new(0));
     let timing_sink = Arc::new(StageValues::default());
@@ -910,6 +951,29 @@ struct NeverCancelled;
 impl ExecutionCancellation for NeverCancelled {
     fn is_cancelled(&self, _cancellation_id: &str) -> bool {
         false
+    }
+}
+
+struct AlwaysInProgressTerminalRepository;
+impl V2TerminalRepository for AlwaysInProgressTerminalRepository {
+    fn prepare(
+        &self,
+        _scope: &V2TerminalScope,
+        _restart_recovery: V2TerminalResponseContent,
+    ) -> V2TerminalClaim {
+        V2TerminalClaim::InProgress
+    }
+
+    fn lookup(&self, _scope: &V2TerminalScope) -> V2TerminalLookup {
+        V2TerminalLookup::InProgress
+    }
+
+    fn complete(
+        &self,
+        _scope: &V2TerminalScope,
+        _content: V2TerminalResponseContent,
+    ) -> V2TerminalComplete {
+        V2TerminalComplete::Missing
     }
 }
 

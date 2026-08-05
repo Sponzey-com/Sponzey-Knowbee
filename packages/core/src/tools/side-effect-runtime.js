@@ -205,7 +205,7 @@ function boundedRecoveryEvidence(value) {
         resolvedDevicePresent: evidence.resolvedDevicePresent,
     };
 }
-const BOUNDED_CAMERA_EFFECT_FAILURE_REASONS = new Set([
+const BOUNDED_EFFECT_FAILURE_REASONS = new Set([
     "camera_response_timeout",
     "camera_handler_timeout",
     "camera_helper_timeout",
@@ -215,6 +215,7 @@ const BOUNDED_CAMERA_EFFECT_FAILURE_REASONS = new Set([
     "camera_permission_denied",
     "camera_permission_restricted",
     "camera_permission_not_determined",
+    "screen_permission_denied",
     "side_effect_binding_required",
     "side_effect_authorization_required",
     "side_effect_authorization_rejected",
@@ -222,8 +223,11 @@ const BOUNDED_CAMERA_EFFECT_FAILURE_REASONS = new Set([
     "unknown_method",
     "resource_busy",
     "resource_state_unavailable",
+    "screen_capture_artifact_empty",
+    "yeonjang_screen_capture_remote_failure",
+    "yeonjang_capability_matrix_required",
 ]);
-const BOUNDED_CAMERA_TERMINAL_STAGES = new Set([
+const BOUNDED_EFFECT_TERMINAL_STAGES = new Set([
     "response_timeout",
     "handler_timeout",
     "helper_timeout",
@@ -231,7 +235,7 @@ const BOUNDED_CAMERA_TERMINAL_STAGES = new Set([
     "cancelled",
     "rejected",
 ]);
-const BOUNDED_CAMERA_RETRY_SAFETY = new Set([
+const BOUNDED_EFFECT_RETRY_SAFETY = new Set([
     "safe_same_command",
     "change_strategy",
     "unknown_effect_state",
@@ -249,7 +253,7 @@ function boundedEffectFailure(value) {
     }
     const reasonCode = failure.reasonCode;
     if (typeof reasonCode !== "string"
-        || !BOUNDED_CAMERA_EFFECT_FAILURE_REASONS.has(reasonCode)) {
+        || !BOUNDED_EFFECT_FAILURE_REASONS.has(reasonCode)) {
         return undefined;
     }
     const terminalStage = failure.terminalStage;
@@ -258,18 +262,34 @@ function boundedEffectFailure(value) {
         reasonCode,
         retrySameStrategy: false,
         ...(typeof terminalStage === "string"
-            && BOUNDED_CAMERA_TERMINAL_STAGES.has(terminalStage)
+            && BOUNDED_EFFECT_TERMINAL_STAGES.has(terminalStage)
             ? {
                 terminalStage: terminalStage,
             }
             : {}),
         ...(typeof retrySafety === "string"
-            && BOUNDED_CAMERA_RETRY_SAFETY.has(retrySafety)
+            && BOUNDED_EFFECT_RETRY_SAFETY.has(retrySafety)
             ? {
                 retrySafety: retrySafety,
             }
             : {}),
     };
+}
+function boundedTerminalFailureControls(value) {
+    if (!value?.details || typeof value.details !== "object" || Array.isArray(value.details)) {
+        return undefined;
+    }
+    const details = value.details;
+    const failureKind = details.failureKind;
+    if (details.stopAfterFailure !== true ||
+        details.via !== "yeonjang" ||
+        (failureKind !== "remote_failure" &&
+            failureKind !== "remote_rejected" &&
+            failureKind !== "path_bug" &&
+            failureKind !== "timeout")) {
+        return undefined;
+    }
+    return { stopAfterFailure: true, via: "yeonjang", failureKind };
 }
 export async function executeToolWithSideEffectLedger(input) {
     const contract = input.tool.sideEffect;
@@ -456,6 +476,7 @@ export async function executeToolWithSideEffectLedger(input) {
             };
         case "effect_rejected": {
             const failure = boundedEffectFailure(executedToolResult);
+            const terminalFailureControls = boundedTerminalFailureControls(executedToolResult);
             return {
                 success: false,
                 output: executedToolResult?.output
@@ -468,21 +489,30 @@ export async function executeToolWithSideEffectLedger(input) {
                     operationId: identity.operationId,
                     reasonCode: result.reasonCode,
                     ...(failure ? { failure } : {}),
+                    ...(terminalFailureControls ?? {}),
                 },
             };
         }
         case "manual_intervention": {
             const recoveryEvidence = boundedRecoveryEvidence(result.recoveryEvidence);
             const effectFailure = boundedEffectFailure(executedToolResult);
+            const terminalFailureControls = boundedTerminalFailureControls(executedToolResult);
+            // A Yeonjang adapter may have a typed terminal decision that is newer
+            // than this Gateway's closed failure-code allowlist. Keep its already
+            // redacted tool output visible; replacing it here with a generic manual
+            // message destroys the only actionable MQTT boundary evidence.
+            const terminalFailureOutput = terminalFailureControls && executedToolResult?.output;
             return {
                 success: false,
-                output: "외부 변경 결과를 검증하거나 자동 복구할 수 없습니다.",
+                output: (effectFailure || terminalFailureOutput) && executedToolResult?.output
+                    ? executedToolResult.output
+                    : "외부 변경 결과를 검증하거나 자동 복구할 수 없습니다.",
                 error: "SIDE_EFFECT_MANUAL_INTERVENTION",
                 details: {
                     kind: "side_effect_manual_intervention",
                     operationId: identity.operationId,
                     reasonCode: result.reasonCode,
-                    goalValidationCandidate: true,
+                    goalValidationCandidate: !effectFailure,
                     ...(result.priorReceiptRef
                         ? {
                             priorState: "MANUAL_INTERVENTION",
@@ -491,6 +521,7 @@ export async function executeToolWithSideEffectLedger(input) {
                         : {}),
                     ...(recoveryEvidence ? { recoveryEvidence } : {}),
                     ...(effectFailure ? { failure: effectFailure } : {}),
+                    ...(terminalFailureControls ?? {}),
                 },
             };
         }

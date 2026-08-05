@@ -65,6 +65,9 @@ const { createRootRun } = await import("../packages/core/src/runs/store.ts")
 const { initializeTestDbRuntime } = await import("./fixtures/runtime-db.ts")
 const { executeToolWithSideEffectLedger } = await import("../packages/core/src/tools/side-effect-runtime.ts")
 const { screenCaptureTool, screenFindTextTool } = await import("../packages/core/src/tools/index.ts")
+const { rejectsDuplicateAsUnchangedRecovery } = await import(
+  "../packages/core/src/runs/message-ledger.ts"
+)
 
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`
@@ -239,6 +242,223 @@ describe("Task 060 Yeonjang screen side-effect ledger", () => {
     const receipts = serializedReceiptRows()
     expect(receipts).not.toContain("c2NyZWVuLWJpbmFyeQ==")
     expect(receipts).not.toContain("base64_data")
+  })
+
+  it("preserves an empty screenshot artifact as a typed manual-intervention failure", async () => {
+    const params = { extensionId: "yeonjang-main", display: 0 }
+    fsMocks.statSync.mockReturnValueOnce({ size: 0 })
+    mqttMocks.invokeYeonjangMethod.mockResolvedValueOnce({
+      file_name: "screen.png",
+      file_extension: "png",
+      mime_type: "image/png",
+      size_bytes: 123,
+      transfer_encoding: "base64",
+      base64_data: "c2NyZWVuLWJpbmFyeQ==",
+      message: "Screen capture completed.",
+    })
+
+    const result = await executeToolWithSideEffectLedger({
+      tool: screenCaptureTool,
+      params,
+      ctx: createContext(params),
+    })
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "SIDE_EFFECT_MANUAL_INTERVENTION",
+      output: "Yeonjang 화면 캡처 결과 파일이 비어 있어 전달할 수 없습니다.",
+      details: {
+        kind: "side_effect_manual_intervention",
+        goalValidationCandidate: false,
+        stopAfterFailure: true,
+        via: "yeonjang",
+        failureKind: "remote_failure",
+        failure: {
+          reasonCode: "screen_capture_artifact_empty",
+          terminalStage: "handler_failed",
+          retrySafety: "unknown_effect_state",
+        },
+      },
+    })
+    expect(operationRows()).toEqual([
+      { state: "MANUAL_INTERVENTION", revision: 5, adapter_id: "tool:screen_capture" },
+    ])
+  })
+
+  it("preserves an untyped Yeonjang screen failure instead of inventing a permission blocker", async () => {
+    const params = { extensionId: "yeonjang-main", display: 0 }
+    mqttMocks.invokeYeonjangMethod.mockRejectedValueOnce(new Error("response did not include image data"))
+
+    const result = await executeToolWithSideEffectLedger({
+      tool: screenCaptureTool,
+      params,
+      ctx: createContext(params),
+    })
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "SIDE_EFFECT_MANUAL_INTERVENTION",
+      output: "Yeonjang 화면 캡처 실패: response did not include image data",
+      details: {
+        goalValidationCandidate: false,
+        stopAfterFailure: true,
+        via: "yeonjang",
+        failure: {
+          reasonCode: "yeonjang_screen_capture_remote_failure",
+          terminalStage: "handler_failed",
+          retrySafety: "unknown_effect_state",
+        },
+      },
+    })
+  })
+
+  it("preserves a newer typed MQTT artifact rejection even before its code is allowlisted", async () => {
+    const params = { extensionId: "yeonjang-main", display: 0 }
+    mqttMocks.invokeYeonjangMethod.mockRejectedValueOnce(Object.assign(
+      new Error("Yeonjang artifact fetch rejected the requested transfer."),
+      {
+        code: "yeonjang_v2_artifact_fetch_unavailable",
+        attempt: {
+          schemaVersion: 1,
+          method: "screen.capture",
+          commandId: "screen-command-060",
+          operationId: "screen-operation-060",
+          terminalStage: "rejected",
+          reasonCode: "yeonjang_v2_artifact_fetch_unavailable",
+          retrySafety: "change_strategy",
+        },
+      },
+    ))
+
+    const result = await executeToolWithSideEffectLedger({
+      tool: screenCaptureTool,
+      params,
+      ctx: createContext(params),
+    })
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "SIDE_EFFECT_MANUAL_INTERVENTION",
+      output: "Yeonjang 화면 캡처 실패: Yeonjang artifact fetch rejected the requested transfer.",
+      details: {
+        stopAfterFailure: true,
+        via: "yeonjang",
+        failureKind: "remote_rejected",
+      },
+    })
+  })
+
+  it("stops at the capability-contract preflight failure without invoking or retrying capture", async () => {
+    const params = { extensionId: "yeonjang-main", display: 0 }
+    mqttMocks.hasYeonjangCapabilityMatrix.mockReturnValue(false)
+
+    const result = await executeToolWithSideEffectLedger({
+      tool: screenCaptureTool,
+      params,
+      ctx: createContext(params),
+    })
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "YEONJANG_CAPABILITY_MATRIX_REQUIRED",
+      details: {
+        kind: "side_effect_effect_rejected",
+        stopAfterFailure: true,
+        via: "yeonjang",
+        failureKind: "remote_rejected",
+        failure: {
+          reasonCode: "yeonjang_capability_matrix_required",
+          terminalStage: "rejected",
+          retrySafety: "change_strategy",
+        },
+      },
+    })
+    expect(mqttMocks.invokeYeonjangMethod).not.toHaveBeenCalled()
+    expect(operationRows()).toEqual([
+      { state: "EFFECT_REJECTED", revision: 2, adapter_id: "tool:screen_capture" },
+    ])
+  })
+
+  it("keeps a v2 screen OS permission denial in the pre-effect rejected state", async () => {
+    const params = { extensionId: "yeonjang-main", display: 0 }
+    mqttMocks.invokeYeonjangMethod.mockRejectedValueOnce(Object.assign(
+      new Error("Yeonjang MQTT v2 execution did not succeed."),
+      {
+        code: "screen_permission_denied",
+        attempt: {
+          schemaVersion: 1,
+          method: "screen.capture",
+          commandId: "screen-command-v2",
+          operationId: "screen-operation-v2",
+          terminalStage: "rejected",
+          reasonCode: "screen_permission_denied",
+          retrySafety: "change_strategy",
+        },
+      },
+    ))
+
+    const result = await executeToolWithSideEffectLedger({
+      tool: screenCaptureTool,
+      params,
+      ctx: createContext(params),
+    })
+
+    expect(result).toMatchObject({
+      success: false,
+      error: "screen_permission_denied",
+      details: {
+        kind: "side_effect_effect_rejected",
+        failure: {
+          reasonCode: "screen_permission_denied",
+          terminalStage: "rejected",
+          retrySafety: "change_strategy",
+        },
+      },
+    })
+    expect(operationRows()).toEqual([
+      { state: "EFFECT_REJECTED", revision: 2, adapter_id: "tool:screen_capture" },
+    ])
+  })
+
+  it("accepts the MQTT v2 artifact capability and saves its verified capture result", async () => {
+    const params = { extensionId: "yeonjang-main", display: 0 }
+    mqttMocks.getYeonjangCapabilities.mockResolvedValueOnce({
+      protocolVersion: "2",
+      capabilityMatrix: {
+        "screen.capture": { supported: true, outputModes: ["artifact"] },
+      },
+    })
+    mqttMocks.doesYeonjangCapabilitySupportOutputMode.mockImplementation(
+      (_capabilities: unknown, _method: string, outputMode: string) => outputMode === "artifact",
+    )
+    mqttMocks.invokeYeonjangMethod.mockResolvedValueOnce({
+      file_name: "screen.png",
+      file_extension: "png",
+      mime_type: "image/png",
+      size_bytes: 123,
+      transfer_encoding: "base64",
+      base64_data: "c2NyZWVuLWJpbmFyeQ==",
+      message: "Yeonjang MQTT v2 capture artifact verified.",
+    })
+
+    const result = await executeToolWithSideEffectLedger({
+      tool: screenCaptureTool,
+      params,
+      ctx: createContext(params),
+    })
+
+    expect(result).toMatchObject({
+      success: true,
+      details: {
+        via: "yeonjang",
+        transferEncoding: "base64",
+        localFileSize: 512,
+      },
+    })
+  })
+
+  it("rejects unchanged screen-capture recovery instead of reporting the skipped call as success", () => {
+    expect(rejectsDuplicateAsUnchangedRecovery("screen_capture")).toBe(true)
   })
 
   it("executes screen_find_text through the side-effect ledger without storing OCR temp content", async () => {

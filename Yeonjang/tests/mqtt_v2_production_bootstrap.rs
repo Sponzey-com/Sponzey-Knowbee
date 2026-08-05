@@ -8,14 +8,14 @@ mod system_info_test_backend;
 
 use std::net::TcpListener;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use controlled_mqtt_broker::ControlledMqttBroker;
 use knowbee_yeonjang::atomic_local_storage::AtomicLocalStorage;
 use knowbee_yeonjang::durable_completed_store::DurableRecordStorage;
 use knowbee_yeonjang::instance_process_lease::{
-    InstanceLeaseError, InstanceLeaseProvider, InstanceProcessLease,
+    FilesystemRuntimeLeaseProvider, RuntimeLeaseGuard, RuntimeLeaseProvider,
 };
 use knowbee_yeonjang::legacy_capture_platform::{
     LegacyScreenPermissionProbe, ScreenPermissionProbeError,
@@ -51,6 +51,7 @@ fn production_bootstrap_exposes_opt_in_stage_timing_without_changing_default_dep
     let observed_start: fn(
         MqttV2ProductionConfig,
         MqttV2ProductionDependencies,
+        RuntimeLeaseGuard,
         tokio::runtime::Handle,
         StageTimingRecorder,
     ) -> Result<MqttV2ProductionRuntime, MqttV2ProductionBuildError> =
@@ -58,6 +59,7 @@ fn production_bootstrap_exposes_opt_in_stage_timing_without_changing_default_dep
     let default_start: fn(
         MqttV2ProductionConfig,
         MqttV2ProductionDependencies,
+        RuntimeLeaseGuard,
         tokio::runtime::Handle,
     ) -> Result<MqttV2ProductionRuntime, MqttV2ProductionBuildError> = start_production_mqtt_v2;
 
@@ -139,10 +141,10 @@ async fn packaged_bootstrap_burst_duplicate_returns_two_results_with_one_effect(
         MqttV2ProductionDependencies {
             backend: backend.clone(),
             policy: durable_allowed_policy(&root),
-            lease_provider: Arc::new(TestLeaseProvider),
             screen_permission: Arc::new(UnavailableScreenPermissionProbe),
             clock: Arc::new(FixedClock),
         },
+        test_runtime_lease(&root),
         tokio::runtime::Handle::current(),
     )
     .expect("production runtime");
@@ -207,10 +209,10 @@ async fn packaged_bootstrap_reconnects_and_replays_one_terminal_without_repeatin
         MqttV2ProductionDependencies {
             backend: backend.clone(),
             policy: durable_allowed_policy(&root),
-            lease_provider: Arc::new(TestLeaseProvider),
             screen_permission: Arc::new(UnavailableScreenPermissionProbe),
             clock: Arc::new(FixedClock),
         },
+        test_runtime_lease(&root),
         tokio::runtime::Handle::current(),
     )
     .expect("production runtime");
@@ -297,10 +299,10 @@ async fn packaged_restart_replays_completed_terminal_without_repeating_the_effec
         MqttV2ProductionDependencies {
             backend: backend.clone(),
             policy: policy.clone(),
-            lease_provider: Arc::new(TestLeaseProvider),
             screen_permission: Arc::new(UnavailableScreenPermissionProbe),
             clock: Arc::new(FixedClock),
         },
+        test_runtime_lease(&root),
         tokio::runtime::Handle::current(),
     )
     .expect("first runtime");
@@ -339,10 +341,10 @@ async fn packaged_restart_replays_completed_terminal_without_repeating_the_effec
         MqttV2ProductionDependencies {
             backend: backend.clone(),
             policy,
-            lease_provider: Arc::new(TestLeaseProvider),
             screen_permission: Arc::new(UnavailableScreenPermissionProbe),
             clock: Arc::new(FixedClock),
         },
+        test_runtime_lease(&root),
         tokio::runtime::Handle::current(),
     )
     .expect("restart runtime");
@@ -409,10 +411,10 @@ async fn packaged_bootstrap_applies_signed_policy_admin_without_platform_effect(
         MqttV2ProductionDependencies {
             backend: backend_port,
             policy: policy.clone(),
-            lease_provider: Arc::new(TestLeaseProvider),
             screen_permission: Arc::new(UnavailableScreenPermissionProbe),
             clock: Arc::new(FixedClock),
         },
+        test_runtime_lease(&root),
         tokio::runtime::Handle::current(),
     )
     .expect("production start");
@@ -499,10 +501,10 @@ async fn packaged_bootstrap_applies_signed_policy_admin_without_platform_effect(
         MqttV2ProductionDependencies {
             backend: backend.clone(),
             policy: policy.clone(),
-            lease_provider: Arc::new(TestLeaseProvider),
             screen_permission: Arc::new(UnavailableScreenPermissionProbe),
             clock: Arc::new(FixedClock),
         },
+        test_runtime_lease(&root),
         tokio::runtime::Handle::current(),
     )
     .expect("duplicate production runtime");
@@ -563,10 +565,10 @@ async fn packaged_bootstrap_applies_signed_policy_admin_without_platform_effect(
         MqttV2ProductionDependencies {
             backend: backend.clone(),
             policy: recovered_policy,
-            lease_provider: Arc::new(TestLeaseProvider),
             screen_permission: Arc::new(UnavailableScreenPermissionProbe),
             clock: Arc::new(FixedClock),
         },
+        test_runtime_lease(&root),
         tokio::runtime::Handle::current(),
     )
     .expect("restarted production runtime");
@@ -617,10 +619,10 @@ async fn packaged_bootstrap_reports_stale_policy_revision_without_write_or_effec
         MqttV2ProductionDependencies {
             backend: backend.clone(),
             policy: policy.clone(),
-            lease_provider: Arc::new(TestLeaseProvider),
             screen_permission: Arc::new(UnavailableScreenPermissionProbe),
             clock: Arc::new(FixedClock),
         },
+        test_runtime_lease(&root),
         tokio::runtime::Handle::current(),
     )
     .expect("production start");
@@ -675,10 +677,10 @@ async fn packaged_capture(
         MqttV2ProductionDependencies {
             backend: Arc::new(SystemInfoTestBackend::default()),
             policy: durable_allowed_policy(&root),
-            lease_provider: Arc::new(TestLeaseProvider),
             screen_permission,
             clock: Arc::new(FixedClock),
         },
+        test_runtime_lease(&root),
         tokio::runtime::Handle::current(),
     )
     .expect("production start");
@@ -762,17 +764,16 @@ async fn legacy_pending_terminal_blocks_artifact_and_mqtt_activation_before_runt
     )
     .expect("config");
     let backend = Arc::new(SystemInfoTestBackend::default());
-    let provider = Arc::new(ExclusiveLeaseProvider::default());
 
     let result = start_production_mqtt_v2(
         config,
         MqttV2ProductionDependencies {
             backend: backend.clone(),
             policy: durable_allowed_policy(&root),
-            lease_provider: provider.clone(),
             screen_permission: Arc::new(UnavailableScreenPermissionProbe),
             clock: Arc::new(FixedClock),
         },
+        test_runtime_lease(&root),
         tokio::runtime::Handle::current(),
     );
 
@@ -785,18 +786,11 @@ async fn legacy_pending_terminal_blocks_artifact_and_mqtt_activation_before_runt
     assert!(!root.join("artifacts").exists());
     assert_eq!(backend.camera_capture_calls(), 0);
     assert_eq!(backend.screen_capture_calls(), 0);
-    assert_eq!(provider.counts(), (1, 1));
-    drop(
-        provider
-            .acquire("instance-a")
-            .expect("failure released lease"),
-    );
-    assert_eq!(provider.counts(), (2, 2));
     let _ = std::fs::remove_dir_all(root);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn duplicate_instance_is_rejected_before_storage_and_mqtt_connection() {
+async fn production_bootstrap_accepts_the_transferred_runtime_guard() {
     let root = temporary_root();
     std::fs::create_dir_all(&root).expect("test root");
     let state_root = root.join("state");
@@ -811,25 +805,20 @@ async fn duplicate_instance_is_rejected_before_storage_and_mqtt_connection() {
     )
     .expect("config");
 
-    let result = start_production_mqtt_v2(
+    let runtime = start_production_mqtt_v2(
         config,
         MqttV2ProductionDependencies {
             backend: Arc::new(SystemInfoTestBackend::default()),
             policy: durable_allowed_policy(&root),
-            lease_provider: Arc::new(BusyLeaseProvider),
             screen_permission: Arc::new(UnavailableScreenPermissionProbe),
             clock: Arc::new(FixedClock),
         },
+        test_runtime_lease(&root),
         tokio::runtime::Handle::current(),
-    );
-
-    assert!(matches!(
-        result,
-        Err(MqttV2ProductionBuildError::InstanceLease(
-            InstanceLeaseError::AlreadyRunning
-        ))
-    ));
-    assert!(!state_root.exists());
+    )
+    .expect("bootstrap must use the transferred runtime guard");
+    assert!(state_root.exists());
+    runtime.shutdown().await.expect("shutdown");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -838,7 +827,6 @@ async fn graceful_shutdown_releases_exact_instance_lease_for_reacquisition() {
     std::fs::create_dir_all(&root).expect("test root");
     let mut settings = production_settings(&root, true);
     settings.connection.port = unused_loopback_port();
-    let provider = Arc::new(ExclusiveLeaseProvider::default());
     let config = MqttV2ProductionConfig::from_resolved_settings(
         settings.clone(),
         MqttV2Enrollment::from_settings(&settings),
@@ -852,10 +840,10 @@ async fn graceful_shutdown_releases_exact_instance_lease_for_reacquisition() {
         MqttV2ProductionDependencies {
             backend: Arc::new(SystemInfoTestBackend::default()),
             policy: durable_allowed_policy(&root),
-            lease_provider: provider.clone(),
             screen_permission: Arc::new(UnavailableScreenPermissionProbe),
             clock: Arc::new(FixedClock),
         },
+        test_runtime_lease(&root),
         tokio::runtime::Handle::current(),
     )
     .expect("runtime");
@@ -865,17 +853,11 @@ async fn graceful_shutdown_releases_exact_instance_lease_for_reacquisition() {
     )
     .await
     .expect("reconnecting runtime");
-    assert_eq!(provider.counts(), (1, 0));
 
     assert_eq!(
         runtime.shutdown().await.expect("graceful shutdown"),
         knowbee_yeonjang::mqtt_v2_command_pump::MqttV2PumpOutcome::Stopped
     );
-    assert_eq!(provider.counts(), (1, 1));
-    let reacquired = provider.acquire("instance-a").expect("reacquired lease");
-    assert_eq!(provider.counts(), (2, 1));
-    drop(reacquired);
-    assert_eq!(provider.counts(), (2, 2));
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -885,7 +867,6 @@ async fn dropped_runtime_requests_shutdown_and_releases_lease_after_owned_pump_e
     std::fs::create_dir_all(&root).expect("test root");
     let mut settings = production_settings(&root, true);
     settings.connection.port = unused_loopback_port();
-    let provider = Arc::new(ExclusiveLeaseProvider::default());
     let config = MqttV2ProductionConfig::from_resolved_settings(
         settings.clone(),
         MqttV2Enrollment::from_settings(&settings),
@@ -899,10 +880,10 @@ async fn dropped_runtime_requests_shutdown_and_releases_lease_after_owned_pump_e
         MqttV2ProductionDependencies {
             backend: Arc::new(SystemInfoTestBackend::default()),
             policy: durable_allowed_policy(&root),
-            lease_provider: provider.clone(),
             screen_permission: Arc::new(UnavailableScreenPermissionProbe),
             clock: Arc::new(FixedClock),
         },
+        test_runtime_lease(&root),
         tokio::runtime::Handle::current(),
     )
     .expect("runtime");
@@ -914,13 +895,6 @@ async fn dropped_runtime_requests_shutdown_and_releases_lease_after_owned_pump_e
     .expect("reconnecting runtime");
     drop(runtime);
 
-    wait_for_lease_release(&provider)
-        .await
-        .expect("drop shutdown lease release");
-    assert_eq!(provider.counts(), (1, 1));
-    let reacquired = provider.acquire("instance-a").expect("reacquired lease");
-    drop(reacquired);
-    assert_eq!(provider.counts(), (2, 2));
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -1175,106 +1149,12 @@ async fn wait_for_connection_state(
     .map_err(|_| format!("timed out waiting for connection state {expected:?}"))
 }
 
-async fn wait_for_lease_release(provider: &ExclusiveLeaseProvider) -> Result<(), String> {
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while provider.is_held() {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
-    })
-    .await
-    .map_err(|_| "timed out waiting for instance lease release".to_string())
-}
-
 fn unused_loopback_port() -> u16 {
     TcpListener::bind(("127.0.0.1", 0))
         .expect("unused loopback listener")
         .local_addr()
         .expect("unused loopback address")
         .port()
-}
-
-#[derive(Default)]
-struct ExclusiveLeaseProvider {
-    held: Arc<AtomicBool>,
-    acquired: Arc<AtomicUsize>,
-    released: Arc<AtomicUsize>,
-}
-
-impl ExclusiveLeaseProvider {
-    fn counts(&self) -> (usize, usize) {
-        (
-            self.acquired.load(Ordering::SeqCst),
-            self.released.load(Ordering::SeqCst),
-        )
-    }
-
-    fn is_held(&self) -> bool {
-        self.held.load(Ordering::SeqCst)
-    }
-}
-
-impl InstanceLeaseProvider for ExclusiveLeaseProvider {
-    fn acquire(
-        &self,
-        instance_id: &str,
-    ) -> Result<Box<dyn InstanceProcessLease>, InstanceLeaseError> {
-        if instance_id != "instance-a" {
-            return Err(InstanceLeaseError::InvalidIdentity);
-        }
-        if self
-            .held
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return Err(InstanceLeaseError::AlreadyRunning);
-        }
-        self.acquired.fetch_add(1, Ordering::SeqCst);
-        Ok(Box::new(ExclusiveLease {
-            held: self.held.clone(),
-            released: self.released.clone(),
-        }))
-    }
-}
-
-struct ExclusiveLease {
-    held: Arc<AtomicBool>,
-    released: Arc<AtomicUsize>,
-}
-
-impl InstanceProcessLease for ExclusiveLease {}
-
-impl Drop for ExclusiveLease {
-    fn drop(&mut self) {
-        if self.held.swap(false, Ordering::SeqCst) {
-            self.released.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-}
-
-struct TestLease;
-impl InstanceProcessLease for TestLease {}
-
-struct TestLeaseProvider;
-
-impl InstanceLeaseProvider for TestLeaseProvider {
-    fn acquire(
-        &self,
-        instance_id: &str,
-    ) -> Result<Box<dyn InstanceProcessLease>, InstanceLeaseError> {
-        if instance_id == "instance-a" {
-            Ok(Box::new(TestLease))
-        } else {
-            Err(InstanceLeaseError::InvalidIdentity)
-        }
-    }
-}
-
-struct BusyLeaseProvider;
-
-impl InstanceLeaseProvider for BusyLeaseProvider {
-    fn acquire(&self, _: &str) -> Result<Box<dyn InstanceProcessLease>, InstanceLeaseError> {
-        Err(InstanceLeaseError::AlreadyRunning)
-    }
 }
 
 fn temporary_root() -> std::path::PathBuf {
@@ -1288,6 +1168,13 @@ fn temporary_root() -> std::path::PathBuf {
             .as_nanos(),
         SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ))
+}
+
+fn test_runtime_lease(root: &std::path::Path) -> RuntimeLeaseGuard {
+    FilesystemRuntimeLeaseProvider::new(root.join("runtime-process-lease"))
+        .expect("test runtime lease provider")
+        .acquire()
+        .expect("test runtime lease")
 }
 
 fn production_settings(root: &std::path::Path, enrolled: bool) -> YeonjangSettings {

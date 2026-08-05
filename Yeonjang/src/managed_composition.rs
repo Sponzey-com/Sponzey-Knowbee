@@ -16,9 +16,7 @@ use crate::completed_idempotency::{
     DurableCompletedRecordStore,
 };
 use crate::durable_cancellation::DurableCancellationReceiptStore;
-use crate::instance_process_lease::{
-    InstanceLeaseError, InstanceLeaseProvider, InstanceProcessLease,
-};
+use crate::instance_process_lease::RuntimeLeaseGuard;
 use crate::lifecycle::SharedLifecycleState;
 use crate::managed_request::ManagedRequestService;
 use crate::mqtt::{MqttRuntimeHandle, RuntimeEvent, start_runtime_with_dispatcher_and_transport};
@@ -85,7 +83,7 @@ pub struct ManagedRuntimeDependencies {
     clock: Arc<dyn AuthorizationClock>,
     mqtt_transport: MqttTransportSecurity,
     durable: Option<ManagedDurableDependencies>,
-    instance_lease_provider: Arc<dyn InstanceLeaseProvider>,
+    runtime_lease: RuntimeLeaseGuard,
 }
 
 pub struct ManagedDurableDependencies {
@@ -124,7 +122,7 @@ impl ManagedRuntimeDependencies {
         backend: Arc<dyn AutomationBackend>,
         authorization: AuthorizationBootstrapInput,
         clock: Arc<dyn AuthorizationClock>,
-        instance_lease_provider: Arc<dyn InstanceLeaseProvider>,
+        runtime_lease: RuntimeLeaseGuard,
     ) -> Self {
         Self {
             settings,
@@ -133,7 +131,7 @@ impl ManagedRuntimeDependencies {
             clock,
             mqtt_transport: MqttTransportSecurity::LoopbackPlaintext,
             durable: None,
-            instance_lease_provider,
+            runtime_lease,
         }
     }
 
@@ -143,7 +141,7 @@ impl ManagedRuntimeDependencies {
         authorization: AuthorizationBootstrapInput,
         clock: Arc<dyn AuthorizationClock>,
         durable: ManagedDurableDependencies,
-        instance_lease_provider: Arc<dyn InstanceLeaseProvider>,
+        runtime_lease: RuntimeLeaseGuard,
     ) -> Self {
         Self {
             settings,
@@ -152,7 +150,7 @@ impl ManagedRuntimeDependencies {
             clock,
             mqtt_transport: MqttTransportSecurity::LoopbackPlaintext,
             durable: Some(durable),
-            instance_lease_provider,
+            runtime_lease,
         }
     }
 
@@ -170,7 +168,6 @@ pub enum ManagedRuntimeBuildError {
     Supervisor(RuntimeBuildError),
     Host(RuntimeHostError),
     Dispatcher(DispatchBuildError),
-    InstanceLease(InstanceLeaseError),
 }
 
 pub struct ManagedRuntime {
@@ -180,7 +177,7 @@ pub struct ManagedRuntime {
     dispatcher: TokioRequestDispatcher,
     mqtt_transport: MqttTransportSecurity,
     _artifacts: ArtifactRuntimeComposition,
-    _instance_lease: Box<dyn InstanceProcessLease>,
+    _runtime_lease: RuntimeLeaseGuard,
 }
 
 enum ManagedRuntimeHost {
@@ -210,7 +207,7 @@ impl ManagedRuntime {
             dispatcher,
             mqtt_transport: _,
             _artifacts: _,
-            _instance_lease: _,
+            _runtime_lease: _,
         } = self;
         dispatcher.shutdown().await;
         drop(dispatcher);
@@ -283,7 +280,7 @@ impl ManagedMqttRuntime {
             dispatcher,
             mqtt_transport: _,
             _artifacts: _,
-            _instance_lease: _,
+            _runtime_lease: _,
         } = managed;
         let ManagedRuntimeHost::Owned(host) = host else {
             return Err(ManagedMqttShutdownError::BlockingShutdownRequiresOwnedHost);
@@ -342,11 +339,8 @@ fn build_managed_runtime_with_handle(
         clock,
         mqtt_transport,
         durable,
-        instance_lease_provider,
+        runtime_lease,
     } = dependencies;
-    let instance_lease = instance_lease_provider
-        .acquire(&settings.instance_id)
-        .map_err(ManagedRuntimeBuildError::InstanceLease)?;
     let capability_snapshot = backend.capabilities();
     let admission = build_side_effect_admission(authorization, Arc::clone(&clock))
         .map_err(ManagedRuntimeBuildError::Authorization)?;
@@ -413,6 +407,6 @@ fn build_managed_runtime_with_handle(
         dispatcher,
         mqtt_transport,
         _artifacts: artifacts,
-        _instance_lease: instance_lease,
+        _runtime_lease: runtime_lease,
     })
 }

@@ -89,6 +89,31 @@ describe("Gateway Yeonjang MQTT v2 external contract", () => {
     })
   })
 
+  it("projects a screen OS permission denial as a screen-specific pre-effect rejection", () => {
+    expect(projectYeonjangMqttV2TerminalFailure({
+      method: "screen.capture",
+      commandId: "command-screen-v2",
+      operationId: "operation-screen-v2",
+      targetFingerprint: `sha256:${"56".repeat(32)}`,
+      executionOutcome: "blocked",
+      failure: {
+        stage: "os_preflight",
+        reason_code: "permission_denied",
+        effect_state: "not_started",
+        retry_safety: "local_action_required",
+        recovery_action: "complete_local_os_setup",
+      },
+    })).toMatchObject({
+      code: "screen_permission_denied",
+      attempt: {
+        method: "screen.capture",
+        terminalStage: "rejected",
+        reasonCode: "screen_permission_denied",
+        retrySafety: "change_strategy",
+      },
+    })
+  })
+
   it("loads one explicit requester identity from the immutable startup snapshot", () => {
     const root = mkdtempSync(join(tmpdir(), "knowbee-mqtt-v2-config-"))
     try {
@@ -887,6 +912,7 @@ describe("Gateway Yeonjang MQTT v2 external contract", () => {
         snapshot.sessionId === "session-stable"
         && snapshot.v2StatusSequence === 50
         && snapshot.v2CapabilitiesSequence === 50
+        && snapshot.v2CapabilitiesExpiresAt === firstObservedAt + 60_000
       )))
 
       await new Promise<void>((resolve) => producer?.end(true, {}, resolve))
@@ -928,6 +954,7 @@ describe("Gateway Yeonjang MQTT v2 external contract", () => {
           && snapshot.state === "online"
           && snapshot.v2StatusSequence === 1
           && snapshot.v2CapabilitiesSequence === 1
+          && snapshot.v2CapabilitiesExpiresAt === restartedObservedAt + 60_000
           && snapshot.methods.includes("camera.capture")
         )),
         () => JSON.stringify(getMqttExtensionSnapshots()),
@@ -1489,6 +1516,9 @@ describe("Gateway Yeonjang MQTT v2 external contract", () => {
         stage: "terminal_admission",
         outcome: "admitted",
         executionOutcome: "blocked",
+        terminalFailureReasonCode: "permission_not_determined",
+        terminalFailureEffectState: "not_started",
+        terminalFailureRetrySafety: "local_action_required",
       }))
       const traceText = JSON.stringify(mqttFieldDebug.mock.calls)
       expect(traceText).not.toContain("fixture-pre-effect")

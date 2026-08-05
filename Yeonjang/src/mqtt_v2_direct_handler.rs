@@ -185,7 +185,7 @@ impl MqttV2CommandHandler {
             V2TerminalClaim::Claimed => {}
             V2TerminalClaim::InProgress => {
                 return MqttV2HandlerResult::Rejected(idempotency_failure(
-                    &terminal_scope,
+                    &ingress_correlation,
                     ExecutionFailureReason::IdempotencyInProgress,
                     RetrySafety::SafeRedeliverySameIdempotency,
                     RecoveryAction::RetryAdmission,
@@ -196,7 +196,7 @@ impl MqttV2CommandHandler {
             }
             V2TerminalClaim::ScopeConflict => {
                 return MqttV2HandlerResult::Rejected(idempotency_failure(
-                    &terminal_scope,
+                    &ingress_correlation,
                     ExecutionFailureReason::IdempotencyScopeConflict,
                     RetrySafety::NotRetryable,
                     RecoveryAction::CorrectRequest,
@@ -204,7 +204,7 @@ impl MqttV2CommandHandler {
             }
             V2TerminalClaim::Saturated | V2TerminalClaim::Unavailable => {
                 return MqttV2HandlerResult::Rejected(idempotency_failure(
-                    &terminal_scope,
+                    &ingress_correlation,
                     ExecutionFailureReason::TerminalRepositoryUnavailable,
                     RetrySafety::SafeRedeliverySameIdempotency,
                     RecoveryAction::RetryAdmission,
@@ -476,19 +476,19 @@ impl MqttV2CommandHandler {
         match self.terminal_repository.lookup(scope) {
             V2TerminalLookup::Completed(content) => MqttV2HandlerResult::Terminal(content),
             V2TerminalLookup::InProgress => MqttV2HandlerResult::Rejected(idempotency_failure(
-                scope,
+                &ingress_correlation,
                 ExecutionFailureReason::IdempotencyInProgress,
                 RetrySafety::SafeRedeliverySameIdempotency,
                 RecoveryAction::RetryAdmission,
             )),
             V2TerminalLookup::ScopeConflict => MqttV2HandlerResult::Rejected(idempotency_failure(
-                scope,
+                &ingress_correlation,
                 ExecutionFailureReason::IdempotencyScopeConflict,
                 RetrySafety::NotRetryable,
                 RecoveryAction::CorrectRequest,
             )),
             V2TerminalLookup::Unavailable => MqttV2HandlerResult::Rejected(idempotency_failure(
-                scope,
+                &ingress_correlation,
                 ExecutionFailureReason::TerminalRepositoryUnavailable,
                 RetrySafety::SafeRedeliverySameIdempotency,
                 RecoveryAction::RetryAdmission,
@@ -549,7 +549,7 @@ fn pre_effect_binding_failure(correlation_id: String) -> ExecutionFailure {
 }
 
 fn idempotency_failure(
-    scope: &V2TerminalScope,
+    ingress_correlation: &str,
     reason: ExecutionFailureReason,
     retry_safety: RetrySafety,
     recovery_action: RecoveryAction,
@@ -561,9 +561,9 @@ fn idempotency_failure(
         retry_safety,
         recovery_action,
         None,
-        scope.exact_scope_digest().to_string(),
+        ingress_correlation.to_string(),
     )
-    .expect("a validated scope digest is contract-valid")
+    .expect("a SHA-256 ingress correlation is contract-valid")
 }
 
 fn active_registration_failure(

@@ -1,7 +1,7 @@
 //! Packaged direct-MQTT-v2 bootstrap and activation ordering.
 //!
 //! This composition root consumes resolved settings and credentials once,
-//! acquires the exact instance lease before storage or transport activation,
+//! requires a process-owned bootstrap guard before storage or transport activation,
 //! recovers independent durable owners, constructs one OS-neutral platform
 //! adapter, then starts the owned Tokio pump. It never falls back to v1.
 
@@ -25,9 +25,7 @@ use crate::durable_cancellation::{
 };
 use crate::durable_completed_store::DurableRecordStorage;
 use crate::execute_capability::ExecutionClock;
-use crate::instance_process_lease::{
-    InstanceLeaseError, InstanceLeaseProvider, InstanceProcessLease,
-};
+use crate::instance_process_lease::RuntimeLeaseGuard;
 use crate::legacy_capture_permission_observer::LegacyCapturePermissionObserver;
 use crate::legacy_capture_platform::{
     LegacyCapturePlatformAdapter, LegacyScreenPermissionProbe, ScreenPermissionProbeError,
@@ -158,7 +156,6 @@ pub struct MqttV2ProductionConfig {
     crypto: Arc<MqttV2HmacCrypto>,
     artifact: ArtifactRuntimeConfig,
     state_root: PathBuf,
-    instance_id: String,
 }
 
 impl MqttV2ProductionConfig {
@@ -239,7 +236,6 @@ impl MqttV2ProductionConfig {
                 ARTIFACT_TTL_MS,
             ),
             state_root,
-            instance_id,
         })
     }
 }
@@ -277,7 +273,6 @@ pub struct MqttV2ProductionDependencies {
     /// One canonical durable policy owner shared by command reads, admin
     /// writes, local settings projection, and restart recovery.
     pub policy: Arc<DurablePermissionPolicyRepository>,
-    pub lease_provider: Arc<dyn InstanceLeaseProvider>,
     pub screen_permission: Arc<dyn LegacyScreenPermissionProbe>,
     pub clock: Arc<dyn MqttV2BootstrapClock>,
 }
@@ -324,7 +319,6 @@ pub enum MqttV2ProductionBuildError {
     Crypto(MqttV2HmacBuildError),
     RuntimeConfig,
     Runtime(MqttV2RuntimeBuildError),
-    InstanceLease(InstanceLeaseError),
     Artifact(ArtifactRuntimeBuildError),
     StateStorage(LocalStorageBuildError),
     Terminal(DurableV2TerminalRepositoryError),
@@ -335,9 +329,10 @@ pub enum MqttV2ProductionBuildError {
 pub fn start_production_mqtt_v2(
     config: MqttV2ProductionConfig,
     dependencies: MqttV2ProductionDependencies,
+    runtime_lease: RuntimeLeaseGuard,
     handle: Handle,
 ) -> Result<MqttV2ProductionRuntime, MqttV2ProductionBuildError> {
-    start_production_mqtt_v2_inner(config, dependencies, handle, None)
+    start_production_mqtt_v2_inner(config, dependencies, runtime_lease, handle, None)
 }
 
 /// Starts the same production runtime with opt-in bounded duration evidence.
@@ -347,22 +342,26 @@ pub fn start_production_mqtt_v2(
 pub fn start_production_mqtt_v2_with_stage_timing(
     config: MqttV2ProductionConfig,
     dependencies: MqttV2ProductionDependencies,
+    runtime_lease: RuntimeLeaseGuard,
     handle: Handle,
     stage_timing: StageTimingRecorder,
 ) -> Result<MqttV2ProductionRuntime, MqttV2ProductionBuildError> {
-    start_production_mqtt_v2_inner(config, dependencies, handle, Some(stage_timing))
+    start_production_mqtt_v2_inner(
+        config,
+        dependencies,
+        runtime_lease,
+        handle,
+        Some(stage_timing),
+    )
 }
 
 fn start_production_mqtt_v2_inner(
     config: MqttV2ProductionConfig,
     dependencies: MqttV2ProductionDependencies,
+    runtime_lease: RuntimeLeaseGuard,
     handle: Handle,
     stage_timing: Option<StageTimingRecorder>,
 ) -> Result<MqttV2ProductionRuntime, MqttV2ProductionBuildError> {
-    let lease = dependencies
-        .lease_provider
-        .acquire(&config.instance_id)
-        .map_err(MqttV2ProductionBuildError::InstanceLease)?;
     let state_root = prepare_state_root(&config.state_root)?;
     let now_ms = dependencies.clock.now_ms();
     // Recover execution truth before artifact cleanup or MQTT activation. A
@@ -427,12 +426,11 @@ fn start_production_mqtt_v2_inner(
     if let Some(stage_timing) = stage_timing {
         runtime_dependencies = runtime_dependencies.with_stage_timing(stage_timing);
     }
-    let guard: Box<dyn Send> = Box::new(InstanceActivationGuard(lease));
     let runtime = start_mqtt_v2_runtime_on_handle_with_guard(
         config.runtime,
         runtime_dependencies,
         handle,
-        Some(guard),
+        Some(Box::new(runtime_lease)),
     )
     .map_err(MqttV2ProductionBuildError::Runtime)?;
     Ok(MqttV2ProductionRuntime { runtime })
@@ -451,8 +449,6 @@ impl ExecutionClock for BootstrapClockAdapter {
         self.0.now_ms()
     }
 }
-
-struct InstanceActivationGuard(#[allow(dead_code)] Box<dyn InstanceProcessLease>);
 
 fn prepare_state_root(root: &Path) -> Result<PathBuf, MqttV2ProductionBuildError> {
     fs::create_dir_all(root).map_err(|_| {

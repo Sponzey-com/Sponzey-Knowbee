@@ -134,6 +134,7 @@ function resolveRunAgentMemoryOwnerScope(params) {
     }
     return MAIN_AGENT_MEMORY_OWNER_SCOPE;
 }
+const TRUSTED_SCREEN_PERMISSION_DENIED_OUTPUT = "Yeonjang 화면 캡처는 운영 체제의 화면 캡처 권한이 거부되어 시작되지 않았습니다. 시스템 설정에서 Yeonjang의 화면 캡처 권한을 허용한 뒤 다시 요청해 주세요.";
 export async function* runAgent(params) {
     const runId = params.runId ?? crypto.randomUUID();
     const sessionId = params.sessionId ?? crypto.randomUUID();
@@ -1260,7 +1261,7 @@ function buildTerminalFailureNotice(toolName, result) {
     const output = result.output.trim();
     if (!output)
         return null;
-    const trusted = isTrustedDeterministicTerminalFailure(result.details);
+    const trusted = isTrustedDeterministicTerminalFailure(result);
     const text = trusted ? output : sanitizeUserFacingError(output).userMessage;
     if (!text.trim())
         return null;
@@ -1289,12 +1290,20 @@ function shouldStopAfterFailure(details) {
         return false;
     return Boolean(details.stopAfterFailure);
 }
-function isTrustedDeterministicTerminalFailure(details) {
-    if (!details || typeof details !== "object")
+function isTrustedDeterministicTerminalFailure(result) {
+    if (!result.details || typeof result.details !== "object")
         return false;
-    const typed = details;
-    return (typed.via === "yeonjang" &&
-        (typed.failureKind === "path_bug" || typed.failureKind === "timeout"));
+    const typed = result.details;
+    if (typed.via !== "yeonjang")
+        return false;
+    if (typed.failureKind === "path_bug" || typed.failureKind === "timeout")
+        return true;
+    const failure = typed.failure;
+    return (typed.failureKind === "remote_rejected"
+        && result.output.trim() === TRUSTED_SCREEN_PERMISSION_DENIED_OUTPUT
+        && failure?.reasonCode === "screen_permission_denied"
+        && failure.terminalStage === "rejected"
+        && failure.retrySafety === "change_strategy");
 }
 function buildExecutionRecoverySummary(failures) {
     const toolNames = [...new Set(failures.map((failure) => failure.toolName))];

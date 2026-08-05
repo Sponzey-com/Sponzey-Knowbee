@@ -8,7 +8,7 @@ canonical side-effect identity를 사용하며 Rust Yeonjang producer, 승인 �
 
 | Path | Responsibility | Boundary / Side effects |
 | --- | --- | --- |
-| `mqtt-client.ts` | v1 compatibility 또는 signed v2 requester transport 선택과 호출 생명주기 | MQTT 연결·발행·구독·취소; v2 관측 후 v1 fallback 금지; signed terminal의 pre-effect OS 실패를 camera Tool 계약으로 투영하고, terminal waiter는 만료된 Field Debug에 category·latency만 남김 |
+| `mqtt-client.ts` | v1 compatibility 또는 signed v2 requester transport 선택과 호출 생명주기 | MQTT 연결·발행·구독·취소; v2 관측 후 v1 fallback 금지; signed terminal의 pre-effect OS 실패를 camera/screen Tool 계약으로 투영하고, terminal waiter는 만료된 Field Debug에 category·latency만 남김 |
 | `mqtt-v2-contract.ts` | v2 enrollment, topic, HMAC, status/capability, command wire 계약 | 외부 payload 검증·서명; 의미 판단 없음 |
 | `mqtt-v2-permission.ts` | signed `capture.permission.get` query와 response admission | exact requester/instance/session/fingerprint/operation identity 및 HMAC을 검증하는 read-only permission projection; 촬영·selector·OS prompt 없음 |
 | `mqtt-v2-target.ts` | 단일 online instance/session/fingerprint target 해석 | read-only registry projection 입력 |
@@ -36,7 +36,9 @@ signed v2 terminal의 `stage`, `reason_code`, `effect_state`, `retry_safety`는 
 해석하지 않고 closed mapping으로 command-attempt 계약에 투영합니다. 특히 카메라의
 `permission_not_determined + not_started + local_action_required`는
 `camera_permission_not_determined + rejected + change_strategy`이며, 실행된 효과나 추가
-Telegram 승인으로 오인하지 않습니다.
+Telegram 승인으로 오인하지 않습니다. 화면 캡처의 `permission_denied + not_started`는
+`screen_permission_denied + rejected + change_strategy`로 투영합니다. 따라서 MQTT 연결,
+사용자 승인, OS 권한, 실제 효과 실행을 서로 대체하지 않습니다.
 
 artifact descriptor는 Rust producer의 versioned `schemaVersion` camelCase DTO이며,
 `lifecycleRevision`은 non-negative durable CAS revision입니다. Yeonjang은 등록 직후 `0`을

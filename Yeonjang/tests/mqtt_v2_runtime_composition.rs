@@ -61,6 +61,12 @@ use knowbee_yeonjang::protocol_v2_terminal::V2ResponseSigner;
 use knowbee_yeonjang::v2_delivery_receipt::DurableV2DeliveryRepository;
 use knowbee_yeonjang::v2_terminal_repository::DurableV2TerminalRepository;
 
+// A fresh macOS test binary can spend several seconds in executable policy
+// inspection before the runtime reaches its first MQTT CONNECT. Keep that
+// cold-start allowance confined to the first network observation; connected
+// session assertions retain their tighter per-operation budgets below.
+const CONTROLLED_INITIAL_CONNECTION_BUDGET: Duration = Duration::from_secs(20);
+
 #[test]
 fn runtime_config_binds_connection_topics_target_and_signing_identity_once() {
     let connection = MqttV2ConnectionConfig::new(
@@ -255,7 +261,7 @@ async fn production_builder_owns_signed_command_pump_and_deterministic_shutdown(
 
     let runtime = start_mqtt_v2_runtime(config, dependencies).expect("runtime start");
     let response = broker
-        .wait_for_response(Duration::from_secs(5))
+        .wait_for_response(CONTROLLED_INITIAL_CONNECTION_BUDGET)
         .expect("signed response");
     assert_eq!(response["schema_id"], "yeonjang.response.v2");
     assert_eq!(
@@ -373,7 +379,7 @@ async fn production_control_route_reads_permissions_without_platform_effect() {
     .with_permission_observation(Arc::new(PermissionObservationFixture));
     let runtime = start_mqtt_v2_runtime(config, dependencies).expect("runtime");
     let response = broker
-        .wait_for_response(Duration::from_secs(5))
+        .wait_for_response(CONTROLLED_INITIAL_CONNECTION_BUDGET)
         .expect("permission response");
     assert_eq!(
         response["schema_id"],
@@ -470,7 +476,7 @@ async fn production_builder_binds_will_then_publishes_online_and_graceful_offlin
     // enters a synchronous observation boundary.
     tokio::task::yield_now().await;
     let will = match tokio::task::block_in_place(|| {
-        broker.wait_for_response(Duration::from_secs(5))
+        broker.wait_for_response(CONTROLLED_INITIAL_CONNECTION_BUDGET)
     }) {
         Ok(will) => will,
         Err(error) => {

@@ -193,6 +193,7 @@
 - review 진입 직전의 `prepare review + direct delivery complete/stop/retry` glue도 `review-entry-pass.ts`로 묶어, `start.ts`는 delivery/review 경계의 다음 상태 반영에 더 집중하게 정리했습니다.
 - `post-execution-pass.ts`는 execution 이후 `retry/break/continue`와 preview, delivery outcome, seen recovery key를 한 번에 계산해 `start.ts`의 post-pass glue를 더 줄입니다.
 - `execution-postpass.ts`는 이제 새 recovery key나 구조화된 대안이 없으면 `none`으로 넘기지 않고 `stop`을 반환합니다. 따라서 `실행 실패 + 대안 있음 => retry`, `실행 실패 + 대안 없음 => terminal stop` 규칙을 post-pass 경계에서 구조적으로 고정합니다.
+- Agent가 typed terminal Tool failure notice를 내보내면 `execution-chunk-pass`가 이를 같은 run의 terminal stop으로 전환합니다. 따라서 실패한 화면/카메라/연장 작업이 completion follow-up의 가상 Tool 호출이나 직접 전달 재시도 루프로 되돌아가지 않습니다.
 - filesystem post-pass의 `stop / initial_retry / retry / verified` 적용도 `filesystem-postpass-application.ts`로 묶어, `start.ts`는 filesystem decision의 다음 상태 반영에 더 집중하게 정리했습니다.
 - direct delivery retry, synthetic approval continuation, completion retry에 공통으로 쓰이는 running 상태/event/summary 적용도 `running-application.ts`로 분리해, `start.ts`는 message 전환과 clear flag 반영만 맡는 방향으로 더 좁혀졌습니다.
 - command failure, generic execution failure, filesystem mutation/verification retry, direct delivery retry, completion retry에 공통으로 쓰이는 실패 기록, budget 소모, recovery event, running 전환도 `retry-application.ts`로 분리하기 시작했고, `start.ts`는 retry별 고유한 next message와 clear flag 반영에 더 집중합니다.

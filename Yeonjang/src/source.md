@@ -6,9 +6,18 @@
 
 ## 중요 단위
 
-- `main.rs`: GUI, stdio와 managed MQTT 진입점을 선택하는 packaged composition root.
-  Explicit config root와 bounded stdin broker-secret lease는 이 경계에서만 읽고
-  non-secret bootstrap 뒤 validated runtime dependency로 넘깁니다.
+- `main.rs`: closed startup-mode value가 선택한 GUI, stdio, managed MQTT 또는 bounded
+  utility entrypoint만 호출하는 packaged composition root. Explicit config root와 bounded
+  stdin broker-secret lease는 managed branch에서만 읽습니다. Managed branch는 explicit config
+  root를 검증하기 전 fixed OS-runtime guard를 acquire해 duplicate claimant를 먼저 닫고, 그 guard를
+  managed, GUI 또는 stdio process lifetime까지 보유합니다. 그 뒤 non-secret bootstrap과 validated
+  runtime dependency 구성을 진행합니다.
+- `startup_mode.rs`: side-effect-free mutually-exclusive packaged mode grammar. Mixed
+  runtime/helper/utility selector는 settings, secret, runtime host와 platform adapter 전에
+  usage rejection으로 닫고 helper의 opaque child arguments는 exact helper branch에만 넘깁니다.
+- `instance_process_lease.rs`: executable, config root와 instance ID에서 독립된 fixed
+  product runtime lease를 secure file lock과 RAII guard로 제공합니다. Packaged와 standalone
+  claimant은 이 guard를 먼저 acquire해 lifetime owner로 전달하며 child composition은 재획득하지 않습니다.
 - `managed_shutdown.rs`: managed composition의 OS signal adapter. Windows GUI-subsystem
   process는 parent console을 한 번 결속하고 exact process-group Ctrl+Break를, Unix는
   Ctrl+C를 runtime의 단일 drain/shutdown owner로 전달합니다.
@@ -95,9 +104,10 @@
 - `managed_composition.rs`: typed config와 consuming dependencies로 authorization,
 
   store, supervisor, single runtime host와 dispatcher를 조립하는 standalone root
-- `instance_process_lease.rs`: bootstrap에서 주입한 root/executable identity와 immutable
-
-  instance ID에 결속된 exclusive filesystem process lease adapter
+- `instance_process_lease.rs`: executable/config/instance ID를 받지 않는 단일 fixed
+  product-key OS-runtime filesystem lease adapter입니다. Secure open, symlink rejection과
+  file-descriptor RAII release만 소유하며 process scan, PID 판정이나 lock-file deletion은
+  하지 않습니다. 이전 instance-bound adapter와 재획득 경로는 제거되었습니다.
 - `request_dispatcher.rs`: caller-owned Tokio handle과 bounded owned permits로 managed
 
   response task를 생성하는 infrastructure dispatch seam
@@ -219,14 +229,18 @@
 - `mqtt_admission.rs`: common admission outcome을 raw receipt 없이 stable MQTT
 
   rejection response로 투영하는 compatibility adapter seam
-- `gui.rs`: 고정 크기 설정 다이얼로그
+- `gui.rs`: 고정 크기 설정 다이얼로그. local screen capture policy가 허용된 첫 GUI
+  시작은 durable one-time marker를 먼저 저장한 뒤 `system_screen_permission` adapter에
+  macOS 권한 요청을 한 번만 전달하며 MQTT runtime에는 그 경로를 노출하지 않습니다.
+  권한 탭은 read-only observation과 marker를 `허용됨` 또는 `요청 후 미허용`으로만
+  투영하며, macOS가 제공하지 않는 거부/미결 구분을 추측하지 않습니다.
 - `automation`, `features`, `platform`: 추상화 계층과 OS별 구현
 
 ## 메모
 
 - 이 폴더는 전송 계층, UI, 실행 추상화를 비교적 명확히 분리하고 있습니다.
 - Standalone managed composition은 authorization input과 clock, settings, backend,
-  instance lease provider를
+  process-lifetime runtime lease guard를
 
   dependency로 소비하고 bounded host/runtime/dispatch/completed config만 받습니다.
   Composition은 backend capability를 시작 시 한 번 snapshot으로 만들고 managed
@@ -234,11 +248,11 @@
   capability 발행은 이 immutable snapshot만 사용하며 platform backend를 다시
   선택하지 않습니다.
   Owned headless path는 single Tokio host를 획득하고, shared GUI path는 caller handle을
-  사용합니다. 두 경로 모두 authorization/store/supervisor 구성 전에 instance ID의
-  exclusive process lease를 획득합니다. 후속 build failure는 process lease와 owned host를
-  모두 되돌리며 async shutdown은 dispatcher delivery를 drain한 뒤 lease owner를
-  해제합니다. 시작 때 주입된 settings snapshot을 그대로 보유해 controlled MQTT를
-  연결하며, MQTT 시작 실패도 owner drop으로 두 lease를 반환합니다. Environment/file
+  사용합니다. 두 경로 모두 packaged/standalone bootstrap이 이미 획득한 fixed OS-runtime
+  guard를 consuming dependency로 받아 재획득하지 않습니다. 후속 build failure와 async
+  shutdown은 dispatcher delivery를 drain한 뒤 guard와 owned host를 반환합니다. 시작 때
+  주입된 settings snapshot을 그대로 보유해 controlled MQTT를 연결하며, MQTT 시작 실패도
+  owner drop으로 runtime guard를 반환합니다. Environment/file
   재읽기와 default MQTT activation은 이 root에 포함하지 않습니다.
 - Packaged `--managed`, `--headless-managed`와 `--managed-tls` bootstrap은 settings,
 
@@ -261,13 +275,11 @@
   재연결은 이전 async drain 완료 뒤에만 시작하며 요청 당시 settings snapshot을
   보존합니다. 정상 quit은 connection/dispatcher drain 완료 메시지를 받은 뒤 window를
   닫고, 비정상 UI drop은 최소한 transport stop signal을 보냅니다.
-- `configured_instance_lease_provider`는 settings path와 canonical current executable을
-
-  GUI/headless bootstrap에서 한 번 읽어 immutable provider로 주입합니다. Adapter는
-  executable identity와 instance ID를 versioned digest한 lock filename만 사용하며 PID,
-  raw identity, secret이나 payload를 기록하지 않습니다. Existing stale file은 OS lock
-  획득으로 복구하고, active owner와 symlink path는 fail-closed합니다. Runtime owner의
-  normal shutdown/drop과 process 종료가 lock을 반환합니다.
+- 공통 startup mode classifier 뒤 bootstrap은 settings/config/credential/runtime 활성화 전에
+  stable per-user OS root의 fixed runtime lease를 한 번 획득합니다. Guard는 GUI, managed 또는
+  stdio process owner로 이동하며 downstream composition은 provider를 재호출하지 않습니다.
+  Existing stale file은 OS lock 획득으로 복구하고 active owner와 unsafe/symlink root는
+  fail-closed합니다. 정상 owner drop과 process 종료만 lock을 반환합니다.
 - Managed root의 기존 constructor는 process-local completed 경로를 그대로 유지합니다.
 
   Durable activation은 별도 `ManagedRuntimeDependencies::new_with_durable`과
@@ -401,8 +413,10 @@
   identity를 함께 검증하며 x64와 ARM64만 허용합니다. Parallels ARM64와 Ubuntu X11의
   실제 성공은 각각 해당 cell만 채우고 Windows x64나 Ubuntu Wayland 결과로
   복제하지 않습니다.
-- Packaged managed entry의 `--config-root`는 settings, permission policy, MQTT durable
-  state와 instance lease owner를 caller-validated absolute root 하나에 결속합니다.
+- Packaged managed entry의 `--config-root`는 settings, permission policy와 MQTT durable
+  state를 caller-validated absolute root 하나에 결속합니다. OS-runtime singleton guard는
+  config root와 분리된 product root에서 packaged bootstrap이 먼저 acquire해 direct MQTT
+  production composition으로 mandatory transfer하며, inner composition은 lease를 재획득하지 않습니다.
   `--broker-secret-stdin`은 최대 4,096 bytes secret을 EOF까지 한 번 읽으며 non-secret
   bootstrap이 끝난 뒤 production config가 즉시 소비합니다. 두 옵션은 독립 release
   harness가 default user data나 Keychain을 사용하지 않고 정식 composition을 실행하기
@@ -821,7 +835,9 @@
   manual verification을 요구합니다. 분류하지 못한 `anyhow` 내용은 폐기하고
   `internal_unclassified` contract만 반환합니다.
 - macOS screen helper는 capture path에서 OS permission request를 수행하지 않고
-  read-only preflight 실패를 stable exit code로 반환합니다. Platform adapter와 legacy
+  read-only preflight 실패를 stable exit code로 반환합니다. local screen policy가 허용된
+  첫 GUI 시작만 durable marker를 먼저 저장하고 `CGRequestScreenCaptureAccess`를 호출해
+  앱 번들을 macOS TCC에 등록하며, Platform adapter와 legacy
   mapper는 이를 typed permission/helper failure로 보존하므로 stderr 문구, private path,
   token을 의미 판정이나 public response에 사용하지 않습니다.
 - `TerminalReceipt`는 target platform까지 포함한 bound operation identity를 그대로
@@ -898,7 +914,9 @@
   saturation을 결정하고 fresh claim만 platform effect에 진입합니다. 동일 signed QoS
   redelivery는 completed content를 반환해 effect count 1을 유지하고, 같은 key의 다른
   scope는 call 0으로 닫힙니다. Pending이나 repository failure를 자동 abandon해 effect를
-  재실행하지 않으며 raw command/signature를 저장하지 않습니다. 현재 adapter는
+  재실행하지 않으며 raw command/signature를 저장하지 않습니다. In-progress, scope-conflict와
+  repository-unavailable rejection은 내부 scope digest가 아니라 수신 command bytes의 SHA-256
+  correlation을 사용해 requester가 exact duplicate 응답도 식별할 수 있습니다. 현재 adapter는
   process-local이므로 restart durability와 retention은 후속 작업입니다.
 - `DurableV2TerminalRepository`는 기존 revision-CAS `DurableRecordStorage` port를
   재사용하며 concrete file/path를 발견하지 않습니다. Version 1 strict record는
@@ -1101,12 +1119,14 @@
   identity의 domain-separated SHA-256을 target fingerprint로 사용합니다. Broker
   password는 CONNECT credential snapshot과 domain-separated v2 HMAC key로 한 번
   변환되며 임시 raw buffer, connection credential과 HMAC key buffer는 각 owner가
-  사용 후 지웁니다. Exact instance process lease를 가장 먼저 얻고 terminal,
+  사용 후 지웁니다. Bootstrap에서 이미 획득해 전달된 fixed OS-runtime lease guard를
+  runtime owner로 이동한 뒤 terminal,
   delivery, cancellation의 서로 다른 atomic files와 artifact recovery를 준비한 뒤에만
   MQTT client/pump를 만듭니다. Lease는 pump task의 activation guard로 이동해 runtime
   handle을 실수로 drop해도 detached pump보다 먼저 반환되지 않습니다.
 - `main.rs --managed`와 GUI connection flow는 더 이상 legacy
-  `ManagedRuntime::start_mqtt`를 호출하지 않습니다. 둘 다 같은 production bootstrap과
+  `ManagedRuntime::start_mqtt`를 호출하지 않습니다. 둘 다 process-lifetime fixed guard를
+  production bootstrap에 전달하며 같은
   common `LegacyCapturePlatformAdapter -> PlatformCapabilityPort` factory를 사용합니다.
   GUI는 dedicated lowercase v2 session/requester 입력을 저장하고, spawn 성공이 아니라
   pump가 관측한 실제 MQTT CONNACK projection에서만 Connected를 표시합니다. Pump의
@@ -1116,13 +1136,15 @@
   publication은 별도 후속 계약입니다.
 - `system_screen_permission.rs`는 normal MQTT execution에서 OS consent를 변경하지 않는
   Platform observer입니다. macOS는 CoreGraphics의 read-only
-  `CGPreflightScreenCaptureAccess`만 호출해 granted/denied를 반환하고 request API를
-  link하거나 호출하지 않습니다. 현재 Windows와 non-portal Linux adapter에는 별도
-  screen-recording consent API가 없으므로 `NotRequired`를 반환하지만 capability,
-  Wayland/X11 backend와 native capture failure는 별도 preflight/effect 경계에서 계속
-  검증됩니다. 다른 target은 observation unavailable로 닫힙니다. Headless와 GUI가
-  같은 probe를 production platform factory에 주입하며 camera와 screen 모두 같은
-  common use case에서 typed artifact terminal을 생성합니다.
+  `CGPreflightScreenCaptureAccess`로 granted/denied를 반환합니다. 별도
+  `request_screen_capture_access`는 capture policy가 허용된 첫 GUI 시작에서만 durable
+  marker 뒤 `CGRequestScreenCaptureAccess`를 호출하고, remote request·permission read·
+  capture preflight에는 연결되지 않습니다. 현재 Windows와 non-portal Linux adapter에는 별도
+  screen-recording consent API가 없어 `NotRequired` observation과 `Unsupported` local-request
+  result를 구분합니다. capability, Wayland/X11 backend와 native capture failure는 별도
+  preflight/effect 경계에서 계속 검증됩니다. 다른 target은 observation unavailable로
+  닫힙니다. Headless와 GUI가 같은 probe를 production platform factory에 주입하며 camera와
+  screen 모두 같은 common use case에서 typed artifact terminal을 생성합니다.
 - capture permission projection은 canonical method descriptor에서 camera/screen의
   method, resource와 local setting identity를 가져오고 platform availability,
   persisted local policy와 supplied OS permission observation을 별도 closed state로

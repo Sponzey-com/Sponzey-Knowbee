@@ -410,6 +410,7 @@ cargo run --manifest-path Yeonjang/Cargo.toml
 - `start-yeonjang-linux.sh`는 시작 전에 Linux desktop 바이너리를 확인하고 다시 빌드합니다.
 - `start-yeonjang-linux-headless.sh`는 `headless_managed` 프로파일로 managed MQTT entrypoint만 실행하며 tray/window를 기대하지 않습니다.
 - `build-yeonjang-windows.bat`, `build-yeonjang-linux.sh`는 실행보다 빌드 산출물 준비에 집중합니다.
+- 일반 `start-yeonjang-*`은 기존 런타임을 종료하지 않습니다. effect-capable 런타임이 이미 있으면 새 binary가 고정 OS-runtime lease 결과로 종료하고, 기존 PID 파일과 로그는 운영자용 투영으로 그대로 둡니다. `--restart`(및 명시적 macOS 앱 번들 재빌드)만 해당 launcher가 기록한 정확한 PID를 종료할 수 있으며, PID 파일이 없다고 프로세스를 탐색하거나 종료하지 않습니다.
 - Yeonjang support profile은 다음 3가지입니다.
   - `desktop_interactive`: tray-first 데스크톱 앱
   - `desktop_limited`: GUI는 있으나 tray-first를 보장하지 않는 데스크톱 앱

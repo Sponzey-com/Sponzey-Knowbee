@@ -25,9 +25,8 @@ use crate::credential_store::{
     load_system_settings_with_interactive_credential_repair,
     resolve_system_settings_with_credentials, save_system_settings_with_credentials,
 };
-use crate::instance_process_lease::{
-    InstanceLeaseError, InstanceLeaseProvider, configured_instance_lease_provider,
-};
+use crate::instance_process_lease::RuntimeLeaseGuard;
+use crate::legacy_capture_platform::LegacyScreenPermissionProbe;
 use crate::lifecycle::{
     LifecycleCommand, LifecycleMachine, SharedLifecycleState, WindowModeState,
     current_policy_from_settings, new_shared_lifecycle_state, sync_launch_on_startup,
@@ -52,11 +51,13 @@ use crate::permission_policy::PermissionPolicySnapshot;
 use crate::permission_policy_bootstrap::{
     PermissionPolicyBootstrapError, configured_permission_policy_repository,
 };
-use crate::platform_operation::TargetPlatform;
+use crate::platform_operation::{PreflightPermissionState, TargetPlatform};
 use crate::policy_repository::DurablePermissionPolicyRepository;
 use crate::settings::{PermissionSettings, UiLanguage, YeonjangSettings, load_settings};
 use crate::system_automation_backend;
-use crate::system_screen_permission::SystemScreenPermissionProbe;
+use crate::system_screen_permission::{
+    ScreenPermissionRequestResult, SystemScreenPermissionProbe, request_screen_capture_access,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActiveTab {
@@ -195,6 +196,7 @@ enum Message {
     ToggleAutoConnect(bool),
     ToggleLaunchOnStartup(bool),
     TogglePermission(PermissionField, bool),
+    RequestScreenCapturePermission,
     CheckConnection,
     Connect,
     Disconnect,
@@ -438,7 +440,7 @@ fn select_gui_bootstrap_settings(
     }
 }
 
-pub fn run_gui() -> Result<()> {
+pub fn run_gui(runtime_lease: RuntimeLeaseGuard) -> Result<()> {
     let bootstrap_settings = match load_settings() {
         Ok(persisted) => {
             let resolved = resolve_system_settings_with_credentials(persisted.clone());
@@ -446,10 +448,8 @@ pub fn run_gui() -> Result<()> {
         }
         Err(_) => GuiBootstrapSettings::SettingsUnavailable,
     };
-    let bootstrap_instance_lease = configured_instance_lease_provider();
     let initial_window_visible = bootstrap_settings.initial_window_visible();
-    let boot =
-        move || YeonjangGuiApp::new(bootstrap_settings.clone(), bootstrap_instance_lease.clone());
+    let boot = move || YeonjangGuiApp::new(bootstrap_settings.clone(), runtime_lease.clone());
     let mut app = iced::application(boot, YeonjangGuiApp::update, YeonjangGuiApp::view)
         .title(YeonjangGuiApp::title)
         .subscription(YeonjangGuiApp::subscription)
@@ -480,6 +480,7 @@ struct YeonjangGuiApp {
     policy_snapshot: Option<PermissionPolicySnapshot>,
     port_input: String,
     status_message: String,
+    screen_permission_observation: Option<PreflightPermissionState>,
     active_tab: ActiveTab,
     connection_state: ConnectionState,
     connection_attempted: bool,
@@ -493,18 +494,16 @@ struct YeonjangGuiApp {
     lifecycle: LifecycleMachine,
     lifecycle_state: SharedLifecycleState,
     pending_lifecycle_command: Option<LifecycleCommand>,
+    initial_screen_capture_permission_request_pending: bool,
     quit_in_progress: bool,
-    instance_lease_provider:
-        std::result::Result<Arc<dyn InstanceLeaseProvider>, InstanceLeaseError>,
+    #[allow(dead_code)]
+    runtime_lease: RuntimeLeaseGuard,
 }
 
 impl YeonjangGuiApp {
     fn new(
         bootstrap_settings: GuiBootstrapSettings,
-        instance_lease_provider: std::result::Result<
-            Arc<dyn InstanceLeaseProvider>,
-            InstanceLeaseError,
-        >,
+        runtime_lease: RuntimeLeaseGuard,
     ) -> (Self, Task<Message>) {
         let (mut settings, mut status_message, credential_access) = match bootstrap_settings {
             GuiBootstrapSettings::Ready(settings) => {
@@ -571,6 +570,7 @@ impl YeonjangGuiApp {
             };
         let ui_language = settings.ui_language;
         let policy = current_policy_from_settings(&settings);
+        let screen_permission_observation = SystemScreenPermissionProbe.permission().ok();
         let mut lifecycle = LifecycleMachine::new(policy, false);
         let mut tray_controller = None;
         let mut pending_lifecycle_command = None;
@@ -582,6 +582,7 @@ impl YeonjangGuiApp {
             port_input: settings.connection.port.to_string(),
             settings,
             status_message,
+            screen_permission_observation,
             active_tab: ActiveTab::Connection,
             connection_state: ConnectionState::Disconnected,
             connection_attempted: false,
@@ -600,8 +601,9 @@ impl YeonjangGuiApp {
             lifecycle_state: new_shared_lifecycle_state(lifecycle.state()),
             lifecycle: lifecycle.clone(),
             pending_lifecycle_command: None,
+            initial_screen_capture_permission_request_pending: false,
             quit_in_progress: false,
-            instance_lease_provider,
+            runtime_lease,
         };
 
         match SystemTrayController::new(ui_language) {
@@ -633,7 +635,38 @@ impl YeonjangGuiApp {
         app.sync_lifecycle_registration();
         app.sync_tray_menu();
 
-        let task = if credential_access == CredentialAccessState::Ready
+        if app
+            .settings
+            .needs_initial_screen_capture_permission_request()
+        {
+            // Persist the one-time marker before requesting macOS consent. A
+            // restart can therefore never create a second prompt merely
+            // because the process ended while the system sheet was visible.
+            let mut marked_settings = app.settings.clone();
+            marked_settings.mark_screen_capture_permission_requested();
+            match save_system_settings_with_credentials(&marked_settings) {
+                Ok(saved_settings) => {
+                    app.settings = saved_settings;
+                    app.saved_settings = app.settings.clone();
+                    app.pending_lifecycle_command = Some(app.lifecycle.show_window());
+                    app.initial_screen_capture_permission_request_pending = true;
+                    app.set_status(t(
+                        app.lang(),
+                        "macOS 화면 캡처 권한 요청을 준비합니다.",
+                        "Preparing the one-time macOS screen-capture permission request.",
+                    ));
+                }
+                Err(_) => {
+                    app.set_status(t(
+                        app.lang(),
+                        "화면 캡처 권한 요청 상태를 저장하지 못해 macOS 권한 요청을 시작하지 않았습니다.",
+                        "Yeonjang did not request macOS screen-capture permission because it could not save the one-time request state.",
+                    ));
+                }
+            }
+        }
+
+        let connection_task = if credential_access == CredentialAccessState::Ready
             && app.policy_repository.is_ok()
             && app.settings.connection.auto_connect
         {
@@ -642,7 +675,7 @@ impl YeonjangGuiApp {
             Task::none()
         };
 
-        (app, task)
+        (app, connection_task)
     }
 
     fn lang(&self) -> UiLanguage {
@@ -666,8 +699,20 @@ impl YeonjangGuiApp {
                 let mut tasks = vec![self.process_runtime_events()];
                 self.sync_tray_menu();
 
+                let mut showed_pending_window = false;
                 if let Some(command) = self.pending_lifecycle_command.take() {
+                    showed_pending_window = command == LifecycleCommand::ShowWindow;
                     tasks.push(self.apply_lifecycle_command(command, "startup-ready"));
+                }
+
+                // The first Tick submits the show/focus command. The next
+                // Tick is intentionally the earliest point that can request
+                // macOS consent, ensuring the owning app is visible rather
+                // than tray-hidden when the system sheet is created.
+                if self.initial_screen_capture_permission_request_pending && !showed_pending_window
+                {
+                    self.initial_screen_capture_permission_request_pending = false;
+                    tasks.push(Task::done(Message::RequestScreenCapturePermission));
                 }
 
                 for action in self.drain_tray_actions() {
@@ -768,6 +813,33 @@ impl YeonjangGuiApp {
             }
             Message::TogglePermission(field, value) => {
                 apply_permission_change(&mut self.settings, field, value);
+                Task::none()
+            }
+            Message::RequestScreenCapturePermission => {
+                let status = match request_screen_capture_access() {
+                    Ok(ScreenPermissionRequestResult::Granted) => t(
+                        self.lang(),
+                        "Yeonjang의 화면 캡처 권한이 이미 허용되어 있습니다.",
+                        "Yeonjang already has screen-capture permission.",
+                    ),
+                    Ok(ScreenPermissionRequestResult::Requested) => t(
+                        self.lang(),
+                        "macOS에 Yeonjang 화면 캡처 권한을 요청했습니다. 표시되는 시스템 창에서 허용한 뒤 다시 요청해 주세요.",
+                        "macOS has been asked for Yeonjang screen-capture permission. Allow it in the system prompt, then retry your request.",
+                    ),
+                    Ok(ScreenPermissionRequestResult::Unsupported) => t(
+                        self.lang(),
+                        "이 운영체제에서는 Yeonjang이 화면 캡처 권한 창을 직접 요청할 수 없습니다.",
+                        "Yeonjang cannot directly request a screen-capture permission prompt on this operating system.",
+                    ),
+                    Err(_) => t(
+                        self.lang(),
+                        "macOS 화면 캡처 권한 요청 상태를 확인하지 못했습니다.",
+                        "Yeonjang could not check the macOS screen-capture permission request state.",
+                    ),
+                };
+                self.screen_permission_observation = SystemScreenPermissionProbe.permission().ok();
+                self.set_status(status);
                 Task::none()
             }
             Message::CheckConnection => {
@@ -1323,6 +1395,10 @@ impl YeonjangGuiApp {
                         t(lang, "OS 상태 확인 필요", "OS Status Check").to_string(),
                         os_required.to_string(),
                     ),
+                    (
+                        t(lang, "macOS 화면 캡처", "macOS Screen Capture").to_string(),
+                        self.screen_capture_permission_status_label().to_string(),
+                    ),
                 ],
             ),
             permission_checkbox(
@@ -1686,25 +1762,6 @@ impl YeonjangGuiApp {
         let Some(settings) = self.pending_connection_settings.take() else {
             return Task::none();
         };
-        let instance_lease_provider = match &self.instance_lease_provider {
-            Ok(provider) => Arc::clone(provider),
-            Err(_) => {
-                self.runtime_phase = self
-                    .runtime_phase
-                    .transition(GuiRuntimeEvent::StartFailed)
-                    .expect("idle runtime accepts start failure");
-                let message = t(
-                    self.lang(),
-                    "인스턴스 실행 소유권을 준비하지 못했습니다.",
-                    "Failed to prepare the instance runtime lease.",
-                )
-                .to_string();
-                self.connection_state = ConnectionState::Disconnected;
-                self.last_error = message.clone();
-                self.set_status(message);
-                return Task::none();
-            }
-        };
         let policy = match &self.policy_repository {
             Ok(policy) => Arc::clone(policy),
             Err(_) => {
@@ -1761,11 +1818,10 @@ impl YeonjangGuiApp {
         let dependencies = MqttV2ProductionDependencies {
             backend: system_automation_backend(),
             policy,
-            lease_provider: instance_lease_provider,
             screen_permission: Arc::new(SystemScreenPermissionProbe),
             clock: Arc::new(SystemMqttV2BootstrapClock),
         };
-        match start_production_mqtt_v2(config, dependencies, handle) {
+        match start_production_mqtt_v2(config, dependencies, self.runtime_lease.clone(), handle) {
             Ok(runtime) => {
                 self.runtime_phase = self
                     .runtime_phase
@@ -2018,6 +2074,38 @@ impl YeonjangGuiApp {
 
     fn permission_counts(&self) -> (usize, usize, usize) {
         permission_counts_from_settings(&self.settings.permissions)
+    }
+
+    /// Projects only the observed OS state and the durable one-time request
+    /// marker. `Not granted after request` intentionally covers both a denied
+    /// choice and an unresolved system sheet because CoreGraphics does not
+    /// expose a safe distinction between those two states.
+    fn screen_capture_permission_status_label(&self) -> &'static str {
+        if !self.settings.permissions.allow_screen_capture {
+            return t(self.lang(), "로컬 기능 꺼짐", "Local feature off");
+        }
+        match self.screen_permission_observation {
+            Some(PreflightPermissionState::Granted) => t(self.lang(), "허용됨", "Granted"),
+            Some(PreflightPermissionState::NotRequired) => {
+                t(self.lang(), "별도 권한 없음", "No separate permission")
+            }
+            Some(
+                PreflightPermissionState::Denied
+                | PreflightPermissionState::Restricted
+                | PreflightPermissionState::NotDetermined,
+            ) if self
+                .settings
+                .needs_initial_screen_capture_permission_request() =>
+            {
+                t(self.lang(), "아직 요청 안 됨", "Not requested yet")
+            }
+            Some(
+                PreflightPermissionState::Denied
+                | PreflightPermissionState::Restricted
+                | PreflightPermissionState::NotDetermined,
+            ) => t(self.lang(), "요청 후 미허용", "Not granted after request"),
+            None => t(self.lang(), "확인 불가", "Unavailable"),
+        }
     }
 
     fn drain_tray_actions(&self) -> Vec<TrayAction> {

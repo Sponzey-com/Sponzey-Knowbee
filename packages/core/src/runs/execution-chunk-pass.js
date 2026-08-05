@@ -14,6 +14,21 @@ export function applyExecutionChunkPass(params, dependencies, moduleDependencies
         if (preview) {
             dependencies.updateRunSummary(params.runId, preview.slice(-500));
         }
+        if (params.chunk.notice?.kind === "agent_terminal_failure") {
+            const toolName = params.chunk.notice.toolName;
+            return {
+                handled: true,
+                preview,
+                previewSource: params.chunk.textSource ?? "runtime_deterministic",
+                executionRecoveryLimitStop: {
+                    summary: `${toolName} 실행이 확인된 실패로 중단되었습니다.`,
+                    reason: params.chunk.notice.reason,
+                    rawMessage: params.chunk.delta,
+                    remainingItems: [`${toolName}의 확인된 실패 원인을 해소해야 합니다.`],
+                },
+                abortExecutionStream: true,
+            };
+        }
         return {
             handled: true,
             preview,

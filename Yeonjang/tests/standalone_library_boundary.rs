@@ -22,7 +22,9 @@ use knowbee_yeonjang::cancellation::{
 };
 use knowbee_yeonjang::completed_idempotency::CompletedResponseRepository;
 use knowbee_yeonjang::handle_request_with_settings_and_backend;
-use knowbee_yeonjang::instance_process_lease::FilesystemInstanceLeaseProvider;
+use knowbee_yeonjang::instance_process_lease::{
+    FilesystemRuntimeLeaseProvider, RuntimeLeaseProvider,
+};
 use knowbee_yeonjang::managed_composition::{
     ManagedMqttStartError, ManagedRuntimeBuildError, ManagedRuntimeConfig,
     ManagedRuntimeDependencies, ManagedRuntimeWorkConfig, build_managed_runtime,
@@ -1977,15 +1979,13 @@ async fn same_instance_managed_composition_is_exclusive_and_shutdown_returns_its
     let lease_root =
         std::env::temp_dir().join(format!("knowbee-instance-lease-{}", std::process::id()));
     fs::create_dir_all(&lease_root).expect("lease root");
-    let lease_provider = Arc::new(
-        FilesystemInstanceLeaseProvider::new(lease_root.clone(), "test-executable")
-            .expect("lease provider"),
-    );
+    let lease_provider =
+        FilesystemRuntimeLeaseProvider::new(lease_root.clone()).expect("lease provider");
     let settings = YeonjangSettings {
         instance_id: "shared-instance".to_string(),
         ..Default::default()
     };
-    let dependencies = |backend: Arc<dyn AutomationBackend>| {
+    let dependencies = |backend: Arc<dyn AutomationBackend>, runtime_lease| {
         ManagedRuntimeDependencies::new(
             settings.clone(),
             backend,
@@ -1998,7 +1998,7 @@ async fn same_instance_managed_composition_is_exclusive_and_shutdown_returns_its
             )
             .expect("authorization input"),
             Arc::new(FixedAuthorizationClock),
-            lease_provider.clone(),
+            runtime_lease,
         )
     };
     let config = ManagedRuntimeWorkConfig {
@@ -2008,26 +2008,23 @@ async fn same_instance_managed_composition_is_exclusive_and_shutdown_returns_its
     };
     let first = build_managed_runtime_on_handle(
         config,
-        dependencies(Arc::new(FakeBackend::default())),
+        dependencies(
+            Arc::new(FakeBackend::default()),
+            lease_provider.acquire().expect("first runtime lease"),
+        ),
         tokio::runtime::Handle::current(),
     )
     .expect("first instance owner");
 
-    let duplicate = build_managed_runtime_on_handle(
-        config,
-        dependencies(Arc::new(FakeBackend::default())),
-        tokio::runtime::Handle::current(),
-    )
-    .expect_err("same instance must have one runtime owner");
-    assert!(matches!(
-        duplicate,
-        ManagedRuntimeBuildError::InstanceLease(_)
-    ));
+    assert!(lease_provider.acquire().is_err(), "second runtime lease");
 
     first.shutdown().await;
     let restarted = build_managed_runtime_on_handle(
         config,
-        dependencies(Arc::new(FakeBackend::default())),
+        dependencies(
+            Arc::new(FakeBackend::default()),
+            lease_provider.acquire().expect("restarted runtime lease"),
+        ),
         tokio::runtime::Handle::current(),
     )
     .expect("shutdown returned instance lease");
@@ -2074,13 +2071,12 @@ fn managed_dependencies(backend: Arc<dyn AutomationBackend>) -> ManagedRuntimeDe
         )
         .expect("authorization input"),
         Arc::new(FixedAuthorizationClock),
-        Arc::new(
-            FilesystemInstanceLeaseProvider::new(
-                std::env::temp_dir().join("knowbee-standalone-instance-leases"),
-                "standalone-library-boundary",
-            )
-            .expect("test lease provider"),
-        ),
+        FilesystemRuntimeLeaseProvider::new(
+            std::env::temp_dir().join("knowbee-standalone-runtime-leases"),
+        )
+        .expect("test lease provider")
+        .acquire()
+        .expect("test runtime lease"),
     )
 }
 

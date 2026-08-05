@@ -110,6 +110,7 @@ pub mod settings;
 pub mod side_effect_admission;
 pub mod stage_timing;
 pub mod stage_timing_jsonl;
+pub mod startup_mode;
 pub mod stdio;
 pub mod system_screen_permission;
 pub mod terminal_receipt;
@@ -130,8 +131,8 @@ pub use lifecycle::{managed_runtime_state, new_shared_lifecycle_state};
 pub use mqtt::RuntimeEvent;
 pub use node::handle_request_with_settings_and_backend;
 
-pub fn run_gui() -> Result<()> {
-    gui::run_gui()
+pub fn run_gui(runtime_lease: instance_process_lease::RuntimeLeaseGuard) -> Result<()> {
+    gui::run_gui(runtime_lease)
 }
 
 pub fn write_bundle_icon_png(path: &Path) -> Result<()> {

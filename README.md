@@ -421,6 +421,7 @@ Notes:
 - `start-yeonjang-linux.sh` checks and rebuilds the Linux desktop binary before launch.
 - `start-yeonjang-linux-headless.sh` runs the `headless_managed` profile through the managed MQTT entrypoint with no tray/window expectation.
 - `build-yeonjang-windows.bat` and `build-yeonjang-linux.sh` stay focused on build output preparation.
+- A normal `start-yeonjang-*` never stops an existing runtime. If one is already effect-capable, the newly launched binary exits with its fixed OS-runtime lease result; the existing PID file and log remain its operator-facing projection. Only `--restart` (and an explicit macOS bundle rebuild) may stop the exact PID recorded by that launcher. A missing PID file never triggers process discovery or termination.
 - Yeonjang support profiles are:
   - `desktop_interactive`: tray-first desktop app
   - `desktop_limited`: desktop app without tray-first guarantees

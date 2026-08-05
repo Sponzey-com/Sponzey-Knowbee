@@ -33,7 +33,6 @@ function createStartFixture(): {
   const fakeBinDir = join(rootDir, "fake-bin")
   const startScript = join(scriptsDir, "start-yeonjang-macos.sh")
   const buildMarker = join(rootDir, "build-called")
-  const pgrepState = join(rootDir, "pgrep-state")
   const appExecutable = join(
     rootDir,
     "Yeonjang",
@@ -48,28 +47,15 @@ function createStartFixture(): {
   mkdirSync(scriptsDir, { recursive: true })
   cpSync("scripts/start-yeonjang-macos.sh", startScript)
   chmodSync(startScript, 0o755)
-  writeExecutable(appExecutable, "#!/usr/bin/env bash\nexit 0\n")
+  // The launcher now owns the exact signed-bundle child PID. Model a real
+  // long-lived GUI process instead of the obsolete `open`/`pgrep` projection.
+  writeExecutable(appExecutable, "#!/usr/bin/env bash\nexec sleep 60\n")
   writeExecutable(
     join(scriptsDir, "build-yeonjang-macos.sh"),
     `#!/usr/bin/env bash\n: > "${buildMarker}"\n`,
   )
   writeExecutable(join(fakeBinDir, "uname"), "#!/usr/bin/env bash\necho Darwin\n")
-  writeExecutable(join(fakeBinDir, "open"), "#!/usr/bin/env bash\nexit 0\n")
   writeExecutable(join(fakeBinDir, "codesign"), "#!/usr/bin/env bash\nexit 0\n")
-  writeExecutable(
-    join(fakeBinDir, "pgrep"),
-    `#!/usr/bin/env bash
-count=0
-if [[ -f "${pgrepState}" ]]; then
-  count="$(<"${pgrepState}")"
-fi
-count=$((count + 1))
-echo "$count" > "${pgrepState}"
-if [[ "$count" -ge 2 ]]; then
-  echo "$KNOWBEE_TEST_LIVE_PID"
-fi
-`,
-  )
 
   return {
     rootDir,
@@ -78,7 +64,6 @@ fi
     environment: {
       ...process.env,
       PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
-      KNOWBEE_TEST_LIVE_PID: String(process.pid),
     },
   }
 }
@@ -86,7 +71,20 @@ fi
 afterEach(() => {
   while (tempDirs.length > 0) {
     const tempDir = tempDirs.pop()
-    if (tempDir) rmSync(tempDir, { recursive: true, force: true })
+    if (tempDir) {
+      const pidFile = join(tempDir, "pids", "yeonjang-macos.pid")
+      if (existsSync(pidFile)) {
+        const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10)
+        if (Number.isSafeInteger(pid) && pid > 1 && pid !== process.pid) {
+          try {
+            process.kill(pid, "SIGTERM")
+          } catch {
+            // The fixture process may already have completed.
+          }
+        }
+      }
+      rmSync(tempDir, { recursive: true, force: true })
+    }
   }
 })
 
@@ -161,14 +159,16 @@ describe("Yeonjang macOS startup identity contract", () => {
 
   it("fails closed when helper or app signing verification fails", () => {
     const build = readFileSync("scripts/build-yeonjang-macos.sh", "utf8")
-    const helperSign = build.indexOf('codesign --force --sign "$SIGNING_IDENTITY" "$CAMERA_HELPER_BINARY_PATH"')
+    const helperSign = build.indexOf(
+      'codesign --force --sign "$SIGNING_IDENTITY" "$CAMERA_HELPER_BINARY_PATH"',
+    )
     const appSign = build.indexOf(
       'codesign --force --sign "$SIGNING_IDENTITY" --entitlements "$MACOS_ENTITLEMENTS" "$APP_BUNDLE_PATH"',
     )
     const strictVerification = build.indexOf("codesign --verify --deep --strict")
 
     expect(build).toContain('PREFERRED_LOCAL_SIGNING_IDENTITY="Sponzey RemoCom Local Code Signing"')
-    expect(build).toContain('security find-identity -v -p codesigning')
+    expect(build).toContain("security find-identity -v -p codesigning")
     expect(build).toContain('SIGNING_IDENTITY="$PREFERRED_LOCAL_SIGNING_IDENTITY"')
     expect(build).toContain('SIGNING_IDENTITY="-"')
     expect(helperSign).toBeGreaterThan(-1)

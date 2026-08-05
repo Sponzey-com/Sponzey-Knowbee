@@ -28,8 +28,16 @@ readonly LIVE_TELEGRAM_THREAD_ID_SNAPSHOT="${KNOWBEE_CHANNEL_SMOKE_TELEGRAM_THRE
 readonly LIVE_SLACK_CHANNEL_ID_SNAPSHOT="${KNOWBEE_CHANNEL_SMOKE_SLACK_CHANNEL_ID:-}"
 readonly LIVE_SLACK_USER_ID_SNAPSHOT="${KNOWBEE_CHANNEL_SMOKE_SLACK_USER_ID:-}"
 readonly LIVE_SLACK_THREAD_TS_SNAPSHOT="${KNOWBEE_CHANNEL_SMOKE_SLACK_THREAD_TS:-}"
-readonly LOG_PURPOSE_SNAPSHOT="${KNOWBEE_LOG_PURPOSE:-}"
-readonly FIELD_DEBUG_UNTIL_SNAPSHOT="${KNOWBEE_FIELD_DEBUG_UNTIL:-}"
+LOG_PURPOSE_SNAPSHOT="${KNOWBEE_LOG_PURPOSE:-}"
+FIELD_DEBUG_UNTIL_SNAPSHOT="${KNOWBEE_FIELD_DEBUG_UNTIL:-}"
+# A scoped field-debug lease is otherwise silently hidden by the default
+# product-only visibility. Preserve an explicit operator purpose, but make an
+# otherwise empty purpose observable for the finite diagnostic lease.
+if [[ -n "$FIELD_DEBUG_UNTIL_SNAPSHOT" && -z "$LOG_PURPOSE_SNAPSHOT" ]]; then
+  LOG_PURPOSE_SNAPSHOT="debug"
+fi
+readonly LOG_PURPOSE_SNAPSHOT
+readonly FIELD_DEBUG_UNTIL_SNAPSHOT
 LABEL_SUFFIX="$(printf '%s' "$ROOT_DIR" | cksum | awk '{print $1}')"
 GATEWAY_LAUNCHD_LABEL="com.sponzey.knowbee.${LABEL_SUFFIX}.gateway"
 WEBUI_LAUNCHD_LABEL="com.sponzey.knowbee.${LABEL_SUFFIX}.webui"

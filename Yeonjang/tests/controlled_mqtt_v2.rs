@@ -409,11 +409,11 @@ async fn admitted_artifact_fetch_failure_publishes_one_signed_response_without_a
     )
     .expect("artifact composition");
     let binding = ArtifactBinding::new(
-        &format!("capture:{}", "90".repeat(32)),
+        format!("capture:{}", "90".repeat(32)),
         "requester-a",
         "request-v2",
         "operation-v2",
-        &format!("sha256:{}", "ab".repeat(32)),
+        format!("sha256:{}", "ab".repeat(32)),
         4,
         1_000,
         601_000,

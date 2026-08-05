@@ -9,7 +9,7 @@ mod system_info_test_backend;
 mod terminal_assertions;
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use controlled_mqtt_broker::ControlledMqttBroker;
 use hmac::{Hmac, Mac};
@@ -17,7 +17,7 @@ use knowbee_yeonjang::authorization::AuthorizationClock;
 use knowbee_yeonjang::authorization_bootstrap::AuthorizationBootstrapInput;
 use knowbee_yeonjang::automation::AutomationBackend;
 use knowbee_yeonjang::instance_process_lease::{
-    FilesystemInstanceLeaseProvider, InstanceLeaseProvider,
+    FilesystemRuntimeLeaseProvider, RuntimeLeaseGuard, RuntimeLeaseProvider,
 };
 use knowbee_yeonjang::managed_composition::{
     ManagedRuntimeConfig, ManagedRuntimeDependencies, build_managed_runtime,
@@ -39,6 +39,26 @@ const CONTROLLED_LOCAL_IO_TIMEOUT: Duration = Duration::from_secs(5);
 // changing the production reconnect or effect deadline.
 const CONTROLLED_CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 static CONTROLLED_RUNTIME_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn wait_for_connected(events: &std::sync::mpsc::Receiver<RuntimeEvent>) -> Result<(), String> {
+    let deadline = Instant::now() + CONTROLLED_CONNECTION_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("controlled runtime did not connect within the finite budget".to_string());
+        }
+        match events.recv_timeout(remaining) {
+            Ok(RuntimeEvent::Connected) => return Ok(()),
+            Ok(RuntimeEvent::Reconnecting(_)) => {}
+            Ok(event) => {
+                return Err(format!(
+                    "unexpected runtime event before CONNECT: {event:?}"
+                ));
+            }
+            Err(error) => return Err(format!("runtime event channel before CONNECT: {error}")),
+        }
+    }
+}
 
 struct FixedClock;
 
@@ -96,7 +116,7 @@ async fn managed_mqtt_processes_requests_reconnects_and_returns_its_host_lease()
             )
             .expect("authorization input"),
             Arc::new(FixedClock),
-            controlled_lease_provider(),
+            controlled_runtime_lease(),
         ),
     )
     .expect("managed runtime");
@@ -107,11 +127,7 @@ async fn managed_mqtt_processes_requests_reconnects_and_returns_its_host_lease()
     let initial_client_id = broker
         .wait_for_client_id(CONTROLLED_CONNECTION_TIMEOUT)
         .expect("initial MQTT client identity");
-    let first_event = events.recv_timeout(CONTROLLED_CONNECTION_TIMEOUT);
-    assert!(
-        matches!(first_event, Ok(RuntimeEvent::Connected)),
-        "expected initial connected event, received {first_event:?}"
-    );
+    wait_for_connected(&events).expect("initial connected event");
     assert!(initial_client_id.starts_with("knowbee-y-"));
     assert!(!initial_client_id.contains("controlled-node"));
     let response = broker
@@ -198,17 +214,14 @@ async fn managed_mqtt_processes_requests_reconnects_and_returns_its_host_lease()
             )
             .expect("authorization input"),
             Arc::new(FixedClock),
-            controlled_lease_provider(),
+            controlled_runtime_lease(),
         ),
     )
     .expect("reconnect managed runtime");
     let (reconnect_runtime, reconnect_events) = reconnect_runtime
         .start_mqtt(new_shared_lifecycle_state(managed_runtime_state()))
         .expect("reconnect managed MQTT");
-    assert!(matches!(
-        reconnect_events.recv_timeout(CONTROLLED_CONNECTION_TIMEOUT),
-        Ok(RuntimeEvent::Connected)
-    ));
+    wait_for_connected(&reconnect_events).expect("reconnect broker initial connection");
     let first_reconnect_client_id = reconnect_broker
         .wait_for_client_id(CONTROLLED_CONNECTION_TIMEOUT)
         .expect("first reconnect client identity");
@@ -342,7 +355,7 @@ async fn managed_mqtt_preserves_the_current_unknown_failure_projection_and_bindi
             )
             .expect("authorization input"),
             Arc::new(FixedClock),
-            controlled_lease_provider(),
+            controlled_runtime_lease(),
         ),
     )
     .expect("failure managed runtime");
@@ -350,11 +363,7 @@ async fn managed_mqtt_preserves_the_current_unknown_failure_projection_and_bindi
         .start_mqtt(new_shared_lifecycle_state(managed_runtime_state()))
         .expect("failure managed MQTT");
 
-    let first_event = events.recv_timeout(CONTROLLED_CONNECTION_TIMEOUT);
-    assert!(
-        matches!(first_event, Ok(RuntimeEvent::Connected)),
-        "expected controlled failure broker connection, got {first_event:?}"
-    );
+    wait_for_connected(&events).expect("controlled failure broker connection");
     broker
         .wait_for_client_id(CONTROLLED_CONNECTION_TIMEOUT)
         .expect("failure MQTT client identity");
@@ -465,7 +474,7 @@ async fn managed_mqtt_replays_a_bound_camera_timeout_without_repeating_the_effec
             )
             .expect("authorization input"),
             Arc::new(FixedClock),
-            controlled_lease_provider(),
+            controlled_runtime_lease(),
         ),
     )
     .expect("timeout managed runtime");
@@ -473,11 +482,7 @@ async fn managed_mqtt_replays_a_bound_camera_timeout_without_repeating_the_effec
         .start_mqtt(new_shared_lifecycle_state(managed_runtime_state()))
         .expect("timeout managed MQTT");
 
-    let first_event = events.recv_timeout(CONTROLLED_CONNECTION_TIMEOUT);
-    assert!(
-        matches!(first_event, Ok(RuntimeEvent::Connected)),
-        "expected timeout broker connection, got {first_event:?}"
-    );
+    wait_for_connected(&events).expect("timeout broker connection");
     let first = broker
         .wait_for_response(CONTROLLED_LOCAL_IO_TIMEOUT)
         .expect("first timeout terminal");
@@ -594,7 +599,7 @@ async fn managed_mqtt_distinguishes_missing_camera_and_screen_artifacts_after_ef
             )
             .expect("authorization input"),
             Arc::new(FixedClock),
-            controlled_lease_provider(),
+            controlled_runtime_lease(),
         ),
     )
     .expect("missing artifact managed runtime");
@@ -602,11 +607,7 @@ async fn managed_mqtt_distinguishes_missing_camera_and_screen_artifacts_after_ef
         .start_mqtt(new_shared_lifecycle_state(managed_runtime_state()))
         .expect("missing artifact managed MQTT");
 
-    let first_event = events.recv_timeout(CONTROLLED_CONNECTION_TIMEOUT);
-    assert!(
-        matches!(first_event, Ok(RuntimeEvent::Connected)),
-        "expected missing-artifact broker connection, got {first_event:?}"
-    );
+    wait_for_connected(&events).expect("missing-artifact broker connection");
     let camera = broker
         .wait_for_response(CONTROLLED_LOCAL_IO_TIMEOUT)
         .expect("camera artifact terminal");
@@ -654,17 +655,14 @@ async fn managed_mqtt_distinguishes_missing_camera_and_screen_artifacts_after_ef
     drop(TokioRuntimeHost::acquire(host_config).expect("missing artifact host lease returned"));
 }
 
-fn controlled_lease_provider() -> Arc<dyn InstanceLeaseProvider> {
-    Arc::new(
-        FilesystemInstanceLeaseProvider::new(
-            std::env::temp_dir().join(format!(
-                "knowbee-controlled-mqtt-leases-{}",
-                std::process::id()
-            )),
-            "controlled-mqtt-provider",
-        )
-        .expect("controlled lease provider"),
-    )
+fn controlled_runtime_lease() -> RuntimeLeaseGuard {
+    FilesystemRuntimeLeaseProvider::new(std::env::temp_dir().join(format!(
+        "knowbee-controlled-mqtt-runtime-leases-{}",
+        std::process::id()
+    )))
+    .expect("controlled lease provider")
+    .acquire()
+    .expect("controlled runtime lease")
 }
 
 fn request_from_value(value: &serde_json::Value) -> knowbee_yeonjang::protocol::Request {

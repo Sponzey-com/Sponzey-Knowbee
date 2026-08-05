@@ -33,6 +33,10 @@ runtime_path() {
 }
 WORK_DIR="$(mktemp -d /tmp/knowbee-yeonjang-mtls.XXXXXX)"
 WORK_DIR="$(cd "$WORK_DIR" && pwd -P)"
+if [[ "$WINDOWS_BASH" == "1" && -z "${CARGO_TARGET_DIR:-}" ]]; then
+  CARGO_TARGET_DIR="$WORK_DIR/windows-cargo-target"
+  export CARGO_TARGET_DIR
+fi
 CONTAINER_NAME="knowbee-yeonjang-mtls-$$"
 LIVE_INSTANCE_ID="live-instance-$$"
 LIVE_SESSION_ID="live-session"

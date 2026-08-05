@@ -65,6 +65,8 @@ export interface MqttExtensionSnapshot {
     v2CapabilitiesSequence?: number | null;
     /** Signed online status lease; null for offline or non-v2 projections. */
     v2StatusExpiresAt?: number | null;
+    /** Signed capability lease; only this bounds reuse of a v2 capability projection. */
+    v2CapabilitiesExpiresAt?: number | null;
     permissions?: Record<string, unknown>;
     toolHealth?: Record<string, unknown>;
     capabilityMatrix?: Record<string, unknown>;

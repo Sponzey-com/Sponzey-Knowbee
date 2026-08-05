@@ -20,7 +20,7 @@ use knowbee_yeonjang::authorization_bootstrap::{
 };
 use knowbee_yeonjang::credential_store::resolve_system_settings_with_credentials;
 use knowbee_yeonjang::instance_process_lease::{
-    configured_instance_lease_provider, configured_instance_lease_provider_at,
+    RuntimeLeaseError, RuntimeLeaseGuard, configured_runtime_lease_provider,
 };
 use knowbee_yeonjang::mqtt_transport::{
     MAX_TLS_MATERIAL_BYTES, MqttTransportSecurity, MutualTlsIdentity,
@@ -39,61 +39,66 @@ use knowbee_yeonjang::runtime_host::{RuntimeHostConfig, TokioRuntimeHost};
 use knowbee_yeonjang::settings::{load_runtime_settings, load_settings, load_settings_at};
 use knowbee_yeonjang::stage_timing::StageTimingRecorder;
 use knowbee_yeonjang::stage_timing_jsonl::{JsonlStageTimingSink, SystemStageTimingClock};
+use knowbee_yeonjang::startup_mode::StartupMode;
 use knowbee_yeonjang::system_automation_backend;
 use knowbee_yeonjang::system_screen_permission::SystemScreenPermissionProbe;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
+    let mode = StartupMode::parse(&args).unwrap_or_else(|_| usage_and_exit());
+    let runtime_lease = acquire_runtime_lease(&mode)?;
 
-    if args.iter().any(|arg| arg == "--release-identity") {
-        write_release_identity()?;
-        return Ok(());
+    match mode {
+        StartupMode::Gui => knowbee_yeonjang::run_gui(require_runtime_lease(runtime_lease)?),
+        StartupMode::Managed {
+            use_tls,
+            config_root,
+            broker_secret_stdin,
+            stage_timing_jsonl,
+        } => {
+            let config_root = config_root
+                .map(PathBuf::from)
+                .map(validate_explicit_config_root)
+                .transpose()?;
+            run_managed(
+                use_tls,
+                config_root,
+                broker_secret_stdin,
+                stage_timing_jsonl,
+                require_runtime_lease(runtime_lease)?,
+            )
+        }
+        StartupMode::Stdio { authenticated } => {
+            run_stdio(authenticated, require_runtime_lease(runtime_lease)?)
+        }
+        StartupMode::ReleaseIdentity => write_release_identity(),
+        StartupMode::WriteIcon { output_path } => {
+            knowbee_yeonjang::write_bundle_icon_png(Path::new(&output_path))
+        }
+        StartupMode::CameraCaptureHelper { args } => run_camera_capture_helper(args),
+        StartupMode::RejectLegacyLocalExec => reject_legacy_local_exec(),
     }
+}
 
-    if let Some(camera_helper_index) = args.iter().position(|arg| arg == "--camera-capture-helper")
-    {
-        run_camera_capture_helper(args[(camera_helper_index + 1)..].to_vec())?;
-        return Ok(());
+fn acquire_runtime_lease(mode: &StartupMode) -> Result<Option<RuntimeLeaseGuard>> {
+    if !mode.claims_runtime() {
+        return Ok(None);
     }
+    configured_runtime_lease_provider()
+        .and_then(|provider| provider.acquire())
+        .map(Some)
+        .map_err(project_runtime_lease_error)
+}
 
-    if args
-        .iter()
-        .any(|arg| arg == "--exec" || arg == "--exec-bin")
-    {
-        reject_legacy_local_exec()?;
-    }
+fn require_runtime_lease(lease: Option<RuntimeLeaseGuard>) -> Result<RuntimeLeaseGuard> {
+    lease.ok_or_else(|| anyhow::anyhow!("yeonjang startup failed: runtime_lease_unavailable"))
+}
 
-    if let Some(output_path) = parse_flag_value(&args, "--write-icon") {
-        knowbee_yeonjang::write_bundle_icon_png(Path::new(&output_path))?;
-        return Ok(());
-    }
+fn project_runtime_lease_error(error: RuntimeLeaseError) -> anyhow::Error {
+    anyhow::anyhow!("yeonjang startup failed: {}", error.reason_code())
+}
 
-    if args
-        .iter()
-        .any(|arg| arg == "--stdio" || arg == "--stdio-authenticated")
-    {
-        run_stdio(args.iter().any(|arg| arg == "--stdio-authenticated"))?;
-        return Ok(());
-    }
-
-    if args
-        .iter()
-        .any(|arg| arg == "--managed" || arg == "--headless-managed" || arg == "--managed-tls")
-    {
-        run_managed(
-            args.iter().any(|arg| arg == "--managed-tls"),
-            parse_flag_value(&args, "--config-root").map(PathBuf::from),
-            args.iter().any(|arg| arg == "--broker-secret-stdin"),
-            args.iter().any(|arg| arg == "--stage-timing-jsonl"),
-        )?;
-        return Ok(());
-    }
-
-    if args.is_empty() || args.iter().any(|arg| arg == "--gui") {
-        knowbee_yeonjang::run_gui()?;
-        return Ok(());
-    }
-
+fn usage_and_exit() -> ! {
     eprintln!(
         "Usage: knowbee-yeonjang [--gui | --managed | --managed-tls] [--config-root <absolute-path>] [--broker-secret-stdin] [--stage-timing-jsonl] | [--stdio | --stdio-authenticated | --release-identity | --write-icon <path> | --camera-capture-helper <args...>]"
     );
@@ -111,14 +116,14 @@ fn write_release_identity() -> Result<()> {
     Ok(())
 }
 
-fn run_stdio(authenticated: bool) -> Result<()> {
+fn run_stdio(authenticated: bool, runtime_lease: RuntimeLeaseGuard) -> Result<()> {
     let settings = load_runtime_settings()?;
     let backend = system_automation_backend();
     let stdin = io::stdin();
     let stdout = io::stdout();
-    if authenticated {
+    let result = if authenticated {
         let authorization = stdio_authorization_from_environment()?;
-        return knowbee_yeonjang::stdio::run_authenticated_stdio_with_backend(
+        knowbee_yeonjang::stdio::run_authenticated_stdio_with_backend(
             stdin.lock(),
             stdout.lock(),
             settings,
@@ -126,10 +131,18 @@ fn run_stdio(authenticated: bool) -> Result<()> {
             authorization,
             Arc::new(SystemAuthorizationClock),
         )
-        .map_err(anyhow::Error::new);
-    }
-    knowbee_yeonjang::stdio::run_stdio_with_backend(stdin.lock(), stdout.lock(), settings, backend)
         .map_err(anyhow::Error::new)
+    } else {
+        knowbee_yeonjang::stdio::run_stdio_with_backend(
+            stdin.lock(),
+            stdout.lock(),
+            settings,
+            backend,
+        )
+        .map_err(anyhow::Error::new)
+    };
+    drop(runtime_lease);
+    result
 }
 
 fn stdio_authorization_from_environment() -> Result<AuthorizationBootstrapInput> {
@@ -158,13 +171,11 @@ fn run_managed(
     explicit_config_root: Option<PathBuf>,
     broker_secret_stdin: bool,
     stage_timing_jsonl: bool,
+    runtime_lease: RuntimeLeaseGuard,
 ) -> Result<()> {
     let _managed_signal_source =
         knowbee_yeonjang::managed_shutdown::prepare_managed_signal_source()
             .map_err(|_| anyhow::anyhow!("managed shutdown signal source is unavailable"))?;
-    let explicit_config_root = explicit_config_root
-        .map(validate_explicit_config_root)
-        .transpose()?;
     let settings = match &explicit_config_root {
         Some(root) => load_settings_at(&root.join("settings.json"))?,
         None => load_settings()?,
@@ -180,11 +191,6 @@ fn run_managed(
     }
     .map_err(|error| anyhow::anyhow!("permission policy bootstrap failed: {error}"))?;
     let enrollment = MqttV2Enrollment::from_settings(&settings);
-    let instance_lease_provider = match &explicit_config_root {
-        Some(root) => configured_instance_lease_provider_at(root),
-        None => configured_instance_lease_provider(),
-    }
-    .map_err(|error| anyhow::anyhow!("instance lease bootstrap failed: {error:?}"))?;
     let state_root = match &explicit_config_root {
         Some(root) => root.join("mqtt-v2"),
         None => configured_mqtt_v2_state_root()
@@ -215,7 +221,6 @@ fn run_managed(
     let dependencies = MqttV2ProductionDependencies {
         backend: system_automation_backend(),
         policy,
-        lease_provider: instance_lease_provider,
         screen_permission: Arc::new(SystemScreenPermissionProbe),
         clock: Arc::new(SystemMqttV2BootstrapClock),
     };
@@ -227,9 +232,15 @@ fn run_managed(
                     .map_err(|error| anyhow::anyhow!("stage timing bootstrap failed: {error:?}"))?,
             ),
         );
-        start_production_mqtt_v2_with_stage_timing(config, dependencies, host.handle(), recorder)
+        start_production_mqtt_v2_with_stage_timing(
+            config,
+            dependencies,
+            runtime_lease,
+            host.handle(),
+            recorder,
+        )
     } else {
-        start_production_mqtt_v2(config, dependencies, host.handle())
+        start_production_mqtt_v2(config, dependencies, runtime_lease, host.handle())
     }
     .map_err(|error| anyhow::anyhow!("direct MQTT v2 startup failed: {error:?}"))?;
 
@@ -381,9 +392,4 @@ fn write_response_and_exit(response: Response) -> Result<()> {
     }
 
     std::process::exit(1);
-}
-
-fn parse_flag_value(args: &[String], flag: &str) -> Option<String> {
-    let index = args.iter().position(|arg| arg == flag)?;
-    args.get(index + 1).cloned()
 }

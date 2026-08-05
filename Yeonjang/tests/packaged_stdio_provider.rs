@@ -10,13 +10,19 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use knowbee_yeonjang::protocol::Response;
 use protocol_fixture::ReadOnlyProtocolFixture;
 
+static MANAGED_RUNTIME_LEASE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 #[test]
 fn packaged_stdio_requires_the_strict_versioned_envelope() {
+    let _managed_runtime_lease_test = MANAGED_RUNTIME_LEASE_TEST_LOCK
+        .lock()
+        .expect("runtime lease test lock");
     let responses = run_stdio(&[
         r#"{"id":"legacy-stdio","method":"system.info","params":{}}"#,
         r#"{"protocolVersion":1,"id":"unknown-field-stdio","method":"system.info","params":{},"metadata":{},"unexpected":true}"#,
@@ -46,6 +52,9 @@ fn packaged_stdio_requires_the_strict_versioned_envelope() {
 
 #[test]
 fn packaged_authenticated_stdio_requires_explicit_bootstrap_and_runs_read_only() {
+    let _managed_runtime_lease_test = MANAGED_RUNTIME_LEASE_TEST_LOCK
+        .lock()
+        .expect("runtime lease test lock");
     let missing = Command::new(env!("CARGO_BIN_EXE_knowbee-yeonjang"))
         .arg("--stdio-authenticated")
         .env_remove("YEONJANG_STDIO_AUTH_ISSUER")
@@ -66,6 +75,9 @@ fn packaged_authenticated_stdio_requires_explicit_bootstrap_and_runs_read_only()
 
 #[test]
 fn packaged_managed_tls_requires_all_bootstrap_material_before_runtime_start() {
+    let _managed_runtime_lease_test = MANAGED_RUNTIME_LEASE_TEST_LOCK
+        .lock()
+        .expect("managed lease test lock");
     let output = Command::new(env!("CARGO_BIN_EXE_knowbee-yeonjang"))
         .arg("--managed-tls")
         .env_remove("YEONJANG_MQTT_CA_CERT_PATH")
@@ -81,6 +93,9 @@ fn packaged_managed_tls_requires_all_bootstrap_material_before_runtime_start() {
 
 #[test]
 fn packaged_managed_explicit_root_and_stdin_secret_fail_closed() {
+    let _managed_runtime_lease_test = MANAGED_RUNTIME_LEASE_TEST_LOCK
+        .lock()
+        .expect("managed lease test lock");
     let relative = Command::new(env!("CARGO_BIN_EXE_knowbee-yeonjang"))
         .args([
             "--managed",
@@ -144,6 +159,29 @@ fn packaged_legacy_exec_flags_fail_closed_without_executing_commands() {
         assert!(!stdout.contains("legacy-binary-marker"));
         assert!(!stderr.contains("legacy-shell-marker"));
         assert!(!stderr.contains("legacy-binary-marker"));
+    }
+}
+
+#[test]
+fn packaged_startup_rejects_mixed_utility_and_runtime_or_primary_modes() {
+    for args in [
+        vec!["--release-identity", "--managed"],
+        vec!["--stdio", "--managed"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_knowbee-yeonjang"))
+            .args(args)
+            .output()
+            .expect("mixed startup-mode process");
+
+        assert!(
+            !output.status.success(),
+            "mixed startup mode unexpectedly succeeded: {:?}",
+            output.status
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("Usage: knowbee-yeonjang"),
+            "mixed startup mode must stop before bootstrap"
+        );
     }
 }
 

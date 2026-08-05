@@ -142,13 +142,20 @@ fn authenticated_stdio_executes_one_exact_effect_and_rejects_its_replay() {
         })
         .collect::<Vec<_>>();
     outcomes.sort();
-    assert_eq!(
-        outcomes,
-        vec![
-            "idempotency_in_progress".to_string(),
-            "ok".to_string(),
-            "side_effect_authorization_rejected".to_string(),
-        ]
+    assert!(
+        outcomes
+            == vec![
+                "idempotency_in_progress".to_string(),
+                "ok".to_string(),
+                "side_effect_authorization_rejected".to_string(),
+            ]
+            || outcomes
+                == vec![
+                    "ok".to_string(),
+                    "side_effect_authorization_rejected".to_string(),
+                    "side_effect_authorization_rejected".to_string(),
+                ],
+        "replay must close at idempotency while the first effect is active or at single-use authorization after it completes: {outcomes:?}"
     );
     assert_eq!(backend.camera_capture_calls(), 1);
 }

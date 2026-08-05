@@ -224,6 +224,29 @@ export const screenCaptureTool: AgentTool<ScreenCaptureParams> = {
           join(ctx.artifactStorage.rootDir, "screens"),
         )
         const localFileSize = statArtifactSize(localSavedPath)
+        if (!Number.isSafeInteger(localFileSize) || localFileSize < 1) {
+          return {
+            success: false,
+            output: "Yeonjang 화면 캡처 결과 파일이 비어 있어 전달할 수 없습니다.",
+            error: "SCREEN_CAPTURE_ARTIFACT_EMPTY",
+            details: {
+              via: "yeonjang",
+              stopAfterFailure: true,
+              failureKind: "remote_failure",
+              reasonCode: "screen_capture_artifact_empty",
+              terminalStage: "handler_failed",
+              retrySafety: "unknown_effect_state",
+              failure: {
+                reasonCode: "screen_capture_artifact_empty",
+                retrySameStrategy: false,
+                terminalStage: "handler_failed",
+                retrySafety: "unknown_effect_state",
+              },
+              ...buildYeonjangTargetResolutionDetails(reboundSelection),
+              ...(display !== undefined ? { display } : {}),
+            },
+          }
+        }
         const artifactChannel = ctx.source === "webui" || ctx.source === "telegram" || ctx.source === "slack"
           ? ctx.source
           : null

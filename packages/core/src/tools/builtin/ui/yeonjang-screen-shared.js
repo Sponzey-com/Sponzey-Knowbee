@@ -43,6 +43,20 @@ export function yeonjangCapabilityMatrixRequiredFailure(method) {
         ].join("\n"),
         error: "YEONJANG_CAPABILITY_MATRIX_REQUIRED",
         details: {
+            via: "yeonjang",
+            // This is a pre-dispatch contract rejection. It has no device effect,
+            // so a same-request capture retry cannot establish new evidence.
+            stopAfterFailure: true,
+            failureKind: "remote_rejected",
+            reasonCode: "yeonjang_capability_matrix_required",
+            terminalStage: "rejected",
+            retrySafety: "change_strategy",
+            failure: {
+                reasonCode: "yeonjang_capability_matrix_required",
+                retrySameStrategy: false,
+                terminalStage: "rejected",
+                retrySafety: "change_strategy",
+            },
             requiredExecutor: "yeonjang",
             requiredMethod: method,
             requiredCapabilityMatrix: true,
@@ -89,11 +103,16 @@ export async function preflightYeonjangScreenCapture(options) {
         if (!hasYeonjangCapabilityMatrix(capabilities)) {
             return yeonjangCapabilityMatrixRequiredFailure(method);
         }
-        const base64Support = doesYeonjangCapabilitySupportOutputMode(capabilities, method, "base64");
-        if (base64Support === false)
-            return yeonjangOutputModeFailure(method, "base64");
-        if (base64Support === null)
-            return yeonjangOutputModeUnknownFailure(method, "base64");
+        // MQTT v2 exposes a verified artifact transfer. mqtt-client consumes that
+        // transfer, verifies its receipt and digest, then normalizes it to this
+        // tool's in-memory base64 result. Legacy transports still return base64
+        // directly, so their advertised capability remains the required contract.
+        const requiredOutputMode = capabilities.protocolVersion === "2" ? "artifact" : "base64";
+        const outputModeSupport = doesYeonjangCapabilitySupportOutputMode(capabilities, method, requiredOutputMode);
+        if (outputModeSupport === false)
+            return yeonjangOutputModeFailure(method, requiredOutputMode);
+        if (outputModeSupport === null)
+            return yeonjangOutputModeUnknownFailure(method, requiredOutputMode);
         return null;
     }
     catch (error) {
@@ -119,9 +138,12 @@ export function classifyYeonjangScreenCaptureFailure(error, message) {
         && attempt["method"] === "screen.capture"
         && attempt["reasonCode"] === code;
     if (boundAttempt) {
+        const output = code === "screen_permission_denied"
+            ? "Yeonjang 화면 캡처는 운영 체제의 화면 캡처 권한이 거부되어 시작되지 않았습니다. 시스템 설정에서 Yeonjang의 화면 캡처 권한을 허용한 뒤 다시 요청해 주세요."
+            : `Yeonjang 화면 캡처 실패: ${message}`;
         return {
             code,
-            output: `Yeonjang 화면 캡처 실패: ${message}`,
+            output,
             details: {
                 via: "yeonjang",
                 stopAfterFailure: true,
@@ -169,6 +191,15 @@ export function classifyYeonjangScreenCaptureFailure(error, message) {
             via: "yeonjang",
             stopAfterFailure: true,
             failureKind: "remote_failure",
+            reasonCode: "yeonjang_screen_capture_remote_failure",
+            terminalStage: "handler_failed",
+            retrySafety: "unknown_effect_state",
+            failure: {
+                reasonCode: "yeonjang_screen_capture_remote_failure",
+                retrySameStrategy: false,
+                terminalStage: "handler_failed",
+                retrySafety: "unknown_effect_state",
+            },
         },
     };
 }

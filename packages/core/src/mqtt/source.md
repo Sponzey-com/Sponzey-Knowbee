@@ -24,6 +24,10 @@ broker 소유 liveness sweep는 signed status lease 만료를 offline으로 수�
 함께 종료됩니다. broker의 실제 신규 시작은 SQLite에 남은 v2 session/client/method 상태를
 fail-closed로 닫고, fresh signed status가 도착하기 전에는 이전 상태를 재사용하지 않습니다.
 이 startup fence는 v1 transport와 CLI 소유 상태를 변경하지 않습니다.
+v2 capability projection은 status와 별개로 서명된 lease를 소유합니다. 같은 session의 online
+status heartbeat는 유효한 capability matrix를 지우지 않으며 Gateway는 legacy 5초 cache 대신
+그 projection의 signed expiry까지만 실행 capability로 재사용합니다. offline status, session
+변경, broker stop, 또는 capability lease 만료는 이 재사용을 닫습니다.
 종료 시 TCP listener는 즉시 새 연결을 거부하도록 close를 시작하고, Aedes broker가 소유한
 활성 client를 먼저 종료한 뒤 listener drain 완료를 기다립니다. 따라서 연결된 Yeonjang이
 있어도 Gateway shutdown이 서로를 기다리는 순환 대기에 빠지지 않습니다.

@@ -37,10 +37,36 @@ const MQTT_V2_CAMERA_FAILURE_CODES = Object.freeze({
     deadline_exceeded: "camera_capture_timeout",
     helper_timed_out: "camera_helper_timeout",
 });
+const MQTT_V2_SCREEN_FAILURE_CODES = Object.freeze({
+    permission_denied: "screen_permission_denied",
+});
 function boundedTerminalFailureCode(value) {
     return typeof value === "string" && /^[a-z][a-z0-9_]{0,127}$/u.test(value)
         ? value
         : null;
+}
+/**
+ * Produces the only terminal-failure fields permitted in scoped Field Debug.
+ * The signed envelope itself, paths, artifact data, and native helper text
+ * never cross this diagnostic boundary.
+ */
+function terminalFailureDebugFields(failure) {
+    const effectState = failure?.effect_state;
+    const retrySafety = failure?.retry_safety;
+    return {
+        terminalFailureReasonCode: boundedTerminalFailureCode(failure?.reason_code),
+        terminalFailureEffectState: effectState === "not_started" || effectState === "confirmed_not_applied"
+            || effectState === "confirmed_applied" || effectState === "unknown"
+            ? effectState
+            : null,
+        terminalFailureRetrySafety: retrySafety === "safe_redelivery_same_idempotency"
+            || retrySafety === "material_change_required"
+            || retrySafety === "local_action_required"
+            || retrySafety === "not_retryable"
+            || retrySafety === "manual_verification_required"
+            ? retrySafety
+            : null,
+    };
 }
 /**
  * Converts the signed MQTT v2 terminal failure into the existing command-attempt
@@ -51,7 +77,10 @@ export function projectYeonjangMqttV2TerminalFailure(input) {
     const reasonCode = input.method === "camera.capture" && rawReasonCode
         && Object.hasOwn(MQTT_V2_CAMERA_FAILURE_CODES, rawReasonCode)
         ? MQTT_V2_CAMERA_FAILURE_CODES[rawReasonCode]
-        : rawReasonCode ?? `yeonjang_v2_${input.executionOutcome}`;
+        : input.method === "screen.capture" && rawReasonCode
+            && Object.hasOwn(MQTT_V2_SCREEN_FAILURE_CODES, rawReasonCode)
+            ? MQTT_V2_SCREEN_FAILURE_CODES[rawReasonCode]
+            : rawReasonCode ?? `yeonjang_v2_${input.executionOutcome}`;
     const effectState = input.failure?.effect_state;
     const retrySafety = input.failure?.retry_safety;
     const terminalStage = effectState === "not_started" || effectState === "confirmed_not_applied"
@@ -888,6 +917,12 @@ function getFreshCapabilitySnapshot(extensionId) {
         return null;
     if (!snapshot.capabilityMatrix && snapshot.methods.length === 0)
         return null;
+    // MQTT v2 capabilities arrive as a separately signed retained projection.
+    // Its signed expiry, not the legacy five-second cache TTL, is the authority
+    // for reusing it between the extension's normal heartbeat publications.
+    if (snapshot.protocolVersion === "2" && snapshot.v2CapabilitiesExpiresAt != null) {
+        return now < snapshot.v2CapabilitiesExpiresAt ? snapshot : null;
+    }
     const refreshedAt = snapshot.lastCapabilityRefreshAt ?? snapshot.lastSeenAt;
     if (now - refreshedAt > YEONJANG_CAPABILITY_TTL_MS)
         return null;
@@ -1030,7 +1065,10 @@ async function invokeYeonjangMqttV2Capture(input) {
             elapsedMs: Math.max(0, Date.now() - terminalWaitStartedAt),
             outcome: admitted.ok ? "admitted" : "rejected",
             ...(admitted.ok
-                ? { executionOutcome: admitted.terminal.executionOutcome }
+                ? {
+                    executionOutcome: admitted.terminal.executionOutcome,
+                    ...terminalFailureDebugFields(admitted.terminal.failure),
+                }
                 : { reasonCode: admitted.reasonCode }),
         });
         if (!admitted.ok)

@@ -87,10 +87,16 @@ fi
 
 if [[ "$RESTART_YEONJANG" == "1" ]]; then
   echo "Yeonjang Linux headless runtime을 재시작합니다..."
+  stop_existing
+else
+  # A PID file is only an operator-facing projection. Do not terminate a
+  # recorded runtime during an ordinary start: the binary lease owns that decision.
+  cleanup_stale_pid
 fi
 
-stop_existing
-: > "$LOG_FILE"
+if [[ ! -f "$PID_FILE" ]]; then
+  : > "$LOG_FILE"
+fi
 
 echo "Yeonjang Linux headless runtime을 시작합니다..."
 (
@@ -98,17 +104,18 @@ echo "Yeonjang Linux headless runtime을 시작합니다..."
   exec env YEONJANG_SUPPORT_PROFILE=headless_managed nohup "$BINARY_PATH" --managed </dev/null
 ) >>"$LOG_FILE" 2>&1 &
 
-echo "$!" > "$PID_FILE"
+STARTED_PID="$!"
 
 sleep 2
 
-if ! kill -0 "$(cat "$PID_FILE")" >/dev/null 2>&1; then
+if ! kill -0 "$STARTED_PID" >/dev/null 2>&1; then
   echo "Yeonjang Linux headless runtime이 시작 중 종료되었습니다."
   echo "로그:"
   tail -n 80 "$LOG_FILE" || true
-  rm -f "$PID_FILE"
   exit 1
 fi
+
+echo "$STARTED_PID" > "$PID_FILE"
 
 echo "Yeonjang Linux headless runtime 실행 완료"
 echo "  PID  : $(cat "$PID_FILE")"

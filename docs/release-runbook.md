@@ -230,8 +230,9 @@ YEONJANG_LIVE_WINDOWS_CAMERA_DEVICE_ID='<exact-device-id>' \
   bash scripts/self/run-yeonjang-independent-mqtt-gate.sh
 ```
 
-The gate reads .NET `OSArchitecture`, accepts only native x64 or ARM64, rejects
-explicit target overrides, and rejects a missing exact camera device ID before
+The gate reads the physical processor's CIM `Architecture` code so an x64 Git
+Bash process cannot misreport an ARM64 host. It accepts only native x64 or ARM64,
+rejects explicit target overrides, and rejects a missing exact camera device ID before
 building and packaging the matching native binary. The PE architecture,
 release manifest, and loaded executable digest must all match that native
 target. It runs the same shared assertions. The packaged GUI-subsystem process
@@ -242,14 +243,15 @@ are verified without terminating the requester. Keep an architecture cell
 incomplete until this full gate runs with Docker, OpenSSL, Node, Rust, camera,
 display, and pre-granted OS permissions on that exact native host.
 
-The selected 2026-07-31 Parallels `Windows 11 - 개발` ARM64 session passed this full gate,
+The selected 2026-08-05 Parallels `Windows 11 - 개발` ARM64 session passed this full gate,
 including actual camera JPEG, screen PNG, duplicate single-effect convergence,
 running cancellation, artifact fetch/digest/ACK/cancel/cleanup, broker/runtime
 restart, and singleton reacquisition. Ubuntu `192.168.20.123` passed the same
-gate from its active X11 desktop session. These are the required Windows and
-Linux cells for the current user-selected release matrix. Windows x64 and
-Ubuntu Wayland remain separately runnable compatibility profiles; they are not
-claimed as actual results in this release.
+gate from its active X11 desktop session on 2026-08-05. The signed macOS arm64
+package also passed its native direct-MQTT camera/screen gate on the same date.
+These are the required desktop cells for the current user-selected release
+matrix. Windows x64 and Ubuntu Wayland remain separately runnable compatibility
+profiles; they are not claimed as actual results in this release.
 
 ## Release Readiness Authorization
 
@@ -456,6 +458,7 @@ Run these checks on the target OS after the automated release gate passes.
 ### macOS desktop_interactive
 
 - Start with `bash scripts/start-yeonjang-macos.sh --restart`.
+- After the first process is healthy, run the same start command once without `--restart`. It must not terminate or replace the existing process; the new binary must reject the duplicate through its fixed runtime lease, while the recorded PID remains unchanged.
 - Confirm normal restart reports reuse of the verified app bundle and does not run the build
 
   script. Use `bash scripts/start-yeonjang-macos.sh --restart --build` only for an explicit
@@ -471,6 +474,7 @@ Run these checks on the target OS after the automated release gate passes.
 ### Windows desktop_interactive
 
 - Start with `scripts\\start-yeonjang-windows.bat --restart`.
+- Verify a normal second start leaves the first process and its PID projection intact, then reports the new process's runtime-lease rejection. Use `--restart` only to stop the exact recorded PID before launch.
 - Confirm the notify icon appears and double click or tray menu opens the main window.
 - Confirm close-to-tray behavior and explicit quit behavior.
 - Confirm the node appears in `/api/status` and `/api/doctor`.
@@ -479,6 +483,7 @@ Run these checks on the target OS after the automated release gate passes.
 ### Linux desktop_interactive
 
 - Start with `bash scripts/start-yeonjang-linux.sh --restart`.
+- Verify a normal second start preserves the first process and PID projection and surfaces the new process's fixed runtime-lease rejection. `--restart` alone may stop the recorded PID.
 - Confirm tray fallback behavior for the current desktop environment.
 - Confirm the node appears in `/api/status` and `/api/doctor`.
 - Run one `screen.capture` and verify desktop capability baseline.
@@ -486,6 +491,7 @@ Run these checks on the target OS after the automated release gate passes.
 ### Linux headless_managed
 
 - Start with `bash scripts/start-yeonjang-linux-headless.sh --restart`.
+- Verify a normal second start preserves the first process and PID projection and surfaces the new process's fixed runtime-lease rejection. `--restart` alone may stop the recorded PID.
 - Do not require tray or window behavior.
 - Confirm the node appears in `/api/status` and `/api/doctor` with `headless_managed` support profile.
 - Verify diagnostics-only flow and headless capability baseline.

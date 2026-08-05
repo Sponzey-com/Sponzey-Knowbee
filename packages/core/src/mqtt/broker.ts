@@ -116,6 +116,8 @@ export interface MqttExtensionSnapshot {
   v2CapabilitiesSequence?: number | null
   /** Signed online status lease; null for offline or non-v2 projections. */
   v2StatusExpiresAt?: number | null
+  /** Signed capability lease; only this bounds reuse of a v2 capability projection. */
+  v2CapabilitiesExpiresAt?: number | null
   permissions?: Record<string, unknown>
   toolHealth?: Record<string, unknown>
   capabilityMatrix?: Record<string, unknown>
@@ -353,6 +355,7 @@ function clearExtensionClaims(): void {
       v2StatusSequence: null,
       v2CapabilitiesSequence: null,
       v2StatusExpiresAt: null,
+      v2CapabilitiesExpiresAt: null,
       lastSeenAt: now,
     })
     persistYeonjangRegistrySnapshot(extensionSnapshots.get(extensionId) ?? current)
@@ -777,6 +780,7 @@ function handleMqttV2Observation(
         ? previous.v2StatusSequence ?? null
         : null,
       v2CapabilitiesSequence: admitted.observation.sequence,
+      v2CapabilitiesExpiresAt: admitted.observation.expiresAt,
       v2StatusExpiresAt: previous?.sessionId === admitted.observation.sessionId
         ? previous.v2StatusExpiresAt ?? null
         : null,
@@ -818,6 +822,9 @@ function handleMqttV2Observation(
     admitted.observation.instanceId,
     activeGeneration,
   )
+  const retainCapabilityProjection =
+    admitted.observation.state !== "offline"
+    && previous?.sessionId === admitted.observation.sessionId
   extensionSnapshots.set(admitted.observation.instanceId, {
     extensionId: admitted.observation.instanceId,
     clientId,
@@ -843,7 +850,12 @@ function handleMqttV2Observation(
     arch: existing?.arch ?? null,
     transport: ["mqtt_v2"],
     capabilityHash: null,
-    methods: [],
+    // Keep the separately signed capability projection for this exact session
+    // until its own lease expires. A status heartbeat must not erase it and
+    // force the legacy node.capabilities RPC path.
+    methods: retainCapabilityProjection
+      ? previous.methods
+      : [],
     sessionId: admitted.observation.sessionId,
     startupMode: null,
     windowMode: null,
@@ -855,11 +867,19 @@ function handleMqttV2Observation(
     installFingerprint: null,
     targetFingerprint: admitted.observation.targetFingerprint,
     v2StatusSequence: admitted.observation.sequence,
-    v2CapabilitiesSequence: previous?.sessionId === admitted.observation.sessionId
+    v2CapabilitiesSequence: retainCapabilityProjection
       ? previous.v2CapabilitiesSequence ?? null
       : null,
+    v2CapabilitiesExpiresAt: retainCapabilityProjection
+      ? previous.v2CapabilitiesExpiresAt ?? null
+      : null,
     v2StatusExpiresAt: admitted.observation.expiresAt,
-    lastCapabilityRefreshAt: null,
+    ...(retainCapabilityProjection && previous.capabilityMatrix
+      ? { capabilityMatrix: previous.capabilityMatrix }
+      : {}),
+    lastCapabilityRefreshAt: retainCapabilityProjection
+      ? previous.lastCapabilityRefreshAt ?? null
+      : null,
     lastSeenAt: admitted.observation.observedAt,
   })
   eventBus.emit("yeonjang.heartbeat", {

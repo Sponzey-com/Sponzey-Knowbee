@@ -9,7 +9,10 @@ function functionSlice(source: string, name: string): string {
 
 describe("Yeonjang package script env snapshot", () => {
   it("keeps candidate path helpers free of direct env reads", () => {
-    const source = readFileSync(new URL("../scripts/package-yeonjang-platform.mjs", import.meta.url), "utf-8")
+    const source = readFileSync(
+      new URL("../scripts/package-yeonjang-platform.mjs", import.meta.url),
+      "utf-8",
+    )
 
     expect(source).toContain("const YEONJANG_PACKAGE_ENV")
     expect(functionSlice(source, "defaultTargetDirs")).not.toContain("process.env")

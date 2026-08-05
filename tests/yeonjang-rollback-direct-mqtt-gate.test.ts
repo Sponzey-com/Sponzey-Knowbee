@@ -7,7 +7,7 @@ describe("Yeonjang previous-package rollback release gate", () => {
   it("fails closed unless both exact rollback package inputs are supplied", () => {
     const gate = source("scripts/self/run-yeonjang-independent-mqtt-gate.sh")
 
-    expect(gate).toContain('YEONJANG_ROLLBACK_GATE:-0')
+    expect(gate).toContain("YEONJANG_ROLLBACK_GATE:-0")
     expect(gate).toContain("YEONJANG_ROLLBACK_BINARY")
     expect(gate).toContain("YEONJANG_ROLLBACK_PACKAGE_MANIFEST")
     expect(gate).toContain("rollback gate requires an executable previous package binary")
@@ -24,8 +24,6 @@ describe("Yeonjang previous-package rollback release gate", () => {
     expect(sharedGate).toContain("rollback package must differ from the current package")
     expect(sharedGate).toContain("LiveRuntime::spawn_rollback")
     expect(sharedGate).toContain('assert_eq!(replay["payload"], camera_terminal["payload"])')
-    expect(sharedGate).toContain(
-      '"rollback replay must not execute a new camera effect"',
-    )
+    expect(sharedGate).toContain('"rollback replay must not execute a new camera effect"')
   })
 })

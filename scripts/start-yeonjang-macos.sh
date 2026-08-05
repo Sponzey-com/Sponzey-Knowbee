@@ -48,35 +48,12 @@ cleanup_stale_pid() {
   fi
 }
 
-find_running_pid() {
-  local match="${1:-}"
-  if [[ -z "$match" ]]; then
-    return 1
-  fi
-
-  local pid
-  pid="$(pgrep -f "$match" | tail -n 1 || true)"
-  if [[ -z "$pid" ]]; then
-    return 1
-  fi
-
-  echo "$pid"
-}
-
 stop_existing() {
   cleanup_stale_pid
-  local pid=""
-  if [[ -f "$PID_FILE" ]]; then
-    pid="$(cat "$PID_FILE")"
-  else
-    # A prior app launch can outlive a stale/missing PID file. Stop only the
-    # app bundle belonging to this repository before replacing that bundle.
-    local existing_bundle
-    existing_bundle="$(resolve_app_bundle_path)"
-    if [[ -n "$existing_bundle" ]]; then
-      pid="$(find_running_pid "$existing_bundle/Contents/MacOS/$APP_NAME" || true)"
-    fi
-  fi
+  [[ ! -f "$PID_FILE" ]] && return
+
+  local pid
+  pid="$(cat "$PID_FILE")"
   [[ -z "$pid" ]] && return
   echo "기존 Yeonjang GUI를 종료합니다. PID=$pid"
   kill "$pid" >/dev/null 2>&1 || true
@@ -153,7 +130,11 @@ else
     exit 1
   fi
   echo "검증된 기존 Yeonjang 앱 번들을 재사용합니다."
-  stop_existing
+  if [[ "$RESTART_YEONJANG" == "1" ]]; then
+    stop_existing
+  else
+    cleanup_stale_pid
+  fi
 fi
 
 BINARY_PATH="$(resolve_binary_path)"
@@ -166,11 +147,19 @@ if [[ -n "$APP_BUNDLE_PATH" ]] && ! validate_app_bundle "$APP_BUNDLE_PATH"; then
   exit 1
 fi
 
-: > "$LOG_FILE"
+if [[ ! -f "$PID_FILE" ]]; then
+  : > "$LOG_FILE"
+fi
 
 echo "Yeonjang GUI를 시작합니다..."
 if [[ -n "$APP_BUNDLE_PATH" ]]; then
-  open -na "$APP_BUNDLE_PATH" >>"$LOG_FILE" 2>&1
+  # Launch the signed bundle executable directly so this launcher owns the
+  # exact child PID. `open` does not return that PID and would require a
+  # process scan that could mistake an existing runtime for this launch.
+  (
+    cd "$ROOT_DIR"
+    exec "$APP_BUNDLE_PATH/Contents/MacOS/$APP_NAME" </dev/null
+  ) >>"$LOG_FILE" 2>&1 &
 else
   (
     cd "$ROOT_DIR"
@@ -178,25 +167,14 @@ else
   ) >>"$LOG_FILE" 2>&1 &
 fi
 
-STARTED_PID=""
-MATCH_PATH="$BINARY_PATH"
-if [[ -n "$APP_BUNDLE_PATH" ]]; then
-  MATCH_PATH="$APP_BUNDLE_PATH/Contents/MacOS/$APP_NAME"
-fi
+STARTED_PID="$!"
 
-for _ in $(seq 1 40); do
-  STARTED_PID="$(find_running_pid "$MATCH_PATH" || true)"
-  if [[ -n "$STARTED_PID" ]] && kill -0 "$STARTED_PID" >/dev/null 2>&1; then
-    break
-  fi
-  sleep 0.25
-done
+sleep 2
 
-if [[ -z "$STARTED_PID" ]] || ! kill -0 "$STARTED_PID" >/dev/null 2>&1; then
+if ! kill -0 "$STARTED_PID" >/dev/null 2>&1; then
   echo "Yeonjang GUI가 시작 중 종료되었습니다."
   echo "로그:"
   tail -n 80 "$LOG_FILE" || true
-  rm -f "$PID_FILE"
   exit 1
 fi
 

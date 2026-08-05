@@ -912,15 +912,19 @@ fn run_command_artifact_broker(
     listener
         .set_nonblocking(true)
         .map_err(|error| error.to_string())?;
-    let mut stream = accept_stream(&listener, &stop_rx, Duration::from_secs(3))?
-        .ok_or_else(|| "command artifact broker stopped before CONNECT".to_string())?;
-    configure_stream(&stream)?;
+    let (mut stream, connect) =
+        accept_connect_packet(&listener, &stop_rx, CONTROLLED_CONNECT_BUDGET)?
+            .ok_or_else(|| "command artifact broker stopped before CONNECT".to_string())?;
+    if packet_type(connect.header) != 1 {
+        return Err("command artifact broker first packet was not CONNECT".to_string());
+    }
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .map_err(|error| error.to_string())?;
     client_id_tx
-        .send(accept_connect(&mut stream, &stop_rx)?)
+        .send(parse_connect_client_id(&connect.payload)?)
         .map_err(|error| error.to_string())?;
+    write_packet(&mut stream, 0x20, &[0x00, 0x00])?;
     let mut subscriptions = 0_u8;
     let mut command_sent = false;
     let mut fetch_sent = false;
@@ -1474,11 +1478,9 @@ fn run_status_broker(
     ready_tx
         .send(())
         .map_err(|error| format!("status broker readiness failed: {error}"))?;
-    let mut stream = accept_stream(&listener, &stop_rx, Duration::from_secs(10))?
-        .ok_or_else(|| "status broker stopped before CONNECT".to_string())?;
-    configure_stream(&stream)?;
-    let connect = read_packet(&mut stream, &stop_rx)?
-        .ok_or_else(|| "status broker stopped before CONNECT".to_string())?;
+    let (mut stream, connect) =
+        accept_connect_packet(&listener, &stop_rx, CONTROLLED_CONNECT_BUDGET)?
+            .ok_or_else(|| "status broker stopped before CONNECT".to_string())?;
     if packet_type(connect.header) != 1 {
         return Err("status broker first packet was not CONNECT".to_string());
     }

@@ -19,7 +19,14 @@
   artifact ACK/cleanup, graceful shutdown과 same-instance restart를 추가로 검증합니다.
   Windows Git Bash 경로는 .NET native architecture와 interactive session을 먼저
   검증하고 x64/ARM64 외 architecture, architecture 불일치와 target override를
-  거부합니다. 각 architecture 결과는 다른 Windows release cell을 대신하지 않습니다.
+  거부합니다. PowerShell 5.1/7 양쪽에서 shared script의 short path를 positional argument로
+  전달합니다. Native gate 호출 구간의 일반 stderr는 PowerShell 5.1
+  `NativeCommandError`가 아니라 원래 stream으로 보존하고, 성공·실패는 exact native exit
+  code로만 판정합니다. Windows-owned Cargo target을 사용해 Parallels shared-folder archive
+  cleanup에 의존하지 않습니다. 각 architecture 결과는 다른 Windows release cell을 대신하지
+  않습니다.
+- `verify-yeonjang-windows-singleton.ps1`는 native packaged binary의 stdio/authenticated/
+  managed cross-mode duplicate, alternate binary/config root와 owner 종료 뒤 reacquire를 검증합니다.
 - `YEONJANG_ROLLBACK_GATE=1`은 live gate에 absolute previous binary와 package
   manifest를 추가로 요구합니다. Current package와 동일 digest, 부분·symlink 입력,
   target 불일치와 schema-3 state exact replay 실패를 장치 재실행 없이 차단합니다.

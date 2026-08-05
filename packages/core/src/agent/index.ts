@@ -309,7 +309,15 @@ interface StopAfterFailureDetails {
   stopAfterFailure?: boolean
   via?: string
   failureKind?: string
+  failure?: {
+    reasonCode?: unknown
+    terminalStage?: unknown
+    retrySafety?: unknown
+  }
 }
+
+const TRUSTED_SCREEN_PERMISSION_DENIED_OUTPUT =
+  "Yeonjang 화면 캡처는 운영 체제의 화면 캡처 권한이 거부되어 시작되지 않았습니다. 시스템 설정에서 Yeonjang의 화면 캡처 권한을 허용한 뒤 다시 요청해 주세요."
 
 export async function* runAgent(params: RunAgentParams): AsyncGenerator<AgentChunk> {
   const runId = params.runId ?? crypto.randomUUID()
@@ -1620,7 +1628,7 @@ function buildTerminalFailureNotice(
 } | null {
   const output = result.output.trim()
   if (!output) return null
-  const trusted = isTrustedDeterministicTerminalFailure(result.details)
+  const trusted = isTrustedDeterministicTerminalFailure(result)
   const text = trusted ? output : sanitizeUserFacingError(output).userMessage
   if (!text.trim()) return null
   return {
@@ -1648,12 +1656,18 @@ function shouldStopAfterFailure(details: unknown): boolean {
   return Boolean((details as StopAfterFailureDetails).stopAfterFailure)
 }
 
-function isTrustedDeterministicTerminalFailure(details: unknown): boolean {
-  if (!details || typeof details !== "object") return false
-  const typed = details as StopAfterFailureDetails
+function isTrustedDeterministicTerminalFailure(result: ToolResult): boolean {
+  if (!result.details || typeof result.details !== "object") return false
+  const typed = result.details as StopAfterFailureDetails
+  if (typed.via !== "yeonjang") return false
+  if (typed.failureKind === "path_bug" || typed.failureKind === "timeout") return true
+  const failure = typed.failure
   return (
-    typed.via === "yeonjang" &&
-    (typed.failureKind === "path_bug" || typed.failureKind === "timeout")
+    typed.failureKind === "remote_rejected"
+    && result.output.trim() === TRUSTED_SCREEN_PERMISSION_DENIED_OUTPUT
+    && failure?.reasonCode === "screen_permission_denied"
+    && failure.terminalStage === "rejected"
+    && failure.retrySafety === "change_strategy"
   )
 }
 

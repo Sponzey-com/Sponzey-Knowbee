@@ -235,6 +235,7 @@ function clearExtensionClaims() {
             v2StatusSequence: null,
             v2CapabilitiesSequence: null,
             v2StatusExpiresAt: null,
+            v2CapabilitiesExpiresAt: null,
             lastSeenAt: now,
         });
         persistYeonjangRegistrySnapshot(extensionSnapshots.get(extensionId) ?? current);
@@ -625,6 +626,7 @@ function handleMqttV2Observation(packet, client, topic) {
                 ? previous.v2StatusSequence ?? null
                 : null,
             v2CapabilitiesSequence: admitted.observation.sequence,
+            v2CapabilitiesExpiresAt: admitted.observation.expiresAt,
             v2StatusExpiresAt: previous?.sessionId === admitted.observation.sessionId
                 ? previous.v2StatusExpiresAt ?? null
                 : null,
@@ -659,6 +661,8 @@ function handleMqttV2Observation(packet, client, topic) {
         return true;
     }
     mqttV2StatusGenerationByExtensionId.set(admitted.observation.instanceId, activeGeneration);
+    const retainCapabilityProjection = admitted.observation.state !== "offline"
+        && previous?.sessionId === admitted.observation.sessionId;
     extensionSnapshots.set(admitted.observation.instanceId, {
         extensionId: admitted.observation.instanceId,
         clientId,
@@ -684,7 +688,12 @@ function handleMqttV2Observation(packet, client, topic) {
         arch: existing?.arch ?? null,
         transport: ["mqtt_v2"],
         capabilityHash: null,
-        methods: [],
+        // Keep the separately signed capability projection for this exact session
+        // until its own lease expires. A status heartbeat must not erase it and
+        // force the legacy node.capabilities RPC path.
+        methods: retainCapabilityProjection
+            ? previous.methods
+            : [],
         sessionId: admitted.observation.sessionId,
         startupMode: null,
         windowMode: null,
@@ -696,11 +705,19 @@ function handleMqttV2Observation(packet, client, topic) {
         installFingerprint: null,
         targetFingerprint: admitted.observation.targetFingerprint,
         v2StatusSequence: admitted.observation.sequence,
-        v2CapabilitiesSequence: previous?.sessionId === admitted.observation.sessionId
+        v2CapabilitiesSequence: retainCapabilityProjection
             ? previous.v2CapabilitiesSequence ?? null
             : null,
+        v2CapabilitiesExpiresAt: retainCapabilityProjection
+            ? previous.v2CapabilitiesExpiresAt ?? null
+            : null,
         v2StatusExpiresAt: admitted.observation.expiresAt,
-        lastCapabilityRefreshAt: null,
+        ...(retainCapabilityProjection && previous.capabilityMatrix
+            ? { capabilityMatrix: previous.capabilityMatrix }
+            : {}),
+        lastCapabilityRefreshAt: retainCapabilityProjection
+            ? previous.lastCapabilityRefreshAt ?? null
+            : null,
         lastSeenAt: admitted.observation.observedAt,
     });
     eventBus.emit("yeonjang.heartbeat", {

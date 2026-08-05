@@ -67,6 +67,8 @@ pub struct YeonjangSettings {
     pub ui_language: UiLanguage,
     #[serde(default)]
     pub permission_review_required: bool,
+    #[serde(default)]
+    pub screen_capture_permission_request: ScreenCapturePermissionRequestState,
     pub instance_id: String,
     pub instance_alias: String,
     pub node_id: String,
@@ -83,6 +85,17 @@ pub struct YeonjangSettings {
     pub permissions: PermissionSettings,
     pub path_access: PathAccessSettings,
     pub capture_artifact_root: String,
+}
+
+/// Durable local record that the GUI has already asked macOS for screen
+/// capture consent. It is not an OS permission result and is never sent over
+/// MQTT.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenCapturePermissionRequestState {
+    #[default]
+    NotRequested,
+    Requested,
 }
 
 impl fmt::Debug for YeonjangSettings {
@@ -253,6 +266,7 @@ impl Default for YeonjangSettings {
             schema_version: SETTINGS_SCHEMA_VERSION,
             ui_language: UiLanguage::En,
             permission_review_required: false,
+            screen_capture_permission_request: ScreenCapturePermissionRequestState::NotRequested,
             instance_id: String::new(),
             instance_alias: String::new(),
             node_id,
@@ -369,6 +383,16 @@ impl YeonjangSettings {
 
     pub fn confirm_permission_review(&mut self) {
         self.permission_review_required = false;
+    }
+
+    pub fn needs_initial_screen_capture_permission_request(&self) -> bool {
+        self.permissions.allow_screen_capture
+            && self.screen_capture_permission_request
+                == ScreenCapturePermissionRequestState::NotRequested
+    }
+
+    pub fn mark_screen_capture_permission_requested(&mut self) {
+        self.screen_capture_permission_request = ScreenCapturePermissionRequestState::Requested;
     }
 
     fn validate(&self) -> Result<(), SettingsLoadError> {
@@ -1103,6 +1127,26 @@ mod tests {
         .expect("deserialize legacy secrets");
         assert_eq!(legacy.pairing_secret, "legacy-pairing");
         assert_eq!(legacy.connection.password, "legacy-broker");
+    }
+
+    #[test]
+    fn screen_capture_permission_request_is_persisted_once_for_an_enabled_capture_policy() {
+        let path = settings_test_path("screen-permission-request-once");
+        let mut settings = YeonjangSettings::default();
+        settings.permissions.allow_screen_capture = true;
+
+        assert!(settings.needs_initial_screen_capture_permission_request());
+        settings.mark_screen_capture_permission_requested();
+        assert!(!settings.needs_initial_screen_capture_permission_request());
+        save_settings_to_path(&settings, &path).expect("save requested marker");
+
+        let restored = load_settings_from_path(&path).expect("restore requested marker");
+        assert_eq!(
+            restored.screen_capture_permission_request,
+            ScreenCapturePermissionRequestState::Requested
+        );
+        assert!(!restored.needs_initial_screen_capture_permission_request());
+        fs::remove_file(path).expect("remove settings");
     }
 
     #[test]

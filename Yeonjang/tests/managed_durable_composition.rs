@@ -15,7 +15,7 @@ use knowbee_yeonjang::durable_cancellation::DurableCancellationReceiptRepository
 use knowbee_yeonjang::durable_completed_store::DurableRecordRepository;
 use knowbee_yeonjang::durable_response_archive::ResponseArchiveRepository;
 use knowbee_yeonjang::instance_process_lease::{
-    FilesystemInstanceLeaseProvider, InstanceLeaseProvider,
+    FilesystemRuntimeLeaseProvider, RuntimeLeaseGuard, RuntimeLeaseProvider,
 };
 use knowbee_yeonjang::managed_composition::{
     ManagedDurableDependencies, ManagedRuntimeConfig, ManagedRuntimeDependencies,
@@ -290,21 +290,18 @@ fn real_durable_dependencies(
         Arc::new(FixedClock),
         ManagedDurableDependencies::new(records, archive.clone(), archive)
             .with_cancellations(cancellations),
-        durable_lease_provider(),
+        durable_runtime_lease(),
     )
 }
 
-fn durable_lease_provider() -> Arc<dyn InstanceLeaseProvider> {
-    Arc::new(
-        FilesystemInstanceLeaseProvider::new(
-            std::env::temp_dir().join(format!(
-                "knowbee-managed-durable-leases-{}",
-                std::process::id()
-            )),
-            "managed-durable-composition",
-        )
-        .expect("durable lease provider"),
-    )
+fn durable_runtime_lease() -> RuntimeLeaseGuard {
+    FilesystemRuntimeLeaseProvider::new(std::env::temp_dir().join(format!(
+        "knowbee-managed-durable-runtime-leases-{}",
+        std::process::id()
+    )))
+    .expect("durable lease provider")
+    .acquire()
+    .expect("durable runtime lease")
 }
 
 struct TempDurableFiles {

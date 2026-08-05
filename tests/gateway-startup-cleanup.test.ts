@@ -37,6 +37,7 @@ describe("Gateway startup cleanup boundary", () => {
 
     expect(source).toContain('LOG_PURPOSE_SNAPSHOT="${KNOWBEE_LOG_PURPOSE:-}"')
     expect(source).toContain('FIELD_DEBUG_UNTIL_SNAPSHOT="${KNOWBEE_FIELD_DEBUG_UNTIL:-}"')
+    expect(source).toContain('LOG_PURPOSE_SNAPSHOT="debug"')
     expect(noHup).toContain('export KNOWBEE_LOG_PURPOSE="$LOG_PURPOSE_SNAPSHOT"')
     expect(noHup).toContain('export KNOWBEE_FIELD_DEBUG_UNTIL="$FIELD_DEBUG_UNTIL_SNAPSHOT"')
     expect(launchctl).toContain("KNOWBEE_LOG_PURPOSE=%q KNOWBEE_FIELD_DEBUG_UNTIL=%q")

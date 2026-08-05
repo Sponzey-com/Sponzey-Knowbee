@@ -17,6 +17,7 @@ const DEDUPE_TOOL_NAMES = new Set([
     "yeonjang_camera_capture",
 ]);
 const UNCHANGED_RECOVERY_REJECT_TOOL_NAMES = new Set([
+    "screen_capture",
     "yeonjang_camera_capture",
 ]);
 const SECRET_KEY_PATTERN = /(?:api[_-]?key|token|secret|password|credential|authorization|cookie|raw[_-]?(?:body|response))/i;

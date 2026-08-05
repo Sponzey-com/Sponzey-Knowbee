@@ -142,4 +142,71 @@ describe("task0042 terminal failure text gate", () => {
     expect(JSON.stringify(textChunks)).not.toContain("sk-terminal-secret")
     expect(JSON.stringify(textChunks)).not.toContain("/Users/me/private")
   })
+
+  it("keeps a bound screen permission denial actionable without trusting arbitrary remote failures", async () => {
+    getAllMock.mockReturnValueOnce([{
+      name: "screen_capture",
+      description: "screen capture",
+      parameters: { type: "object", properties: {} },
+    }])
+
+    const output = "Yeonjang 화면 캡처는 운영 체제의 화면 캡처 권한이 거부되어 시작되지 않았습니다. 시스템 설정에서 Yeonjang의 화면 캡처 권한을 허용한 뒤 다시 요청해 주세요."
+    dispatchMock.mockResolvedValueOnce({
+      success: false,
+      output,
+      error: "SIDE_EFFECT_REJECTED",
+      details: {
+        stopAfterFailure: true,
+        via: "yeonjang",
+        failureKind: "remote_rejected",
+        failure: {
+          reasonCode: "screen_permission_denied",
+          terminalStage: "rejected",
+          retrySafety: "change_strategy",
+        },
+      },
+    })
+
+    const provider = {
+      chat: vi.fn(async function* () {
+        yield {
+          type: "tool_use",
+          id: "tool-screen-permission-denied",
+          name: "screen_capture",
+          input: {},
+        } as const
+        yield {
+          type: "message_stop",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        } as const
+      }),
+    }
+
+    const chunks = []
+    for await (const chunk of runAgent({
+      ...agentRuntime,
+      config: DEFAULT_CONFIG,
+      userMessage: "메인 화면을 캡처해줘",
+      sessionId: "session-task0042-screen-permission",
+      runId: "run-task0042-screen-permission",
+      model: "gpt-5",
+      provider: provider as never,
+      source: "telegram",
+      toolsEnabled: true,
+    })) {
+      chunks.push(chunk)
+    }
+
+    expect(chunks).toContainEqual(expect.objectContaining({
+      type: "text",
+      delta: output,
+      textSource: "runtime_deterministic",
+      notice: expect.objectContaining({
+        kind: "agent_terminal_failure",
+        toolName: "screen_capture",
+        failureTrust: "trusted_deterministic",
+        reason: "remote_rejected",
+      }),
+    }))
+  })
 })

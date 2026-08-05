@@ -87,6 +87,9 @@ if not exist "%MANIFEST_PATH%" (
 
 if /I "%CARGO_EXE%"=="%SYSTEM_CARGO%" call :use_system_profile_env
 if /I "%CARGO_EXE%"=="%SYSTEM_TOOLCHAIN_CARGO%" call :use_system_profile_env
+for %%I in ("%CARGO_EXE%") do set "CARGO_BIN_DIR=%%~dpI"
+set "PATH=%CARGO_BIN_DIR%;%PATH%"
+if exist "%CARGO_BIN_DIR%rustc.exe" set "RUSTC=%CARGO_BIN_DIR%rustc.exe"
 
 echo Building Yeonjang for Windows...
 echo   Cargo  : %CARGO_EXE%
