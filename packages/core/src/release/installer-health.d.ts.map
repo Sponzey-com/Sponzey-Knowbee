@@ -1,0 +1,1 @@
+{"version":3,"file":"installer-health.d.ts","sourceRoot":"","sources":["../../src/release/installer-health.ts"],"names":[],"mappings":"AAEA,MAAM,WAAW,uBAAuB;IACtC,QAAQ,CAAC,cAAc,EAAE,MAAM,CAAA;IAC/B,QAAQ,CAAC,yBAAyB,EAAE,UAAU,MAAM,EAAE,CAAA;CACvD;AAED,wBAAgB,4BAA4B,CAAC,KAAK,EAAE;IAClD,QAAQ,CAAC,cAAc,EAAE,MAAM,CAAA;IAC/B,QAAQ,CAAC,cAAc,EAAE,MAAM,CAAA;CAChC,GAAG,uBAAuB,CAe1B"}
