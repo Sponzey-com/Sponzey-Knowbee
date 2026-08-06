@@ -359,7 +359,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p release/candidate/prepared
           node scripts/collect-installer-release-assets.mjs \
             --bundle-root release/candidate/bundles \
             --verifier-root release/candidate/verifiers \

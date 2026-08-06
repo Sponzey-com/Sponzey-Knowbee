@@ -21,6 +21,7 @@ describe("task019 installer release workflow", () => {
       "find release/application/node_modules -type f \\( -name '*.d.ts' -o -name '*.map' \\) -delete",
     )
     expect(workflow).toContain("node scripts/compose-installer-release.mjs prepare")
+    expect(workflow).not.toContain("mkdir -p release/candidate/prepared")
     expect(workflow).not.toMatch(/PRIVATE_KEY|SIGNING_PRIVATE/iu)
   })
 
