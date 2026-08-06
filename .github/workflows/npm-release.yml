@@ -441,7 +441,11 @@ jobs:
                 echo "Skipping already published package: $package_spec"
                 continue
               fi
-              npm publish "$package_file" --access public
+              if [[ "$package_spec" == *-* ]]; then
+                npm publish "$package_file" --access public --tag next
+              else
+                npm publish "$package_file" --access public
+              fi
             done < <(find release/npm/publish -name "$pattern" | sort)
           done
         env:

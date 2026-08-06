@@ -11,6 +11,7 @@ describe("task019 installer release workflow", () => {
       expect(workflow).toContain(`installer_target: ${target}`)
     }
     expect(workflow).toContain("node scripts/prepare-installer-inputs.mjs")
+    expect(workflow).toContain("--tag next")
     expect(workflow).toContain("node scripts/build-installer-bundle.mjs")
     expect(workflow).toContain("node scripts/compose-installer-release.mjs prepare")
     expect(workflow).not.toMatch(/PRIVATE_KEY|SIGNING_PRIVATE/iu)

@@ -102,6 +102,18 @@ describe("task005 signed Node release input", () => {
     ).toEqual({ status: "rejected", reasonCode: "node_shasums_signature_invalid" })
   })
 
+  it("accepts signed Node checksum entries in nested release directories", async () => {
+    const input = fixture()
+    const shasumsBytes = Buffer.concat([
+      input.shasumsBytes,
+      Buffer.from(`${"a".repeat(64)}  win-x64/node_pdb.zip\n`, "utf8"),
+    ])
+
+    await expect(
+      collectVerifiedReleaseArchives({ ...input, shasumsBytes, verifySignature: () => true }),
+    ).resolves.toMatchObject({ status: "verified" })
+  })
+
   it.each([
     [
       "missing entry",

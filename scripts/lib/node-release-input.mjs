@@ -55,7 +55,7 @@ function parseShasums(bytes) {
   const entries = new Map()
   for (const line of content.split(/\r?\n/)) {
     if (line.length === 0) continue
-    const match = /^([a-f0-9]{64}) {2}([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(line)
+    const match = /^([a-f0-9]{64}) {2}([A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*)$/.exec(line)
     if (!match) return undefined
     const digest = match[1]
     const fileName = match[2]
