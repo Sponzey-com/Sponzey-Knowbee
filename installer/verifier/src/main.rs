@@ -73,6 +73,7 @@ struct Artifact {
 #[serde(rename_all = "camelCase")]
 struct VerifiedReceipt {
     status: &'static str,
+    origin_trust: &'static str,
     manifest_sha256: String,
     release_version: String,
     node_version: String,
@@ -163,6 +164,7 @@ fn verify() -> Result<(VerifiedReceipt, OutputFormat), &'static str> {
     Ok((
         VerifiedReceipt {
             status: "verified",
+            origin_trust: "unsigned_origin_unverified",
             manifest_sha256: format!("sha256:{}", sha256_hex(&manifest_bytes)),
             release_version: manifest.release_version,
             node_version: manifest.node.version,

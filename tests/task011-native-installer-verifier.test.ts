@@ -112,6 +112,7 @@ describe("task011 native installer verifier", () => {
     expect(result.status, result.stderr).toBe(0)
     expect(JSON.parse(result.stdout)).toEqual({
       status: "verified",
+      originTrust: "unsigned_origin_unverified",
       manifestSha256: `sha256:${createHash("sha256").update(input.manifest).digest("hex")}`,
       releaseVersion: "9.8.7",
       nodeVersion: "24.18.0",
