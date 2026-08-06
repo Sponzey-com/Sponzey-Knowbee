@@ -1,0 +1,136 @@
+name: installer native evidence
+# All Knowbee receipts must retain the explicit unsigned_origin_unverified disclosure.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Immutable v-prefixed candidate tag
+        required: true
+        type: string
+      candidate_run_id:
+        description: npm release workflow run containing the exact candidate artifact
+        required: true
+        type: string
+
+jobs:
+  inspect-native-candidate:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: darwin-arm64
+            inspector: unsigned
+            verifier: knowbee-installer-verify-darwin-arm64
+          - os: macos-15-intel
+            target: darwin-x64
+            inspector: unsigned
+            verifier: knowbee-installer-verify-darwin-x64
+          - os: ubuntu-latest
+            target: linux-x64
+            inspector: linux
+            verifier: knowbee-installer-verify-linux-x64
+          - os: windows-11-arm
+            target: win32-arm64
+            inspector: unsigned
+            verifier: knowbee-installer-verify-win32-arm64.exe
+          - os: windows-latest
+            target: win32-x64
+            inspector: unsigned
+            verifier: knowbee-installer-verify-win32-x64.exe
+    runs-on: ${{ matrix.os }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-release-candidate-${{ inputs.release_tag }}
+          path: release/candidate
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Install Linux ELF inspector
+        if: matrix.inspector == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y binutils
+      - name: Verify and stage exact unsigned artifact
+        shell: bash
+        env:
+          INSTALLER_TARGET: ${{ matrix.target }}
+          INSTALLER_VERIFIER: ${{ matrix.verifier }}
+        run: |
+          set -euo pipefail
+          bundle_root="release/candidate/bundles/installer-bundle-$INSTALLER_TARGET"
+          artifact_name="$(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(value.name)' "$bundle_root/artifact-receipt.json")"
+          verifier="release/candidate/verifiers/installer-verifier-$INSTALLER_TARGET/$INSTALLER_VERIFIER"
+          if [[ "$INSTALLER_TARGET" != win32-* ]]; then chmod 0755 "$verifier"; fi
+          node -e 'const fs=require("node:fs"); const values=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const receipt=values.find((value)=>value.target===process.argv[2]); if(!receipt) process.exit(1); process.stdout.write(`${JSON.stringify(receipt)}\n`)' \
+            release/candidate/receipts/verifier-receipts.json "$INSTALLER_TARGET" > release/native-verifier-receipt.json
+          "$verifier" --manifest release/candidate/prepared/installer-manifest.json --target "$INSTALLER_TARGET" --artifact "$bundle_root/$artifact_name" --stage release/native/stage > "release/native-verified-receipt-$INSTALLER_TARGET.json"
+      - name: Inspect unsigned macOS or Windows target
+        if: matrix.inspector == 'unsigned'
+        shell: bash
+        env:
+          INSTALLER_TARGET: ${{ matrix.target }}
+          INSTALLER_VERIFIER: ${{ matrix.verifier }}
+        run: |
+          set -euo pipefail
+          node scripts/inspect-installer-native.mjs --target "$INSTALLER_TARGET" --stage release/native/stage --verified-receipt "release/native-verified-receipt-$INSTALLER_TARGET.json" --verifier "release/candidate/verifiers/installer-verifier-$INSTALLER_TARGET/$INSTALLER_VERIFIER" --verifier-receipt release/native-verifier-receipt.json > "release/native-attestation-$INSTALLER_TARGET.json"
+      - name: Inspect Linux ABI floor
+        if: matrix.inspector == 'linux'
+        shell: bash
+        env:
+          INSTALLER_TARGET: ${{ matrix.target }}
+          INSTALLER_VERIFIER: ${{ matrix.verifier }}
+        run: |
+          set -euo pipefail
+          node scripts/inspect-installer-linux-native.mjs --stage release/native/stage --verified-receipt "release/native-verified-receipt-$INSTALLER_TARGET.json" --verifier "release/candidate/verifiers/installer-verifier-$INSTALLER_TARGET/$INSTALLER_VERIFIER" --verifier-receipt release/native-verifier-receipt.json --readelf /usr/bin/readelf > "release/native-attestation-$INSTALLER_TARGET.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-native-attestation-${{ matrix.target }}
+          path: release/native-attestation-${{ matrix.target }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate-native-evidence:
+    needs: inspect-native-candidate
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-release-candidate-${{ inputs.release_tag }}
+          path: release/candidate
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-native-attestation-*
+          merge-multiple: true
+          path: release/native-attestations
+      - name: Compose exact five-target unsigned native evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_id="$(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(value.manifestSha256)' release/candidate/prepared/installer-manifest.json)"
+          node scripts/compose-installer-native-evidence.mjs --candidate-id "$candidate_id" --artifact-receipts release/candidate/receipts/artifact-receipts.json --verifier-receipts release/candidate/receipts/verifier-receipts.json --attestation-root release/native-attestations --output-dir release/native-evidence
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-native-evidence-${{ inputs.release_tag }}
+          path: release/native-evidence/platform-evidence.json
+          if-no-files-found: error
+          retention-days: 30

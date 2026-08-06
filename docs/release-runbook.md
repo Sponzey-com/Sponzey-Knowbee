@@ -41,6 +41,133 @@ Platform payload:
 
 Platform binaries are optional on a single-host local release build, but must be present before publishing a release for that platform.
 
+### Installer lifecycle ownership gate
+
+The candidate installer must create a bounded `.knowbee-install-root.json` ownership marker and
+version directories outside the independent `~/.knowbee` application state. Exercise
+first-install, same-version, upgrade, downgrade and forced post-check rollback before publishing.
+`knowbee uninstall` must stop and remove only the candidate service, launcher, versions and
+installer receipts; it must preserve `~/.knowbee`. Run `knowbee uninstall --purge` as a separate,
+explicit destructive cell and prove the state root is then absent. A live lifecycle lock,
+malformed ownership marker, unexpected install-root entry, unsafe launcher or service-stop
+failure must block deletion. Windows must run uninstall from a copied private Node so the active
+version is not held open while it is removed.
+
+### Installer option and offline gate
+
+Run default, every effect opt-out, no-service, registered-but-not-started, non-interactive JSON and
+dry-run profiles on both bootstraps. Dry-run must create no temporary installer directory and call
+neither network nor application handoff. Mutation JSON without `--non-interactive`, half an offline
+pair, duplicate/conflicting/unknown flags and unsupported locale must fail before download.
+
+For offline cells, remove network access and supply `--manifest` plus `--bundle-dir`; require the
+same pinned verifier digest, unsigned manifest artifact digest, target receipt and staged entrypoint as online.
+There is no online fallback. `--with-yeonjang` requires exact platform package inventory and may
+record no OS permission or launch effect before authenticated initialization. Re-run the same
+release with a different effect profile and require profile convergence rather than an
+inventory-only `already_active` result.
+
+### Unsigned installer candidate and prerelease gate
+
+The tag workflow verifies the pinned Node 24.18.0 `SHASUMS256.txt.sig` with the pinned Node
+release-key archive, builds each of the five native bundles twice, and emits an unsigned manifest
+v2 with bundle and verifier SHA-256 receipts. Node supplier GPG verification remains required.
+Knowbee bundle, verifier and manifest are not publisher-authenticated: every installer and native
+receipt records `unsigned_origin_unverified`. HTTPS, pinned bootstrap verifier digests, exact target
+selection and artifact SHA-256 prevent transport/corruption mistakes but do not authenticate a
+release origin.
+
+macOS and Windows jobs do not import certificates, sign, notarize, staple or run Authenticode.
+The Linux Yeonjang package builds in Rocky Linux 8.10 (glibc 2.28 and GCC 8), the native verifier
+uses `x86_64-unknown-linux-musl`, and native evidence checks header target plus exact candidate,
+artifact and verifier digests; Linux also checks the stated ABI floor.
+
+The macOS application plist, Rust build and Swift camera helper all pin deployment target 13.5;
+the macOS verifier build uses the same target. This does not replace an actual 13.5 clean-machine
+cell. `macos-15-intel` is the explicit Intel runner label. `windows-11-arm` is currently a GitHub
+hosted public-preview label, so verify that it is available to this repository before starting a
+candidate. If it is unavailable, route the exact ARM64 job to an approved native self-hosted runner
+or leave the ARM64 cell incomplete; never substitute the x64 runner or copy its receipt.
+
+Run `.github/workflows/installer-native-evidence.yml` with the immutable tag and exact candidate
+workflow run ID. It verifies and extracts the exact unsigned manifest artifact on its target host,
+then records target header/digest evidence (and `readelf` ABI evidence on Linux). The aggregate artifact is
+`installer-native-evidence-<tag>` and contains five candidate-, bundle-, and verifier-bound rows.
+It is an input to the later clean-machine artifact; it is not by itself installation or rollback
+success.
+
+Run `installer release finalize` only with the exact candidate workflow run and an independently
+produced `installer-clean-machine-evidence-<tag>` artifact. It must contain:
+
+- `platform-evidence.json`: five unique `unsigned_origin_unverified` receipts bound to manifest,
+  bundle and native verifier digests. Linux also requires the glibc 2.28, `GLIBCXX_3.4.25`, and
+  verifier glibc floor checks.
+- `dry-run-receipts.json`: five unique target receipts with the same candidate and bundle digest.
+- `rollback-receipt.json`: a passed previous-version rollback receipt for the same candidate.
+
+The finalizer verifies the unsigned manifest, all five verifier receipts, every platform
+cell, dry-run cells and rollback before rendering `install.sh` or `install.ps1`. It uploads only
+to an already-existing prerelease and never selects `latest` or approves a stable promotion.
+Missing native host, a mismatched digest, failed rollback, unresolved
+bootstrap placeholder, or non-prerelease target blocks upload.
+
+#### Installer rehearsal, finalization, and stable promotion order
+
+Use one immutable `release_tag` and preserve every workflow run ID. Do not substitute another run
+because its tag or version text looks equivalent.
+
+Before opening a candidate workflow, an authenticated release operator can run the read-only
+preflight below. It checks the three required protected environments and their
+`required_reviewers` protection rule, at least one self-hosted runner registration, and the exact
+prerelease tag; it does not inspect or expose secrets, create a release, or substitute for
+native/clean-machine evidence.
+
+```bash
+node scripts/check-installer-release-readiness.mjs \
+  --repo Sponzey-com/Sponzey-Knowbee \
+  --release-tag vX.Y.Z-rc.N
+```
+
+A nonzero result is a release blocker. Resolve every returned `missing` item and rerun the
+preflight before beginning the sequence below.
+
+1. Run `npm release` for the tag and retain the
+   `installer-release-candidate-<tag>` artifact and its run ID.
+2. Run `installer native evidence` with that candidate run. It must produce all five
+   `unsigned_origin_unverified` native rows.
+3. Run `installer rehearsal publish` with the candidate and native-evidence run IDs. The protected
+   `installer-release-publish` environment renders the unsigned bootstrap and uploads the scripts,
+   manifest, five bundles, five verifiers, and `installer-rehearsal-gate.json` only to the
+   already-existing exact prerelease.
+4. On GitHub-hosted Actions clean matrix hosts, exercise the published prerelease bytes. Produce one
+   artifact per exact target named `installer-clean-machine-receipt-<target>`, containing
+   `clean-machine-receipt-<target>.json`. Each closed receipt must state
+   `originTrust=unsigned_origin_unverified` and record that the OS warning was both observed and
+   acknowledged; it must not claim publisher authentication. Each hosted job is an external release
+   operation and must not be replaced with fixture or synthetic passed receipts.
+5. Run `installer clean machine evidence` with the candidate, native-evidence, and independent
+   receipt run IDs. It accepts exactly five closed-schema receipts and binds every one to the same
+   candidate and artifact SHA-256. Each receipt must report one command, zero or one confirmation,
+   zero follow-up commands, and passed dry-run, online/offline install, service/health/WebUI,
+   opt-out, login PATH, same-version, upgrade, forced rollback, reinstall, state-preserving
+   uninstall, and reboot recovery checks.
+6. Run `installer release finalize` with the candidate and aggregated evidence run IDs. It verifies
+   that the 14 rehearsal bytes are unchanged, then adds only `installer-release-gate.json` and
+   `installer-finalized-assets.json`. The finalizer artifact contains the exact 14 publishable
+   assets and their size/SHA-256 inventory.
+7. Review the finalizer evidence, then manually run `installer stable promote` through the
+   protected `installer-stable-promotion` environment. Supply the exact finalizer run ID and the
+   currently observed `previous_latest_tag`. The workflow re-downloads and hashes all 14 release
+   assets before changing release state; it has no build or signing credentials.
+
+Stable promotion changes the exact release from prerelease to stable/latest only after the final
+inventory passes. It then downloads both `releases/latest/download/install.sh` and
+`install.ps1` and compares them byte-for-byte with the finalized artifact. If that post-check
+fails, the workflow marks the candidate prerelease again and restores `previous_latest_tag` as
+latest. It never deletes or rebuilds release assets. If automatic restoration itself fails, stop
+all publishing, leave the candidate commands undocumented as current, and restore the two release
+pointers manually before any retry.
+
 ### Gateway-free Yeonjang macOS device pre-gate
 
 On a macOS arm64 release host, build the signed package and run the direct MQTT

@@ -1336,6 +1336,63 @@ export {
 } from "./release/npm-install-receipt.js"
 
 export {
+  INSTALLER_TARGETS,
+  parseUnsignedInstallerManifest,
+  selectInstallerArtifact,
+} from "./release/installer-contract.js"
+export type {
+  DarwinInstallerHostSnapshot,
+  InstallerArtifact,
+  InstallerArtifactSelectionResult,
+  InstallerHostRejectionReason,
+  InstallerHostSnapshot,
+  InstallerManifestRejectionReason,
+  UnsignedInstallerManifestParseResult,
+  UnsignedInstallerManifestV2,
+  InstallerTarget,
+  LinuxInstallerArtifact,
+  LinuxInstallerHostSnapshot,
+  NonLinuxInstallerArtifact,
+  WindowsInstallerHostSnapshot,
+} from "./release/installer-contract.js"
+
+export {
+  verifyInstallerArtifactBytes,
+  verifyUnsignedInstallerManifest,
+} from "./release/installer-integrity.js"
+export type {
+  InstallerArtifactIntegrityResult,
+  UnsignedInstallerManifestVerificationResult,
+} from "./release/installer-integrity.js"
+
+export { buildInstallerHealthIdentity } from "./release/installer-health.js"
+export type { InstallerHealthIdentity } from "./release/installer-health.js"
+
+export {
+  parseInstallerTransactionSnapshot,
+  recoverInstallerTransaction,
+  reduceInstallerTransaction,
+  startInstallerTransaction,
+} from "./release/installer-transaction.js"
+export type {
+  InstallerEvidenceKind,
+  InstallerTransactionEvent,
+  InstallerTransactionFailure,
+  InstallerTransactionPhase,
+  InstallerTransactionRecoveryAction,
+  InstallerTransactionReduceResult,
+  InstallerTransactionSnapshotParseResult,
+  InstallerTransactionState,
+} from "./release/installer-transaction.js"
+
+export { buildInstallerPreflight } from "./release/installer-preflight.js"
+export type {
+  InstallerLayout,
+  InstallerPreflightInput,
+  InstallerPreflightResult,
+} from "./release/installer-preflight.js"
+
+export {
   REQUIRED_RESTORE_REHEARSAL_CHECKS,
   buildBackupRestoreRehearsalReceipt,
   verifyBackupRestoreRehearsalReceipt,

@@ -1,0 +1,117 @@
+name: installer stable promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Exact finalized prerelease tag to promote
+        required: true
+        type: string
+      finalizer_run_id:
+        description: Finalizer run containing the immutable finalized asset artifact
+        required: true
+        type: string
+      previous_latest_tag:
+        description: Exact current latest tag restored if promotion post-check fails
+        required: true
+        type: string
+
+jobs:
+  promote-exact-installer-assets:
+    runs-on: ubuntu-latest
+    environment: installer-stable-promotion
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-finalized-assets-${{ inputs.release_tag }}
+          path: release/finalized
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.finalizer_run_id }}
+      - name: Verify finalizer artifact and exact prerelease
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          PREVIOUS_LATEST_TAG: ${{ inputs.previous_latest_tag }}
+        run: |
+          set -euo pipefail
+          node -e 'const stable=/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u; if(!stable.test(process.argv[1])||!stable.test(process.argv[2])) { process.stderr.write("stable_release_tag_invalid\n"); process.exit(1) }' "$RELEASE_TAG" "$PREVIOUS_LATEST_TAG"
+          test "$RELEASE_TAG" != "$PREVIOUS_LATEST_TAG"
+          inventory=release/finalized/finalized-inventory/installer-finalized-assets.json
+          asset_root=release/finalized/finalized-assets
+          test -f "$inventory"
+          test -d "$asset_root"
+          node scripts/collect-installer-finalized-assets.mjs verify \
+            --inventory "$inventory" \
+            --asset-root "$asset_root"
+          inventory_tag="$(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(value.releaseTag)' "$inventory")"
+          inventory_candidate="$(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(value.candidateId)' "$inventory")"
+          gate_candidate="$(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if(value.status!=="passed"||value.targetCount!==5||value.rollback!=="passed") process.exit(1); process.stdout.write(value.candidateId)' "$asset_root/installer-release-gate.json")"
+          test "$inventory_tag" = "$RELEASE_TAG"
+          test "$gate_candidate" = "$inventory_candidate"
+          test "$(gh release view "$RELEASE_TAG" --json isPrerelease --jq .isPrerelease)" = true
+          test "$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)" = "$PREVIOUS_LATEST_TAG"
+      - name: Verify every published finalized byte
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          inventory=release/finalized/finalized-inventory/installer-finalized-assets.json
+          mkdir -p release/published-finalized-assets release/published-finalized-inventory
+          gh release download "$RELEASE_TAG" \
+            --pattern installer-finalized-assets.json \
+            --dir release/published-finalized-inventory
+          cmp --silent \
+            "$inventory" \
+            release/published-finalized-inventory/installer-finalized-assets.json
+          while IFS= read -r name; do
+            gh release download "$RELEASE_TAG" \
+              --pattern "$name" \
+              --dir release/published-finalized-assets
+          done < <(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); for(const asset of value.assets) console.log(asset.name)' "$inventory")
+          node scripts/collect-installer-finalized-assets.mjs verify \
+            --inventory "$inventory" \
+            --asset-root release/published-finalized-assets
+      - name: Promote, post-check latest downloads, and rollback on failure
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          PREVIOUS_LATEST_TAG: ${{ inputs.previous_latest_tag }}
+        run: |
+          set -euo pipefail
+          promotion_complete=false
+          restore_previous_latest() {
+            if test "$promotion_complete" != true; then
+              gh release edit "$RELEASE_TAG" --prerelease
+              gh release edit "$PREVIOUS_LATEST_TAG" --latest
+            fi
+          }
+          trap restore_previous_latest ERR
+          gh release edit "$RELEASE_TAG" --prerelease=false --latest
+          test "$(gh release view "$RELEASE_TAG" --json isPrerelease --jq .isPrerelease)" = false
+          test "$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)" = "$RELEASE_TAG"
+          curl -fsSL \
+            "https://github.com/$GH_REPO/releases/latest/download/install.sh" \
+            --output release/latest-install.sh
+          curl -fsSL \
+            "https://github.com/$GH_REPO/releases/latest/download/install.ps1" \
+            --output release/latest-install.ps1
+          cmp --silent release/latest-install.sh release/finalized/finalized-assets/install.sh
+          cmp --silent release/latest-install.ps1 release/finalized/finalized-assets/install.ps1
+          promotion_complete=true
+          trap - ERR

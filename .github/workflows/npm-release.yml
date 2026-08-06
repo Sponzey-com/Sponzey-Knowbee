@@ -16,7 +16,7 @@ jobs:
           version: 8.10.2
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.18.0
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
@@ -40,11 +40,28 @@ jobs:
         include:
           - os: macos-latest
             target: darwin-arm64
+            rust_target: aarch64-apple-darwin
             build: bash scripts/build-yeonjang-macos.sh
+            package_args: --binary Yeonjang/target/aarch64-apple-darwin/release/Yeonjang.app/Contents/MacOS/Yeonjang --app-bundle Yeonjang/target/aarch64-apple-darwin/release/Yeonjang.app
+          - os: macos-15-intel
+            target: darwin-x64
+            rust_target: x86_64-apple-darwin
+            build: bash scripts/build-yeonjang-macos.sh
+            package_args: --binary Yeonjang/target/x86_64-apple-darwin/release/Yeonjang.app/Contents/MacOS/Yeonjang --app-bundle Yeonjang/target/x86_64-apple-darwin/release/Yeonjang.app
           - os: windows-latest
             target: win32-x64
+            rust_target: x86_64-pc-windows-msvc
             build: scripts\build-yeonjang-windows.bat
+            package_args: --binary Yeonjang/target/x86_64-pc-windows-msvc/release/knowbee-yeonjang.exe
+          - os: windows-11-arm
+            target: win32-arm64
+            rust_target: aarch64-pc-windows-msvc
+            build: scripts\build-yeonjang-windows.bat
+            package_args: --binary Yeonjang/target/aarch64-pc-windows-msvc/release/knowbee-yeonjang.exe
     runs-on: ${{ matrix.os }}
+    env:
+      YEONJANG_TARGET_DIR: ${{ github.workspace }}/Yeonjang/target
+      YEONJANG_TARGET_TRIPLE: ${{ matrix.rust_target }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -52,11 +69,15 @@ jobs:
           version: 8.10.2
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.18.0
           registry-url: https://registry.npmjs.org
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.rust_target }}
       - run: ${{ matrix.build }}
-      - run: node scripts/package-yeonjang-platform.mjs --target ${{ matrix.target }} --version "$GITHUB_REF_NAME" --output-dir release/npm
+      - name: Package unsigned Yeonjang target
+        shell: bash
+        run: node scripts/package-yeonjang-platform.mjs --target ${{ matrix.target }} --version "$GITHUB_REF_NAME" --output-dir release/npm ${{ matrix.package_args }}
       - run: mkdir -p release/npm/tarballs
         shell: bash
       - run: npm pack ./release/npm/yeonjang-${{ matrix.target }} --pack-destination release/npm/tarballs
@@ -68,32 +89,37 @@ jobs:
   build-yeonjang-linux-package:
     runs-on: ubuntu-latest
     container:
-      image: ubuntu:20.04
+      image: rockylinux/rockylinux:8.10
     steps:
-      - run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            build-essential \
+      - name: Install glibc 2.28 build dependencies
+        run: |
+          dnf -y install dnf-plugins-core epel-release
+          dnf config-manager --set-enabled powertools
+          dnf -y install \
             ca-certificates \
             curl \
+            gcc \
+            gcc-c++ \
             git \
-            libgtk-3-dev \
-            libwayland-dev \
-            libx11-dev \
-            libxcb1-dev \
-            libxdo-dev \
-            libxkbcommon-dev \
-            pkg-config \
-            xz-utils
-          DEBIAN_FRONTEND=noninteractive apt-get install -y libayatana-appindicator3-dev || \
-            DEBIAN_FRONTEND=noninteractive apt-get install -y libappindicator3-dev
+            gtk3-devel \
+            libX11-devel \
+            libxcb-devel \
+            libxdo-devel \
+            libxkbcommon-devel \
+            make \
+            pkgconf-pkg-config \
+            tar \
+            wayland-devel \
+            xz
+          dnf -y install libayatana-appindicator-gtk3-devel || \
+            dnf -y install libappindicator-gtk3-devel
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
           version: 8.10.2
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.18.0
           registry-url: https://registry.npmjs.org
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: bash scripts/build-yeonjang-linux.sh
@@ -105,12 +131,255 @@ jobs:
           name: npm-yeonjang-linux-x64-tarballs
           path: release/npm/tarballs/*.tgz
 
+  build-installer-verifiers:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            installer_target: darwin-arm64
+            rust_target: aarch64-apple-darwin
+            executable: knowbee-installer-verify
+          - os: macos-15-intel
+            installer_target: darwin-x64
+            rust_target: x86_64-apple-darwin
+            executable: knowbee-installer-verify
+          - os: ubuntu-latest
+            installer_target: linux-x64
+            rust_target: x86_64-unknown-linux-musl
+            executable: knowbee-installer-verify
+          - os: windows-11-arm
+            installer_target: win32-arm64
+            rust_target: aarch64-pc-windows-msvc
+            executable: knowbee-installer-verify.exe
+          - os: windows-latest
+            installer_target: win32-x64
+            rust_target: x86_64-pc-windows-msvc
+            executable: knowbee-installer-verify.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install static Linux verifier toolchain
+        if: matrix.installer_target == 'linux-x64'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.rust_target }}
+      - run: cargo test --locked --manifest-path installer/verifier/Cargo.toml
+      - run: cargo build --release --locked --manifest-path installer/verifier/Cargo.toml --target ${{ matrix.rust_target }}
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ startsWith(matrix.installer_target, 'darwin-') && '13.5' || '' }}
+      - run: |
+          mkdir -p release/installer/verifier
+          cp "installer/verifier/target/${{ matrix.rust_target }}/release/${{ matrix.executable }}" \
+            "release/installer/verifier/knowbee-installer-verify-${{ matrix.installer_target }}${{ startsWith(matrix.installer_target, 'win32-') && '.exe' || '' }}"
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-verifier-${{ matrix.installer_target }}
+          path: release/installer/verifier/*
+          if-no-files-found: error
+
+  prepare-installer-inputs:
+    needs:
+      - build-js-packages
+      - build-yeonjang-packages
+      - build-yeonjang-linux-package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: npm-*-tarballs
+          merge-multiple: true
+          path: release/installer-input/files
+      - name: Download and verify pinned Node release inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          node_version='24.18.0'
+          release_root="https://nodejs.org/dist/v${node_version}"
+          input_root='release/installer-input/files'
+          mkdir -p "$input_root" release/node-release-keys
+          curl -fsSL --proto '=https' --tlsv1.2 "$release_root/SHASUMS256.txt" -o "$input_root/SHASUMS256.txt"
+          curl -fsSL --proto '=https' --tlsv1.2 "$release_root/SHASUMS256.txt.sig" -o "$input_root/SHASUMS256.txt.sig"
+          for archive in \
+            node-v24.18.0-darwin-arm64.tar.gz \
+            node-v24.18.0-darwin-x64.tar.gz \
+            node-v24.18.0-linux-x64.tar.xz \
+            node-v24.18.0-win-arm64.zip \
+            node-v24.18.0-win-x64.zip
+          do
+            curl -fsSL --proto '=https' --tlsv1.2 "$release_root/$archive" -o "$input_root/$archive"
+          done
+          curl -fsSL --proto '=https' --tlsv1.2 \
+            'https://github.com/nodejs/release-keys/archive/b28073028e6d6855cfb53bf7fa0137599c01f967.tar.gz' \
+            -o release/node-release-keys/release-keys.tar.gz
+          printf '%s  %s\n' \
+            'acc7fcc9b6cfc5d0b26ecb03538050e58252681da286bd2548129815ef454a2e' \
+            'release/node-release-keys/release-keys.tar.gz' | sha256sum --check --strict
+          tar -xzf release/node-release-keys/release-keys.tar.gz -C release/node-release-keys
+          node scripts/prepare-installer-inputs.mjs \
+            --package-version "${GITHUB_REF_NAME#v}" \
+            --input-dir "$input_root" \
+            --shasums "$input_root/SHASUMS256.txt" \
+            --signature "$input_root/SHASUMS256.txt.sig" \
+            --keyring release/node-release-keys/release-keys-b28073028e6d6855cfb53bf7fa0137599c01f967/gpg-only-active-keys/pubring.kbx \
+            --gpgv /usr/bin/gpgv \
+            --output-dir release/installer-input/prepared
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-bundle-inputs
+          path: release/installer-input
+          if-no-files-found: error
+          retention-days: 14
+
+  build-installer-bundles:
+    needs: prepare-installer-inputs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            installer_target: darwin-arm64
+            node_archive: node-v24.18.0-darwin-arm64.tar.gz
+            node_root: node-v24.18.0-darwin-arm64
+          - os: macos-15-intel
+            installer_target: darwin-x64
+            node_archive: node-v24.18.0-darwin-x64.tar.gz
+            node_root: node-v24.18.0-darwin-x64
+          - os: ubuntu-latest
+            installer_target: linux-x64
+            node_archive: node-v24.18.0-linux-x64.tar.xz
+            node_root: node-v24.18.0-linux-x64
+          - os: windows-11-arm
+            installer_target: win32-arm64
+            node_archive: node-v24.18.0-win-arm64.zip
+            node_root: node-v24.18.0-win-arm64
+          - os: windows-latest
+            installer_target: win32-x64
+            node_archive: node-v24.18.0-win-x64.zip
+            node_root: node-v24.18.0-win-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-bundle-inputs
+          path: release/installer-input
+      - name: Materialize target application and private Node
+        shell: bash
+        env:
+          INSTALLER_TARGET: ${{ matrix.installer_target }}
+          NODE_ARCHIVE: ${{ matrix.node_archive }}
+          NODE_ROOT: ${{ matrix.node_root }}
+        run: |
+          set -euo pipefail
+          input_root='release/installer-input/files'
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p release/node-extracted release/private-node release/application
+          tar -xf "$input_root/$NODE_ARCHIVE" -C release/node-extracted
+          if [[ "$INSTALLER_TARGET" == win32-* ]]; then
+            cp "release/node-extracted/$NODE_ROOT/node.exe" release/private-node/node.exe
+          else
+            mkdir -p release/private-node/bin
+            cp "release/node-extracted/$NODE_ROOT/bin/node" release/private-node/bin/node
+            chmod 0755 release/private-node/bin/node
+          fi
+          tar -xzf "$input_root/sponzey-knowbee-$version.tgz" \
+            --strip-components=1 -C release/application
+          node scripts/rewrite-installer-application-package.mjs \
+            --package release/application/package.json \
+            --input-dir "$input_root" \
+            --package-version "$version" \
+            --target "$INSTALLER_TARGET"
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install \
+            --prefix release/application \
+            --omit=dev \
+            --no-audit \
+            --no-fund
+      - name: Build deterministic unsigned installer bundle
+        shell: bash
+        env:
+          INSTALLER_TARGET: ${{ matrix.installer_target }}
+        run: |
+          set -euo pipefail
+          rm -rf release/application/node_modules/.bin
+          node scripts/build-installer-bundle.mjs \
+            --plan "release/installer-input/prepared/plans/$INSTALLER_TARGET.json" \
+            --node-runtime-dir release/private-node \
+            --application-dir release/application \
+            --output-dir "release/installer-bundle-$INSTALLER_TARGET"
+          node scripts/build-installer-bundle.mjs \
+            --plan "release/installer-input/prepared/plans/$INSTALLER_TARGET.json" \
+            --node-runtime-dir release/private-node \
+            --application-dir release/application \
+            --output-dir "release/installer-bundle-rebuild-$INSTALLER_TARGET"
+          artifact_name="$(node -e 'const fs=require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).outputName)' "release/installer-input/prepared/plans/$INSTALLER_TARGET.json")"
+          cmp \
+            "release/installer-bundle-$INSTALLER_TARGET/$artifact_name" \
+            "release/installer-bundle-rebuild-$INSTALLER_TARGET/$artifact_name"
+          rm -rf "release/installer-bundle-rebuild-$INSTALLER_TARGET"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-bundle-${{ matrix.installer_target }}
+          path: release/installer-bundle-${{ matrix.installer_target }}
+          if-no-files-found: error
+          retention-days: 14
+
+  prepare-installer-candidate:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - build-installer-bundles
+      - build-installer-verifiers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-bundle-*
+          path: release/candidate/bundles
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-verifier-*
+          path: release/candidate/verifiers
+      - name: Prepare unsigned installer candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release/candidate/prepared
+          node scripts/collect-installer-release-assets.mjs \
+            --bundle-root release/candidate/bundles \
+            --verifier-root release/candidate/verifiers \
+            --output-dir release/candidate/receipts
+          node scripts/compose-installer-release.mjs prepare \
+            --release-version "${GITHUB_REF_NAME#v}" \
+            --artifact-receipts release/candidate/receipts/artifact-receipts.json \
+            --output-dir release/candidate/prepared
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-release-candidate-${{ github.ref_name }}
+          path: release/candidate
+          if-no-files-found: error
+          retention-days: 30
+
   github-release:
     if: startsWith(github.ref, 'refs/tags/')
     needs:
       - build-js-packages
       - build-yeonjang-packages
       - build-yeonjang-linux-package
+      - build-installer-verifiers
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -127,17 +396,20 @@ jobs:
           fi
 
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            test "$(gh release view "$GITHUB_REF_NAME" --json isPrerelease --jq .isPrerelease)" = true
             gh release upload "$GITHUB_REF_NAME" "${package_files[@]}" --clobber
           else
             gh release create "$GITHUB_REF_NAME" "${package_files[@]}" \
               --title "Sponzey Knowbee $GITHUB_REF_NAME" \
-              --notes "Compiled npm install packages for $GITHUB_REF_NAME."
+              --notes "Compiled npm packages for $GITHUB_REF_NAME. Unsigned installer assets remain gated by native and clean-machine evidence." \
+              --prerelease
           fi
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
 
   publish:
+    if: startsWith(github.ref, 'refs/tags/')
     needs:
       - build-js-packages
       - build-yeonjang-packages
@@ -148,7 +420,7 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.18.0
           registry-url: https://registry.npmjs.org
       - uses: actions/download-artifact@v4
         with:

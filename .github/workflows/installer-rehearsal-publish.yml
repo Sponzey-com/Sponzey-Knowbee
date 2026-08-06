@@ -1,0 +1,76 @@
+name: installer rehearsal publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Immutable v-prefixed prerelease tag
+        required: true
+        type: string
+      candidate_run_id:
+        description: npm release workflow run containing the exact candidate
+        required: true
+        type: string
+      native_evidence_run_id:
+        description: Native evidence workflow run for the exact candidate
+        required: true
+        type: string
+
+jobs:
+  publish-rehearsal-assets:
+    runs-on: ubuntu-latest
+    environment: installer-release-publish
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-release-candidate-${{ inputs.release_tag }}
+          path: release/candidate
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-native-evidence-${{ inputs.release_tag }}
+          path: release/native
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.native_evidence_run_id }}
+      - name: Render unsigned native-gated rehearsal bootstraps
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/compose-installer-release.mjs rehearsal \
+            --manifest release/candidate/prepared/installer-manifest.json \
+            --verifier-receipts release/candidate/receipts/verifier-receipts.json \
+            --platform-evidence release/native/platform-evidence.json \
+            --posix-template installer/install.sh \
+            --powershell-template installer/install.ps1 \
+            --output-dir release/rehearsal
+      - name: Upload exact assets to existing prerelease only
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE_TAG" in v[0-9A-Za-z]* ) ;; * ) exit 1 ;; esac
+          test "$(gh release view "$RELEASE_TAG" --json isPrerelease --jq .isPrerelease)" = true
+          mapfile -t bundle_assets < <(find release/candidate/bundles -type f \( -name '*.tar.gz' -o -name '*.zip' \) | sort)
+          mapfile -t verifier_assets < <(find release/candidate/verifiers -type f -name 'knowbee-installer-verify-*' | sort)
+          test "${#bundle_assets[@]}" -eq 5
+          test "${#verifier_assets[@]}" -eq 5
+          gh release upload "$RELEASE_TAG" --clobber \
+            release/rehearsal/install.sh \
+            release/rehearsal/install.ps1 \
+            release/rehearsal/installer-manifest.json \
+            release/rehearsal/installer-rehearsal-gate.json \
+            "${bundle_assets[@]}" \
+            "${verifier_assets[@]}"

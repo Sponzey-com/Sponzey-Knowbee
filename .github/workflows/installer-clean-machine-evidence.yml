@@ -1,0 +1,71 @@
+name: installer clean machine evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Immutable v-prefixed prerelease tag
+        required: true
+        type: string
+      candidate_run_id:
+        description: npm release workflow run containing the exact candidate
+        required: true
+        type: string
+      native_evidence_run_id:
+        description: Native evidence workflow run for the exact candidate
+        required: true
+        type: string
+      receipt_run_id:
+        description: GitHub-hosted clean-machine matrix workflow run containing five actual receipts
+        required: true
+        type: string
+
+jobs:
+  aggregate-clean-machine-evidence:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-release-candidate-${{ inputs.release_tag }}
+          path: release/candidate
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-native-evidence-${{ inputs.release_tag }}
+          path: release/native
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.native_evidence_run_id }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-clean-machine-receipt-*
+          merge-multiple: true
+          path: release/clean-receipts
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.receipt_run_id }}
+      - name: Aggregate candidate-bound clean-machine evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_id="$(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(value.manifestSha256)' release/candidate/prepared/installer-manifest.json)"
+          node scripts/compose-installer-clean-machine-evidence.mjs \
+            --candidate-id "$candidate_id" \
+            --artifact-receipts release/candidate/receipts/artifact-receipts.json \
+            --platform-evidence release/native/platform-evidence.json \
+            --receipt-root release/clean-receipts \
+            --output-dir release/clean-evidence
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-clean-machine-evidence-${{ inputs.release_tag }}
+          path: release/clean-evidence
+          if-no-files-found: error
+          retention-days: 30

@@ -175,6 +175,16 @@ export { buildCleanMachineInstallChecklist, buildReleaseArtifactDefinitions, bui
 export { ARTIFACT_CLEANUP_CONFIRMATION, executeArtifactCleanup, previewArtifactCleanup, projectArtifactCleanupForUser, } from "./release/artifact-retention.js";
 export type { ArtifactCleanupExecution, ArtifactCleanupPreview, ArtifactCleanupTargetSummary, ArtifactCleanupTargetUserProjection, ArtifactCleanupUserProjection, ArtifactRetentionPolicy, } from "./release/artifact-retention.js";
 export { REQUIRED_NPM_RELEASE_PACKAGE_NAMES, buildNpmCleanInstallReceipt, verifyNpmCleanInstallReceipt, } from "./release/npm-install-receipt.js";
+export { INSTALLER_TARGETS, parseUnsignedInstallerManifest, selectInstallerArtifact, } from "./release/installer-contract.js";
+export type { DarwinInstallerHostSnapshot, InstallerArtifact, InstallerArtifactSelectionResult, InstallerHostRejectionReason, InstallerHostSnapshot, InstallerManifestRejectionReason, UnsignedInstallerManifestParseResult, UnsignedInstallerManifestV2, InstallerTarget, LinuxInstallerArtifact, LinuxInstallerHostSnapshot, NonLinuxInstallerArtifact, WindowsInstallerHostSnapshot, } from "./release/installer-contract.js";
+export { verifyInstallerArtifactBytes, verifyUnsignedInstallerManifest, } from "./release/installer-integrity.js";
+export type { InstallerArtifactIntegrityResult, UnsignedInstallerManifestVerificationResult, } from "./release/installer-integrity.js";
+export { buildInstallerHealthIdentity } from "./release/installer-health.js";
+export type { InstallerHealthIdentity } from "./release/installer-health.js";
+export { parseInstallerTransactionSnapshot, recoverInstallerTransaction, reduceInstallerTransaction, startInstallerTransaction, } from "./release/installer-transaction.js";
+export type { InstallerEvidenceKind, InstallerTransactionEvent, InstallerTransactionFailure, InstallerTransactionPhase, InstallerTransactionRecoveryAction, InstallerTransactionReduceResult, InstallerTransactionSnapshotParseResult, InstallerTransactionState, } from "./release/installer-transaction.js";
+export { buildInstallerPreflight } from "./release/installer-preflight.js";
+export type { InstallerLayout, InstallerPreflightInput, InstallerPreflightResult, } from "./release/installer-preflight.js";
 export { REQUIRED_RESTORE_REHEARSAL_CHECKS, buildBackupRestoreRehearsalReceipt, verifyBackupRestoreRehearsalReceipt, } from "./release/backup-restore-receipt.js";
 export type { BackupRestoreReceiptBuildResult, BackupRestoreReceiptVerificationResult, BackupRestoreRehearsalReceipt, } from "./release/backup-restore-receipt.js";
 export type { NpmCleanInstallReceipt, NpmCleanInstallRuntimeIdentity, NpmInstallReceiptBuildResult, NpmInstallReceiptVerificationResult, StagedNpmPackageDigest, } from "./release/npm-install-receipt.js";

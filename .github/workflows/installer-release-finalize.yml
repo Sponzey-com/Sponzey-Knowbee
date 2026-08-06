@@ -1,0 +1,120 @@
+name: installer release finalize
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Immutable v-prefixed candidate tag
+        required: true
+        type: string
+      candidate_run_id:
+        description: npm release workflow run containing the candidate artifact
+        required: true
+        type: string
+      evidence_run_id:
+        description: Clean-machine workflow run containing candidate-bound evidence
+        required: true
+        type: string
+
+jobs:
+  finalize-installer-prerelease:
+    runs-on: ubuntu-latest
+    environment: installer-release-publish
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-release-candidate-${{ inputs.release_tag }}
+          path: release/candidate
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-clean-machine-evidence-${{ inputs.release_tag }}
+          path: release/evidence
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run_id }}
+      - name: Render unsigned publishable bootstraps
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/compose-installer-release.mjs finalize \
+            --manifest release/candidate/prepared/installer-manifest.json \
+            --verifier-receipts release/candidate/receipts/verifier-receipts.json \
+            --platform-evidence release/evidence/platform-evidence.json \
+            --dry-run-receipts release/evidence/dry-run-receipts.json \
+            --rollback-receipt release/evidence/rollback-receipt.json \
+            --posix-template installer/install.sh \
+            --powershell-template installer/install.ps1 \
+            --output-dir release/final-installer
+          test -f release/final-installer/installer-release-gate.json
+      - name: Build finalized installer asset inventory
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p release/finalized-assets
+          cp release/final-installer/install.sh release/finalized-assets/
+          cp release/final-installer/install.ps1 release/finalized-assets/
+          cp release/final-installer/installer-manifest.json release/finalized-assets/
+          cp release/final-installer/installer-release-gate.json release/finalized-assets/
+          mapfile -t bundle_assets < <(find release/candidate/bundles -type f \( -name '*.tar.gz' -o -name '*.zip' \) | sort)
+          mapfile -t verifier_assets < <(find release/candidate/verifiers -type f -name 'knowbee-installer-verify-*' | sort)
+          test "${#bundle_assets[@]}" -eq 5
+          test "${#verifier_assets[@]}" -eq 5
+          cp "${bundle_assets[@]}" release/finalized-assets/
+          cp "${verifier_assets[@]}" release/finalized-assets/
+          candidate_id="$(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(value.candidateId)' release/final-installer/installer-release-gate.json)"
+          node scripts/collect-installer-finalized-assets.mjs collect \
+            --candidate-id "$candidate_id" \
+            --release-tag "$RELEASE_TAG" \
+            --asset-root release/finalized-assets \
+            --artifact-receipts release/candidate/receipts/artifact-receipts.json \
+            --verifier-receipts release/candidate/receipts/verifier-receipts.json \
+            --output-dir release/finalized-inventory
+      - name: Verify rehearsal bytes and add immutable final metadata
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test "$(gh release view "$RELEASE_TAG" --json isPrerelease --jq .isPrerelease)" = true
+          gh release edit "$RELEASE_TAG" --prerelease
+          mkdir -p release/published-rehearsal-assets
+          mapfile -t finalized_assets < <(find release/finalized-assets -type f | sort)
+          test "${#finalized_assets[@]}" -eq 14
+          verified_rehearsal_count=0
+          for asset in "${finalized_assets[@]}"; do
+            name="$(basename "$asset")"
+            if test "$name" = installer-release-gate.json; then
+              continue
+            fi
+            gh release download "$RELEASE_TAG" \
+              --pattern "$name" \
+              --dir release/published-rehearsal-assets
+            cmp --silent "$asset" "release/published-rehearsal-assets/$name"
+            verified_rehearsal_count=$((verified_rehearsal_count + 1))
+          done
+          test "$verified_rehearsal_count" -eq 13
+          gh release upload "$RELEASE_TAG" \
+            release/finalized-inventory/installer-finalized-assets.json \
+            release/finalized-assets/installer-release-gate.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-finalized-assets-${{ inputs.release_tag }}
+          path: |
+            release/finalized-assets
+            release/finalized-inventory
+          if-no-files-found: error
+          retention-days: 90

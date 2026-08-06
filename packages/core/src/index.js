@@ -95,6 +95,11 @@ export { attachCapabilityProfileToTrace, buildProviderProfileId, clearProviderCa
 export { buildCleanMachineInstallChecklist, buildReleaseArtifactDefinitions, buildReleaseManifest, buildReleasePipelinePlan, buildReleaseRollbackRunbook, buildReleaseUpdatePreflightReport, evaluateReleaseReadiness, writePreparedReleasePackage, writeReleasePackage, } from "./release/package.js";
 export { ARTIFACT_CLEANUP_CONFIRMATION, executeArtifactCleanup, previewArtifactCleanup, projectArtifactCleanupForUser, } from "./release/artifact-retention.js";
 export { REQUIRED_NPM_RELEASE_PACKAGE_NAMES, buildNpmCleanInstallReceipt, verifyNpmCleanInstallReceipt, } from "./release/npm-install-receipt.js";
+export { INSTALLER_TARGETS, parseUnsignedInstallerManifest, selectInstallerArtifact, } from "./release/installer-contract.js";
+export { verifyInstallerArtifactBytes, verifyUnsignedInstallerManifest, } from "./release/installer-integrity.js";
+export { buildInstallerHealthIdentity } from "./release/installer-health.js";
+export { parseInstallerTransactionSnapshot, recoverInstallerTransaction, reduceInstallerTransaction, startInstallerTransaction, } from "./release/installer-transaction.js";
+export { buildInstallerPreflight } from "./release/installer-preflight.js";
 export { REQUIRED_RESTORE_REHEARSAL_CHECKS, buildBackupRestoreRehearsalReceipt, verifyBackupRestoreRehearsalReceipt, } from "./release/backup-restore-receipt.js";
 export { verifyOperationalRehearsalEvidence } from "./release/operational-rehearsal-evidence.js";
 export { RELEASE_PERFORMANCE_TARGETS, buildReleasePerformanceSummary, } from "./release/performance-gate.js";

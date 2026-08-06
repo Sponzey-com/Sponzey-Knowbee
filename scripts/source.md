@@ -12,6 +12,15 @@
 - Linux용 Yeonjang headless managed 시작/종료 스크립트
 - Windows용 Yeonjang 빌드/시작/종료 배치 스크립트
 - 패키징과 릴리스 실행 스크립트
+- installer platform/Node/Yeonjang 공통 packaging identity는 `lib/installer-platforms.mjs`에 두며 상세 경계는 `lib/source.md`를 따른다.
+- `prepare-installer-inputs.mjs`는 pinned Node keyring/GPG 검증과 package receipt를 묶고, `build-installer-bundle.mjs`는 native runner의 private Node/application을 executable archive로 만듭니다.
+- `compose-installer-release.mjs`의 `prepare`는 unsigned manifest v2만 쓰며 `finalize`는 candidate-bound native/dry-run/rollback evidence가 모두 통과한 경우에만 publishable bootstrap을 씁니다. `collect-installer-release-assets.mjs`는 workflow artifact를 다시 hash하며 `rewrite-installer-application-package.mjs`는 candidate-local tarball만 install input으로 허용합니다.
+- `inspect-installer-native.mjs`는 unsigned manifest로 native verifier가 추출한 macOS/Windows exact stage의 header target과 verifier digest를 검사합니다. `inspect-installer-linux-native.mjs`는 같은 binding에 Linux ABI floor를 추가합니다.
+- `compose-installer-native-evidence.mjs`는 다섯 native attestation을 `unsigned_origin_unverified`, candidate, bundle SHA-256, verifier SHA-256에 다시 결속해 원자적으로 `platform-evidence.json`을 씁니다.
+- `build-yeonjang-macos.sh`는 공개 installer 하한과 동일하게 Rust/Swift/app bundle의 macOS deployment target을 13.5로 고정합니다.
+- `compose-installer-clean-machine-evidence.mjs`는 독립 native runner가 만든 exact 다섯 closed-schema receipt만 candidate/native artifact에 결속해 dry-run과 rollback matrix evidence로 집계합니다. 각 receipt는 `unsigned_origin_unverified`와 OS 경고의 실제 관찰·확인을 기록해야 합니다.
+- `collect-installer-finalized-assets.mjs`는 finalizer의 exact 14개 unsigned 공개 자산을 size/SHA-256 inventory로 고정하고 stable promotion 전에 다시 검증합니다.
+- `check-installer-release-readiness.mjs`는 GitHub-hosted clean-machine Actions를 전제로 protected environment의 `required_reviewers` 규칙과 exact prerelease를 read-only로 확인해 release 시작 전 missing boundary를 typed result로 출력합니다.
 
 ## 자체 검증 스크립트
 
