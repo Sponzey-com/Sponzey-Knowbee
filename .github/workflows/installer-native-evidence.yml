@@ -66,6 +66,7 @@ jobs:
           INSTALLER_VERIFIER: ${{ matrix.verifier }}
         run: |
           set -euo pipefail
+          mkdir -p release/native
           bundle_root="release/candidate/bundles/installer-bundle-$INSTALLER_TARGET"
           artifact_name="$(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(value.name)' "$bundle_root/artifact-receipt.json")"
           verifier="release/candidate/verifiers/installer-verifier-$INSTALLER_TARGET/$INSTALLER_VERIFIER"
