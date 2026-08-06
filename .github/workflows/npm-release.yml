@@ -312,7 +312,7 @@ jobs:
           INSTALLER_TARGET: ${{ matrix.installer_target }}
         run: |
           set -euo pipefail
-          rm -rf release/application/node_modules/.bin
+          find release/application/node_modules -type d -name .bin -prune -exec rm -rf {} +
           node scripts/build-installer-bundle.mjs \
             --plan "release/installer-input/prepared/plans/$INSTALLER_TARGET.json" \
             --node-runtime-dir release/private-node \
