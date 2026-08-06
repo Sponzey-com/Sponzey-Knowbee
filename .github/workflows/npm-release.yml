@@ -285,10 +285,11 @@ jobs:
           input_root='release/installer-input/files'
           version="${GITHUB_REF_NAME#v}"
           mkdir -p release/node-extracted release/private-node release/application
-          tar -xf "$input_root/$NODE_ARCHIVE" -C release/node-extracted
           if [[ "$INSTALLER_TARGET" == win32-* ]]; then
+            unzip -q "$input_root/$NODE_ARCHIVE" -d release/node-extracted
             cp "release/node-extracted/$NODE_ROOT/node.exe" release/private-node/node.exe
           else
+            tar -xf "$input_root/$NODE_ARCHIVE" -C release/node-extracted
             mkdir -p release/private-node/bin
             cp "release/node-extracted/$NODE_ROOT/bin/node" release/private-node/bin/node
             chmod 0755 release/private-node/bin/node
