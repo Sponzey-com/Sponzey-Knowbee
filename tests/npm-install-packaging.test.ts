@@ -140,12 +140,8 @@ describe("npm install packaging", () => {
     expect(readFileSync(join(outputDir, "cli", "dist", "launcher.js"), "utf-8")).toContain(
       "@sponzey/core/serve",
     )
-    expect(
-      existsSync(join(outputDir, "core", "dist", "runtime", "serve-bundle.js")),
-    ).toBe(true)
-    expect(
-      existsSync(join(outputDir, "core", "dist", "runtime", "serve-bundle.d.ts")),
-    ).toBe(true)
+    expect(existsSync(join(outputDir, "core", "dist", "runtime", "serve-bundle.js"))).toBe(true)
+    expect(existsSync(join(outputDir, "core", "dist", "runtime", "serve-bundle.d.ts"))).toBe(true)
     expect(
       existsSync(join(outputDir, "core", "dist", "runtime", "serve-bundle.manifest.json")),
     ).toBe(true)
@@ -188,9 +184,7 @@ describe("npm install packaging", () => {
       true,
     )
     expect(existsSync(join(outputDir, "yeonjang-darwin-arm64", "index.js"))).toBe(true)
-    const identity = readJson(
-      join(outputDir, "yeonjang-darwin-arm64", "release-identity.json"),
-    )
+    const identity = readJson(join(outputDir, "yeonjang-darwin-arm64", "release-identity.json"))
     expect(identity).toMatchObject({
       schemaId: "yeonjang.package-identity.v1",
       schemaVersion: 1,
@@ -207,9 +201,7 @@ describe("npm install packaging", () => {
       },
     })
     const stagedIndex = join(outputDir, "yeonjang-darwin-arm64", "index.js")
-    const stagedModule = await import(
-      `${pathToFileURL(stagedIndex).href}?identity=${Date.now()}`
-    )
+    const stagedModule = await import(`${pathToFileURL(stagedIndex).href}?identity=${Date.now()}`)
     expect(stagedModule.verifyYeonjangPackageIdentity()).toEqual({
       outcome: "verified",
     })
@@ -246,6 +238,53 @@ describe("npm install packaging", () => {
       cpu: ["x64"],
       libc: ["glibc"],
     })
+  })
+
+  it("preserves a notarizable macOS app bundle as the shipped executable identity", () => {
+    const fixtureDir = makeTempDir("knowbee-yeonjang-app-fixture-")
+    const outputDir = makeTempDir("knowbee-yeonjang-app-package-")
+    const appBundle = join(fixtureDir, "Yeonjang.app")
+    const appExecutable = join(appBundle, "Contents", "MacOS", "Yeonjang")
+    mkdirSync(dirname(appExecutable), { recursive: true })
+    writeFileSync(appExecutable, machOArm64Fixture())
+    writeFileSync(join(appBundle, "Contents", "Info.plist"), "<plist></plist>\n")
+
+    execFileSync(
+      "node",
+      [
+        "scripts/package-yeonjang-platform.mjs",
+        "--target",
+        "darwin-arm64",
+        "--binary",
+        appExecutable,
+        "--app-bundle",
+        appBundle,
+        "--version",
+        "v9.8.7",
+        "--output-dir",
+        outputDir,
+      ],
+      { cwd: process.cwd(), stdio: "pipe" },
+    )
+
+    const packageDirectory = join(outputDir, "yeonjang-darwin-arm64")
+    const identity = readJson(join(packageDirectory, "release-identity.json"))
+    expect(identity).toMatchObject({
+      binary: {
+        name: "Yeonjang",
+        relativePath: "app/Yeonjang.app/Contents/MacOS/Yeonjang",
+        targetKey: "darwin-arm64",
+      },
+      applicationBundle: {
+        relativePath: "app/Yeonjang.app",
+      },
+    })
+    expect(
+      existsSync(join(packageDirectory, "app", "Yeonjang.app", "Contents", "MacOS", "Yeonjang")),
+    ).toBe(true)
+    const index = readFileSync(join(packageDirectory, "index.js"), "utf8")
+    expect(index).toContain("yeonjangAppBundlePath")
+    expect(index).toContain("./app/Yeonjang.app/Contents/MacOS/Yeonjang")
   })
 
   it("rejects a binary whose executable target differs from the package target", () => {
@@ -353,7 +392,8 @@ describe("npm install packaging", () => {
     expect(workflow).toContain('--version "$GITHUB_REF_NAME"')
     expect(workflow).toContain("macos-latest")
     expect(workflow).toContain("build-yeonjang-linux-package:")
-    expect(workflow).toContain("image: ubuntu:20.04")
+    expect(workflow).toContain("image: rockylinux/rockylinux:8.10")
+    expect(workflow).toContain("glibc 2.28")
     expect(workflow).toMatch(/build-yeonjang-linux-package:[\s\S]*runs-on: ubuntu-latest/u)
     expect(workflow).toMatch(
       /build-yeonjang-linux-package:[\s\S]*bash scripts\/build-yeonjang-linux\.sh/u,

@@ -8,8 +8,7 @@ BINARY_NAME="knowbee-yeonjang"
 APP_NAME="Yeonjang"
 PROFILE="${YEONJANG_PROFILE:-release}"
 TARGET_TRIPLE="${YEONJANG_TARGET_TRIPLE:-}"
-PREFERRED_LOCAL_SIGNING_IDENTITY="Sponzey RemoCom Local Code Signing"
-SIGNING_IDENTITY="${YEONJANG_CODESIGN_IDENTITY:-}"
+MACOS_DEPLOYMENT_TARGET="13.5"
 MACOS_INFO_PLIST="$YEONJANG_DIR/manifests/macos/Info.plist"
 MACOS_ENTITLEMENTS="$YEONJANG_DIR/manifests/macos/Yeonjang.entitlements"
 CAMERA_HELPER_SWIFT="$YEONJANG_DIR/helpers/macos/camera_capture_helper.swift"
@@ -24,16 +23,6 @@ fi
 if ! command -v cargo >/dev/null 2>&1; then
   echo "cargo 를 찾을 수 없습니다. Rust 도구체인을 먼저 설치하세요."
   exit 1
-fi
-
-if [[ -z "$SIGNING_IDENTITY" ]]; then
-  if command -v security >/dev/null 2>&1 \
-    && security find-identity -v -p codesigning 2>/dev/null \
-      | grep -Fq "\"$PREFERRED_LOCAL_SIGNING_IDENTITY\""; then
-    SIGNING_IDENTITY="$PREFERRED_LOCAL_SIGNING_IDENTITY"
-  else
-    SIGNING_IDENTITY="-"
-  fi
 fi
 
 if [[ ! -f "$MANIFEST_PATH" ]]; then
@@ -64,10 +53,23 @@ if [[ -n "$TARGET_TRIPLE" ]]; then
   BUILD_CMD+=(--target "$TARGET_TRIPLE")
 fi
 
+case "${TARGET_TRIPLE:-$(uname -m)}" in
+  aarch64-apple-darwin|arm64)
+    SWIFT_TARGET="arm64-apple-macosx$MACOS_DEPLOYMENT_TARGET"
+    ;;
+  x86_64-apple-darwin|x86_64)
+    SWIFT_TARGET="x86_64-apple-macosx$MACOS_DEPLOYMENT_TARGET"
+    ;;
+  *)
+    echo "지원하지 않는 macOS build architecture입니다."
+    exit 1
+    ;;
+esac
+
 echo "Yeonjang macOS 바이너리를 빌드합니다..."
 (
   cd "$ROOT_DIR"
-  "${BUILD_CMD[@]}"
+  MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET" "${BUILD_CMD[@]}"
 )
 
 if [[ -n "$TARGET_TRIPLE" ]]; then
@@ -101,29 +103,11 @@ chmod +x "$APP_BINARY_PATH"
 "$APP_BINARY_PATH" --write-icon "$APP_RESOURCES_DIR/YeonjangIcon.png"
 
 echo "macOS 카메라 helper를 빌드합니다..."
-xcrun swiftc -O -o "$CAMERA_HELPER_BINARY_PATH" "$CAMERA_HELPER_SWIFT"
+MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET" \
+  xcrun swiftc -O -target "$SWIFT_TARGET" -o "$CAMERA_HELPER_BINARY_PATH" "$CAMERA_HELPER_SWIFT"
 chmod +x "$CAMERA_HELPER_BINARY_PATH"
 
-if ! command -v codesign >/dev/null 2>&1; then
-  echo "codesign 을 찾을 수 없어 Yeonjang 앱 번들을 검증할 수 없습니다."
-  exit 1
-fi
-
-if [[ "$SIGNING_IDENTITY" == "-" ]]; then
-  echo "Yeonjang signing mode: ad-hoc (명시 rebuild 뒤 macOS 권한 재확인이 필요할 수 있음)"
-else
-  echo "Yeonjang signing mode: configured identity"
-fi
-
-codesign --force --sign "$SIGNING_IDENTITY" "$CAMERA_HELPER_BINARY_PATH"
-codesign --verify --strict --verbose=2 "$CAMERA_HELPER_BINARY_PATH"
-
-if [[ -f "$MACOS_ENTITLEMENTS" ]]; then
-  codesign --force --sign "$SIGNING_IDENTITY" --entitlements "$MACOS_ENTITLEMENTS" "$APP_BUNDLE_PATH"
-else
-  codesign --force --sign "$SIGNING_IDENTITY" "$APP_BUNDLE_PATH"
-fi
-codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE_PATH"
+echo "Yeonjang signing mode: unsigned (publisher identity is not cryptographically authenticated)"
 
 echo "빌드 완료:"
 echo "  Binary : $BINARY_PATH"

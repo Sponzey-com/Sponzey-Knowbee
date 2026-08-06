@@ -157,23 +157,20 @@ describe("Yeonjang macOS startup identity contract", () => {
     expect(existsSync(fixture.buildMarker)).toBe(true)
   })
 
-  it("fails closed when helper or app signing verification fails", () => {
+  it("keeps the macOS application bundle unsigned", () => {
     const build = readFileSync("scripts/build-yeonjang-macos.sh", "utf8")
-    const helperSign = build.indexOf(
-      'codesign --force --sign "$SIGNING_IDENTITY" "$CAMERA_HELPER_BINARY_PATH"',
-    )
-    const appSign = build.indexOf(
-      'codesign --force --sign "$SIGNING_IDENTITY" --entitlements "$MACOS_ENTITLEMENTS" "$APP_BUNDLE_PATH"',
-    )
-    const strictVerification = build.indexOf("codesign --verify --deep --strict")
+    expect(build).toContain("Yeonjang signing mode: unsigned")
+    expect(build).not.toContain("codesign")
+    expect(build).not.toContain("security find-identity")
+  })
 
-    expect(build).toContain('PREFERRED_LOCAL_SIGNING_IDENTITY="Sponzey RemoCom Local Code Signing"')
-    expect(build).toContain("security find-identity -v -p codesigning")
-    expect(build).toContain('SIGNING_IDENTITY="$PREFERRED_LOCAL_SIGNING_IDENTITY"')
-    expect(build).toContain('SIGNING_IDENTITY="-"')
-    expect(helperSign).toBeGreaterThan(-1)
-    expect(appSign).toBeGreaterThan(helperSign)
-    expect(strictVerification).toBeGreaterThan(appSign)
-    expect(build).not.toMatch(/codesign[^\n]*\|\|\s*true/u)
+  it("pins the macOS 13.5 deployment target for Rust, Swift and the app bundle", () => {
+    const build = readFileSync("scripts/build-yeonjang-macos.sh", "utf8")
+    const plist = readFileSync("Yeonjang/manifests/macos/Info.plist", "utf8")
+
+    expect(build).toContain('MACOS_DEPLOYMENT_TARGET="13.5"')
+    expect(build).toContain('MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET"')
+    expect(build).toContain('-target "$SWIFT_TARGET"')
+    expect(plist).toMatch(/<key>LSMinimumSystemVersion<\/key>\s*<string>13\.5<\/string>/u)
   })
 })

@@ -25,7 +25,7 @@
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.utilities</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>13.5</string>
     <key>NSCameraUsageDescription</key>
     <string>Yeonjang needs camera access so Knowbee can capture still images from this Mac.</string>
     <key>NSMicrophoneUsageDescription</key>

@@ -2,19 +2,23 @@
 import { createHash } from "node:crypto"
 import {
   chmodSync,
+  closeSync,
   copyFileSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
   openSync,
-  closeSync,
   readFileSync,
   readSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+
+import { INSTALLER_PLATFORM_BY_TARGET } from "./lib/installer-platforms.mjs"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const rootDir = resolve(__dirname, "..")
@@ -25,18 +29,13 @@ const YEONJANG_PACKAGE_ENV = Object.freeze({
   binaryPath: process.env.YEONJANG_BINARY_PATH,
 })
 
-const TARGETS = {
-  "darwin-arm64": { os: "darwin", cpu: "arm64", binaryName: "knowbee-yeonjang" },
-  "darwin-x64": { os: "darwin", cpu: "x64", binaryName: "knowbee-yeonjang" },
-  "linux-x64": { os: "linux", cpu: "x64", libc: "glibc", binaryName: "knowbee-yeonjang" },
-  "win32-arm64": { os: "win32", cpu: "arm64", binaryName: "knowbee-yeonjang.exe" },
-  "win32-x64": { os: "win32", cpu: "x64", binaryName: "knowbee-yeonjang.exe" },
-}
+const TARGETS = INSTALLER_PLATFORM_BY_TARGET
 
 function parseArgs(argv) {
   const options = {
     target: null,
     binary: null,
+    appBundle: null,
     outputDir: resolve(rootDir, "release/npm"),
     version: null,
   }
@@ -44,6 +43,7 @@ function parseArgs(argv) {
     const arg = argv[index]
     if (arg === "--target") options.target = argv[++index] ?? null
     else if (arg === "--binary") options.binary = argv[++index] ?? null
+    else if (arg === "--app-bundle") options.appBundle = argv[++index] ?? null
     else if (arg === "--output-dir") options.outputDir = resolve(argv[++index] ?? options.outputDir)
     else if (arg === "--version") options.version = argv[++index] ?? null
     else throw new Error(`Unknown option: ${arg}`)
@@ -104,6 +104,16 @@ function copyIfPresent(sourcePath, targetPath) {
   copyFileSync(sourcePath, targetPath)
 }
 
+function assertSafeTree(path, count = { value: 0 }) {
+  const metadata = lstatSync(path)
+  if (metadata.isSymbolicLink()) throw new Error("Yeonjang app bundle contains a symlink")
+  count.value += 1
+  if (count.value > 100_000) throw new Error("Yeonjang app bundle contains too many entries")
+  if (metadata.isFile()) return
+  if (!metadata.isDirectory()) throw new Error("Yeonjang app bundle contains an unsafe entry")
+  for (const name of readdirSync(path)) assertSafeTree(join(path, name), count)
+}
+
 function fileIdentity(path, publicName) {
   const metadata = lstatSync(path)
   if (!metadata.isFile() || metadata.isSymbolicLink()) {
@@ -147,20 +157,20 @@ function inspectExecutableTarget(path) {
     if (cpu === 0x01000007) return { targetKey: "darwin-x64", format: "mach_o_64" }
   }
   if (
-    header.length >= 20
-    && header[0] === 0x7f
-    && header.subarray(1, 4).toString("ascii") === "ELF"
-    && header[4] === 2
-    && header[5] === 1
-    && header.readUInt16LE(18) === 62
+    header.length >= 20 &&
+    header[0] === 0x7f &&
+    header.subarray(1, 4).toString("ascii") === "ELF" &&
+    header[4] === 2 &&
+    header[5] === 1 &&
+    header.readUInt16LE(18) === 62
   ) {
     return { targetKey: "linux-x64", format: "elf_64" }
   }
   if (header.length >= 64 && header.subarray(0, 2).toString("ascii") === "MZ") {
     const peOffset = header.readUInt32LE(0x3c)
     if (
-      peOffset <= header.length - 6
-      && header.subarray(peOffset, peOffset + 4).equals(Buffer.from([0x50, 0x45, 0, 0]))
+      peOffset <= header.length - 6 &&
+      header.subarray(peOffset, peOffset + 4).equals(Buffer.from([0x50, 0x45, 0, 0]))
     ) {
       const machine = header.readUInt16LE(peOffset + 4)
       if (machine === 0x8664) return { targetKey: "win32-x64", format: "pe_32_plus" }
@@ -177,6 +187,17 @@ function main() {
   }
   const target = TARGETS[options.target]
   const binaryPath = resolveBinaryPath(options.target, options.binary)
+  const appBundlePath = options.appBundle ? resolve(options.appBundle) : null
+  if (appBundlePath) {
+    if (
+      target.os !== "darwin" ||
+      basename(appBundlePath) !== "Yeonjang.app" ||
+      resolve(appBundlePath, "Contents", "MacOS", "Yeonjang") !== binaryPath
+    ) {
+      throw new Error("Yeonjang app bundle does not match the target executable")
+    }
+    assertSafeTree(appBundlePath)
+  }
   const executableTarget = inspectExecutableTarget(binaryPath)
   if (executableTarget.targetKey !== options.target) {
     throw new Error("Yeonjang executable target does not match the package target")
@@ -185,24 +206,36 @@ function main() {
   const version = packageVersion(options.version)
   const packageDir = join(options.outputDir, `yeonjang-${options.target}`)
   const binDir = join(packageDir, "bin")
-  const targetBinaryPath = join(binDir, target.binaryName)
+  const binaryRelativePath = appBundlePath
+    ? "app/Yeonjang.app/Contents/MacOS/Yeonjang"
+    : `bin/${target.binaryName}`
+  const targetBinaryPath = join(packageDir, ...binaryRelativePath.split("/"))
   rmSync(packageDir, { recursive: true, force: true })
-  mkdirSync(binDir, { recursive: true })
+  mkdirSync(packageDir, { recursive: true })
   const sourceBinaryIdentity = {
-    ...fileIdentity(binaryPath, target.binaryName),
+    ...fileIdentity(binaryPath, basename(binaryPath)),
     format: executableTarget.format,
     targetKey: executableTarget.targetKey,
   }
-  copyFileSync(binaryPath, targetBinaryPath)
+  if (appBundlePath) {
+    cpSync(appBundlePath, join(packageDir, "app", "Yeonjang.app"), {
+      recursive: true,
+      errorOnExist: true,
+    })
+  } else {
+    mkdirSync(binDir, { recursive: true })
+    copyFileSync(binaryPath, targetBinaryPath)
+  }
   if (target.os !== "win32") chmodSync(targetBinaryPath, 0o755)
   const stagedBinaryIdentity = {
-    ...fileIdentity(targetBinaryPath, target.binaryName),
+    ...fileIdentity(targetBinaryPath, basename(targetBinaryPath)),
+    relativePath: binaryRelativePath,
     format: executableTarget.format,
     targetKey: executableTarget.targetKey,
   }
   if (
-    sourceBinaryIdentity.sizeBytes !== stagedBinaryIdentity.sizeBytes
-    || sourceBinaryIdentity.sha256 !== stagedBinaryIdentity.sha256
+    sourceBinaryIdentity.sizeBytes !== stagedBinaryIdentity.sizeBytes ||
+    sourceBinaryIdentity.sha256 !== stagedBinaryIdentity.sha256
   ) {
     throw new Error("Yeonjang staged binary identity mismatch")
   }
@@ -224,6 +257,7 @@ function main() {
       ...(target.libc ? { libc: target.libc } : {}),
     },
     binary: stagedBinaryIdentity,
+    ...(appBundlePath ? { applicationBundle: { relativePath: "app/Yeonjang.app" } } : {}),
     contracts: {
       permissions: fileIdentity(stagedPermissionsPath, "manifests/permissions.json"),
       protocol: fileIdentity(stagedProtocolPath, "protocol/protocol.rs"),
@@ -242,27 +276,38 @@ function main() {
     os: [target.os],
     cpu: [target.cpu],
     ...(target.libc ? { libc: [target.libc] } : {}),
-    files: ["bin", "index.js", "release-identity.json", "manifests", "protocol"],
+    files: [
+      appBundlePath ? "app" : "bin",
+      "index.js",
+      "release-identity.json",
+      "manifests",
+      "protocol",
+    ],
     exports: {
       ".": "./index.js",
     },
   }
-  writeFileSync(join(packageDir, "package.json"), `${JSON.stringify(packageJson, null, 2)}\n`, "utf-8")
+  writeFileSync(
+    join(packageDir, "package.json"),
+    `${JSON.stringify(packageJson, null, 2)}\n`,
+    "utf-8",
+  )
   writeFileSync(
     join(packageDir, "index.js"),
     [
-      "import { createHash } from \"node:crypto\"",
-      "import { closeSync, openSync, readFileSync, readSync, statSync } from \"node:fs\"",
-      "import { fileURLToPath } from \"node:url\"",
+      'import { createHash } from "node:crypto"',
+      'import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs"',
+      'import { fileURLToPath } from "node:url"',
       "",
-      `export const yeonjangBinaryName = ${JSON.stringify(target.binaryName)}`,
-      `export const yeonjangBinaryPath = fileURLToPath(new URL(${JSON.stringify(`./bin/${basename(targetBinaryPath)}`)}, import.meta.url))`,
-      "export const yeonjangReleaseIdentityPath = fileURLToPath(new URL(\"./release-identity.json\", import.meta.url))",
+      `export const yeonjangBinaryName = ${JSON.stringify(basename(targetBinaryPath))}`,
+      `export const yeonjangBinaryPath = fileURLToPath(new URL(${JSON.stringify(`./${binaryRelativePath}`)}, import.meta.url))`,
+      `export const yeonjangAppBundlePath = ${appBundlePath ? 'fileURLToPath(new URL("./app/Yeonjang.app", import.meta.url))' : "null"}`,
+      'export const yeonjangReleaseIdentityPath = fileURLToPath(new URL("./release-identity.json", import.meta.url))',
       "",
       "function digestFile(path) {",
-      "  const digest = createHash(\"sha256\")",
+      '  const digest = createHash("sha256")',
       "  const buffer = Buffer.allocUnsafe(64 * 1024)",
-      "  const descriptor = openSync(path, \"r\")",
+      '  const descriptor = openSync(path, "r")',
       "  try {",
       "    while (true) {",
       "      const count = readSync(descriptor, buffer, 0, buffer.length, null)",
@@ -272,22 +317,22 @@ function main() {
       "  } finally {",
       "    closeSync(descriptor)",
       "  }",
-      "  return `sha256:${digest.digest(\"hex\")}`",
+      '  return `sha256:${digest.digest("hex")}`',
       "}",
       "",
       "export function verifyYeonjangPackageIdentity() {",
       "  try {",
-      "    const identity = JSON.parse(readFileSync(yeonjangReleaseIdentityPath, \"utf-8\"))",
-      "    if (identity?.schemaId !== \"yeonjang.package-identity.v1\" || identity?.schemaVersion !== 1) {",
-      "      return { outcome: \"rejected\", reason: \"identity_contract_invalid\" }",
+      '    const identity = JSON.parse(readFileSync(yeonjangReleaseIdentityPath, "utf-8"))',
+      '    if (identity?.schemaId !== "yeonjang.package-identity.v1" || identity?.schemaVersion !== 1) {',
+      '      return { outcome: "rejected", reason: "identity_contract_invalid" }',
       "    }",
       "    const metadata = statSync(yeonjangBinaryPath)",
       "    if (!metadata.isFile() || metadata.size !== identity.binary?.sizeBytes || digestFile(yeonjangBinaryPath) !== identity.binary?.sha256) {",
-      "      return { outcome: \"rejected\", reason: \"binary_identity_mismatch\" }",
+      '      return { outcome: "rejected", reason: "binary_identity_mismatch" }',
       "    }",
-      "    return { outcome: \"verified\" }",
+      '    return { outcome: "verified" }',
       "  } catch {",
-      "    return { outcome: \"rejected\", reason: \"identity_unavailable\" }",
+      '    return { outcome: "rejected", reason: "identity_unavailable" }',
       "  }",
       "}",
       "",
