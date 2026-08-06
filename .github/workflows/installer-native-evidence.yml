@@ -86,7 +86,11 @@ jobs:
           INSTALLER_VERIFIER: ${{ matrix.verifier }}
         run: |
           set -euo pipefail
-          node scripts/inspect-installer-native.mjs --target "$INSTALLER_TARGET" --stage release/native/stage --verified-receipt "release/native-verified-receipt-$INSTALLER_TARGET.json" --verifier "release/candidate/verifiers/installer-verifier-$INSTALLER_TARGET/$INSTALLER_VERIFIER" --verifier-receipt release/native-verifier-receipt.json > "release/native-attestation-$INSTALLER_TARGET.json"
+          attestation="release/native-attestation-$INSTALLER_TARGET.json"
+          if ! node scripts/inspect-installer-native.mjs --target "$INSTALLER_TARGET" --stage release/native/stage --verified-receipt "release/native-verified-receipt-$INSTALLER_TARGET.json" --verifier "release/candidate/verifiers/installer-verifier-$INSTALLER_TARGET/$INSTALLER_VERIFIER" --verifier-receipt release/native-verifier-receipt.json > "$attestation"; then
+            cat "$attestation"
+            exit 1
+          fi
       - name: Inspect Linux ABI floor
         if: matrix.inspector == 'linux'
         shell: bash
@@ -95,7 +99,11 @@ jobs:
           INSTALLER_VERIFIER: ${{ matrix.verifier }}
         run: |
           set -euo pipefail
-          node scripts/inspect-installer-linux-native.mjs --stage release/native/stage --verified-receipt "release/native-verified-receipt-$INSTALLER_TARGET.json" --verifier "release/candidate/verifiers/installer-verifier-$INSTALLER_TARGET/$INSTALLER_VERIFIER" --verifier-receipt release/native-verifier-receipt.json --readelf /usr/bin/readelf > "release/native-attestation-$INSTALLER_TARGET.json"
+          attestation="release/native-attestation-$INSTALLER_TARGET.json"
+          if ! node scripts/inspect-installer-linux-native.mjs --stage release/native/stage --verified-receipt "release/native-verified-receipt-$INSTALLER_TARGET.json" --verifier "release/candidate/verifiers/installer-verifier-$INSTALLER_TARGET/$INSTALLER_VERIFIER" --verifier-receipt release/native-verifier-receipt.json --readelf /usr/bin/readelf > "$attestation"; then
+            cat "$attestation"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: installer-native-attestation-${{ matrix.target }}
