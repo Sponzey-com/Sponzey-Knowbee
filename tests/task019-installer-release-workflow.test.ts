@@ -20,6 +20,11 @@ describe("task019 installer release workflow", () => {
     expect(workflow).toContain(
       "find release/application/node_modules -type f \\( -name '*.d.ts' -o -name '*.map' \\) -delete",
     )
+    expect(workflow).toContain("container: ${{ matrix.container }}")
+    expect(workflow).toContain("Install Linux native module build dependencies")
+    expect(workflow).toContain("rockylinux/rockylinux:8.10")
+    expect(workflow).toContain("selenium-webdriver/bin")
+    expect(workflow).toContain("better-sqlite3/build/Release/obj.target")
     expect(workflow).toContain("node scripts/compose-installer-release.mjs prepare")
     expect(workflow).not.toContain("mkdir -p release/candidate/prepared")
     expect(workflow).not.toMatch(/PRIVATE_KEY|SIGNING_PRIVATE/iu)
