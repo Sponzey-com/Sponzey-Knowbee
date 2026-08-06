@@ -16,3 +16,4 @@
 
 - Knowbee는 Yeonjang을 단순 헬퍼 라이브러리가 아니라 실제 실행 주체로 다룹니다.
 - 캡처처럼 바이너리 비중이 큰 결과물도 Yeonjang을 거쳐 MQTT로 돌아옵니다.
+- macOS camera helper는 macOS 13.5 배포 하한을 지키며, macOS 14 전용 device type은 availability guard 안에서만 사용합니다.

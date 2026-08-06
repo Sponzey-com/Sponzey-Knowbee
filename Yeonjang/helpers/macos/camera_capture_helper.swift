@@ -94,7 +94,7 @@ func scoreDevice(_ device: AVCaptureDevice, requestedId: String?) -> Int {
     if device.deviceType == .builtInWideAngleCamera {
         score += 100
     }
-    if device.deviceType == .external {
+    if #available(macOS 14.0, *), device.deviceType == .external {
         score -= 50
     }
     return score
@@ -223,8 +223,13 @@ default:
     exit(10)
 }
 
+var deviceTypes: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera]
+if #available(macOS 14.0, *) {
+    deviceTypes.append(.external)
+}
+
 let discovery = AVCaptureDevice.DiscoverySession(
-    deviceTypes: [.builtInWideAngleCamera, .external],
+    deviceTypes: deviceTypes,
     mediaType: .video,
     position: .unspecified
 )

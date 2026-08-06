@@ -173,4 +173,11 @@ describe("Yeonjang macOS startup identity contract", () => {
     expect(build).toContain('-target "$SWIFT_TARGET"')
     expect(plist).toMatch(/<key>LSMinimumSystemVersion<\/key>\s*<string>13\.5<\/string>/u)
   })
+
+  it("guards macOS 14 camera APIs when compiling for the macOS 13.5 floor", () => {
+    const helper = readFileSync("Yeonjang/helpers/macos/camera_capture_helper.swift", "utf8")
+
+    expect(helper).toContain("if #available(macOS 14.0, *)")
+    expect(helper).toContain("deviceTypes.append(.external)")
+  })
 })
