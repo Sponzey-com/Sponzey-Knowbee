@@ -90,6 +90,32 @@ describe("task019 installer bundle CLI", () => {
     )
   })
 
+  it("preserves a dependency path longer than the legacy tar name field", async () => {
+    const input = fixture()
+    const nestedDirectory = join(
+      input.applicationDirectory,
+      "node_modules",
+      "@sponzey",
+      "a-dependency-directory-name-that-makes-the-ustar-path-use-the-prefix-field",
+      "dist",
+    )
+    mkdirSync(nestedDirectory, { recursive: true })
+    writeFileSync(join(nestedDirectory, "runtime-entry.js"), "export {}\n")
+
+    await expect(
+      runInstallerBundleCli([
+        "--plan",
+        input.planPath,
+        "--node-runtime-dir",
+        input.nodeDirectory,
+        "--application-dir",
+        input.applicationDirectory,
+        "--output-dir",
+        input.outputDirectory,
+      ]),
+    ).resolves.toMatchObject({ status: "ready" })
+  })
+
   it("rejects an existing destination before building a partial layout", async () => {
     const input = fixture()
     mkdirSync(input.outputDirectory)

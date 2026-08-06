@@ -125,9 +125,29 @@ function writeTarOctal(header, offset, length, value) {
   writeTarString(header, offset, length, `${encoded}\0`)
 }
 
+function writeTarPath(header, path) {
+  const bytes = Buffer.from(path, "utf8")
+  if (bytes.byteLength <= 100) {
+    writeTarString(header, 0, 100, path)
+    return
+  }
+
+  const segments = path.split("/")
+  for (let index = 1; index < segments.length; index += 1) {
+    const prefix = segments.slice(0, index).join("/")
+    const name = segments.slice(index).join("/")
+    if (Buffer.byteLength(prefix, "utf8") <= 155 && Buffer.byteLength(name, "utf8") <= 100) {
+      writeTarString(header, 0, 100, name)
+      writeTarString(header, 345, 155, prefix)
+      return
+    }
+  }
+  throw new ArchiveBuildError("bundle_archive_entry_name_too_long")
+}
+
 function tarHeader(name, sizeBytes, mode = 0o644) {
   const header = Buffer.alloc(512)
-  writeTarString(header, 0, 100, name)
+  writeTarPath(header, name)
   writeTarOctal(header, 100, 8, mode)
   writeTarOctal(header, 108, 8, 0)
   writeTarOctal(header, 116, 8, 0)
