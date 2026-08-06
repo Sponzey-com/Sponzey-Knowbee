@@ -72,7 +72,11 @@ jobs:
           if [[ "$INSTALLER_TARGET" != win32-* ]]; then chmod 0755 "$verifier"; fi
           node -e 'const fs=require("node:fs"); const values=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const receipt=values.find((value)=>value.target===process.argv[2]); if(!receipt) process.exit(1); process.stdout.write(`${JSON.stringify(receipt)}\n`)' \
             release/candidate/receipts/verifier-receipts.json "$INSTALLER_TARGET" > release/native-verifier-receipt.json
-          "$verifier" --manifest release/candidate/prepared/installer-manifest.json --target "$INSTALLER_TARGET" --artifact "$bundle_root/$artifact_name" --stage release/native/stage > "release/native-verified-receipt-$INSTALLER_TARGET.json"
+          verified_receipt="release/native-verified-receipt-$INSTALLER_TARGET.json"
+          if ! "$verifier" --manifest release/candidate/prepared/installer-manifest.json --target "$INSTALLER_TARGET" --artifact "$bundle_root/$artifact_name" --stage release/native/stage > "$verified_receipt"; then
+            cat "$verified_receipt"
+            exit 1
+          fi
       - name: Inspect unsigned macOS or Windows target
         if: matrix.inspector == 'unsigned'
         shell: bash

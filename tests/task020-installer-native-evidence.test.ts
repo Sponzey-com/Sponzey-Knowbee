@@ -61,6 +61,7 @@ describe("task020 installer native evidence", () => {
     expect(workflow).toContain("inspect-installer-linux-native.mjs")
     expect(workflow).toContain("compose-installer-native-evidence.mjs")
     expect(workflow).toContain("installer-native-evidence-${{ inputs.release_tag }}")
+    expect(workflow).toContain("cat \"$verified_receipt\"")
     expect(workflow).not.toMatch(/INSTALLER_(?:ED25519_)?PRIVATE_KEY/iu)
   })
 
