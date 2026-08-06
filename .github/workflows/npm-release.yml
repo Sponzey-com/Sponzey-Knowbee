@@ -313,6 +313,7 @@ jobs:
         run: |
           set -euo pipefail
           find release/application/node_modules -type d \( -name .bin -o -name test -o -name tests -o -name fixture -o -name fixtures \) -prune -exec rm -rf {} +
+          find release/application/node_modules -type f \( -name '*.d.ts' -o -name '*.map' \) -delete
           node scripts/build-installer-bundle.mjs \
             --plan "release/installer-input/prepared/plans/$INSTALLER_TARGET.json" \
             --node-runtime-dir release/private-node \

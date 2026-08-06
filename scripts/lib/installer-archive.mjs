@@ -125,13 +125,26 @@ function writeTarOctal(header, offset, length, value) {
   writeTarString(header, offset, length, `${encoded}\0`)
 }
 
-function writeTarPath(header, path) {
+function canWriteUstarPath(path) {
   const bytes = Buffer.from(path, "utf8")
-  if (bytes.byteLength <= 100) {
+  if (bytes.byteLength <= 100) return true
+
+  const segments = path.split("/")
+  for (let index = 1; index < segments.length; index += 1) {
+    const prefix = segments.slice(0, index).join("/")
+    const name = segments.slice(index).join("/")
+    if (Buffer.byteLength(prefix, "utf8") <= 155 && Buffer.byteLength(name, "utf8") <= 100) {
+      return true
+    }
+  }
+  return false
+}
+
+function writeTarPath(header, path) {
+  if (Buffer.byteLength(path, "utf8") <= 100) {
     writeTarString(header, 0, 100, path)
     return
   }
-
   const segments = path.split("/")
   for (let index = 1; index < segments.length; index += 1) {
     const prefix = segments.slice(0, index).join("/")
@@ -145,7 +158,18 @@ function writeTarPath(header, path) {
   throw new ArchiveBuildError("bundle_archive_entry_name_too_long")
 }
 
-function tarHeader(name, sizeBytes, mode = 0o644) {
+function paxPathRecord(path) {
+  const body = `path=${path}\n`
+  let length = Buffer.byteLength(body, "utf8") + 2
+  while (true) {
+    const record = `${length} ${body}`
+    const observedLength = Buffer.byteLength(record, "utf8")
+    if (observedLength === length) return Buffer.from(record, "utf8")
+    length = observedLength
+  }
+}
+
+function tarHeader(name, sizeBytes, mode = 0o644, typeFlag = 0x30) {
   const header = Buffer.alloc(512)
   writeTarPath(header, name)
   writeTarOctal(header, 100, 8, mode)
@@ -154,7 +178,7 @@ function tarHeader(name, sizeBytes, mode = 0o644) {
   writeTarOctal(header, 124, 12, sizeBytes)
   writeTarOctal(header, 136, 12, 0)
   header.fill(0x20, 148, 156)
-  header[156] = 0x30
+  header[156] = typeFlag
   writeTarString(header, 257, 6, "ustar\0")
   writeTarString(header, 263, 2, "00")
   let checksum = 0
@@ -245,7 +269,7 @@ async function* tarArchiveChunks({ plan, inputDirectory, signal }) {
 function safeLayoutPath(value) {
   return (
     value.length > 0 &&
-    value.length <= 512 &&
+    value.length <= 4096 &&
     !value.startsWith("/") &&
     !value.includes("\\") &&
     value
@@ -334,7 +358,15 @@ async function* layoutFileChunks(entry, signal) {
 
 async function* layoutTarArchiveChunks({ files, signal }) {
   for (const entry of files) {
-    yield tarHeader(entry.archivePath, entry.sizeBytes, entry.mode)
+    const requiresPax = !canWriteUstarPath(entry.archivePath)
+    if (requiresPax) {
+      const pax = paxPathRecord(entry.archivePath)
+      yield tarHeader("PaxHeaders.0/path", pax.byteLength, 0o644, 0x78)
+      yield pax
+      const paxPadding = (512 - (pax.byteLength % 512)) % 512
+      if (paxPadding > 0) yield Buffer.alloc(paxPadding)
+    }
+    yield tarHeader(requiresPax ? "././@PaxPayload" : entry.archivePath, entry.sizeBytes, entry.mode)
     for await (const chunk of layoutFileChunks(entry, signal)) yield chunk
     const padding = (512 - (entry.sizeBytes % 512)) % 512
     if (padding > 0) yield Buffer.alloc(padding)

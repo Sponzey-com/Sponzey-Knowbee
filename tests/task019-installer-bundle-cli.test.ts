@@ -116,6 +116,54 @@ describe("task019 installer bundle CLI", () => {
     ).resolves.toMatchObject({ status: "ready" })
   })
 
+  it("preserves a deeply nested dependency path through a POSIX PAX archive", async () => {
+    const input = fixture()
+    let nestedDirectory = join(input.applicationDirectory, "node_modules")
+    for (let index = 0; index < 8; index += 1) {
+      nestedDirectory = join(nestedDirectory, `dependency-${index}-${"x".repeat(64)}`)
+    }
+    mkdirSync(nestedDirectory, { recursive: true })
+    writeFileSync(join(nestedDirectory, "runtime-entry.js"), "export {}\n")
+
+    await expect(
+      runInstallerBundleCli([
+        "--plan",
+        input.planPath,
+        "--node-runtime-dir",
+        input.nodeDirectory,
+        "--application-dir",
+        input.applicationDirectory,
+        "--output-dir",
+        input.outputDirectory,
+      ]),
+    ).resolves.toMatchObject({ status: "ready" })
+  })
+
+  it("preserves a safe dependency file name longer than the USTAR name field", async () => {
+    const input = fixture()
+    const fileName = `${"runtime-dependency-".repeat(7)}entry.js`
+    mkdirSync(join(input.applicationDirectory, "node_modules", "runtime-package"), {
+      recursive: true,
+    })
+    writeFileSync(
+      join(input.applicationDirectory, "node_modules", "runtime-package", fileName),
+      "export {}\n",
+    )
+
+    await expect(
+      runInstallerBundleCli([
+        "--plan",
+        input.planPath,
+        "--node-runtime-dir",
+        input.nodeDirectory,
+        "--application-dir",
+        input.applicationDirectory,
+        "--output-dir",
+        input.outputDirectory,
+      ]),
+    ).resolves.toMatchObject({ status: "ready" })
+  })
+
   it("rejects an existing destination before building a partial layout", async () => {
     const input = fixture()
     mkdirSync(input.outputDirectory)
