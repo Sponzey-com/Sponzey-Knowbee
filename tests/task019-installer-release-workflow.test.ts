@@ -67,4 +67,11 @@ describe("task019 installer release workflow", () => {
     expect(workflow).not.toContain("npm publish")
     expect(workflow).not.toContain("NPM_TOKEN")
   })
+
+  it("rejects a candidate tag that does not exactly match the workspace release version", () => {
+    const workflow = readFileSync(".github/workflows/npm-release.yml", "utf8")
+
+    expect(workflow).toContain("Validate immutable tag and workspace version")
+    expect(workflow).toContain("installer_release_tag_version_mismatch")
+  })
 })

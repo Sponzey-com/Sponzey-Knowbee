@@ -63,7 +63,7 @@ describe("npm install packaging", () => {
 
     expect(packageJson).toMatchObject({
       name: "@sponzey/knowbee",
-      version: "0.1.0",
+      version: "0.3.1",
       type: "module",
     })
     expect(packageJson.private).not.toBe(true)

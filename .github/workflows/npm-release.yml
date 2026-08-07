@@ -11,6 +11,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Validate immutable tag and workspace version
+        shell: bash
+        run: |
+          set -euo pipefail
+          workspace_version="$(node -p \"JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version\")"
+          if [ "$GITHUB_REF_NAME" != "v$workspace_version" ]; then
+            echo "installer_release_tag_version_mismatch"
+            exit 1
+          fi
       - uses: pnpm/action-setup@v4
         with:
           version: 8.10.2
