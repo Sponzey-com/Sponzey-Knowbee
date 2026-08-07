@@ -63,8 +63,8 @@ jobs:
           set -euo pipefail
           case "$RELEASE_TAG" in v[0-9A-Za-z]* ) ;; * ) exit 1 ;; esac
           test "$(gh release view "$RELEASE_TAG" --json isPrerelease --jq .isPrerelease)" = true
-          mapfile -t bundle_assets < <(find release/candidate/bundles -type f \( -name '*.tar.gz' -o -name '*.zip' \) | sort)
-          mapfile -t verifier_assets < <(find release/candidate/verifiers -type f -name 'knowbee-installer-verify-*' | sort)
+          mapfile -t bundle_assets < <(node -e 'const fs=require("node:fs"); const values=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const seen=new Set(); if(!Array.isArray(values)||values.length!==5) process.exit(1); for(const value of values){if(typeof value?.target!=="string"||!seen.add(value.target)||typeof value.name!=="string"||!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value.name)) process.exit(1); process.stdout.write(`release/candidate/bundles/installer-bundle-${value.target}/${value.name}\n`)}' release/candidate/receipts/artifact-receipts.json)
+          mapfile -t verifier_assets < <(node -e 'const fs=require("node:fs"); const values=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const seen=new Set(); if(!Array.isArray(values)||values.length!==5) process.exit(1); for(const value of values){if(typeof value?.target!=="string"||!seen.add(value.target)||typeof value.name!=="string"||!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value.name)) process.exit(1); process.stdout.write(`release/candidate/verifiers/installer-verifier-${value.target}/${value.name}\n`)}' release/candidate/receipts/verifier-receipts.json)
           if [ "${#bundle_assets[@]}" -ne 5 ]; then
             echo "Expected exactly five installer bundle assets; found ${#bundle_assets[@]}."
             exit 1

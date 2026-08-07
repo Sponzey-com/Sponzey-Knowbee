@@ -50,6 +50,9 @@ describe("task019 installer release workflow", () => {
 
   it("reports rehearsal asset-count gate failures without publishing partial assets", () => {
     const workflow = readFileSync(".github/workflows/installer-rehearsal-publish.yml", "utf8")
+    expect(workflow).toContain("release/candidate/receipts/artifact-receipts.json")
+    expect(workflow).toContain("release/candidate/receipts/verifier-receipts.json")
+    expect(workflow).not.toContain("find release/candidate/bundles -type f")
     expect(workflow).toContain("Expected exactly five installer bundle assets")
     expect(workflow).toContain("Expected exactly five installer verifier assets")
   })
