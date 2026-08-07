@@ -27,6 +27,7 @@ describe("task019 installer release workflow", () => {
     expect(workflow).toContain("npm_config_python: ${{ matrix.npm_config_python }}")
     expect(workflow).toContain("gcc-toolset-12-gcc-c++")
     expect(workflow).toContain("source /opt/rh/gcc-toolset-12/enable")
+    expect(workflow).toContain("findutils")
     expect(workflow).toContain("selenium-webdriver/bin")
     expect(workflow).toContain("better-sqlite3/build/Release/obj.target")
     expect(workflow).toContain("node scripts/compose-installer-release.mjs prepare")

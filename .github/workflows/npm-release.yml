@@ -279,7 +279,7 @@ jobs:
       - name: Install Linux native module build dependencies
         if: matrix.installer_target == 'linux-x64'
         shell: bash
-        run: dnf -y install ca-certificates curl gcc gcc-c++ gcc-toolset-12-gcc-c++ git make python39 tar xz
+        run: dnf -y install ca-certificates curl findutils gcc gcc-c++ gcc-toolset-12-gcc-c++ git make python39 tar xz
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
