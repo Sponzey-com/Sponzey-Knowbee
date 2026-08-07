@@ -247,30 +247,40 @@ jobs:
             installer_target: darwin-arm64
             container: ''
             npm_config_python: ''
+            npm_config_arch: arm64
+            native_ldflags: ''
             node_archive: node-v24.18.0-darwin-arm64.tar.gz
             node_root: node-v24.18.0-darwin-arm64
           - os: macos-15-intel
             installer_target: darwin-x64
             container: ''
             npm_config_python: ''
+            npm_config_arch: x64
+            native_ldflags: ''
             node_archive: node-v24.18.0-darwin-x64.tar.gz
             node_root: node-v24.18.0-darwin-x64
           - os: ubuntu-latest
             installer_target: linux-x64
             container: rockylinux/rockylinux:8.10
             npm_config_python: /usr/bin/python3.9
+            npm_config_arch: x64
+            native_ldflags: -static-libstdc++ -static-libgcc
             node_archive: node-v24.18.0-linux-x64.tar.xz
             node_root: node-v24.18.0-linux-x64
           - os: windows-11-arm
             installer_target: win32-arm64
             container: ''
             npm_config_python: ''
+            npm_config_arch: arm64
+            native_ldflags: ''
             node_archive: node-v24.18.0-win-arm64.zip
             node_root: node-v24.18.0-win-arm64
           - os: windows-latest
             installer_target: win32-x64
             container: ''
             npm_config_python: ''
+            npm_config_arch: x64
+            native_ldflags: ''
             node_archive: node-v24.18.0-win-x64.zip
             node_root: node-v24.18.0-win-x64
     runs-on: ${{ matrix.os }}
@@ -296,6 +306,8 @@ jobs:
           NODE_ARCHIVE: ${{ matrix.node_archive }}
           NODE_ROOT: ${{ matrix.node_root }}
           npm_config_python: ${{ matrix.npm_config_python }}
+          npm_config_arch: ${{ matrix.npm_config_arch }}
+          LDFLAGS: ${{ matrix.native_ldflags }}
         run: |
           set -euo pipefail
           input_root='release/installer-input/files'
@@ -333,13 +345,7 @@ jobs:
           set -euo pipefail
           find release/application/node_modules -type d \( -name .bin -o -name test -o -name tests -o -name fixture -o -name fixtures \) -prune -exec rm -rf {} +
           find release/application/node_modules -type f \( -name '*.d.ts' -o -name '*.map' \) -delete
-          case "$INSTALLER_TARGET" in
-            darwin-*) selenium_manager_platform=macos ;;
-            linux-x64) selenium_manager_platform=linux ;;
-            win32-*) selenium_manager_platform=windows ;;
-            *) exit 1 ;;
-          esac
-          find release/application/node_modules/selenium-webdriver/bin -mindepth 1 -maxdepth 1 -type d ! -name "$selenium_manager_platform" -prune -exec rm -rf {} +
+          rm -rf release/application/node_modules/selenium-webdriver/bin
           rm -rf release/application/node_modules/better-sqlite3/build/Release/obj.target
           rm -f release/application/node_modules/better-sqlite3/build/Release/test_extension.node
           node scripts/build-installer-bundle.mjs \
