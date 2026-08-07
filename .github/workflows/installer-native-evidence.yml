@@ -139,7 +139,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          candidate_id="$(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(value.manifestSha256)' release/candidate/prepared/installer-manifest.json)"
+          candidate_id="sha256:$(sha256sum release/candidate/prepared/installer-manifest.json | awk '{print $1}')"
           node scripts/compose-installer-native-evidence.mjs --candidate-id "$candidate_id" --artifact-receipts release/candidate/receipts/artifact-receipts.json --verifier-receipts release/candidate/receipts/verifier-receipts.json --attestation-root release/native-attestations --output-dir release/native-evidence
       - uses: actions/upload-artifact@v4
         with:

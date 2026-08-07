@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 
 import { buildInstallerCleanMachineEvidence } from "../scripts/lib/installer-clean-machine-evidence.mjs"
@@ -52,6 +53,12 @@ function fixture() {
 }
 
 describe("task021 installer clean-machine evidence", () => {
+  it("derives the clean-machine candidate ID from exact manifest bytes", () => {
+    const workflow = readFileSync(".github/workflows/installer-clean-machine-evidence.yml", "utf8")
+    expect(workflow).toContain('sha256sum release/candidate/prepared/installer-manifest.json')
+    expect(workflow).not.toContain("manifestSha256)' release/candidate/prepared/installer-manifest.json")
+  })
+
   it("requires every target, unsigned disclosure, OS-warning acknowledgement, one-shot budget and every user-goal post-check", () => {
     const input = fixture()
     expect(buildInstallerCleanMachineEvidence({ candidateId, ...input })).toEqual({

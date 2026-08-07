@@ -64,6 +64,7 @@ describe("task020 installer native evidence", () => {
     expect(workflow).toContain("cat \"$verified_receipt\"")
     expect(workflow).toContain("cat \"$attestation\"")
     expect(workflow).toContain("mkdir -p release/native")
+    expect(workflow).toContain('sha256sum release/candidate/prepared/installer-manifest.json')
     expect(workflow).not.toMatch(/INSTALLER_(?:ED25519_)?PRIVATE_KEY/iu)
   })
 
