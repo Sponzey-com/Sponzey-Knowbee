@@ -183,7 +183,12 @@ export async function inspectLinuxInstallerNative(input, dependencies = {}) {
     (maxGlibcxx && compareNativeVersion(maxGlibcxx, "3.4.25") > 0) ||
     (verifierVersions.maxGlibc && compareNativeVersion(verifierVersions.maxGlibc, "2.28") > 0)
   ) {
-    return blocked("installer_linux_abi_floor_exceeded")
+    return {
+      ...blocked("installer_linux_abi_floor_exceeded"),
+      ...(maxGlibc ? { maxGlibc } : {}),
+      ...(maxGlibcxx ? { maxGlibcxx } : {}),
+      ...(verifierVersions.maxGlibc ? { verifierMaxGlibc: verifierVersions.maxGlibc } : {}),
+    }
   }
   return {
     status: "ready",

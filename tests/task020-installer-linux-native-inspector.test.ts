@@ -101,6 +101,11 @@ describe("task020 Linux native inspector", () => {
         },
         { readVersions: async () => "Name: GLIBC_2.31" },
       ),
-    ).toEqual({ status: "blocked", reasonCode: "installer_linux_abi_floor_exceeded" })
+    ).toEqual({
+      status: "blocked",
+      reasonCode: "installer_linux_abi_floor_exceeded",
+      maxGlibc: "2.31",
+      verifierMaxGlibc: "2.31",
+    })
   })
 })
