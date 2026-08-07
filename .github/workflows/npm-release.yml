@@ -15,7 +15,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          workspace_version="$(node -p \"JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version\")"
+          workspace_version="$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync("package.json", "utf8")).version)')"
           if [ "$GITHUB_REF_NAME" != "v$workspace_version" ]; then
             echo "installer_release_tag_version_mismatch"
             exit 1

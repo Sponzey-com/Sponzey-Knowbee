@@ -73,5 +73,7 @@ describe("task019 installer release workflow", () => {
 
     expect(workflow).toContain("Validate immutable tag and workspace version")
     expect(workflow).toContain("installer_release_tag_version_mismatch")
+    expect(workflow).toContain("process.stdout.write(JSON.parse(require(\"node:fs\").readFileSync(\"package.json\", \"utf8\")).version)")
+    expect(workflow).not.toContain('node -p \\"JSON.parse')
   })
 })
