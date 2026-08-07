@@ -48,6 +48,12 @@ describe("task019 installer release workflow", () => {
     expect(workflow).not.toMatch(/--latest|make_latest/iu)
   })
 
+  it("reports rehearsal asset-count gate failures without publishing partial assets", () => {
+    const workflow = readFileSync(".github/workflows/installer-rehearsal-publish.yml", "utf8")
+    expect(workflow).toContain("Expected exactly five installer bundle assets")
+    expect(workflow).toContain("Expected exactly five installer verifier assets")
+  })
+
   it("never overwrites a stable release or publishes installer packages to npm", () => {
     const workflow = readFileSync(".github/workflows/npm-release.yml", "utf8")
     expect(workflow).toMatch(/github-release:\n\s+if: startsWith\(github\.ref, 'refs\/tags\/'\)/u)

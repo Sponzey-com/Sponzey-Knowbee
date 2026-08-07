@@ -65,8 +65,14 @@ jobs:
           test "$(gh release view "$RELEASE_TAG" --json isPrerelease --jq .isPrerelease)" = true
           mapfile -t bundle_assets < <(find release/candidate/bundles -type f \( -name '*.tar.gz' -o -name '*.zip' \) | sort)
           mapfile -t verifier_assets < <(find release/candidate/verifiers -type f -name 'knowbee-installer-verify-*' | sort)
-          test "${#bundle_assets[@]}" -eq 5
-          test "${#verifier_assets[@]}" -eq 5
+          if [ "${#bundle_assets[@]}" -ne 5 ]; then
+            echo "Expected exactly five installer bundle assets; found ${#bundle_assets[@]}."
+            exit 1
+          fi
+          if [ "${#verifier_assets[@]}" -ne 5 ]; then
+            echo "Expected exactly five installer verifier assets; found ${#verifier_assets[@]}."
+            exit 1
+          fi
           gh release upload "$RELEASE_TAG" --clobber \
             release/rehearsal/install.sh \
             release/rehearsal/install.ps1 \
