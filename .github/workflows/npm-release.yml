@@ -279,7 +279,7 @@ jobs:
       - name: Install Linux native module build dependencies
         if: matrix.installer_target == 'linux-x64'
         shell: bash
-        run: dnf -y install ca-certificates curl gcc gcc-c++ git make python39 tar xz
+        run: dnf -y install ca-certificates curl gcc gcc-c++ gcc-toolset-12-gcc-c++ git make python39 tar xz
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -317,6 +317,9 @@ jobs:
             --input-dir "$input_root" \
             --package-version "$version" \
             --target "$INSTALLER_TARGET"
+          if [[ "$INSTALLER_TARGET" == linux-x64 ]]; then
+            source /opt/rh/gcc-toolset-12/enable
+          fi
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install \
             --prefix release/application \
             --omit=dev \
