@@ -246,26 +246,31 @@ jobs:
           - os: macos-latest
             installer_target: darwin-arm64
             container: ''
+            npm_config_python: ''
             node_archive: node-v24.18.0-darwin-arm64.tar.gz
             node_root: node-v24.18.0-darwin-arm64
           - os: macos-15-intel
             installer_target: darwin-x64
             container: ''
+            npm_config_python: ''
             node_archive: node-v24.18.0-darwin-x64.tar.gz
             node_root: node-v24.18.0-darwin-x64
           - os: ubuntu-latest
             installer_target: linux-x64
             container: rockylinux/rockylinux:8.10
+            npm_config_python: /usr/bin/python3.9
             node_archive: node-v24.18.0-linux-x64.tar.xz
             node_root: node-v24.18.0-linux-x64
           - os: windows-11-arm
             installer_target: win32-arm64
             container: ''
+            npm_config_python: ''
             node_archive: node-v24.18.0-win-arm64.zip
             node_root: node-v24.18.0-win-arm64
           - os: windows-latest
             installer_target: win32-x64
             container: ''
+            npm_config_python: ''
             node_archive: node-v24.18.0-win-x64.zip
             node_root: node-v24.18.0-win-x64
     runs-on: ${{ matrix.os }}
@@ -274,7 +279,7 @@ jobs:
       - name: Install Linux native module build dependencies
         if: matrix.installer_target == 'linux-x64'
         shell: bash
-        run: dnf -y install ca-certificates curl gcc gcc-c++ git make python3 tar xz
+        run: dnf -y install ca-certificates curl gcc gcc-c++ git make python39 tar xz
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -290,6 +295,7 @@ jobs:
           INSTALLER_TARGET: ${{ matrix.installer_target }}
           NODE_ARCHIVE: ${{ matrix.node_archive }}
           NODE_ROOT: ${{ matrix.node_root }}
+          npm_config_python: ${{ matrix.npm_config_python }}
         run: |
           set -euo pipefail
           input_root='release/installer-input/files'
