@@ -384,7 +384,7 @@ describe("npm install packaging", () => {
     })
   })
 
-  it("documents the GitHub Actions release path for npm package publishing", () => {
+  it("publishes installer inputs through GitHub Releases without npm registry publication", () => {
     const workflow = readFileSync(".github/workflows/npm-release.yml", "utf-8")
 
     expect(workflow).toContain("scripts/package-npm.mjs")
@@ -404,8 +404,8 @@ describe("npm install packaging", () => {
     expect(workflow).toContain("GH_REPO: ${{ github.repository }}")
     expect(workflow).toContain("gh release create")
     expect(workflow).toContain("gh release upload")
-    expect(workflow).toContain('npm view "$package_spec" version')
-    expect(workflow).toContain("Skipping already published package")
-    expect(workflow).toContain("NODE_AUTH_TOKEN")
+    expect(workflow).not.toMatch(/\n\s+publish:\n/u)
+    expect(workflow).not.toContain("npm publish")
+    expect(workflow).not.toContain("NODE_AUTH_TOKEN")
   })
 })
