@@ -4,7 +4,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { inspectLinuxInstallerNative } from "../scripts/inspect-installer-linux-native.mjs"
+import {
+  inspectLinuxInstallerNative,
+  isReadelfStaticallyLinked,
+} from "../scripts/inspect-installer-linux-native.mjs"
 
 const directories: string[] = []
 
@@ -37,6 +40,11 @@ function fixture() {
 }
 
 describe("task020 Linux native inspector", () => {
+  it("accepts static PIE verifiers with no NEEDED shared library", () => {
+    expect(isReadelfStaticallyLinked("Dynamic section at offset 0x1 contains 0 entries")).toBe(true)
+    expect(isReadelfStaticallyLinked("0x0000000000000001 (NEEDED) Shared library: [libc.so.6]")).toBe(false)
+  })
+
   it("measures every staged ELF and verifier without emitting raw paths", async () => {
     const input = fixture()
     const result = await inspectLinuxInstallerNative(

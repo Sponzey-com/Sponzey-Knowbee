@@ -223,12 +223,16 @@ export function createReadelfVersionReader(readelfPath) {
   }
 }
 
+export function isReadelfStaticallyLinked(dynamicSection) {
+  return typeof dynamicSection === "string" && !/\(NEEDED\)/u.test(dynamicSection)
+}
+
 function createReadelfStaticInspector(readelfPath) {
   return async (path) => {
     const dynamic = await execFile(readelfPath, ["--dynamic", path], {
       env: {}, maxBuffer: 1024 * 1024, timeout: 30_000,
     })
-    return dynamic.stdout.includes("no dynamic section")
+    return isReadelfStaticallyLinked(dynamic.stdout)
   }
 }
 
